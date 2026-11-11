@@ -1,0 +1,27 @@
+# The emitter of a test of a boxed value, by itself. No walk runs: the Code is written out.
+# What may come is anything or the empty value; what passes is undefined or a text. The empty value has the form of a cell and nothing may be read off it: the look for it stays in front of all others.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: = NotEqual(
+# CHECK-NEXT: = Branch({{*}}, rare
+# CHECK: = Load8Z({{*}}JSCell_typeInfoType
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1 @Void = CheckProof v0 checkedType=undefined|string typeWithoutProof=absent|anything source=Contents
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asks" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

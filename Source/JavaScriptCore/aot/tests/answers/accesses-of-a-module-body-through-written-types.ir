@@ -1,0 +1,57 @@
+# type Point = { x: number }; type Numbers = number[];
+# keep({ x: 1 }); const point: Point = take(); const list: Numbers = takeList(); show(point.x); point.x = 5; show(list[1]); list[1] = 7; show(1 in list); show(point.x); show(list[1]);
+# const bytes: Uint8Array = takeBytes(); show(bytes[1]); bytes[1] = 7; show(bytes[1]);
+# A module body without a loop reads and stores through values of which only the written type is known. `take` hands back the object that the program has made.
+# RUN(ANSWER): run-in-shell globalThis.keep = (point) => { globalThis.kept = point; }; globalThis.take = () => globalThis.kept; globalThis.takeList = () => [1, 2, 3]; globalThis.takeBytes = () => new Uint8Array([1, 2, 3]); globalThis.show = (x) => print(x);
+# ANSWER: 1
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: true
+# ANSWER-NEXT: 5
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] declaredOrder=[0] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = Convert v1 declared={type=number}
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = PropGet v0 key="keep" [isFreeName]
+    v6 = Call v5, -, v4 calleeName="keep"
+    v7 = PropGet v0 key="take" [isFreeName]
+    v8 = Call v7, - calleeName="take"
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v10 = PropGet v0 key="takeList" [isFreeName]
+    v11 = Call v10, - calleeName="takeList"
+    v12 = Convert v11 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v13 = PropGet v0 key="show" [isFreeName]
+    v14 = PropGet v9 key="x"
+    v15 = Call v13, -, v14 calleeName="show"
+    v16 = Integer integer=5
+    PropSet v9, v16 key="x"
+    v18 = ElemGet v12, v1
+    v19 = Call v13, -, v18 calleeName="show"
+    v20 = Integer integer=7
+    ElemSet v12, v1, v20
+    v22 = ElemHas v12, v1
+    v23 = Call v13, -, v22 calleeName="show"
+    v24 = PropGet v9 key="x"
+    v25 = Call v13, -, v24 calleeName="show"
+    v26 = ElemGet v12, v1
+    v27 = Call v13, -, v26 calleeName="show"
+    v28 = PropGet v0 key="takeBytes" [isFreeName]
+    v29 = Call v28, - calleeName="takeBytes"
+    v30 = Convert v29 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}
+    v31 = ElemGet v30, v1
+    v32 = Call v13, -, v31 calleeName="show"
+    ElemSet v30, v1, v20
+    v34 = ElemGet v30, v1
+    v35 = Call v13, -, v34 calleeName="show"
+    Return v35
+}

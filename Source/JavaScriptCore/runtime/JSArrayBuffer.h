@@ -47,7 +47,7 @@ public:
     }
 
     // This function will register the new wrapper with the vm's TypedArrayController.
-    JS_EXPORT_PRIVATE static JSArrayBuffer* create(VM&, Structure*, RefPtr<ArrayBuffer>&&);
+    JS_EXPORT_PRIVATE static JSArrayBuffer* create(VM&, Structure*, RefPtr<ArrayBuffer>&&, size_t bytesAlreadyReported = 0);
 
     ArrayBuffer* impl() const { return m_impl; }
     static constexpr ptrdiff_t offsetOfImpl() { return OBJECT_OFFSETOF(JSArrayBuffer, m_impl); }
@@ -76,7 +76,7 @@ public:
 
 private:
     JSArrayBuffer(VM&, Structure*, RefPtr<ArrayBuffer>&&);
-    void finishCreation(VM&, JSGlobalObject*);
+    void finishCreation(VM&, JSGlobalObject*, size_t bytesAlreadyReported);
 
     static size_t estimatedSize(JSCell*, VM&);
 

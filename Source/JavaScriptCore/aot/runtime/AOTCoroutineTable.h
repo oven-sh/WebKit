@@ -7,11 +7,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTVector.h"
-#include "CollectionScope.h"
+#include "AOTCoroutineWords.h"
+#include "AOTWatchpoints.h"
 #include <wtf/FastMalloc.h>
 #include <array>
-#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC {
@@ -22,7 +21,6 @@ class VM;
 
 namespace AOT {
 
-class SavedFrame;
 struct Instance;
 struct State;
 
@@ -34,30 +32,13 @@ public:
 
     Structure* generatorStructure() const { return m_generatorStructure; }
     Structure* savedFrameStructure() const { return m_savedFrameStructure; }
+    Structure* structureOfGeneratorsOfLibrary(VM&, bool isAsync);
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
     void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
 
-    void didCreateSavedFrame(VM&, SavedFrame*);
-    // From any thread that marks.
-    void didVisitFrameWithDeadWords(SavedFrame*, uint32_t version, const uint32_t* firstWordOfMap);
-
     template<typename Visitor> void visitRoots(Visitor&);
-    size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
-    struct VisitedFrameWithDeadWords {
-        SavedFrame* frame;
-        const uint32_t* firstWordOfMap;
-        uint32_t version;
-    };
-    // Threads that mark at one time take different lists, and no two lists share a cache line.
-    struct ListOfVisitedFrames {
-        Lock lock;
-        Vector<VisitedFrameWithDeadWords> frames WTF_GUARDED_BY_LOCK(lock);
-        std::array<uint8_t, 104> padding;
-    };
-    static_assert(sizeof(ListOfVisitedFrames) == 128);
-
     uint32_t createEmptyPrototypeStructure(VM&, JSObject* parent);
     void initializeCoroutineWords(VM&);
 
@@ -67,8 +48,8 @@ private:
     void* m_handlerOfJobEntrypoint;
     Structure* m_generatorStructure { nullptr };
     Structure* m_savedFrameStructure { nullptr };
-    Vector<SavedFrame*> m_savedFramesForValidation;
-    std::array<ListOfVisitedFrames, 16> m_visitedFramesWithDeadWords;
+    std::array<std::unique_ptr<PropertyValueWatchpoint>, 2> m_watchesAboveGeneratorFunctionsOfLibrary;
+    std::array<bool, 2> m_hasAskedAboveGeneratorFunctionsOfLibrary { };
 };
 
 } } // namespace JSC::AOT

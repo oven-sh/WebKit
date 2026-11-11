@@ -266,10 +266,6 @@ String JSFunction::nameWithoutGC(VM& vm)
 
 String JSFunction::displayName(VM& vm)
 {
-#if ENABLE(AOT)
-    if (isCompiledClosure())
-        return AOT::CompiledCallee::ownDisplayName(this);
-#endif
     JSValue displayName = getDirect(vm, vm.propertyNames->displayName);
     
     if (displayName && isJSString(displayName))
@@ -287,8 +283,9 @@ const String JSFunction::calculatedDisplayName(VM& vm)
 
 #if ENABLE(AOT)
     if (isCompiledClosure()) {
+        // Anonymous functions have no name, as below. The caller then uses the name of the built-in class.
         if (String displayName = AOT::CompiledCallee::displayName(this); !displayName.isNull())
-            return displayName;
+            return displayName.isEmpty() ? String() : displayName;
     }
 #endif
     
@@ -547,8 +544,6 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
 #if ENABLE(AOT)
         if (function->isCompiledClosure()) {
-            if (String ownDisplayName = AOT::CompiledCallee::ownDisplayName(function); !ownDisplayName.isNull())
-                return ownDisplayName;
             if (String displayName = AOT::CompiledCallee::displayName(function); !displayName.isNull())
                 return displayName;
         }

@@ -41,6 +41,7 @@ import type {
   SharingMode,
   TargetPlatform,
   TypedResultForm,
+  WordOfCell,
 } from "./vocabulary.ts";
 
 export const builtinFlags = [
@@ -72,6 +73,7 @@ export const overloadFlags = [
   "IsSpecialCase",
   "OnlyPropagatesErrors",
   "ResultIsDeclaredOnly",
+  "ResultIsHeld",
 ] as const;
 export type OverloadFlag = (typeof overloadFlags)[number];
 
@@ -115,7 +117,6 @@ export const typePartKinds = [
   "CallbackResult",
   "Prototype",
 ] as const;
-export type TypePartKind = (typeof typePartKinds)[number];
 
 export const placeKinds = [
   "None",
@@ -132,10 +133,8 @@ export const placeKinds = [
   "Member",
   "NativeCell",
 ] as const;
-export type PlaceKind = (typeof placeKinds)[number];
 
 export const keyKinds = ["None", "Any", "Indexes", "Names", "Operand", "ElementsOf"] as const;
-export type KeyKind = (typeof keyKinds)[number];
 
 export const implementationKinds = [
   "Generic",
@@ -153,9 +152,7 @@ export const prototypeLinks = ["Unknown", "Null", "Builtin"] as const;
 export type PrototypeLink = (typeof prototypeLinks)[number];
 
 export const hostReadUses = ["Inspected", "Called", "PassedTo", "Kept", "IsValueOf"] as const;
-export type HostReadUseKind = (typeof hostReadUses)[number];
 
-/** Of a function that native code makes and hands over by itself: the host answers it to nobody who asks. */
 export const noHostNumber = 0xffff;
 
 export const nameKinds = ["Text", "WellKnownSymbol", "RegisteredSymbol"] as const;
@@ -203,6 +200,7 @@ export interface ModelType {
   id: number;
   key: string;
   isAnything: boolean;
+  isMadeOfListedClasses: boolean;
   hasAnyObject: boolean;
   hasAnyFunction: boolean;
   hasPlainData: boolean;
@@ -222,11 +220,11 @@ export type ModelPlace =
   | { place: "Result" }
   | { place: "ResultSlot"; slot: ModelSlot }
   | { place: "ResultField"; index: number; holdsOnlyWhatIsStored: boolean }
-  | { place: "NewValue"; type: ModelType }
+  | { place: "NewValue"; type: ModelType; holdsWhatIsThrown: boolean }
   | { place: "NativeMemory" }
   | { place: "Prototype"; operand: ModelOperand }
   | { place: "Member"; operand: ModelOperand; path: readonly (ModelName | null)[]; firstStep: number }
-  | { place: "NativeCell"; cell: ModelName };
+  | { place: "NativeCell"; cell: ModelName; holdsOnlyWhatIsStored: boolean };
 
 export type ModelKey =
   | { key: "None" }
@@ -299,7 +297,6 @@ export interface ModelPlatformType {
 
 export interface ModelResult {
   type: ModelType;
-  /** Empty where the platform decides nothing. Else one for each platform, and `type` is all of them together. */
   typesByPlatform: readonly ModelPlatformType[];
   layouts: readonly ModelResultLayout[];
   rangeRule: RangeRule;
@@ -329,7 +326,6 @@ export interface ModelFlow {
   handlerCalls: readonly ModelHandlerCall[];
 }
 
-/** The Structure that a getter of JSGlobalObject answers, after the transitions that add the names in their order. */
 export interface ModelRealmStructure {
   id: number;
   getter: string;
@@ -360,13 +356,7 @@ export interface ModelResultProperty {
 export interface ModelCode {
   implementation: ModelImplementation;
   directEntry: DirectEntrySpec | null;
-  /** The overload that does the same with a part of each of these operands, of which native code takes nothing but the bytes. */
-  inRanges: { overload: ModelOverload; views: readonly ModelOperand[] } | null;
   model: ModelFunction | null;
-  fieldsForm: InlineBuiltinName | null;
-  prefixForm: InlineBuiltinName | null;
-  prefixProperties: readonly ModelResultProperty[];
-  listForm: InlineBuiltinName | null;
 }
 
 export interface ModelOverload {
@@ -415,6 +405,9 @@ export interface ModelCondition {
   objectNobodyKnowsIsWritten: boolean;
   testsReplaceBuiltins: boolean;
   programStores: ModelBuiltin | null;
+  isAskedForOtherNames: ModelBuiltin | null;
+  valuesServed: readonly ModelName[];
+  methodsServed: readonly ModelName[];
 }
 
 export interface ModelFeatureUse {
@@ -429,13 +422,11 @@ export type ModelHostValue = Extract<ModelPlace, { place: "None" | "NewValue" | 
 export interface ModelHostCall {
   times: CallbackTimes;
   thisValue: ModelHostValue;
-  /** null: what the annotations of the callee's own parameters say. */
   arguments: readonly ModelHostValue[] | null;
   otherArguments: ModelHostValue;
   result: ModelHostUses;
 }
 
-/** The names lead from the value to what native code uses. */
 export type ModelHostUse = { path: readonly ModelName[] } & (
   | { read: "Inspected" }
   | { read: "Called"; call: ModelHostCall | null }
@@ -444,7 +435,6 @@ export type ModelHostUse = { path: readonly ModelName[] } & (
   | { read: "IsValueOf"; builtin: ModelBuiltin }
 );
 
-/** null: nothing says what native code does with the value, so anybody may get it. */
 export type ModelHostUses = readonly ModelHostUse[] | null;
 
 export interface ModelExportRead {
@@ -461,12 +451,10 @@ export interface ModelModuleLoad {
 export interface ModelCalledFunction {
   function: ModelFunction;
   condition: ModelCondition | null;
-  /** What native code does with the object of the function. */
   uses: ModelHostUses;
 }
 
 export interface ModelHostObjectField {
-  /** null: every other name and index. */
   name: ModelName | null;
   value: ModelHostValue;
 }
@@ -484,20 +472,9 @@ export interface ModelHostObject {
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: readonly ModelName[];
+  lockedNames: readonly ModelName[];
+  holder: ModelBuiltin | null;
   platforms: readonly TargetPlatform[];
-  source: Source;
-}
-
-export interface ModelHostMethodCall {
-  name: ModelName;
-  cell: ModelName;
-  call: ModelHostCall;
-  source: Source;
-}
-
-export interface ModelNamedMemberCall {
-  name: ModelName;
-  arguments: readonly ModelHostValue[];
   source: Source;
 }
 
@@ -511,12 +488,10 @@ export interface ModelNativeFunction {
 export interface ModelAttachments {
   featureUses: readonly ModelFeatureUse[];
   unseenCodeCondition: ModelCondition | null;
+  conditionOnInstancesThatAnswerEveryName: ModelCondition | null;
   moduleLoads: readonly ModelModuleLoad[];
   calledFunctions: readonly ModelCalledFunction[];
-  appendForm: InlineBuiltinName | null;
-  jsonTextForm: { argument: ModelOperand; builtin: ModelBuiltin } | null;
   literalPartsForm: { argument: ModelOperand; names: readonly ModelName[]; builtin: ModelBuiltin } | null;
-  bodyBytesForm: ModelBuiltin | null;
   boxedCallStub: BoxedStubName | null;
   nativeFunction: ModelNativeFunction | null;
   nativeSymbols: readonly string[];
@@ -526,7 +501,6 @@ export interface ModelAttachments {
 
 export type ModelPrototype = { link: "Unknown" } | { link: "Null" } | { link: "Builtin"; builtin: ModelBuiltin };
 
-/** What an entry holds in an executable for one of the listed platforms and one of the listed architectures. */
 export interface ModelTargetText {
   platforms: readonly TargetPlatform[];
   architectures: readonly TargetArchitecture[];
@@ -562,7 +536,9 @@ export interface ModelBuiltin {
   constant: ModelConstant | null;
   isAddedAtFirstRead: boolean;
   isAddedAsEnumerable: boolean;
-  /** Of a native binding that some text of the library names: what the host evaluates it by. It depends on how Bun is built, so the engine's half of the table does not hold it. */
+  canBeListed: boolean;
+  isCreatedInSomeRuns: boolean;
+  namesFoundAbove: readonly ModelName[];
   hostNumber: number;
   attachments: ModelAttachments;
 }
@@ -576,6 +552,10 @@ export interface ModelSlot {
   contentsSlot: ContentsSlot | null;
   indexInType: number | null;
   holds: ModelType | null;
+  internalField: number | null;
+  holdsStepValues: boolean;
+  holdsWhatIsThrown: boolean;
+  wordOfCell: WordOfCell;
 }
 
 export interface ModelTypeName {
@@ -601,13 +581,13 @@ export interface ModelClass {
   isNeverPristine: boolean;
   pristineTest: PristineTest;
   hasClosureInstances: boolean;
+  isFollowedBesideUnseenObject: boolean;
   instancesAreEntries: boolean;
+  keepsStructuresOfClassesBelow: boolean;
   definesCharactersOnNewInstances: boolean;
   namesDefinedOnNewInstances: readonly ModelName[] | null;
-  typesOfNamesDefinedOnNewInstances: readonly ModelResultProperty[];
-  namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
-  namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
+  constructorAdder: ModelName | null;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;
   types: readonly ModelTypeName[];
@@ -632,7 +612,6 @@ export interface ModelModule {
   token: string;
   specifier: string;
   hasSource: boolean;
-  /** The registry does not have it: the loader takes its source as an ES module, with an export table and a namespace object. */
   isEsModule: boolean;
   hasOpenNamespace: boolean;
   listsAllExports: boolean;
@@ -666,7 +645,7 @@ export type ModelIntrinsicMeaning =
   | { intrinsic: "IfAbruptCloseIterator" }
   | { intrinsic: "SymbolKey"; symbol: ModelName }
   | { intrinsic: "HasJSType"; first: string; last: string }
-  | { intrinsic: "Builtin" | "Construct" | "NativeBinding"; builtin: ModelBuiltin }
+  | { intrinsic: "Builtin" | "Construct" | "IsHolderWithoutAddedNames" | "NativeBinding"; builtin: ModelBuiltin }
   | { intrinsic: "LinkTimeConstant"; constant: string }
   | { intrinsic: "Int"; value: number }
   | { intrinsic: "Bool"; value: boolean }
@@ -718,6 +697,7 @@ export interface ModelHostRead {
   context: HostReadContext;
   exportName: ModelName;
   use: Exclude<HostReadUse, { read: "PassedTo" }> | { read: "PassedTo"; builtin: ModelBuiltin; argument: number };
+  namesLookedFor: readonly ModelName[];
 }
 
 export interface ModelProtocolKeys {
@@ -731,17 +711,12 @@ export interface ModelClosedKeys {
   openNames: readonly ModelName[];
 }
 
-export interface ModelNamesReadByNativeCode {
-  holder: ModelBuiltin;
-  names: readonly ModelName[];
-  namesOnlyInspected: readonly ModelName[];
-}
-
 export interface ModelStartup {
   modules: readonly ModelModule[];
   loads: readonly ModelModuleLoad[];
   functionsCalledWithLoads: readonly ModelCalledFunction[];
   namesOfMethodsCallingLoads: readonly ModelName[];
+  functionsLayingSuchMethods: readonly ModelFunction[];
   moduleLoaderFunctions: readonly ModelFunction[];
 }
 
@@ -758,7 +733,6 @@ export interface ModelEngineFile {
   text: string;
 }
 
-/** What the table takes from the list of what an executable can be linked without. */
 export interface TableFeature {
   name: FeatureName;
   index: number;
@@ -770,7 +744,6 @@ export interface TableModel {
   builtins: readonly ModelBuiltin[];
   membersLockedByName: readonly ModelBuiltin[];
   closedKeys: readonly ModelClosedKeys[];
-  namesReadByNativeCode: readonly ModelNamesReadByNativeCode[];
   overloads: readonly ModelOverload[];
   dispatches: readonly ModelDispatch[];
   dispatchNodes: readonly ModelDispatchNode[];
@@ -785,14 +758,10 @@ export interface TableModel {
   boxedStubs: readonly BoxedStubName[];
   protocolKeys: readonly ModelProtocolKeys[];
   hostReads: readonly ModelHostRead[];
-  /** What hand-written code of the engine may name besides the entries, classes and layouts that the engine declares. */
   namesOfEngine: ReadonlySet<ModelName>;
-  /** The token is the role's. The entry is another where the host leaves the role out. */
   hostRoles: readonly { token: string; builtin: ModelBuiltin }[];
   hostClassRoles: readonly { token: string; builtinClass: ModelClass }[];
   hostObjects: readonly ModelHostObject[];
-  namedMemberCalls: readonly ModelNamedMemberCall[];
-  hostMethodCalls: readonly ModelHostMethodCall[];
   checkedNumbers: readonly ModelBound[];
   startup: ModelStartup;
   syntax: ModelSyntax;

@@ -10,24 +10,22 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeGenerator.h"
 #include "AOTCompiledCode.h"
-#include <span>
+#include "AOTMachine.h"
 
-namespace JSC {
-
-namespace B3 {
-class CompilationScratch;
-}
-
-namespace AOT { namespace Typed {
+namespace JSC { namespace AOT { namespace Typed {
 
 struct CodeGenerationWorker {
     BuildContext& build;
     TypeArena& types;
-    B3::CompilationScratch& scratch;
+    Machine::Arena& arena;
 };
 
-void compileFunctions(const CodeGenerationWorker&, const CodeGenerationInputs&, std::span<const FunctionID> ids, std::span<CompiledCode> results, CodeGenerationTotals&);
-uint32_t estimatedCodeSize(const Program&, FunctionID);
+CompiledCode generateCode(const CodeGenerationWorker&, const CodeGenerationInputs&, const Code&, CodeGenerationTotals&);
+
+class BodyIndex;
+bool hasStraightForm(const CodeGenerationInputs&, CodeUnit, const BodyIndex&);
+std::optional<CompiledCode> generateStraightCode(const CodeGenerationWorker&, const CodeGenerationInputs&, const Code&, const BodyIndex&, CodeGenerationTotals&);
+std::optional<CompiledCode> generateEntryWrittenByHand(const CodeGenerationWorker&, const CodeGenerationInputs&, const Code&, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter, CodeGenerationTotals&, bool nobodyEnters);
 
 } } } // namespace JSC::AOT::Typed
 

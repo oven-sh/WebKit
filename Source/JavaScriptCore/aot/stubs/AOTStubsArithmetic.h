@@ -19,7 +19,6 @@ constexpr bool isOnBits(BinaryOperator operation) { return operation >= BinaryOp
 constexpr bool hasDoubleCase(BinaryOperator operation) { return !isOnBits(operation); }
 constexpr bool hasFormAfterInt32Check(BinaryOperator operation) { return operation != BinaryOperator::Div && operation != BinaryOperator::Mod; }
 
-// Every operator, then in the same order every operator that has a form after the check.
 constexpr uint8_t binaryOperationForm(BinaryOperator operation, bool isAfterInt32Check)
 {
     if (!isAfterInt32Check)

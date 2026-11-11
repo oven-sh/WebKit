@@ -1,0 +1,14 @@
+# the same operators with unboxed numbers withheld: each takes the number that its operand is
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Div
+# CHECK: = BitOr
+# RUN(BITS): walk f3 mechanisms=none+TypedOperations
+# BITS-LABEL: code f3:Body
+# BITS: = BitOr
+# BITS: = URShift
+# RUN(NEVER): walk f1 f2 f3 f6 mechanisms=none+TypedOperations
+# NEVER-NOT: DivideIntegers
+# NEVER-NOT: RemainderOfIntegers
+# NEVER-NOT: = ToInt32
+# PROGRAM-OF: bit-operator-takes-the-integer-behind-its-operand.ir

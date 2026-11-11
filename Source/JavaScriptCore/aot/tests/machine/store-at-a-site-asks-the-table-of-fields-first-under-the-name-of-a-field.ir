@@ -1,0 +1,39 @@
+# const kept = { m: 1 };   function storeField(object, value) { object.m = value; }   function storeOther(object, value) { object.n = value; }
+# A store by name at a site asks the table of fields first, as PutById does, and its site behind that, whether a layout of the program lists the name (`m`) or none does (`n`): one stub for both.
+# The shell fills both sites with objects of its own, and then hands in the compiled object: its field is stored into, what it has no field for is added, and a frozen one refuses both.
+# LIBRARY: own
+# RUN: bytes f1:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: InstanceWord SiteCache "main.js" 20 "m"
+# CHECK: PutByIdAtSite.Strict
+# RUN(OTHER): bytes f2:Body
+# OTHER-LABEL: unit f2:Body
+# OTHER: InstanceWord SiteCache "main.js" 30 "n"
+# OTHER: PutByIdAtSite.Strict
+# RUN(SHELL): run-in-shell globalThis.publish = (kept, storeField, storeOther) => { const out = []; const attempt = (store, object, value) => { try { store(object, value); return Object.keys(object).join("") + object.m + object.n; } catch (error) { return error.constructor.name; } }; for (let i = 0; i < 300; i++) { attempt(storeField, { }, i); attempt(storeOther, { }, i); } out.push(attempt(storeField, { }, 1), attempt(storeField, kept, 2), attempt(storeOther, kept, 3), attempt(storeField, { }, 4), attempt(storeField, kept, 5), attempt(storeOther, kept, 6)); Object.freeze(kept); out.push(attempt(storeField, kept, 7), attempt(storeOther, kept, 8), kept.m, kept.n); print(out.join()); };
+# SHELL: m1undefined,m2undefined,mn23,m4undefined,mn53,mn56,TypeError,TypeError,5,6
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="m" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject layout=L0
+    PropDefine v3, v2 key="m"
+    v5 = FinishObject v3
+    v6 = NewClosure function=f1
+    v7 = NewClosure function=f2
+    v8 = Call v1, -, v5, v6, v7
+    Return
+}
+function f1 name="storeField" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="m" @20
+    Return
+}
+function f2 name="storeOther" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="n" @30
+    Return
+}

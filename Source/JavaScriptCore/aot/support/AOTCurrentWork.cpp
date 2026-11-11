@@ -8,16 +8,12 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTIRProgram.h"
 #include <algorithm>
 #include <array>
 #include <mutex>
-#include <span>
-#include <wtf/DataLog.h>
+#include <utility>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Threading.h>
 
 #if OS(UNIX)
 #include <signal.h>
@@ -28,25 +24,24 @@ namespace JSC { namespace AOT {
 
 namespace CurrentWorkInternal {
 
-static constexpr size_t numberOfRecords = 512;
+static constexpr size_t numberOfCurrentWorkRecords = 512;
 
-using Records = std::array<CurrentWork, numberOfRecords>;
+using CurrentWorkRecords = std::array<CurrentWork, numberOfCurrentWorkRecords>;
 
-static constinit std::atomic<Records*> records { nullptr };
+static constinit std::atomic<CurrentWorkRecords*> currentWorkRecords { nullptr };
 constinit CurrentWork sharedRecord { };
 constinit thread_local CurrentWork* recordOfThread = &sharedRecord;
 
-// None until a thread takes one.
-static std::span<CurrentWork> allRecords()
+static std::span<CurrentWork> allCurrentWorkRecords()
 {
-    Records* made = records.load(std::memory_order_acquire);
-    return made ? std::span<CurrentWork>(*made) : std::span<CurrentWork>();
+    CurrentWorkRecords* records = currentWorkRecords.load(std::memory_order_acquire);
+    return records ? std::span<CurrentWork>(*records) : std::span<CurrentWork>();
 }
 
 namespace {
 
-struct RecordHolder {
-    ~RecordHolder()
+struct CurrentWorkRecordHolder {
+    ~CurrentWorkRecordHolder()
     {
         CurrentWork* record = std::exchange(recordOfThread, &sharedRecord);
         if (record != &sharedRecord)
@@ -64,7 +59,6 @@ struct RecordHolder {
 #if OS(UNIX)
     static constexpr size_t signalStackSize = 512 * KB;
 
-    // A thread that has run out of stack has none left for whoever reports that.
     void ensureSignalStack()
     {
         stack_t current { };
@@ -91,7 +85,7 @@ struct RecordHolder {
 
 CurrentWork& takeRecord()
 {
-    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local RecordHolder holder;
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local CurrentWorkRecordHolder holder;
 #if OS(UNIX)
     holder.ensureSignalStack();
 #else
@@ -99,9 +93,9 @@ CurrentWork& takeRecord()
 #endif
     static std::once_flag makeRecords;
     std::call_once(makeRecords, [] {
-        records.store(makeUniqueWithoutFastMallocCheck<Records>().release(), std::memory_order_release);
+        currentWorkRecords.store(makeUniqueWithoutFastMallocCheck<CurrentWorkRecords>().release(), std::memory_order_release);
     });
-    for (CurrentWork& record : allRecords()) {
+    for (CurrentWork& record : allCurrentWorkRecords()) {
         if (record.isTaken.load(std::memory_order_relaxed) || record.isTaken.exchange(true, std::memory_order_acquire))
             continue;
         recordOfThread = &record;
@@ -114,10 +108,24 @@ CurrentWork& takeRecord()
 
 namespace {
 
-// Text in memory that the caller has. What does not fit is left out.
-class BoundedText {
+struct CurrentWorkAsRead {
+    explicit CurrentWorkAsRead(const CurrentWork& work)
+        : program(work.program.load(std::memory_order_relaxed))
+        , functionPlusOne(work.functionPlusOne.load(std::memory_order_relaxed))
+        , step(work.step.load(std::memory_order_relaxed))
+    {
+    }
+
+    bool isIdle() const { return !functionPlusOne && !step; }
+
+    const Typed::Program* program;
+    uint32_t functionPlusOne;
+    const char* step;
+};
+
+class CurrentWorkText {
 public:
-    explicit BoundedText(std::span<char> buffer)
+    explicit CurrentWorkText(std::span<char> buffer)
         : m_buffer(buffer)
     {
     }
@@ -136,6 +144,20 @@ public:
             append(character);
     }
 
+    void appendWork(const CurrentWorkAsRead& work)
+    {
+        append(" compiling"_s);
+        size_t sizeBeforeFunction = m_size;
+        append(' ');
+        if (!appendFunction(work))
+            m_size = sizeBeforeFunction;
+        if (!work.step)
+            return;
+        append(" in "_s);
+        append(work.step);
+    }
+
+private:
     void append(const char* text)
     {
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -155,7 +177,6 @@ public:
             append(digits[--count]);
     }
 
-    // A name or a path of the program, which a terminal is going to show.
     void appendProgramText(std::span<const uint8_t> text)
     {
         constexpr size_t longestShown = 200;
@@ -165,213 +186,87 @@ public:
             append("..."_s);
     }
 
-private:
+    static std::span<const uint8_t> stringOrEmpty(const Typed::Program& program, StringID id)
+    {
+        if (!id || id.index() >= program.strings.size())
+            return { };
+        return program.strings[id];
+    }
+
+    static std::span<const uint8_t> pathOrEmpty(const Typed::Program& program, ModuleID id)
+    {
+        if (!id || id.index() >= program.modules.size())
+            return { };
+        const Typed::Module& module = program.modules[id.index()];
+        return stringOrEmpty(program, module.flags.contains(Typed::ModuleFlags::HasInstalledPositions) ? module.path : module.displayPath);
+    }
+
+    bool appendFunction(const CurrentWorkAsRead& work)
+    {
+        if (!work.program || !work.functionPlusOne)
+            return false;
+        const Typed::Program& program = *work.program;
+        uint32_t index = work.functionPlusOne - 1;
+        if (index >= program.functions.size())
+            return false;
+        const Typed::Function& function = program.functions[index];
+        std::span<const uint8_t> path = pathOrEmpty(program, function.module);
+        if (function.isModuleBody()) {
+            if (path.empty())
+                return false;
+            appendProgramText(path);
+            return true;
+        }
+        std::span<const uint8_t> name = stringOrEmpty(program, function.name);
+        if (name.empty())
+            append("a function"_s);
+        else
+            appendProgramText(name);
+        if (path.empty())
+            return true;
+        append(" ("_s);
+        appendProgramText(path);
+        append(':');
+        append(static_cast<uint64_t>(program.lineColumnFor(function.module, function.position).line));
+        append(')');
+        return true;
+    }
+
     std::span<char> m_buffer;
     size_t m_size { 0 };
 };
 
-struct WorkAsRead {
-    explicit WorkAsRead(const CurrentWork& work)
-        : program(work.program.load(std::memory_order_relaxed))
-        , functionPlusOne(work.functionPlusOne.load(std::memory_order_relaxed))
-        , pass(work.pass.load(std::memory_order_relaxed))
-        , stage(work.stage.load(std::memory_order_relaxed))
-        , backEndPhase(work.backEndPhase.load(std::memory_order_relaxed))
-        , finishedPart(work.finishedPart.load(std::memory_order_relaxed))
-        , startInSeconds(work.startInSeconds.load(std::memory_order_relaxed))
-    {
-        if (static_cast<uint32_t>(pass) >= numberOfPasses)
-            pass = PassID::None;
-        if (static_cast<uint32_t>(stage) >= numberOfEnumerators<Stage>)
-            stage = Stage::Any;
-    }
-
-    bool isNothing() const { return !functionPlusOne && pass == PassID::None && stage == Stage::Any; }
-
-    const Typed::Program* program;
-    uint32_t functionPlusOne;
-    PassID pass;
-    Stage stage;
-    const char* backEndPhase;
-    const char* finishedPart;
-    double startInSeconds;
-};
-
 } // anonymous namespace
 
-static std::span<const uint8_t> textOrNothing(const Typed::Program& program, Typed::StringID id)
+size_t describeCurrentThreadWork(std::span<char> buffer)
 {
-    if (!id || Typed::StringTable::isProvisional(id) || id.index() >= program.strings.size())
-        return { };
-    return program.strings[id];
-}
-
-// "parse (src/parser.ts:12)", "a function (src/parser.ts:12)", "src/parser.ts".
-static bool appendFunction(BoundedText& text, const WorkAsRead& work)
-{
-    if (!work.program || !work.functionPlusOne)
-        return false;
-    const Typed::Program& program = *work.program;
-    uint32_t index = work.functionPlusOne - 1;
-    if (index >= program.functions.size())
-        return false;
-    const Typed::Function& function = program.functions[index];
-    std::span<const uint8_t> path;
-    if (function.module && function.module.index() < program.modules.size())
-        path = textOrNothing(program, program.pathForLineColumns(function.module));
-    if (function.isModuleBody()) {
-        if (path.empty())
-            return false;
-        text.appendProgramText(path);
-        return true;
-    }
-    std::span<const uint8_t> name = textOrNothing(program, function.name);
-    if (name.empty())
-        text.append("a function"_s);
-    else
-        text.appendProgramText(name);
-    if (path.empty())
-        return true;
-    text.append(" ("_s);
-    text.appendProgramText(path);
-    text.append(':');
-    text.append(static_cast<uint64_t>(program.lineColumnFor(function.module, function.position).line));
-    text.append(')');
-    return true;
-}
-
-// " in PlaceTypeTests", " in GenerateCode (allocateRegistersByGraphColoring)", " in AnalyzeFlow (after: link bodies)".
-static void appendStep(BoundedText& text, const WorkAsRead& work)
-{
-    if (work.pass == PassID::None && work.stage == Stage::Any)
-        return;
-    text.append(" in "_s);
-    text.append(work.pass != PassID::None ? nameOf(work.pass) : nameOf(work.stage));
-    if (work.backEndPhase) {
-        text.append(" ("_s);
-        text.append(work.backEndPhase);
-        text.append(')');
-    } else if (work.finishedPart) {
-        text.append(" (after: "_s);
-        text.append(work.finishedPart);
-        text.append(')');
-    }
-}
-
-static void appendWork(BoundedText& text, const WorkAsRead& work)
-{
-    text.append(" compiling"_s);
-    BoundedText rest = text;
-    rest.append(' ');
-    if (appendFunction(rest, work))
-        text = rest;
-    appendStep(text, work);
-}
-
-static void appendWayAround(BoundedText& text, PassID pass)
-{
-    if (!isOptionalPass(pass))
-        return;
-    text.append("To build without that step, add --aot-disable=pass:"_s);
-    text.append(nameOf(pass));
-    text.append(".\n"_s);
-}
-
-size_t describeWhereThisThreadStopped(std::span<char> buffer)
-{
-    WorkAsRead work(currentWork());
-    if (&currentWork() == &CurrentWorkInternal::sharedRecord || work.isNothing())
+    const CurrentWork& record = *CurrentWorkInternal::recordOfThread;
+    if (&record == &CurrentWorkInternal::sharedRecord)
         return 0;
-    BoundedText text(buffer);
+    CurrentWorkAsRead work(record);
+    if (work.isIdle())
+        return 0;
+    CurrentWorkText text(buffer);
     text.append("Stopped while"_s);
-    appendWork(text, work);
+    text.appendWork(work);
     text.append(".\n"_s);
-    appendWayAround(text, work.pass);
     return text.size();
 }
 
-size_t describeWhatThreadsAreCompiling(std::span<char> buffer)
+size_t describeAllThreadsWork(std::span<char> buffer)
 {
-    BoundedText text(buffer);
-    double now = MonotonicTime::now().secondsSinceEpoch().value();
-    // The threads of a loop that names no function are all at the same.
-    std::array<std::pair<PassID, Stage>, 16> stepsSaid;
-    size_t numberOfStepsSaid = 0;
-    // No function takes a minute.
-    double longestTimeInFunction = 60;
-    PassID passOfLongestTime = PassID::None;
-    bool isStuck = false;
-    for (const CurrentWork& record : CurrentWorkInternal::allRecords()) {
+    CurrentWorkText text(buffer);
+    for (const CurrentWork& record : CurrentWorkInternal::allCurrentWorkRecords()) {
         if (!record.isTaken.load(std::memory_order_acquire))
             continue;
-        WorkAsRead work(record);
-        if (work.isNothing())
+        CurrentWorkAsRead work(record);
+        if (!work.functionPlusOne)
             continue;
-        if (!work.functionPlusOne) {
-            std::pair step { work.pass, work.stage };
-            auto said = std::span(stepsSaid).first(numberOfStepsSaid);
-            if (std::ranges::find(said, step) != said.end())
-                continue;
-            if (numberOfStepsSaid < stepsSaid.size())
-                stepsSaid[numberOfStepsSaid++] = step;
-        }
-        double time = std::max(now - work.startInSeconds, 0.0);
-        if (work.functionPlusOne && time >= longestTimeInFunction) {
-            longestTimeInFunction = time;
-            passOfLongestTime = work.pass;
-            isStuck = true;
-        }
         text.append("Still"_s);
-        appendWork(text, work);
-        text.append(" for "_s);
-        text.append(static_cast<uint64_t>(time));
-        text.append(" s.\n"_s);
-    }
-    if (isStuck) {
-        text.append("A build that stays this long in one function is stuck, which is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues\n"_s);
-        appendWayAround(text, passOfLongestTime);
+        text.appendWork(work);
+        text.append(".\n"_s);
     }
     return text.size();
-}
-
-void stopWhereSabotaged(const BuildContext& build, std::optional<Stage> stage, PassID pass)
-{
-    RELEASE_ASSERT(!build.isSabotaged(Sabotage::ProgramPassFailsAssertion) || pass != PassID::BuildCallGraph);
-    RELEASE_ASSERT(!build.isSabotaged(Sabotage::FlowAnalysisFailsAssertion) || pass != PassID::AnalyzeFlow);
-    RELEASE_ASSERT(!build.isSabotaged(Sabotage::ImageBuildingFailsAssertion) || stage != Stage::BuildImage);
-}
-
-static NEVER_INLINE uint64_t useStackWithoutEnd(uint64_t depth)
-{
-    volatile uint64_t words[64];
-    words[depth % 64] = depth;
-    if (!words[depth % 64])
-        return 0;
-    return useStackWithoutEnd(depth + 1) + words[depth % 64];
-}
-
-void stopWhereSabotaged(const BuildContext& build, const Typed::Program& program, const Typed::Function& function, PassID pass)
-{
-    if (!equalSpans(textOrNothing(program, function.name), "stopsTheCompiler"_span8))
-        return;
-    if (pass == PassID::GenerateCode) {
-        RELEASE_ASSERT(!build.isSabotaged(Sabotage::CodeGenerationFailsAssertion));
-        return;
-    }
-    RELEASE_ASSERT(!build.isSabotaged(Sabotage::FunctionPassFailsAssertion));
-    if (build.isSabotaged(Sabotage::FunctionPassReadsBadAddress)) {
-        volatile uintptr_t badAddress = 16;
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        *reinterpret_cast<volatile uint32_t*>(badAddress);
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    }
-    if (build.isSabotaged(Sabotage::FunctionPassRunsOutOfStack))
-        useStackWithoutEnd(1);
-    if (!build.isSabotaged(Sabotage::FunctionPassNeverEnds))
-        return;
-    dataLogLn("This build never ends.");
-    for (;;)
-        WTF::sleep(10_ms);
 }
 
 } } // namespace JSC::AOT

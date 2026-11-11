@@ -1,0 +1,37 @@
+# a store from which no way leads to a Return has not run when the function returns: it counts on throw alone
+# function set(o, v) { if (v < 0) { o.bad = v; throw v; } o.v = v; }  set({ v: 0, bad: 0 }, 1);
+# RUN: summary f1
+# CHECK: access {{*}}Store Parameter 0 "bad" {{*}}on-no-way-to-return
+# RUN(KEPT): summary f1
+# KEPT-NOT: access {{*}}Store Parameter 0 "v" {{*}}on-no-way-to-return
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}}fields-written-on-return=1 fields-written=
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 {{*}}mayCallUnknownCode
+
+layout L0 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}, {key="bad" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = Integer integer=1
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v2, v3
+    Return v5
+}
+function f1 name="set" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v1 key="bad"
+    Throw v1
+  b2():
+    PropSet v0, v1 key="v"
+    v6 = Undefined
+    Return v6
+}

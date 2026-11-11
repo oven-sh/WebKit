@@ -1,0 +1,35 @@
+# an instance stands beside a value that nobody knows. What its class has above it may well be what a read finds, and what the next read finds on that: the store at the end is followed to the prototype object
+# same(seed); same(new WeakRef(o)).constructor.prototype[name] = f; reference.deref();
+# RUN: locks open
+# CHECK: open WeakRefPrototypeDeref written-through-lost-built-ins
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="WeakRef" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Construct v1, -, v2
+    v4 = PropGet v3 key="deref"
+    v5 = Call v4, v3 calleeKey="deref"
+    v6 = NewClosure function=f1
+    v7 = PropGet v0 key="seed" [isFreeName]
+    v8 = Call v6, -, v7
+    v9 = Call v6, -, v3
+    v10 = PropGet v9 key="constructor"
+    v11 = PropGet v10 key="prototype"
+    v12 = PropGet v0 key="name" [isFreeName]
+    v13 = NewClosure function=f2
+    ElemSet v11, v12, v13
+    Return v5
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

@@ -819,7 +819,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     }
     m_errorWaitsForPoll = false;
     // A collection takes its own memory from malloc, and malloc has none.
-    if (m_exhaustedHeaps == ExhaustedHeap::ListOfArrayBuffers)
+    if (!m_exhaustedHeaps.isEmpty() && m_exhaustedHeaps.containsOnly({ ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }))
         return false;
     if (vm.heap.isDeferred() || (m_hasCollectedAtPoll && !m_owesCollection))
         return false;
@@ -924,30 +924,40 @@ MarkedBlockCage::ReservationFailure MarkedBlockCage::reservationFailure()
 
 static constexpr ASCIILiteral noRoomUnderLimitOnAddressSpace = "The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s;
 
+// The functor gets the pieces of the sentence: literals and numbers.
+static auto withLimitOfMarkedBlockCage(const auto& functor)
+{
+    if (s_isGrowable)
+        return functor(noRoomUnderLimitOnAddressSpace);
+    size_t size = g_jscConfig.markedBlockCageSize;
+    bool isInGB = !(size % GB);
+    if (size < std::min(static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB, static_cast<size_t>(MarkedBlockCage::maxSize) - MarkedBlockCage::distanceOfStartFromBase()))
+        return functor("The limit on address space (ulimit -v) leaves the threads of this executable "_s, size / MB, " MB for JavaScript objects. Raise the limit, or build with --aot-huge-heap."_s);
+    return functor("Each thread of a compiled executable can use "_s, size / (isInGB ? GB : MB), isInGB ? " GB"_s : " MB"_s, " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower."_s);
+}
+
+static auto withLimitOfStructureHeap(const auto& functor)
+{
+    size_t size = g_jscConfig.sizeOfStructureHeap;
+    if (hasAddressSpaceLimit() && !Options::structureHeapSizeInKB())
+        return functor("The limit on address space (ulimit -v) leaves this executable "_s, size / MB, " MB for the shapes of JavaScript objects (Structures). Raise the limit, or set BUN_JSC_structureHeapSizeInKB to a larger power of two."_s);
+    return functor("This executable can use "_s, size / MB, " MB for the shapes of JavaScript objects (Structures)."_s);
+}
+
+static constexpr auto makeStringOfPieces = [](auto... pieces) -> String {
+    return makeString(pieces...);
+};
+
 String describeLimitOfMarkedBlockCage()
 {
     if (!MarkedBlockCage::isRequired())
         return { };
-    if (s_isGrowable)
-        return noRoomUnderLimitOnAddressSpace;
-    size_t size = g_jscConfig.markedBlockCageSize;
-    bool isInGB = !(size % GB);
-    if (size < std::min(static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB, static_cast<size_t>(MarkedBlockCage::maxSize) - MarkedBlockCage::distanceOfStartFromBase()))
-        return makeString("The limit on address space (ulimit -v) leaves the threads of this executable "_s, size / MB, " MB for JavaScript objects. Raise the limit, or build with --aot-huge-heap."_s);
-    return makeString("Each thread of a compiled executable can use "_s, size / (isInGB ? GB : MB), isInGB ? " GB"_s : " MB"_s, " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower."_s);
-}
-
-static String describeLimitOfStructureHeap()
-{
-    size_t size = g_jscConfig.sizeOfStructureHeap;
-    if (hasAddressSpaceLimit() && !Options::structureHeapSizeInKB())
-        return makeString("The limit on address space (ulimit -v) leaves this executable "_s, size / MB, " MB for the shapes of JavaScript objects (Structures). Raise the limit, or set BUN_JSC_structureHeapSizeInKB to a larger power of two."_s);
-    return makeString("This executable can use "_s, size / MB, " MB for the shapes of JavaScript objects (Structures)."_s);
+    return withLimitOfMarkedBlockCage(makeStringOfPieces);
 }
 
 String MarkedBlockCage::describeExhaustedLimit() const
 {
-    return m_exhaustedHeaps.contains(ExhaustedHeap::Structures) ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage();
+    return m_exhaustedHeaps.contains(ExhaustedHeap::Structures) ? withLimitOfStructureHeap(makeStringOfPieces) : describeLimitOfMarkedBlockCage();
 }
 
 void MarkedBlockCage::didThrowOutOfMemoryError()
@@ -1022,18 +1032,31 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
 {
     if (!isRequired())
         return;
+    // Nothing may be left to make a String of. A literal that is printed as such is copied first.
+    auto withoutCopy = [](auto piece) {
+        if constexpr (std::is_same_v<decltype(piece), ASCIILiteral>)
+            return piece.characters();
+        else
+            return piece;
+    };
+    auto log = [&](auto... pieces) {
+        dataLogLn("FATAL: out of memory. ", withoutCopy(pieces)...);
+    };
 #if OS(LINUX)
-    // Under a limit on address space nothing may be left to make a String of, or for the host to write a crash report with.
+    // Under a limit on address space nothing may be left for the host to write a crash report with either.
     if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable) {
         // The threads of a collection get here together. One of them says so and ends the process.
         static std::atomic_flag isEnding = ATOMIC_FLAG_INIT;
         while (isEnding.test_and_set())
             pause();
-        dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
+        log(noRoomUnderLimitOnAddressSpace);
         _exit(EXIT_FAILURE);
     }
 #endif
-    dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
+    if (exhaustedHeap == ExhaustedHeap::Structures)
+        withLimitOfStructureHeap(log);
+    else
+        withLimitOfMarkedBlockCage(log);
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }
@@ -1111,6 +1134,10 @@ void* MarkedBlockCage::allocateWeakBlock(VM& vm)
 {
     if (!tryFillSpareWeakBlocks() && !vm.traps().needsOutOfMemoryError()) [[unlikely]] {
         addExhaustedHeap(ExhaustedHeap::WeakBlocks);
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && !vm.heap.isDeferred())
+            AOT::HeapHooks::didFindNoRoomWhereCollectionMayRun(vm);
+#endif
         vm.traps().setNeedsOutOfMemoryError(true);
     }
     if (m_spareWeakBlocks.isEmpty()) [[unlikely]] {

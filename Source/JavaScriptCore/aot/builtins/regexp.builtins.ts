@@ -7,28 +7,25 @@ const self = b.operand("this");
 const stringReceiver = b.string.loose.refusing(b.null);
 const regExpConstructor = b.builtin("RegExp");
 const pristineRegExp = b.instance("RegExp").pristine("Names");
-// The slot holds what the program stores as lastIndex. A new one starts at 0.
 const newRegExp = b.instance("RegExp").holding({ lastIndex: b.length }).fresh;
 const newMatchIterator = b.instance("RegExpStringIterator").fresh;
 const capture = b.union(b.string, b.undefined);
 const matchResult = b.union(b.instance("Array").holding({ element: capture }).unaliased, b.strictNull);
-// A group that took no part in the match is there and holds undefined. `indices` is there under the flag d.
 const matchProperties = {
   index: nonNegativeInt32,
   input: b.string,
   groups: b.union(b.object, b.undefined),
   indices: b.union(b.object, b.undefined),
 };
-const newArrayOf = (element: b.TableType) => b.instance("Array").holding({ element }).fresh;
+const newArrayOf = (element: b.TableType) => b.instance("Array").exactly.holding({ element }).fresh;
 
-const characters = [b.readAsCharacters];
-const patternText = [b.contentKey, b.readAsCharacters];
+const characters = b.inspected;
+const patternText = b.inspected;
 const usesLastIndex = [b.readsContents("lastIndex"), b.writesContents("lastIndex"), b.runsOnContents("ToPrimitive")];
 const escapesToOperandCode = [b.retained, b.runs("ToPrimitive")];
 const storesLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.length);
 const restoresLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.any);
 const runsMembers = (...protocols: readonly b.ProtocolSpec[]) => b.runsTransitively("ToPrimitive", ...protocols);
-// The member that is called has the pattern for `this`. A built-in function there, such as Object.prototype.valueOf, may hand it back as the result.
 const isCalledAsPattern = (...protocols: readonly b.ProtocolSpec[]) => [b.retained, runsMembers(...protocols)];
 
 const flagNames = ["hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode", "unicodeSets", "sticky"];
@@ -50,7 +47,7 @@ const createRegExp = (resultForObject: b.TableType, namesReadFromPattern: readon
       capability: "heap",
       throws: true,
       readsStateBeforeConversions: true,
-      uses: { pattern: [b.contentKey], flags: patternText },
+      uses: { pattern: b.inspected, flags: patternText },
       reads: [state],
       implementation: b.hostCall,
     },
@@ -69,8 +66,8 @@ const createRegExp = (resultForObject: b.TableType, namesReadFromPattern: readon
       throws: true,
       runsOnlyOperandCode: true,
       uses: {
-        pattern: [b.contentKey, runsMembers(b.named(...namesReadFromPattern))],
-        flags: [b.contentKey, b.runs("ToPrimitive")],
+        pattern: [runsMembers(b.named(...namesReadFromPattern))],
+        flags: [b.runs("ToPrimitive")],
       },
       reads: [state],
       implementation: b.hostCall,
@@ -264,6 +261,7 @@ const splitAtString = (limit: b.TableType) =>
     capability: "heap",
     throws: b.propagated,
     uses: { separator: characters },
+    overloadUsesFeature: "StringLastIndexOf",
     implementation: b.inline("StringSplit", { parameters: ["String"] }),
   }) satisfies b.FunctionField;
 
@@ -283,15 +281,12 @@ const splitAtRegExp = (limit: b.TableType) =>
   }) satisfies b.FunctionField;
 
 export default b.declarations(
-  // Every method that matches calls what it finds under `exec` with the text.
-  b.namedMemberCall("exec", [b.string]),
   b.class("RegExp", {
     jsType: "RegExpObjectType",
     constructorOnlyReadsPrototypeOfNewTarget: true,
     slots: { lastIndex: b.state(state, b.any) },
     stateHeap: state,
-    lockedObjects: ["prototype"],
-    lockedMembers: ["constructor"],
+    lockedMembers: ["constructor", "prototype"],
     mutability: "AlwaysLocked",
     types: [b.exactType("RegExp")],
     constructorTable: b.staticTable("runtime/RegExpConstructor.cpp", "regExpConstructorTable"),
@@ -314,6 +309,7 @@ export default b.declarations(
         returns: b.string,
         capability: "heap",
         throws: true,
+        deterministic: true,
         uses: { string: characters },
         usesFeature: "RegExp",
         nativeSymbols: ["regExpConstructorEscape"],
@@ -352,7 +348,7 @@ export default b.declarations(
           capability: "none",
           throws: true,
           uses: { this: [b.writesContents("lastIndex")], value: [b.storedIn(b.slot("this", "lastIndex"))] },
-          implementation: b.inline("RegExpSetLastIndex"),
+          implementation: b.generic,
         },
       },
     },
@@ -405,7 +401,7 @@ export default b.declarations(
         throws: true,
         runsOnlyOperandCode: true,
         uses: {
-          this: [b.writesContents(), b.replacesContents],
+          this: [b.writesContents()],
           pattern: [b.runs("ToPrimitive")],
           flags: [b.runs("ToPrimitive")],
         },
@@ -424,9 +420,9 @@ export default b.declarations(
         uses: { this: usesLastIndex },
         usesFeature: "RegExp",
         nativeSymbols: ["regExpProtoFuncExec"],
+        length: 1,
+        boxedCallStub: "RegExpExec",
         substringOf: "string",
-        prefixForm: "RegExpExecPrefix",
-        prefixProperties: { index: nonNegativeInt32, input: b.string },
         implementation: b.inline("RegExpExec"),
       },
       test: [
@@ -488,7 +484,7 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: {
           this: [
-            runsMembers(b.named("flags", "lastIndex", "length", "index", "groups"), b.calls("exec"), "OwnValues"),
+            runsMembers(b.named(), b.calls("exec"), "OwnValues"),
             storesLastIndex,
           ],
           replaceValue: [
@@ -538,7 +534,9 @@ export default b.declarations(
       readsStateBeforeConversions: true,
       uses: { regexp: usesLastIndex },
       overloadUsesFeature: "RegExp",
-      prefixForm: "StringMatchPrefix",
+      length: 1,
+      boxedCallStub: "StringMatch",
+      nativeSymbols: ["stringProtoFuncMatch"],
       implementation: b.inline("StringMatch", { otherwise: b.hostCall }),
     },
     invokeSymbolMethod(b.calls("@@match")),
@@ -598,7 +596,6 @@ export default b.declarations(
     {
       ...splitAtString(b.notPassed),
       substringOf: "this",
-      prefixForm: "StringSplitPrefix",
       length: 2,
       boxedCallStub: "StringSplit",
       nativeSymbols: ["stringProtoFuncSplit"],
@@ -615,6 +612,7 @@ export default b.declarations(
       uses: { separator: characters },
       implementation: b.hostCall,
     },
+    { ...splitAtRegExp(b.u32.wrap.optional), implementation: b.hostCall },
     {
       this: b.any.refusing(b.null),
       args: { separator: b.any.optional, limit: b.any.optional },
@@ -630,6 +628,5 @@ export default b.declarations(
     },
   ]),
 
-  // `import "core-js"` replaces it without a test, from 3.33 to 3.37.
   b.replacedByPackages("RegExp.escape"),
 );

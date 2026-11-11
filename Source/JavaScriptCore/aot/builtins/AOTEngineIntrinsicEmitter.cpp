@@ -8,7 +8,11 @@
 
 #if ENABLE(AOT)
 
-#include "AOTRuntimeValidation.h"
+#include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
+#include "AOTElementEmitterAllocation.h"
+#include "AOTGuardEmitter.h"
+#include "AOTIRProgram.h"
 #include "AOTSavedFrameEmitter.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTThrowEmitter.h"
@@ -35,17 +39,44 @@ void EngineIntrinsicEmitter::generateReadsIteratorOfListUnseen(const ValueContex
 void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& value)
 {
     LBasicBlock invalid = newBlock();
-    Boxed length = boxedOperand(value, value->lengthOperand());
     CellPointer array = objectOrElse(value->arrayOperand(), invalid);
     LBasicBlock continuation = m_out.m_block;
 
     m_out.appendTo(invalid);
-    if (generator().validates())
-        callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxedOperand(value, value->arrayOperand()), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
     m_out.unreachable();
 
     m_out.appendTo(continuation);
-    defineAs(value, callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { length, array }), typeOf(value.id()));
+    Operand lengthAsHanded = get(value->lengthOperand());
+    if (!lengthAsHanded.is<Number>()) {
+        defineAs(value, callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { boxedOperand(value, value->lengthOperand()), array }), typeOf(value.id()));
+        return;
+    }
+
+    LBasicBlock asksRunTime = newBlock();
+    Join<Boxed> join(m_out);
+    auto wholeNumberBehind = [](Number number) -> LValue {
+        return number.value()->opcode() == Machine::IToD && number.value()->child(0)->type() == Machine::Int64 ? number.value()->child(0) : nullptr;
+    };
+    Number number = lengthAsHanded.as<Number>();
+    LValue whole = wholeNumberBehind(number);
+    Integer count = whole ? Integer(whole) : emitter<ConversionEmitter>().toInteger(number);
+    Condition hasRoomInLine = belowOrEqual(count, integer(maxHoleArrayCapacity));
+    branchUnless(whole ? hasRoomInLine : logicalAnd(hasRoomInLine, equal(toNumber(count), number)), asksRunTime);
+    branchUnless(logicalAnd(hasCellType(array, ArrayType), emitter<ElementAccessEmitter>().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names })), asksRunTime);
+    branchUnless(emitter<GuardEmitter>().belongsToInstance(array), asksRunTime);
+    branchUnless(emitter<GuardEmitter>().realmWatchesSpeciesOfLists(), asksRunTime);
+    bool isEmpty = count.value()->hasInt64() && !count.value()->asInt64();
+    ArrayAllocationEmitter allocation(generator());
+    std::optional<Integer> roomOfEmptyList;
+    if (Operand room = value->capacityOperand() ? get(value->capacityOperand()) : Operand(); isEmpty && value->capacityOperand() && room.is<Number>())
+        roomOfEmptyList = wholeNumberBehind(room.as<Number>()) ? Integer(wholeNumberBehind(room.as<Number>())) : emitter<ConversionEmitter>().toInteger(room.as<Number>());
+    allocation.allocateListLike(value, array, count, roomOfEmptyList, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
+        join.add(Boxed(list.value()));
+    }), value->likeOperand() && typeOf(value->likeOperand()).isUndefinedOrNull() ? &arrayStorageFormOf(ArrayStorage::Int32) : nullptr);
+
+    m_out.appendTo(asksRunTime);
+    join.add(callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { boxedOperand(value, value->lengthOperand()), array }));
+    defineAs(value, join.finish(), typeOf(value.id()));
 }
 
 void EngineIntrinsicEmitter::generateGetByValWithThis(const ValueContext& value)
@@ -65,12 +96,12 @@ void EngineIntrinsicEmitter::generateGetOwnProperty(const ValueContext& value)
 void EngineIntrinsicEmitter::generateToLength(const ValueContext& value)
 {
     Boxed operand = boxedOperand(value, value->valueOperand());
-    defineAs(value, either<Boxed>(isInt32(operand), [&] {
+    define(value, eitherOperand(isInt32(operand), value.representation(), [&] {
         Word32 length = unboxInt32(operand);
-        return boxInt32(select(lessThan(length, 0), 0, length));
+        return inRepresentation(value, value.representation(), select(lessThan(length, 0), 0, length), types().at(types().integer(Range { 0, std::numeric_limits<int32_t>::max() })));
     }, [&] {
-        return callOperation<Boxed>(value, RuntimeOperation::ToLength, { operand }, { .isOnRarePath = true });
-    }), m_program.at(TypeTable::number));
+        return inRepresentation(value, value.representation(), callOperation<Boxed>(value, RuntimeOperation::ToLength, { operand }, { .isOnRarePath = true }), m_program.at(TypeTable::number));
+    }));
 }
 
 void EngineIntrinsicEmitter::generateThrowNewError(const ValueContext& value)

@@ -1,0 +1,56 @@
+# async function keep(call, a, b, .. s) { await null; const x: number = call(); const y: number = call(); await null; const z: number = call(); return x + y + z + a + b + .. + s + call; }
+# RUN(ANSWER): run-in-shell globalThis.register = keep => { const run = bad => { if (bad === 4) return; let calls = 0; const call = () => ++calls === bad ? "s" : calls; call.toString = () => "t"; const collect = () => { gc(); return 0; }; const fresh = letter => letter + bad; const answer = keep(call, fresh("a"), fresh("b"), fresh("c"), fresh("d"), fresh("e"), fresh("f"), fresh("g"), fresh("h"), fresh("i"), fresh("j"), fresh("k"), fresh("l"), fresh("m"), fresh("n"), fresh("o"), fresh("p"), fresh("q"), fresh("r"), fresh("s")); keep(collect, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""); answer.then(text => { print(text); run(bad + 1); }); }; run(0); };
+# ANSWER: 6a0b0c0d0e0f0g0h0i0j0k0l0m0n0o0p0q0r0s0t
+# ANSWER-NEXT: s23a1b1c1d1e1f1g1h1i1j1k1l1m1n1o1p1q1r1s1t
+# ANSWER-NEXT: 1s3a2b2c2d2e2f2g2h2i2j2k2l2m2n2o2p2q2r2s2t
+# ANSWER-NEXT: 3sa3b3c3d3e3f3g3h3i3j3k3l3m3n3o3p3q3r3s3t
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = String string="return globalThis.register"
+    v2 = Construct v0, -, v1
+    v3 = Call v2
+    v4 = NewClosure function=f1
+    v5 = Call v3, -, v4
+    v6 = Undefined
+    Return v6
+}
+function f1 name="keep" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=20 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything, v14: anything, v15: anything, v16: anything, v17: anything, v18: anything, v19: anything):
+    v20 = Null
+    v21 = Await v20, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19
+    v22 = Call v0, -
+    v23 = Convert v22 declared={type=number} illTypedCause=FromLooseType
+    v24 = Call v0, -
+    v25 = Convert v24 declared={type=number} illTypedCause=FromLooseType
+    v26 = Null
+    v27 = Await v26, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v23, v25
+    v28 = Call v0, -
+    v29 = Convert v28 declared={type=number} illTypedCause=FromLooseType
+    v30 = Add v23, v25
+    v31 = Add v30, v29
+    v32 = Add v31, v1
+    v33 = Add v32, v2
+    v34 = Add v33, v3
+    v35 = Add v34, v4
+    v36 = Add v35, v5
+    v37 = Add v36, v6
+    v38 = Add v37, v7
+    v39 = Add v38, v8
+    v40 = Add v39, v9
+    v41 = Add v40, v10
+    v42 = Add v41, v11
+    v43 = Add v42, v12
+    v44 = Add v43, v13
+    v45 = Add v44, v14
+    v46 = Add v45, v15
+    v47 = Add v46, v16
+    v48 = Add v47, v17
+    v49 = Add v48, v18
+    v50 = Add v49, v19
+    v51 = Add v50, v0
+    Return v51
+}
+entry module=m0

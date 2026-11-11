@@ -1,0 +1,48 @@
+# const box = { inner: { n: 1 } };   box.inner = id("text");
+# function read(b) { const inner = b.inner; return inner === undefined ? -1 : inner.n; }
+# print(read(box));   print("went on");
+# Fault injection: Link assumes that the shell's `id` returns undefined.
+# A single reference field stays boxed, and the receiver of the store is proven, so the store uses the stub that is passed the field's record.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN: run-in-shell mechanisms=all
+# CHECK: bun: internal AOT error: object mutation check failed
+# CHECK-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# CHECK-NOT: went on
+# CHECK: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="id" [isFreeName]
+    v5 = String string="text"
+    v6 = Call v4, -, v5 calleeName="id"
+    PropSet v2, v6 key="inner"
+    v8 = NewClosure function=f1
+    v9 = Call v8, -, v2 calleeName="read"
+    v10 = PropGet v3 key="print" [isFreeName]
+    v11 = Call v10, -, v9 calleeName="print"
+    v12 = String string="went on"
+    v13 = Call v10, -, v12 calleeName="print"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = Undefined
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=-1
+    Return v4
+  b2():
+    v5 = PropGet v1 key="n"
+    Return v5
+}

@@ -36,6 +36,19 @@ static std::optional<ExtensionKind> extensionKindOf(const Procedure& proc, Value
     return value->opcode() == SExt32 ? ExtensionKind::Sign : ExtensionKind::Zero;
 }
 
+static std::optional<ExtensionKind> extensionKindOf(int64_t constant)
+{
+    bool isSignExtended = constant == static_cast<int32_t>(constant);
+    bool isZeroExtended = constant == static_cast<uint32_t>(constant);
+    if (isSignExtended && isZeroExtended)
+        return ExtensionKind::Either;
+    if (isSignExtended)
+        return ExtensionKind::Sign;
+    if (isZeroExtended)
+        return ExtensionKind::Zero;
+    return std::nullopt;
+}
+
 static Opcode unsignedComparison(Opcode opcode)
 {
     switch (opcode) {
@@ -56,14 +69,17 @@ static Opcode unsignedComparison(Opcode opcode)
 static RangeReduction compareBeforeExtension(const Procedure& proc, Value* comparison)
 {
     std::optional<ExtensionKind> left = extensionKindOf(proc, comparison->child(0));
-    std::optional<ExtensionKind> right = extensionKindOf(proc, comparison->child(1));
+    Value* rightOperand = comparison->child(1);
+    std::optional<ExtensionKind> right = rightOperand->hasInt64() ? extensionKindOf(rightOperand->asInt64()) : extensionKindOf(proc, rightOperand);
     if (!left || !right)
         return { };
     ExtensionKind kind = *left == ExtensionKind::Either ? *right : *left;
     if (*right != ExtensionKind::Either && *right != kind)
         return { };
     Opcode opcode = kind == ExtensionKind::Zero ? unsignedComparison(comparison->opcode()) : comparison->opcode();
-    return { RangeReduction::Kind::Comparison, 0, comparison->child(0)->child(0), comparison->child(1)->child(0), opcode };
+    if (rightOperand->hasInt64())
+        return { RangeReduction::Kind::ComparisonWithConstant, static_cast<int32_t>(rightOperand->asInt64()), comparison->child(0)->child(0), nullptr, opcode };
+    return { RangeReduction::Kind::Comparison, 0, comparison->child(0)->child(0), rightOperand->child(0), opcode };
 }
 
 static Value* truncatedInt64(Value* extension)

@@ -121,8 +121,8 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
     };
 
 #if ENABLE(AOT)
-    // For a compiled object the cache holds the number of the field, below invalidOffset where nothing was found while its slot was empty.
-    // It speaks only of an object that has its fields in their slots and nothing else.
+    // For a compiled handler: the field's index, or a value below invalidOffset if the lookup found nothing.
+    // It is valid only for an object whose properties are exactly its fields, each in its own slot.
     AOT::Object* compiledHandler = handler->type() == CompiledObjectType ? uncheckedDowncast<AOT::Object>(handler) : nullptr;
     bool mayUseCache = !compiledHandler || !compiledHandler->hasFlagsInOrderWord();
 #else
@@ -218,7 +218,7 @@ void ProxyObject::clearHandlerTrapsOffsetsCache()
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
 
 #if ENABLE(AOT)
-// The Structure of a compiled object says of all of them that they may be anything. What was done to one object stands in the object, and what its fields are born with in the layout.
+// Compiled objects of a layout share one Structure, so changes to one object are recorded in the object.
 static bool isExtensibleCompiledObjectWithConfigurablePropertiesOnly(JSObject* target)
 {
     constexpr size_t maxFieldsLookedAt = 32;
@@ -229,13 +229,13 @@ static bool isExtensibleCompiledObjectWithConfigurablePropertiesOnly(JSObject* t
     if (object->hasFlagsInOrderWord() || fields.size() > maxFieldsLookedAt)
         return false;
     auto* structure = uncheckedDowncast<AOT::CompiledStructure>(target->structure());
-    if (structure->isKnownThatEveryFieldIsBornConfigurable())
+    if (structure->hasOnlyConfigurableFields())
         return true;
     bool hasFieldThatBinds = std::ranges::any_of(fields, [](const AOT::FieldData& field) {
         return field.attributes() & PropertyAttribute::DontDelete;
     });
     if (!hasFieldThatBinds)
-        structure->didFindEveryFieldBornConfigurable();
+        structure->setHasOnlyConfigurableFields();
     return !hasFieldThatBinds;
 }
 #endif
@@ -433,7 +433,7 @@ void ProxyObject::finishSet(JSGlobalObject* globalObject, JSValue trapResult, JS
     RETURN_IF_EXCEPTION(scope, void());
     if (!trapResultAsBool) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, makeString("Proxy object's 'set' trap returned falsy value for property '"_s, key.isSymbol() ? asSymbol(key)->tryGetDescriptiveString().value_or(String()) : String(name.impl()), '\''));
+            throwTypeError(globalObject, scope, makeString("Proxy object's 'set' trap returned falsy value for property '"_s, StringView(name.impl()), '\''));
         return;
     }
     RELEASE_AND_RETURN(scope, validatePositiveSetTrapResult(globalObject, target, name, putValue));

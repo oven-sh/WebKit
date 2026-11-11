@@ -793,7 +793,7 @@ sub runTest {
         }
         $testResult = close(TEST) ? 0 : $?;
         print "$testOutput" if ($verbose or $testResult);
-        # Bun: CI reads how many tests testaot left out from its line of counts, also when all of them pass.
+        # Bun: testaot's line of counts is printed also when all of its tests pass, so that the log says how many ran.
         if (!$verbose && !$testResult && $testName eq "testaot") {
             my @counts = grep { /^\d+ passed, \d+ failed/ } split(/\n/, $testOutput);
             print "$counts[-1]\n" if @counts;

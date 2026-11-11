@@ -1,0 +1,69 @@
+# function step(state) { return { ...state, count: state.count + 1 }; }
+# let state = { name: "s", count: 0 };
+# for (let i = 0; i < which; i++) state = step(state);
+# print(state.name + state.count);
+# print("went on");
+# WHAT A SPREAD COPIES IS SHOWN BEHIND A TEST OF THE SHAPE THAT ASKS IN FULL. `state` comes from out of sight; a test of its shape stands in front of the copy. What is read out of a slot is shown where the object read is shown to be
+# of the layout (the kind `Field` is on), so the floor makes that test ask in full: of `anything`, not of what `state` is claimed to be. Then nothing is asked in front of the new object. Once an exception
+# in the floor spared the two checks and left the test thin: it went by the claim that `state` is an object, which nothing in the unit shows.
+# RUN(COPIED): walk f1 mechanisms=all-Inlining
+# COPIED-LABEL: code f1:Body
+# An entry parameter shows its type, so the test of `state`'s shape counts as it stands and is not made to ask in full here. What the test holds to is that nothing is asked in front of the new object.
+# COPIED: = ShapeTest {{*}} layouts=[L0]
+# COPIED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven
+# COPIED: [[count]]: number|string @JSValue = GetSlot {{*}} key="count" receivers=[L0] level=Proven
+# COPIED-NOT: CheckProof
+# COPIED: = NewObject -, [[name]], [[count]] layout=L0
+# RUN(ANSWER): run-in-shell mechanisms=-Inlining globalThis.which = 3;
+# ANSWER: s3
+# ANSWER: went on
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=82 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 flags=[IsNeverAllocated]
+data d0 root=Object{layout=L0 members=[{key="name" value=String{value="s"}}, {key="count" value=Number{}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @82
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]} @82
+    v4 = Integer @120
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @120
+    Jump -> next b1(v3, v5) @116
+  b1(v6, v7):
+    LoopHint @116
+    v9 = Builtin builtin=GlobalThis @127
+    v10 = PropGet v9 key="which" [isFreeName] @127
+    v11 = Less v7, v10 @127
+    Branch v11 -> taken b2(), notTaken b3() @127
+  b2():
+    v12 = Call v1, -, v6 calleeName="step" @147
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[IsExpected]} @139
+    v14 = Increment v7 @134
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @134
+    Jump -> next b1(v13, v15) @134
+  b3():
+    v16 = Builtin builtin=GlobalThis @160
+    v17 = PropGet v16 key="print" [isFreeName] @160
+    v18 = PropGet v6 key="name" @166
+    v19 = PropGet v6 key="count" @179
+    v20 = Add v18, v19 @179
+    v21 = Call v17, -, v20 calleeName="print" @160
+    v22 = Builtin builtin=GlobalThis @193
+    v23 = PropGet v22 key="print" [isFreeName] @193
+    v24 = String string="went on" @199
+    v25 = Call v23, -, v24 calleeName="print" @193
+    v26 = Undefined @193
+    Return v26 @193
+}
+function f1 name="step" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = CopyObject v0 @30
+    v2 = PropGet v0 key="count" @49
+    v3 = Integer integer=1 @63
+    v4 = Add v2, v3 @63
+    PropDefine v1, v4 key="count" @42
+    Return v1 @30
+}

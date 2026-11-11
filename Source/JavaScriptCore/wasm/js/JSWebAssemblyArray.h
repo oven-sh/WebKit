@@ -122,11 +122,16 @@ public:
 
     static constexpr ptrdiff_t offsetPastShapeWord = 16;
 
+    static constexpr ptrdiff_t paddingOverShapeWordInCompiledProcess(size_t elementSize)
+    {
+        return std::max<ptrdiff_t>(offsetPastShapeWord - alignedOffsetOfData(elementSize), 0);
+    }
+
     static ptrdiff_t paddingOverShapeWord(size_t elementSize)
     {
 #if ENABLE(AOT)
         if (alignedOffsetOfData(elementSize) < offsetPastShapeWord && Options::runsCompiledImage()) [[unlikely]]
-            return offsetPastShapeWord - alignedOffsetOfData(elementSize);
+            return paddingOverShapeWordInCompiledProcess(elementSize);
 #else
         UNUSED_PARAM(elementSize);
 #endif

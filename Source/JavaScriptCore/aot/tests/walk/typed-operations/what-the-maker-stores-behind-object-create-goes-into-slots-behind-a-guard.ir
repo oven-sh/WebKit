@@ -1,0 +1,58 @@
+# function make(i, parent) { const made = Object.create(parent); made.a = i; made.b = i; return made; }        globalThis.make = make;        const one = make(1, {}); one.late = 2;
+# What the body that makes the object stores on it are fields of the layout of that call, in the cell. What a stranger stores later is none: the object stands below a parent that nobody knows, where a setter may take the store each time.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "a" appended
+# CHECK: field L0.1 "b" appended
+# CHECK-NOT: field L0.2
+# A store that creates a field asks that nothing above the object takes it. The parent of the first object is the prototype of the layout: the object says whether it stands below that one, and the guard of the name says what the run time
+# has found on the chain above it and has heard of since: ClassTable::defineClassOfCreatedObjects().
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: NewObject layout=L0
+# WALK: SetLiteralPrototype {{*}}[refusesOtherValues]
+# WALK: HasLayoutPrototype
+# WALK: AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}
+# WALK: PutSlotOrAdd {{*}}key="a" receivers=[L0]
+# A read that finds nothing in the object goes as it is written: no guard speaks of what reads find above.
+# RUN(READ): walk f2 mechanisms=all
+# READ-LABEL: code f2:Body
+# READ: PropGet {{*}}key="above"
+# READ-NOT: MemberUnchanged
+
+layout L0 kind=Instance module=m0 position=100 flags=[IsOfCreatedObject]
+layout L1 module=m0 position=200
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v0 key="make"
+    PropSet v2, v1 key="read"
+    v5 = Integer integer=1
+    v6 = NewObject layout=L1
+    v7 = FinishObject v6
+    v8 = Call v0, -, v5, v7 calleeName="make"
+    v9 = Integer integer=2
+    PropSet v8, v9 key="late"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L0
+    SetLiteralPrototype v2, v1 [refusesOtherValues]
+    v4 = FinishObject v2
+    PropSet v4, v0 key="a"
+    PropSet v4, v0 key="b"
+    Return v4
+}
+function f2 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    SetLiteralPrototype v1, v0 [refusesOtherValues]
+    v3 = FinishObject v1
+    v4 = PropGet v3 key="above"
+    Return v4
+}

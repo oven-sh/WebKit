@@ -34,19 +34,16 @@ public:
         HasOtherPrototype = 1 << 1,
         HasOutOfLineKeyOrder = 1 << 2,
         HasFieldsWithSymbolKeys = 1 << 3,
-        // The bits of every slot are all there is to its field, so a copy of the slots is a copy of the fields.
         HasOnlyPlainSlots = 1 << 4,
-        // The object has its layout's fields and nothing else, and above it is only the Object.prototype of its realm: a name that is neither a field nor a name of that object finds nothing.
         HasOnlyFieldsBelowObjectPrototype = 1 << 5,
         IsCopiedByWords = 1 << 6,
-        // Set by whoever has looked at the fields of the layout.
-        EveryFieldIsBornConfigurable = 1 << 7,
+        HasOnlyConfigurableFields = 1 << 7,
     };
-    // Why a key order that the Structure holds does not go to a copy of the object along with the Structure.
     enum class HeldKeyOrder : uint8_t {
         IsOfOneObject = 1 << 0,
         IsBesideExtraProperties = 1 << 1,
     };
+    using KeyOrderEntries = Vector<uint16_t, 16>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -64,12 +61,11 @@ public:
         Structure* extraPropertiesStructure { nullptr };
         JSObject* heldExtraProperties { nullptr };
         std::optional<std::span<const uint16_t>> outOfLineKeyOrder;
-        // With a value, the order is that of one object. An entry from the number of fields on then stands for one of these extra keys, in this order: the extra keys up to that one come before what follows the entry.
+        bool isFoundByKeyOrder { true };
         std::optional<std::span<const RefPtr<UniquedStringImpl>>> keysNamedByOrder;
     };
 
     JS_EXPORT_PRIVATE static CompiledStructure* createForObject(VM&, const TypeInfo&, const ClassInfo*, const ObjectParameters&);
-    // Copies what is the same in every Structure of the compiled objects of a realm from one that no cell ever had.
     JS_EXPORT_PRIVATE static CompiledStructure* createForObject(VM&, const CompiledStructure& templateStructure, const ObjectParameters&);
     JS_EXPORT_PRIVATE static CompiledStructure* createForEnvironment(VM&, JSGlobalObject*, const TypeInfo&, const ClassInfo*, const EnvironmentShapes&, uint16_t shapePage);
     ~CompiledStructure();
@@ -96,8 +92,8 @@ public:
     bool hasOutOfLineKeyOrder() const { return m_flags.contains(Flag::HasOutOfLineKeyOrder); }
     bool hasOnlyPlainSlots() const { return m_flags.contains(Flag::HasOnlyPlainSlots); }
     bool isCopiedByWords() const { return m_flags.contains(Flag::IsCopiedByWords); }
-    bool isKnownThatEveryFieldIsBornConfigurable() const { return m_flags.contains(Flag::EveryFieldIsBornConfigurable); }
-    void didFindEveryFieldBornConfigurable() { m_flags.add(Flag::EveryFieldIsBornConfigurable); }
+    bool hasOnlyConfigurableFields() const { return m_flags.contains(Flag::HasOnlyConfigurableFields); }
+    void setHasOnlyConfigurableFields() { m_flags.add(Flag::HasOnlyConfigurableFields); }
 
     StructureID extraPropertiesStructureID() const { return std::bit_cast<StructureID>(hasExtraProperties() ? m_namedStructureAndRareData.extraPropertiesStructureID : 0); }
     Structure* extraPropertiesStructure() const
@@ -105,17 +101,15 @@ public:
         StructureID id = extraPropertiesStructureID();
         return id ? id.decode() : nullptr;
     }
-    // A dictionary gets a property without becoming another Structure: it says where a property is, and not that one is absent.
     bool listsEveryExtraProperty() const
     {
         Structure* named = extraPropertiesStructure();
         return named && !named->isDictionary();
     }
     uint16_t extraPropertiesCellSize() const { return hasExtraProperties() ? m_extraKeysAndCellSize.extraPropertiesCellSize : 0; }
-    // What an object of this Structure went on to when a private name was last put among its extra properties. It names their Structure, which says which name that was.
-    CompiledStructure* successorByPrivateName() const { return m_successorByPrivateName.get(); }
     void setSuccessorByPrivateName(VM& vm, CompiledStructure* successor) { m_successorByPrivateName.set(vm, this, successor); }
-    // Where the layout has no word for the extra properties, an object that gets some gets a Structure of its own, which holds them.
+    const uint64_t* wordsOfObjectWithoutFields() const { return m_wordsOfObjectWithoutFields; }
+    void setWordsOfObjectWithoutFields(const uint64_t* words) { m_wordsOfObjectWithoutFields = words; }
     JSObject* heldExtraProperties() const
     {
         const RareData* rareData = this->rareData();
@@ -138,31 +132,38 @@ public:
         ASSERT(hasOutOfLineKeyOrder());
         return rareData()->outOfLineKeyOrder.span();
     }
-    // Each object of the Structure says in its order word how many of the entries are its own, so one that has them all adds the next for itself alone. The entries never move: somebody may be walking them.
     bool tryAppendToOutOfLineKeyOrder(uint16_t entry) const
     {
         ASSERT(hasOutOfLineKeyOrder() && !hasKeyOrderOfOneObject());
         RareData* rareData = const_cast<RareData*>(this->rareData());
-        Vector<uint16_t>& entries = rareData->outOfLineKeyOrder;
+        KeyOrderEntries& entries = rareData->outOfLineKeyOrder;
         if (rareData->keyOrderHasEnded || entries.size() == entries.capacity())
             return false;
         entries.append(entry);
         return true;
     }
-    // Whoever remembers that objects of this Structure go on to another one, which has a copy of the entries, sends them there with whatever count they have.
     void endOutOfLineKeyOrder() const
     {
         if (hasOutOfLineKeyOrder())
             const_cast<RareData*>(rareData())->keyOrderHasEnded = true;
     }
-    // Such a Structure belongs to one object, which changes the order in place.
+    bool keyOrderWasFoundAgain() const
+    {
+        ASSERT(hasOutOfLineKeyOrder());
+        return rareData()->keyOrderWasFoundAgain;
+    }
+    void didFindKeyOrderAgain() const
+    {
+        ASSERT(hasOutOfLineKeyOrder());
+        const_cast<RareData*>(rareData())->keyOrderWasFoundAgain = true;
+    }
     bool hasKeyOrderOfOneObject() const { return m_heldKeyOrder.contains(HeldKeyOrder::IsOfOneObject); }
     std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder() const
     {
         ASSERT(hasKeyOrderOfOneObject());
         return rareData()->keysNamedByOrder.span();
     }
-    void setKeyOrderOfOneObject(Vector<uint16_t>&& entries, Vector<RefPtr<UniquedStringImpl>>&& keysNamedByOrder) const
+    void setKeyOrderOfOneObject(KeyOrderEntries&& entries, Vector<RefPtr<UniquedStringImpl>>&& keysNamedByOrder) const
     {
         ASSERT(hasKeyOrderOfOneObject());
         RareData* rareData = const_cast<RareData*>(this->rareData());
@@ -185,7 +186,6 @@ public:
         const_cast<RareData*>(rareData())->keysNamedByOrder[index] = key;
     }
 
-    // The list that KeyOrderTable has for the order word an object of this Structure was last listed with. Lists live as long as the table.
     struct ListedFields {
         static constexpr uint32_t noOrderWord = UINT32_MAX;
 
@@ -193,12 +193,10 @@ public:
         uint32_t size { 0 };
         const FieldAsProperty* fields { nullptr };
     };
-    // The order word of an object with extra properties is never equal to orderAndCount, so nobody looks at the rest, which is meaningless for its Structure.
     ListedFields listedFields() const { return { m_listedOrderAndCount, m_listedSize, m_listedFields }; }
 
     static constexpr uint16_t unknownNumberOfExtraKeys = UINT16_MAX;
 
-    // How many properties of extraPropertiesStructure() have a position among the keys and are no fields of the layout. Both are fixed, so the number is counted once.
     std::optional<uint16_t> numberOfExtraKeys() const
     {
         if (!hasExtraProperties() || m_extraKeysAndCellSize.numberOfExtraKeys == unknownNumberOfExtraKeys)
@@ -221,7 +219,6 @@ public:
     }
 
     static constexpr ptrdiff_t offsetOfLayout() { return OBJECT_OFFSETOF(CompiledStructure, m_layout); }
-    // The three of them hold what they are named after only in a Structure that has extra properties.
     static constexpr ptrdiff_t offsetOfExtraPropertiesStructureID() { return OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID); }
     static constexpr ptrdiff_t offsetOfExtraPropertiesCellSize() { return OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSize); }
     static constexpr ptrdiff_t offsetOfNumberOfExtraKeys() { return OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys); }
@@ -229,7 +226,6 @@ public:
     static constexpr ptrdiff_t offsetOfExtensionSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot); }
     static constexpr ptrdiff_t offsetOfEnvironmentShapePage() { return OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(CompiledStructure, m_flags); }
-    // The byte behind the flags: a stub reads both at once.
     static constexpr ptrdiff_t offsetOfHeldKeyOrder() { return OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder); }
     static constexpr ptrdiff_t offsetOfSuccessorByPrivateName() { return OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName); }
 
@@ -240,10 +236,11 @@ private:
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RareData);
 
-        Vector<uint16_t> outOfLineKeyOrder;
+        KeyOrderEntries outOfLineKeyOrder;
         Vector<RefPtr<UniquedStringImpl>> keysNamedByOrder;
         WriteBarrier<JSObject> heldExtraProperties;
         bool keyOrderHasEnded { false };
+        bool keyOrderWasFoundAgain { false };
     };
 
     struct NamedStructureAndRareData {
@@ -256,7 +253,6 @@ private:
         uint16_t extraPropertiesCellSize;
     };
 
-    // A cell size from here on would set, in the word that it shares with the listed order word, the bit by which the order word of an object says that it has extra properties.
     static constexpr uint16_t endOfExtraPropertiesCellSizes = 1 << 12;
 
     CompiledStructure(VM&, const TypeInfo&, const ClassInfo*, const ObjectParameters&);
@@ -265,7 +261,6 @@ private:
 
     void initializeForObject(const ObjectParameters&);
 
-    // Only an object without extra properties whose key order has a number is listed by its order word. Only the Structures of the others name a Structure or have rare data.
     bool holdsListedFields() const { return !m_flags.containsAny({ Flag::HasExtraProperties, Flag::HasOutOfLineKeyOrder }); }
     const RareData* rareData() const
     {
@@ -296,9 +291,10 @@ private:
     SlotData m_extraPropertiesSlot { };
     SlotData m_extensionSlot { };
     WriteBarrier<CompiledStructure> m_successorByPrivateName;
+    const uint64_t* m_wordsOfObjectWithoutFields { nullptr };
 };
 #if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
-static_assert(sizeof(CompiledStructure) == 152);
+static_assert(sizeof(CompiledStructure) == 160);
 #endif
 
 ALWAYS_INLINE const CompiledStructure* compiledObjectStructureOrNull(const Structure* structure)

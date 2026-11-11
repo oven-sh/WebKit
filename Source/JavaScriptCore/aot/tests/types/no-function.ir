@@ -1,0 +1,12 @@
+# A command on types asks for the function whose parameters name them. A program without one is told so, in front of any word about an argument, and nothing runs.
+# RUN: subset
+# RUN(ARGUMENT): subset declared
+# CHECK: no function
+# CHECK-NOT: laws hold
+# ARGUMENT-NOT: argument
+# ARGUMENT: no function
+# ARGUMENT-NOT: argument
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+entry module=m0

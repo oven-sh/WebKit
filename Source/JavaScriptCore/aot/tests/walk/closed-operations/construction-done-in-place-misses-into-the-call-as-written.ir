@@ -1,0 +1,26 @@
+# the row of Reflect.construct forwards the call as a construction. Its code in line constructs, and misses on what the built-in refuses: there the call is made as it is written. The two meet again.
+# With fewer operands than the row names, the call stays as it is written.
+# RUN: walk f2 f3 f5 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[target]]: {{*}}, [[list]]: {{*}}, [[newTarget]]:
+# CHECK: TryCallInline -, [[target]], [[list]], [[newTarget]] inlineBuiltin=ReflectConstruct {{*}}-> done [[done]](), miss [[miss]]()
+# CHECK: [[done]]([[constructed]]:
+# CHECK-NEXT: Jump -> next [[join]]([[constructed]])
+# CHECK: [[miss]]() frequency=Rare:
+# CHECK: [[called]]: {{*}} = Call {{*}}, [[target]], [[list]], [[newTarget]] calleeName="Reflect.construct"
+# CHECK-NEXT: Jump -> next [[join]]([[called]])
+# CHECK: [[join]]([[result]]:
+# CHECK-NEXT: Return [[result]]
+# CHECK-LABEL: code f3:Body
+# CHECK: TryCallInline
+# CHECK-NOT: ReturnCall
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: TryCallInline
+# CHECK: = Call
+# CHECK-NOT: TryCallInline
+# RUN(ALL): walk f1 f2 f3 f4
+# ALL-COUNT-4: TryCallInline
+# ALL-NOT: TryCallInline
+# RUN(NEVER): walk f1 f2 f3 f4 f5
+# NEVER-NOT: CallBuiltin
+# PROGRAM-OF: ../../answers/reflect-construct-done-in-place-constructs-its-target.ir

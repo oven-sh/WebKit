@@ -4,70 +4,89 @@
  */
 
 #include "config.h"
-#include "AOTFieldValueNarrowing.h"
+#include "AOTTypeNarrowing.h"
 
 #if ENABLE(AOT)
 
-#include "AOTFamilyTables.h"
 #include "AOTIRProgram.h"
+#include "AOTLayout.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
-#include <algorithm>
-#include <utility>
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static LayoutSetID allocatedMembersExcluding(const TypingContext& context, LayoutSetID family, LayoutSetID excluded)
+static bool memberCanHoldFieldValue(const TypingContext& context, LayoutID member, PropertyKeyID key, TypeID read, bool readMayBeUndefined)
 {
-    const LayoutSet& familySet = context.types.at(family);
-    std::span<const LayoutID> allocatedMembers = context.program.familyTables().allocatedMembersOf(family);
-    if (!excluded && allocatedMembers.size() == familySet.written().size())
+    bool isGuess = context.level == TypeLevel::Expected;
+    std::optional<FieldReference> reference = findField(context.program, member, key);
+    if (!reference || (!isGuess && reference->layout != member))
+        return !isGuess || readMayBeUndefined;
+
+    const Field& field = fieldAt(context.program, *reference);
+    if (isGuess && readMayBeUndefined && !field.flags.contains(FieldFlags::IsRequired))
+        return true;
+
+    TypeID held;
+    if (!field.form.contains(FieldForm::IsAccessor))
+        held = context.positions.slot(context.level, reference->layout, reference->field);
+    if (!held && isGuess)
+        held = enforceableTypeOf(context.types, field.declared);
+    if (held && !context.types.overlap(held, read))
+        return false;
+
+    TypeID arriving = context.positions.readOfSlot(context.level, reference->layout, reference->field);
+    return !arriving || context.types.overlap(arriving, read);
+}
+
+static LayoutSetID membersThatCanHoldFieldValue(const TypingContext& context, LayoutSetID family, PropertyKeyID key, TypeID read, ReadOfEmptySlot emptySlot)
+{
+    bool readMayBeUndefined = context.at(read).primitives & Primitive::Undefined;
+    if (readMayBeUndefined && emptySlot == ReadOfEmptySlot::GivesUndefined)
         return family;
 
-    std::span<const LayoutID> excludedMembers;
-    if (excluded)
-        excludedMembers = context.types.at(excluded).completeMembers().value();
-
-    Vector<LayoutID> remaining;
-    remaining.grow(allocatedMembers.size());
-    remaining.shrink(std::ranges::set_difference(allocatedMembers, excludedMembers, remaining.begin()).out - remaining.begin());
-    if (remaining.isEmpty())
+    Vector<LayoutID, 16> members;
+    context.types.at(family).forEach([&](LayoutID member) {
+        members.append(member);
+    });
+    size_t sizeOfFamily = members.size();
+    members.removeAllMatching([&](LayoutID member) {
+        return !memberCanHoldFieldValue(context, member, key, read, readMayBeUndefined);
+    });
+    if (members.size() == sizeOfFamily)
+        return family;
+    if (members.isEmpty())
         return { };
-    return context.types.intern(LayoutSet::complete(WTF::move(remaining)));
+    return context.types.layoutSets().ofSorted(members.span());
 }
 
-static LayoutSetID membersThatCanHold(const TypingContext& context, LayoutSetID family, PropertyKeyID key, const Type& read)
+static TypeID tryNarrowLayoutsOfHolderByFieldValue(const TypingContext& context, TypeID holderID, PropertyKeyID key, TypeID read, ReadOfEmptySlot emptySlot)
 {
-    LayoutSetID excluded = context.program.familyTables().membersWhoseFieldCannotHold(family, key, context.types.intern(read), context.level);
-    return allocatedMembersExcluding(context, family, excluded);
+    LayoutSetID layouts = context.at(holderID).layouts;
+    LayoutSetID kept = membersThatCanHoldFieldValue(context, layouts, key, read, emptySlot);
+    if (!kept)
+        return { };
+    if (kept == layouts)
+        return holderID;
+
+    TypeID narrowed = narrowByShapeCase(context, holderID, kept);
+    RELEASE_ASSERT(!isNeverType(narrowed));
+    return narrowed;
 }
 
-Type narrowHolderByFieldValue(const TypingContext& context, const Type& holder, PropertyKeyID key, const Type& read)
+TypeID narrowHolderByFieldValue(const TypingContext& context, TypeID holder, PropertyKeyID key, TypeID read, ReadOfEmptySlot emptySlot)
 {
-    if (read.isNever())
-        return Type::never();
+    if (!holder)
+        return { };
+    if (isNeverType(read))
+        return TypeTable::never;
 
-    Type result = holder.withoutNullish();
-    if (!result.layouts)
-        return result;
+    TypeID withoutNullish = context.types.withoutNullish(holder);
+    if (!read || !context.at(withoutNullish).hasOnlyLayouts())
+        return withoutNullish;
 
-    LayoutSetID family = std::exchange(result.layouts, membersThatCanHold(context, result.layouts, key, read));
-    if (result.isNever())
-        result.layouts = family;
-    return result;
-}
-
-bool narrowsHolderToNothing(const TypingContext& context, const Type& holder, PropertyKeyID key, const Type& read)
-{
-    Type result = holder.withoutNullish();
-    if (read.isNever() || !result.layouts)
-        return false;
-    result.layouts = membersThatCanHold(context, result.layouts, key, read);
-    return result.isNever();
-}
-
-bool narrowsHolderToNothing(const TypingContext& context, const Value& value)
-{
-    return value.opcode == Opcode::NarrowByField && narrowsHolderToNothing(context, context.typeOf(value.valueOperand()), value.key(), context.typeOf(value.readOperand()));
+    TypeID narrowed = tryNarrowLayoutsOfHolderByFieldValue(context, withoutNullish, key, read, emptySlot);
+    return narrowed ? narrowed : withoutNullish;
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -8,14 +8,13 @@ enum NameClass (words: Text) {
 }
 record String wire customEngine customText { offset: UInt32 length: UInt32 nameClass: NameClass builtinName: BuiltinName? }
 
-enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol ModulePrivateName | engine RegisteredSymbol }
+enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol ModulePrivateName RegisteredSymbol }
 enum WellKnownSymbol {
     AsyncDispose AsyncIterator Dispose HasInstance IsConcatSpreadable Iterator Match MatchAll Replace Search Species Split ToPrimitive ToStringTag
     Unscopables
 }
 record PropertyKey wire customText {
     kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? callNumber: UInt32?
-    | engine site: AllocationSite?
 }
 
 flags Primitives abi { Undefined Null False True Number String Symbol BigInt Absent }
@@ -23,7 +22,7 @@ flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber Frac
 flags TypeFlags { HasIntegers AnyObject AnyFunction }
 enum ContentsSlot { Element Key Value }
 enum ArrayStorage { Other Int32 Double Contiguous }
-flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow Prototype }
+flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow Prototype CellAlone }
 
 record Type wire customEngine customText {
     primitives: Primitives flags: TypeFlags opaque: OpaqueKind? environment: Layout? minimum: Int64 maximum: Int64
@@ -32,7 +31,7 @@ record Type wire customEngine customText {
 }
 record ClassPart wire customEngine {
     builtinClass: BuiltinClass contents: Span<Type>
-    | engine contentsAreProven: Bool arrayStorage: ArrayStorage provenPristine: PristineAspects
+    | engine arrayStorage: ArrayStorage provenPristine: PristineAspects
 }
 
 enum TypeSiteKind (logWord: Text) {
@@ -41,18 +40,14 @@ enum TypeSiteKind (logWord: Text) {
     SetElement("element") PromiseValue("element") CallResult("call-result") PropertyRead("property") Assertion("cast")
 }
 record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
-flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim }
+flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim IsVariableOfModule }
 record DeclaredType wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags }
 
-enum IllTypedCause abi {
-    None Unclassified FromLooseType Assertion SuppressedError DeclarationWithoutBody OutsideData LayoutOutsideFamily MemberWithoutSlot
-    StoreOutsideFieldType ComputedKeyStore UnprovenReceiverStore NativeWritesOperand StateChanged UnseenWriter UnseenCaller UnprovenCallee
-    OtherThis CalledByEngine ContainerWriterUnseen ElementMayBeAbsent ScopeOpenedByEval ReadBeforeInitialized LookupMayChange
-}
+enum IllTypedCause { None FromLooseType Assertion DeclarationWithoutBody UnprovenCallee }
 enum CastResolution { | engine Unresolved Nothing Upcast Check Assume }
 record TailCast wire { declared: DeclaredType | engine resolution: CastResolution }
 
-flags ExpectedResultFlags { IsRowsOfQuery }
+flags ExpectedResultFlags { IsRowsOfQuery IsMadeByParser }
 record ExpectedResult wire { type: Type layouts: Span<Layout> flags: ExpectedResultFlags }
 
 list bytes : Byte

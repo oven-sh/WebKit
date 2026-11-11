@@ -39,7 +39,6 @@ struct RuntimeCellTest {
     static constexpr RuntimeCellTest isSymbol(uint32_t propertyKeyNumber) { return { CellTestKind::IsSymbol, 0, 0, 0, propertyKeyNumber }; }
     static constexpr RuntimeCellTest sharingModeIs(ArrayBufferSharingMode sharingMode) { return { CellTestKind::SharingModeIs, 0, 0, 0, static_cast<uint32_t>(sharingMode) }; }
     static constexpr RuntimeCellTest isNamespaceOf(ModuleID module) { return { CellTestKind::IsNamespaceOf, 0, 0, 0, module.index() }; }
-    static constexpr RuntimeCellTest carriesBrandOfClass(uint32_t rankOfClass) { return { CellTestKind::CarriesBrandOfClass, 0, 0, 0, rankOfClass }; }
 
     constexpr JSTypeRange cellTypes() const
     {
@@ -62,7 +61,6 @@ struct RuntimeCellTest {
     constexpr uint32_t symbolKeyNumber() const { return operandOf(CellTestKind::IsSymbol); }
     constexpr ArrayBufferSharingMode sharingMode() const { return operandOf(CellTestKind::SharingModeIs) ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default; }
     constexpr ModuleID module() const { return ModuleID(operandOf(CellTestKind::IsNamespaceOf)); }
-    constexpr uint32_t rankOfClass() const { return operandOf(CellTestKind::CarriesBrandOfClass); }
 
     static constexpr ptrdiff_t offsetOfKind() { return 0; }
     static constexpr ptrdiff_t offsetOfFirstCellType() { return 1; }
@@ -75,13 +73,9 @@ struct alignas(4) RuntimeType {
     static constexpr uint8_t hasIntegerRange = 1;
     static constexpr uint8_t hasContents = 2;
     static constexpr uint8_t hasLayoutSet = 4;
-    // Of the listed strings. One without text has a word, and one without a word has its text.
-    static constexpr uint8_t hasLiteralStringWithoutText = 8;
-    static constexpr uint8_t hasLiteralStringWithoutWord = 16;
 
     uint16_t primitives;
     uint8_t flags;
-    // Those that stand in front of testsOfOneFunctionEach(): a type has a handful. With more than fit here it says so, and they are counted.
     static constexpr uint8_t hasManyTestsOfMoreThanOneFunction = UINT8_MAX;
     uint8_t numberOfTestsOfMoreThanOneFunctionIfFew;
     uint16_t numberOfCellTests;
@@ -94,7 +88,6 @@ struct alignas(4) RuntimeType {
         return { reinterpret_cast<const RuntimeCellTest*>(this + 1), numberOfCellTests };
     }
 
-    // A member that holds one of many functions has a test for each of them. They stand behind all other tests, by rising number.
     size_t numberOfTestsOfMoreThanOneFunction() const
     {
         if (numberOfTestsOfMoreThanOneFunctionIfFew != hasManyTestsOfMoreThanOneFunction) [[likely]]
@@ -142,6 +135,15 @@ struct alignas(4) RuntimeType {
                 return true;
         }
         return false;
+    }
+
+    bool takesEveryValue() const
+    {
+        constexpr OptionSet<PrimitiveSet> everyPrimitive {
+            PrimitiveSet::Undefined, PrimitiveSet::Null, PrimitiveSet::False, PrimitiveSet::True, PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber,
+            PrimitiveSet::String, PrimitiveSet::Symbol, PrimitiveSet::BigInt
+        };
+        return primitiveSet().containsAll(everyPrimitive) && !(flags & hasIntegerRange) && acceptsEveryObject();
     }
 
     static constexpr size_t sizeInBytes(unsigned numberOfCellTests, unsigned numberOfLiteralStrings, uint8_t flags)

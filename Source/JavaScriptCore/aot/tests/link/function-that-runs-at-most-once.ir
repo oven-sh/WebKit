@@ -1,0 +1,97 @@
+# in one realm a function runs at most once where it is the body of a module that the loader enters once, or where one call alone may enter it, outside of loops, in a function of which the same holds
+# function once() { return below() }  function below() { return 1 }  function twice() {}  function looped() {}  function ring(n) { return n ? ring(n - 1) : 0 }
+# function under() {}  function handedOut() {}
+# once(); twice(); twice(); ring(3); handedOut(); sink(handedOut); do {} while (looped())   and looped() calls under()
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}runs-once
+# CHECK: function f1 {{*}}runs-once
+# CHECK: function f2 {{*}}runs-once
+# Two calls, a call in a loop, a call of itself, and what is called from there
+# RUN(AGAIN): link functions mechanisms=all
+# AGAIN-NOT: function f3 {{*}}runs-once
+# AGAIN-NOT: function f4 {{*}}runs-once
+# AGAIN-NOT: function f5 {{*}}runs-once
+# AGAIN-NOT: function f6 {{*}}runs-once
+# Whoever has the function may call it
+# AGAIN-NOT: function f7 {{*}}runs-once
+
+variable g0 name="once" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="below" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="twice" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="looped" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="ring" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="under" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="handedOut" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="once"
+    v2 = GetModuleVariable variable=g2
+    v3 = Call v2 calleeName="twice"
+    v4 = Call v2 calleeName="twice"
+    v5 = Integer integer=3
+    v6 = GetModuleVariable variable=g4
+    v7 = Call v6, -, v5 calleeName="ring"
+    v8 = GetModuleVariable variable=g6
+    v9 = Call v8 calleeName="handedOut"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="sink" [isFreeName]
+    v12 = Call v11, -, v8
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = GetModuleVariable variable=g3
+    v15 = Call v14 calleeName="looped"
+    v16 = ToBoolean v15
+    Branch v16 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+function f1 name="once" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0 calleeName="below"
+    Return v1
+}
+function f2 name="below" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="twice" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="looped" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g5
+    v1 = Call v0 calleeName="under"
+    Return v1
+}
+function f5 name="ring" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = Sub v0, v2
+    v4 = GetModuleVariable variable=g4
+    v5 = Call v4, -, v3 calleeName="ring"
+    Return v5
+  b2():
+    v6 = Integer
+    Return v6
+}
+function f6 name="under" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean
+    Return v0
+}
+function f7 name="handedOut" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

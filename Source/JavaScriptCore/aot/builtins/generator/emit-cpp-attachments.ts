@@ -1,4 +1,5 @@
 import { GeneratorError } from "./declarations.ts";
+import { cellsFilledByCalledFunctionsAlone } from "./check-host-uses.ts";
 import {
   emitArray,
   formatAggregate,
@@ -21,7 +22,6 @@ import {
   type ModelCondition,
   type ModelFeatureUse,
   type ModelHostCall,
-  type ModelHostMethodCall,
   type ModelHostObject,
   type ModelHostUse,
   type ModelHostUses,
@@ -29,14 +29,12 @@ import {
   type ModelImplementation,
   type ModelModuleLoad,
   type ModelName,
-  type ModelNamedMemberCall,
   type ModelOverload,
   type TableFeature,
   type TableModel,
 } from "./model.ts";
 import { targetPlatforms, type FeatureName } from "./vocabulary.ts";
 
-// A use names a call and a call lists the uses of what it answers, so each is a constant of its own that follows what it names.
 class HostUseConstants {
   readonly #definitions: string[] = [];
   readonly #names = new Map<string, string>();
@@ -98,6 +96,9 @@ function formatCondition(context: AttachmentContext, condition: ModelCondition |
       ["objectNobodyKnowsIsWritten", condition.objectNobodyKnowsIsWritten ? "true" : null],
       ["testsReplaceBuiltins", condition.testsReplaceBuiltins ? "true" : null],
       ["programStores", formatId("BuiltinID", condition.programStores)],
+      ["isAskedForOtherNames", formatId("BuiltinID", condition.isAskedForOtherNames)],
+      ["valuesServed", formatNames(context, condition.valuesServed)],
+      ["methodsServed", formatNames(context, condition.methodsServed)],
     ]),
   );
 }
@@ -119,8 +120,8 @@ function formatFeatureUse(context: AttachmentContext, builtin: ModelBuiltin, use
   ]);
 }
 
-function formatUnseenCode(context: AttachmentContext, builtin: ModelBuiltin): string[] {
-  const condition = formatCondition(context, builtin.attachments.unseenCodeCondition);
+function formatConditionOn(context: AttachmentContext, builtin: ModelBuiltin, written: ModelCondition | null): string[] {
+  const condition = formatCondition(context, written);
   if (condition === null) return [];
   return [
     formatAggregate([
@@ -243,6 +244,8 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
     ],
     ["keepsStringsOfStoredValues", object.keepsStringsOfStoredValues ? "true" : null],
     ["nativeAccessors", formatNames(context, object.nativeAccessors)],
+    ["lockedNames", formatNames(context, object.lockedNames)],
+    ["holder", formatId("BuiltinID", object.holder)],
     [
       "platforms",
       formatOptionSet(
@@ -253,38 +256,15 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
   ]);
 }
 
-function formatHostMethodCall(context: AttachmentContext, { name, cell, call }: ModelHostMethodCall): string {
-  return formatAggregate([
-    ["name", formatName(name)],
-    ["nativeCell", formatName(cell)],
-    ["call", context.hostUses.addCall(formatHostCall(context, call))],
-  ]);
-}
-
-function formatNamedMemberCall(context: AttachmentContext, call: ModelNamedMemberCall): string {
-  return formatAggregate([
-    ["name", formatName(call.name)],
-    ["arguments", formatHostValues(context, call.arguments)],
-  ]);
-}
-
 function formatForms(builtin: ModelBuiltin): string[] {
-  const { appendForm, jsonTextForm, literalPartsForm, bodyBytesForm } = builtin.attachments;
-  if ([appendForm, jsonTextForm, literalPartsForm, bodyBytesForm].every(form => form === null))
-    return [];
+  const { literalPartsForm } = builtin.attachments;
+  if (literalPartsForm === null) return [];
   return [
     formatAggregate([
       ["builtin", formatId("BuiltinID", builtin)],
-      ["appendForm", appendForm === null ? null : formatEnumerator("InlineBuiltin", appendForm)],
-      ["jsonTextForm", formatId("BuiltinID", jsonTextForm === null ? null : jsonTextForm.builtin)],
-      ["jsonTextArgument", formatOperand(jsonTextForm === null ? null : jsonTextForm.argument)],
-      ["literalPartsForm", formatId("BuiltinID", literalPartsForm === null ? null : literalPartsForm.builtin)],
-      ["literalPartsArgument", formatOperand(literalPartsForm === null ? null : literalPartsForm.argument)],
-      [
-        "literalPartNames",
-        literalPartsForm === null ? null : `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`,
-      ],
-      ["bodyBytesForm", formatId("BuiltinID", bodyBytesForm)],
+      ["literalPartsForm", formatId("BuiltinID", literalPartsForm.builtin)],
+      ["literalPartsArgument", formatOperand(literalPartsForm.argument)],
+      ["literalPartNames", `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`],
     ]),
   ];
 }
@@ -336,7 +316,6 @@ function formatStringConstants(builtin: ModelBuiltin): string[] {
   );
 }
 
-// The implementation that ends in a call of the entry's function object, which has the callee and the function of the library.
 function calledImplementationOf(implementation: ModelImplementation): ModelImplementation | null {
   return implementation.how === "Inline" ? implementation.otherwise : implementation;
 }
@@ -388,7 +367,14 @@ export function emitCppAttachments(model: TableModel, features: readonly TableFe
     emitTableArray(
       "BuiltinUnseenCode",
       "UnseenCode",
-      builtins.flatMap(builtin => formatUnseenCode(context, builtin)),
+      builtins.flatMap(builtin => formatConditionOn(context, builtin, builtin.attachments.unseenCodeCondition)),
+    ),
+    emitTableArray(
+      "BuiltinUnseenCode",
+      "InstancesThatAnswerEveryName",
+      builtins.flatMap(builtin =>
+        formatConditionOn(context, builtin, builtin.attachments.conditionOnInstancesThatAnswerEveryName),
+      ),
     ),
     emitTableArray(
       "BuiltinModuleLoad",
@@ -420,14 +406,9 @@ export function emitCppAttachments(model: TableModel, features: readonly TableFe
       model.hostObjects.map(object => formatHostObject(context, object)),
     ),
     emitTableArray(
-      "BuiltinNamedMemberCall",
-      "NamedMemberCalls",
-      model.namedMemberCalls.map(call => formatNamedMemberCall(context, call)),
-    ),
-    emitTableArray(
-      "BuiltinHostMethodCall",
-      "HostMethodCalls",
-      model.hostMethodCalls.map(call => formatHostMethodCall(context, call)),
+      "BuiltinName",
+      "NativeCellsFilledByCalledFunctions",
+      cellsFilledByCalledFunctionsAlone(model).map(cell => formatName(cell)),
     ),
     emitTableArray("BuiltinForms", "Forms", builtins.flatMap(formatForms)),
     emitTableArray("BuiltinBoxedCall", "BoxedCalls", builtins.flatMap(formatBoxedCall)),

@@ -1,0 +1,7 @@
+# The program of link-given-more-finds-no-less.ir under a seed with bit 3 set: half of the nodes that are drawn are given what another node of the same body holds (an edge from that node), not anything.
+# A second value with a name takes a type up its steps one by one (a closure, a set, lost; a layout, a set, a family), which anything jumps over. What Link says then it must say of the program as it is.
+# OPTIONS: testing=WidenFlowNodes:24 check=FlowMonotonicity
+# STATISTIC: FactNodesWidened >= 1
+# PROGRAM-OF: link-given-more-finds-no-less.ir
+# RUN: link functions mechanisms=all
+# CHECK: function f0

@@ -1,0 +1,44 @@
+# behind the program's own test of a type each arm reads the local under a name of its own, NarrowByTest, which the walk binds to what the edge hands over: the passing arm has its proof and asks nothing again,
+# and the failing arm has all that the test leaves. Whoever asks what the value IS finds the local behind the operation, as behind a cast
+# function size(x) { return typeof x === "string" ? x.length : x === undefined ? 0 : x; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean {{*}} = TypeTest [[x]] testedType=string
+# CHECK: [[text]]: string {{*}} = Narrowed [[x]], [[test]] [isOnTakenEdge]
+# CHECK: = GetStringLength
+# CHECK: [[rest]]: undefined|null|boolean|number|symbol|bigint|object{{*}} = Narrowed [[x]], [[test]]
+# CHECK: = TypeTest [[rest]] testedType=undefined
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: PropGet
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD: = PropGet {{*}}key="length"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = NarrowByTest v0, v2
+    v4 = PropGet v3 key="length"
+    Return v4
+  b2(v5):
+    v6 = NarrowByTest v0, v5
+    v7 = TypeTest v6 testedType=undefined
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    v9 = Integer
+    Return v9
+  b4(v10):
+    v11 = NarrowByTest v6, v10
+    Return v11
+}

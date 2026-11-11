@@ -22,46 +22,66 @@ public:
     void generateIsSlotFilled(const ValueContext&);
     void generateHasNoExtraProperties(const ValueContext&);
     void generateHasNoFieldOutsideSlot(const ValueContext&);
-    void generateHasBirthFieldsFilled(const ValueContext&);
+    void generateHasKeyOrder(const ValueContext&);
+    void generateAreHeldFieldsFilled(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
-    void generateBelongsToInstance(const ValueContext& value) { defineTest(value, belongsToInstance(in<CellPointer>(value->objectOperand()))); }
     void generateIsPristine(const ValueContext&);
+    void generateHasStructureOfClass(const ValueContext&);
     void generateHasArrayStorage(const ValueContext&);
-    void generateIsInBounds(const ValueContext&);
     void generateIsElementPresent(const ValueContext&);
-    void generateIsInsideView(const ValueContext&);
     void generateIsNotThenable(const ValueContext&);
-    void generateAreMembersUnchanged(const ValueContext& value) { defineTest(value, holds(value->guardBit())); }
-    void generateHasKeyOrder(const ValueContext&);
+    void generateAreMembersUnchanged(const ValueContext&);
+    void generateIsMemberAsBuilt(const ValueContext&);
+    void generateHasNumberOfBoundArguments(const ValueContext&);
+    void generateGetWordOfBoundFunction(const ValueContext&);
+    void generateIsHolderWithoutAddedNames(const ValueContext&);
+    void defineWhetherDeclaredMemberIsFound(const ValueContext&);
+    void defineWhetherObjectIsPlainInstance(const ValueContext&);
+    void defineWhetherPrototypeChainIsPlain(const ValueContext&);
+    void defineWhetherNoMemberIsFound(const ValueContext&);
+    void branchOnOwnPropertyByCell(const ValueContext&, BranchTargets, LBasicBlock asksRunTime);
     void generateIsClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
-    void generateIsPrototypeOfClass(const ValueContext&);
 
-    Condition holds(GuardBitID);
+    Condition holds(LayoutID classLayout, ClassSide, PropertyKeyID name);
+    Condition guardsWereBegun(LayoutID constructorFunction);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
-    // Whether the cell is a compiled closure that inherits from the realm's Function.prototype and has only the properties it was created with.
+    bool testsMayAddNamesToObjectPrototype() const;
+    Condition noNameWasAddedToObjectPrototype();
+    Condition areMembersUnchanged(PayloadListView<MemberConditionRecord>);
+    Condition areMembersUnchanged(std::span<const MemberConditionRecord>);
     Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
+    Condition realmWatchesSpeciesOfLists();
+    Pointer structuresOfHeir(LayoutID classLayout);
 
 private:
+    Word32 offsetOfStructuresOfHeir(LayoutID classLayout);
+    void failAndDefineFalse(const ValueContext&, InternalErrorKind);
+    Condition guardInByteHolds(LayoutID classLayout, ClassSide, TypedPointer byteOfGuard);
+    struct GuardLeftToAsk {
+        LayoutID classLayout;
+        ClassSide side;
+        ClassGuardKey key;
+    };
+    bool listGuardsAskedBy(std::span<const MemberConditionRecord>, Vector<GuardLeftToAsk, 4>&);
+    struct RowOfCountsOfDoor {
+        TypedPointer words;
+        uint32_t lastShape { 0 };
+        uint32_t width { 0 };
+    };
+    std::optional<RowOfCountsOfDoor> rowOfCountsOfDoor(const ValueContext&);
     Condition isPresentCell(Boxed, const Type&);
-    bool standsInFrontOfReadsAlone(const ValueContext& test);
-    uint8_t flagsTestedBy(const Value& test);
-    void planTestsOfFlags();
-    Condition testOfFlags(const ValueContext&);
-    // These tests read words of compiled objects. A cell of a built-in class fails them.
     void defineTestOfCompiledObject(const ValueContext&, NOESCAPE const Invocable<Condition()> auto& test);
     Condition orderWordHasNoBits(const ValueContext&, uint32_t bits);
     CellPointer untestedCell(const OperationContext&, ValueID);
-    CellPointer cellOrElse(const OperationContext&, ValueID, B3::FrequentedBlock isNotCell);
+    CellPointer cellOrElse(const OperationContext&, ValueID, BlockEdge isNotCell);
+    CellPointer cellOrElse(const OperationContext&, ValueID, const Type& known, BlockEdge isNotCell);
 
     Condition hasInstanceRealm(Pointer structure);
     void branchOnIsNotThenable(Boxed, const Type&, BranchTargets);
     void branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTargets);
-
-    bool m_didPlanTestsOfFlags { false };
-    HashMap<ValueID, uint8_t> m_flagsToTest;
 };
 
 } } } // namespace JSC::AOT::Typed

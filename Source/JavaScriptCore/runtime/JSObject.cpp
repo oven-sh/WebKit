@@ -51,6 +51,7 @@
 #include "PropertyNameArray.h"
 #include "PropertyRun.h"
 #include "ProxyObject.h"
+#include "ReflectObject.h"
 #include "RegExpObject.h"
 #include "ResourceExhaustion.h"
 #include "StringObject.h"
@@ -448,11 +449,11 @@ bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyNam
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    // The receiver is a proxy of the object that hands definitions on to it. Where an element can be set quickly nothing above the object takes the store, so the store ends in the object as it does without the proxy.
-    if (std::optional<uint32_t> index = parseIndex(propertyName); index && !object->structure()->hasImmutableIndexedProperties()) {
-        JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver);
+    // The receiver is a proxy for this object, and its handler forwards defineProperty to it. If an element can be set quickly, nothing on the prototype chain intercepts the store, so the store ends in the object just as it would without the proxy.
+    if (std::optional<uint32_t> index = vm.hasCompiledCode() ? parseIndex(propertyName) : std::nullopt; index && !object->structure()->hasImmutableIndexedProperties()) {
+        JSObject* defineTarget = AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver);
         RETURN_IF_EXCEPTION(scope, false);
-        if (definedOn == object && object->trySetIndexQuickly(vm, *index, value))
+        if (defineTarget == object && object->trySetIndexQuickly(vm, *index, value))
             return true;
     }
 #endif
@@ -864,8 +865,8 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     if (receiver->type() == GlobalProxyType)
         receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
 #if ENABLE(AOT)
-    if (JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver); definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
-        receiver = definedOn;
+    if (JSObject* defineTarget = vm.hasCompiledCode() ? AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver) : nullptr; defineTarget && defineTarget->type() != ProxyObjectType && defineTarget->type() != CompiledObjectType)
+        receiver = defineTarget;
     RETURN_IF_EXCEPTION(scope, false);
 #endif
     scope.release();
@@ -2188,6 +2189,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 #endif
         ImmutablePropertyNames* names = this->structure()->listedImmutablePropertyNames();
         String message = names && shouldThrowIfCantSet ? names->setPrototypeErrorMessage() : String();
+#if ENABLE(AOT)
+        if (!names && shouldThrowIfCantSet)
+            message = AOT::RuntimeHooks::lockedObjectErrorMessage(globalObject, this, nullptr, AOT::RejectedWrite::Prototype);
+#endif
         if (!message.isNull())
             return typeError(globalObject, scope, true, message);
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
@@ -2360,7 +2365,6 @@ ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName propertyNa
 ASCIILiteral JSObject::putDirectToCompiledClosure(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes, PutPropertySlot& slot)
 {
     slot.disableCaching();
-    AOT::PropertyWalk::willPutDirectOnClosure(vm, this, propertyName.uid());
     ASCIILiteral error = putDirectInternal<PutModeDefineOwnPropertyWithoutClosureHooks>(vm, propertyName, value, attributes, slot);
     if (error.isNull())
         AOT::PropertyWalk::didPutDirectOnClosure(vm, this, propertyName.uid());
@@ -3365,22 +3369,25 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
 #if ENABLE(AOT)
-                // Compiled code may hold the object already. The property is that object.
-                JSObject* madeAhead = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(this, key.impl()) : nullptr;
-                if (madeAhead) [[unlikely]] {
+                // Compiled code may already hold the object for this property. If so, store that same object.
+                JSObject* preallocated = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takePreallocatedStaticProperty(this, key.impl()) : nullptr;
+                if (preallocated) [[unlikely]] {
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                    putDirect(vm, key, madeAhead, attributesForStructure(value.attributes()));
+                    putDirect(vm, key, preallocated, attributesForStructure(value.attributes()));
                 } else
 #endif
                     reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
                 // Leave the rest lazy on throw; the caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)
-                    JSValue standIn = vm.hasCompiledCode() ? AOT::takeStandInForMemberLeftOut(globalObject, key.string()) : JSValue();
-                    if (!standIn)
+                    JSValue placeholder = vm.hasCompiledCode() ? AOT::takeOmittedMemberPlaceholder(globalObject, key.string()) : JSValue();
+                    if (!placeholder)
                         return;
+                    // It is stored as a getter that throws the error naming the member. No read returns it as a value.
                     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-                    putDirect(vm, key, standIn, attributesForStructure(value.attributes()));
+                    unsigned attributesOfGetter = (attributesForStructure(value.attributes()) & ~static_cast<unsigned>(PropertyAttribute::ReadOnly)) | PropertyAttribute::Accessor;
+                    putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(placeholder), nullptr), attributesOfGetter);
+                    continue;
 #else
                     return;
 #endif
@@ -4492,6 +4499,15 @@ static bool onlyRepeatsOrRestrictsProperty(JSGlobalObject* globalObject, const P
     return !descriptor.value() || sameValue(globalObject, descriptor.value(), current.value());
 }
 
+// True if reflection reports a locked property differently from the structure.
+static bool repeatsReportedDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    if (!descriptor.isDataDescriptor() || !descriptor.value() || !descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent())
+        return false;
+    PropertyDescriptor reported = current;
+    return reportIfLocked(object, propertyName, reported) && reported.equalTo(globalObject, descriptor);
+}
+
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
 bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException)
@@ -4540,6 +4556,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (isUnchanged)
+            return true;
+        bool repeatsReported = repeatsReportedDescriptor(globalObject, object, propertyName, current, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (repeatsReported)
             return true;
         bool onlyRestricts = onlyRepeatsOrRestrictsProperty(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);

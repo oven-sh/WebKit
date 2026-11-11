@@ -1,0 +1,64 @@
+# `for (; i < bound; i++) if ($hasContiguousIndex(array, 0)) last = $getOwnContiguousIndex(array, 1);`
+# The library's own read of an element tests nothing by itself: its text says that the position lies inside, and it says so behind a test.
+# Array and position stand in front of the loop and nothing in the turns writes, so the read was lifted in front of the head, over the test that it stands behind:
+# of a list without elements it read what lies behind the storage, in every build; in a hardened build, where the read holds its position against the length, a right program was stopped.
+# The three rows say `relies = InBounds` now, as the reads of elements that the walk makes do: what relies on a position lying inside leaves no loop.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: = GetOwnContiguousIndex
+# CHECK: isLoopHead=true
+# CHECK: = GetOwnContiguousIndex
+# RUN(EMPTY): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime globalThis.after = () => print(each.call([], null, 3), each.call(["a", "b"], null, 3));
+# EMPTY: undefined b
+# EMPTY-NEXT: exited with 0
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="each"
+    v3 = PropGet v1 key="after"
+    v4 = Call v3, -
+    v5 = Undefined
+    Return v5
+}
+function f1 name="each" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = ToObject v0 message="no object"
+    v4 = Integer
+    v5 = Convert v4 declared={type=undefined|number}
+    v6 = HasJSType v3
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(| 0), notTaken b8(| 0)
+  b2(v8):
+    v9 = Undefined
+    Jump -> next b3(v5, v9)
+  b3(v10: undefined|number, v11: anything):
+    LoopHint
+    v13 = Less v10, v2
+    Branch v13 -> taken b4(), notTaken b7()
+  b4():
+    v14 = Convert v3 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v15 = Integer
+    v16 = HasContiguousIndex v14, v15
+    v17 = ToBoolean v16
+    Branch v17 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v18):
+    v19 = Convert v3 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v20 = Integer integer=1
+    v21 = GetOwnContiguousIndex v19, v20
+    v22 = Increment v10
+    v23 = Convert v22 declared={type=undefined|number}
+    Jump -> next b3(v23, v21)
+  b6(v24):
+    Jump -> next b7()
+  b7():
+    Return v11
+  b8(v25):
+    v26 = Undefined
+    Return v26
+}

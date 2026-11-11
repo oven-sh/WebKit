@@ -66,14 +66,17 @@ class RegExpLiterals {
 public:
     explicit RegExpLiterals(CacheRegistry&);
 
+    RegExp* regExpIfCreated(RegExpRecordID, OptionSet<Yarr::Flags>) const;
     JS_EXPORT_PRIVATE RegExp* regExpFor(VM&, RegExpRecordID, OptionSet<Yarr::Flags>);
 
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
-    // By the number of the record in this image and the flags. Where several images run, a cell finds a record by its pattern, which may be that of another image.
+    static uint64_t keyOf(RegExpRecordID, OptionSet<Yarr::Flags>);
+
     const ImageRegExp* m_records { nullptr };
-    UncheckedKeyHashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cells;
+    Vector<uint32_t> m_firstCellOfRecord;
+    UncheckedKeyHashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cellsWithOtherFlags;
     Vector<RegExp*> m_cellsInOrderOfCreation;
     size_t m_numberOfCellsVisited { 0 };
     uint32_t m_lastFullVisitVersion { 0 };

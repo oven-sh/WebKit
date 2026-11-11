@@ -1,0 +1,45 @@
+# nine operations stand in the join. A second copy of them costs more than the test and the branch that the way with the constant would save, so the ways meet at its head
+# function pick(a, b) { const ok = a ? b.ok : false; b.more; b.more; b.more; b.more; b.more; b.more; b.more; b.more; if (ok) return 1; return 2; }
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK: mechanisms Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[read]]: {{*}} = PropGet {{*}}key="ok"
+# CHECK-NOT: = ToBoolean [[read]]
+# RUN(COUNT): walk f1 mechanisms=none+Folding
+# COUNT-LABEL: code f1:Body
+# COUNT-COUNT-8: = PropGet {{*}}key="more"
+# COUNT-NOT: key="more"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v1 key="ok"
+    Jump -> next b3(v3)
+  b2():
+    v4 = Boolean
+    Jump -> next b3(v4)
+  b3(v5):
+# REPEAT: i = 6..13
+    v%(i) = PropGet v1 key="more"
+# END REPEAT
+    v14 = ToBoolean v5
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    v15 = Integer integer=1
+    Return v15
+  b5():
+    v16 = Integer integer=2
+    Return v16
+}

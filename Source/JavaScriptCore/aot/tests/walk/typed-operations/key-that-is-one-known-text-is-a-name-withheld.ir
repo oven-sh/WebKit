@@ -1,0 +1,10 @@
+# the same functions with typed operations withheld: each access goes by the value of its key
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet
+# RUN(HAS): walk f2 mechanisms=none
+# HAS-LABEL: code f2:Body
+# HAS: = ElemHas
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: = PropGet
+# PROGRAM-OF: key-that-is-one-known-text-is-a-name.ir

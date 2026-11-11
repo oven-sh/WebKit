@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Joins paths that each end with one value for every result of an operation.
 template<typename... Results>
 class ResultsJoin {
 public:
@@ -33,7 +32,7 @@ public:
     {
         m_out.appendTo(m_continuation);
         size_t index = 0;
-        return { Results(m_out.phi(b3TypeOf(Results::representation), m_incoming[index++]))... };
+        return { Results(m_out.phi(machineTypeOf(Results::representation), m_incoming[index++]))... };
     }
 
 private:

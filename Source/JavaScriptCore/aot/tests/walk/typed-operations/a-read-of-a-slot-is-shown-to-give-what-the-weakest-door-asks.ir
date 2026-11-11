@@ -1,0 +1,72 @@
+# function first() { return 1; }
+# function make(i) { return { run: first, name: "s" + i }; }
+# function relabel(i) { const state = make(i); return { kept: state.run, label: state.name }; }
+# const made = relabel(which);
+# print(made.label + made.kept());
+# print("went on");
+# A READ OF A SLOT IS SHOWN TO GIVE WHAT THE WEAKEST DOOR ASKS. The check in front of a compiled store asks typeThatUnitMayTestFor(testablePartOf(..)): a function that the STORING unit does not lead to is asked as `function`. So a
+# reader may not take the slot's word `f1` for shown: some unit's door may have asked no more than "a function". The reader's condition and the writer's check are the same function, the reader's as of a unit that leads to nothing.
+# Here the object is shown (a direct call gives it). What its slot `name` gives is shown to be a text: nothing is asked. What its slot `run` gives is shown to be a function and no more: it is asked in front of the slot that takes f1.
+# RUN(RELABELED): walk f3 mechanisms=all-Inlining
+# RELABELED-LABEL: code f3:Body
+# RELABELED: [[run]]: f1 @JSValue = GetSlot {{*}} key="run" receivers=[L0] level=Proven
+# RELABELED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven
+# RELABELED-NOT: CheckProof [[name]]
+# RELABELED: CheckProof [[run]] checkedType=f1 typeWithoutProof=absent|anything source=Field
+# RELABELED-NOT: CheckProof [[name]]
+# RELABELED: = NewObject -, [[run]], [[name]] layout=L1
+# RUN(ANSWER): run-in-shell mechanisms=-Inlining globalThis.which = 3;
+# ANSWER: s31
+# ANSWER: went on
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=57 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=142 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="first" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="make" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @205
+    v3 = PropGet v2 key="which" [isFreeName] @205
+    v4 = Call v1, -, v3 calleeName="relabel" @197
+    v5 = Builtin builtin=GlobalThis @213
+    v6 = PropGet v5 key="print" [isFreeName] @213
+    v7 = PropGet v4 key="label" @219
+    v8 = PropGet v4 key="kept" @232
+    v9 = Call v8, v4 calleeKey="kept" calleeName="made.kept" @237
+    v10 = Add v7, v9 @232
+    v11 = Call v6, -, v10 calleeName="print" @213
+    v12 = Builtin builtin=GlobalThis @246
+    v13 = PropGet v12 key="print" [isFreeName] @246
+    v14 = String string="went on" @252
+    v15 = Call v13, -, v14 calleeName="print" @246
+    v16 = Undefined @246
+    Return v16 @246
+}
+function f1 name="first" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @26
+    Return v0 @26
+}
+function f2 name="make" module=m0 position=31 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @64
+    v2 = String string="s" @77
+    v3 = Add v2, v0 @83
+    v4 = NewObject -, v1, v3 layout=L0 fields=[1, 0] @57
+    v5 = FinishObject v4 @57
+    Return v5 @57
+}
+function f3 name="relabel" module=m0 position=90 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @126
+    v2 = Call v1, -, v0 calleeName="make" @126
+    v3 = PropGet v2 key="run" @150
+    v4 = PropGet v2 key="name" @168
+    v5 = NewObject -, v3, v4 layout=L1 fields=[0, 1] @142
+    v6 = FinishObject v5 @142
+    Return v6 @142
+}

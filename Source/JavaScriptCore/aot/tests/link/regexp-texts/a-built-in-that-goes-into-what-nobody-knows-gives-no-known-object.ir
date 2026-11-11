@@ -1,0 +1,38 @@
+# The list follows from the program alone. The statics of Object go into what they are handed first: of what nobody knows they would list the names of the cell that stands for it: a known empty list. They are not entered.
+# new RegExp((Object.keys([7].flat()[0]).length ? "named" : "bare").toUpperCase() + "q");   ([7].flat(): flat is not entered: nobody knows what it gives.)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /BAREq/
+# CHECK: text /NAMEDq/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectKeys
+    v1 = Integer integer=7
+    v2 = NewArray v1 contents=anything
+    v3 = PropGet v2 key="flat"
+    v4 = Call v3, v2 calleeKey="flat"
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Call v0, -, v6
+    v8 = PropGet v7 key="length"
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    v10 = String string="named"
+    v11 = PropGet v10 key="toUpperCase"
+    v12 = Call v11, v10 calleeKey="toUpperCase"
+    Jump -> next b3(v12)
+  b2():
+    v13 = String string="bare"
+    v14 = PropGet v13 key="toUpperCase"
+    v15 = Call v14, v13 calleeKey="toUpperCase"
+    Jump -> next b3(v15)
+  b3(v16: anything):
+    v17 = Builtin builtin=RegExp
+    v18 = String string="q"
+    v19 = Add v16, v18
+    v20 = Construct v17, -, v19
+    Return v20
+}

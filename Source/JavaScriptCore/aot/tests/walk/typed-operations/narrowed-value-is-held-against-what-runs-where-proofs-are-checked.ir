@@ -1,0 +1,81 @@
+# testing=CheckProofsAtRunTime: a Narrowed is a new proof about an old value, and that it stands on the edge on which its test says so is the word of whoever built it.
+# Behind each stands a CheckProof that takes the value for what it was in front of the test. An edge may hand over several: the checks stand among them, at the head of the block.
+# function use(f, flag) { const first = f === undefined ? 0 : f(); return flag ? f : first; }
+# OPTIONS: testing=CheckProofsAtRunTime check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[f]]: undefined|null|f1
+# CHECK: [[isUndefined]]: boolean @Boolean = TypeTest [[f]] testedType=undefined
+# CHECK: [[nothing]]: undefined @JSValue = Narrowed [[f]], [[isUndefined]] [isOnTakenEdge]
+# CHECK: CheckProof [[nothing]] checkedType=undefined typeWithoutProof=undefined|null|absent|f1 source=Test
+# CHECK: [[rest]]: null|f1 @JSValue = Narrowed [[f]], [[isUndefined]]
+# CHECK: CheckProof [[rest]] checkedType=null|f1 typeWithoutProof=undefined|null|absent|f1 source=Test
+# The test that the walk itself builds in front of the call.
+# CHECK: [[closure]]: f1 @JSValue = Narrowed
+# CHECK: CheckProof [[closure]] checkedType=f1 typeWithoutProof={{*}}absent|f1 source=Test
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Boolean boolean=true
+    v4 = Boolean
+    v5 = Undefined
+    v6 = Null
+    v7 = Call v1, -, v0, v3
+    v8 = Call v1, -, v5, v4
+    v9 = Call v1, -, v6, v4
+    v10 = Call v2, -, v0, v3
+    v11 = Call v2, -, v5, v4
+    v12 = Call v2, -, v6, v4
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="sink" [isFreeName]
+    v15 = Call v14, -, v7, v8, v9, v10, v11, v12
+    Return v15
+}
+function f1 name="work" module=m0 position=1 sourceRange={start=1 end=29} thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1 @25
+    Return v0 @25
+}
+function f2 name="use" module=m0 position=30 sourceRange={start=30 end=125} length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=undefined @70
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @70
+  b1(v3):
+    v4 = Integer @88
+    Jump -> next b3(v4) @88
+  b2(v5):
+    v6 = Call v0 calleeName="f" @92
+    Jump -> next b3(v6) @92
+  b3(v7):
+    v8 = ToBoolean v1 @106
+    Branch v8 -> taken b4(), notTaken b5() @106
+  b4():
+    Return v0 @113
+  b5():
+    Return v7 @117
+}
+function f3 name="handed" module=m0 position=130 sourceRange={start=130 end=225} length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=undefined @170
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @170
+  b1(v3):
+    v4 = Integer @188
+    Jump -> next b3(v4) @188
+  b2(v5):
+    v6 = Call v0 calleeName="f" @192
+    Jump -> next b3(v6) @192
+  b3(v7):
+    v8 = ToBoolean v1 @206
+    Branch v8 -> taken b4(), notTaken b5() @206
+  b4():
+    Jump -> next b6(v0) @213
+  b5():
+    Jump -> next b6(v7) @217
+  b6(v9):
+    Return v9 @217
+}

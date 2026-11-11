@@ -1,0 +1,47 @@
+# `return list.join(",")`: the call that a block returns at once is part of a stretch like any other. Each arm ends with its own return:
+# the closed arm keeps the tail call that the program wrote, on which its depth may rest, and the typed run returns what the row gives
+# function joined(list: string[]) { list.length; return list.join(","); }
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=Array
+# CHECK: = IsPristine {{*}}builtinClass=Array
+# CHECK: inlineBuiltin=ArrayJoin
+# RUN(CLOSED): walk f1 mechanisms=all-ParameterGuards
+# CLOSED-LABEL: code f1:Body
+# CLOSED: frequency=Rare
+# CLOSED: = Call {{*}}calleeKey="join"
+# CLOSED-NEXT: ReturnCall
+# Walked in line where the caller goes on behind the call, the arms meet as ever: function shown(list: string[]) { return joined(list) + "!"; }
+# RUN(INLINE): walk f2 mechanisms=all-ParameterGuards
+# INLINE-LABEL: code f2:Body
+# INLINE: inlineBuiltin=ArrayJoin
+# INLINE-NOT: ReturnCall
+# INLINE: = Add
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="joined" module=m0 length=1 thisType={type=anything} parameters=[{type=Array<string>}] results=[{type=anything}] {
+  b0(v0: Array<string>):
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="join"
+    v3 = String string=","
+    v4 = Call v2, v0, v3 calleeKey="join" calleeName="list.join"
+    ReturnCall v4
+}
+function f2 name="shown" module=m0 length=1 thisType={type=anything} parameters=[{type=Array<string>}] results=[{type=anything}] {
+  b0(v0: Array<string>):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    v3 = String string="!"
+    v4 = Add v2, v3
+    Return v4
+}

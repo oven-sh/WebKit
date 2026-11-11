@@ -429,8 +429,8 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
 
     bool shouldStop = needHandling(AsyncEvents);
 #if ENABLE(AOT)
-    // Compiled code polls the stop request alone, and looks at no trap bit. Native code that clears whatever was thrown may clear a TerminationException,
-    // whose bit is spent by then. So the polls stay armed for as long as the termination is asked for, and throw it again.
+    // Compiled code polls only the stop request and does not look at the trap bits. Native code that clears any pending exception may clear a TerminationException
+    // whose trap bit was already consumed. So the polls stay armed for as long as termination is requested, and throw it again.
     shouldStop |= vm().hasCompiledCode() && vm().hasTerminationRequest();
 #endif
 
@@ -569,8 +569,6 @@ VMTraps::VMTraps()
     : m_trapSignalingLock(Box<Lock>::create())
     , m_condition(Box<Condition>::create())
 {
-    if (Options::forceTrapAwareStackChecks()) [[unlikely]]
-        m_stack.requestStop();
 }
 
 VMTraps::~VMTraps()

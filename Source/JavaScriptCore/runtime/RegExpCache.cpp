@@ -98,7 +98,7 @@ void RegExpCache::keepParsedPattern(RegExp* regExp)
             m_parsedPatternCharacters -= forgotten->pattern().length();
     };
     forget(m_nextParsedPattern);
-    // The oldest stand behind the slot that is written next.
+    // The oldest entries follow the slot that is written next.
     for (unsigned index = m_nextParsedPattern + 1; m_parsedPatternCharacters + length > maxParsedPatternCharactersKept; ++index)
         forget(index % maxParsedPatternsKept);
     (*m_parsedPatterns)[m_nextParsedPattern] = regExp;

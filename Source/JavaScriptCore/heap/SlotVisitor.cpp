@@ -944,11 +944,12 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
     
     JSC::Heap& heap = m_collector.heap();
     if (Options::numberOfGCMarkers() == 1
+        || Collector::startsHelpersLazily()
         || (heap.m_worldState.load() & Heap::mutatorWaitingBit)
         || !heap.hasHeapAccess()
         || heap.worldIsStopped()) {
         // This is an optimization over drainInParallel() when we have a concurrent mutator but
-        // otherwise it is not profitable.
+        // otherwise it is not profitable. Helpers that start lazily may never start.
         return drainInParallel(timeout);
     }
 

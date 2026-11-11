@@ -1,0 +1,35 @@
+# After `$isPlainInstanceOf` returns true, the library's own source omits reads. It does not look up a private name that it knows it has not stored,
+# because the true result promises that no code has defined the name between the object and the prototype of its class.
+# No operation is there for any run-time check to test, and the true result and the guards that back it read the same record of the runtime.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) and with testing=CheckWalkAtRunTime the true result is checked against the objects themselves.
+# Each object between the object and the first class prototype above it is queried, by a VM inquiry, under the name of each field of the object's layout.
+# 3841 means "nothing, answered by the entry check's true result".
+# RUN(EMIT): emit f3 mechanisms=all testing=CheckWalkAtRunTime
+# EMIT: = Const32(528129)
+# RUN(HARDENED): emit f3 mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: = Const32(528129)
+# RUN(BARE): emit f3 mechanisms=all
+# BARE-NOT: = Const32(528129)
+# A property between them under another name does not concern the entry check.
+# RUN(OTHERNAME): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.send = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# OTHERNAME: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 number | yes 1 undefined | nothing caught
+# OTHERNAME-NEXT: exited with 0
+# Fault injection, testing=AssumeGuardsAndFacts: the entry check assumes that its guards hold. With that fault alone it silently returns true.
+# The read after it finds the slot empty and returns undefined where the language finds the function: the program without AoT prints "no function".
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# BITES: yes 1 undefined | yes 1 undefined
+# BITES-NEXT: yes 1 undefined | yes 1 undefined
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# ASKEDLIE: yes 1 undefined | yes 1 undefined
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: the plain instance check passed, but an object between the instance and the prototype of its class has a value for the field 'type'
+# ASKEDLIE: crashed with
+# RUN(HARDENEDLIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; Object.setPrototypeOf(response, Object.create(upper)); }; later = function () { };
+# HARDENEDLIE: yes 1 undefined | yes 1 undefined
+# HARDENEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# HARDENEDLIE-NEXT: the plain instance check passed, but an object between the instance and the prototype of its class has a value for the field 'type'
+# HARDENEDLIE: crashed with
+# PROGRAM-OF: whatever-lies-between-an-object-and-its-prototype-under-the-name-of-a-field-ends-the-door.ir

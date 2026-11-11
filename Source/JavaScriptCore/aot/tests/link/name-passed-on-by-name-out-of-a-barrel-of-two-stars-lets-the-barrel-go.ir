@@ -1,0 +1,87 @@
+# main.mjs: pick(api)(1), where pick(from) returns from.helper . api.mjs: export { helper } from "./barrel.mjs" . barrel.mjs: export * from "./one.cjs"; export * from "./two.cjs"
+# Where a barrel has two stars the front end cannot say whose name `helper` is: the export of api.mjs is an indirect one onto a name that the barrel does not list. giveExport() finds no such entry: it gives anything,
+# AND THE BARREL's NAMESPACE IS LET GO THEN, with what its stars pass on. (Without that escape `helper` was reached by nobody and the executable died: "This function was not compiled".)
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions modules lookups mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+layout L0 module=m0 fields=[{key="helper" declared={type=anything}}] ownFieldCount=1
+layout L1 module=m2 fields=[{key="other" declared={type=anything}}] ownFieldCount=1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/one.cjs" displayPath="one.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="one.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="/two.cjs" displayPath="two.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+module m3 path="#3" displayPath="two.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f4 requests=[{target=m2 kind=Require completes=true}]
+module m4 path="/barrel.mjs" displayPath="barrel.mjs" flags=[CachesEvaluationError] body=f5 requests=[{target=m1 isDynamicStarExport=true completes=true}, {target=m3 isDynamicStarExport=true completes=true}]
+module m5 path="/api.mjs" displayPath="api.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f6 requests=[{target=m4 completes=true}] exports=[{name="helper" kind=Indirect module=m4 importName="helper"}] requiredNames=[{module=m4 name="helper" exportName="helper" specifier="./barrel.mjs"}]
+module m6 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f7 requests=[{target=m1 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m5 completes=true}]
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = Convert v3 declared={type=L0 flags=[IsExpected]}
+    v5 = NewClosure function=f2
+    PropSet v4, v5 key="helper" mode=Sloppy
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    v1 = Undefined
+    Return v1
+}
+function f2 name="helper" module=m0 sourceRange={start=17 end=53} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 module=m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g1
+    v3 = GetModuleVariable variable=g1
+    v4 = Convert v3 declared={type=L1 flags=[IsExpected]}
+    v5 = Integer integer=2
+    PropSet v4, v5 key="other" mode=Sloppy
+    v7 = Undefined
+    Return v7
+}
+function f4 module=m2 kind=Module flags=[IsHiddenInStackTraces] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m3 [isBare]
+    v1 = Undefined
+    Return v1
+}
+function f5 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 module=m5 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 module=m6 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    v1 = Convert v0 declared={type=f8 flags=[IsFromCompiler]}
+    v2 = ModuleNamespace module=m5
+    v3 = Call v1, -, v2 calleeName="pick"
+    v4 = Integer integer=1
+    v5 = Call v3, -, v4 calleeName="helper"
+    v6 = Undefined
+    Return v6
+}
+function f8 name="pick" module=m6 sourceRange={start=34 end=77} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="helper"
+    Return v1
+}
+entry module=m6 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["fetch", "app"]}, {exportName="then"}]

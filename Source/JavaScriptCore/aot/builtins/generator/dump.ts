@@ -105,6 +105,7 @@ export type DumpedTypePart =
 
 export interface DumpedType {
   isAnything: boolean;
+  isMadeOfListedClasses: boolean;
   hasAnyObject: boolean;
   hasAnyFunction: boolean;
   hasPlainData: boolean;
@@ -122,9 +123,9 @@ export type DumpedPlace =
   | { place: "Slot"; operand: DumpedOperand; slot: string }
   | { place: "ResultSlot"; slot: string }
   | { place: "ResultField"; index: number; holdsOnlyWhatIsStored: boolean }
-  | { place: "NewValue"; type: DumpedType }
+  | { place: "NewValue"; type: DumpedType; holdsWhatIsThrown: boolean }
   | { place: "Member"; operand: DumpedOperand; path: (string | null)[]; firstStep: number }
-  | { place: "NativeCell"; cell: string };
+  | { place: "NativeCell"; cell: string; holdsOnlyWhatIsStored: boolean };
 
 export type DumpedKey =
   | { key: "None" | "Any" | "Indexes" }
@@ -222,6 +223,7 @@ export interface DumpedOverload {
   readsStateBeforeConversions: boolean;
   isSpecialCase: boolean;
   resultIsDeclaredOnly?: true;
+  resultIsHeld?: true;
   reads: Heap[];
   writes: Heap[];
   transfers: DumpedTransfer[];
@@ -286,10 +288,23 @@ export interface DumpedLayout {
   fields: { name: string | null; isOptional: boolean; type: DumpedType }[];
 }
 
+export interface DumpedHostObject {
+  cell: string;
+  function: string | null;
+  prototype: string | null;
+  fields: { name: string | null; value: DumpedPlace }[];
+  keepsStringsOfStoredValues: boolean;
+  nativeAccessors: string[];
+  lockedNames: string[];
+  holder: string | null;
+  platforms: TargetPlatform[];
+}
+
 export interface TableDump {
   entries: DumpedEntry[];
   classes: DumpedClass[];
   layouts: DumpedLayout[];
+  hostObjects: DumpedHostObject[];
 }
 
 export function canonicalTextOf(value: unknown): string {

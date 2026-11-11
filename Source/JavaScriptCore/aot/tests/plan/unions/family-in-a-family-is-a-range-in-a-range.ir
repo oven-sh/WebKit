@@ -1,0 +1,53 @@
+# an interface above three records, and a union of the first and the last of them: any two families are nested or apart, so both are ranges. The union stands side by side within the interface, and a record that is written as neither stands outside
+# interface Node { kind }   First and Last have `end` besides, Stranger has no `kind`: a record with the fields of another is written as it.   type Ends = First | Last;   function kindOf(n: Node) { .. }   function endOf(n: Ends) { .. }
+# RUN: plan shapes mechanisms=none+TypedOperations
+# CHECK: shape [[first]] L1
+# CHECK-NEXT: shape {{*}} L4
+# CHECK-NEXT: shape {{*}} L3
+# CHECK: shape {{*}} L2
+# RUN(WITHHELD): plan shapes mechanisms=none
+# WITHHELD: shape [[first]] L1
+# WITHHELD-NEXT: shape {{*}} L2
+# WITHHELD-NEXT: shape {{*}} L3
+# WITHHELD-NEXT: shape {{*}} L4
+
+layout L0 name="Node" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] flags=[IsNeverAllocated] ownFieldCount=1
+layout L1 name="First" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+layout L2 name="Stranger" module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 name="Middle" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=1
+layout L4 name="Last" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L3 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v2
+    v11 = Call v9, -, v6
+    v12 = Call v9, -, v8
+    v13 = NewClosure function=f2
+    v14 = Call v13, -, v2
+    v15 = Call v13, -, v8
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="sink" [isFreeName]
+    v18 = Call v17, -, v4, v10, v11, v12, v14, v15
+    Return v18
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L3|L4 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1|L3|L4):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}
+function f2 name="endOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L4 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1|L4):
+    v1 = PropGet v0 key="end"
+    Return v1
+}

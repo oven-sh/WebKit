@@ -16,6 +16,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void AllocationEmitter::generateNewArray(const ValueContext& value)
 {
+    if (isListedByArgumentsObjectAlone(value.id())) {
+        define(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value()));
+        return;
+    }
     ArrayAllocationEmitter allocation(generator());
     define(value, allocation.newLiteral(value));
 }
@@ -33,42 +37,48 @@ void AllocationEmitter::generateAppendHole(const ValueContext& value)
 void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
 {
     ArrayStorage kind = value->arrayStorage();
-    if (!hasArrayStorageForm(kind)) {
+    if (kind == ArrayStorage::Other && value->isWritable()) {
+        defineTest(value, emitter<ElementAccessEmitter>().takesNumbersByKindOfStorage(in<CellPointer>(value->arrayOperand()), value->admitsInt32Storage()));
+        return;
+    }
+    if (!accessToElementsHasCode(Opcode::HasArrayStorage, kind, value->admitsInt32Storage(), value->isWritable())) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         defineTest(value, boolean(false));
+        return;
+    }
+    if (value->data()) {
+        Pointer written(m_out.add(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.data)).value(), m_out.zeroExtPtr(numberOf(m_mentions.add(NumberSpace::DataElements, value->data())).value())));
+        defineTest(value, equal(emitter<ElementAccessEmitter>().storageOfList(in<CellPointer>(value->arrayOperand())), written));
+        return;
+    }
+    if (value->admitsInt32Storage()) {
+        CellPointer list = in<CellPointer>(value->arrayOperand());
+        if (value->isWritable()) {
+            defineTest(value, kind == ArrayStorage::Contiguous ? emitter<ElementAccessEmitter>().holdsWritableBoxedElements(list) : emitter<ElementAccessEmitter>().hasWritableNumericStorage(list));
+            return;
+        }
+        defineTest(value, kind == ArrayStorage::Contiguous ? emitter<ElementAccessEmitter>().holdsBoxedElements(list) : emitter<ElementAccessEmitter>().hasDoubleOrInt32Storage(list));
         return;
     }
     defineTest(value, emitter<ElementAccessEmitter>().hasArrayStorage(in<CellPointer>(value->arrayOperand()), kind, value->isWritable()));
 }
 
-void GuardEmitter::generateIsInBounds(const ValueContext& value)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    // The test stands behind the test or the proof of a form, as the access that it is for does.
-    Integer index = elements.indexOrElse(value->positionOperand(), true, nullptr);
-    defineTest(value, elements.testLength(value, index, elements.elementsOf(in<CellPointer>(value->arrayOperand()))).isInside);
-}
-
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)
 {
+    if (!accessToElementsHasCode(Opcode::IsElementPresent, value->arrayStorage(), value->admitsInt32Storage(), false)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        defineTest(value, boolean(false));
+        return;
+    }
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
+    emitter<ElementAccessEmitter>().holdKindOfList(value);
     defineTestByBranching(value, [&](BranchTargets targets) {
-        if (form)
+        if (form && form->kind == ArrayStorage::Double && value->admitsInt32Storage())
+            emitter<ElementAccessEmitter>().branchOnPresentElementInDoubleOrInt32Storage(value, targets);
+        else if (form)
             emitter<ElementAccessEmitter>().branchOnPresentElement(value, *form, targets);
         else
             emitter<ElementAccessEmitter>().branchOnPresentElementInAnyStorage(value, targets);
-    });
-}
-
-// A view of a detached buffer has the length 0.
-void GuardEmitter::generateIsInsideView(const ValueContext& value)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        LBasicBlock fails = targets.notTaken.block();
-        Integer index = elements.indexOrElse(value->positionOperand(), value->keyIsIntegral(), fails);
-        TypedArrayElements view = elements.typedArrayElementsOf(value->viewOperand(), fails);
-        branch(below(index, view.length), targets);
     });
 }
 

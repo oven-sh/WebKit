@@ -1,0 +1,21 @@
+# a new name on Array.prototype is taken: the store is done, and no function of the program that a setter could be leaves. So the store behind it is come to in every run: the build stops
+# Array.prototype.last = f; Array.prototype.push = f;
+# behind-a-store-that-a-lock-turns-away.ir is the twin: the first store throws, so the second never runs
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = Builtin builtin=ArrayPrototype @2
+    PropSet v1, v0 key="last" @3
+    PropSet v1, v0 key="push" @4
+    Return v0 @5
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}

@@ -1,4 +1,5 @@
 import { GeneratorError, Problems } from "./declarations.ts";
+import { cellsFilledByCalledFunctionsAlone } from "./check-host-uses.ts";
 import {
   classTokensArray,
   classTokensType,
@@ -11,7 +12,14 @@ import {
 } from "./emit-cpp-names.ts";
 import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
-import type { ModelAttachments, ModelBound, ModelBuiltin, ModelFunction, ModelSlot, TableModel } from "./model.ts";
+import type {
+  ModelAttachments,
+  ModelBound,
+  ModelBuiltin,
+  ModelFunction,
+  ModelSlot,
+  TableModel,
+} from "./model.ts";
 import { cap } from "./support.ts";
 
 type Constant = readonly [name: string, number: number];
@@ -86,7 +94,6 @@ function formatCheckedNumber({ value, cppExpression }: ModelBound): string[] {
   return [`${isInt64 ? formatInt64(value) : formatDouble(value)}, (${cppExpression})`];
 }
 
-// FNV-1a over the text.
 function hashOfText(text: string): bigint {
   let hash = 0xcbf29ce484222325n;
   for (const byte of Buffer.from(text, "utf8")) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
@@ -101,7 +108,6 @@ export function engineListStampOf(idsHeader: string): string {
   return stamp;
 }
 
-// What code that is compiled with the engine takes from the table at compile time. Only the declarations of the engine decide what is in it.
 export function emitCppIds(model: TableModel): string {
   const problems = new Problems();
   const { checkedJSTypes, linkTimeConstants } = model.syntax;
@@ -152,8 +158,7 @@ function hasUnseenCodeCondition({ attachments }: ModelBuiltin): boolean {
 }
 
 function hasForms({ attachments }: ModelBuiltin): boolean {
-  const { appendForm, jsonTextForm, literalPartsForm, bodyBytesForm } = attachments;
-  return [appendForm, jsonTextForm, literalPartsForm, bodyBytesForm].some(form => form !== null);
+  return attachments.literalPartsForm !== null;
 }
 
 function hasBoxedCallStub({ attachments }: ModelBuiltin): boolean {
@@ -193,13 +198,17 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ]),
     ["BuiltinFeatureUse", "builtinTableFeatureUses", countAttached(attachments => attachments.featureUses)],
     ["BuiltinUnseenCode", "builtinTableUnseenCode", countBuiltins(hasUnseenCodeCondition)],
+    [
+      "BuiltinUnseenCode",
+      "builtinTableInstancesThatAnswerEveryName",
+      countBuiltins(({ attachments }) => attachments.conditionOnInstancesThatAnswerEveryName !== null),
+    ],
     ["BuiltinModuleLoad", "builtinTableModuleLoads", countAttached(attachments => attachments.moduleLoads)],
     ["BuiltinModuleLoad", "builtinTableStartupLoads", startup.loads.length],
     ["BuiltinCalledFunction", "builtinTableCalledFunctions", countAttached(attachments => attachments.calledFunctions)],
     ["BuiltinCalledFunction", "builtinTableStartupCalledFunctions", startup.functionsCalledWithLoads.length],
     ["BuiltinHostObject", "builtinTableHostObjects", model.hostObjects.length],
-    ["BuiltinNamedMemberCall", "builtinTableNamedMemberCalls", model.namedMemberCalls.length],
-    ["BuiltinHostMethodCall", "builtinTableHostMethodCalls", model.hostMethodCalls.length],
+    ["BuiltinName", "builtinTableNativeCellsFilledByCalledFunctions", cellsFilledByCalledFunctionsAlone(model).length],
     ["BuiltinForms", "builtinTableForms", countBuiltins(hasForms)],
     ["BuiltinBoxedCall", "builtinTableBoxedCalls", countBuiltins(hasBoxedCallStub)],
     ["BuiltinNumberConstant", "builtinTableNumberConstants", countBuiltins(isNumberConstant)],
@@ -215,7 +224,6 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["RuntimeFunctionID", "builtinTableFunctionsCalledWithStartupLoads", startup.functionsCalledWithLoads.length],
     ["BuiltinName", "builtinTableNamesOfHostMethodsCallingStartupLoads", startup.namesOfMethodsCallingLoads.length],
     ["RuntimeFunctionID", "builtinTableModuleLoaderFunctions", startup.moduleLoaderFunctions.length],
-    ["BuiltinHostRead", "builtinTableHostReads", model.hostReads.length],
     ["BuiltinID", "builtinTableLockedObjects", countBuiltins(isLockedObject)],
     ["BuiltinMarkedEntry", "builtinTableMarks", builtins.reduce((count, { marks }) => count + marks.length, 0)],
     [
@@ -224,7 +232,6 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
       countBuiltins(({ loadsMachineCodeAs }) => loadsMachineCodeAs !== null),
     ],
     ["BuiltinClosedKeys", "builtinTableClosedKeys", model.closedKeys.length],
-    ["BuiltinNamesReadByNativeCode", "builtinTableNamesReadByNativeCode", model.namesReadByNativeCode.length],
   ];
 }
 
@@ -247,7 +254,6 @@ export function emitCppArraysHeader(model: TableModel, engineListStamp: string):
   const declarations = collectArrayDeclarations(model)
     .filter(([, , count]) => count > 0)
     .flatMap(([cppType, name, count]) => [
-      // lookup.rs in src/aot/builtins/table reads the text names where they lie.
       name === textNamesArray
         ? `extern "C" const ${cppType} ${name};`
         : name === classTokensArray

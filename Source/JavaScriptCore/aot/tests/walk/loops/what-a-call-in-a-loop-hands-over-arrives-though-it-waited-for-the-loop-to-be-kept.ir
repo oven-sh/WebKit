@@ -1,0 +1,94 @@
+# function inc(x) { return x + 1; }   function dbl(x) { return x * 2; }
+# function take(f, n) { let s = 0; for (let k = 0; k < n; k++) s = (s + f(k)) | 0; return s; }
+# let out = take(inc, 4); let acc = 0; const all = turns(); for (let i = 0; i < all; i++) acc += take(dbl, 4) + 0.5; sink(out, acc);
+# A walk of a loop may be undone, and what its calls handed over must go with it: it made the entries of callees wider for calls that are in no code (`cb` of a callee was any function where one closure arrives: 11 instructions a turn).
+# So what a call hands over while a loop is tried waits, is cut back with an undone walk, and is handed on when the outermost loop is kept.
+# Were it dropped there, `take` would believe that `inc` alone arrives, call it directly, and answer 10 42. Inlining is withheld: else the call in the loop is copied and nothing arrives. The number of turns is unknown: else the turns are written out and nothing waits.
+# OPTIONS: check=Validate mechanisms=all-Inlining
+# RUN: walk f0 f3
+# CHECK-LABEL: code f0:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = CallDirect {{*}}function=f3
+# CHECK-LABEL: code f3:Body
+# CHECK: ({{*}}: f1|f2 @JSValue
+# RUN(SHELL): run-in-shell globalThis.turns = () => 4; globalThis.sink = (out, acc) => print(out, acc);
+# SHELL: 10 50
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]}
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]}
+    v6 = Integer integer=4
+    v7 = Call v5, -, v1, v6 calleeName="take"
+    v8 = Integer
+    v9 = Convert v8 declared={type=number}
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="turns" [isFreeName]
+    v12 = Call v11 calleeName="turns"
+    v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v14 = Integer
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v9, v15)
+  b1(v16: number, v17: number):
+    LoopHint
+    v19 = Less v17, v13
+    Branch v19 -> taken b2(), notTaken b3()
+  b2():
+    v20 = Integer integer=4
+    v21 = Call v5, -, v3, v20 calleeName="take"
+    v22 = Double number=0.5
+    v23 = Add v21, v22
+    v24 = Add v16, v23
+    v25 = Convert v24 declared={type=number}
+    v26 = Increment v17
+    v27 = Convert v26 declared={type=number}
+    Jump -> next b1(v25, v27)
+  b3():
+    v28 = Builtin builtin=GlobalThis
+    v29 = PropGet v28 key="sink" [isFreeName]
+    v30 = Call v29, -, v7, v16 calleeName="sink"
+    v31 = Undefined
+    Return v31
+}
+function f1 name="inc" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="dbl" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f3 name="take" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v3, v5)
+  b1(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Call v0, -, v7 calleeName="f"
+    v11 = Add v6, v10
+    v12 = Integer
+    v13 = BitOr v11, v12
+    v14 = Convert v13 declared={type=number}
+    v15 = Increment v7
+    v16 = Convert v15 declared={type=number}
+    Jump -> next b1(v14, v16)
+  b3():
+    Return v6
+}

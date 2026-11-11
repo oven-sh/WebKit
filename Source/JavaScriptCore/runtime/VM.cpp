@@ -417,6 +417,8 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 #if ENABLE(AOT)
     if (AOT::Image::current())
         m_aotState.attachImage(*this);
+    else if (AOT::Image::isDisabledOnThisThread() && Options::aotCountsPath()) [[unlikely]]
+        m_aotState.countWithoutImage(*this);
 #endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
     stringStructure.setWithoutWriteBarrier(JSString::createStructure(*this, nullptr, jsNull()));
@@ -1063,7 +1065,7 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
 }
 
 #if ENABLE(AOT) && !ENABLE(C_LOOP)
-// What a call from bytecode enters in place of llint_native_call_trampoline in a process without a JIT: llint/LowLevelInterpreterAOT.asm.
+// The entry point that a call from bytecode uses instead of llint_native_call_trampoline in a process without a JIT. See llint/LowLevelInterpreterAOT.asm.
 static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
 {
     switch (intrinsic) {
@@ -1524,7 +1526,7 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
     std::optional<HandlerType> nearest;
     if (globalObject->aotInstance() && vm.topCallFrame)
         nearest = AOT::findNearestHandler(vm, vm.topCallFrame);
-    // Nobody lists the frames of what a `catch` takes.
+    // Nothing lists the frames of an exception that a `catch` handles.
     if (nearest == HandlerType::SynthesizedCatch || nearest == HandlerType::Catch)
         return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
     if (Exception* exception = Exception::tryCreateWithStackOfErrorMadeHere(vm, thrownValue))
@@ -1912,8 +1914,8 @@ void VM::drainMicrotasks()
 #if ENABLE(AOT)
     if (m_aotState.hasObjectsBeingFilled) [[unlikely]]
         AOT::RuntimeHooks::finishFillingObjects(*this);
-    if (m_aotState.modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
-        AOT::RuntimeHooks::runFilesThatWaitInLoader(*this);
+    if (m_aotState.modulesWithEagerLoads) [[unlikely]]
+        AOT::RuntimeHooks::transferEagerLoadsToLoader(*this);
 #endif
 
     if (executionForbidden()) [[unlikely]]

@@ -290,7 +290,7 @@ public:
     Structure* trySingleTransition() { return m_transitionTable.trySingleTransition(); }
 
     JS_EXPORT_PRIVATE static Structure* addPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&);
-    JS_EXPORT_PRIVATE static Structure* addNewPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&, PutPropertySlot::Context = PutPropertySlot::UnknownContext, DeferredStructureTransitionWatchpointFire* = nullptr, JSObject* objectThatGetsProperty = nullptr);
+    JS_EXPORT_PRIVATE static Structure* addNewPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&, PutPropertySlot::Context = PutPropertySlot::UnknownContext, DeferredStructureTransitionWatchpointFire* = nullptr, JSObject* targetObject = nullptr);
     static Structure* addPropertyTransitionToExistingStructureConcurrently(Structure*, UniquedStringImpl* uid, unsigned attributes, PropertyOffset&);
     static Structure* addPropertyTransitionToExistingStructure(Structure*, PropertyName, unsigned attributes, PropertyOffset&);
     static Structure* removeNewPropertyTransition(VM&, Structure*, PropertyName, PropertyOffset&, DeferredStructureTransitionWatchpointFire* = nullptr);
@@ -440,6 +440,7 @@ public:
     bool isPristine() const { return typeInfo().hasPristineNames(); }
     JS_EXPORT_PRIVATE bool tryMarkPristine(VM&);
     bool clearsPristineBitsOf(const Structure& previous) const { return (previous.isPristine() && !isPristine()) || (previous.hasPristineElements() && !hasPristineElements()); }
+    static bool isSymbolThatNothingProbes(UniquedStringImpl* uid) { return uid->isSymbol() && !uid->isStatic() && !static_cast<SymbolImpl*>(uid)->isRegistered() && !static_cast<SymbolImpl*>(uid)->isPrivate(); }
 
     bool hasFrozenElementsInPlace() const { return transitionKind() == TransitionKind::FreezeElementsInPlace; }
 

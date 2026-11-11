@@ -843,12 +843,12 @@ public:
 
     void andb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_AND_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_AND_EvGb, src, base, offset);
     }
 
     void andb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_AND_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_AND_EvGb, src, base, index, scale, offset);
     }
 
     void andl_ir(int imm, RegisterID dst)
@@ -1157,12 +1157,12 @@ public:
 
     void orb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_OR_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_OR_EvGb, src, base, offset);
     }
 
     void orb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_OR_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_OR_EvGb, src, base, index, scale, offset);
     }
 
     void orl_ir(int imm, RegisterID dst)
@@ -1337,12 +1337,12 @@ public:
 
     void subb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_SUB_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_SUB_EvGb, src, base, offset);
     }
 
     void subb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_SUB_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_SUB_EvGb, src, base, index, scale, offset);
     }
 
     void subl_ir(int imm, RegisterID dst)
@@ -1573,12 +1573,12 @@ public:
 
     void xorb_rm(RegisterID src, int offset, RegisterID base)
     {
-        m_formatter.oneByteOp(OP_XOR_EvGb, src, base, offset);
+        m_formatter.oneByteOp8(OP_XOR_EvGb, src, base, offset);
     }
 
     void xorb_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
-        m_formatter.oneByteOp(OP_XOR_EvGb, src, base, index, scale, offset);
+        m_formatter.oneByteOp8(OP_XOR_EvGb, src, base, index, scale, offset);
     }
 
     void xorb_im(int imm, int offset, RegisterID base)
@@ -2004,6 +2004,11 @@ public:
         m_formatter.oneByteOp(OP_CMP_GvEv, src, base, offset);
     }
 
+    void cmpl_mr(int offset, RegisterID base, RegisterID index, int scale, RegisterID src)
+    {
+        m_formatter.oneByteOp(OP_CMP_GvEv, src, base, index, scale, offset);
+    }
+
     void cmpl_ir(int imm, RegisterID dst)
     {
         if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -2082,6 +2087,11 @@ public:
     void cmpq_mr(int offset, RegisterID base, RegisterID src)
     {
         m_formatter.oneByteOp64(OP_CMP_GvEv, src, base, offset);
+    }
+
+    void cmpq_mr(int offset, RegisterID base, RegisterID index, int scale, RegisterID src)
+    {
+        m_formatter.oneByteOp64(OP_CMP_GvEv, src, base, index, scale, offset);
     }
 
     void cmpq_ir(int imm, RegisterID dst)
@@ -3577,6 +3587,17 @@ public:
         m_formatter.oneByteOp64RIPRelative(OP_MOV_GvEv, dst);
     }
 
+    void cmpq_rip(RegisterID left)
+    {
+        m_formatter.oneByteOp64RIPRelative(OP_CMP_GvEv, left);
+    }
+
+    void movsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_MOVSD_VsdWsd, (RegisterID)dst);
+    }
+
     // Flow control:
 
     AssemblerLabel call()
@@ -4107,6 +4128,12 @@ public:
     {
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.twoByteOp(OP2_PCMPEQB_VdqWdq, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void pcmpeqw_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PCMPEQW_VdqWdq, (RegisterID)dst, (RegisterID)src);
     }
 
     void subsd_rr(XMMRegisterID src, XMMRegisterID dst)
@@ -6666,8 +6693,8 @@ public:
         char* code = static_cast<char*>(m_formatter.data());
         ASSERT(!WTF::unalignedLoad<int32_t>(std::bit_cast<int32_t*>(code + from.offset()) - 1));
         setRel32(code + from.offset(), code + to.offset());
-        if (m_recordsJumps) [[unlikely]]
-            m_linkedJumps.append(X86LinkedJump { from.offset(), to.offset() });
+        if (from.offset() == to.offset() && m_recordsJumps) [[unlikely]]
+            m_jumpsToNextInstruction.append(from.offset());
     }
 
     void setRecordsJumps(bool recordsJumps)
@@ -6676,17 +6703,20 @@ public:
         m_recordsJumps = recordsJumps;
     }
 
+    // X86JumpShortener::startOfRareCode.
+    void setStartOfRareCode(uint32_t offset) { m_startOfRareCode = offset; }
+
     void assignJumpKinds()
     {
         RELEASE_ASSERT(m_recordsJumps);
-        assignX86JumpKinds(m_linkedJumps, m_emittedJumps.span());
+        collectX86LinkedJumps({ static_cast<const uint8_t*>(m_formatter.data()), codeSize() }, m_emittedJumps.span(), m_jumpsToNextInstruction, m_linkedJumps);
     }
 
     Vector<X86JumpShift> shortenJumps()
     {
         RELEASE_ASSERT(m_recordsJumps);
         Vector<X86JumpShift> shifts;
-        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts);
+        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts, m_startOfRareCode);
         m_formatter.m_buffer.setCodeSize(size);
         m_indexOfLastWatchpoint = INT_MIN;
         m_indexOfTailOfLastWatchpoint = INT_MIN;
@@ -6979,8 +7009,11 @@ private:
 
     AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
     {
-        if (m_recordsJumps) [[unlikely]]
+        if (m_recordsJumps) [[unlikely]] {
+            if (m_emittedJumps.size() == m_emittedJumps.capacity())
+                m_emittedJumps.reserveCapacity(std::max(initialEmittedJumpCapacity, 2 * m_emittedJumps.capacity()));
             m_emittedJumps.append(X86EmittedJump { end.offset(), kind, condition });
+        }
         return end;
     }
 
@@ -7368,6 +7401,7 @@ private:
         void oneByteOpAddr(OneByteOpcodeID opcode, int reg, uint32_t address)
         {
             SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexIfNeeded(reg, 0, 0);
             writer.putByteUnchecked(opcode);
             writer.memoryModRMAddr(reg, address);
         }
@@ -7632,6 +7666,16 @@ private:
             writer.putIntUnchecked(0);
         }
 
+        void twoByteOpRIPRelative(TwoByteOpcodeID opcode, int reg)
+        {
+            SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexIfNeeded(reg, 0, 0);
+            writer.putByteUnchecked(OP_2BYTE_ESCAPE);
+            writer.putByteUnchecked(opcode);
+            writer.putModRm(ModRmMemoryNoDisp, reg, SingleInstructionBufferWriter::noBase);
+            writer.putIntUnchecked(0);
+        }
+
         void twoByteOp64(TwoByteOpcodeID opcode, int reg)
         {
             SingleInstructionBufferWriter writer(m_buffer);
@@ -7816,7 +7860,10 @@ private:
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
     bool m_recordsJumps { false };
+    uint32_t m_startOfRareCode { UINT32_MAX };
+    static constexpr size_t initialEmittedJumpCapacity = 64;
     Vector<X86EmittedJump> m_emittedJumps;
+    Vector<uint32_t> m_jumpsToNextInstruction;
     Vector<X86LinkedJump> m_linkedJumps;
 };
 

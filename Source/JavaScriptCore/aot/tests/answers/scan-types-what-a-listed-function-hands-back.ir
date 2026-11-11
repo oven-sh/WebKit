@@ -1,0 +1,160 @@
+# function add(a, b) { return a + b; }   function sum(n) { let total = 0; for (let i = 0; i < n; i++) total += add(i & 7, 1); return total; }
+# var table = { first: function (x) { return x + 1; }, second: function (x) { return x * 2; } };
+# function both(n) { let total = 0; for (let i = 0; i < n; i++) total += (i & 1 ? table.first : table.second)(i & 3); return total; }
+# function pick(o) { return o; }   function held(n, o) { let total = 0; for (let i = 0; i < n; i++) total += pick(o); return total; }
+# async function later(x) { return x + 1; }   function waits(n) { let total = 0; for (let i = 0; i < n; i++) total += later(i); return total; }
+# RUN(ANSWER): run-in-shell globalThis.held = { valueOf() { print("asked"); return 2; } }; globalThis.show = (x) => print(String(x));
+# ANSWER: 15
+# ANSWER-NEXT: 10
+# ANSWER-NEXT: asked
+# ANSWER-NEXT: asked
+# ANSWER-NEXT: asked
+# ANSWER-NEXT: asked
+# ANSWER-NEXT: asked
+# ANSWER-NEXT: 10
+# ANSWER-NEXT: 0[object Promise][object Promise][object Promise][object Promise][object Promise]
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="table" module=m0 declared={type=anything flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g1 name="add" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="pick" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g3 name="later" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=5
+    v2 = PropGet v0 key="held" [isFreeName]
+    v3 = PropGet v0 key="show" [isFreeName]
+    v4 = NewClosure function=f4
+    v5 = NewClosure function=f5
+    v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v1 calleeName="sum"
+    v11 = Call v3, -, v10 calleeName="show"
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v1 calleeName="both"
+    v14 = Call v3, -, v13 calleeName="show"
+    v15 = NewClosure function=f6
+    v16 = Call v15, -, v1, v2 calleeName="held"
+    v17 = Call v3, -, v16 calleeName="show"
+    v18 = NewClosure function=f8
+    v19 = Call v18, -, v1 calleeName="waits"
+    v20 = Call v3, -, v19 calleeName="show"
+    Return v20
+}
+function f1 name="sum" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g1
+    v7 = Integer integer=7
+    v8 = BitAnd v3, v7
+    v9 = Integer integer=1
+    v10 = Call v6, -, v8, v9 calleeName="add"
+    v11 = Add v2, v10
+    v12 = Increment v3
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v2
+}
+function f2 name="add" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="both" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b6()
+  b2():
+    v6 = Integer integer=1
+    v7 = BitAnd v3, v6
+    v8 = ToBoolean v7
+    v9 = GetModuleVariable variable=g0
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v10 = PropGet v9 key="first"
+    Jump -> next b5(v10)
+  b4():
+    v11 = PropGet v9 key="second"
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Integer integer=3
+    v14 = BitAnd v3, v13
+    v15 = Call v12, -, v14
+    v16 = Add v2, v15
+    v17 = Increment v3
+    Jump -> next b1(v16, v17)
+  b6():
+    Return v2
+}
+function f4 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f5 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f6 name="held" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g2
+    v8 = Call v7, -, v1 calleeName="pick"
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}
+function f7 name="pick" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f8 name="waits" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g3
+    v7 = Call v6, -, v3 calleeName="later"
+    v8 = Add v2, v7
+    v9 = Increment v3
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v2
+}
+function f9 name="later" module=m0 flags=[IsAsync, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

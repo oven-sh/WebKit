@@ -1,0 +1,12 @@
+# X is written above Y and Y above X: whoever climbs the row of bases comes to no end, in the build or at run time. Below stands under the ring, so its row does not end either.
+# Heir stands under Root, which has no base: that row ends, and nothing is said of it.
+# The front end's link cuts such rings (bun: src/aot/link/rings_of_bases.rs), so no wire of a build holds one: whoever writes bases anew and brings one is stopped here by name.
+# RUN: verify
+# DIAGNOSTIC: BaseChainCycle 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="X" module=m0 base=L1 supertypes=[L1] flags=[HasHeritage]
+layout L1 kind=Instance name="Y" module=m0 base=L0 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Below" module=m0 base=L0 supertypes=[L0] flags=[HasHeritage]
+layout L3 kind=Instance name="Root" module=m0
+layout L4 kind=Instance name="Heir" module=m0 base=L3 supertypes=[L3] flags=[HasHeritage]

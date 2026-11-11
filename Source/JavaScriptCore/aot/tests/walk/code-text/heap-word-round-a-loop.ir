@@ -1,0 +1,28 @@
+# the type that a read of a heap word names holds what every store that reaches the read has put: here the store of another value comes round the loop
+# RUN: verify-code
+# CHECK: TypeOutOfDate: f0 CoroutineBody b1 v6 GetHeapFrameWord: the read names undefined, and a store that reaches a read of the word under that type puts true there: v7 in b1
+# -- code
+# code f0:CoroutineBody {
+#   v0: undefined @JSValue = Undefined
+#   v1: true @JSValue = Boolean boolean=true
+#   b0(v2: anything @JSValue, v3: anything @JSValue) entry=0:
+#     v4: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = PutHeapFrameWord v4, v0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b1()
+#   b1() isInLoop=true isLoopHead=true:
+#     v6: undefined @JSValue = GetHeapFrameWord v4 valueType=undefined traits=[mayTouchMemory]
+#     v7 @Void = PutHeapFrameWord v4, v1 traits=[mayWriteObservableState, mayTouchMemory]
+#     v8: boolean @Boolean = TypeTest v2 testedType=undefined
+#     Branch v8 -> taken b1(), notTaken b2()
+#   b2():
+#     Return v6
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0

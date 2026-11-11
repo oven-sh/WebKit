@@ -136,13 +136,77 @@ void emitLoadCurrentAsyncContext(StubAssembler& jit, GPRReg context)
     jit.load64(Address(context, InternalFieldTuple::offsetOfInternalField(0)), context);
 }
 
+static void emitStoreCurrentAsyncContext(StubAssembler& jit, TrustedImm64 context, GPRReg scratch)
+{
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
+    jit.loadPtr(Address(scratch, JSGlobalObject::offsetOfAsyncContextData()), scratch);
+    jit.store64(context, Address(scratch, InternalFieldTuple::offsetOfInternalField(0)));
+}
+
 void emitBranchUnlessFrameMayContinue(StubAssembler& jit, const AwaitRegisters& registers, JumpList& mustSuspend)
 {
     for (const AwaitCondition& condition : awaitConditionsOnState)
         emitBranchUnlessHolds(jit, condition, registers, mustSuspend);
 }
 
-// Expects a copy of the awaited value in result.
+static constexpr Address addressOfFrameThatMayContinue(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue));
+static constexpr int32_t maxBytesOfAwaitingFrames = 128 * KB;
+
+static void emitBranchUnlessCallIsAwaited(StubAssembler& jit, GPRReg returnAddress, GPRReg awaitStub, GPRReg scratch, JumpList& otherwise)
+{
+    RELEASE_ASSERT(noOverlap(returnAddress, awaitStub, scratch, instanceGPR));
+#if CPU(X86_64)
+    constexpr int32_t moveIntoSiteWord = 0xba41;
+    constexpr int32_t call = 0xe8;
+    constexpr int32_t offsetOfCall = 6;
+    constexpr int32_t offsetOfDisplacement = offsetOfCall + 1;
+    constexpr int32_t offsetAfterCall = offsetOfDisplacement + sizeof(int32_t);
+    static_assert(gprOf(resumeModeRegister) == X86Registers::r10);
+    otherwise.append(jit.branch16(CCallHelpers::NotEqual, Address(returnAddress), TrustedImm32(moveIntoSiteWord)));
+    otherwise.append(jit.branch8(CCallHelpers::NotEqual, Address(returnAddress, offsetOfCall), TrustedImm32(call)));
+    jit.load32SignedExtendTo64(Address(returnAddress, offsetOfDisplacement), scratch);
+    jit.getEffectiveAddress(BaseIndex(returnAddress, scratch, CCallHelpers::TimesOne, offsetAfterCall), scratch);
+    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, awaitStub));
+#elif CPU(ARM64)
+    constexpr int32_t branchWithLink = static_cast<int32_t>(0x94000000u);
+    constexpr int32_t displacementMask = 0x3ffffff;
+    JumpList isAwaited;
+    jit.sub64(awaitStub, returnAddress, scratch);
+    jit.urshift64(TrustedImm32(2), scratch);
+    for (int32_t offset : { 4, 8 }) {
+        jit.sub32(TrustedImm32(1), scratch);
+        jit.and32(TrustedImm32(displacementMask), scratch);
+        jit.or32(TrustedImm32(branchWithLink), scratch);
+        if (offset == 4)
+            isAwaited.append(jit.branch32(CCallHelpers::Equal, scratch, Address(returnAddress, offset)));
+        else
+            otherwise.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(returnAddress, offset)));
+    }
+    isAwaited.link(&jit);
+#endif
+}
+
+struct AwaitingCallerRegisters { GPRReg frame, returnAddress, awaitStub, scratch; };
+
+static void emitBranchUnlessCallersAwait(StubAssembler& jit, const AwaitingCallerRegisters& registers, JumpList& otherwise)
+{
+    const auto [frame, returnAddress, awaitStub, scratch] = registers;
+    RELEASE_ASSERT(noOverlap(frame, returnAddress, awaitStub, scratch, instanceGPR));
+    const GPRReg vm = scratch;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+    otherwise.append(jit.branchTest8(CCallHelpers::NonZero, Address(vm, static_cast<int32_t>(tracksNoAsyncContext.word.offset))));
+    jit.loadPtr(Address(vm, VM::topEntryFrameOffset()), scratch);
+    jit.subPtr(fp, scratch);
+    otherwise.append(jit.branch64(CCallHelpers::Above, scratch, TrustedImm32(maxBytesOfAwaitingFrames)));
+    jit.loadStubAddress(awaitCallBySavingFrame(), awaitStub);
+    jit.move(fp, frame);
+    Label nextFrame = jit.label();
+    jit.loadPtr(Address(frame, sizeof(void*)), returnAddress);
+    emitBranchUnlessCallIsAwaited(jit, returnAddress, awaitStub, scratch, otherwise);
+    jit.loadPtr(Address(frame), frame);
+    jit.branchPtr(CCallHelpers::NotEqual, addressOfFrameThatMayContinue, frame).linkTo(nextFrame, &jit);
+}
+
 static void emitLoadSettledValue(StubAssembler& jit, const AwaitRegisters& registers, GPRReg result, JumpList& isOtherObject, JumpList& mustSuspend)
 {
     const auto [savedFrame, awaited, word, other] = registers;
@@ -150,7 +214,6 @@ static void emitLoadSettledValue(StubAssembler& jit, const AwaitRegisters& regis
     RELEASE_ASSERT(noOverlap(result, awaited, word, other));
     Jump notCell = jit.branchIfNotCell(awaited);
     Jump isObject = jit.branchIfObject(awaited);
-    // The sentinel says that a generator resumes the function.
     mustSuspend.append(jit.branchIfType(awaited, SentinelType));
     Jump notObject = jit.jump();
     isObject.link(&jit);
@@ -174,7 +237,6 @@ static Label emitFunctionReturn(StubAssembler& jit)
 
 static void emitReturnToCallerOfFunction(StubAssembler& jit, GPRReg scratch, Label returnToCallerOfFunction)
 {
-    // Returning through the label keeps calls and returns paired for the return address predictor.
     jit.loadLabelAddress(returnToCallerOfFunction, scratch);
 #if CPU(X86_64)
     jit.storePtr(scratch, Address(sp));
@@ -184,15 +246,12 @@ static void emitReturnToCallerOfFunction(StubAssembler& jit, GPRReg scratch, Lab
 #endif
 }
 
-// Returns to the caller of the suspended function, so the callee saves reloaded here are not clobbers of the stub.
 static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratch, Label returnToCallerOfFunction)
 {
     emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
     emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
 }
 
-// Calls the operation with the instance as its first and the suspension words as its sixth argument. The others are already in their registers.
-// The callee saves are reloaded in front of the call: the operation stores the ones it uses, and the function has read what it left in them for the last time.
 static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operation, GPRReg siteWord, Label returnToCallerOfFunction, GPRReg valueToReturn = InvalidGPRReg)
 {
     constexpr int32_t offsetOfSiteWord = OBJECT_OFFSETOF(SuspensionWords, siteWord);
@@ -225,7 +284,6 @@ static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operatio
         jit.load64(Address(sp, sizeof(SuspensionWords)), valueToReturn);
     }
 #if CPU(X86_64)
-    // A handler in the function reads what the function keeps in this register.
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
     jit.emitFunctionEpilogue();
     emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
@@ -241,7 +299,6 @@ static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operatio
     jit.jumpToExceptionHandler();
 }
 
-// Calls operation(instance, subject, frame, bottom, resumeAddress, suspensionWords). The subject, an awaited value or a generator, is already in its argument register.
 static void emitSuspend(StubAssembler& jit, Entry operation, GPRReg siteWord, Label returnToCallerOfFunction, GPRReg valueToReturn = InvalidGPRReg)
 {
     const GPRReg frame = jit.reuseScratch(StubRegister::A2);
@@ -264,7 +321,6 @@ static constexpr StubRegister secondRegisterOfFrameCopy = StubRegister::A0;
 static constexpr StubRegister secondRegisterOfFrameCopy = StubRegister::T10;
 #endif
 
-// The stack is as at the entry of the stub. The number of words kept is even and may be zero. The words skipped at the bottom of the frame lie below them.
 static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& registers)
 {
     const auto [subject, saved, count, cursor, word, second] = registers;
@@ -315,21 +371,33 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
 #endif
 }
 
-// The SavedFrame has held this frame before, or emitAllocateSavedFrame has made it for this frame. The write barrier is left to the caller.
-static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, uint8_t flags)
+enum class FrameMayLieOnHeap : bool { No, Yes };
+static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, FrameMayLieOnHeap mayLieOnHeap, uint8_t flags, uint8_t flagsKept = 0)
 {
     const GPRReg saved = registers.saved;
     const GPRReg word = registers.word;
     const Address version(saved, SavedFrame::offsetOfVersion());
     jit.add32(TrustedImm32(1), version);
     jit.storeFence();
+    Jump liesOnHeap;
+    if (mayLieOnHeap == FrameMayLieOnHeap::Yes)
+        liesOnHeap = jit.branchTest8(CCallHelpers::NonZero, Address(saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(SavedFrame::liesOnHeapBit));
     emitCopyFrameWords(jit, registers);
 #if CPU(X86_64)
     jit.store64(SavedFrame::preservedRegister, Address(saved, SavedFrame::offsetOfPreservedRegister()));
 #endif
     jit.loadCallerReturnAddress(0, word);
     jit.storePtr(word, Address(saved, SavedFrame::offsetOfResumeAddress()));
-    jit.store8(TrustedImm32(flags), Address(saved, SavedFrame::offsetOfFlags()));
+    if (mayLieOnHeap == FrameMayLieOnHeap::Yes)
+        liesOnHeap.link(&jit);
+    if (flagsKept) {
+        jit.load8(Address(saved, SavedFrame::offsetOfFlags()), word);
+        jit.and32(TrustedImm32(flagsKept), word);
+        if (flags)
+            jit.or32(TrustedImm32(flags), word);
+        jit.store8(word, Address(saved, SavedFrame::offsetOfFlags()));
+    } else
+        jit.store8(TrustedImm32(flags), Address(saved, SavedFrame::offsetOfFlags()));
     jit.and32(TrustedImm32((1 << SavedFrame::liveSlotMapOffsetBits) - 1), siteWord, word);
     jit.add32(TrustedImm32(1), word);
     jit.store32(word, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
@@ -337,7 +405,6 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
     jit.add32(TrustedImm32(1), version);
 }
 
-// Takes SavedFrame::skippedAtTopOf off the number.
 static void emitSubtractNumberOfWordsSkippedAtTop(StubAssembler& jit, GPRReg siteWord, GPRReg number, GPRReg scratch)
 {
 #if CPU(X86_64)
@@ -369,9 +436,6 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     static_assert(!static_cast<unsigned>(Continuation::None) && !JSValue::ValueEmpty);
     RELEASE_ASSERT(noOverlap(saved, count, allocator, scratch, siteWord, instanceGPR));
 
-    // A validating build keeps a list of all SavedFrames.
-    needsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFramesAreListed))));
-
 #if CPU(X86_64)
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(sizeof(void*))), fp, count);
     jit.sub64(sp, count);
@@ -387,39 +451,17 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.addOutOfLinePart([skipsManyPairs, hasSkippedPairs, siteWord, skippedAtBottom](StubAssembler& jit) {
         skipsManyPairs.link(&jit);
         jit.urshift64(siteWord, TrustedImm32(SavedFrame::manySkippedPairsShift), skippedAtBottom);
+        jit.and32(TrustedImm32(UINT16_MAX), skippedAtBottom);
         jit.jump().linkTo(hasSkippedPairs, &jit);
     });
     jit.lshift32(TrustedImm32(1), skippedAtBottom);
     jit.sub32(skippedAtBottom, count);
     needsOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(SavedFrame::maxWordsAllocatedInStub)));
 
-    // What SavedFrame::create does to the lowest of the words kept.
-    Jump clearsNothing = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::maxClearedWords << SavedFrame::clearedWordsShift));
-    const GPRReg belowWordsKept = saved;
-    const GPRReg wordsToClear = allocator;
-#if CPU(X86_64)
-    jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), belowWordsKept);
-#else
-    jit.move(sp, belowWordsKept);
-    jit.addLeftShift64(belowWordsKept, skippedAtBottom, TrustedImm32(3), belowWordsKept);
-    jit.subPtr(TrustedImm32(sizeof(uint64_t)), belowWordsKept);
-#endif
-    extractBits(jit, siteWord, SavedFrame::clearedWordsShift, SavedFrame::clearedWordsBits, wordsToClear);
-    Label clearsNext = jit.label();
-#if CPU(ARM64)
-    jit.store64(ARM64Registers::zr, BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
-#else
-    jit.store64(TrustedImm32(0), BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
-#endif
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), wordsToClear).linkTo(clearsNext, &jit);
-    clearsNothing.link(&jit);
-
-    // A pair of words is a size step, and the number of words is even.
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(uint64_t) && !(sizeof(SavedFrame) % MarkedSpace::sizeStep));
     constexpr ptrdiff_t offsetOfAllocatorWithoutWords = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(SavedFrame) / MarkedSpace::sizeStep * sizeof(Allocator);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
     jit.loadPtr(BaseIndex(allocator, count, CCallHelpers::TimesFour, offsetOfAllocatorWithoutWords), allocator);
-    // From here on count has the two counts as the cell has them.
     jit.lshift32(TrustedImm32(16), skippedAtBottom);
     jit.or32(skippedAtBottom, count);
     needsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
@@ -435,12 +477,9 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.store64(TrustedImm32(0), Address(saved, JSObject::butterflyOffset()));
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfResumeAddress()));
     jit.store64(saved, Address(saved, SavedFrame::offsetOfPromiseOrWaiter()));
-    // Nobody reads the word of the preserved register before a save has written it.
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfAsyncContext()));
 #endif
-    // The upper half of the register is zero, and so is the version.
     jit.store64(count, Address(saved, SavedFrame::offsetOfNumberOfWords()));
-    // One word: no offset of a map, the kind, no continuation, the saved registers or pairs, no flags.
     static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && !(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() % sizeof(uint64_t)) && SavedFrame::liveSlotMapOffsetBits >= 16);
     jit.and32(TrustedImm32(((1 << SavedFrame::savedRegisterBits) - 1) << SavedFrame::liveSlotMapOffsetBits), siteWord, scratch);
     if (static_cast<int32_t>(kind)) {
@@ -476,7 +515,6 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     return refill;
 }
 
-// The barrier takes its owner in the first operand register of stubs and overwrites the register of the site word.
 static void emitBarrierPreservingOperands(StubAssembler& jit, GPRReg owner, GPRReg firstStubOperand, GPRReg siteWord, GPRReg scratch)
 {
     RELEASE_ASSERT(firstStubOperand == gprOf(firstStubOperandRegister));
@@ -494,14 +532,12 @@ static void emitBarrierPreservingOperands(StubAssembler& jit, GPRReg owner, GPRR
     });
 }
 
-// registers.awaited is a promise of the realm. Nothing is stored before the last exit.
 static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& takesNoInlineReaction, JumpList& needsOperation, uint64_t reactionBits = resumeReactionBits)
 {
     const auto [savedFrame, promise, word, other] = registers;
     emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, registers, takesNoInlineReaction);
     jit.move(TrustedImm64(static_cast<int64_t>(reactionBits)), other);
     jit.or64(other, word);
-    // The reaction keeps the context where that of a task with a cell keeps the cell: JSPromise::performPromiseThenWithInternalMicrotask.
     Jump capturesNothing = emitBranchIfTracksNoAsyncContext(jit, other);
     emitLoadCurrentAsyncContext(jit, other);
     Jump isCell = jit.branchIfCell(other);
@@ -516,7 +552,6 @@ static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegister
     jit.store64(word, Address(promise, JSPromise::offsetOfPacked()));
 }
 
-// registers.awaited is a cell that a call without a promise returned.
 static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& isResultOfCallee, JumpList& takesNoInlineReaction, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;
@@ -551,16 +586,14 @@ StubSignature signatureOfAwaitBySavingFrame(StubKey key)
 {
     switch (static_cast<AwaitedOperand>(key.form())) {
     case AwaitedOperand::Value:
-    case AwaitedOperand::ValueAfterTurn:
     case AwaitedOperand::ValueInModuleBody:
-        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) });
+        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) }).fillingOperandInFront(0);
     case AwaitedOperand::ResultOfCallWithoutPromise:
         return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) });
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The awaited value, the SavedFrame, the site word.
 StubSignature signatureOfAwaitWithSavedFrame(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T9) }); }
 
 struct AwaitOperations {
@@ -575,15 +608,12 @@ static AwaitOperations operationsOf(AwaitedOperand form)
         return { Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTAwaitWithSavedFrame };
     case AwaitedOperand::ResultOfCallWithoutPromise:
         return { Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitCallWithSavedFrame };
-    case AwaitedOperand::ValueAfterTurn:
-        return { Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn };
     case AwaitedOperand::ValueInModuleBody:
         return { Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// StepAsyncGenerator suspends its site by a jump to a stub that awaits, and its site reads a status beside the value.
 static void emitReturnAwaitedValue(StubAssembler& jit, GPRReg siteWord)
 {
     static_assert(!static_cast<int32_t>(AsyncGeneratorStepStatus::Result));
@@ -596,7 +626,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
 {
     const auto form = static_cast<AwaitedOperand>(jit.key().form());
     const bool awaitsCallWithoutPromise = form == AwaitedOperand::ResultOfCallWithoutPromise;
-    const bool queuesJobInOperation = form == AwaitedOperand::ValueAfterTurn || form == AwaitedOperand::ValueInModuleBody;
+    const bool queuesJobInOperation = form == AwaitedOperand::ValueInModuleBody;
     const AwaitOperations operations = operationsOf(form);
     const GPRReg result = jit.result();
     const GPRReg awaited = awaitsCallWithoutPromise ? jit.allocateScratch(StubRegister::A1) : jit.operand(0);
@@ -610,11 +640,17 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     RELEASE_ASSERT(awaited == operationArgumentGPR(1) && savedFrame == operationArgumentGPR(2));
 
     JumpList mustSuspend;
+    JumpList isOtherFrame;
     JumpList isOtherObject;
+    Label mayContinue;
+    const AwaitCondition& queueIsEmpty = awaitConditionsOnState[1];
     if (awaitsCallWithoutPromise)
         jit.move(result, awaited);
-    if (form != AwaitedOperand::ValueInModuleBody)
-        emitBranchUnlessFrameMayContinue(jit, registers, mustSuspend);
+    if (form != AwaitedOperand::ValueInModuleBody) {
+        emitBranchUnlessHolds(jit, awaitConditionsOnState[0], registers, isOtherFrame);
+        mayContinue = jit.label();
+        emitBranchUnlessHolds(jit, queueIsEmpty, registers, mustSuspend);
+    }
     switch (form) {
     case AwaitedOperand::Value:
         jit.move(awaited, result);
@@ -625,14 +661,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         emitLoadSettledValue(jit, registers, result, isOtherObject, mustSuspend);
         jit.returnToCaller();
         break;
-    case AwaitedOperand::ValueAfterTurn:
-        // Both turns run nothing of the program unless the value has a "then".
-        emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
-        jit.move(awaited, result);
-        jit.returnToCaller();
-        break;
     case AwaitedOperand::ValueInModuleBody:
-        // A require() of the module runs the job itself, so the engine decides which queue takes it.
         mustSuspend.append(jit.jump());
         break;
     }
@@ -641,18 +670,58 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
 
     isOtherObject.link(&jit);
     if (awaitsCallWithoutPromise) {
-        // Unless the callee returned its SavedFrame, it has finished and this object is its result.
         mustSuspend.append(jit.branch32(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
         jit.returnToCaller();
     }
     if (form == AwaitedOperand::Value) {
-        // An object without a "then" is settled as it is, like a primitive.
         emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
         emitReturnAwaitedValue(jit, siteWord);
     }
 
+    if (form != AwaitedOperand::ValueInModuleBody) {
+        static_assert(mustSuspendAtNextAwaitBit == 1);
+        isOtherFrame.link(&jit);
+        jit.loadPtr(addressOfFrameThatMayContinue, word);
+        mustSuspend.append(jit.branchTestPtr(CCallHelpers::Zero, word));
+        if (awaitsCallWithoutPromise) {
+            const GPRReg frameOfCallee = savedFrame;
+            jit.subPtr(sp, TrustedImm32(static_cast<int32_t>(prologueStackPointerDelta())), other);
+            jit.move(word, frameOfCallee);
+            jit.andPtr(TrustedImm32(~mustSuspendAtNextAwaitBit), frameOfCallee);
+            Jump calleeHasNotContinued = jit.branchPtr(CCallHelpers::NotEqual, frameOfCallee, other);
+            Jump tracksNone = emitBranchIfTracksNoAsyncContext(jit, other);
+            emitStoreCurrentAsyncContext(jit, TrustedImm64(JSValue::ValueUndefined), other);
+            tracksNone.link(&jit);
+            jit.andPtr(TrustedImm32(mustSuspendAtNextAwaitBit), word);
+            jit.orPtr(fp, word);
+            jit.storePtr(word, addressOfFrameThatMayContinue);
+            jit.branchPtr(CCallHelpers::Equal, word, fp).linkTo(mayContinue, &jit);
+            mustSuspend.append(jit.jump());
+            calleeHasNotContinued.link(&jit);
+        }
+
+        JumpList isOtherObjectInOtherFrame;
+        emitBranchUnlessHolds(jit, queueIsEmpty, registers, mustSuspend);
+        if (!awaitsCallWithoutPromise)
+            jit.move(awaited, result);
+        emitLoadSettledValue(jit, registers, result, isOtherObjectInOtherFrame, mustSuspend);
+        Label isSettled = jit.label();
+        emitBranchUnlessCallersAwait(jit, { savedFrame, count, other, word }, mustSuspend);
+        jit.storePtr(fp, addressOfFrameThatMayContinue);
+        if (awaitsCallWithoutPromise)
+            jit.returnToCaller();
+        else
+            emitReturnAwaitedValue(jit, siteWord);
+
+        isOtherObjectInOtherFrame.link(&jit);
+        if (awaitsCallWithoutPromise)
+            mustSuspend.append(jit.branch32(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
+        else
+            emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
+        jit.jump().linkTo(isSettled, &jit);
+    }
+
     mustSuspend.link(&jit);
-    // Nobody but the adapter restores the frame of an async function.
     jit.loadPtr(Address(fp, sizeof(void*)), word);
     Jump isFirstSave = jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
     jit.loadPtr(Address(fp), word);
@@ -662,7 +731,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         checkStubOperands(awaitWithSavedFrame(), { awaited, savedFrame, siteWord });
         jit.bindEntry(awaitWithSavedFrame());
     }
-    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, 0);
+    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, FrameMayLieOnHeap::No, 0, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0);
 
     JumpList needsOperation;
     if (!queuesJobInOperation) {
@@ -678,7 +747,6 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
             emitBarrierPreservingOperands(jit, second, result, siteWord, word);
         } else {
             Jump isObject = jit.branchIfObject(awaited);
-            // Whoever handed out the sentinel resumes the function.
             isResumedByOthers.append(jit.branchIfType(awaited, SentinelType));
             isResumedByJob.append(jit.jump());
             isObject.link(&jit);
@@ -692,7 +760,6 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         jit.loadPtr(Address(savedFrame, SavedFrame::offsetOfPromiseOrWaiter()), result);
         emitLeaveFunction(jit, siteWord, other, returnToCallerOfFunction);
 
-        // The value is settled as it is, so its job is queued at once. The queue is a root, so it takes no barrier.
         isResumedByJob.link(&jit);
         Label queuesJob = jit.label();
         const JobRegisters job { count, word, other, second };
@@ -701,7 +768,6 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         emitFillJob(jit, { InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, awaited, savedFrame, JobAsyncContext::Current }, job);
         jit.jump().linkTo(isRegistered, &jit);
 
-        // The job of a fulfilled promise is queued at once too, with what the promise holds. The operation wants the awaited value as it came.
         RELEASE_ASSERT(noOverlap(result, awaited, savedFrame, siteWord, count, word, other, second));
         takesNoInlineReaction.link(&jit);
         emitBranchUnlessHolds(jit, awaitedIsFulfilled, { savedFrame, promise, word, other }, needsOperation);
@@ -755,7 +821,6 @@ void emitRunGeneratorJobWhenSettled(StubAssembler& jit, InternalMicrotask task, 
         emitBarrierPreservingOperands(jit, awaited, awaited, *siteWord, word);
     Jump isRegistered = jit.jump();
 
-    // The job of a fulfilled promise takes what the promise holds.
     takesNoInlineReaction.link(&jit);
     emitBranchUnlessHolds(jit, awaitedIsFulfilled, registers, isLeftToEngine);
     emitReserveJob(jit, job, isLeftToEngine);
@@ -788,7 +853,6 @@ void emitRunGeneratorJobWhenSettled(StubAssembler& jit, InternalMicrotask task, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// setSavedFrameOfGenerator without its barrier.
 static void emitStoreSavedFrame(StubAssembler& jit, GeneratorSuspension form, GPRReg generator, GPRReg saved)
 {
     switch (form) {
@@ -829,7 +893,6 @@ static void emitStoreSuspendedState(StubAssembler& jit, GeneratorSuspension form
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The first suspension of a generator is its initial yield, which is a YieldBySavingFrame.
 static std::optional<CoroutineKind> kindOfGeneratorAtInitialYield(GeneratorSuspension form)
 {
     switch (form) {
@@ -846,7 +909,6 @@ static std::optional<CoroutineKind> kindOfGeneratorAtInitialYield(GeneratorSuspe
 
 StubSignature signatureOfSuspendGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A1), gprOf(StubRegister::R0), gprOf(StubRegister::T9) }); }
 
-// Where it suspends it writes neither result: RestoreSavedFrameToStack does, when control comes back to the site.
 void generateSuspendGenerator(StubAssembler& jit)
 {
     const auto form = static_cast<GeneratorSuspension>(jit.key().form());
@@ -861,31 +923,28 @@ void generateSuspendGenerator(StubAssembler& jit)
     RELEASE_ASSERT(generator == operationArgumentGPR(1));
     RELEASE_ASSERT(noOverlap(generator, value, siteWord, saved, count, cursor, word, second, instanceGPR));
 
-    // loadLabelAddress needs a bound label and nothing may fall into its code, so that code precedes the entry.
     Label returnToCallerOfFunction = emitFunctionReturn(jit);
     jit.align();
     jit.bindEntry(jit.key());
 
     if (form == GeneratorSuspension::AsyncAwait) {
-        // The value register is written on success only.
         const GPRReg awaited = saved;
         const AwaitRegisters registers { InvalidGPRReg, awaited, cursor, word };
         JumpList mustSuspend;
         emitBranchUnlessFrameMayContinue(jit, registers, mustSuspend);
         jit.move(value, awaited);
         emitLoadSettledValue(jit, registers, value, mustSuspend, mustSuspend);
-        // Whoever stepped the body waits for the step from here on, and a stack trace lists nobody who waits.
         jit.load64(Address(generator, JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(JSAsyncGenerator::Field::Frame))), cursor);
         jit.store8(TrustedImm32(SavedFrame::hasPassedAwaitOnStackFlag), Address(cursor, SavedFrame::offsetOfFlags()));
         emitReturnAwaitedValue(jit, siteWord);
         mustSuspend.link(&jit);
     }
 
-    // The initial yield leaves the state as it is, so the state is stored in front of what the two have in common.
     Jump isFirstSave = emitLoadSavedFrame(jit, form, generator, saved);
     emitStoreSuspendedState(jit, form, generator);
     Label hasSavedFrame = jit.label();
-    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag);
+    const uint8_t keptAtAwait = form == GeneratorSuspension::AsyncAwait ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0;
+    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::Yield ? FrameMayLieOnHeap::No : FrameMayLieOnHeap::Yes, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag | keptAtAwait);
     emitBarrierPreservingOperands(jit, saved, value, siteWord, word);
     if (form == GeneratorSuspension::AsyncAwait) {
         JumpList isLeftToEngine;
@@ -895,7 +954,6 @@ void generateSuspendGenerator(StubAssembler& jit)
     emitLeaveFunction(jit, siteWord, word, returnToCallerOfFunction);
 
     isFirstSave.link(&jit);
-    // A body that the first step has called suspends for the first time at a yield whose value is read.
     if (form == GeneratorSuspension::Yield) {
         Jump isInitialYield = jit.branch32(CCallHelpers::NotEqual, Address(generator, Generator::offsetOfState()), TrustedImm32(static_cast<int32_t>(Generator::State::Running)));
         emitStoreSuspendedState(jit, form, generator);

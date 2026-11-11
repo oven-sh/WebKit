@@ -1,0 +1,28 @@
+# A built-in that is handed a number makes a list of that size for the price of one operation. What it gives back is counted with the characters: eight bytes an element.
+# for (let n = 0; n < 100; n++) { new Array(1000000); new RegExp("b" + n); }   264000089 are made in front of the turn of 33; its list passes the room, and the rehearsal is over at the next operation, in front of its text.
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /b32/
+# CHECK-NOT: text /b33/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Array
+    v2 = Integer integer=1000000
+    v3 = String string="b"
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: anything):
+    LoopHint
+    v7 = Construct v1, -, v2
+    v8 = Add v3, v5
+    v9 = Construct v0, -, v8
+    v10 = Increment v5
+    v11 = Integer integer=100
+    v12 = Less v10, v11
+    Branch v12 -> taken b1(v10), notTaken b2()
+  b2():
+    Return v4
+}

@@ -25,6 +25,7 @@
 #include "ArrayConstructor.h"
 
 #include "AOTCompactTable.h"
+#include "AOTRuntimeHooks.h"
 
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"
@@ -790,6 +791,8 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     return JSArray::createWithButterfly(vm, nullptr, resultStructure, resultButterfly);
 }
 
+static ALWAYS_INLINE JSArray* tryCreateArrayFromIterableFastInline(JSGlobalObject*, JSValue items);
+
 JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -801,7 +804,23 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
     if (constructor != globalObject->arrayConstructor() && constructor.isObject()) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    JSValue items = callFrame->uncheckedArgument(1);
+    JSArray* result = tryCreateArrayFromIterableFastInline(globalObject, callFrame->uncheckedArgument(1));
+    if (result)
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsUndefined());
+}
+
+JSArray* tryCreateArrayFromIterableFast(JSGlobalObject* globalObject, JSValue items)
+{
+    return tryCreateArrayFromIterableFastInline(globalObject, items);
+}
+
+static ALWAYS_INLINE JSArray* tryCreateArrayFromIterableFastInline(JSGlobalObject* globalObject, JSValue items)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSArray* result = nullptr;
     if (isJSArray(items)) [[likely]] {
         // For `Array.from(array)`
@@ -860,9 +879,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
-    if (result)
-        return JSValue::encode(result);
-    return JSValue::encode(jsUndefined());
+#if ENABLE(AOT)
+    // For `Array.from(map)`, `Array.from(map.entries())`
+    if (!result && vm.hasCompiledCode() && items && items.isCell())
+        result = AOT::RuntimeHooks::tryCreateArrayOfPairs(globalObject, items.asCell());
+#endif
+    return result;
 }
 
 } // namespace JSC

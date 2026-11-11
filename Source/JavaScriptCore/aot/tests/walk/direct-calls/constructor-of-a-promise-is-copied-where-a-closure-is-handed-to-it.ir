@@ -1,0 +1,122 @@
+# function later(v) { return new Promise(resolve => { resolve(v); }); }
+# function handsOn(executor) { return new Promise(executor); }
+# function forOther(v, Other) { return Reflect.construct(Promise, [..], Other); }   as the front end writes a construction with a new.target of its own
+# sink(later, handsOn, forOther);
+# The constructor of Promise is a function of the library that makes its own object (a naked constructor). Where the callee of a construction is proven to be that one built-in, and the executor is a closure of one function,
+# the constructor's text is copied, in and outside of loops: the executor goes into the copy, the two resolving functions are never made, and what is left is the allocation and one store of the value.
+# Link says that the construction names the constructor: without that word the copy would name the constructor's two arrows in a unit that does not lead to them, and it is refused.
+# The library here is a stand-in with the engine's own text.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame {{*}}callee=f5
+# CHECK: frame {{*}}callee=f4
+# CHECK: = NewPromise
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = Construct
+# NEVER-NOT: = NewClosure
+# NEVER-NOT: = CreatePromise
+# with copies withheld the construction stays as it is written, and says that it makes a Promise
+# RUN(WITHHELD): walk f1 mechanisms=all-Inlining
+# WITHHELD: Promise {{*}}= Construct
+# an executor of which nothing is known: as written
+# RUN(UNKNOWN): walk f2 mechanisms=all
+# UNKNOWN-LABEL: code f2:Body
+# UNKNOWN: Promise {{*}}= Construct
+# RUN(UNCOPIED): walk f2 mechanisms=all
+# UNCOPIED-NOT: callee=f5
+# another new.target: as written
+# RUN(OTHER): walk f3 mechanisms=all
+# OTHER-LABEL: code f3:Body
+# OTHER: = Construct
+# RUN(TARGET): walk f3 mechanisms=all
+# TARGET-NOT: callee=f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/PromiseConstructor.ts" displayPath="/$bun/js/engine/PromiseConstructor.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=PromiseConstructorPromise function=f5
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="later" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Promise" [isFreeName]
+    v3 = NewClosure v0 function=f4
+    v4 = Construct v2, -, v3 calleeName="Promise"
+    Return v4
+}
+function f2 name="handsOn" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Promise" [isFreeName]
+    v3 = Construct v2, -, v0 calleeName="Promise"
+    Return v3
+}
+function f3 name="forOther" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Promise" [isFreeName]
+    v4 = NewClosure v0 function=f4
+    v5 = Construct v3, v1, v4 calleeName="Promise"
+    Return v5
+}
+function f4 module=m0 kind=Arrow length=1 captures=[{type=anything variableName="v"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, -, v0 calleeName="resolve"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="Promise" module=m1 kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] length=1 enclosingRuntimeFunction=PromiseConstructorPromise thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = TypeTest v1 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b7(| 0)
+  b1(v4):
+    v5 = NarrowByTest v1, v4
+    v6 = CreatePromise v0
+    Jump -> next b2()
+  b2() handler=b3():
+    v7 = NewClosure v6 function=f6
+    v8 = NewClosure v6 function=f7
+    v9 = Call v5, -, v7, v8 calleeName="executor"
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v10 = CatchValue
+    v11 = Convert v6 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    RejectPromise v11, v10
+    v13 = Undefined
+    Jump -> next b4()
+  b4():
+    v14 = TypeTest v6 testedType=object
+    Branch v14 -> taken b5(| 0), notTaken b6(v0)
+  b5(v15):
+    Jump -> next b6(v15)
+  b6(v16):
+    Return v16
+  b7(v17):
+    v18 = ThrowNewError errorKind=TypeError message="Promise constructor takes a function argument"
+    Unreachable
+}
+function f6 module=m1 kind=Arrow role=Library length=1 enclosingRuntimeFunction=PromiseConstructorPromise captures=[{type=anything variableName="capturedPromise"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    ResolvePromise v2, v1
+    v4 = Undefined
+    Return v4
+}
+function f7 module=m1 kind=Arrow role=Library length=1 enclosingRuntimeFunction=PromiseConstructorPromise captures=[{type=anything variableName="capturedPromise"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    RejectPromise v2, v1
+    v4 = Undefined
+    Return v4
+}

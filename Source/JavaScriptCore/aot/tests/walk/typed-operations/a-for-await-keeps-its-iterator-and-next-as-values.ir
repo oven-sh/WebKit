@@ -1,0 +1,67 @@
+# `for await`: the iterator, its `next` and a word that says whether the iteration is done lay in a cell of the heap, read and written in every turn.
+# Where every close stands behind the one step, on the way where the step was not the last, no step follows the last and no close finds the iteration done: the iterator and `next` are values of the frame.
+# async function each(things) { for await (const thing of things) keep(thing); }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: [[next]]: {{*}} = PropGet {{*}} key="next"
+# CHECK-NOT: NewHeapWords
+# CHECK-NOT: HeapFrameWord
+# CHECK: = StepAsyncGenerator
+# CHECK-NOT: HeapFrameWord
+# Where a close stands on the way where the step was the last, it must find the iteration done: the cell stays.
+
+# RUN(BESIDE): walk f2:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# BESIDE-LABEL: code f2:CoroutineBody
+# BESIDE: = NewHeapWords
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="each" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 iteratorKind=Async completion=Throw
+    Rethrow v10
+}
+function f2 name="closesBeside" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    IteratorClose v1 iteratorKind=Async
+    v7 = Undefined
+    Return v7
+  b3():
+    Jump -> next b1()
+}

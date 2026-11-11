@@ -3,131 +3,218 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// AOTStubsOperations.cpp
 v(CallOperation, CalledByCode, (ValueWithInstance, ValueWithGlobalObject, ValueWithVM, Value, VoidWithInstance, VoidWithGlobalObject, VoidWithVM, Void, DoubleWithInstance, DoubleWithGlobalObject, DoubleWithVM, Double, PairWithInstance, ValueWithInstanceMayFailToAllocate, VoidWithInstanceMayFailToAllocate, ValueWithInstanceWithoutPoll, VoidWithInstanceWithoutPoll, DoubleWithInstanceWithoutPoll, DoubleWithInstanceMayFailToAllocate, PairWithInstanceMayFailToAllocate), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, CallOperation)
 v(TailCallOperation, CalledByCode, (Instance, GlobalObject, VM, None), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, TailCallOperation)
 v(CallOperationPreservingRegisters, CalledByCode, (VoidWithInstance, VoidWithInstanceOnlyGPRs, ValueWithInstance, ValueWithInstanceOnlyGPRs, ValueWithInstanceNoExceptionCheck, ValueWithInstanceOnlyGPRsNoExceptionCheck, ValueNoExceptionCheck, DoubleNoExceptionCheck, DoubleWithInstance, ValueWithInstanceMayFailToAllocate, ValueWithInstanceOnlyGPRsMayFailToAllocate, VoidWithInstanceWithoutPoll, VoidWithInstanceOnlyGPRsWithoutPoll, ValueWithInstanceWithoutPoll, ValueWithInstanceOnlyGPRsWithoutPoll, DoubleWithInstanceWithoutPoll), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersOnlyScratch, NoEffects, CallOperationPreservingRegisters)
 v(ThrowAtSite, CalledByCode, (WordsAfterCall, WordInRegister), FormAxis | NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowAtSite)
 v(ThrowAtFault, EnteredByRuntime, (), CallerFrameAxis | NeverReturns, 0, 0, AllISAs, AllISAs, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowAtFault)
 
-// AOTStubsExceptions.cpp
 v(HandleException, EnteredByRuntime, (), NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, HandleException)
 v(HandleExceptionPreservingRegisters, CalledByCode, (), NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, HandleExceptionPreservingRegisters)
 v(HandleExceptionAtPrologue, CalledByCode, (), NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, HandleExceptionAtPrologue)
 v(ThrowStackOverflow, CalledByCode, (InBody, AtPrologue), FormAxis | NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowStackOverflow)
 v(Catch, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, Catch)
 v(RejectInFrame, EnteredByRuntime, (Plain, BelowSpilledArguments), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RejectInFrame)
+v(RejectAwaitedCall, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RejectAwaitedCall)
 
-// AOTStubsPolls.cpp
 v(PollAtPrologue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologue)
 v(PollAtPrologueWithoutCollecting, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologueWithoutCollecting)
-v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, X86_64Only, X86_64Only, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
+v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, AllISAs, AllISAs, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
 v(PollBeforeEntering, InternalEntry, (Plain, FunctionObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollBeforeEntering)
 
-// AOTStubsBarriers.cpp
-v(WriteBarrier, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), WriteBarrier)
-v(RememberElement, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, ArrayStorage) | writes(RuntimeState), RememberElement)
+v(WriteBarrier, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), WriteBarrier)
+v(RememberElement, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, ArrayStorage) | writes(RuntimeState), RememberElement)
 
-// AOTStubsAllocation.cpp
-v(AllocateCell, CalledByCode, (Header, HeaderAndWords, HeaderAndZeros, HeaderAndWordsAndZeros), FormAxis | CountAxis, 0, 5, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), AllocateCell)
+v(AllocateCell, CalledByCode, (Header, HeaderAndWords, HeaderAndZeros, HeaderAndWordsAndZeros), FormAxis | CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, 5, AllISAs, NoISA, AlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), AllocateCell)
+v(AllocateCellFromTemplate, CalledByCode, (Header, HeaderAndWords), FormAxis | CountAxis | OperandRegisterAxis | SlowPathRecurs, 2, 16, AllISAs, NoISA, FewAlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), AllocateCellFromTemplate)
 v(InitializeObjectInFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), InitializeObjectInFrame)
 v(AllocateInstance, CalledByCode, (), CountAxis, 0, 5, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState), AllocateInstance)
 v(AllocateInstanceOutOfLine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateInstanceOutOfLine)
-v(CopyObject, CalledByCode, (), CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, ShapeWords, OrderWords, AllocatorState) | writes(AllocatorState), CopyObject)
 v(AllocateExtension, CalledByCode, (), CountAxis, 1, 16, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, AllocatorState) | writes(ObjectFields, AllocatorState), AllocateExtension)
 v(AllocateExtensionSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateExtensionSlow)
 v(NewTypedArray, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewTypedArray)
-v(NewDictionary, CalledByCode, (), CountAxis, 0, 13, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
+v(NewDictionary, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
 
-// AOTStubsClosures.cpp
-v(NewClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)
-v(NewSlimClosure, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewSlimClosure)
-v(MakeClosureOfField, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, 1, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, ObjectFields), MakeClosureOfField)
+v(NewClosure, CalledByCode, (), CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, FewAlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)
+v(NewSlimClosure, CalledByCode, (Plain, Async), FormAxis | CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, FewAlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewSlimClosure)
+v(NewSlimClosureInFrame, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, writes(ShapeWords), NewSlimClosureInFrame)
+v(MakeClosureOfField, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, 2, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState, ObjectFields) | writes(AllocatorState, ObjectFields), MakeClosureOfField)
 v(ClosureOfTable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, AllocatorState) | writes(RuntimeState, AllocatorState), ClosureOfTable)
-v(InitializeClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, InitializeClosure)
-v(MaterializeEnvironment, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(EnvironmentFields, AllocatorState) | writes(AllocatorState), MaterializeEnvironment)
-v(ValueEndsItsTailCalls, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ValueEndsItsTailCalls)
-v(ValueIsClosureOf, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ValueIsClosureOf)
-v(RecordCallee, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState) | writes(RuntimeState), RecordCallee)
 
-// AOTStubsConstants.cpp
-v(CreateConstant, CalledByCode, (String, NewString, Key, FunctionName), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, CreateConstant)
-v(BuiltinCell, CalledByCode, (), ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersOnlyScratch, NoEffects, BuiltinCell)
+v(CreateConstant, CalledByCode, (String, Key), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, CreateConstant)
+v(BuiltinCell, CalledByCode, (), ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersOnlyScratch, NoEffects, BuiltinCell)
+v(CreateConstantAtSite, CalledByCode, (String, Key, BuiltinCell), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, CreateConstantAtSite)
 
-// AOTStubsValues.cpp
-v(ToBoolean, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ToBoolean)
-v(ValueIsTruthy, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ValueIsTruthy)
-v(ValueIsCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, ValueIsCallable)
+v(ToBoolean, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, reads(StringStorage), ToBoolean)
+v(ValueIsTruthy, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, reads(StringStorage), ValueIsTruthy)
 v(ThrowUnlessCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessCallable)
-v(ThrowUnlessForwardedCalleeIsCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessForwardedCalleeIsCallable)
+v(CheckProofOfKinds, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, CheckProofOfKinds)
+v(CheckProofOfType, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, AsOperation, CheckProofOfType)
+v(ThrowUnlessForwardedCallCanBeMade, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessForwardedCallCanBeMade)
 
-// AOTStubsGlobalBindings.cpp
 v(GetGlobalBinding, CalledByCode, (ScriptsAndGlobalObject, GlobalObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetGlobalBinding)
 v(SetGlobalBinding, CalledByCode, (ScriptsAndGlobalObject, ScriptsAndGlobalObjectSloppy, GlobalObject, GlobalObjectSloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SetGlobalBinding)
-v(Equal, CalledByCode, (Loose, Strict), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(StringStorage), Equal)
+v(Equal, CalledByCode, (Loose, Strict, StrictInFlags), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(StringStorage), Equal)
+v(EqualOfNullableStrings, CalledByCode, (Loose, Strict), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(StringStorage), Equal)
 
-// AOTStubsArithmetic.cpp
 v(BinaryOperation, CalledByCode, (Add, Sub, Mul, Div, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Mod, Less, LessEq, Greater, GreaterEq, AddAfterInt32Check, SubAfterInt32Check, MulAfterInt32Check, BitAndAfterInt32Check, BitOrAfterInt32Check, BitXorAfterInt32Check, LShiftAfterInt32Check, RShiftAfterInt32Check, URShiftAfterInt32Check, LessAfterInt32Check, LessEqAfterInt32Check, GreaterAfterInt32Check, GreaterEqAfterInt32Check), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(StringStorage, AllocatorState) | writes(AllocatorState), BinaryOperation)
 v(BinaryWithDouble, CalledByCode, (Add, Mul, Sub, SubWithNumberOnRight, Div, DivWithNumberOnRight), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, BinaryWithDouble)
-v(UnaryOperation, CalledByCode, (Negate, Increment, Decrement, BitNot, ToNumeric, AddToEmptyString, ToString), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, UnaryOperation)
+v(UnaryOperation, CalledByCode, (Negate, Increment, Decrement, BitNot, ToNumeric, AddToEmptyString, ToString), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, UnaryOperation)
 v(BoxNumber, CalledByCode, (Double, OptionalDouble, Integer, OptionalInteger), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, BoxNumber)
 
-// AOTStubsPrimitiveFastPaths.cpp
-v(ToNumberAsDouble, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, ToNumberAsDouble)
+v(ToNumberAsDouble, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, ToNumberAsDouble)
+v(NumberOfAnyValue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, NumberOfAnyValue)
 v(ToStringFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ToStringFrontEnd)
 AOT_STUB_FRONT_END(ToString, ToStringFrontEnd)
+v(StringOfAnyValueFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringOfAnyValueFrontEnd)
+AOT_STUB_FRONT_END(StringOfAnyValue, StringOfAnyValueFrontEnd)
 
-// AOTStubsElements.cpp
 v(MoveFewBytes, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(TypedArrayElements) | writes(TypedArrayElements), MoveFewBytes)
+v(MoveElementsDown, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MoveElementsDown)
 v(GetByVal, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
 v(GetByValAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
 v(GetByValKeepingRegisters, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValKeepingRegisters)
+v(GetByValAtConstantIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValKeepingRegisters)
 v(PutByVal, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
 v(PutByValAtIndex, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
+v(PutByValAtConstantIndex, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
 v(StoreElementOfCompiledObject, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StoreElementOfCompiledObject)
-v(GetByValExpecting, CalledByCode, (Int32Array, Uint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
-v(GetByValAtIndexExpecting, CalledByCode, (Int32Array, Uint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
-v(PutByValExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, SloppyInt32Array, SloppyUint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)
-v(PutByValAtIndexExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, SloppyInt32Array, SloppyUint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)
+v(GetByValExpecting, CalledByCode, (Int32Array, Uint8Array, Float64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
+v(GetByValAtIndexExpecting, CalledByCode, (Int32Array, Uint8Array, Float64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
+v(PutByValExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, StrictFloat64Array, SloppyInt32Array, SloppyUint8Array, SloppyFloat64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)
+v(PutByValAtIndexExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, StrictFloat64Array, SloppyInt32Array, SloppyUint8Array, SloppyFloat64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)
 
-// AOTStubsConstruct.cpp
 v(ConstructFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConstructFrontEnd)
 v(SuperConstructFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuperConstructFrontEnd)
 AOT_STUB_FRONT_END(Construct, ConstructFrontEnd)
 AOT_STUB_FRONT_END(SuperConstruct, SuperConstructFrontEnd)
 
-// AOTStubsBoxedCalls.cpp
-v(CallBoxedBuiltin, Handler, (ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, ArraySort, FunctionBind, IsNaN, JSONStringify, MapDelete, MapGet, MapHas, MapSet, MapSize, ObjectGetPrototypeOf, ObjectIs, ObjectSetPrototypeOf, RegExpTest, SetAdd, SetDelete, SetHas, SetSize, StringCharAt, StringCharCodeAt, StringCodePointAt, StringEndsWith, StringIncludes, StringIndexOf, StringReplace, StringReplaceAll, StringSlice, StringSplit, StringStartsWith, StringSubstring, StringToLowerCase, StringToUpperCase, StringTrim, StringTrimEnd, StringTrimStart, TypedArrayLength, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
+#define AOT_FORMS_OF_BOXED_CALLS ( \
+    ArrayIncludes, \
+    ArrayIndexOf, \
+    ArrayIsArray, \
+    ArrayJoin, \
+    ArrayPop, \
+    ArrayPush, \
+    ArrayShift, \
+    ArraySlice, \
+    ArraySort, \
+    ArraySplice, \
+    ArrayToString, \
+    ArrayUnshift, \
+    DataViewGetFloat32, \
+    DataViewGetFloat64, \
+    DataViewGetInt16, \
+    DataViewGetInt32, \
+    DataViewGetInt8, \
+    DataViewGetUint16, \
+    DataViewGetUint32, \
+    DataViewGetUint8, \
+    DataViewSetFloat32, \
+    DataViewSetFloat64, \
+    DataViewSetInt16, \
+    DataViewSetInt32, \
+    DataViewSetInt8, \
+    DataViewSetUint16, \
+    DataViewSetUint32, \
+    DataViewSetUint8, \
+    FunctionBind, \
+    IsNaN, \
+    JSONStringify, \
+    MapClear, \
+    MapDelete, \
+    MapGet, \
+    MapHas, \
+    MapSet, \
+    MapSize, \
+    MathMax, \
+    MathMin, \
+    ObjectGetPrototypeOf, \
+    ObjectHasOwnProperty, \
+    ObjectIs, \
+    ObjectSetPrototypeOf, \
+    PromiseCatch, \
+    PromiseResolve, \
+    PromiseThen, \
+    RegExpExec, \
+    RegExpTest, \
+    SetAdd, \
+    SetClear, \
+    SetDelete, \
+    SetHas, \
+    SetSize, \
+    StringAt, \
+    StringCharAt, \
+    StringCharCodeAt, \
+    StringCodePointAt, \
+    StringEndsWith, \
+    StringIncludes, \
+    StringIndexOf, \
+    StringIsWellFormed, \
+    StringLastIndexOf, \
+    StringMatch, \
+    StringReplace, \
+    StringReplaceAll, \
+    StringSlice, \
+    StringSplit, \
+    StringStartsWith, \
+    StringSubstr, \
+    StringSubstring, \
+    StringToLowerCase, \
+    StringToUpperCase, \
+    StringTrim, \
+    StringTrimEnd, \
+    StringTrimStart, \
+    TypedArrayLength, \
+    WeakMapGet, \
+    WeakMapHas, \
+    WeakMapSet, \
+    WeakSetHas)
+v(CallBoxedBuiltin, Handler, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
+v(CallMethodOfBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis | ImmediateAxis, 0, 4, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
+v(TryCallMethodOfBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, TryCallMethodOfBuiltinClass)
+v(CallMethodOfBuiltinClassAtSite, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
+v(CallFunctionOfBuiltinAtSite, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFunctionOfBuiltinAtSite)
+v(CallMethodOfBuiltinClassWithSharedPattern, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassWithSharedPattern)
+v(CallMethodOfBuiltinClassAtSiteWithSharedPattern, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassWithSharedPattern)
+v(CallMethodOfBuiltinClassByValue, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassByValue)
+v(CallMethodOfProvenBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis | ImmediateAxis, 0, 4, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
+v(CallMethodOfProvenBuiltinClassByValue, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassByValue)
+v(CallMethodThatMayBeUnread, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodThatMayBeUnread)
+v(CallMethodThatMayBeUnreadInTailPosition, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodThatMayBeUnread)
+v(CallMethodOfAnyReceiverThatMayBeUnread, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodThatMayBeUnread)
+v(ReadMethodAtSiteUnlessReceiverFindsIt, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 1, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadMethodAtSiteUnlessReceiverFindsIt)
+#undef AOT_FORMS_OF_BOXED_CALLS
+v(CallMethodOfTable, CalledByCode, (MapDeleteAnyValue, MapDeleteString, MapDeleteBits, MapGetAnyValue, MapGetString, MapGetBits, MapHasAnyValue, MapHasString, MapHasBits, MapSetAnyValue, MapSetString, MapSetBits, SetAddAnyValue, SetAddString, SetAddBits, SetDeleteAnyValue, SetDeleteString, SetDeleteBits, SetHasAnyValue, SetHasString, SetHasBits), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfTable)
+v(CallMethodOfProvenTable, CalledByCode, (MapDeleteAnyValue, MapDeleteString, MapDeleteBits, MapGetAnyValue, MapGetString, MapGetBits, MapHasAnyValue, MapHasString, MapHasBits, MapSetAnyValue, MapSetString, MapSetBits, SetAddAnyValue, SetAddString, SetAddBits, SetDeleteAnyValue, SetDeleteString, SetDeleteBits, SetHasAnyValue, SetHasString, SetHasBits), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfTable)
+v(CallCompiledMethodOfArray, CalledByCode, (At, Every, Filter, Find, FindIndex, FindLast, FindLastIndex, FlatMap, ForEach, Map, Reduce, ReduceRight, Some), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallCompiledMethodOfArray)
+v(CallCompiledMethodOfArrayLending, CalledByCode, (At, Every, Filter, Find, FindIndex, FindLast, FindLastIndex, FlatMap, ForEach, Map, Reduce, ReduceRight, Some), FormAxis | CountAxis, 1, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallCompiledMethodOfArrayLending)
 v(WeakMapSet, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, WeakMapSet)
 v(StringStartsWith, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringStartsWith)
 v(StringIndexOf, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringIndexOf)
 
-// AOTStubsCollections.cpp
 v(MapGet, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), MapGet)
+v(FindKeyInMap, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), FindKeyInMap)
+v(FindCharactersInMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), FindCharactersInMap)
 v(MapHas, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), MapHas)
-v(SetHas, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage), SetHas)
 v(MapSet, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage, RuntimeState) | writes(CollectionStorage, CollectionEntries), MapSet)
 v(SetAdd, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage, RuntimeState) | writes(CollectionStorage, CollectionEntries), SetAdd)
 v(MapDelete, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage) | writes(CollectionStorage, CollectionEntries), MapDelete)
 v(SetDelete, CalledByCode, (AnyValue, String, Bits), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage) | writes(CollectionStorage, CollectionEntries), SetDelete)
 v(NewCompactTable, InternalEntry, (Map, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState, RuntimeState) | writes(CollectionStorage, CollectionEntries, AllocatorState), NewCompactTable)
 v(GrowCompactTable, InternalEntry, (Map, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) | writes(CollectionStorage, CollectionEntries, AllocatorState), GrowCompactTable)
-v(WeakMapGet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapGet)
-v(WeakMapHas, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapHas)
-v(WeakSetHas, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakSetHas)
+v(WeakMapGet, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapGet)
+v(WeakMapHas, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakMapHas)
+v(WeakSetHas, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakSetHas)
 v(NewMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewMap)
 v(NewSet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewSet)
 v(MapNextFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapNextFrontEnd)
 v(SetNextFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SetNextFrontEnd)
-v(ReserveCollectionCapacityFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReserveCollectionCapacityFrontEnd)
 AOT_STUB_FRONT_END(MapNext, MapNextFrontEnd)
 AOT_STUB_FRONT_END(SetNext, SetNextFrontEnd)
-AOT_STUB_FRONT_END(ReserveCollectionCapacity, ReserveCollectionCapacityFrontEnd)
 
-// AOTStubsRegExp.cpp, AOTStubsRegExpLiterals.cpp
-v(RegExpMatch, CalledByCode, (Array, Boolean, Found, BoxedBoolean), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RegExpMatch)
+v(RegExpMatch, CalledByCode, (Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RegExpMatch)
 v(FinishRegExpExec, InternalEntry, (WithObject, WithoutObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FinishRegExpExec)
-v(StringMatchRegExp, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringMatchRegExp)
-v(StringReplaceRegExpMayNotMatch, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringReplaceRegExpMayNotMatch)
+v(StringReplaceRegExpMayNotMatch, CalledByCode, (TextOrFunction, AnyValue), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringReplaceRegExpMayNotMatch)
 v(NewRegExpLiteral, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewRegExpLiteral)
-v(RegExpMatchLiteral, CalledByCode, (Test, Exec, Search, Match, TestGlobal, ExecGlobal, SearchGlobal, MatchGlobal, TestWithoutObject, ExecWithoutObject, SearchWithoutObject, MatchWithoutObject), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersLikeCall, AsOperation, RegExpMatchLiteral)
+v(RegExpMatchLiteral, CalledByCode, (TestWithoutObject, ExecWithoutObject, SearchWithoutObject, MatchWithoutObject, PartsWithoutObject, Test, Exec, Search, Match, Parts, TestGlobal, ExecGlobal, SearchGlobal, MatchGlobal, PartsGlobal, TestRecorded, ExecRecorded, SearchRecorded, MatchRecorded, PartsRecorded, TestGlobalRecorded, ExecGlobalRecorded, SearchGlobalRecorded, MatchGlobalRecorded, PartsGlobalRecorded), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RegExpMatchLiteral)

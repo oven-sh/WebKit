@@ -1,0 +1,52 @@
+# namespace Tools { export function twice(n: number) { return n * 2; } export const added = 7; }  function use(n: number) { return Tools.twice(n) + Tools.added; }
+# Compiled code alone makes the object of a namespace, and it has a shape word like a record's. So the variable is proven to hold it, nothing is seen to change it, and each name is a slot.
+# The object is in the variable before its block has stored anything, so whoever reads may find a slot empty. What the stores bring is all that a slot holds: behind a test for the one function the call is a copy of it.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : undefined|L0 @{{*}} = GetModuleVariable variable=g0
+# CHECK: : undefined|f2 @{{*}} = GetSlotOrUndefined {{*}}key="twice" receivers=[L0] level=Proven
+# CHECK: = Mul
+# CHECK: = GetSlotOrUndefined {{*}}key="added" receivers=[L0] level=Proven
+# RUN(CLOSED): walk f1 mechanisms=all
+# CLOSED-NOT: = PropGet
+# RUN(LINK): link variables layouts mechanisms=all
+# LINK: variable g0 proven=undefined|L0
+# LINK: layout L0 changes=[] stays-with-compiled-code
+
+layout L0 kind=Container name="Tools" module=m0 fields=[{key="twice" declared={type=f2 flags=[IsFromCompiler, IsExpected]}}, {key="added" declared={type=7}}] ownFieldCount=2
+variable g0 name="Tools" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewObject layout=L0
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f2
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]}
+    PropSet v3, v6 key="twice"
+    v8 = Integer integer=7
+    v9 = Convert v8 declared={type=7}
+    PropSet v3, v9 key="added"
+    v11 = Integer integer=3
+    v12 = Call v1, -, v11 calleeName="use"
+    Return v12
+}
+function f1 name="use" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="twice"
+    v3 = Call v2, v1, v0 calleeKey="twice" calleeName="Tools.twice"
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="added"
+    v6 = Add v3, v5
+    Return v6
+}
+function f2 name="twice" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}

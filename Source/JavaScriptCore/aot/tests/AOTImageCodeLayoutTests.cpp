@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodeLayout.h"
 #include "AOTImageBuildSteps.h"
 #include "AOTImageTestBodies.h"
 #include "AOTImageTestSupport.h"
@@ -15,8 +16,8 @@
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
-#include "AOTWasmModules.h"
 #include "CPU.h"
+#include "MacroAssembler.h"
 #include <algorithm>
 #include <array>
 #include <span>
@@ -26,14 +27,21 @@
 
 namespace JSC::AOT::ImageTests {
 
-static constexpr uint32_t numberOfFarBodies = 75;
-static constexpr unsigned pinnedUnitsInLargeBody = 16;
-static constexpr uint32_t numberOfLargeBodies = 48 * scaleOfSharedCode;
-static_assert(numberOfLargeBodies * pinnedUnitsInLargeBody * wordsInPinnedUnit * sizeof(uint32_t) >= 3 * loweredSharedCodeReach);
-static constexpr uint32_t lastBodyAtEdgeOfReach = 24;
+static constexpr unsigned wordsInBigBody = 1024;
 static constexpr unsigned thunkCallsInBody = 100;
 static constexpr size_t maxRunSize = 1 * MB;
 static constexpr uint16_t secondEntry = 1;
+
+#if CPU(ARM64)
+static constexpr uint64_t reachOfNearCall = MacroAssembler::relocationReach(RelocationKind::Call);
+static constexpr size_t sizeOfLongFiller = reachOfNearCall / 8 * 5;
+static constexpr uint32_t numberOfFarBodies = 5;
+static constexpr uint32_t firstLongFarBody = 3;
+static constexpr uint32_t lastLongFarBody = numberOfFarBodies - 1;
+static constexpr uint32_t numberOfLargeBodies = 4;
+static_assert((lastLongFarBody - firstLongFarBody + 1) * sizeOfLongFiller > reachOfNearCall);
+static_assert(numberOfLargeBodies * sizeOfLongFiller > 2 * reachOfNearCall);
+#endif
 
 namespace {
 
@@ -49,7 +57,7 @@ static CodeSketch bigSketch(uint32_t function)
 {
     CodeSketch sketch(function);
     sketch.withFrame();
-    sketch.pinned(function, wordsInPinnedUnit);
+    sketch.plain(function, wordsInBigBody);
     return sketch;
 }
 
@@ -75,20 +83,29 @@ static CompiledCode framed(uint32_t function)
     return sketch.take();
 }
 
+static Vector<CompiledCode> framedBodies(unsigned count)
+{
+    Vector<CompiledCode> result;
+    result.reserveInitialCapacity(count);
+    for (uint32_t function = 1; function <= count; ++function)
+        result.append(framed(function));
+    return result;
+}
+
 static CompiledCode framedWithPrefix(uint32_t function)
 {
     CodeSketch sketch(function);
     sketch.withFrame();
-    sketch.pinned(0x0105);
+    sketch.plain(0x0105);
     sketch.code().body.entries[0].offset = sketch.size();
-    sketch.pinned(0x1000 + function);
+    sketch.plain(0x1000 + function);
     sketch.end();
     return sketch.take();
 }
 
 static void addSecondEntry(CodeSketch& sketch)
 {
-    sketch.code().body.entries.append(CodeEntry { sketch.pinned(9), secondEntry });
+    sketch.code().body.entries.append(CodeEntry { sketch.plain(9), secondEntry });
 }
 
 static CompiledCode stubCaller(uint32_t function, StubKey key)
@@ -107,45 +124,6 @@ static CompiledCode thunkCaller(uint32_t function, const ArgumentMoves& moves)
     return sketch.take();
 }
 
-static void callRegExp(CodeSketch& sketch, uint32_t regExp, uint16_t entry)
-{
-    sketch.callStub(writeBarrier());
-    Relocation& call = sketch.lastRelocation();
-    call.space = SymbolSpace::RegExp;
-    call.symbol = regExp;
-    call.entry = entry;
-}
-
-static void fillUpTo(CodeSketch& sketch, uint32_t size)
-{
-    AOT_TEST_CHECK(sketch.size() <= size);
-    if (uint32_t oddBytes = (size - sketch.size()) % sizeof(uint32_t))
-        sketch.pinnedBytes(oddBytes);
-    while (sketch.size() < size)
-        sketch.pinned(7, std::min<uint32_t>((size - sketch.size()) / sizeof(uint32_t), wordsInPinnedUnit));
-}
-
-static CompiledCode sizedCaller(uint32_t function, uint32_t callee, uint32_t size)
-{
-    CodeSketch sketch(function);
-    sketch.withFrame();
-    AOT_TEST_CHECK(!sketch.callFunction(callee));
-    fillUpTo(sketch, size - sizeof(uint32_t));
-    sketch.end();
-    AOT_TEST_CHECK(sketch.size() == size);
-    return sketch.take();
-}
-
-static Vector<CompiledCode> bodiesAtEdgeOfReach(uint32_t calleeOfSecond)
-{
-    constexpr uint32_t sizeOfFirst = loweredReach / 2;
-    constexpr uint32_t sizeOfSecond = loweredReach - sizeOfFirst - sizeof(uint32_t);
-    Vector<CompiledCode> result = bodies(sizedCaller(1, 3, sizeOfFirst), sizedCaller(2, calleeOfSecond, sizeOfSecond));
-    for (uint32_t function = 3; function <= lastBodyAtEdgeOfReach; ++function)
-        result.append(big(function));
-    return result;
-}
-
 static Vector<ArgumentMoves> moveLists(unsigned count)
 {
     Vector<ArgumentMoves> lists;
@@ -160,15 +138,32 @@ static Vector<CompiledCode> bodiesWithMoves(unsigned count, std::span<const Argu
     result.reserveInitialCapacity(count);
     for (uint32_t function = 1; function <= count; ++function) {
         CodeSketch sketch = framedSketch(function);
-        for (unsigned call = 0; call < thunkCallsInBody; ++call) {
-            sketch.callThunk(lists[function % lists.size()]);
-            sketch.lastRelocation().symbol = 0;
-            sketch.code().body.argumentMoves.shrink(1);
-        }
+        sketch.callThunk(lists[function % lists.size()]);
+        for (unsigned call = 1; call < thunkCallsInBody; ++call)
+            sketch.callThunkAgain(0);
         sketch.end();
         result.append(sketch.take());
     }
     return result;
+}
+
+#if CPU(ARM64)
+static void appendLongFiller(CodeSketch& sketch)
+{
+    constexpr size_t roomForWhatFollows = 1 * KB;
+    auto& bytes = sketch.code().body.bytes;
+    size_t start = bytes.size();
+    bytes.reserveCapacity(start + sizeOfLongFiller + roomForWhatFollows);
+    bytes.grow(start + sizeOfLongFiller);
+    zeroSpan(bytes.mutableSpan().subspan(start));
+}
+
+static CodeSketch farSketch(uint32_t function)
+{
+    CodeSketch sketch = bigSketch(function);
+    if (function >= firstLongFarBody && function <= lastLongFarBody)
+        appendLongFiller(sketch);
+    return sketch;
 }
 
 template<typename AddCalls>
@@ -177,7 +172,7 @@ static Vector<CompiledCode> farBodies(const AddCalls& addCalls)
     Vector<CompiledCode> result;
     result.reserveInitialCapacity(numberOfFarBodies);
     for (uint32_t function = 1; function <= numberOfFarBodies; ++function) {
-        CodeSketch sketch = bigSketch(function);
+        CodeSketch sketch = farSketch(function);
         addCalls(function, sketch);
         sketch.callStub(writeBarrier());
         sketch.end();
@@ -192,8 +187,7 @@ static Vector<CompiledCode> largeStubCallers()
     result.reserveInitialCapacity(numberOfLargeBodies);
     for (uint32_t function = 1; function <= numberOfLargeBodies; ++function) {
         CodeSketch sketch = bigSketch(function);
-        for (unsigned unit = 1; unit < pinnedUnitsInLargeBody; ++unit)
-            sketch.pinned(function, wordsInPinnedUnit);
+        appendLongFiller(sketch);
         sketch.callStub(writeBarrier());
         sketch.end();
         result.append(sketch.take());
@@ -205,6 +199,7 @@ static uint64_t distanceBetween(uint64_t first, uint64_t second)
 {
     return std::max(first, second) - std::min(first, second);
 }
+#endif // CPU(ARM64)
 
 static void checkCodeIsDisjoint(const Steps& steps)
 {
@@ -220,6 +215,7 @@ static void checkCodeIsDisjoint(const Steps& steps)
         AOT_TEST_CHECK(ranges[index - 1].second <= ranges[index].first);
 }
 
+#if CPU(ARM64)
 static void checkStubCallsInReach(const Steps& steps)
 {
     for (size_t position = 0; position < steps.functions.size(); ++position) {
@@ -229,33 +225,51 @@ static void checkStubCallsInReach(const Steps& steps)
             if (relocation.space != SymbolSpace::Stub)
                 continue;
             uint64_t from = static_cast<uint64_t>(steps.layout.bodyStarts[position]) + relocation.offset;
-            AOT_TEST_CHECK(distanceBetween(from, copy) <= loweredSharedCodeReach);
-            AOT_TEST_CHECK(distanceBetween(from, copy + steps.layout.sharedCodeSize) <= loweredSharedCodeReach);
+            AOT_TEST_CHECK(distanceBetween(from, copy) <= reachOfNearCall);
+            AOT_TEST_CHECK(distanceBetween(from, copy + steps.layout.sharedCodeSize) <= reachOfNearCall);
         }
     }
 }
+
+static void checkFunctionCallsInReach(const Steps& steps)
+{
+    const CodeLayout& layout = steps.layout;
+    for (uint32_t position = 0; position < steps.functions.size(); ++position) {
+        const CodeBody& body = steps.functions[position].body;
+        for (const Relocation& relocation : body.relocations) {
+            if (relocation.space != SymbolSpace::Function)
+                continue;
+            uint32_t callee = *steps.callees.at(position, relocation.symbol);
+            size_t veneer = layout.veneersByBody[position].find(VeneerTarget { SymbolSpace::Function, relocation.entry, callee });
+            uint64_t target = veneer == notFound
+                ? static_cast<uint64_t>(layout.bodyStarts[callee]) + *steps.functions[callee].body.offsetOfEntry(relocation.entry)
+                : static_cast<uint64_t>(layout.firstVeneerOffset(position, body.bytes.size()) + veneer * testTemplates().sizeOfVeneer());
+            uint64_t from = static_cast<uint64_t>(layout.bodyStarts[position]) + relocation.offset;
+            AOT_TEST_CHECK(distanceBetween(from, target) < reachOfNearCall);
+        }
+    }
+}
+#endif // CPU(ARM64)
 
 static void checkMoveLists(const Steps& steps, std::span<const ArgumentMoves> lists)
 {
     const SharedCode& sharedCode = steps.sharedCode;
     AOT_TEST_CHECK(sharedCode.argumentMoves.size() == lists.size());
     for (size_t index = 0; index < lists.size(); ++index) {
-        AOT_TEST_CHECK(*sharedCode.argumentMoves[index] == lists[index]);
-        AOT_TEST_CHECK(sharedCode.thunkOffset(lists[index]) == sharedCode.argumentThunks.offsets[index]);
+        AOT_TEST_CHECK(equalSpans(sharedCode.argumentMoves[index].span(), lists[index].span()));
+        AOT_TEST_CHECK(sharedCode.thunkOffset(lists[index].span()) == sharedCode.argumentThunks.offsets[index]);
     }
     AOT_TEST_CHECK(sharedCode.blob.offsetOf(writeBarrier()));
 }
 
 static void checkJumpRetained(Steps& steps)
 {
-    steps.rewrite();
-    Vector<uint8_t> bytes = steps.functions[0].body.bytes;
+    Vector<uint8_t> bytes(steps.functions[0].body.bytes.span());
     size_t numberOfRelocations = steps.functions[0].body.relocations.size();
     steps.removeJumps();
     AOT_TEST_CHECK(!steps.layout.fallsIntoNext.bitCount());
     AOT_TEST_CHECK(steps.functions[0].body.bytes == bytes);
     AOT_TEST_CHECK(steps.functions[0].body.relocations.size() == numberOfRelocations);
-    AOT_TEST_CHECK(!steps.build.statistic(StatisticID::JumpsToNextFunctionRemoved));
 }
 
 static void checkJumpRetained(Vector<CompiledCode>&& code)
@@ -277,21 +291,6 @@ static void testCalledKeys()
     steps.select();
     AOT_TEST_CHECK(steps.sharedCode.blob.offsetOf(writeBarrier()));
     AOT_TEST_CHECK(steps.sharedCode.blob.offsetOf(toPropertyKey()));
-}
-
-static void testKeyOfOutlinedJump()
-{
-    Steps steps(bodies(framed(1)));
-    steps.rewrite();
-    OutlinedBodies& sharedBodies = steps.outlinedCode.sharedBodies;
-    AOT_TEST_CHECK(sharedBodies.bytes.isEmpty());
-    sharedBodies.bytes = testTemplates().nearJump;
-    sharedBodies.offsets.append(0);
-    sharedBodies.relocations.append(Relocation { 0, RelocationKind::Jump, SymbolSpace::Stub, primaryEntry, static_cast<uint32_t>(steps.outlinedCode.stubKeys.size()) });
-    steps.outlinedCode.stubKeys.append(toPropertyKey());
-    steps.select();
-    AOT_TEST_CHECK(steps.sharedCode.blob.offsetOf(toPropertyKey()));
-    AOT_TEST_CHECK(steps.sharedCode.veneersOffset >= steps.sharedCode.sharedBodiesOffset + sizeOfJump);
 }
 
 static void checkSelectedMoveLists(unsigned numberOfLists)
@@ -343,7 +342,7 @@ static void testSelectionThreads()
 
 static void testOneCopy()
 {
-    Steps steps(repeatedBodies(5));
+    Steps steps(framedBodies(5));
     steps.layOut();
     const CodeLayout& layout = steps.layout;
     AOT_TEST_CHECK(layout.sharedCodeCopies.size() == 1);
@@ -361,13 +360,12 @@ static void testOneCopy()
     AOT_TEST_CHECK(layout.codeSize == layout.constantsOffset);
 }
 
+#if CPU(ARM64)
 static void testSeveralCopies()
 {
-    if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
-        return;
-    Steps steps(largeStubCallers(), sharedCodeReachOptions());
+    Steps steps(largeStubCallers());
     steps.layOut();
-    AOT_TEST_CHECK(steps.layout.sharedCodeSize < loweredSharedCodeReach / 2);
+    AOT_TEST_CHECK(steps.layout.sharedCodeSize < reachOfNearCall / 4);
     AOT_TEST_CHECK(steps.layout.sharedCodeCopies.size() > 1);
     for (uint32_t copy : steps.layout.sharedCodeCopies)
         AOT_TEST_CHECK(!(copy % imageStubsAlignment));
@@ -386,116 +384,77 @@ static void testFarCallsGetVeneers()
         }
         if (function == 2)
             sketch.callFunction(3);
-    }), reachOptions(LimitID::FunctionCallReach));
+    }));
     steps.layOut();
     const CodeLayout& layout = steps.layout;
     AOT_TEST_CHECK(layout.veneersByBody[0].size() == 1);
-    AOT_TEST_CHECK(layout.veneersByBody[0][0] == (VeneerTarget { SymbolSpace::Function, primaryEntry, numberOfFarBodies - 1, { } }));
+    AOT_TEST_CHECK(layout.veneersByBody[0][0] == (VeneerTarget { SymbolSpace::Function, primaryEntry, numberOfFarBodies - 1 }));
     AOT_TEST_CHECK(layout.veneersByBody[1].isEmpty());
     AOT_TEST_CHECK(layout.sharedCodeVeneers.isEmpty());
     AOT_TEST_CHECK(steps.build.statistic(StatisticID::Veneers) == 1);
     size_t firstVeneer = layout.firstVeneerOffset(0, steps.functions[0].body.bytes.size());
     AOT_TEST_CHECK(firstVeneer >= layout.bodyStarts[0] + steps.functions[0].body.bytes.size());
     AOT_TEST_CHECK(layout.bodyStarts[1] >= firstVeneer + testTemplates().sizeOfVeneer());
+    checkFunctionCallsInReach(steps);
+    checkStubCallsInReach(steps);
+    checkCodeIsDisjoint(steps);
 }
 
-static void testTwoEntriesTwoVeneers()
+static void testOrderOfVeneers()
 {
     Steps steps(farBodies([](uint32_t function, CodeSketch& sketch) {
-        if (function == numberOfFarBodies)
+        if (function >= lastLongFarBody)
             addSecondEntry(sketch);
         if (function != 1)
             return;
         sketch.callFunction(numberOfFarBodies, { }, secondEntry);
         sketch.callFunction(numberOfFarBodies);
-    }), reachOptions(LimitID::FunctionCallReach));
+        sketch.callFunction(lastLongFarBody, { }, secondEntry);
+    }));
     steps.layOut();
     const auto& veneers = steps.layout.veneersByBody[0];
-    AOT_TEST_CHECK(veneers.size() == 2);
-    AOT_TEST_CHECK(veneers[0] == (VeneerTarget { SymbolSpace::Function, secondEntry, numberOfFarBodies - 1, { } }));
-    AOT_TEST_CHECK(veneers[1] == (VeneerTarget { SymbolSpace::Function, primaryEntry, numberOfFarBodies - 1, { } }));
-}
-
-static void testVeneerPushesCallOutOfReach()
-{
-    Steps withoutFarCall(bodiesAtEdgeOfReach(3), reachOptions(LimitID::FunctionCallReach));
-    withoutFarCall.layOut();
-    const CodeLayout& layoutInReach = withoutFarCall.layout;
-    AOT_TEST_CHECK(layoutInReach.bodyStarts[2] - layoutInReach.bodyStarts[0] == loweredReach - sizeof(uint32_t));
-    AOT_TEST_CHECK(layoutInReach.veneersByBody[0].isEmpty());
-    AOT_TEST_CHECK(layoutInReach.veneersByBody[1].isEmpty());
-
-    Steps withFarCall(bodiesAtEdgeOfReach(lastBodyAtEdgeOfReach), reachOptions(LimitID::FunctionCallReach));
-    withFarCall.layOut();
-    const CodeLayout& layout = withFarCall.layout;
-    AOT_TEST_CHECK(layout.veneersByBody[1].size() == 1);
-    AOT_TEST_CHECK(layout.veneersByBody[1][0].index == lastBodyAtEdgeOfReach - 1);
-    AOT_TEST_CHECK(layout.veneersByBody[0].size() == 1);
-    AOT_TEST_CHECK(layout.veneersByBody[0][0].index == 2);
-    AOT_TEST_CHECK(layout.bodyStarts[2] - layout.bodyStarts[0] >= loweredReach);
-    AOT_TEST_CHECK(withFarCall.build.statistic(StatisticID::Veneers) == 2);
+    AOT_TEST_CHECK(veneers.size() == 3);
+    AOT_TEST_CHECK(veneers[0] == (VeneerTarget { SymbolSpace::Function, secondEntry, lastLongFarBody - 1 }));
+    AOT_TEST_CHECK(veneers[1] == (VeneerTarget { SymbolSpace::Function, primaryEntry, numberOfFarBodies - 1 }));
+    AOT_TEST_CHECK(veneers[2] == (VeneerTarget { SymbolSpace::Function, secondEntry, numberOfFarBodies - 1 }));
+    checkFunctionCallsInReach(steps);
 }
 
 static void testFarRegExpEntries()
 {
-    Steps steps(farBodies([](uint32_t function, CodeSketch& sketch) {
-        if (function == 1 || function == numberOfFarBodies)
-            callRegExp(sketch, 0, 1);
-    }), reachOptions(LimitID::FunctionCallReach));
+    Steps steps(largeStubCallers());
     steps.regExpSection.bytes.fill(0, 64);
     steps.regExpSection.entries.append(std::array<uint32_t, 2> { 0, 16 });
     steps.select();
-    AOT_TEST_CHECK(steps.sharedCode.blob.code.relocations.isEmpty());
-    steps.sharedCode.blob.code.relocations.append(Relocation { 0, RelocationKind::Call, SymbolSpace::RegExp, 0, 0 });
+    Vector<Relocation>& relocations = steps.sharedCode.blob.code.relocations;
+    AOT_TEST_CHECK(relocations.isEmpty());
+    relocations.append(Relocation { 0, RelocationKind::Call, SymbolSpace::RegExp, 1, 0 });
+    relocations.append(Relocation { static_cast<uint32_t>(sizeOfNearCall), RelocationKind::Call, SymbolSpace::RegExp, 0, 0 });
     steps.layOut();
 
     const CodeLayout& layout = steps.layout;
-    AOT_TEST_CHECK(layout.veneersByBody[0].size() == 1);
-    AOT_TEST_CHECK(layout.veneersByBody[0][0] == (VeneerTarget { SymbolSpace::RegExp, 1, 0, { } }));
-    AOT_TEST_CHECK(layout.veneersByBody.last().isEmpty());
-    AOT_TEST_CHECK(layout.sharedCodeVeneers.size() == 1);
-    AOT_TEST_CHECK(layout.sharedCodeVeneers[0] == (VeneerTarget { SymbolSpace::RegExp, 0, 0, { } }));
-    AOT_TEST_CHECK(layout.sharedCodeSize == steps.sharedCode.veneersOffset + testTemplates().sizeOfVeneer());
-    AOT_TEST_CHECK(steps.build.statistic(StatisticID::Veneers) == 1 + layout.sharedCodeCopies.size());
+    AOT_TEST_CHECK(distanceBetween(layout.sharedCodeCopies[0], layout.regExpCodeOffset) > reachOfNearCall);
+    for (const auto& veneers : layout.veneersByBody)
+        AOT_TEST_CHECK(veneers.isEmpty());
+    AOT_TEST_CHECK(layout.sharedCodeVeneers.size() == 2);
+    AOT_TEST_CHECK(layout.sharedCodeVeneers[0] == (VeneerTarget { SymbolSpace::RegExp, 0, 0 }));
+    AOT_TEST_CHECK(layout.sharedCodeVeneers[1] == (VeneerTarget { SymbolSpace::RegExp, 1, 0 }));
+    AOT_TEST_CHECK(layout.sharedCodeSize == steps.sharedCode.veneersOffset + 2 * testTemplates().sizeOfVeneer());
+    AOT_TEST_CHECK(steps.build.statistic(StatisticID::Veneers) == 2 * layout.sharedCodeCopies.size());
     checkCodeIsDisjoint(steps);
 }
+#endif // CPU(ARM64)
 
-static size_t firstFunctionShift(const Steps& steps)
-{
-    size_t sharedCodeEnd = static_cast<size_t>(steps.layout.sharedCodeCopies[0]) + steps.layout.sharedCodeSize;
-    return steps.layout.bodyStarts[0] - WTF::roundUpToMultipleOf(static_cast<size_t>(1) << steps.shift, sharedCodeEnd);
-}
-
-static void testSeed()
-{
-    Steps unseeded(repeatedBodies(5));
-    Steps seeded(repeatedBodies(5), TestOptions { .layoutSeed = 1 });
-    unseeded.layOut();
-    seeded.layOut();
-    AOT_TEST_CHECK(!firstFunctionShift(unseeded));
-    size_t seededShift = firstFunctionShift(seeded);
-    AOT_TEST_CHECK(seededShift);
-    AOT_TEST_CHECK(!(seededShift % 4));
-    AOT_TEST_CHECK(seededShift < 64);
-    const Vector<uint32_t>& unseededStarts = unseeded.layout.bodyStarts;
-    const Vector<uint32_t>& seededStarts = seeded.layout.bodyStarts;
-    for (size_t position = 0; position < unseeded.functions.size(); ++position) {
-        AOT_TEST_CHECK(seededStarts[position] - seededStarts[0] == unseededStarts[position] - unseededStarts[0]);
-        AOT_TEST_CHECK(seeded.functions[position].function == unseeded.functions[position].function);
-        AOT_TEST_CHECK(seeded.functions[position].body.bytes.size() == unseeded.functions[position].body.bytes.size());
-    }
-}
-
-#if ENABLE(WEBASSEMBLY)
 static void testRegExpAndWebAssembly()
 {
-    Steps steps(repeatedBodies(5));
+    constexpr size_t webAssemblyCodeAlignment = 4 * KB;
+    Steps steps(framedBodies(5));
     steps.regExpSection.bytes.fill(0, RegExpSection::alignment + 100);
     steps.regExpSection.dataOffset = RegExpSection::alignment;
-    steps.layOut(50, WasmSectionBuilder::codeAlignment);
+    steps.layOut(50, webAssemblyCodeAlignment);
     const CodeLayout& layout = steps.layout;
     AOT_TEST_CHECK(layout.webAssemblyCodeOffset >= layout.functionsEnd);
-    AOT_TEST_CHECK(!(layout.webAssemblyCodeOffset % WasmSectionBuilder::codeAlignment));
+    AOT_TEST_CHECK(!(layout.webAssemblyCodeOffset % webAssemblyCodeAlignment));
     AOT_TEST_CHECK(layout.regExpCodeOffset >= layout.webAssemblyCodeOffset + 50);
     AOT_TEST_CHECK(!(layout.regExpCodeOffset % RegExpSection::alignment));
     AOT_TEST_CHECK(layout.executableSize == layout.regExpCodeOffset + RegExpSection::alignment);
@@ -503,27 +462,29 @@ static void testRegExpAndWebAssembly()
     AOT_TEST_CHECK(layout.constantsOffset == WTF::roundUpToMultipleOf<imageConstantsAlignment>(layout.executableSize + 100));
     AOT_TEST_CHECK(layout.codeSize == layout.constantsOffset);
 }
-#endif // ENABLE(WEBASSEMBLY)
+
+static void testConstantsInLastExecutablePage()
+{
+    for (bool constantsFit : { true, false }) {
+        Steps steps(framedBodies(5));
+        steps.findJumps();
+        steps.constants.bytes.fill(1, constantsFit ? 24 : 2 * imagePageSize);
+        steps.layOut();
+        const CodeLayout& layout = steps.layout;
+        size_t sizeOfConstants = WTF::roundUpToMultipleOf<imageConstantsAlignment>(steps.constants.bytes.size());
+        AOT_TEST_CHECK(constantsFit == (sizeOfConstants <= layout.executableSize - layout.functionsEnd));
+        AOT_TEST_CHECK(layout.constantsOffset == (constantsFit ? layout.executableSize - sizeOfConstants : layout.executableSize));
+        AOT_TEST_CHECK(layout.codeSize == (constantsFit ? layout.executableSize : layout.executableSize + steps.constants.bytes.size()));
+    }
+}
 
 static void testNeitherRegExpNorWebAssembly()
 {
-    Steps steps(repeatedBodies(5));
+    Steps steps(framedBodies(5));
     steps.layOut();
     AOT_TEST_CHECK(steps.layout.webAssemblyCodeOffset == steps.layout.functionsEnd);
     AOT_TEST_CHECK(steps.layout.ffiCodeOffset == steps.layout.functionsEnd);
     AOT_TEST_CHECK(steps.layout.regExpCodeOffset == steps.layout.executableSize);
-}
-
-static void testOwnBodiesAfterCaller()
-{
-    CodeSketch caller = singleCallerSketch(1);
-    caller.end();
-    Steps steps(bodies(caller.take(), framed(2)));
-    steps.layOut();
-    AOT_TEST_CHECK(!steps.layout.ownBodyOffsets.isEmpty());
-    uint64_t ownBody = steps.layout.ownBodyOffsets[0];
-    AOT_TEST_CHECK(ownBody >= steps.layout.bodyStarts[0] + steps.functions[0].body.bytes.size());
-    AOT_TEST_CHECK(ownBody < steps.layout.bodyStarts[1]);
 }
 
 static void testNoBody()
@@ -539,9 +500,7 @@ static void testJumpToNext()
     steps.removeJumps();
     AOT_TEST_CHECK(steps.functions[0].body.relocations.isEmpty());
     AOT_TEST_CHECK(steps.functions[0].body.bytes.size() == 4);
-    AOT_TEST_CHECK(steps.functions[0].body.paddingStart == 4);
     checkFallsThrough(steps, 0);
-    AOT_TEST_CHECK(steps.build.statistic(StatisticID::JumpsToNextFunctionRemoved) == 1);
 }
 
 #if CPU(X86_64)
@@ -549,7 +508,7 @@ static void testOddOffset()
 {
     CodeSketch first(1);
     first.plain(1);
-    uint32_t oddByte = first.pinnedBytes(1);
+    uint32_t oddByte = first.noOperationBytes(1);
     first.jumpToFunction(2);
     Steps steps(bodies(first.take(), framed(2)));
     steps.removeJumps();
@@ -565,7 +524,7 @@ static void checkReturningCallBeforeJump(unsigned oddBytes)
     first.withFrame();
     first.plain(1);
     if (oddBytes)
-        first.pinnedBytes(oddBytes);
+        first.noOperationBytes(oddBytes);
     size_t returnOffset = first.callStub(writeBarrier()) + sizeOfNearCall;
     first.jumpToFunction(2);
     Steps steps(bodies(first.take(), framed(2)));
@@ -598,6 +557,7 @@ static void testRunOfThree()
     checkFallsThrough(steps, 1);
 }
 
+#if CPU(ARM64)
 static void testVeneer()
 {
     Vector<CompiledCode> code;
@@ -608,24 +568,17 @@ static void testVeneer()
     first.plain(2);
     first.jumpToFunction(2);
     code.append(first.take());
-    for (uint32_t function = 2; function <= numberOfFarBodies; ++function)
-        code.append(big(function));
-    Steps steps(WTF::move(code), reachOptions(LimitID::FunctionCallReach));
+    for (uint32_t function = 2; function <= numberOfFarBodies; ++function) {
+        CodeSketch sketch = farSketch(function);
+        sketch.end();
+        code.append(sketch.take());
+    }
+    Steps steps(WTF::move(code));
     checkJumpRetained(steps);
     AOT_TEST_CHECK(steps.finalJumps[0].jumpsToNextBody);
     AOT_TEST_CHECK(!steps.layout.veneersByBody[0].isEmpty());
 }
-
-static void testOwnOutlinedBody()
-{
-    CodeSketch caller = singleCallerSketch(1);
-    caller.pinned(200);
-    caller.jumpToFunction(2);
-    Steps steps(bodies(caller.take(), framed(2)));
-    steps.rewrite();
-    AOT_TEST_CHECK(steps.outlinedCode.ownBodiesSize(0));
-    checkJumpRetained(steps);
-}
+#endif
 
 static void testJumpToStub()
 {
@@ -652,8 +605,8 @@ static void checkNullCheckBeforeJump(unsigned oddBytes)
     CodeSketch first(1);
     first.plain(1);
     if (oddBytes)
-        first.pinnedBytes(oddBytes);
-    uint32_t access = first.pinnedBytes(1);
+        first.noOperationBytes(oddBytes);
+    uint32_t access = first.noOperationBytes(1);
     first.code().sites.faultingAccesses.append(FaultingAccess { access, { }, { } });
     first.jumpToFunction(2);
     checkJumpRetained(bodies(first.take(), framed(2)));
@@ -667,7 +620,7 @@ static void testLongRunIsBroken()
     code.reserveInitialCapacity(numberOfBodies);
     for (uint32_t function = 1; function < numberOfBodies; ++function) {
         CodeSketch sketch(function);
-        sketch.pinned(function, wordsInPinnedUnit);
+        sketch.plain(function, wordsInBigBody);
         sketch.jumpToFunction(function + 1);
         code.append(sketch.take());
     }
@@ -693,7 +646,6 @@ std::span<const NativeTest> codeLayoutTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/stub-selection/called-keys"_s, testCalledKeys },
-        { "image/stub-selection/key-of-outlined-jump"_s, testKeyOfOutlinedJump },
         { "image/stub-selection/equal-move-lists"_s, [] { checkSelectedMoveLists(1); } },
         { "image/stub-selection/different-move-lists"_s, [] { checkSelectedMoveLists(3); } },
         { "image/stub-selection/uncalled-key"_s, testUncalledKey },
@@ -701,25 +653,24 @@ std::span<const NativeTest> codeLayoutTests()
         { "image/stub-selection/missing-stub-of-thunk"_s, [] { checkMissingStub(thunkCaller(1, stubArgumentMoves(writeBarrier().withCount(1), 1))); } },
         { "image/stub-selection/threads"_s, testSelectionThreads },
         { "image/layout/one-copy"_s, testOneCopy },
+#if CPU(ARM64)
         { "image/layout/several-copies"_s, testSeveralCopies },
         { "image/layout/far-calls-get-veneers"_s, testFarCallsGetVeneers },
-        { "image/layout/two-entries-two-veneers"_s, testTwoEntriesTwoVeneers },
-        { "image/layout/veneer-pushes-call-out-of-reach"_s, testVeneerPushesCallOutOfReach },
+        { "image/layout/order-of-veneers"_s, testOrderOfVeneers },
         { "image/layout/far-regexp-entries"_s, testFarRegExpEntries },
-        { "image/layout/seed"_s, testSeed },
-#if ENABLE(WEBASSEMBLY)
-        { "image/layout/regexp-and-wasm"_s, testRegExpAndWebAssembly },
 #endif
+        { "image/layout/regexp-and-wasm"_s, testRegExpAndWebAssembly },
+        { "image/layout/constants-in-last-executable-page"_s, testConstantsInLastExecutablePage },
         { "image/layout/neither"_s, testNeitherRegExpNorWebAssembly },
-        { "image/layout/own-bodies-after-caller"_s, testOwnBodiesAfterCaller },
         { "image/layout/no-body"_s, testNoBody },
         { "image/fall-through/jump-to-next"_s, testJumpToNext },
         { "image/fall-through/returning-call-before-jump"_s, testReturningCallBeforeJump },
         { "image/fall-through/run-of-three"_s, testRunOfThree },
         { "image/fall-through/other-target"_s, [] { checkJumpRetained(bodies(tail(1, 3), framed(2), framed(3))); } },
         { "image/fall-through/next-has-prefix"_s, [] { checkJumpRetained(bodies(tail(1, 2), framedWithPrefix(2))); } },
+#if CPU(ARM64)
         { "image/fall-through/veneer"_s, testVeneer },
-        { "image/fall-through/own-outlined-body"_s, testOwnOutlinedBody },
+#endif
         { "image/fall-through/jump-to-stub"_s, testJumpToStub },
         { "image/fall-through/jump-to-second-entry"_s, testJumpToSecondEntry },
         { "image/fall-through/last-body"_s, [] { checkJumpRetained(bodies(tail(1, 1))); } },

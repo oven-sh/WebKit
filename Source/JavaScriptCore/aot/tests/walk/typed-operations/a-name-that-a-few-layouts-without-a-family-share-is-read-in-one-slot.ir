@@ -1,0 +1,81 @@
+# function weigh(e) { if (e.kind === "leaf") return e.value; if (e.kind === "pair") return weigh(e.left) + weigh(e.right); return -weigh(e.inner); }
+# weigh({ kind: "pair", left: { kind: "flip", inner: { kind: "leaf", value: 3 } }, right: { kind: "leaf", value: 4 } })
+# Nothing is written of `e`: three literals meet in the parameter, so Link says a set of three layouts, and no family holds them
+# A pair has three references: narrow they make its cell smaller, so its `kind` is narrow. A flip and a leaf gain nothing by it. The three are read through one set: `kind` is narrow in all
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject
+# PLAN: "kind" Cell32 Inline offset=[[tag]]
+# PLAN: layout L1 CompiledObject
+# PLAN: "kind" Cell32 Inline offset=[[tag]]
+# PLAN: layout L2 CompiledObject
+# PLAN: "kind" Cell32 Inline offset=[[tag]]
+# so the name has one place in all, the read has a typed form, and each comparison of the tag is a test of the shape: nothing is read, nothing stays closed
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = ShapeTest {{*}}layouts=[L2]
+# WALK: = GetSlot {{*}}key="value" receivers=[L2] level=Proven
+# WALK: = ShapeTest {{*}}layouts=[L1]
+# WALK: = GetSlot {{*}}key="left" receivers=[L1] level=Proven
+# WALK: = GetSlot {{*}}key="inner" receivers=[L0] level=Proven
+# WALK: = GetSlot {{*}}key="right" receivers=[L1] level=Proven
+# RUN(NOTHING): walk f1 mechanisms=all
+# NOTHING-NOT: PropGet
+# NOTHING-NOT: StrictEq
+# RUN(LINK): link families mechanisms=all
+# LINK-NOT: family F0
+
+layout L0 module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="left" declared={type=anything} flags=[IsRequired]}, {key="right" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L2 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="weigh" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="leaf"
+    v1 = Integer integer=3
+    v2 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    v3 = String string="flip"
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = Integer integer=4
+    v6 = NewObject -, v0, v5 layout=L2 fields=[0, 1]
+    v7 = String string="pair"
+    v8 = NewObject -, v7, v4, v6 layout=L1 fields=[0, 1, 2]
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v9, -, v8 calleeName="weigh"
+    Return v10
+}
+function f1 name="weigh" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kind"
+    v2 = String string="leaf"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    v6 = PropGet v5 key="value"
+    Return v6
+  b2(v7):
+    v8 = NarrowByField v0, v7 key="kind"
+    v9 = PropGet v8 key="kind"
+    v10 = String string="pair"
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12):
+    v13 = NarrowByField v8, v12 key="kind"
+    v14 = GetModuleVariable variable=g0
+    v15 = PropGet v13 key="left"
+    v16 = Call v14, -, v15 calleeName="weigh"
+    v17 = GetModuleVariable variable=g0
+    v18 = PropGet v13 key="right"
+    v19 = Call v17, -, v18 calleeName="weigh"
+    v20 = Add v16, v19
+    Return v20
+  b4(v21):
+    v22 = NarrowByField v8, v21 key="kind"
+    v23 = GetModuleVariable variable=g0
+    v24 = PropGet v22 key="inner"
+    v25 = Call v23, -, v24 calleeName="weigh"
+    v26 = Negate v25
+    Return v26
+}

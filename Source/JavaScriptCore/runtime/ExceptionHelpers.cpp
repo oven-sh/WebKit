@@ -29,6 +29,7 @@
 #include "config.h"
 #include "ExceptionHelpers.h"
 
+#include "AOTErrorMessages.h"
 #include "ErrorHandlingScope.h"
 #include "Exception.h"
 #include "JSCInlines.h"
@@ -70,6 +71,10 @@ JSObject* createUndefinedVariableError(JSGlobalObject* globalObject, const Ident
 
 String errorDescriptionForValue(JSGlobalObject* globalObject, JSValue v)
 {
+#if ENABLE(AOT)
+    if (String kind = AOT::primitiveKindForErrorMessage(v); !kind.isNull())
+        return kind;
+#endif
     if (v.isString()) {
         auto string = asString(v)->value(globalObject);
         if (!string)
@@ -349,6 +354,10 @@ JSObject* createErrorForDuplicateGlobalVariableDeclaration(JSGlobalObject* globa
 
 JSObject* createErrorForInvalidGlobalFunctionDeclaration(JSGlobalObject* globalObject, const Identifier& ident)
 {
+#if ENABLE(AOT)
+    if (globalObject->structure()->isImmutableProperty(ident.impl())) [[unlikely]]
+        return createTypeError(globalObject, withAOTErrorNote(makeString("Cannot declare '"_s, ident.string(), "': compiled code treats the global '"_s, ident.string(), "' as a constant, so code from a string can't replace it with a top-level function"_s)));
+#endif
     String message = tryMakeString("Can't declare global function '"_s, ident.string(), "': property must be either configurable or both writable and enumerable"_s);
     if (!message) [[unlikely]]
         message = "Can't declare global function: property must be either configurable or both writable and enumerable"_s;

@@ -1,0 +1,114 @@
+# `options.signal`, where the literal leaves the optional property out: the layout has the field, the slot is empty from birth, and nothing above has the name.
+# The place of the read is filled with the shape and the offset all the same, and the stub answers undefined by the object's own marks. Before, nothing was ever filed for such a read:
+# every one of them went the whole road behind the place, and every 32nd into the run time, for as long as the program ran.
+# `options.other`, a name that the layout has no field for: the place is filled with the Structure and "absent", which ends when the object gets a property of its own or Object.prototype changes.
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full) => { let missing = 0; for (let turn = 0; turn < 6400; turn++) { if (signalOf(bare()) === undefined) missing++; } print(missing, aotOperationCount("operationAOTFillSiteAnswers") < 8 ? "the place was filled" : "the place stayed empty"); print(signalOf(full()), signalOf(bare())); const later = bare(); later.signal = "later"; print(signalOf(later), signalOf(bare())); const got = bare(); Object.defineProperty(got, "signal", { get() { return "got"; } }); print(signalOf(got), signalOf(bare())); const below = bare(); Object.setPrototypeOf(below, { signal: "above" }); print(signalOf(below), signalOf(bare())); };
+# CHECK: 6400 the place was filled
+# CHECK-NEXT: signal undefined
+# CHECK-NEXT: later undefined
+# CHECK-NEXT: got undefined
+# CHECK-NEXT: above undefined
+# CHECK-NEXT: exited with 0
+# RUN(NOFIELD): run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full, otherOf) => { let missing = 0; for (let turn = 0; turn < 6400; turn++) { if (otherOf(bare()) === undefined) missing++; } print(missing, aotOperationCount("operationAOTFillSiteAnswers") < 8 ? "the place was filled" : "the place stayed empty"); const later = bare(); later.other = "later"; print(otherOf(later), otherOf(bare())); const got = bare(); Object.defineProperty(got, "other", { get() { return "got"; } }); print(otherOf(got), otherOf(bare())); const below = bare(); Object.setPrototypeOf(below, { other: "above" }); print(otherOf(below), otherOf(bare())); const proxied = bare(); Object.setPrototypeOf(proxied, new Proxy({ }, { get() { return "proxy"; } })); print(otherOf(proxied), otherOf(bare())); };
+# NOFIELD: 6400 the place was filled
+# NOFIELD-NEXT: later undefined
+# NOFIELD-NEXT: got undefined
+# NOFIELD-NEXT: above undefined
+# NOFIELD-NEXT: proxy undefined
+# NOFIELD-NEXT: exited with 0
+# `options.other` asked at one place of objects of five kinds that all lack it: the place keeps the Structures of all five, and each way in which the name comes to one of them ends it for that one.
+# RUN(MANY): run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full, otherOf) => { const root = { above: 1 }; const kinds = [bare, () => ({ a: 1 }), () => ({ b: 1, c: 2 }), () => Object.create(null), () => Object.create(root)]; const all = () => { let text = ""; for (let kind = 0; kind < 5; kind++) text += (kind ? "," : "") + otherOf(kinds[kind]()); return text; }; let missing = 0; for (let turn = 0; turn < 32000; turn++) { if (otherOf(kinds[turn % 5]()) === undefined) missing++; } print(missing, aotOperationCount("operationAOTFillSiteAnswers") < 100 ? "the place holds all five" : "the place holds too few"); gc(); print(all()); const later = kinds[1](); later.other = "later"; print(otherOf(later), all()); root.other = "above"; print(all()); delete root.other; print(all()); for (let turn = 0; turn < 32000; turn++) { if (otherOf(kinds[turn % 5]()) === undefined) missing++; } Object.setPrototypeOf(root, { other: "laid above" }); print(missing, all()); };
+# MANY: 32000 the place holds all five
+# MANY-NEXT: undefined,undefined,undefined,undefined,undefined
+# MANY-NEXT: later undefined,undefined,undefined,undefined,undefined
+# MANY-NEXT: undefined,undefined,undefined,undefined,above
+# MANY-NEXT: undefined,undefined,undefined,undefined,undefined
+# MANY-NEXT: 64000 undefined,undefined,undefined,undefined,laid above
+# MANY-NEXT: exited with 0
+# `options.other` asked at one place of objects of three kinds that have it, each elsewhere in its cell, then of two more that lack it: the place keeps an answer for each of the five.
+# RUN(EACH): run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full, otherOf) => { const kinds = [() => ({ other: 1 }), () => ({ a: 0, other: 2 }), () => ({ a: 0, b: 0, other: 3 }), bare, () => ({ c: 0 })]; const all = () => { let text = ""; for (let kind = 0; kind < 5; kind++) text += (kind ? "," : "") + otherOf(kinds[kind]()); return text; }; let sum = 0; for (let turn = 0; turn < 19200; turn++) sum += otherOf(kinds[turn % 3]()); for (let turn = 0; turn < 32000; turn++) sum += otherOf(kinds[turn % 5]()) | 0; print(sum, aotOperationCount("operationAOTFillSiteAnswers") < 100 ? "the place holds all five" : "the place holds too few"); gc(); print(all()); const removed = kinds[1](); delete removed.other; print(otherOf(removed), all()); const got = kinds[2](); Object.defineProperty(got, "other", { get() { return "got"; } }); print(otherOf(got), all()); };
+# EACH: 76800 the place holds all five
+# EACH-NEXT: 1,2,3,undefined,undefined
+# EACH-NEXT: undefined 1,2,3,undefined,undefined
+# EACH-NEXT: got 1,2,3,undefined,undefined
+# EACH-NEXT: exited with 0
+# `options.signal` of objects that leave the property out and stand below another object than Object.prototype: the place keeps what stands above them, in that object's cell, in its storage, or nowhere.
+# RUN(ABOVE): run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full) => { const many = { }; for (let i = 0; i < 12; i++) many["p" + i] = i; many.signal = "in the storage"; const roots = [{ }, { signal: "in the cell" }, many]; for (let which = 0; which < 3; which++) { const root = roots[which]; const below = () => Object.setPrototypeOf(bare(), root); const before = aotOperationCount("operationAOTFillSiteAnswers"); let seen; for (let turn = 0; turn < 32000; turn++) seen = signalOf(below()); print(seen, aotOperationCount("operationAOTFillSiteAnswers") - before < 100 ? "the place keeps what stands above" : "the place keeps nothing"); gc(); print(signalOf(below()), signalOf(Object.setPrototypeOf(full(), root)), signalOf(bare())); root.signal = "stored above"; print(signalOf(below())); for (let i = 0; i < 40; i++) root["q" + i] = i; print(signalOf(below())); delete root.signal; print(signalOf(below())); Object.defineProperty(root, "signal", { get() { return "got above"; } }); print(signalOf(below())); } };
+# ABOVE: undefined the place keeps what stands above
+# ABOVE-NEXT: undefined signal undefined
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: undefined
+# ABOVE-NEXT: got above
+# ABOVE-NEXT: in the cell the place keeps what stands above
+# ABOVE-NEXT: in the cell signal undefined
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: undefined
+# ABOVE-NEXT: got above
+# ABOVE-NEXT: in the storage the place keeps what stands above
+# ABOVE-NEXT: in the storage signal undefined
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: undefined
+# ABOVE-NEXT: got above
+# ABOVE-NEXT: exited with 0
+
+module m0 path="absent-place.ts" displayPath="absent-place.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=10 fields=[{key="depth" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="signal" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}] declaredOrder=[0, 2, 1] ownFieldCount=3
+data d0 root=Object{layout=L0 members=[{key="depth" value=Number{value=2}}, {key="name" value=String{value="bare"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="depth" value=Number{value=2}}, {key="signal" value=String{value="signal"}}, {key="name" value=String{value="full"}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=GlobalThis @348
+    v9 = PropGet v8 key="Function" [isFreeName] @348
+    v10 = Convert v9 declared={type=builtin(Function) flags=[IsExpected]} @348
+    v11 = String string="return globalThis.register" @357
+    v12 = Construct v10, -, v11 calleeName="Function" @348
+    v13 = Convert v12 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @344
+    v14 = Call v13 @385
+    v15 = Call v14, -, v5, v1, v3, v7 @387
+    v16 = Undefined @344
+    Return v16 @344
+}
+function f1 name="bare" module=m0 position=74 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @74
+  b1():
+    v0 = Data data=d0 @110
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @110
+    Return v1 @110
+}
+function f2 name="full" module=m0 position=140 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @140
+  b1():
+    v0 = Data data=d1 @176
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @176
+    Return v1 @176
+}
+function f3 name="signalOf" module=m0 position=224 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @224
+  b1():
+    v1 = PropGet v0 key="signal" @267
+    Return v1 @267
+}
+function f4 name="otherOf" module=m0 position=285 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @285
+  b1():
+    v1 = PropGet v0 key="other" @327
+    Return v1 @327
+}

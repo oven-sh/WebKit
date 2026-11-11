@@ -7,10 +7,13 @@
 
 #if ENABLE(AOT)
 
-#include "AOTImage.h"
+#include "AOTBuiltProgramTestSupport.h"
+#include "AOTBuiltinTable.h"
 #include "AOTNativeTest.h"
 #include "AOTRealmStartup.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTTestHarness.h"
+#include <algorithm>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -20,15 +23,13 @@ std::span<const NativeTest> closedWorldTests();
 
 using Flags = OptionSet<ImageFlag>;
 
-static constexpr Flags closed { };
-// Text may ask process.getBuiltinModule for a module of the library under a name that nobody knows. No file of the program answers to such a name: closed-world/modules/evaluated-text-finds-no-module-by-name.
-static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::RunsUnreadCode };
-// A module that stays outside the image has require and every module of the library. It sees no module object of the program and replaces no answer of the loader.
-static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::RunsUnreadCode };
-static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName, ImageFlag::FindsDataFilesByName };
-static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage, ImageFlag::FindsDataFilesByName, ImageFlag::RunsUnreadCode };
-static constexpr Flags showsWaysBetweenModuleObjects { ImageFlag::ShowsWaysBetweenModuleObjects };
-static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule, ImageFlag::RunsUnreadCode };
+static constexpr Flags refusesOriginals { ImageFlag::RefusesOriginalsBesideMocks };
+static constexpr Flags closed = refusesOriginals;
+static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AllowsLibrarySource, ImageFlag::LetsGlobalObjectGo };
+static constexpr Flags findsModulesByName = refusesOriginals | Flags { ImageFlag::LoadsModulesByName };
+static constexpr Flags loadsCodeFromOutside = runsModuleFromOutside | Flags { ImageFlag::LoadsCodeOutsideImage };
+static constexpr Flags showsWaysBetweenModuleObjects = refusesOriginals | Flags { ImageFlag::ShowsWaysBetweenModuleObjects };
+static constexpr Flags open = loadsCodeFromOutside;
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -108,17 +109,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR" AOT_APPLY_EVALUATOR_TEXT ""_s;
 
-static constexpr ASCIILiteral evaluatorUnderUnknownKeyOfGlobalObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="name" [isFreeName]
-    v2 = ElemGet v0, v1
-    v3 = CallDirect v2 function=f1
-    Return
-}
-)IR" AOT_APPLY_EVALUATOR_TEXT ""_s;
-
 static constexpr ASCIILiteral evaluatorComesBackFromUnknownCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -144,38 +134,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral callsUnknownFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="sink" [isFreeName]
-    v2 = Call v1, -, v0
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral evaluatesUnknownText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="text" [isFreeName]
-    v2 = PropGet v0 key="eval" [isFreeName]
-    v3 = Call v2, -, v1
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral constructsFunctionFromUnknownText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="text" [isFreeName]
-    v2 = Builtin builtin=Function
-    v3 = Construct v2, -, v1
-    Return
-}
-)IR"_s;
-
 static constexpr ASCIILiteral importsUncompiledModule = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
 entry module=m0
@@ -197,19 +155,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral installsPlugin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=Bun
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="plugin" [isFreeName]
-    v3 = Builtin builtin=BunPlugin
-    v4 = Call v3, v0, v2
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral otherModuleIsNeverLoaded =R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+static constexpr ASCIILiteral otherModuleIsNeverLoaded = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -243,32 +189,6 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral unseenCodeMayCallLoader = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/other.js" displayPath="other.js" body=f1
-entry module=m0
-function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="text" [isFreeName]
-    v2 = PropGet v0 key="eval" [isFreeName]
-    v3 = Call v2, -, v1
-    v4 = PropGet v0 key="sink" [isFreeName]
-    v5 = Builtin builtin=Process
-    v6 = Call v4, -, v5
-    v7 = PropGet v0 key="name" [isFreeName]
-    v8 = ElemGet v6, v7
-    v9 = Call v8, v6, v7
-    Return
-}
-function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="print" [isFreeName]
-    v2 = String string="other ran"
-    v3 = Call v1, -, v2
-    Return
-}
-)IR"_s;
-
-// A name that the build did not follow finds the entry points and no other file of the image, so the other module is one.
 static constexpr ASCIILiteral otherModuleIsLoadedByUnknownName = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
@@ -292,8 +212,8 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
   b0():
 )IR"
 
-#define AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] body=f1
+#define AOT_MAIN_OF_TWO_COMMONJS_MODULES R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f1
 entry module=m0
 function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE
 
@@ -305,8 +225,8 @@ function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE
 }
 )IR"_s
 
-static constexpr ASCIILiteral callsRequireAsValueUnderKnownName = R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0
-module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] body=f1
+static constexpr ASCIILiteral callsRequireAsValueUnderKnownName = R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f0
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f1
 entry module=m0
 entry module=m1
 function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
@@ -363,11 +283,31 @@ function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = Modu
 }
 )IR"_s
 
-static constexpr ASCIILiteral takesMainModuleAsFrontEndSays = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError, NamesWayToModuleObjects");
-static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MODULE_AS_VALUE("KeepsError");
+static constexpr ASCIILiteral takesMainModuleAsFrontEndSays = AOT_TAKES_MAIN_MODULE_AS_VALUE("CachesEvaluationError, ReachesModuleObjects");
+static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MODULE_AS_VALUE("CachesEvaluationError");
+
+#define AOT_HOLDS_MOCK_OF_FILE(flagsOfVariable) R"IR(variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 module=m1 declared={type=anything|absent} flags=[)IR" flagsOfVariable R"IR(]
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/mocked.cjs" displayPath="mocked.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeMocked] requireResult=ModuleExports body=f1 exportsVariable=g0
+entry module=m0
+entry module=m1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="mocked" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+)IR"_s
+
+static constexpr ASCIILiteral holdsMockOfFile = AOT_HOLDS_MOCK_OF_FILE("IsReplaceable, HoldsMock");
+static constexpr ASCIILiteral holdsMockOfFileWhoseOriginalMayRun = AOT_HOLDS_MOCK_OF_FILE("IsReplaceable, HoldsMock, OriginalMayRun");
 
 #define AOT_LIBRARY_LOADS_BY_NAME(operation) R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
+module m2 path="internal:load" displayPath="internal:load" flags=[IsLibrary]
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = CallDirect function=f2
@@ -380,13 +320,13 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
     v3 = Call v1, -, v2
     Return
 }
-function f2 name="load" module=m0 role=Library results=[{type=anything}] {
+function f2 name="load" module=m2 role=Library results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="name" [isFreeName]
     Jump -> next b1()
   b1() handler=b3():
-    v3 = )IR" operation R"IR( v2 referrer=m0
+    v3 = )IR" operation R"IR( v2 referrer=m2
     v4 = Call v1, -, v3
     Jump -> next b2()
   b2():
@@ -435,136 +375,157 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 static constexpr ASCIILiteral everyEvaluator = "globalThis.text = '1 + 1'; const evaluators = [eval, Function, (async function () { }).constructor, (function* () { }).constructor, (async function* () { }).constructor]; globalThis.take = () => evaluators.shift();"_s;
 
-static Flags flagsOf(ASCIILiteral programText, OptionWords optionWords = { })
-{
-    std::unique_ptr<CompileOutput> output;
-    runOnBuildThread([&] {
-        output = compileForShellOnThisThread(programText, optionWords);
-    });
-    std::optional<Flags> flags = Image::flags(output->image.span());
-    AOT_TEST_CHECK(flags);
-    return *flags;
-}
-
 static String refusal(unsigned count)
 {
     StringBuilder text;
     for (unsigned index = 0; index < count; ++index)
-        text.append("EvalError\n"_s, evaluationRefusedMessage(), '\n');
+        text.append("EvalError\n"_s, rejectedEvaluationMessage(), '\n');
     return text.toString();
 }
 
-static void checkShellOutput(ASCIILiteral programText, const String& expectedOutput, ASCIILiteral statementsBeforeProgram, OptionWords optionWords = { })
+static void checkShellOutput(ASCIILiteral programText, const String& expectedOutput, ASCIILiteral statementsBeforeProgram, OptionWords optionWords = { }, std::source_location location = std::source_location::current())
 {
     String output = outputOfProgramInShell(programText, optionWords, statementsBeforeProgram);
-    if (output != expectedOutput)
-        dataLog("the shell printed\n", output, "expected\n", expectedOutput);
-    AOT_TEST_CHECK(output == expectedOutput);
+    checkPrintedLines(location.file_name(), static_cast<int>(location.line()), optionWordsOfReason(optionWords), output, expectedOutput);
 }
 
 static void testProgramWithoutEventIsClosed()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum) == closed);
-    AOT_TEST_CHECK(flagsOf(otherModuleIsNeverLoaded) == closed);
-    // An addon is native code.
-    AOT_TEST_CHECK(flagsOf(loadsNativeAddon) == closed);
+    checkImageFlags({
+        { printsSum, closed },
+        { otherModuleIsNeverLoaded, closed },
+        { loadsNativeAddon, closed },
+    });
 }
 
 static void testReachableEvaluatorLeavesTheProgramClosed()
 {
-    AOT_TEST_CHECK(flagsOf(callsUnknownFunction) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatorsFromUnknownCode) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKey) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKeyOfGlobalObject) == closed);
-}
-
-static void testCallThatStartsUnseenCodeAdmitsNothingElse()
-{
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText) == runsText);
-    AOT_TEST_CHECK(flagsOf(constructsFunctionFromUnknownText) == runsText);
-    AOT_TEST_CHECK(flagsOf(installsPlugin) == runsText);
-    AOT_TEST_CHECK(flagsOf(evaluatesTextBesideOtherModule) == runsText);
-    AOT_TEST_CHECK(flagsOf(unseenCodeMayCallLoader) == runsText);
-    AOT_TEST_CHECK(flagsOf(evaluatorComesBackFromUnknownCode) == runsText);
+    checkImageFlags({
+        { evaluatorsFromUnknownCode, closed },
+        { evaluatorUnderUnknownKey, closed },
+    });
 }
 
 static void testUncompiledModuleOpensTheProgram()
 {
-    AOT_TEST_CHECK(flagsOf(importsUncompiledModule) == runsModuleFromOutside);
+    checkImageFlags({
+        { importsUncompiledModule, runsModuleFromOutside, { "exclude=CodeOutsideImage"_s } },
+        { importsUncompiledModule, isHardenedBuild ? runsModuleFromOutside : loadsCodeFromOutside },
+    });
 }
 
 static void testOptionThatAdmitsCodeOpensTheProgram()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum, { "admit=Inspector"_s }) == open);
+    checkImageFlags({
+        { printsSum, open, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
+        { printsSum, open, { "admit=Inspector"_s } },
+    });
+}
+
+static void testOptionThatAdmitsCodeKeepsEveryFeature()
+{
+    std::unique_ptr<CompileOutput> output;
+    runOnBuildThread([&] {
+        output = compileForShellOnThisThread(printsSum, { "admit=Inspector"_s });
+    });
+
+    AOT_TEST_CHECK(std::ranges::contains(output->records<Wire::UnseenCodeRecord>(Wire::ResultSection::UnseenCode), Wire::UnseenCodeCause::OptionAdmitsCode, &Wire::UnseenCodeRecord::cause));
+
+    const BuiltinTable& builtins = BuiltinTable::singleton();
+    std::span<const Wire::BuiltinUseRecord> uses = output->records<Wire::BuiltinUseRecord>(Wire::ResultSection::BuiltinsUsed);
+    AOT_TEST_CHECK(uses.size() == builtins.builtinCount());
+    static_assert(isFlagWord<Wire::BuiltinUse>);
+    constexpr auto everyUse = static_cast<Wire::BuiltinUse>(((1u << numberOfEnumerators<Wire::BuiltinUse>) - 1) & ~static_cast<uint32_t>(Wire::BuiltinUse::NamedAtRunTime));
+    AOT_TEST_CHECK(std::ranges::all_of(uses, [](const Wire::BuiltinUseRecord& use) {
+        return use.uses == everyUse;
+    }));
+
+    std::span<const Wire::FeatureUseRecord> features = output->records<Wire::FeatureUseRecord>(Wire::ResultSection::FeaturesUsed);
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index))) {
+            AOT_TEST_CHECK(std::ranges::any_of(features, [&](const Wire::FeatureUseRecord& use) {
+                return use.feature == static_cast<uint32_t>(line.feature) && use.kind == Wire::FeatureUseKind::Named;
+            }));
+        }
+    }
+
+    std::span<const Wire::LocaleUseRecord> locales = output->records<Wire::LocaleUseRecord>(Wire::ResultSection::LocalesUsed);
+    AOT_TEST_CHECK(locales.size() == 1 && locales[0].kind == Wire::LocaleUseKind::Unknown);
 }
 
 static void testLoadByUnknownNameOnlyExposesModules()
 {
-    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName, { "exclude=CodeOutsideImage"_s }) == findsModulesByName);
-    // The name may be the path of a file that the build has not seen.
-    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName) == (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside));
-    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName, { "admit=Inspector"_s }) == open);
+    checkImageFlags({
+        { otherModuleIsLoadedByUnknownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
+        { otherModuleIsLoadedByUnknownName, isHardenedBuild ? findsModulesByName : loadsCodeFromOutside },
+        { otherModuleIsLoadedByUnknownName, open, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
+    });
 }
 
 static void testLoaderCalledAsValueLoadsByName()
 {
-    AOT_TEST_CHECK(flagsOf(callsRequireAsValueUnderKnownName, { "exclude=CodeOutsideImage"_s }) == findsModulesByName);
-    AOT_TEST_CHECK(flagsOf(callsRequireAsValueUnderKnownName) == (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside));
+    checkImageFlags({
+        { callsRequireAsValueUnderKnownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
+        { callsRequireAsValueUnderKnownName, isHardenedBuild ? findsModulesByName : loadsCodeFromOutside },
+    });
     checkShellOutput(callsRequireAsValueUnderKnownName, "other ran\n"_s, ""_s);
 }
 
 static void testLoadByNameInLibraryFunctionLeavesTheProgramClosed()
 {
-    AOT_TEST_CHECK(flagsOf(libraryRequiresUnknownName) == closed);
-    AOT_TEST_CHECK(flagsOf(libraryImportsUnknownName) == closed);
+    checkImageFlags({
+        { libraryRequiresUnknownName, closed },
+        { libraryImportsUnknownName, closed },
+    });
 }
 
-// No module of the image is in the module cache, so nothing that is done to the cache changes what the code counts on.
 static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 {
-    AOT_TEST_CHECK(flagsOf(requiresOtherModule) == closed);
-    AOT_TEST_CHECK(flagsOf(readsModuleCache) == closed);
-    AOT_TEST_CHECK(flagsOf(removesFromModuleCache) == closed);
-    AOT_TEST_CHECK(flagsOf(storesIntoModuleCache) == closed);
+    checkImageFlags({
+        { requiresOtherModule, closed },
+        { readsModuleCache, closed },
+        { removesFromModuleCache, closed },
+        { storesIntoModuleCache, closed },
+    });
 }
 
-// What a program can observe never hangs on what flow has reached or lost: the front end says by binding whether a file names a way between module objects, and nobody else is asked.
 static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
-    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays) == showsWaysBetweenModuleObjects);
-    AOT_TEST_CHECK(flagsOf(takesMainModuleBehindFrontEnd) == closed);
-    AOT_TEST_CHECK(flagsOf(takesMainModuleAsFrontEndSays, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == (open | showsWaysBetweenModuleObjects));
-}
-
-static void testExcludedTextLeavesTheProgramClosed()
-{
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=EvaluatedText"_s }) == closed);
-    AOT_TEST_CHECK(flagsOf(installsPlugin, { "exclude=EvaluatedText"_s }) == runsText);
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=HostEvaluatedText"_s }) == runsText);
-}
-
-static void testLossesOfTheAnalysisAdmitNothing()
-{
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow:ReachedFunctions"_s }) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "disable=flow:ReachedFunctions"_s }) == runsText);
-}
-
-static void testProgramThatWasNotAnalyzedIsOpen()
-{
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == open);
-    // Any load may name a file outside the image, so only the options say whether one is loaded.
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == (runsOnlyCodeOfImage ? open : open | Flags { ImageFlag::LoadsCodeOutsideImage }));
+    checkImageFlags({
+        { takesMainModuleAsFrontEndSays, (isHardenedBuild ? findsModulesByName : loadsCodeFromOutside) | showsWaysBetweenModuleObjects },
+        { takesMainModuleBehindFrontEnd, isHardenedBuild ? findsModulesByName : loadsCodeFromOutside },
+        { takesMainModuleAsFrontEndSays, open | showsWaysBetweenModuleObjects, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
+    });
 }
 
 static void testObfuscationIsAnotherFlag()
 {
-    AOT_TEST_CHECK(flagsOf(printsSum, { "obfuscate"_s }) == Flags { ImageFlag::IsObfuscated });
+    checkImageFlags({ { printsSum, closed | Flags { ImageFlag::IsObfuscated }, { "obfuscate"_s } } });
+}
+
+static constexpr ASCIILiteral testRunWord = "admit=ReplacedBuiltins"_s;
+
+static void testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun()
+{
+    checkImageFlags({
+        { printsSum, refusesOriginals },
+        { holdsMockOfFile, refusesOriginals },
+        { holdsMockOfFileWhoseOriginalMayRun, Flags { } },
+    });
+}
+
+static void testTestRunRefusesOriginalsOnlyBesideMockOfFile()
+{
+    checkImageFlags({
+        { printsSum, Flags { }, { testRunWord } },
+        { holdsMockOfFile, refusesOriginals, { testRunWord } },
+        { holdsMockOfFileWhoseOriginalMayRun, Flags { }, { testRunWord } },
+    });
 }
 
 static void testClosedProgramRefusesEveryEvaluator()
 {
     checkShellOutput(evaluatorsFromUnknownCode, refusal(5), everyEvaluator);
-    checkShellOutput(evaluatorsFromUnknownCode, refusal(5), everyEvaluator, { "validate"_s });
 }
 
 static void testProgramThatEvaluatesTextKeepsEveryEvaluator()
@@ -593,14 +554,12 @@ static void testEveryRealmOfClosedProgramRefusesEvaluation()
     static constexpr ASCIILiteral evaluateWithoutNestedEvaluation = "globalThis.one = 1; for (const realm of [globalThis, createGlobalObject()]) { for (const evaluate of [realm.eval, realm.Function]) { try { print(typeof evaluate('1 + 1')); } catch (error) { print(error.name); print(error.message); } } }"_s;
     checkShellOutput(printsSum, makeString(refusal(4), "2\n"_s), evaluateWithoutNestedEvaluation);
     checkShellOutput(printsSum, "number\nfunction\nfunction\nnumber\nfunction\nfunction\n2\n"_s, evaluateInEveryRealm, { "admit=Inspector"_s });
-    checkShellOutput(printsSum, "number\nfunction\nfunction\nnumber\nfunction\nfunction\n2\n"_s, evaluateInEveryRealm, { "disable=flow-results"_s });
 }
 
 #define AOT_DECLARATION_REFUSED(name) "SyntaxError: Cannot declare '" name "': compiled code treats the global '" name "' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
 static void testScriptShadowsNoConstantOfCompiledCode()
 {
-    // Whether parseInt is a constant is up to the analysis. Either the declaration is refused or compiled code sees the binding.
     static constexpr ASCIILiteral declareInScripts = "globalThis.errorOf = script => { try { loadString(script); return null; } catch (error) { return error; } };"
         " globalThis.declare = script => { const error = errorOf(script); if (error) print(error); };"
         " globalThis.text = `declare('let Math = { max: () => \"of the script\" }'); declare('const Math = 1'); declare('class Math { }'); declare('let globalThis = 1');"
@@ -609,12 +568,11 @@ static void testScriptShadowsNoConstantOfCompiledCode()
     static constexpr ASCIILiteral expectedOutput = AOT_DECLARATION_REFUSED("Math") AOT_DECLARATION_REFUSED("Math") AOT_DECLARATION_REFUSED("Math") AOT_DECLARATION_REFUSED("globalThis") "of the script\n2\n2\nas declared\nof the script\nundefined\n"_s;
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts);
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "admit=Inspector"_s });
-    checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "disable=flow-results"_s });
-    checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "validate"_s });
 }
 
-#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
+#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
+#define AOT_COMPILED_FILE_REFUSED "Cannot load '/other.js': it was compiled into this executable, and a dynamic path finds a compiled file only if the path is a string somewhere in your code. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 #define AOT_LOADER_CHANGE_REFUSED ": imports in this executable were resolved at build time, so the module loader can't be patched. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
 static constexpr ASCIILiteral runOtherModule = "globalThis.name = '/other.js'; try { runCompiledEntryPoint(2); drainMicrotasks(); } catch (error) { print(error.message); }"_s;
@@ -627,7 +585,7 @@ static void testClosedProgramFindsNoModuleByName()
 static void testEvaluatedTextFindsNoModuleByName()
 {
     static constexpr ASCIILiteral textThatLoads = "globalThis.text = `for (const change of [() => runCompiledEntryPoint(2), () => overrideRequire(true)]) { try { change(); print('done'); } catch (error) { print(error.message); } }`;"_s;
-    checkShellOutput(evaluatesTextBesideOtherModule, AOT_LOAD_BY_NAME_REFUSED "done\n"_s, textThatLoads);
+    checkShellOutput(evaluatesTextBesideOtherModule, isHardenedBuild ? AOT_LOAD_BY_NAME_REFUSED "done\n"_s : AOT_COMPILED_FILE_REFUSED "done\n"_s, textThatLoads);
 }
 
 static void testProgramThatLoadsByNameFindsEntryPoints()
@@ -648,13 +606,12 @@ static void testLibraryFunctionOfClosedProgramFindsNoModuleByName()
 
 static constexpr ASCIILiteral changeLoader = "for (const change of [() => overrideRequire(true), () => setRequireCacheEntry(2, { })]) { try { change(); print('changed'); } catch (error) { print(error.message); } } overrideRequire(false);"_s;
 
-// The code calls the module that each constant name stood for in the build, whatever else the image admits and whatever function the program has put in the loader's place.
 static void testEveryImageTakesHookAndRefusesEntryOfCache()
 {
     static constexpr ASCIILiteral refusals = "changed\nCannot replace '/app/other.cjs' in require.cache" AOT_LOADER_CHANGE_REFUSED "other ran\n"_s;
     checkShellOutput(requiresOtherModule, refusals, changeLoader);
-    checkShellOutput(requiresOtherModule, refusals, changeLoader, { "admit=Inspector"_s });
     checkShellOutput(otherModuleIsLoadedByUnknownName, "other ran\n"_s, "globalThis.name = '/other.js'; try { overrideRequire(true); } catch (error) { print(error.message); }"_s);
+    checkShellOutput(requiresOtherModule, refusals, changeLoader, { "admit=Inspector"_s });
 }
 
 std::span<const NativeTest> closedWorldTests()
@@ -662,7 +619,6 @@ std::span<const NativeTest> closedWorldTests()
     static constexpr NativeTest tests[] {
         { "closed-world/flags/program-without-event-is-closed"_s, testProgramWithoutEventIsClosed },
         { "closed-world/flags/reachable-evaluator-leaves-the-program-closed"_s, testReachableEvaluatorLeavesTheProgramClosed },
-        { "closed-world/flags/call-that-starts-unseen-code-admits-nothing-else"_s, testCallThatStartsUnseenCodeAdmitsNothingElse },
         { "closed-world/flags/uncompiled-module-opens-the-program"_s, testUncompiledModuleOpensTheProgram },
         { "closed-world/flags/option-that-admits-code-opens-the-program"_s, testOptionThatAdmitsCodeOpensTheProgram },
         { "closed-world/flags/load-by-unknown-name-only-exposes-modules"_s, testLoadByUnknownNameOnlyExposesModules },
@@ -670,10 +626,10 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/flags/load-by-name-in-library-function-leaves-the-program-closed"_s, testLoadByNameInLibraryFunctionLeavesTheProgramClosed },
         { "closed-world/flags/what-is-done-to-module-cache-leaves-the-program-closed"_s, testWhatIsDoneToModuleCacheLeavesTheProgramClosed },
         { "closed-world/flags/front-end-alone-says-whether-ways-between-module-objects-are-shown"_s, testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown },
-        { "closed-world/flags/excluded-text-leaves-the-program-closed"_s, testExcludedTextLeavesTheProgramClosed },
-        { "closed-world/flags/losses-of-the-analysis-admit-nothing"_s, testLossesOfTheAnalysisAdmitNothing },
-        { "closed-world/flags/program-that-was-not-analyzed-is-open"_s, testProgramThatWasNotAnalyzedIsOpen },
         { "closed-world/flags/obfuscation-is-another-flag"_s, testObfuscationIsAnotherFlag },
+        { "closed-world/flags/executable-refuses-originals-unless-a-variable-says-that-one-may-run"_s, testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun },
+        { "closed-world/flags/test-run-refuses-originals-only-beside-a-mock-of-a-file"_s, testTestRunRefusesOriginalsOnlyBesideMockOfFile },
+        { "closed-world/features/option-that-admits-code-keeps-every-feature"_s, testOptionThatAdmitsCodeKeepsEveryFeature },
         { "closed-world/evaluation/closed-program-refuses-every-evaluator"_s, testClosedProgramRefusesEveryEvaluator },
         { "closed-world/evaluation/program-that-evaluates-text-keeps-every-evaluator"_s, testProgramThatEvaluatesTextKeepsEveryEvaluator },
         { "closed-world/evaluation/option-keeps-every-evaluator"_s, testOptionKeepsEveryEvaluator },

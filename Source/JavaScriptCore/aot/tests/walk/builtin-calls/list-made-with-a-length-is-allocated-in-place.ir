@@ -1,0 +1,70 @@
+# `new Array(n)` and `Array(n)`: by its row the constructor takes one number for a length. Where that is proven to be an integer the list is allocated where the call stands: no function of the host is entered,
+# and the list has storage that a store by index finds. An integer that is no length is refused by the operation behind the allocation, in the words of the constructor.
+# function made(n) { return new Array(n | 0); }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: : Array @{{*}} = NewArrayLike
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: CallBuiltin
+# function called(n) { return Array(n | 0); }
+# RUN(CALLED): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CALLED-LABEL: code f2:Body
+# CALLED: : Array @{{*}} = NewArrayLike
+# A number that may be a fraction goes by one call of the run time, which does what the constructor does: function fraction(n) { return new Array(n * 0.5); }
+# RUN(FRACTION): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# FRACTION-LABEL: code f3:Body
+# FRACTION-NOT: NewArrayLike
+# FRACTION: = NewArrayOfGiven
+# What may be a length or an element goes that way too: function either(n) { return new Array(n); }
+# RUN(EITHER): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# EITHER-LABEL: code f4:Body
+# EITHER-NOT: NewArrayLike
+# EITHER: = NewArrayOfGiven
+# With typed operations withheld the call stays.
+# RUN(CLOSED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CLOSED-LABEL: code f1:Body
+# CLOSED-NOT: NewArrayLike
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="made" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    Return v4
+}
+function f2 name="called" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Call v1, -, v3 calleeName="Array"
+    Return v4
+}
+function f3 name="fraction" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Double number=0.5
+    v3 = Mul v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    Return v4
+}
+function f4 name="either" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Construct v1, -, v0 calleeName="Array"
+    Return v2
+}

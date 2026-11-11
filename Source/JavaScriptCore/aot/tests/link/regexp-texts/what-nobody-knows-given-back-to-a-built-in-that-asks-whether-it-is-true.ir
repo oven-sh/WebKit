@@ -1,0 +1,44 @@
+# The list follows from the program alone. A function that gives back what nobody knows to a built-in that asks whether the answer is true would hand it an object, and an object is true. The whole call answers what nobody knows.
+# new RegExp(([1].every(() => [0].flat()[0]) ? "all" : "some").toUpperCase() + "q");   ([7].flat()[0]: flat is not entered: nobody knows what it gives.)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /ALLq/
+# CHECK: text /SOMEq/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f1
+    v3 = PropGet v1 key="every"
+    v4 = Call v3, v1, v2 calleeKey="every"
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = String string="all"
+    v7 = PropGet v6 key="toUpperCase"
+    v8 = Call v7, v6 calleeKey="toUpperCase"
+    Jump -> next b3(v8)
+  b2():
+    v9 = String string="some"
+    v10 = PropGet v9 key="toUpperCase"
+    v11 = Call v10, v9 calleeKey="toUpperCase"
+    Jump -> next b3(v11)
+  b3(v12: anything):
+    v13 = Builtin builtin=RegExp
+    v14 = String string="q"
+    v15 = Add v12, v14
+    v16 = Construct v13, -, v15
+    Return v16
+}
+function f1 module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewArray v0 contents=anything
+    v2 = PropGet v1 key="flat"
+    v3 = Call v2, v1 calleeKey="flat"
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    Return v5
+}

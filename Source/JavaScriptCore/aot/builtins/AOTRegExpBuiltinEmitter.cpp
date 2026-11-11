@@ -8,13 +8,11 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAccessEmitter.h"
-#include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTRegExpFlags.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsRegExp.h"
-#include "AOTValueIdentity.h"
+#include "AOTTypeArena.h"
 #include "RegExp.h"
 #include "RegExpObject.h"
 
@@ -48,44 +46,17 @@ Word32 RegExpBuiltinEmitter::flagsOf(CellPointer regExpObject)
     return Word32(m_out.load16ZeroExt32(fieldAt(regExpOf(regExpObject).value(), RegExp::offsetOfFlags())));
 }
 
-void RegExpBuiltinEmitter::storeLastIndex(CellPointer regExpObject, Boxed value, LBasicBlock ifNotWritable)
-{
-    LValue regExpAndFlags = m_out.load64(fieldAt(regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags()));
-    branchUnless(Condition(m_out.testIsZero64(regExpAndFlags, m_out.constInt64(RegExpObject::lastIndexIsNotWritableFlag))), ifNotWritable);
-    m_out.store64(value.value(), fieldAt(regExpObject.value(), RegExpObject::offsetOfLastIndex()));
-}
-
 void RegExpBuiltinEmitter::generateRegExpGetLastIndex(const InlineCall& call)
 {
     CellPointer regExpObject = cellOperand(call.receiver());
     finish(call, Boxed(m_out.load64(fieldAt(regExpObject.value(), RegExpObject::offsetOfLastIndex()))));
 }
 
-void RegExpBuiltinEmitter::generateRegExpSetLastIndex(const InlineCall& call)
-{
-    CellPointer regExpObject = cellOperand(call.receiver());
-    Boxed value = boxedOperand(call.context(), call.argument(0));
-    LBasicBlock notWritable = newBlock();
-    LBasicBlock continuation = newBlock();
-    storeLastIndex(regExpObject, value, notWritable);
-    ifElse(isNotCell(value), [] { }, [&] {
-        emitter<BarrierEmitter>().barrier(call.context(), regExpObject);
-    });
-    m_out.jump(continuation);
-
-    m_out.appendTo(notWritable);
-    emitter<AccessEmitter>().putById(call.context(), boxCell(regExpObject), m_program.keyOf(BuiltinNames::lastIndex), value, PutMode::Strict, SiteCacheID());
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-    finishWithUndefined(call);
-}
-
 void RegExpBuiltinEmitter::generateNewRegExp(const InlineCall& call)
 {
     OptionSet<Yarr::Flags> flags;
     if (ValueID flagsArgument = call.argumentOrNull(1)) {
-        StringID text = typeOf(sameObjectThroughCasts(m_function, flagsArgument).valueInFrontOfFacts()).singleStringLiteral();
+        StringID text = singleStringLiteralOf(typeOf(flagsArgument));
         std::optional<OptionSet<Yarr::Flags>> parsed = text ? Yarr::parseFlags(emitter<StringEmitter>().textOf(text)) : std::nullopt;
         if (!parsed) {
             fail(call.context(), InternalErrorKind::OpcodeWithoutCode);
@@ -94,14 +65,14 @@ void RegExpBuiltinEmitter::generateNewRegExp(const InlineCall& call)
         }
         flags = *parsed;
     }
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewRegExp, { cellOperand(call.argument(0)), word32(flags.toRaw()) }, { .calledBuiltin = functionOf(call.overload()) }), Type::builtinClass(BuiltinClasses::RegExp));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewRegExp, { cellOperand(call.argument(0)), word32(flags.toRaw()) }, { .calledBuiltin = functionOf(call.overload()) }), types().at(types().builtinClass(BuiltinClasses::RegExp)));
 }
 
 void RegExpBuiltinEmitter::generateRegExpExec(const InlineCall& call)
 {
     CellPointer regExpObject = cellOperand(call.receiver());
     CellPointer string = cellOperand(call.argument(0));
-    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::Array), { regExpObject.value(), string.value() }).first));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::Array), { regExpObject.value(), string.value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
 }
 
 void RegExpBuiltinEmitter::generateRegExpTest(const InlineCall& call)
@@ -109,11 +80,11 @@ void RegExpBuiltinEmitter::generateRegExpTest(const InlineCall& call)
     CellPointer regExpObject = cellOperand(call.receiver());
     CellPointer string = cellOperand(call.argument(0));
     if (resultRepresentationOf(call) == Representation::JSValue) {
-        Boxed isMatch(callStub(call.context(), regExpMatch(RegExpMatchResult::BoxedBoolean), { regExpObject.value(), string.value() }).first);
+        Boxed isMatch(callStub(call.context(), regExpMatch(RegExpMatchResult::BoxedBoolean), { regExpObject.value(), string.value() }, { .calledBuiltin = functionOf(call.overload()) }).first);
         finish(call, isMatch, m_program.at(TypeTable::boolean));
         return;
     }
-    LValue isMatch = callStub(call.context(), regExpMatch(RegExpMatchResult::Boolean), { regExpObject.value(), string.value() }).first;
+    LValue isMatch = callStub(call.context(), regExpMatch(RegExpMatchResult::Boolean), { regExpObject.value(), string.value() }, { .calledBuiltin = functionOf(call.overload()) }).first;
     finish(call, Condition(m_out.castToInt32(isMatch)));
 }
 
@@ -145,11 +116,12 @@ void RegExpBuiltinEmitter::generateStringReplace(const InlineCall& call)
     }
     CellPointer regExpObject = cellOperand(pattern);
     if (typeOf(replacement).isAnyString()) {
-        LValue replaced = callStub(call.context(), stringReplaceRegExpMayNotMatch(), { string.value(), regExpObject.value(), cellOperand(replacement).value() }).first;
+        LValue replaced = callStub(call.context(), stringReplaceRegExpMayNotMatch(), { string.value(), regExpObject.value(), cellOperand(replacement).value() }, { .calledBuiltin = functionOf(call.overload()) }).first;
         finish(call, CellPointer(replaced), stringType);
         return;
     }
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceRegExp, { string, regExpObject, boxedOperand(call.context(), replacement) }, { .calledBuiltin = functionOf(call.overload()) }), stringType);
+    LValue replaced = callStub(call.context(), stringReplaceRegExpMayNotMatch(ReplacementOfMatches::AnyValue), { string.value(), regExpObject.value(), boxedOperand(call.context(), replacement).value() }, { .calledBuiltin = functionOf(call.overload()) }).first;
+    finish(call, CellPointer(replaced), stringType);
 }
 
 void RegExpBuiltinEmitter::generateStringReplaceAll(const InlineCall& call)
@@ -177,21 +149,21 @@ void RegExpBuiltinEmitter::generateStringSplit(const InlineCall& call)
             missUnless(call, greaterThanOrEqual(limit, word32(0)));
     }
     RuntimeOperation operation = takesRegExp(call) ? RuntimeOperation::StringSplitRegExp : RuntimeOperation::StringSplitString;
-    finish(call, callOperation<CellPointer>(call.context(), operation, { string, separator, limit }), Type::builtinClass(BuiltinClasses::Array));
+    finish(call, callOperation<CellPointer>(call.context(), operation, { string, separator, limit }, { .calledBuiltin = takesRegExp(call) ? functionOf(call.overload()) : BuiltinID() }), types().at(types().builtinClass(BuiltinClasses::Array)));
 }
 
 void RegExpBuiltinEmitter::generateStringMatch(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
     CellPointer regExpObject = cellOperand(call.argument(0));
-    finish(call, Boxed(callStub(call.context(), stringMatchRegExp(), { string.value(), regExpObject.value() }).first));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::ArrayForStringMatch), { string.value(), regExpObject.value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
 }
 
 void RegExpBuiltinEmitter::generateStringSearch(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
     CellPointer regExpObject = cellOperand(call.argument(0));
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::StringSearchRegExp, { string, regExpObject }));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::IndexForStringSearch), { string.value(), regExpObject.value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
 }
 
 } } } // namespace JSC::AOT::Typed

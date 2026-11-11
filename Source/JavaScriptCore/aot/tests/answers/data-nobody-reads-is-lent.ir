@@ -1,0 +1,33 @@
+# const made = { id: 5 }; report(made.id); const lent = { id: -1 }; look(lent, report);
+# function look(object, hook) { return hook(object === hook); }
+# No read of the program looks into `lent`, so -1 is none of what reads of the field find. It lies in the slot all the same, and the copy that the call is lent is taken back behind the call.
+# RUN: run-in-shell globalThis.report = value => print(String(value));
+# CHECK: 5
+# CHECK-NEXT: false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="id" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="id" value=Number{value=-1}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Integer integer=5
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = PropGet v4 key="id"
+    v6 = Call v1, -, v5 calleeName="report"
+    v7 = NewClosure function=f1
+    v8 = Data data=d0
+    v9 = Call v7, -, v8, v1 calleeName="look"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="look" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v0, v1
+    v3 = Call v1, -, v2 calleeName="hook"
+    Return v3
+}

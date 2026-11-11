@@ -1,0 +1,20 @@
+# typeof "text"[JSON.parse('"at"')]
+# The key may spell any member of String.prototype and Object.prototype, and no member of another class. The read said one word for the whole program: every member of every prototype was handed out.
+# What hangs on the prototypes of texts is handed out as before: `match` makes a regular expression of a text.
+# RUN: features
+# CHECK: feature RegExp by StringPrototypeMatch unnamed
+# RUN(NEVER): features
+# NEVER-NOT: feature WebAssembly
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = String string="\"at\""
+    v4 = Call v2, v1, v3 calleeKey="parse"
+    v5 = ElemGet v0, v4
+    v6 = TypeOf v5
+    Return v6
+}

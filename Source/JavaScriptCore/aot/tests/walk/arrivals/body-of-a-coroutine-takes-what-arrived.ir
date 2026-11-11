@@ -1,0 +1,44 @@
+# the callee is a coroutine. What the caller proved of the argument is proven at the entry of its body too, and that a value is a number outlives the suspension
+# async function callee(n, p) { await p; return n + n; }  function caller(v, p) { if (typeof v === "number") return callee(v * v, p); }
+# RUN: walk f2 f1 f1:CoroutineBody mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK: = Add {{*}}form=Numbers
+# RUN(WITHHELD): walk f2 f1 f1:CoroutineBody mechanisms=none+TypedOperations+DirectCalls
+# WITHHELD-LABEL: code f1:CoroutineBody
+# WITHHELD-NOT: form=Numbers
+# WITHHELD: = AwaitBySavingFrame
+# WITHHELD-NOT: form=Numbers
+
+variable g0 name="callee" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="callee" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Await v1
+    v3 = Add v0, v0
+    Return v3
+}
+function f2 name="caller" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Mul v3, v3
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5, -, v4, v1 calleeName="callee"
+    v7 = NewArray v6 contents=anything
+    Return v7
+  b2(v8):
+    Return v8
+}

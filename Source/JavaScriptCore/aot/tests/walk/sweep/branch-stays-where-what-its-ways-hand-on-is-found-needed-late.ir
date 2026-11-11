@@ -1,0 +1,38 @@
+# let x = a; do { r = x(); x = r === undefined ? a : b; } while (r === null); return a;
+# v5 goes round to v2, which v3 reads in the head, in front of the branch. Where the way comes to the end of b1 nobody has marked v5: the branch is held to decide nothing. Then v3 marks v2, v2 marks v5,
+# and the ways bring different values for it: the branch decides after all, and v4 comes back through the worklist.
+# RUN: sweep-code
+# CHECK: b1(
+# CHECK: v4: boolean @Boolean = TypeTest v3
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
+# CHECK: Jump -> next b4(v0)
+# CHECK: Jump -> next b4(v1)
+# CHECK-NOT: dropped b
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     Jump -> next b1(v0)
+#   b1(v2: anything @JSValue) isInLoop=true isLoopHead=true:
+#     v3: anything @JSValue = Call v2, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: boolean @Boolean = TypeTest v3 testedType=undefined
+#     Branch v4 -> taken b2(), notTaken b3()
+#   b2() isInLoop=true:
+#     Jump -> next b4(v0)
+#   b3() isInLoop=true:
+#     Jump -> next b4(v1)
+#   b4(v5: anything @JSValue) isInLoop=true:
+#     v6: boolean @Boolean = TypeTest v3 testedType=null
+#     Branch v6 -> taken b1(v5), notTaken b5()
+#   b5():
+#     Return v0
+# }
+# -- end of code

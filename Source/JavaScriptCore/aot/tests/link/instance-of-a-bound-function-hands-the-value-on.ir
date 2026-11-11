@@ -1,0 +1,22 @@
+# a bound function on the right of `instanceof` hands the value on to what it is bound to, and no record says where: the object of the literal has left, and anything may be done to it
+# const Bound = Map.bind(null);  ({ a: 1 }) instanceof Bound;
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[{{*}}ChangesPrototype
+# RUN(NEVER): link layouts mechanisms=all
+# NEVER-NOT: layout L0 {{*}}stays-with-compiled-code
+
+layout L0 name="Pair" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Map
+    v4 = Builtin builtin=FunctionPrototypeBind
+    v5 = Null
+    v6 = Call v4, v3, v5 calleeName="Map.bind"
+    v7 = InstanceOf v2, v6
+    Return v7
+}

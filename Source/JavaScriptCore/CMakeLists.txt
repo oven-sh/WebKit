@@ -945,6 +945,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/PreventCollectionScope.h
     heap/RegisterState.h
     heap/ReleaseHeapAccessScope.h
+    heap/RememberedSlot.h
     heap/RootMarkReason.h
     heap/RunningScope.h
     heap/SimpleMarkingConstraint.h

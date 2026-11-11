@@ -1,0 +1,35 @@
+# If the image held the name of every variable that may hold a cell, the name of a function that only left-out code calls could be read out of the executable
+# function qqq..() { }  function zzz..() { }  hold(zzz..);
+# A heap snapshot shows a variable under its name, so the image has the names of the variables under which a cell can lie. Nothing names the first: it gets no word, and no table holds its name.
+# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else. A text that is only shown is coded and printed as it reads.
+# RUN(KEPT): image Text
+# KEPT: coded zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+# RUN(GONE): image Text
+# GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+# RUN(LINK): link functions
+# LINK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hold" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v1, -, v2 calleeName="hold"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

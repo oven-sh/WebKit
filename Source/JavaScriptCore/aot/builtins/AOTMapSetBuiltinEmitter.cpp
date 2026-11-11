@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "IterationKind.h"
+#include "JSCJSValueInlines.h"
 #include "JSWeakMap.h"
 #include "JSWeakSet.h"
 #include <wtf/MathExtras.h>
@@ -23,6 +24,10 @@ MapSetBuiltinEmitter::MapSetBuiltinEmitter(CodeGenerator& generator)
 void MapSetBuiltinEmitter::createFromIterable(const InlineCall& call, HashTableOwner owner)
 {
     Boxed iterable = boxedOperand(call.context(), call.argument(0));
+    if (!call.canMiss()) {
+        finish(call, callOperation<CellPointer>(call.context(), owner == HashTableOwner::Map ? RuntimeOperation::NewMapFromEntries : RuntimeOperation::NewSetFromIterable, { iterable }));
+        return;
+    }
     RuntimeOperation operation = owner == HashTableOwner::Map ? RuntimeOperation::TryNewMapFromEntries : RuntimeOperation::TryNewSetFromIterable;
     CellPointer created = callOperation<CellPointer>(call.context(), operation, { iterable });
     missUnless(call, Condition(m_out.notNull(created.value())));
@@ -56,28 +61,25 @@ void MapSetBuiltinEmitter::lookUpWeakTable(const InlineCall& call, WeakLookup lo
 {
     CellPointer table = cellOperand(call.receiver());
     Boxed key = boxedOperand(call.context(), call.argument(0));
-    if (call.context().shape() != CodeShape::Compact) {
-        probeWeakTable(call, lookup, table, key);
+    WeakProbe probe = probeWeakTable(lookup, table, key, typeOf(call.argument(0)));
+
+    m_out.appendTo(probe.found);
+    if (lookup == WeakLookup::MapGet) {
+        Join<Boxed> join(m_out);
+        join.add(Boxed(m_out.load64(probe.bucket, m_heaps.WeakMapBucket_value)));
+        m_out.appendTo(probe.absent);
+        join.add(undefined());
+        finish(call, join.finish());
         return;
     }
-    auto lookUpInStub = [&](StubKey stub) {
-        return Boxed(callStub(call.context(), stub, { table.value(), key.value() }).first);
-    };
-    switch (lookup) {
-    case WeakLookup::MapGet:
-        finish(call, lookUpInStub(weakMapGet()));
-        return;
-    case WeakLookup::MapHas:
-        finish(call, unboxBoolean(lookUpInStub(weakMapHas())));
-        return;
-    case WeakLookup::SetHas:
-        finish(call, unboxBoolean(lookUpInStub(weakSetHas())));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    Join<Condition> join(m_out);
+    join.add(boolean(true));
+    m_out.appendTo(probe.absent);
+    join.add(boolean(false));
+    finish(call, join.finish());
 }
 
-void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup lookup, CellPointer table, Boxed key)
+MapSetBuiltinEmitter::WeakProbe MapSetBuiltinEmitter::probeWeakTable(WeakLookup lookup, CellPointer table, Boxed key, const Type& typeOfKey)
 {
     using MapBucket = WeakMapBucket<WeakMapBucketDataKeyValue>;
     using SetBucket = WeakMapBucket<WeakMapBucketDataKey>;
@@ -85,25 +87,21 @@ void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup loo
     static_assert(JSWeakMap::offsetOfBuffer() == JSWeakSet::offsetOfBuffer() && JSWeakMap::offsetOfCapacity() == JSWeakSet::offsetOfCapacity());
     static_assert(MapBucket::offsetOfKey() == SetBucket::offsetOfKey());
     size_t bucketSize = lookup == WeakLookup::SetHas ? sizeof(SetBucket) : sizeof(MapBucket);
-    LBasicBlock mayBeKey = newBlock();
     LBasicBlock loop = newBlock();
     LBasicBlock isOtherKey = newBlock();
     LBasicBlock advance = newBlock();
     LBasicBlock found = newBlock();
     LBasicBlock absent = newBlock();
-    if (typeOf(call.argument(0)).isObject())
-        m_out.jump(mayBeKey);
-    else
-        branch(isCell(key), { normalEdge(mayBeKey), rareEdge(absent) });
+    if (!typeOfKey.isObject())
+        branchUnless(isCell(key), absent);
 
-    m_out.appendTo(mayBeKey);
     ValueFromBlock first = m_out.anchor(emitter<HashTableBuiltinEmitter>().hashOfBits(key).value());
     LValue buffer = m_out.loadPtr(table.value(), m_heaps.WeakMapImpl_buffer);
     LValue mask = m_out.sub(m_out.load32(table.value(), m_heaps.WeakMapImpl_capacity), m_out.int32One);
     m_out.jump(loop);
 
     m_out.appendTo(loop);
-    LValue unmasked = m_out.phi(B3::Int32, first);
+    LValue unmasked = m_out.phi(Machine::Int32, first);
     LValue index = m_out.bitAnd(unmasked, mask);
     LValue bucket = m_out.add(buffer, m_out.shl(m_out.zeroExtPtr(index), getLSBSet(bucketSize)));
     LValue bucketKey = m_out.loadPtr(bucket, m_heaps.WeakMapBucket_key);
@@ -115,21 +113,7 @@ void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup loo
     m_out.appendTo(advance);
     m_out.addIncomingToPhi(unmasked, m_out.anchor(m_out.add(index, m_out.int32One)));
     m_out.jump(loop);
-
-    m_out.appendTo(found);
-    if (lookup == WeakLookup::MapGet) {
-        Join<Boxed> join(m_out);
-        join.add(Boxed(m_out.load64(bucket, m_heaps.WeakMapBucket_value)));
-        m_out.appendTo(absent);
-        join.add(undefined());
-        finish(call, join.finish());
-        return;
-    }
-    Join<Condition> join(m_out);
-    join.add(boolean(true));
-    m_out.appendTo(absent);
-    join.add(boolean(false));
-    finish(call, join.finish());
+    return { found, absent, bucket };
 }
 
 void MapSetBuiltinEmitter::generateSetFromIterable(const InlineCall& call)

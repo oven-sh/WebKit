@@ -9,19 +9,15 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
-#include "AOTOperationData.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
-#include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsObjectCreation.h"
 #include "ArrayConventions.h"
-#include "Butterfly.h"
 #include "CompleteSubspace.h"
 #include "IndexingHeader.h"
 #include "IndexingType.h"
 #include "JSCellButterfly.h"
-#include "JSObject.h"
 #include "MarkedSpace.h"
 #include "PureNaN.h"
 #include <algorithm>
@@ -30,18 +26,13 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(descriptorOf(StubFamily::NewEmptyArray).numberOfForms == static_cast<unsigned>(EmptyArray::ContiguousCapacity3OwnStorage) + 1);
+static_assert(descriptorOf(StubFamily::NewEmptyArray).numberOfForms == static_cast<unsigned>(EmptyArray::Int32Capacity3) + 1);
 
 static constexpr StubRegister countAndNumberMaskRegister = StubRegister::T13;
 
 ptrdiff_t offsetOfArrayWithStorageAllocator(unsigned vectorLength, unsigned propertyRoom)
 {
     return CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfArrayWithStorage(vectorLength, propertyRoom)) * sizeof(Allocator);
-}
-
-static ptrdiff_t offsetOfArrayStorageAllocator(unsigned vectorLength)
-{
-    return CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeof(IndexingHeader) + vectorLength * sizeof(EncodedJSValue)) * sizeof(Allocator);
 }
 
 Jump branchIfHavingABadTime(StubAssembler& jit)
@@ -71,7 +62,6 @@ struct ArrayLiteralShape {
     std::optional<unsigned> emptyCapacity { };
     bool areDoubles { false };
     bool areInt32 { false };
-    bool hasStorageOfItsOwn { false };
 };
 
 static void emitStoreBoxedInt32(StubAssembler& jit, unsigned count, GPRReg base, size_t offset, GPRReg scratch)
@@ -93,7 +83,7 @@ static void emitStoreBoxedInt32(StubAssembler& jit, unsigned count, GPRReg base,
 
 static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
 {
-    const auto [count, emptyCapacity, areDoubles, areInt32, hasStorageOfItsOwn] = shape;
+    const auto [count, emptyCapacity, areDoubles, areInt32] = shape;
     auto number = [&](unsigned i) { return jit.operandFPR(1 + i); };
     static_assert(maxArrayElementsInRegisters == 4);
     RELEASE_ASSERT(count <= maxArrayElementsInRegisters);
@@ -109,22 +99,10 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     JumpList slowPath;
     for (unsigned i = 0; areDoubles && i < count; i += 2)
         slowPath.append(branchIfEitherIsNaN(jit, number(i), number(std::min(i + 1, count - 1))));
-    std::optional<AssemblyHelpers::FreeListRefill> storageRefill;
-    if (hasStorageOfItsOwn) {
-        slowPath.append(branchIfHavingABadTime(jit));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
-        jit.loadPtr(Address(allocator, offsetOfArrayStorageAllocator(vectorLength)), allocator);
-        slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
-        storageRefill = allocateCellWithLateRefill(jit, storage, allocator, scratch, slowPath);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), allocator);
-    } else {
-        RELEASE_ASSERT(ShortArrayWords::indexOfAllocator(vectorLength) < ShortArrayWords::numberOfAllocators);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shortArrays.allocators) + ShortArrayWords::indexOfAllocator(vectorLength) * sizeof(void*)), allocator);
-    }
-    static_assert(sizeof(JSArray) <= MarkedSpace::preciseCutoff);
-    AssemblyHelpers::FreeListRefill arrayRefill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, hasStorageOfItsOwn ? sizeof(JSArray) : sizeOfArrayWithStorage(vectorLength));
-    if (!hasStorageOfItsOwn)
-        jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
+    RELEASE_ASSERT(ShortArrayWords::indexOfAllocator(vectorLength) < ShortArrayWords::numberOfAllocators);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shortArrays.allocators) + ShortArrayWords::indexOfAllocator(vectorLength) * sizeof(void*)), allocator);
+    AssemblyHelpers::FreeListRefill arrayRefill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, sizeOfArrayWithStorage(vectorLength));
+    jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
     jit.store64(TrustedImm64(static_cast<uint64_t>(vectorLength) << 32 | count), Address(storage, 0));
     if (areDoubles) {
         for (unsigned i = 0; i < count; ++i)
@@ -144,8 +122,6 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
-    if (storageRefill)
-        emitLateRefill(jit, *storageRefill, slowPath);
     emitLateRefill(jit, arrayRefill, slowPath);
     slowPath.link(&jit);
     if (areDoubles) {
@@ -155,7 +131,7 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     jit.callOperationAndReturn(Entry::operationAOTNewArray, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedRegisters,
-        .spilledArguments = OperationCall::SpilledArguments { count, countAndCapacity | (hasStorageOfItsOwn ? storageOfItsOwnInArrayLiteralCount : 0) | (areInt32 ? int32ValuesInArrayLiteralCount : 0) },
+        .spilledArguments = OperationCall::SpilledArguments { count, countAndCapacity | (areInt32 ? int32ValuesInArrayLiteralCount : 0) },
     });
 }
 
@@ -164,41 +140,12 @@ StubSignature signatureOfArrayLiteral(StubKey key)
     StubSignature signature = StubSignature::withGPRResult({ });
     for (unsigned i = 0; i < key.count(); ++i)
         signature.addOperand(operationArgumentGPR(1 + i));
-    return signature;
+    return key.count() ? signature.fillingOperandInFront(key.count() - 1) : signature;
 }
 
 void generateArrayLiteral(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count() }); }
-
 StubSignature signatureOfArrayLiteralWithInt32(StubKey key) { return signatureOfArrayLiteral(arrayLiteral(key.count())); }
 void generateArrayLiteralWithInt32(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count(), .areInt32 = true }); }
-
-StubSignature signatureOfFrameArrayLiteral(StubKey key)
-{
-    StubSignature signature = signatureOfArrayLiteral(arrayLiteral(key.count()));
-    signature.addOperand(operationArgumentGPR(1 + maxArrayElementsInRegisters));
-    return signature;
-}
-
-// The cell, the indexing header and the elements, one behind the other. A realm whose arrays are not pristine has no header for such a cell, and gets an array on the heap.
-void generateFrameArrayLiteral(StubAssembler& jit)
-{
-    const unsigned count = jit.key().count();
-    const GPRReg cell = jit.operand(count);
-    const GPRReg scratch = jit.allocateScratch(arrayAllocationScratchRegister);
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.frameArrayHeader)), scratch);
-    Jump isOnHeap = jit.branchTest64(CCallHelpers::Zero, scratch);
-    jit.store64(scratch, Address(cell, 0));
-    jit.addPtr(TrustedImm32(sizeOfFrameArray(0)), cell, scratch);
-    jit.store64(scratch, Address(cell, JSObject::butterflyOffset()));
-    jit.store64(TrustedImm64(static_cast<uint64_t>(count) << 32 | count), Address(cell, sizeof(JSArray)));
-    for (unsigned i = 0; i < count; ++i)
-        jit.store64(jit.operand(i), Address(cell, sizeOfFrameArray(i)));
-    jit.move(cell, jit.result());
-    jit.returnToCaller();
-
-    isOnHeap.link(&jit);
-    jit.jumpToStub(arrayLiteral(count));
-}
 
 static StubSignature signatureTakingDoubles(unsigned count)
 {
@@ -222,57 +169,44 @@ void generateArrayLiteralWithDoubleSlow(StubAssembler& jit)
     });
 }
 
-// On x86-64 the immediate and the result share a register.
-StubSignature signatureOfArrayOfData(StubKey key)
+StubSignature signatureOfNewCopyOnWriteArray(StubKey key)
 {
-    StubSignature signature = StubSignature::withGPRResult({ });
-    signature.immediate = isARM64() ? gprOf(stubImmediateRegister) : GPRInfo::returnValueGPR;
-    if (static_cast<ArrayOfData>(key.form()) == ArrayOfData::SharedValues)
-        signature.addOperand(operationArgumentGPR(1));
-    return signature;
+    return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister), gprOf(StubRegister::T11) }).withResultIn(key.operandRegister());
 }
 
-void generateArrayOfData(StubAssembler& jit)
+void generateNewCopyOnWriteArray(StubAssembler& jit)
 {
-    const ArrayOfData form = static_cast<ArrayOfData>(jit.key().form());
+    const auto kind = static_cast<ArrayElementKind>(jit.key().form() % 3);
+    const auto elements = static_cast<SharedElements>(jit.key().form() / 3);
+    const Address header(instanceGPR, Instance::offsetOfNewCopyOnWriteArrayHeader(indexingTypeOf(kind)));
     const GPRReg array = jit.result();
-    // On ARM64 the immediate comes in T9.
-    const GPRReg request = jit.allocateScratch(isARM64() ? StubRegister::T13 : StubRegister::T9);
-    const GPRReg allocator = jit.allocateScratch(StubRegister::T10);
-    const GPRReg storage = jit.allocateScratch(arrayStorageRegister);
-    const GPRReg scratch = jit.allocateScratch(arrayAllocationScratchRegister);
-    RELEASE_ASSERT(noOverlap(array, request, allocator, storage, scratch, instanceGPR));
-    const IndexingType indexingType = form == ArrayOfData::Int32 ? ArrayWithInt32 : form == ArrayOfData::Double ? ArrayWithDouble : ArrayWithContiguous;
+    const GPRReg request = jit.operand(0);
+    const GPRReg firstElement = jit.clobberOperand(1);
+    const GPRReg allocator = jit.allocateScratch(scratchBesideShortStubImmediate);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
+    static_assert(sizeof(JSArray) <= MarkedSpace::preciseCutoff && !(sizeof(JSArray) % MarkedSpace::sizeStep));
 
     JumpList slowPath;
-    jit.zeroExtend32ToWord(jit.immediate(), request);
-    if (form == ArrayOfData::SharedValues) {
-        slowPath.append(jit.branchTest64(CCallHelpers::Zero, jit.operand(0)));
-        jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), jit.operand(0), storage);
-    } else {
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), scratch);
-        loadProgramTable(jit, scratch, ProgramTableIndex::requests, storage);
-        jit.load32(BaseIndex(storage, request, CCallHelpers::TimesOne, OBJECT_OFFSETOF(DataRequest, root)), scratch);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.data)), storage);
-        jit.getEffectiveAddress(BaseIndex(storage, scratch, CCallHelpers::TimesEight, DataNodeHeader::wordsBeforeElements * sizeof(uint64_t)), storage);
+    switch (elements) {
+    case SharedElements::InImage:
+        jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.data)), firstElement);
+        break;
+    case SharedElements::InStorageOfSite:
+        slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, firstElement));
+        jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), firstElement);
+        break;
     }
+    slowPath.append(jit.branchTest64(CCallHelpers::Zero, header));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), allocator);
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, sizeof(JSArray));
-    // A realm whose arrays are not pristine has no header for such a cell.
-    jit.load64(Address(instanceGPR, Instance::offsetOfNewCopyOnWriteArrayHeader(indexingType)), scratch);
-    slowPath.append(jit.branchTest64(CCallHelpers::Zero, scratch));
-    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    jit.load64(header, scratch);
+    jit.storePair64(scratch, firstElement, array, TrustedImm32(0));
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTNewFromData, {
-        .returns = OperationCall::Returns::Value,
-        .firstArgument = OperationCall::FirstArgument::Instance,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .secondArgumentIn = request,
-    });
+    jit.callOperationAndReturn(Entry::operationAOTNewFromData, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = request });
 }
 
 StubSignature signatureOfNewEmptyArray(StubKey) { return StubSignature::withGPRResult({ }); }
@@ -285,14 +219,12 @@ void generateNewEmptyArray(StubAssembler& jit)
         return emitArrayLiteral(jit, { .emptyCapacity = 1 });
     case EmptyArray::ContiguousCapacity3:
         return emitArrayLiteral(jit, { .emptyCapacity = 3 });
-    case EmptyArray::ContiguousCapacity1OwnStorage:
-        return emitArrayLiteral(jit, { .emptyCapacity = 1, .hasStorageOfItsOwn = true });
-    case EmptyArray::ContiguousCapacity3OwnStorage:
-        return emitArrayLiteral(jit, { .emptyCapacity = 3, .hasStorageOfItsOwn = true });
     case EmptyArray::DoubleCapacity1:
     case EmptyArray::DoubleCapacity3:
     case EmptyArray::DoubleDefaultCapacity:
     case EmptyArray::Int32DefaultCapacity:
+    case EmptyArray::Int32Capacity1:
+    case EmptyArray::Int32Capacity3:
         return emitEmptyArrayOfHoles(jit, form);
     }
     RELEASE_ASSERT_NOT_REACHED();

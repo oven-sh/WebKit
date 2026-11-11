@@ -1,0 +1,58 @@
+# main.cjs    var pick; let total = 0; let turn = 0; do { pick = turn => turn + 1; pick = turn => turn + 2; total += pick(turn); turn++; } while (turn < Number("3")); sink(total); function peek() { return pick; } sink(typeof peek());
+# The program of a-few-functions-that-the-turn-of-a-do-while-lays-into-a-var-of-its-file-are-tested-for-in-front-by-the-word-as-it-lies.ir under the lying word AssumeVariablesInitialized.
+# Under the word the read in front of the loop is typed by what Link has proven of the reads of the text. It stands for no value of the text, the proof leaves out the word that the variable is born with,
+# and no operation on the variable stands in front of it on every way: the first store stands in the turn. An executable died of such a read. Where code is verified the build stops at it by name.
+# DIAGNOSTIC: TypeOutOfDate
+# RUN: walk f0 mechanisms=all testing=AssumeVariablesInitialized
+
+variable g0 name="pick" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = NewClosure function=f1
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f3
+    PutModuleVariable v8 variable=g0
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v4 calleeName="pick"
+    v12 = Add v3, v11
+    v13 = Increment v4
+    v14 = Builtin builtin=Number
+    v15 = String string="3"
+    v16 = Call v14, -, v15 calleeName="Number"
+    v17 = Less v13, v16
+    Branch v17 -> taken b1(v12, v13), notTaken b2()
+  b2():
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="sink" [isFreeName]
+    v20 = Call v19, -, v12 calleeName="sink"
+    v21 = Call v0 calleeName="peek"
+    v22 = TypeOf v21
+    v23 = Call v19, -, v22 calleeName="sink"
+    v24 = Undefined
+    Return v24
+}
+function f1 name="pick" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="peek" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f3 name="pick" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}

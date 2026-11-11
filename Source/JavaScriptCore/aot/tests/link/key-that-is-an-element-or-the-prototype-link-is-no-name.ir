@@ -1,0 +1,60 @@
+# a written key is no name where it is an element key, where it is `__proto__`, where it is a number, or where the program names no property by it: such an access goes by the value of its key, as it did
+# function first(o) { return o["0"]; }   function above(o) { return o["__proto__"]; }   function second(o) { return o[1]; }   function nowhere(o) { return o["spelled as no property"]; }
+# function endless(o) { return o["Infinity"]; }   sink(Infinity, first, above, second, nowhere, endless);
+# `Infinity` is a name that the program spells, and a number in print: a typed array answers it out of its elements, without a look above
+# RUN: summary f1 f2 f3 f4 f5 mechanisms=all
+# CHECK: v2 Read Parameter 0 [
+# CHECK: v2 Read Parameter 0 [
+# CHECK: v2 Read Parameter 0 [
+# CHECK: v2 Read Parameter 0 [
+# CHECK: v2 Read Parameter 0 [
+# RUN(NEVER): summary f1 f2 f3 f4 f5 mechanisms=all
+# NEVER-NOT: under-constant-key
+# RUN(LINK): link accesses mechanisms=all
+# LINK-NOT: access f
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = PropGet v0 key="Infinity" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f3
+    v6 = NewClosure function=f4
+    v7 = NewClosure function=f5
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="0"
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="above" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="__proto__"
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f4 name="nowhere" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="spelled as no property"
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f5 name="endless" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="Infinity"
+    v2 = ElemGet v0, v1
+    Return v2
+}

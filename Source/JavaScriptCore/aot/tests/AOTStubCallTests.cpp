@@ -9,14 +9,17 @@
 
 #include "AOTCellFormat.h"
 #include "AOTSlimClosure.h"
+#include "AOTStubProgramTables.h"
 #include "AOTStubRunner.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
+#include "AOTStubsClosures.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
+#include "MarkedSpace.h"
 #include "NativeExecutable.h"
 #include "Structure.h"
 #include <array>
@@ -199,7 +202,6 @@ static void checkCallOfClosure(Calls& calls, uint64_t closure, unsigned numberOf
     }
 }
 
-// A call that passes an argument in every register leaves all of them as they are.
 static void checkCallThatFillsEveryRegister(Calls& calls, uint64_t closure)
 {
     static_assert(numberOfArgumentGPRs == 4 || numberOfArgumentGPRs == 8);
@@ -235,7 +237,6 @@ static void testCallsOfClosures(bool hasOneInstance)
     }
 }
 
-// In an image with one instance the word of a slim closure that takes the arguments says all there is to know: the header of the cell is not read.
 static void testSlimClosuresAreEnteredByTheirWordAlone()
 {
     Calls calls(true);
@@ -422,46 +423,6 @@ static void testConstructions(bool hasOneInstance)
     }
 }
 
-static void testSuperConstructionsWithLists(bool hasOneInstance)
-{
-    Calls calls(hasOneInstance);
-    constexpr uint64_t newTarget = boxedInt32(90);
-    constexpr unsigned maxLengthInRegisters = numberOfArgumentGPRs - 1;
-    std::array<uint64_t, numberOfArgumentGPRs + 1> list;
-    for (size_t i = 0; i < list.size(); ++i)
-        list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
-    const uint64_t words = std::bit_cast<uintptr_t>(list.data());
-    FakeClosure classObject;
-    FakeObject<16> object;
-    calls.initializeClosure(classObject, StructureOf::PlainClosure, calls.runner.closureWord(numberOfArgumentGPRs, { .isNotCallable = true, .takesNewTarget = true }));
-    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
-
-    for (unsigned length = 0; length <= maxLengthInRegisters; ++length) {
-        ArgumentRegisters expected;
-        expected.fill(undefinedBits);
-        expected[0] = newTarget;
-        std::ranges::copy(std::span(list).first(length), expected.begin() + 1);
-        // The upper half of the count is not the caller's to clear.
-        StubRun run = calls.runner.run(superConstructWithList(), { classObject.address(), newTarget, length | 7ull << 32, words });
-        checkLandedInFunction(run, classObject.address(), undefinedBits, expected);
-        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length + 1);
-    }
-
-    calls.runner.recordCallsOf(Entry::operationAOTSuperConstruct);
-    for (uint64_t parent : { classObject.address(), object.address() }) {
-        for (unsigned length = 0; length <= list.size(); ++length) {
-            if (parent == classObject.address() && length <= maxLengthInRegisters)
-                continue;
-            StubRun run = calls.runner.run(superConstructWithList(), { parent, newTarget, length, words });
-            AOT_TEST_CHECK(run.landedCall.place == LandedCall::Place::Nowhere && run.numberOfRecordedCalls == 1);
-            AOT_TEST_CHECK(run.recordedArguments[0] == parent && run.recordedArguments[1] == newTarget && static_cast<uint32_t>(run.recordedArguments[2]) == length);
-            if (length > maxLengthInRegisters)
-                AOT_TEST_CHECK(run.recordedArguments[3] == words);
-        }
-    }
-    calls.runner.countCallsOf(Entry::operationAOTSuperConstruct);
-}
-
 namespace {
 
 struct alignas(16) FakeList {
@@ -565,52 +526,272 @@ static void testSuperConstructionsWithArrays(bool hasOneInstance)
     calls.runner.countCallsOf(Entry::operationAOTSuperConstructList);
 }
 
-static void testCallsWithLists(bool hasOneInstance)
+static void testChangedClosures(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
-    std::array<uint64_t, 2 * numberOfArgumentGPRs + 3> list;
-    for (size_t i = 0; i < list.size(); ++i)
-        list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
-    const uint64_t words = std::bit_cast<uintptr_t>(list.data());
-    FakeClosure closure;
-    calls.initializeClosure(closure, StructureOf::PlainClosure, calls.runner.closureWord(0));
+    const uint64_t word = calls.runner.closureWord(2, { .takesNewTarget = true, .borrowedArguments = 3, .endsItsTailCalls = true });
+    const uint32_t functionOfWord = ClosureWord::closureNumberOf(word);
+    constexpr uint32_t otherFunction = 2;
+    AOT_TEST_CHECK(functionOfWord != Calls::functionWithProperties && functionOfWord != otherFunction);
 
-    for (unsigned length = 0; length <= list.size(); ++length) {
-        ArgumentRegisters expected;
-        expected.fill(undefinedBits);
-        std::ranges::copy(std::span(list).first(std::min<size_t>(length, numberOfArgumentGPRs)), expected.begin());
-        StubRun run = calls.runner.run(callWithList(), { closure.address(), thisValue, length | 7ull << 32, words });
-        checkLandedInFunction(run, closure.address(), thisValue, expected);
-        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length);
+    FakeClosure full;
+    FakeClosure fullOfOtherRealm;
+    FakeSlimClosure slimWithProperties;
+    FakeSlimClosure slimOfOtherRealm;
+    FakeSlimClosure slimAsCreated;
+    FakeFunction interpretedFunction;
+    FakeObject<16> object;
+    calls.initializeClosure(full, StructureOf::AsyncClosure, word);
+    calls.initializeClosure(fullOfOtherRealm, StructureOf::ClosureOfOtherRealm, word);
+    for (FakeSlimClosure* closure : { &slimWithProperties, &slimOfOtherRealm })
+        calls.initializeSlimClosureWithProperties(*closure, word);
+    slimOfOtherRealm.setHeader(calls.idOf(StructureOf::ClosureOfOtherRealm), SlimClosureWithPropertiesType);
+    calls.initializeSlimClosure(slimAsCreated, word);
+    interpretedFunction.setHeader(calls.idOf(StructureOf::OtherFunction), JSFunctionType);
+    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+
+    const std::pair<uint64_t, uint32_t> numbersOfCells[] = {
+        { full.address(), functionOfWord },
+        { fullOfOtherRealm.address(), noClosureNumber },
+        { slimWithProperties.address(), Calls::functionWithProperties },
+        { slimOfOtherRealm.address(), hasOneInstance ? Calls::functionWithProperties : noClosureNumber },
+        { slimAsCreated.address(), noClosureNumber },
+        { interpretedFunction.address(), noClosureNumber },
+        { object.address(), noClosureNumber },
+    };
+    StubCatalog catalog(StubOptions { .hasOneInstance = hasOneInstance, .targetFeatures = CPUFeatureSet::buildTarget() });
+    auto registersLostBeside = [&](StubKey key, RegisterSet expected) {
+        RegisterSet lost = catalog.summaryOf(key).clobbered;
+        lost.exclude(RegisterSet::macroClobberedGPRs());
+        lost.exclude(RegisterSet::macroClobberedFPRs());
+        lost.exclude(expected);
+        return lost;
+    };
+
+    for (ChangedClosure form : { ChangedClosure::Slim, ChangedClosure::Full }) {
+        unsigned numberOfVariants = 0;
+        forEachRegisterVariant(changedClosureHasNumber(form), [&](StubKey key) {
+            ++numberOfVariants;
+            AOT_TEST_CHECK(catalog.isLeaf(key) && registersLostBeside(key, { }).isEmpty());
+            for (auto [cell, number] : numbersOfCells) {
+                bool hasForm = (form == ChangedClosure::Full) == (cell == full.address());
+                for (uint32_t asked : { functionOfWord, Calls::functionWithProperties, otherFunction }) {
+                    StubRun run = calls.runner.run(key, { cell }, asked);
+                    AOT_TEST_CHECK(run.result == (hasForm && asked == number) && !run.calledOperation && run.changedRegisters.isEmpty());
+                }
+            }
+        });
+        AOT_TEST_CHECK(numberOfVariants == 1 + allocatableGPRs.size());
+    }
+
+    forEachRegisterVariant(numberOfChangedClosure(), [&](StubKey key) {
+        AOT_TEST_CHECK(catalog.isLeaf(key) && registersLostBeside(key, RegisterSet(GPRInfo::returnValueGPR)).isEmpty());
+        for (auto [cell, number] : numbersOfCells) {
+            StubRun run = calls.runner.run(key, { cell });
+            AOT_TEST_CHECK(run.result == number && !run.calledOperation && run.changedRegisters.isEmpty());
+        }
+    });
+}
+
+namespace {
+
+class LentClosures {
+    WTF_MAKE_NONCOPYABLE(LentClosures);
+public:
+    static constexpr unsigned numberOfReferences = 4;
+    static constexpr unsigned numberOfCaptures = 5;
+    static constexpr unsigned cellSize = 4 * MarkedSpace::sizeStep;
+    static constexpr uint8_t lowByteOfShape = 0xc3;
+    static constexpr uint8_t highByteOfShape = 0x5a;
+    static_assert(SlimClosure::allocationSize(numberOfCaptures) <= cellSize && cellSize < SlimClosure::allocationSize(numberOfCaptures) + MarkedSpace::sizeStep);
+    static_assert(sizeOfClosureInFrame(offsetOfSlimClosureCaptures, numberOfCaptures) == cellSize);
+    static_assert(!(highByteOfShape & environmentIsEscapedBit));
+
+    using Closure = FakeObject<cellSize>;
+    using Cell = FakeObject<MarkedSpace::sizeStep>;
+
+    explicit LentClosures(Calls& calls)
+        : m_calls(calls)
+        , m_word(calls.runner.closureWord(0))
+    {
+        Instance& instance = calls.runner.instance();
+        m_tables.at<TableRange>(offsetOfProgramTableRange(ProgramTableIndex::closureCaptureCounts)) = { sizeof(ProgramTables), roomForCounts };
+        instance.image.tables = reinterpret_cast<const ProgramTables*>(m_tables.bytes.data());
+        instance.closures.slimClosureAllocators[(numberOfCaptures + 1) / 2] = reinterpret_cast<LocalAllocator*>(&allocator);
+        AOT_TEST_CHECK(ClosureWord::closureNumberOf(m_word) < roomForCounts);
+        captureCounts() = CaptureCounts { numberOfReferences, numberOfCaptures }.encoded();
+        object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+    }
+
+    uint8_t& captureCounts() { return m_tables.at<uint8_t>(sizeof(ProgramTables) + ClosureWord::closureNumberOf(m_word)); }
+
+    void initializeEnvironment(Cell& environment)
+    {
+        environment.setHeader(m_calls.idOf(StructureOf::Object), CompiledEnvironmentType);
+        environment.at<uint8_t>(offsetOfEnvironmentShapeLowByte) = lowByteOfShape;
+        environment.at<uint8_t>(offsetOfEnvironmentShapeHighByte) = highByteOfShape;
+    }
+
+    void initializeClosure(Closure& closure, Cell& held, Cell& heldAsRawWord)
+    {
+        initializeEnvironment(held);
+        initializeEnvironment(heldAsRawWord);
+        closure.setHeader(m_calls.idOf(StructureOf::SlimClosure), SlimClosureType);
+        closure.at<uint8_t>(JSCell::cellStateOffset()) = frameCellState;
+        closure.at<uint64_t>(offsetOfSlimClosureWord) = m_word;
+        const std::array<uint64_t, numberOfCaptures> captures { object.address(), held.address(), boxedInt32(9), 0, heldAsRawWord.address() };
+        for (unsigned slot = 0; slot < numberOfCaptures; ++slot)
+            closure.at<uint64_t>(offsetOfSlimClosureCaptures + slot * sizeof(uint64_t)) = captures[slot];
+    }
+
+    static bool isCopyInHeap(const Closure& moved, Closure inFrame)
+    {
+        inFrame.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::DefinitelyWhite);
+        return moved.bytes == inFrame.bytes;
+    }
+
+    bool isAsMade(Cell& environment) { return hasShapeAndHighByte(environment, highByteOfShape); }
+    bool bearsMarkAlone(Cell& environment) { return hasShapeAndHighByte(environment, highByteOfShape | environmentIsEscapedBit); }
+    bool objectIsAsMade() { return !object.at<uint8_t>(JSCell::typeInfoFlagsOffset()) && !object.at<uint8_t>(JSCell::indexingTypeAndMiscOffset()) && !object.at<uint64_t>(sizeof(JSCell)); }
+
+    FakeAllocator allocator { cellSize };
+    Cell object;
+
+private:
+    static constexpr uint32_t roomForCounts = 16;
+
+    bool hasShapeAndHighByte(Cell& environment, uint8_t highByte)
+    {
+        return environment.at<uint32_t>(JSCell::structureIDOffset()) == m_calls.idOf(StructureOf::Object) && environment.at<uint8_t>(JSCell::typeInfoTypeOffset()) == CompiledEnvironmentType
+            && environment.at<uint8_t>(offsetOfEnvironmentShapeLowByte) == lowByteOfShape && environment.at<uint8_t>(offsetOfEnvironmentShapeHighByte) == highByte
+            && !environment.at<uint8_t>(JSCell::cellStateOffset()) && !environment.at<uint64_t>(offsetOfFirstEnvironmentVariable);
+    }
+
+    Calls& m_calls;
+    uint64_t m_word;
+    FakeObject<sizeof(ProgramTables) + roomForCounts> m_tables;
+};
+
+} // anonymous namespace
+
+static void testLentClosuresStayInFrameOfCalleesThatOnlyCallThem(bool hasOneInstance)
+{
+    Calls calls(hasOneInstance);
+    LentClosures lent(calls);
+    LentClosures::Closure inFrame;
+    LentClosures::Cell held;
+    LentClosures::Cell heldAsRawWord;
+    lent.initializeClosure(inFrame, held, heldAsRawWord);
+    LentClosures::Closure room;
+    lent.allocator.makeRoomAt(room.address(), LentClosures::cellSize);
+
+    FakeSlimClosure slim;
+    FakeClosure full;
+    calls.initializeSlimClosure(slim, calls.runner.closureWord(countInKey, { .borrowedArguments = 1 }));
+    calls.initializeClosure(full, StructureOf::PlainClosure, calls.runner.closureWord(countInKey, { .borrowedArguments = 3 }));
+    for (uint64_t callee : { slim.address(), full.address() }) {
+        StubRun run = calls.runner.runCall(callValueLending(countInKey, 1), callee, thisValue, { inFrame.address(), secondArgument });
+        checkLandedInFunction(run, callee, thisValue, std::array { inFrame.address(), secondArgument });
+        AOT_TEST_CHECK(lent.isAsMade(held) && lent.isAsMade(heldAsRawWord) && lent.objectIsAsMade());
+        AOT_TEST_CHECK(lent.allocator.intervalStart() == room.address());
     }
 }
 
-static void testCallsWithLongLists(bool hasOneInstance)
+static void testLentClosuresAreMovedAndTheirEnvironmentsMarked(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
-    constexpr unsigned length = maxListLengthCopiedTwice + 1;
-    static std::array<uint64_t, length> list;
-    for (size_t i = 0; i < list.size(); ++i)
-        list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
-    const uint64_t words = std::bit_cast<uintptr_t>(list.data());
-    FakeClosure closure;
-    FakeObject<16> object;
-    calls.initializeClosure(closure, StructureOf::PlainClosure, calls.runner.closureWord(0));
-    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+    LentClosures lent(calls);
+    LentClosures::Closure inFrame;
+    LentClosures::Cell held;
+    LentClosures::Cell heldAsRawWord;
 
-    ArgumentRegisters expected;
-    std::ranges::copy(std::span(list).first(numberOfArgumentGPRs), expected.begin());
-    StubRun run = calls.runner.run(callWithList(), { closure.address(), thisValue, length, words });
-    checkLandedInFunction(run, closure.address(), thisValue, expected);
-    AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length);
-
-    calls.runner.recordCallsOf(Entry::operationAOTCallEngineCallee);
-    for (uint64_t callee : { object.address(), undefinedBits }) {
-        StubRun run = calls.runner.run(callWithList(), { callee, thisValue, length, words });
-        AOT_TEST_CHECK(run.landedCall.place == LandedCall::Place::Nowhere && run.numberOfRecordedCalls == 1);
-        AOT_TEST_CHECK(run.recordedArguments[0] == callee && run.recordedArguments[1] == thisValue && static_cast<uint32_t>(run.recordedArguments[2]) == length && run.recordedArguments[3] == words);
+    FakeSlimClosure keeps;
+    FakeSlimClosure borrowsOtherArgument;
+    FakeClosure fullThatKeeps;
+    calls.initializeSlimClosure(keeps, calls.runner.closureWord(countInKey));
+    calls.initializeSlimClosure(borrowsOtherArgument, calls.runner.closureWord(countInKey, { .borrowedArguments = 2 }));
+    calls.initializeClosure(fullThatKeeps, StructureOf::PlainClosure, calls.runner.closureWord(countInKey));
+    for (uint64_t callee : { keeps.address(), borrowsOtherArgument.address(), fullThatKeeps.address() }) {
+        lent.initializeClosure(inFrame, held, heldAsRawWord);
+        LentClosures::Closure moved;
+        lent.allocator.makeRoomAt(moved.address(), LentClosures::cellSize);
+        StubRun run = calls.runner.runCall(callValueLending(countInKey, 1), callee, thisValue, { inFrame.address(), secondArgument });
+        checkLandedInFunction(run, callee, thisValue, std::array { moved.address(), secondArgument });
+        AOT_TEST_CHECK(LentClosures::isCopyInHeap(moved, inFrame) && !lent.allocator.hasRoom());
+        AOT_TEST_CHECK(lent.bearsMarkAlone(held) && lent.isAsMade(heldAsRawWord) && lent.objectIsAsMade());
     }
-    calls.runner.countCallsOf(Entry::operationAOTCallEngineCallee);
+
+    FakeObject<16> objectWithCallData;
+    objectWithCallData.setHeader(calls.idOf(StructureOf::Object), ObjectType);
+    objectWithCallData.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = OverridesGetCallData;
+    {
+        lent.initializeClosure(inFrame, held, heldAsRawWord);
+        LentClosures::Closure moved;
+        lent.allocator.makeRoomAt(moved.address(), LentClosures::cellSize);
+        StubRun run = calls.runner.runCall(callValueLending(countInKey, 1), objectWithCallData.address(), thisValue, { inFrame.address(), secondArgument });
+        checkLandedInEngine(run, objectWithCallData.address(), thisValue, std::array { moved.address(), secondArgument });
+        AOT_TEST_CHECK(LentClosures::isCopyInHeap(moved, inFrame) && lent.bearsMarkAlone(held) && lent.isAsMade(heldAsRawWord) && lent.objectIsAsMade());
+    }
+
+    {
+        LentClosures::Closure secondInFrame;
+        LentClosures::Cell heldBySecond;
+        LentClosures::Cell heldAsRawWordBySecond;
+        lent.initializeClosure(inFrame, held, heldAsRawWord);
+        lent.initializeClosure(secondInFrame, heldBySecond, heldAsRawWordBySecond);
+        std::array<LentClosures::Closure, 2> moved;
+        lent.allocator.makeRoomAt(moved[0].address(), 2 * LentClosures::cellSize);
+        AOT_TEST_CHECK(moved[1].address() == moved[0].address() + LentClosures::cellSize);
+        StubRun run = calls.runner.runCall(callValueLending(countInKey, 3), borrowsOtherArgument.address(), thisValue, { inFrame.address(), secondInFrame.address() });
+        checkLandedInFunction(run, borrowsOtherArgument.address(), thisValue, std::array { moved[0].address(), moved[1].address() });
+        AOT_TEST_CHECK(LentClosures::isCopyInHeap(moved[0], inFrame) && LentClosures::isCopyInHeap(moved[1], secondInFrame) && !lent.allocator.hasRoom());
+        AOT_TEST_CHECK(lent.bearsMarkAlone(held) && lent.bearsMarkAlone(heldBySecond) && lent.isAsMade(heldAsRawWord) && lent.isAsMade(heldAsRawWordBySecond));
+    }
+}
+
+static void testLentClosuresThatStubCannotMoveAreLeftToOperation(bool hasOneInstance)
+{
+    Calls calls(hasOneInstance);
+    LentClosures lent(calls);
+    LentClosures::Closure inFrame;
+    LentClosures::Cell held;
+    LentClosures::Cell heldAsRawWord;
+    FakeSlimClosure keeps;
+    calls.initializeSlimClosure(keeps, calls.runner.closureWord(countInKey));
+    calls.runner.recordCallsOf(Entry::operationAOTMoveClosureToHeap);
+
+    auto checkMovedByOperation = [&] {
+        LentClosures::Closure fromOperation;
+        calls.runner.setResultOfRecordedOperation(fromOperation.address());
+        StubRun run = calls.runner.runCall(callValueLending(countInKey, 1), keeps.address(), thisValue, { inFrame.address(), secondArgument });
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == inFrame.address());
+        const LandedCall& landed = run.landedCall;
+        AOT_TEST_CHECK(landed.place == LandedCall::Place::CompiledFunction && landed.values.callee == keeps.address() && landed.values.thisValue == thisValue);
+        AOT_TEST_CHECK(landed.values.arguments[0] == fromOperation.address() && landed.values.arguments[1] == secondArgument);
+        AOT_TEST_CHECK(lent.isAsMade(heldAsRawWord) && lent.objectIsAsMade());
+    };
+
+    lent.initializeClosure(inFrame, held, heldAsRawWord);
+    checkMovedByOperation();
+    AOT_TEST_CHECK(lent.bearsMarkAlone(held));
+
+    lent.initializeClosure(inFrame, held, heldAsRawWord);
+    lent.captureCounts() = countsAreListed;
+    LentClosures::Closure room;
+    lent.allocator.makeRoomAt(room.address(), LentClosures::cellSize);
+    checkMovedByOperation();
+    AOT_TEST_CHECK(lent.isAsMade(held) && lent.allocator.intervalStart() == room.address());
+
+    LentClosures::Closure heldInFrame;
+    LentClosures::Cell heldByClosureHeld;
+    LentClosures::Cell heldAsRawWordByClosureHeld;
+    lent.initializeClosure(heldInFrame, heldByClosureHeld, heldAsRawWordByClosureHeld);
+    lent.initializeClosure(inFrame, held, heldAsRawWord);
+    lent.captureCounts() = CaptureCounts { LentClosures::numberOfReferences, LentClosures::numberOfCaptures }.encoded();
+    inFrame.at<uint64_t>(offsetOfSlimClosureCaptures) = heldInFrame.address();
+    checkMovedByOperation();
+    AOT_TEST_CHECK(lent.isAsMade(heldByClosureHeld) && lent.allocator.intervalStart() == room.address());
+    calls.runner.countCallsOf(Entry::operationAOTMoveClosureToHeap);
 }
 
 template<void (*test)(bool hasOneInstance)>
@@ -629,11 +810,12 @@ std::span<const NativeTest> stubCallTests()
         { "stubs/call-value/non-cells"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfNonCells>> },
         { "stubs/call-value/host-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfHostFunctions>> },
         { "stubs/call-value/bound-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfBoundFunctions>> },
+        { "stubs/call-value-lending/closures-stay-in-the-frame-of-callees-that-only-call-them"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testLentClosuresStayInFrameOfCalleesThatOnlyCallThem>> },
+        { "stubs/call-value-lending/closures-are-moved-and-their-environments-marked"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testLentClosuresAreMovedAndTheirEnvironmentsMarked>> },
+        { "stubs/call-value-lending/closures-that-the-stub-cannot-move-are-left-to-the-operation"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testLentClosuresThatStubCannotMoveAreLeftToOperation>> },
         { "stubs/construct-value/class-objects-and-other-callees"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testConstructions>> },
-        { "stubs/super-construct-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithLists>> },
         { "stubs/super-construct-with-array/arrays-of-every-shape-and-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithArrays>> },
-        { "stubs/call-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLists>> },
-        { "stubs/call-with-list/long-lists-by-callee"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLongLists>> },
+        { "stubs/changed-closure/every-kind-of-cell-in-every-register"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testChangedClosures>> },
     };
     return tests;
 }

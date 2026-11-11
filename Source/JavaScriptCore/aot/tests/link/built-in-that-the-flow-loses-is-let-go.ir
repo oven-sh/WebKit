@@ -1,0 +1,26 @@
+# The flow follows a built-in that a read finds (built-in-that-a-read-finds-is-followed.ir). If it forgot the object where it hands it to code that nobody has read, whoever gets it there would call what lies below it,
+# and the code of the library behind that would be left out of the executable
+# print([].constructor);
+# `print` has `Array`, so it has `Array.prototype.map`: the function behind it is entered from outside.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = PropGet v0 key="constructor"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="print"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

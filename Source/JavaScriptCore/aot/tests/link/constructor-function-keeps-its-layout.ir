@@ -1,0 +1,46 @@
+# If a function that is constructed gave its objects nothing, as until now, the first access to an object of `function P(a) { this.x = a; }` would let the layout escape: all five changes, `x` unproven, `new P` anything.
+# function P(a) { this.x = a; }  P.prototype.get = function () { return this.x; };  function ask(p) { return p.get(); }  ask(new P(1));
+# The read of `prototype` off the closure gives the prototype object of the layout. What is stored there under a name is followed, and a lookup on an object of the layout takes it. Nothing escapes.
+# The call has one callee, if it enters any: `new P` may run in front of the store, so nobody says that the method is found.
+# RUN: link functions calls fields members layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK: function f2 callers-known one-callee {{*}}result=int[0, 2147483647]
+# CHECK: function f3 callers-known one-callee {{*}}result=int[0, 2147483647]
+# CHECK: call f3 v2 -> f2
+# CHECK: field L0.0 "x" proven=i32 writers-known filled
+# CHECK: on-prototype L0 "get" function=f2
+# CHECK: layout L0 changes=[]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="get"
+    v4 = Integer integer=1
+    v5 = Construct v0, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v5 calleeName="ask"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="get"
+    v2 = Call v1, v0 calleeKey="get"
+    Return v2
+}

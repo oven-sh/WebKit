@@ -1,0 +1,43 @@
+# two of the three members of a union list `kind`, at different places among their fields. The declarations of one name in one family lie at one offset, and the other fields of a layout that was touched go into the bytes that are left, so no cell grows
+# function kindOf(n: A | B | C) { return n.kind; }   A = { a, kind }   B = { kind, b }   C = { c, d, e }
+# RUN: plan layouts mechanisms=none+TypedOperations
+# CHECK: layout L0 CompiledObject size=48
+# CHECK-NEXT: slot 0 "a" {{*}}offset=[[next]]
+# CHECK-NEXT: slot 1 "kind" {{*}}offset=[[kind]]
+# CHECK: layout L1 CompiledObject size=48
+# CHECK-NEXT: slot 0 "kind" {{*}}offset=[[kind]]
+# CHECK-NEXT: slot 1 "b" {{*}}offset=[[next]]
+# RUN(ALL): plan layouts mechanisms=all
+# ALL: layout L0 CompiledObject
+# ALL: slot 1 "kind" {{*}}offset=[[kind]]
+# ALL: layout L1 CompiledObject
+# ALL-NEXT: slot 0 "kind" {{*}}offset=[[kind]]
+
+layout L0 name="A" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="B" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="C" module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0, v0 layout=L2 fields=[0, 1, 2]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v2
+    v9 = Call v7, -, v4
+    v10 = Call v7, -, v6
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="sink" [isFreeName]
+    v13 = Call v12, -, v8, v9, v10
+    Return v13
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L0|L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}

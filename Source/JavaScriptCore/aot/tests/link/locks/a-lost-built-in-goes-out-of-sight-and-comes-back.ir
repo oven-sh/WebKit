@@ -1,0 +1,45 @@
+# a value that holds a lost built-in reaches unseen code. From then on a value that nobody knows may be that built-in, so a write of the program through such a value counts on it, under a key that nobody can read too
+# Map has met nobody and keeps its lock
+# same(seed); seed(same(new Date().constructor)); seed[name] = f; Date.now(); Date.parse("0"); Map.groupBy("0", f);
+# RUN: locks open
+# CHECK: locked MapGroupBy constant
+# CHECK: open DateNow written-through-lost-built-ins
+# CHECK: open DateParse written-through-lost-built-ins
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = PropGet v1 key="parse"
+    v5 = String string="0"
+    v6 = Call v4, v1, v5
+    v7 = PropGet v0 key="Map" [isFreeName]
+    v8 = PropGet v7 key="groupBy"
+    v9 = NewClosure function=f2
+    v10 = Call v8, v7, v5, v9
+    v11 = Construct v1, -
+    v12 = PropGet v11 key="constructor"
+    v13 = Construct v7, -
+    v14 = PropGet v13 key="constructor"
+    v15 = NewClosure function=f1
+    v16 = PropGet v0 key="seed" [isFreeName]
+    v17 = Call v15, -, v16
+    v18 = Call v15, -, v12
+    v19 = Call v16, -, v18
+    v20 = PropGet v0 key="name" [isFreeName]
+    ElemSet v16, v20, v9
+    Return v3
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

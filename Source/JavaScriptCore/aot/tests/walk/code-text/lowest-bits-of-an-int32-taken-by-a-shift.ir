@@ -1,0 +1,19 @@
+# nothing but a BitAnd with a mask of the lowest bits takes a ToInt32 that gives those bits alone
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: {{*}}an operand has only the lowest bits of an int32
+# -- code
+# code f0:Body {
+#   v0: int[8, 8] @Int32 = Integer integer=8
+#   b0(v1: number @Double) entry=0:
+#     v2: i32 @Int32 = ToInt32 v1 [givesOnlyLowestBits]
+#     v3: i32 @Int32 = RShift v2, v0 form=Integers
+#     v4: i32 @JSValue = Box v3
+#     Return v4
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="shifted" parameters=[{type=number}] results=[{type=anything}] {
+    Return v0
+}
+entry module=m0

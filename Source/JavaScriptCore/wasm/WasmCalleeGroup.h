@@ -51,7 +51,6 @@ namespace Wasm {
 
 class CodeInImage;
 class EntryPlan;
-enum class InterpreterFallbackReason : uint8_t;
 struct ModuleInformation;
 struct UnlinkedWasmToWasmCall;
 
@@ -264,7 +263,9 @@ public:
     MemoryMode mode() const { return m_mode; }
 
     void* const* imageCodePointers() const;
+    void didFault(CallFrame*, const void* pc);
     CodePtr<JSEntryPtrTag> jsEntrypointInImage(const RTT&) const;
+    CodePtr<WasmEntryPtrTag> javaScriptImportStubInImage(FunctionSpaceIndex importIndex) const;
 
     // TriState::Indeterminate means weakly referenced.
     TriState calleeIsReferenced(const AbstractLocker&, Wasm::Callee*) const WTF_REQUIRES_LOCK(m_lock);
@@ -283,7 +284,6 @@ private:
     CalleeGroup(MemoryMode, const CalleeGroup&, const ModuleInformation&);
     void takeEntrypoints(const ModuleInformation&);
     CodePtr<WasmEntryPtrTag> interpreterEntrypoint(unsigned functionCodeIndex) const;
-    void countInterpreterFallbackOnce();
     void setCompilationFinished() WTF_REQUIRES_LOCK(m_lock);
 
     OptimizedCallees* optimizedCalleesTuple(const AbstractLocker&, FunctionCodeIndex index) WTF_REQUIRES_LOCK(m_lock)
@@ -356,8 +356,6 @@ private:
     bool m_crashesOnInterpreterUse { false };
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     RefPtr<CodeInImage> m_codeInImage;
-    std::optional<InterpreterFallbackReason> m_interpreterFallbackReason;
-    std::atomic<bool> m_didCountInterpreterFallback { false };
 #endif
     RefPtr<EntryPlan> m_plan WTF_GUARDED_BY_LOCK(m_lock);
     std::atomic<bool> m_compilationFinished { false };

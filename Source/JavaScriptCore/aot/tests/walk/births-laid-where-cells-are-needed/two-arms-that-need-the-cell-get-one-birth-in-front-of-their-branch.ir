@@ -1,0 +1,34 @@
+# const p = [a]; if (!c) return a; return d ? f(p) : g(p);
+# Two ways that do not lie below one another need the cell. The birth does not stand twice: it is laid at the head of the block that parts them, and the way that returns early allocates nothing.
+# RUN: sweep-code mechanisms=all
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: Array @Cell = NewArray v0
+# CHECK-NEXT: Branch v3
+# CHECK-NOT: NewArray
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean, v3: boolean @Boolean) entry=0:
+#     v4: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     Branch v3 -> taken b3(), notTaken b4()
+#   b2():
+#     Return v0
+#   b3():
+#     v5: anything @JSValue = Call v1, -, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v5
+#   b4():
+#     v6: anything @JSValue = Call v0, -, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v6
+# }
+# -- end of code

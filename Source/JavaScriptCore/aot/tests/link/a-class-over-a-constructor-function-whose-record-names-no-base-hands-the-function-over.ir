@@ -1,0 +1,91 @@
+# function Above() { this.a = 1; }
+# Above.prototype.never = function never() { return 1; };
+# class Below extends Above { constructor() { super(); this.b = 2; } }
+# globalThis.kept = new Below().b;
+# A control of a-class-whose-record-names-a-constructor-function-as-its-base-leaves-the-function-in-sight.ir: the same program, and the record of the class names no base, as the front end wrote the classes of the library that stand over constructor functions.
+# Where the class is made Link cannot hold what arrives against the record: the function and its prototype object go to unseen code, and the method that nobody calls is reached.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Above" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 constructor=f3 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = PropGet v1 key="prototype"
+    v3 = NewClosure function=f2
+    PropSet v2, v3 key="never"
+    v5 = ResolveHeritage v1
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v1, v5 layout=L1
+    PutModuleVariable v7 variable=g0
+    v9 = FinishClass v7 layout=L1
+    v10 = Convert v9 declared={type=f3 flags=[IsFromCompiler]}
+    v11 = Convert v9 declared={type=f3 flags=[IsFromCompiler]}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="globalThis" [isFreeName]
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v15 = Construct v11 calleeName="Below"
+    v16 = PropGet v15 key="b"
+    PropSet v14, v16 key="kept"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="Above" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="never" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = Absent
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1 layout=L1
+    v5 = Convert v4 declared={type=L1}
+    v6 = TypeTest v2 testedType=absent
+    Branch v6 -> taken b1(| 0), notTaken b11(| 0)
+  b1(v7):
+    v8 = TypeTest v5 testedType=absent
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v9):
+    v10 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v10
+  b3(v11):
+    v12 = Integer integer=2
+    PropSet v11, v12 key="b"
+    v14 = Undefined
+    v15 = TypeTest v14 testedType=object
+    Branch v15 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v16):
+    Jump -> next b9(v16)
+  b5(v17):
+    v18 = TypeTest v17 testedType=undefined
+    Branch v18 -> taken b6(| 0), notTaken b10(| 0)
+  b6(v19):
+    v20 = TypeTest v11 testedType=absent
+    Branch v20 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v21):
+    v22 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v22
+  b8(v23):
+    Jump -> next b9(v23)
+  b9(v24):
+    Return v24
+  b10(v25):
+    v26 = NewRuntimeError runtimeError=DerivedConstructorResult name="Below"
+    Throw v26
+  b11(v27):
+    v28 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v28
+}

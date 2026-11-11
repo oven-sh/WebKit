@@ -1,0 +1,8 @@
+# the same function with typed operations withheld: the test of the program stays, and the operator behind it is closed
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=number
+# CHECK: = Add {{*}}form=Generic
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: form=Numbers
+# PROGRAM-OF: operator-behind-a-test.ir

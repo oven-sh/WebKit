@@ -1,0 +1,21 @@
+# Without a unit `why-closed` walks the body of every function that has one. Nothing reaches `never`, so the plan holds no unit of it, and the ramp of a coroutine asks for the unit of its body.
+# The command passes over what the plan does not hold. A build never comes there: its queue takes units of the plan alone.
+# main.js: async function never(x) { return await x } print(given.size)
+# RUN: why-closed mechanisms=all
+# CHECK: f0
+# CHECK-NOT: failed
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v1 key="size"
+    v3 = PropGet v0 key="print" [isFreeName]
+    v4 = Call v3, -, v2
+    Return
+}
+function f1 name="never" module=m0 flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}

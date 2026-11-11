@@ -33,7 +33,6 @@ struct State;
 
 enum class CacheKind : uint8_t { StrongRoots, WeakByKey, ClearedEachCollection, Observer };
 enum class RootVolatility : uint8_t { GreyedByMarking, GreyedByExecution };
-enum class CacheValidation : bool { Off, On };
 
 class CacheRegistry {
     WTF_MAKE_NONCOPYABLE(CacheRegistry);
@@ -44,14 +43,15 @@ public:
 
     template<typename Owner> void add(CacheKind, ASCIILiteral name, Owner&, RootVolatility = RootVolatility::GreyedByMarking);
     void addStrongRoots(ASCIILiteral name, std::span<JSCell* const> cellsOrNull, RootVolatility = RootVolatility::GreyedByMarking);
-    void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
+    void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear, const uint8_t* mayBeFilled = nullptr);
+    void addClearedAndGivenBackEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
     template<typename Owner> void addObserver(ASCIILiteral name, Owner& owner) { add(CacheKind::Observer, name, owner); }
 
     Lock& lock() { return m_lock; }
 
     template<typename Visitor> void visitRoots(Visitor&, RootVolatility);
     bool hasVisitedExecutionRoots() const { return m_hasVisitedExecutionRoots; }
-    void finalize(VM&, CollectionScope, CacheValidation);
+    void finalize(VM&, CollectionScope);
     void willAnalyzeHeap(VM&);
 
 private:
@@ -61,6 +61,7 @@ private:
         ASCIILiteral name;
         void* owner { nullptr };
         size_t size { 0 };
+        const uint8_t* mayBeFilled { nullptr };
         void (*visitWithSlotVisitor)(Entry&, SlotVisitor&) { nullptr };
         void (*visitWithAbstractSlotVisitor)(Entry&, AbstractSlotVisitor&) { nullptr };
         size_t (*removeDeadEntries)(Entry&, VM&, CollectionScope) { nullptr };
@@ -79,7 +80,6 @@ private:
 extern template void CacheRegistry::visitRoots<SlotVisitor>(SlotVisitor&, RootVolatility);
 extern template void CacheRegistry::visitRoots<AbstractSlotVisitor>(AbstractSlotVisitor&, RootVolatility);
 
-// What the kind needs, the owner must have.
 template<typename Owner>
 void CacheRegistry::add(CacheKind kind, ASCIILiteral name, Owner& owner, RootVolatility volatility)
 {
@@ -107,18 +107,29 @@ class ImmortalCells {
     WTF_MAKE_TZONE_ALLOCATED(ImmortalCells);
 public:
     explicit ImmortalCells(State&);
+    ~ImmortalCells();
 
     void add(JSCell*);
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
-    static constexpr size_t cellsPerSegment = 512;
+    static constexpr size_t bytesPerSegment = 4096;
+    struct Segment {
+        static constexpr size_t capacity = (bytesPerSegment - sizeof(Segment*) - sizeof(size_t)) / sizeof(JSCell*);
 
-    template<typename Functor> void forEachSegment(size_t firstIndex, const Functor&);
+        Segment* next;
+        size_t size;
+        JSCell* cells[capacity];
+    };
+    static_assert(sizeof(Segment) == bytesPerSegment);
+
+    template<typename Functor> void forEachSegment(Segment* first, size_t firstInSegment, const Functor&);
 
     State& m_state;
-    SegmentedVector<JSCell*, cellsPerSegment> m_cells;
-    size_t m_numberOfCellsVisited { 0 };
+    Segment* m_first { nullptr };
+    Segment* m_last { nullptr };
+    Segment* m_lastVisited { nullptr };
+    size_t m_numberVisitedInLastVisited { 0 };
     HeapVersion m_lastVisitVersion { 0 };
 };
 

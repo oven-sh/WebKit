@@ -1,0 +1,96 @@
+# type Item = { price: number }
+# function make(price: number): Item { return { price }; }
+# async function worth(a: Item, b: Item, c: Item, d: Item, e: Item, f: Item, g: Item, h: Item) { await null; return a.price + b.price + c.price + d.price + e.price + f.price + g.price + h.price; }
+# async function worthOfSeven(a: Item, .. g: Item) { await null; return a.price + .. + g.price; }
+# RUN(ANSWER): run-in-shell globalThis.start = (make, worth, worthOfSeven) => { const run = wrong => { if (wrong === 8) return; const item = i => { const made = make(i + 1); if (i === wrong) made.price = "<" + i + ">"; return made; }; worth(item(0), item(1), item(2), item(3), item(4), item(5), item(6), item(7)).then(answer => { worthOfSeven(item(0), item(1), item(2), item(3), item(4), item(5), item(6)).then(ofSeven => { print(answer + " " + ofSeven); run(wrong + 1); }); }); }; run(-1); };
+# ANSWER: 36 28
+# ANSWER-NEXT: <0>2345678 <0>234567
+# ANSWER-NEXT: 1<1>345678 1<1>34567
+# ANSWER-NEXT: 3<2>45678 3<2>4567
+# ANSWER-NEXT: 6<3>5678 6<3>567
+# ANSWER-NEXT: 10<4>678 10<4>67
+# ANSWER-NEXT: 15<5>78 15<5>7
+# ANSWER-NEXT: 21<6>8 21<6>
+# ANSWER-NEXT: 28<7> 28
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="price" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="worth" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="make" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="worthOfSeven" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g2
+    v4 = PropGet v0 key="start" [isFreeName]
+    v5 = Call v4, -, v1, v2, v3 calleeName="start"
+    Return v5
+}
+function f1 name="worth" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=8 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: undefined|null|L0, v3: undefined|null|L0, v4: undefined|null|L0, v5: undefined|null|L0, v6: undefined|null|L0, v7: undefined|null|L0):
+    v8 = Null
+    v9 = Await v8, v0, v1, v2, v3, v4, v5, v6, v7
+    v10 = PropGet v0 key="price"
+    v11 = Convert v10 declared={type=number}
+    v12 = PropGet v1 key="price"
+    v13 = Convert v12 declared={type=number}
+    v14 = Add v11, v13
+    v15 = PropGet v2 key="price"
+    v16 = Convert v15 declared={type=number}
+    v17 = Add v14, v16
+    v18 = PropGet v3 key="price"
+    v19 = Convert v18 declared={type=number}
+    v20 = Add v17, v19
+    v21 = PropGet v4 key="price"
+    v22 = Convert v21 declared={type=number}
+    v23 = Add v20, v22
+    v24 = PropGet v5 key="price"
+    v25 = Convert v24 declared={type=number}
+    v26 = Add v23, v25
+    v27 = PropGet v6 key="price"
+    v28 = Convert v27 declared={type=number}
+    v29 = Add v26, v28
+    v30 = PropGet v7 key="price"
+    v31 = Convert v30 declared={type=number}
+    v32 = Add v29, v31
+    v33 = Convert v32 declared={type=number|object}
+    Return v33
+}
+function f2 name="make" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v3
+}
+function f3 name="worthOfSeven" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=7 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: undefined|null|L0, v3: undefined|null|L0, v4: undefined|null|L0, v5: undefined|null|L0, v6: undefined|null|L0):
+    v7 = Null
+    v8 = Await v7, v0, v1, v2, v3, v4, v5, v6
+    v9 = PropGet v0 key="price"
+    v10 = Convert v9 declared={type=number}
+    v11 = PropGet v1 key="price"
+    v12 = Convert v11 declared={type=number}
+    v13 = Add v10, v12
+    v14 = PropGet v2 key="price"
+    v15 = Convert v14 declared={type=number}
+    v16 = Add v13, v15
+    v17 = PropGet v3 key="price"
+    v18 = Convert v17 declared={type=number}
+    v19 = Add v16, v18
+    v20 = PropGet v4 key="price"
+    v21 = Convert v20 declared={type=number}
+    v22 = Add v19, v21
+    v23 = PropGet v5 key="price"
+    v24 = Convert v23 declared={type=number}
+    v25 = Add v22, v24
+    v26 = PropGet v6 key="price"
+    v27 = Convert v26 declared={type=number}
+    v28 = Add v25, v27
+    v29 = Convert v28 declared={type=number|object}
+    Return v29
+}

@@ -1,0 +1,7 @@
+# ImageFunctionsEmitted counts the functions that have code in the image, each once, however many units the compiler makes of one: a coroutine has a ramp and a body as written. UnitsCompiled counts the units
+# function plain(a, b) { return a; }  async function waits(p) { return await p; }
+# LIBRARY: own
+# RUN: compile ImageFunctionsEmitted UnitsCompiled mechanisms=none
+# CHECK: statistic ImageFunctionsEmitted 3
+# CHECK: statistic UnitsCompiled 4
+# PROGRAM-OF: ../plan/units-of-a-function-and-a-coroutine.ir

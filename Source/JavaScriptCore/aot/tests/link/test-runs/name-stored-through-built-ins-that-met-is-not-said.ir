@@ -1,0 +1,27 @@
+# several built-ins meet, and the type stops naming any of them. That a name which is stored through what comes out may come to lie on Object.prototype is not said: nobody has followed the store there
+# a suite of 3,000 test files stores 15,000 names through such values, and each was a line of warning
+# same(Math); same(Object.prototype).planted = 1
+# name-on-object-prototype-is-said-and-not-opened.ir is the control: the flow follows the store to the one object, and the build says so
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK-NOT: adds ObjectPrototype
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    v3 = PropGet v0 key="Math" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    v6 = Call v4, -, v2
+    v7 = Integer integer=1
+    PropSet v6, v7 key="planted"
+    Return v7
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

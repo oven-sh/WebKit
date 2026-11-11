@@ -1127,7 +1127,7 @@ public:
     
     void lshiftPtr(Imm32 imm, RegisterID srcDest)
     {
-        lshift64(trustedImm32ForShift(imm), srcDest);
+        lshift64(imm.asTrustedImm32(), srcDest);
     }
 
     void lshiftPtr(TrustedImm32 imm, RegisterID srcDest)
@@ -1147,7 +1147,7 @@ public:
 
     void rshiftPtr(Imm32 imm, RegisterID srcDest)
     {
-        rshift64(trustedImm32ForShift(imm), srcDest);
+        rshift64(imm.asTrustedImm32(), srcDest);
     }
 
     void rshiftPtr(TrustedImm32 imm, RegisterID srcDest)
@@ -1162,7 +1162,7 @@ public:
 
     void urshiftPtr(Imm32 imm, RegisterID srcDest)
     {
-        urshift64(trustedImm32ForShift(imm), srcDest);
+        urshift64(imm.asTrustedImm32(), srcDest);
     }
 
     void urshiftPtr(TrustedImm32 imm, RegisterID srcDest)
@@ -1341,6 +1341,13 @@ public:
     {
         store64(TrustedImm64(imm), address);
     }
+
+#if CPU(X86_64)
+    void storePtr(TrustedImm32 imm, BaseIndex address)
+    {
+        store64(imm, address);
+    }
+#endif
 
     void storePairPtr(RegisterID src1, RegisterID src2, RegisterID dest)
     {
@@ -2013,11 +2020,15 @@ public:
         // The addition immediate may be used as a pointer offset. Keep aligned based on "imm".
         static const uint32_t maskTable[4] = { 0xfffffffc, 0xffffffff, 0xfffffffe, 0xffffffff };
 
-        uint32_t baseValue = imm.asTrustedImm32().m_value;
-        uint32_t key = keyForConstant(baseValue) & maskTable[baseValue & 3];
-        if (key > baseValue)
-            key = key - baseValue;
-        return BlindedImm32(baseValue - key, key);
+        // Both parts have the sign of the immediate and neither exceeds it, so their sum is right at every width.
+        int32_t value = imm.asTrustedImm32().m_value;
+        uint32_t magnitude = value < 0 ? -static_cast<uint32_t>(value) : value;
+        uint32_t key = keyForConstant(magnitude);
+        if (key > magnitude)
+            key = magnitude ? key % magnitude : 0;
+        key &= maskTable[magnitude & 3];
+        uint32_t rest = magnitude - key;
+        return value < 0 ? BlindedImm32(-rest, -key) : BlindedImm32(rest, key);
     }
     
     BlindedImm32 andBlindedConstant(Imm32 imm)

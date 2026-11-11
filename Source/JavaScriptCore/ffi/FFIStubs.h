@@ -14,7 +14,9 @@
 #include "FFIType.h"
 #include "JSExportMacros.h"
 #include "OperationResult.h"
+#include <atomic>
 #include <memory>
+#include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -29,6 +31,11 @@
 #endif
 
 namespace JSC {
+
+class JSFFICallback;
+namespace AOT {
+class Image;
+}
 
 namespace FFI {
 
@@ -71,11 +78,14 @@ struct CallbackRegisters {
 };
 
 struct CallbackEntryContext {
-    JS_EXPORT_PRIVATE static CallbackEntryContext forThisProcess();
+    JS_EXPORT_PRIVATE static CallbackEntryContext forThisProcess(std::atomic<JSFFICallback*>* callbacks);
 
     static constexpr ptrdiff_t offsetOfEnter() { return OBJECT_OFFSETOF(CallbackEntryContext, enter); }
+    static constexpr ptrdiff_t offsetOfCallbacks() { return OBJECT_OFFSETOF(CallbackEntryContext, callbacks); }
 
     void* enter;
+    // A word for each entry of the mapping of the code that this context lies behind.
+    std::atomic<JSFFICallback*>* callbacks;
 };
 
 // Lies behind the constants of an image, where nothing is executed. Every offset counts from the first byte of the FFI code.
@@ -103,18 +113,37 @@ class Stubs {
 public:
     JS_EXPORT_PRIVATE static const Stubs* current();
 
+    // The code of the entries finds its context by its own address, so it can be mapped as often as the process needs entries.
+    struct BlockOfCallbackEntries {
+        uint8_t* code { nullptr };
+        std::span<uint8_t> context;
+    };
+
     InvokeStubFunction invoke() const { return m_invoke; }
-    std::span<void* const> callbackEntries() const LIFETIME_BOUND { return m_callbackEntries.span(); }
-    [[nodiscard]] bool prepareCallbackContext() const;
+    unsigned numberOfCallbackEntriesInBlock() const { return static_cast<unsigned>(m_callbackEntries.offsets.size()); }
+    void* callbackEntry(const BlockOfCallbackEntries& block, unsigned index) const { return block.code + m_callbackEntries.offsets[index]; }
+    // `callbacks` has a word for each entry of a block and stays where it is. Nothing: the process may not map the code once more, or may not write the context.
+    [[nodiscard]] std::optional<BlockOfCallbackEntries> tryMakeBlockOfCallbackEntries(std::atomic<JSFFICallback*>* callbacks, bool isFirst) const;
 
 private:
-    Stubs(InvokeStubFunction, Vector<void*>&& callbackEntries, std::span<uint8_t> reservedCallbackContext);
+    struct CodeOfCallbackEntries {
+        // Whole pages. Behind them the image has room for one context.
+        std::span<uint8_t> pages;
+        size_t contextSize { 0 };
+        Vector<uint32_t> offsets;
+        // Where the pages lie in a file that was open when the image was taken into use, or in the executable, which is opened anew.
+        int descriptor { -1 };
+        int64_t offsetInFile { 0 };
+        const AOT::Image* imageInExecutable { nullptr };
+    };
+
+    Stubs(InvokeStubFunction, CodeOfCallbackEntries&&);
 
     static std::unique_ptr<const Stubs> tryCreateFromImage();
+    std::optional<BlockOfCallbackEntries> tryMapCallbackEntries() const;
 
     InvokeStubFunction m_invoke;
-    Vector<void*> m_callbackEntries;
-    std::span<uint8_t> m_reservedCallbackContext;
+    CodeOfCallbackEntries m_callbackEntries;
 };
 
 JS_EXPORT_PRIVATE CodeSource codeSource();
@@ -125,7 +154,7 @@ JS_EXPORT_PRIVATE void invokeThroughStub(InvokeStubFunction, const Signature&, v
 
 } // namespace FFI
 
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entry, FFI::CallbackRegisters*, const void* frame));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entryInBlock, FFI::CallbackRegisters*, const void* frame, std::atomic<JSFFICallback*>* callbacksOfBlock));
 
 } // namespace JSC
 

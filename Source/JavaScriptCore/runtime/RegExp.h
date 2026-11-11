@@ -94,7 +94,6 @@ public:
     static constexpr uint8_t stateWithBytecode() { return ByteCode; }
     static constexpr ptrdiff_t offsetOfRegExpBytecode() { return OBJECT_OFFSETOF(RegExp, m_regExpBytecode); }
 #endif
-    static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
     static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
     static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }
@@ -194,8 +193,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     bool wasUsedInCurrentFullCollectionCycle(VM&) const;
 
 #if ENABLE(AOT)
-    // A global search of a pattern that is one set or a run of one set, in one pass. False: search match by match.
+    // Runs a global search for a pattern that is one character class, or a repetition of one, in a single pass. Returns false if the caller has to search match by match.
     bool collectMatchesOfOneSetOrRun(VM&, StringView, Vector<unsigned, 128>& matches);
+    bool hasImageCodeFor(bool subjectIs8Bit) const { return m_state == ImageCode && (subjectIs8Bit || m_regExpJITCode->has16BitCode()); }
+    // Returns the start of the match, -1, or Yarr::JSRegExpResult::JITCodeFailure, in which case the caller falls back to match().
+    template<typename CharacterType>
+    int executeImageCode(std::span<const CharacterType> subject, unsigned start, Yarr::MatchingContextHolder& context) { return m_regExpJITCode->execute(subject, start, m_ovector.mutableSpan().data(), &context).start; }
 #endif
 
     bool hasCode()
@@ -269,11 +272,13 @@ private:
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+    enum class BytecodeIsFor : bool { Interpreter, LongSearch };
 #if ENABLE(AOT)
     void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
     int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
     static void countInterpretedMatch(VM&);
+    void countBytecodeCompilation(VM&, BytecodeIsFor) const;
     void crashIfLiteralIsInterpreted() const;
 #endif
 
@@ -288,7 +293,7 @@ private:
         NotCompiled
     };
 
-    void byteCodeCompileIfNecessary(VM*);
+    void byteCodeCompileIfNecessary(VM*, BytecodeIsFor = BytecodeIsFor::Interpreter);
 
     void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);

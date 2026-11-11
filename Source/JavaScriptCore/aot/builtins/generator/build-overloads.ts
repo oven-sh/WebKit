@@ -56,23 +56,16 @@ const genericImplementation: CalledImplementation = { how: "Generic" };
 const entryFlagsByRole: Readonly<Record<OperandRole, BuiltinFlag | null>> = {
   EvaluatedAsText: "EvaluatesText",
   ModuleSpecifier: "LoadsModuleByName",
-  ReadAsCharacters: null,
   Locale: null,
-  ContentKey: null,
-  ReplacesContents: null,
   MembersAreOnlyInspected: null,
-  KeysAreNotListed: null,
-  OwnValuesAreReadByKeyOnly: null,
-  MembersAreOfObjectsOnly: null,
   FunctionsAreConvertedUnderNamesOnly: null,
   OnlyBoxedPrimitivesAreConverted: null,
-  BecomesLengthOfReceiver: null,
-  CopiesHolesToResult: null,
   WorkerEntryPath: null,
   DescribedWhenRefused: null,
   ContentsOfContentsAreOnlyStored: null,
-  FunctionsAreOnlyNamed: null,
-  ProxiesArePrintedAsTheirTargets: null,
+  KeepsWhatCanBeReached: null,
+  MayReplaceLocale: null,
+  PrivateFieldsAreCompared: null,
 };
 
 const engineEnumerators: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
@@ -187,7 +180,7 @@ function withConstructedClass(spec: TypeSpec, constructed: ClassName): TypeSpec 
     return { type: "Union", members: spec.members.map(member => withConstructedClass(member, constructed)) };
   }
   if (spec.type !== "InstanceOfReceiverClass") return spec;
-  return { type: "Instance", class: constructed, freshness: spec.freshness };
+  return { type: "Instance", class: constructed, freshness: spec.freshness, isOfClassItself: true };
 }
 
 function resultSpecOf(context: OverloadContext): TypeSpec {
@@ -412,8 +405,6 @@ function buildResult(context: OverloadContext): ModelResult {
   };
 }
 
-// The built-in throws for a negative index before it converts the operands behind the index. A conversion of one of them that ran
-// before the call would run code that the call never runs.
 export function mayRefuseValueBeforeConversion(
   operands: readonly Pick<ModelParameter, "conversion" | "admitted">[],
 ): boolean {
@@ -437,6 +428,7 @@ function flagsOf(context: OverloadContext): OverloadFlag[] {
     IsSpecialCase: signature.isSpecialCase ?? false,
     OnlyPropagatesErrors: signature.onlyPropagatesErrors ?? false,
     ResultIsDeclaredOnly: signature.resultIsDeclaredOnly ?? false,
+    ResultIsHeld: signature.resultIsHeld ?? false,
   };
   return overloadFlags.filter(flag => isSet[flag]);
 }
@@ -468,15 +460,7 @@ function buildOverload(context: OverloadContext, constantImplementation: ModelIm
     code: {
       implementation: constantImplementation ?? resolveImplementation(context, signature.implementation),
       directEntry: signature.directEntry ?? null,
-      inRanges: null,
       model: resolveModel(context),
-      fieldsForm: signature.fieldsForm ?? (signature.directEntry?.returnsFields ? "FieldsOfDirectEntry" : null),
-      prefixForm: signature.prefixForm ?? null,
-      prefixProperties: (signature.prefixProperties ?? []).map(({ name, type }) => ({
-        name: context.builder.internComponent(name),
-        type: context.types.intern(type, context, source),
-      })),
-      listForm: signature.listForm ?? null,
     },
   };
 }
@@ -560,7 +544,6 @@ function modesOf(
 const kindsOfFunctions: readonly BuiltinKind[] = ["Constructor", "Function", "Method"];
 const lengthOfFunction = b.int(0, 2 ** 31 - 1);
 
-// ECMAScript and WebIDL create every built-in function with a `length` that is a whole number and a `name` that is a string, and every @@toStringTag that they create as a data property holds a string.
 export function typeOfPropertyWithoutWrittenType({ name, holder }: Pick<ModelBuiltin, "name" | "holder">): TypeSpec {
   if (name.kind === "WellKnownSymbol") return name.text === "toStringTag" ? b.string.spec : b.any.spec;
   if (name.kind !== "Text" || holder === null || !kindsOfFunctions.includes(holder.kind)) return b.any.spec;
@@ -684,7 +667,6 @@ function entryFlagsOf(overloads: readonly ModelOverload[]): Set<BuiltinFlag> {
   return flags;
 }
 
-// A function refuses only what none of its overloads takes: an overload that takes anything in one place, and in every other place all that this one takes.
 function describeOnlyWhatEveryOverloadRefuses(overloads: readonly ModelOverload[]): void {
   const takesAllOf = (wide: ModelParameter | null, narrow: ModelParameter | null) =>
     wide === null || narrow === null || wide.accepted.isAnything || wide.accepted.key === narrow.accepted.key;

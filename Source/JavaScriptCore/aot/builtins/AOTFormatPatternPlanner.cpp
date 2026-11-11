@@ -11,6 +11,7 @@
 #include "AOTRemovableFeature.h"
 #include "AOTScratchRealm.h"
 #include "JSCInlines.h"
+#include "TopExceptionScope.h"
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -19,7 +20,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static String keyOf(const FormatterRequest& request)
+static String keyOfFormatterRequest(const FormatterRequest& request)
 {
     StringBuilder builder;
     builder.append(static_cast<unsigned>(request.kind), '\0', static_cast<unsigned>(request.required), '\0', static_cast<unsigned>(request.defaults), '\0', request.locale, '\0', request.hasOptions ? '1' : '0');
@@ -28,7 +29,7 @@ static String keyOf(const FormatterRequest& request)
     return builder.toString();
 }
 
-static std::optional<WTF::Vector<uint8_t>> serializedArgumentsOf(const FormatterRequest& request)
+static std::optional<WTF::Vector<uint8_t>> serializedArgumentsOfFormatter(const FormatterRequest& request)
 {
     WTF::Vector<uint8_t> bytes;
     bool isValid = request.options.size() <= 0xff;
@@ -65,7 +66,7 @@ static std::optional<WTF::Vector<uint8_t>> serializedArgumentsOf(const Formatter
 
 namespace {
 
-class PatternCode {
+class FormatPatternCode {
 public:
     void append(unsigned unit)
     {
@@ -108,7 +109,7 @@ public:
 
     std::optional<WTF::Vector<uint8_t>> finish(const FormatterRequest& request, FormatPatternTimeZone timeZone, int32_t utcOffsetInMinutes) const
     {
-        auto constructorArguments = serializedArgumentsOf(request);
+        auto constructorArguments = serializedArgumentsOfFormatter(request);
         size_t constructorArgumentsOffset = sizeof(FormatPatternHeader) + m_units.size() * (m_is16Bit ? 2 : 1);
         if (!m_isValid || m_maxLength > maxFormatPatternLength || !constructorArguments || constructorArgumentsOffset > 0xffff)
             return std::nullopt;
@@ -129,7 +130,7 @@ public:
         return bytes;
     }
 
-    bool operator==(const PatternCode&) const = default;
+    bool operator==(const FormatPatternCode&) const = default;
 
 private:
     WTF::Vector<char16_t, 128> m_units;
@@ -138,12 +139,12 @@ private:
     bool m_isValid { true };
 };
 
-static const FormatPatternHeader& headerOf(const WTF::Vector<uint8_t>& pattern)
+static const FormatPatternHeader& headerOfFormatPattern(const WTF::Vector<uint8_t>& pattern)
 {
     return *reinterpret_cast<const FormatPatternHeader*>(pattern.span().data());
 }
 
-class PseudoRandomNumbers {
+class SampleNumbersForFormatPattern {
 public:
     double next()
     {
@@ -167,7 +168,6 @@ static ALWAYS_INLINE auto ofNumberFormat(Arguments... arguments)
     return callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, function>(arguments...);
 }
 
-// Nothing of Intl or ICU is called by name here: a direct call would make ICU part of what the compiler keeps in a trimmed executable.
 class FormatPatternPlanner {
 public:
     explicit FormatPatternPlanner(JSGlobalObject* globalObject)
@@ -241,19 +241,18 @@ private:
 
     std::optional<Formatter> makeFormatter(const FormatterRequest& request)
     {
-        auto arguments = PatternCode().finish(request, FormatPatternTimeZone::FixedOffset, 0);
+        auto arguments = FormatPatternCode().finish(request, FormatPatternTimeZone::FixedOffset, 0);
         if (!arguments)
             return std::nullopt;
         JSObject* object = request.kind == FormatPatternKind::Number
-            ? ofNumberFormat<newNumberFormatFromArguments>(m_globalObject, &headerOf(*arguments))
-            : ofDateTimeFormat<newDateTimeFormatFromArguments>(m_globalObject, &headerOf(*arguments));
+            ? ofNumberFormat<newNumberFormatFromArguments>(m_globalObject, &headerOfFormatPattern(*arguments))
+            : ofDateTimeFormat<newDateTimeFormatFromArguments>(m_globalObject, &headerOfFormatPattern(*arguments));
         JSValue format = get(object, "format"_s);
         if (!format)
             return std::nullopt;
         return Formatter { object, format };
     }
 
-    // Another locale is formatted in the locale of the machine that the program runs on.
     bool isSupportedLocale(const Formatter& formatter, const String& locale)
     {
         return lengthOf(callMethod(get(formatter.object, "constructor"_s), "supportedLocalesOf"_s, { jsString(m_vm, locale) })) == 1u;
@@ -266,7 +265,6 @@ private:
 
     static bool isSameText(const String& written, const String& throughICU)
     {
-        // jsString() answers the shared text for one character, whatever it is handed.
         return !written.isNull() && written == throughICU && (written.length() <= 1 || written.is8Bit() == throughICU.is8Bit());
     }
 
@@ -312,14 +310,13 @@ private:
     static constexpr double hour = 60 * minute;
     static constexpr double day = 24 * hour;
 
-    // Saturday, the 3rd of February 2001, 04:05:06.789 on the formatter's clock.
     static double timeValueWithOneDigitInEachField(int32_t utcOffsetInMinutes)
     {
         constexpr double startOf2001 = 978307200000.0;
         return startOf2001 + 33 * day + 4 * hour + 5 * minute + 6 * second + 789 - utcOffsetInMinutes * minute;
     }
 
-    std::optional<PatternCode> codeFromPartsOf(const Formatter& formatter, int32_t utcOffsetInMinutes)
+    std::optional<FormatPatternCode> codeFromPartsOf(const Formatter& formatter, int32_t utcOffsetInMinutes)
     {
         double base = timeValueWithOneDigitInEachField(utcOffsetInMinutes);
         std::optional<Parts> parts = partsOf(formatter, base);
@@ -332,7 +329,7 @@ private:
             return (*other)[index].value;
         };
 
-        PatternCode code;
+        FormatPatternCode code;
         for (size_t index = 0; index < parts->size(); ++index) {
             const String& type = (*parts)[index].type;
             const String& text = (*parts)[index].value;
@@ -463,11 +460,11 @@ private:
         WTF::Vector<double> timeValues;
         for (unsigned i = 0; i < 366 * 4; ++i)
             timeValues.append(startOf2024 + i * 6 * hour + 1799999);
-        PseudoRandomNumbers random;
+        SampleNumbersForFormatPattern random;
         for (unsigned i = 0; i < 600; ++i)
             timeValues.append(std::floor(i % 3 ? startOf1900 + random.next() * (startOf2100 - startOf1900) : firstTimeValueOfYear1 + 48 * hour + random.next() * (maxTimeValue - 96 * hour - firstTimeValueOfYear1)));
         auto agreesAt = [&](double timeValue) {
-            return isSameText(ofDateTimeFormat<formatInNamedTimeZoneWithPattern>(&stretch, &headerOf(pattern), timeValue), formatted(*throughICU, timeValue));
+            return isSameText(ofDateTimeFormat<formatInNamedTimeZoneWithPattern>(&stretch, &headerOfFormatPattern(pattern), timeValue), formatted(*throughICU, timeValue));
         };
         for (double timeValue : timeValues) {
             if (!agreesAt(timeValue))
@@ -480,7 +477,7 @@ private:
         return true;
     }
 
-    std::optional<std::pair<PatternCode, int32_t>> planAtFixedOffset(const FormatterRequest& request, ASCIILiteral timeZone)
+    std::optional<std::pair<FormatPatternCode, int32_t>> planAtFixedOffset(const FormatterRequest& request, ASCIILiteral timeZone)
     {
         FormatterRequest inTimeZone = request;
         if (!timeZone.isNull()) {
@@ -524,7 +521,7 @@ private:
         for (double years : { -2000.0, -1999.0, -1992.0, -1991.0, -1990.0, -1902.0, -1901.0, -1900.0, -1002.0, -1001.0, -1000.0, -419.0, -401.0, -101.0, -32.0, -31.0, -2.0, -1.0, 23.0, 37.0, 7998.0, 7999.0, 10344.0, 97998.0, 97999.0, 273000.0 })
             timeValues.append(base + std::floor(years * daysIn400Years / 400) * day);
 
-        PseudoRandomNumbers random;
+        SampleNumbersForFormatPattern random;
         constexpr double startOf1900 = -2208988800000.0;
         constexpr double startOf2100 = 4102444800000.0;
         for (unsigned i = 0; i < 400; ++i) {
@@ -534,7 +531,7 @@ private:
                 timeValues.append(std::floor(firstTimeValueOfYear1 + day + random.next() * (maxTimeValue - 2 * day - firstTimeValueOfYear1)));
         }
         for (double timeValue : timeValues) {
-            if (!isSameText(ofDateTimeFormat<formatAtFixedOffsetWithPattern>(&headerOf(*pattern), timeValue), formatted(*formatter, timeValue)))
+            if (!isSameText(ofDateTimeFormat<formatAtFixedOffsetWithPattern>(&headerOfFormatPattern(*pattern), timeValue), formatted(*formatter, timeValue)))
                 return std::nullopt;
         }
         return std::pair { WTF::move(*code), *utcOffsetInMinutes };
@@ -750,7 +747,7 @@ private:
                 return std::nullopt;
         }
 
-        PatternCode code;
+        FormatPatternCode code;
         for (unsigned parameter : { primaryGroupSize, secondaryGroupSize, minDigitsToGroup, minFractionDigits, maxFractionDigits, minIntegerDigits, decimalShift })
             code.append(parameter);
         for (auto& text : { positive->prefix, positive->suffix, negative->prefix, negative->suffix, separator, decimalSeparator })
@@ -768,7 +765,7 @@ private:
                 numbers.appendList({ numerator / scale, 1 + numerator / scale, 1234567 + numerator / scale });
         }
         numbers.appendList({ 0.1 + 0.2, 1.0 / 3, 2.0 / 3, 1e-6, 1.5e-6, 9.999999e-7, 0.000001234, 4503599627370495.5, 1125899906842623.75, 999999.9999999999 });
-        PseudoRandomNumbers random;
+        SampleNumbersForFormatPattern random;
         for (unsigned i = 0; i < 200; ++i)
             numbers.append(std::floor(std::pow(10, random.next() * 15.9)));
         for (unsigned i = 0; i < 400; ++i) {
@@ -777,7 +774,7 @@ private:
         }
         for (size_t i = 0; i < numbers.size(); ++i) {
             for (double signedNumber : { numbers[i], -numbers[i] }) {
-                String text = ofNumberFormat<formatNumberWithPattern>(&headerOf(*pattern), signedNumber);
+                String text = ofNumberFormat<formatNumberWithPattern>(&headerOfFormatPattern(*pattern), signedNumber);
                 if (!text.isNull() && !isSameText(text, formatted(*formatter, signedNumber)))
                     return std::nullopt;
             }
@@ -792,13 +789,13 @@ private:
 
 } // anonymous namespace
 
-const WTF::Vector<uint32_t>* FormatPatternPlans::planFor(ScratchRealms& realms, const FormatterRequest& request)
+const WTF::Vector<uint32_t>* FormatPatternPlans::planFor(ScratchRealm& realmOfThisThread, const FormatterRequest& request)
 {
-    String key = keyOf(request);
+    String key = keyOfFormatterRequest(request);
     Locker locker { m_lock };
     if (auto found = m_plans.find(key); found != m_plans.end())
         return found->value.get();
-    std::optional<WTF::Vector<uint8_t>> pattern = realms.ofCurrentThread().run([&](JSGlobalObject* realm) {
+    std::optional<WTF::Vector<uint8_t>> pattern = realmOfThisThread.run([&](JSGlobalObject* realm) {
         return FormatPatternPlanner(realm).plan(request);
     });
     std::unique_ptr<WTF::Vector<uint32_t>> words;

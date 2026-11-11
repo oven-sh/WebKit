@@ -1,0 +1,150 @@
+# the builder of a text that grows lies in the frame of the unit: each part takes the newest cursor and gives the next, and a block that has none in sight reads it out of the record
+# function digits(n) { if (typeof n === "number") { let s = ""; for (let i = 0; i < n; i++) s += i; return s; } }
+# function keys(n) { if (typeof n === "number") { let s = ""; for (let i = 0; i < n; i++) s += "k" + i + ","; return s; } }   the three parts of one row hand the cursor on, so it is read once in the turn and once on the way out
+# function guarded(n, f) { let s = ""; let bad = 0; for (let i = 0; i < n; i++) { try { s += f(i); } catch { bad++; } } return s + bad; }   an append that throws leaves a record that nobody may read, so under a handler no text lies in the frame
+# function told(n, f) { if (typeof n === "number") { let s = ""; for (let i = 0; i < n; i++) { s += i; f(); s += ","; } return s; } }   no cursor is carried past a call that may collect: behind the call it is read out of the record again
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: = StackStringBuilderBegin
+# CHECK: isLoopHead=true
+# RUN(CURSOR): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CURSOR: isLoopHead=true
+# CURSOR: = StackStringBuilderCursor
+# RUN(PART): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# PART: isLoopHead=true
+# PART: = StackStringBuilderAppend
+# RUN(FINISH): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# FINISH: = StackStringBuilderFinish
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NEVER-NOT: = StringBuilder
+# RUN(KEYS): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# KEYS-LABEL: code f2:Body
+# KEYS-COUNT-2: = StackStringBuilderCursor
+# KEYS-NOT: = StackStringBuilderCursor
+# RUN(ROW): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# ROW-COUNT-2: = StackStringBuilderAppendConstant
+# ROW-NOT: = StackStringBuilderAppendConstant
+# RUN(GUARDED): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# GUARDED-NOT: StackStringBuilder
+# RUN(TOLD): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# TOLD-LABEL: code f4:Body
+# TOLD-COUNT-3: = StackStringBuilderCursor
+# TOLD-NOT: = StackStringBuilderCursor
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = StackStringBuilderBegin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="digits" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = String string=""
+    v4 = Integer
+    Jump -> next b2(v3, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = Less v6, v2
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Add v5, v6
+    v10 = Increment v6
+    Jump -> next b2(v9, v10)
+  b4():
+    Return v5
+  b5():
+    v11 = Undefined
+    Return v11
+}
+function f2 name="keys" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = String string=""
+    v4 = Integer
+    Jump -> next b2(v3, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = Less v6, v2
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = String string="k"
+    v10 = Add v9, v6
+    v11 = String string=","
+    v12 = Add v10, v11
+    v13 = Add v5, v12
+    v14 = Increment v6
+    Jump -> next b2(v13, v14)
+  b4():
+    Return v5
+  b5():
+    v15 = Undefined
+    Return v15
+}
+function f3 name="guarded" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    v4 = Integer
+    Jump -> next b1(v2, v3, v4)
+  b1(v5, v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b2(), notTaken b6()
+  b2() handler=b4(v5):
+    v10 = Call v1, -, v7
+    v11 = Add v5, v10
+    Jump -> next b3()
+  b3():
+    Jump -> next b5(v11, v6)
+  b4(v12) role=CatchHandler:
+    v13 = CatchValue
+    v14 = Increment v6
+    Jump -> next b5(v12, v14)
+  b5(v15, v16):
+    v17 = Increment v7
+    Jump -> next b1(v15, v16, v17)
+  b6():
+    v18 = Add v5, v6
+    Return v18
+}
+function f4 name="told" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = String string=""
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v3
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Add v6, v7
+    v11 = Call v1
+    v12 = String string=","
+    v13 = Add v10, v12
+    v14 = Increment v7
+    Jump -> next b2(v13, v14)
+  b4():
+    Return v6
+  b5():
+    v15 = Undefined
+    Return v15
+}

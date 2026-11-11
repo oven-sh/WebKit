@@ -941,6 +941,180 @@ static void testVersionLoopsRemovesRangeCheckOfInt32Counter()
     }
 }
 
+namespace {
+
+struct CheckedLoopKind {
+    bool increases() const { return relation == LessThan || relation == LessEqual || relation == Below || relation == BelowEqual; }
+    bool isUnsigned() const { return relation == Below || relation == BelowEqual || relation == Above || relation == AboveEqual; }
+    int64_t step() const { return increases() ? stepSize : -stepSize; }
+
+    void dump(PrintStream& out) const
+    {
+        out.print(relation, " ", type, isTopTested ? " top-tested" : " bottom-tested", " step ", step(), " scale ", scale, " offset ", offset);
+    }
+
+    B3::Opcode relation;
+    Type type;
+    bool isTopTested;
+    int64_t stepSize;
+    int64_t scale;
+    int64_t offset;
+};
+
+} // anonymous namespace
+
+// for (i = start; i REL bound; i += step), or do .. while (i REL bound): sum += words[2 + i * scale + offset] behind its range check against words[0]. An index out of range returns -1.
+static void buildCheckedLoop(Procedure& proc, const CheckedLoopKind& kind)
+{
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* head = proc.addBlock();
+    BasicBlock* body = kind.isTopTested ? proc.addBlock() : head;
+    BasicBlock* inBounds = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    BasicBlock* out = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root).eager();
+    bool isNarrow = kind.type == Int32;
+    auto narrow = [&](Value* value) {
+        return isNarrow ? graph.make(root, Trunc, value) : value;
+    };
+    auto constant = [&](BasicBlock* block, int64_t value) {
+        return isNarrow ? graph.int32(block, static_cast<int32_t>(value)) : graph.int64(block, value);
+    };
+    Value* bound = narrow(arguments[1]);
+    Value* pointer = arguments[2];
+    Variable* counter = proc.addVariable(kind.type);
+    Variable* sum = proc.addVariable(Int64);
+    graph.set(root, counter, narrow(arguments[0]));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, head);
+
+    Value* test = nullptr;
+    if (kind.isTopTested) {
+        test = graph.make(head, kind.relation, graph.get(head, counter), bound);
+        graph.branch(head, test, body, exit);
+    }
+    Value* length = graph.load(body, Int32, pointer, 0, firstHeap);
+    if (!isNarrow)
+        length = graph.make(body, ZExt32, length);
+    Value* index = graph.get(body, counter);
+    if (kind.scale != 1)
+        index = graph.make(body, Mul, index, constant(body, kind.scale));
+    if (kind.offset)
+        index = graph.make(body, Add, index, constant(body, kind.offset));
+    graph.branch(body, graph.make(body, Below, index, length), FrequentedBlock(inBounds), rarely(out));
+    Value* wideIndex = isNarrow ? graph.make(inBounds, ZExt32, index) : index;
+    Value* address = graph.make(inBounds, Add, pointer, graph.make(inBounds, Shl, wideIndex, graph.int32(inBounds, 3)));
+    graph.increase(inBounds, sum, graph.load(inBounds, Int64, address, 16, secondHeap));
+    Value* next = graph.make(inBounds, Add, graph.get(inBounds, counter), constant(inBounds, kind.step()));
+    graph.set(inBounds, counter, next);
+    if (kind.isTopTested)
+        graph.jump(inBounds, head);
+    else {
+        test = graph.make(inBounds, kind.relation, next, bound);
+        graph.branch(inBounds, test, head, exit);
+    }
+    graph.ret(exit, graph.get(exit, sum));
+    graph.ret(out, graph.int64(out, -1));
+    proc.setKnownInduction(DemotedInduction { counter, head, next, test, kind.step(), false });
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+}
+
+template<typename Integer>
+static int64_t sumOfCheckedLoop(const CheckedLoopKind& kind, int64_t start, int64_t boundArgument, const CheckedArray& array)
+{
+    using UnsignedInteger = std::make_unsigned_t<Integer>;
+    auto add = [](Integer left, int64_t right) {
+        return static_cast<Integer>(static_cast<UnsignedInteger>(left) + static_cast<UnsignedInteger>(right));
+    };
+    auto widen = [&](Integer value) {
+        return kind.isUnsigned() ? static_cast<int64_t>(static_cast<UnsignedInteger>(value)) : static_cast<int64_t>(value);
+    };
+    Integer counter = static_cast<Integer>(start);
+    Integer bound = static_cast<Integer>(boundArgument);
+    int64_t sum = 0;
+    if (kind.isTopTested && !holds(kind.relation, widen(counter), widen(bound)))
+        return sum;
+    while (true) {
+        UnsignedInteger index = static_cast<UnsignedInteger>(counter) * static_cast<UnsignedInteger>(kind.scale) + static_cast<UnsignedInteger>(kind.offset);
+        if (index >= static_cast<uint32_t>(array.words[0]))
+            return -1;
+        sum += array.words[2 + index];
+        counter = add(counter, kind.step());
+        if (!holds(kind.relation, widen(counter), widen(bound)))
+            return sum;
+    }
+}
+
+static bool checkedLoopMatchesModel(const CheckedLoopKind& kind, Compilation& code)
+{
+    constexpr int64_t minInt32 = std::numeric_limits<int32_t>::min();
+    constexpr int64_t maxInt32 = std::numeric_limits<int32_t>::max();
+    constexpr int64_t minInt64 = std::numeric_limits<int64_t>::min();
+    constexpr int64_t maxInt64 = std::numeric_limits<int64_t>::max();
+    // The small ones come first: a wrong loop is caught by its sum before it reads far outside the array.
+    static constexpr int64_t extremes[] = { 0, 1, 2, 5, 9, 37, 38, -1, -2, -5, maxInt32, maxInt32 - 1, minInt32, minInt32 + 1, 0xffffffffll, 0x100000000ll, 0x80000000ll, maxInt64, maxInt64 - 1, minInt64, minInt64 + 1 };
+    for (int64_t length : { 38, 5, 1, 0 }) {
+        CheckedArray array(length, 0);
+        for (int64_t start : extremes) {
+            for (int64_t bound : extremes) {
+                int64_t expected = kind.type == Int32 ? sumOfCheckedLoop<int32_t>(kind, start, bound, array) : sumOfCheckedLoop<int64_t>(kind, start, bound, array);
+                int64_t actual = invoke<int64_t>(code, start, bound, array.words);
+                if (actual == expected)
+                    continue;
+                dataLogLn("The loop ", kind, " from ", start, " to ", bound, " over ", length, " elements returned ", actual, " and not ", expected);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static Vector<CheckedLoopKind> allCheckedLoopKinds()
+{
+    Vector<CheckedLoopKind> kinds;
+    for (B3::Opcode relation : { LessThan, LessEqual, Below, BelowEqual, GreaterThan, GreaterEqual, Above, AboveEqual }) {
+        for (Type type : { Int32, Int64 }) {
+            for (bool isTopTested : { true, false }) {
+                for (int64_t stepSize : { 1, 2 }) {
+                    for (int64_t scale : { 1, 2, 3 }) {
+                        for (int64_t offset : { 0, 1, -1 })
+                            kinds.append(CheckedLoopKind { relation, type, isTopTested, stepSize, scale, offset });
+                    }
+                }
+            }
+        }
+    }
+    return kinds;
+}
+
+static void testVersionLoopsMatchesModelAtExtremeStartsAndBounds()
+{
+    unsigned numberOfClampedKinds = 0;
+    unsigned numberOfClampedKindsThatDecreaseUnsigned = 0;
+    unsigned numberOfScaledKindsWithoutCheck = 0;
+    unsigned numberOfWrongKinds = 0;
+    Vector<CheckedLoopKind> kinds = allCheckedLoopKinds();
+    for (const CheckedLoopKind& kind : kinds) {
+        Procedure proc(loopPolicy());
+        buildCheckedLoop(proc, kind);
+        versionLoopsAndValidate(proc);
+        bool isClamped = proc.report().countOf(Counter::LoopBoundsClamped);
+        numberOfClampedKinds += isClamped;
+        numberOfClampedKindsThatDecreaseUnsigned += isClamped && !kind.increases() && kind.isUnsigned();
+        numberOfScaledKindsWithoutCheck += kind.scale != 1 && proc.report().countOf(Counter::RangeChecksRemoved);
+        auto code = compileProc(proc);
+        numberOfWrongKinds += !checkedLoopMatchesModel(kind, *code);
+    }
+    CHECK_EQ(numberOfWrongKinds, 0u);
+    CHECK_EQ(kinds.size(), 576u);
+    CHECK_EQ(numberOfClampedKinds, 144u);
+    CHECK_EQ(numberOfClampedKindsThatDecreaseUnsigned, 0u);
+    CHECK_EQ(numberOfScaledKindsWithoutCheck, 144u);
+}
+
 static void checkPollsStayInFastLoop(const Policy& policy, unsigned pollsPerIteration)
 {
     LoopProcedure procedure(policy);
@@ -1153,6 +1327,7 @@ void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsRemovesRangeCheckOfLaggingIndex());
     RUN(testVersionLoopsRemovesRangeCheckUnderUnsignedRelation());
     RUN(testVersionLoopsRemovesRangeCheckOfInt32Counter());
+    RUN(testVersionLoopsMatchesModelAtExtremeStartsAndBounds());
     RUN(testVersionLoopsPollsStayInFastLoop());
     RUN(testVersionLoopsReportsUnclampedBound());
     RUN(testVersionLoopsUnswitchLimit());

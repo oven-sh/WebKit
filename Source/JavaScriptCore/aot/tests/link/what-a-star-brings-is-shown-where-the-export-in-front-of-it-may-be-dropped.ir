@@ -1,0 +1,59 @@
+# lacks.js never provides `sep`   stars.js: sep = "/"   t.js: export * from "./stars.js"; export { sep } from "./lacks.js"   plain.js: export const read = 1, unread = 2
+# main.js: import * as t from "./t.js"; import * as plain from "./plain.js"; out = t.sep; other = plain.read
+# The run drops the entry `sep` of t.js while its variable is empty, and reads `sep` off the namespace object of stars.js.
+# showExport() showed the variable behind the entry and returned, so `sep` of stars.js was marked as an export that stays in compiled code, and the run refused the read:
+# "Cannot read 'sep' from the namespace object of stars.js: the build kept only the exports that it saw your code read."
+# the control: plain.js stands behind no star of t.js, and what nobody reads off it stays in
+# RUN: link modules mechanisms=all
+# CHECK-NOT: export g1 stays-in
+# CHECK: export g3 stays-in
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m4 completes=true}]
+module m1 path="/t.js" displayPath="t.js" body=f1 requests=[{target=m2 isDynamicStarExport=true completes=true}, {target=m3 completes=true}] exports=[{name="sep" variable=g0 isHiddenUntilInitialized=true}]
+module m2 path="/stars.js" displayPath="stars.js" body=f2 exports=[{name="sep" variable=g1}]
+module m3 path="/lacks.js" displayPath="lacks.js" body=f3
+module m4 path="/plain.js" displayPath="plain.js" body=f4 exports=[{name="read" variable=g4}, {name="unread" variable=g3}]
+entry module=m0
+variable g0 name="sep" module=m3 declared={type=anything|absent}
+variable g1 name="sep" module=m2 declared={type=anything}
+variable g2 name="out" module=m0 declared={type=anything|absent}
+variable g3 name="unread" module=m4 declared={type=anything}
+variable g4 name="read" module=m4 declared={type=anything}
+variable g5 name="other" module=m0 declared={type=anything|absent}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="sep"
+    PutModuleVariable v1 variable=g2
+    v3 = ModuleNamespace module=m4
+    v4 = PropGet v3 key="read"
+    PutModuleVariable v4 variable=g5
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="/"
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g4
+    v2 = Integer integer=2
+    PutModuleVariable v2 variable=g3
+    v4 = Undefined
+    Return v4
+}

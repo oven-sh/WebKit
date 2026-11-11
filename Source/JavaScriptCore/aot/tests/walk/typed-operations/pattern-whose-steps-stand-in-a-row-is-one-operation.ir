@@ -1,0 +1,52 @@
+# `const [a, b] = values`: between the open and the close behind the last step stand the steps, the reads of what they give and jumps. Nothing runs in between, so all the steps are taken where the open stands:
+# one operation of the run time opens, steps and closes, whatever is iterated, and reads a list that nobody can see being iterated by index. A step that throws leaves the iteration done, so whoever catches it has nothing to close:
+# the steps and the closes as written build nothing, nothing is kept in memory, and the handler that closes is gone. No guess is needed, in a loop either: there the code of the operation itself
+# reads a list as lists are made in line: Bun's test/aot/engine-tests/machine/pattern-in-a-loop-reads-a-list-in-line.ir.
+# function two(values: number[]) { const [a, b] = values; return keep(a, b); }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: RequireObjectCoercible
+# CHECK: [[taken]]: {{*}} = DestructureIterable {{*}} count=2 [readsListsByIndex]
+# CHECK: [[a]]: {{*}} = ResultAt [[taken]]
+# CHECK: [[b]]: {{*}} = ResultAt [[taken]] index=1
+# CHECK: = Call {{*}}, -, [[a]], [[b]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: NewHeapWords
+# NEVER-NOT: @@iterator
+# NEVER-NOT: IsPristine
+# NEVER-NOT: CatchException
+# NEVER-NOT: handler=
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED: = PropGet {{*}}key=@@iterator
+# CLOSED: = NewHeapWords
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="two" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v3, v5
+    Return v9
+  b3() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}

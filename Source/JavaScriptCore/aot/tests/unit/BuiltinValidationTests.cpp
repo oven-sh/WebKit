@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTChildProcess.h"
 #include "AOTVector.h"
@@ -130,7 +131,7 @@ static void testChangedConstantIsReported()
 
     Realms realms;
     VM& vm = realms.vm();
-    realms.object(realms.plain(), "Math"_s)->putDirect(vm, Identifier::fromString(vm, "PI"_s), jsNumber(3));
+    realms.object(realms.plain(), "Math"_s)->putDirect(vm, Identifier::fromString(vm, "PI"_s), jsNumber(3), static_cast<unsigned>(PropertyAttribute::DontEnum));
     checkMismatches(realms.plain(), "Math.PI is 3"_s, { makeString(table.textOf(Builtins::MathPI), ": is not "_s, *pi) });
 }
 
@@ -141,6 +142,19 @@ static void testChangedPrototypeIsReported()
         { "Object.setPrototypeOf(Map.prototype, Set.prototype)"_s, Builtins::MapPrototype, "inherits from another object than the table says"_s },
     };
     checkChanges(changes);
+}
+
+static void testMemberMadeEnumerableIsReported()
+{
+    static constexpr ReportedChange changes[] = {
+        { "Object.defineProperty(Array.prototype, 'push', { enumerable: true })"_s, Builtins::ArrayPrototypePush, "is enumerable, and the table says that no loop over names lists it"_s },
+        { "Object.defineProperty(Function.prototype, 'apply', { enumerable: true })"_s, Builtins::FunctionPrototypeApply, "is enumerable, and the table says that no loop over names lists it"_s },
+    };
+    checkChanges(changes);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    AOT_TEST_CHECK(table.at(Builtins::WebAssemblyMemoryPrototypeGrow).canBeListed);
+    AOT_TEST_CHECK(table.at(Builtins::WebAssemblyMemoryPrototypeToResizableBuffer).canBeListed);
+    AOT_TEST_CHECK(table.at(Builtins::ErrorStackTraceLimit).canBeListed);
 }
 
 static void testHiddenRootsAreFound()
@@ -187,6 +201,17 @@ static void testEntryThatIsAnInstanceOfAnotherClassIsReported()
     });
 }
 
+static void testCellOfAnotherTypeIsNoInstanceOfClassThatSharesItsCellType()
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    Realms realms;
+    AOT_TEST_CHECK(table.at(BuiltinClasses::Object).instanceTest == BuiltinInstanceTest::None);
+    AOT_TEST_CHECK(passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "[]"_s)) == std::optional(false));
+    AOT_TEST_CHECK(passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "Math"_s)) == std::optional(false));
+    AOT_TEST_CHECK(!passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "Object.create(null)"_s)));
+    AOT_TEST_CHECK(!passesInstanceTest(table, BuiltinClasses::Iterator, realms.object(realms.plain(), "[]"_s)));
+}
+
 static void runWithOptionalGlobals(ASCIILiteral testName, void (*body)())
 {
     if (Options::useSharedArrayBuffer()) {
@@ -225,10 +250,12 @@ std::span<const NativeTest> builtinValidationTests()
         { "builtin-validation/changed-accessors-are-reported"_s, withOptionalGlobals<testChangedAccessorsAreReported> },
         { "builtin-validation/changed-constant-is-reported"_s, withOptionalGlobals<testChangedConstantIsReported> },
         { "builtin-validation/changed-prototype-is-reported"_s, withOptionalGlobals<testChangedPrototypeIsReported> },
+        { "builtin-validation/member-made-enumerable-is-reported"_s, withOptionalGlobals<testMemberMadeEnumerableIsReported> },
         { "builtin-validation/hidden-roots-are-found"_s, withOptionalGlobals<testHiddenRootsAreFound> },
         { "builtin-validation/unlisted-members-are-reported"_s, withOptionalGlobals<testUnlistedMembersAreReported> },
         { "builtin-validation/additions-to-object-prototype-are-reported"_s, withOptionalGlobals<testAdditionsToObjectPrototypeAreReported> },
         { "builtin-validation/entry-that-is-an-instance-of-another-class-is-reported"_s, withOptionalGlobals<testEntryThatIsAnInstanceOfAnotherClassIsReported> },
+        { "builtin-validation/cell-of-another-type-is-no-instance-of-class-that-shares-its-cell-type"_s, testCellOfAnotherTypeIsNoInstanceOfClassThatSharesItsCellType },
     };
     return tests;
 }

@@ -1,0 +1,92 @@
+# const frozen = { a: 1, b: 1, n: 0.5 }, sealed = { a: 1, b: 1, n: 0.5 }, closed = { a: 1, b: 1, n: 0.5 }, other = { a: 1, b: 1, n: 0.5 };      `n` is declared a number
+# Object.freeze(new Proxy(frozen, {}));  Object.seal(new Proxy(sealed, {}));  Object.preventExtensions(new Proxy(closed, {}));
+# of each of the four, as sloppy code writes it:  box.a = 2;  box.c = 3;  box.n = 1.5;  print(delete box.b, box.a, box.b, box.c, box.n);      what a closed object refuses is dropped
+# closed.c = 3;                                                                                                                              as strict code writes it, so it throws
+# All four are made in sight and have one layout, so each is known to be open, with every field in its slot, where it is made. A proxy holds three of them, and whoever closes the proxy closes what it holds.
+# What was known of those three ends there. To seal or to freeze, the engine defines each field anew, so each leaves its slot: the number too, which therefore needs a slot that can be empty. Nobody is handed the fourth.
+# RUN: run-in-shell
+# CHECK: false 1 1 undefined 0.5
+# CHECK-NEXT: false 2 1 undefined 1.5
+# CHECK-NEXT: true 2 undefined undefined 1.5
+# CHECK-NEXT: true 2 undefined 3 1.5
+# CHECK-NEXT: TypeError
+# CHECK-NOT: exited with 0
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+layout L1 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Double number=0.5
+    v2 = NewObject -, v0, v0, v1 layout=L0 fields=[0, 1, 2]
+    v3 = FinishObject v2
+    v4 = NewObject -, v0, v0, v1 layout=L0 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0, v0, v1 layout=L0 fields=[0, 1, 2]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v0, v1 layout=L0 fields=[0, 1, 2]
+    v9 = FinishObject v8
+    v10 = Builtin builtin=Proxy
+    v11 = NewObject layout=L1
+    v12 = FinishObject v11
+    v13 = Construct v10, -, v3, v12 calleeName="Proxy"
+    v14 = NewObject layout=L1
+    v15 = FinishObject v14
+    v16 = Construct v10, -, v5, v15 calleeName="Proxy"
+    v17 = NewObject layout=L1
+    v18 = FinishObject v17
+    v19 = Construct v10, -, v7, v18 calleeName="Proxy"
+    v20 = Builtin builtin=Object
+    v21 = Builtin builtin=ObjectFreeze
+    v22 = Call v21, v20, v13 calleeName="Object.freeze"
+    v23 = Builtin builtin=ObjectSeal
+    v24 = Call v23, v20, v16 calleeName="Object.seal"
+    v25 = Builtin builtin=ObjectPreventExtensions
+    v26 = Call v25, v20, v19 calleeName="Object.preventExtensions"
+    v27 = Integer integer=2
+    v28 = Integer integer=3
+    v29 = Double number=1.5
+    v30 = Builtin builtin=GlobalThis
+    v31 = PropGet v30 key="print" [isFreeName]
+    PropSet v3, v27 key="a" mode=Sloppy
+    PropSet v3, v28 key="c" mode=Sloppy
+    PropSet v3, v29 key="n" mode=Sloppy
+    v35 = PropDelete v3 key="b" mode=Sloppy
+    v36 = PropGet v3 key="a"
+    v37 = PropGet v3 key="b"
+    v38 = PropGet v3 key="c"
+    v39 = PropGet v3 key="n"
+    v40 = Call v31, -, v35, v36, v37, v38, v39 calleeName="print"
+    PropSet v5, v27 key="a" mode=Sloppy
+    PropSet v5, v28 key="c" mode=Sloppy
+    PropSet v5, v29 key="n" mode=Sloppy
+    v44 = PropDelete v5 key="b" mode=Sloppy
+    v45 = PropGet v5 key="a"
+    v46 = PropGet v5 key="b"
+    v47 = PropGet v5 key="c"
+    v48 = PropGet v5 key="n"
+    v49 = Call v31, -, v44, v45, v46, v47, v48 calleeName="print"
+    PropSet v7, v27 key="a" mode=Sloppy
+    PropSet v7, v28 key="c" mode=Sloppy
+    PropSet v7, v29 key="n" mode=Sloppy
+    v53 = PropDelete v7 key="b" mode=Sloppy
+    v54 = PropGet v7 key="a"
+    v55 = PropGet v7 key="b"
+    v56 = PropGet v7 key="c"
+    v57 = PropGet v7 key="n"
+    v58 = Call v31, -, v53, v54, v55, v56, v57 calleeName="print"
+    PropSet v9, v27 key="a" mode=Sloppy
+    PropSet v9, v28 key="c" mode=Sloppy
+    PropSet v9, v29 key="n" mode=Sloppy
+    v62 = PropDelete v9 key="b" mode=Sloppy
+    v63 = PropGet v9 key="a"
+    v64 = PropGet v9 key="b"
+    v65 = PropGet v9 key="c"
+    v66 = PropGet v9 key="n"
+    v67 = Call v31, -, v62, v63, v64, v65, v66 calleeName="print"
+    PropSet v7, v28 key="c"
+    v69 = Undefined
+    Return v69
+}

@@ -1,0 +1,60 @@
+# If an access under a symbol counted as one under any key, as it did, a store under `[depth]` would reach every field of the object and a read would give what any of them holds: no field of an object of node:http would have a type.
+# const depth = Symbol("depth");  function depthOf(point) { return point[depth]; }  function setDepth(point, value) { point[depth] = value; }
+# const point = { x: "a", [depth]: 5 };  setDepth(point, 7);  depthOf(point);
+# The call of Symbol runs once, so all that the variable ever holds is the one symbol of the key, and `point[depth]` is `point.depth`.
+# RUN: summary f1
+# CHECK: access [[read]] v2 Read Parameter 0 [Variable g0] -> [[read]]
+# RUN(LINK): link accesses functions fields variables layouts mechanisms=all
+# LINK: access f0 v7 under symbol("depth")@m0:0
+# LINK-NEXT: access f1 v2 under symbol("depth")@m0:0
+# LINK-NEXT: access f2 v3 under symbol("depth")@m0:0
+# LINK: function f1 callers-known one-callee {{*}}result=undefined|int[0, 2147483647] returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone filled
+# LINK: field L0.1 symbol("depth")@m0:0 proven=i32 writers-known
+# LINK: variable g0 proven=symbol("depth")@m0:0 writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+# That chooses the name and proves nothing. The type of the variable names the symbol, each store into it is held to that, and so the walk derives the key by itself: no test stands in front of the access.
+# RUN(WALK): walk f1 f2 mechanisms=all
+# WALK-NOT: TypeTest
+# WALK-NOT: ElemGet
+# WALK-NOT: ElemSet
+# With Link's tables at their defaults nothing is listed.
+# RUN(NONE): link accesses mechanisms=none
+# NONE-NOT: access
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key=symbol("depth")@m0:0 declared={type=anything}}]
+variable g0 name="depth" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="depth"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = String string="a"
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Integer integer=5
+    ElemDefine v5, v2, v6
+    v8 = FinishObject v5
+    v9 = NewClosure function=f1
+    v10 = NewClosure function=f2
+    v11 = Integer integer=7
+    v12 = Call v10, -, v8, v11 calleeName="setDepth"
+    v13 = Call v9, -, v8 calleeName="depthOf"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="depthOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="setDepth" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    ElemSet v0, v2, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}

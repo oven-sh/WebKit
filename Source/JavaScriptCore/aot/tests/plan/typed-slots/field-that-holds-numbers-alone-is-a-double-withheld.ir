@@ -1,0 +1,11 @@
+# the same program with typed slots withheld: every field lies in a slot that holds any value, in the order of declaration, eight bytes each
+# RUN: plan layouts mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "x" JSValue Inline offset=[[x]] record=0
+# CHECK-NEXT: slot 1 "y" JSValue Inline offset=[[y]] record=1
+# RUN(NONE): plan layouts mechanisms=none
+# NONE: mechanisms none
+# NONE: layout L0 CompiledObject
+# NONE-NEXT: slot 0 "x" JSValue Inline
+# NONE-NEXT: slot 1 "y" JSValue Inline
+# PROGRAM-OF: field-that-holds-numbers-alone-is-a-double.ir

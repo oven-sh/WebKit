@@ -1,0 +1,35 @@
+# type Record = { a: number, b?: number, c?: number }; const record: Record = { a: x, c: x }; record.b = x + 1; show(record);
+# Where no order of the layout begins with a, c, the allocation lists a, and c is defined behind it. The store that creates b goes by the keys that the object has then, not by those of the allocation.
+# The plan takes an order from each allocation as written, so that is so only with TypedSlots withheld. With it the allocation lists both.
+# RUN(ANSWER): run-in-shell globalThis.show = (record) => print(JSON.stringify(record) + " " + Object.keys(record));
+# ANSWER: {"a":1,"c":1,"b":2} a,c,b
+# ANSWER-NEXT: exited with 0
+# RUN(WALK): walk f0 mechanisms=all-TypedSlots
+# WALK: [[record]]: L0 @Cell = NewObject -, [[a]] layout=L0 fields=[0]
+# WALK: PropDefine [[record]], [[c]] key="c"
+# WALK-NOT: orderWordAfter
+# RUN(LISTED): walk f0 mechanisms=all
+# LISTED: L0 @Cell = NewObject -, [[a]], [[c]] layout=L0 fields=[0, 2]
+# LISTED-NOT: PropDefine
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = Builtin builtin=MathRandom
+    v3 = Call v2
+    v4 = ToNumber v3
+    v5 = Builtin builtin=MathFloor
+    v6 = Call v5, -, v4
+    v7 = ToNumber v6
+    v8 = Integer integer=1
+    v9 = Add v7, v8
+    v10 = NewObject -, v9, v9 layout=L0 fields=[0, 2]
+    v11 = FinishObject v10
+    v12 = Add v9, v8
+    PropSet v11, v12 key="b"
+    v14 = Call v1, -, v11
+    Return
+}

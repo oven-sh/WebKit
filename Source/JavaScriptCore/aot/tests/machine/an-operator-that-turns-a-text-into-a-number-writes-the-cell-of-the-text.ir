@@ -1,0 +1,36 @@
+# an operator that turns a text into a number makes a joined text flat: the cell of the text gets another word. So its call ends what was read of texts, as the call of ToNumber, of a relation and of >>> does.
+# function all(a, b) { const text = String(a), other = String(b); sink(text - other, text * other, .., -text, ~text); }
+# RUN: emit f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: unit f1:Body
+# CHECK-COUNT-12: Writes:{StringStorage, AllocatorState, RuntimeState
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Undefined
+    Return v4
+}
+function f1 name="all" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToString v0
+    v3 = ToString v1
+    v4 = Sub v2, v3
+    v5 = Mul v2, v3
+    v6 = Div v2, v3
+    v7 = Mod v2, v3
+    v8 = Pow v2, v3
+    v9 = BitAnd v2, v3
+    v10 = BitOr v2, v3
+    v11 = BitXor v2, v3
+    v12 = LShift v2, v3
+    v13 = RShift v2, v3
+    v14 = Negate v2
+    v15 = BitNot v2
+    v16 = NewArray v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15 contents=anything
+    Return v16
+}

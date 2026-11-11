@@ -1,0 +1,71 @@
+# the target is a plain literal that nothing else has, right below Object.prototype, so a store into it defines. Each source whose keys are known is read field by field, and the literal is made once with all of it
+# function merged(i) { return Object.assign({ c: 1 }, { a: i, b: 1 }); }   function tested(state: State) { return Object.assign({ c: 1 }, state); }   function other(target, i) { return Object.assign(target, { a: i, b: 1 }); }
+# found by binding: the callee is the built-in itself
+# the target is written as a NewObject here. The front end writes a literal whose members are all constants as a Data, which the form does not take: tests/answers/object-assign-into-a-literal-in-sight.ts, `constant`
+# without TypedSlots the plan has no word for the order of `c` alone, so not even the allocation as written lists its field: the run with few mechanisms showed nothing
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}layout=L2
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = Call
+# NEVER-NOT: layout=L1
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: = Call
+# RUN(TESTED): walk f2 mechanisms=all
+# TESTED-LABEL: code f2:Body
+# TESTED: = HasKeyOrder {{*}}layout=L1
+# TESTED: = GetSlot {{*}}key="a"
+# RUN(OTHER): walk f3 mechanisms=all
+# OTHER-LABEL: code f3:Body
+# OTHER-NOT: layout=L2
+# OTHER: = Call
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+data d0 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Data data=d0
+    v6 = Call v4, -, v0, v1, v2, v5
+    Return v6
+}
+function f1 name="merged" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L2 fields=[2]
+    v3 = FinishObject v2
+    v4 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectAssign
+    v8 = Call v7, v6, v3, v5 calleeKey="assign" calleeName="Object.assign"
+    Return v8
+}
+function f2 name="tested" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L2 fields=[2]
+    v3 = FinishObject v2
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectAssign
+    v6 = Call v5, v4, v3, v0 calleeKey="assign" calleeName="Object.assign"
+    Return v6
+}
+function f3 name="other" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectAssign
+    v7 = Call v6, v5, v0, v4 calleeKey="assign" calleeName="Object.assign"
+    Return v7
+}

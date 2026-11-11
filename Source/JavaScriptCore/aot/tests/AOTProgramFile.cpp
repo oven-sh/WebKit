@@ -8,15 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRParser.h"
 #include "AOTIRPrinter.h"
+#include "AOTReaderInternal.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <wtf/ASCIICType.h>
+#include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
@@ -350,21 +353,53 @@ ProgramFile::Kind programKindOf(std::span<const uint8_t> bytes)
     return spanHasPrefix(bytes, std::span { magicBytes }) ? ProgramFile::Kind::Bytes : ProgramFile::Kind::Text;
 }
 
+static Program::OwnedBytes readInPieces(const String& path)
+{
+    constexpr size_t bytesInPiece = 1 * GB;
+    FileSystem::FileHandle file = FileSystem::openFile(path, FileSystem::FileOpenMode::Read);
+    Program::OwnedBytes bytes = Program::OwnedBytes::malloc(file.size().value_or(0));
+    for (std::span<uint8_t> rest = bytes.mutableSpan(); !rest.empty();) {
+        uint64_t numberRead = file.read(rest.first(std::min(rest.size(), bytesInPiece))).value_or(0);
+        if (!numberRead)
+            return { };
+        rest = rest.subspan(numberRead);
+    }
+    return bytes;
+}
+
+static void takeOptionsWrittenBehindProgram(ProgramFile& file)
+{
+    std::span<const uint8_t> bytes = file.bytes.span();
+    if (bytes.size() < sizeof(Wire::Header))
+        return;
+    size_t sizeOfProgram = reinterpretCastSpanStartTo<Wire::Header>(bytes).sizeInBytes;
+    if (bytes.size() < sizeOfProgram || bytes.size() - sizeOfProgram != sizeof(Wire::CompileOptions))
+        return;
+    Wire::CompileOptions options;
+    memcpySpan(asMutableByteSpan(options), bytes.subspan(sizeOfProgram));
+    if (options.size != sizeof(Wire::CompileOptions))
+        return;
+    file.bytes.realloc(sizeOfProgram);
+    file.options = options;
+}
+
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors)
 {
-    std::optional<Vector<uint8_t>> bytes = FileSystem::readEntireFile(path);
-    if (!bytes) {
+    Program::OwnedBytes bytes = readInPieces(path);
+    if (!bytes.sizeInBytes()) {
         errors.println("cannot read ", path);
         return std::nullopt;
     }
 
     ProgramFile file;
-    file.bytes = WTF::move(*bytes);
+    file.bytes = WTF::move(bytes);
     file.kind = programKindOf(file.bytes.span());
-    if (file.kind == ProgramFile::Kind::Bytes)
+    if (file.kind == ProgramFile::Kind::Bytes) {
+        takeOptionsWrittenBehindProgram(file);
         return file;
+    }
 
-    if (!StringImpl::isValidLength<char16_t>(file.bytes.size())) {
+    if (!StringImpl::isValidLength<char16_t>(file.bytes.sizeInBytes())) {
         errors.println(path, " is too large for IR text");
         return std::nullopt;
     }
@@ -382,13 +417,20 @@ std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& erro
     return file;
 }
 
-std::unique_ptr<Program> createProgram(const ProgramFile& file, BuildContext& build)
+std::unique_ptr<Program> createProgram(ProgramFile&& file, BuildContext& build, SchemaHashCheck check)
 {
     switch (file.kind) {
-    case ProgramFile::Kind::Bytes:
-        return Program::read(file.bytes.span(), build);
+    case ProgramFile::Kind::Bytes: {
+        auto program = makeUnique<Program>(BuiltinTable::singleton());
+        program->adoptBuffer(WTF::move(file.bytes));
+        Reader reader(*program, build);
+        reader.setSchemaHashCheck(check);
+        if (!reader.run())
+            return nullptr;
+        return program;
+    }
     case ProgramFile::Kind::Text:
-        return parseProgram(file.text, IRForm::AsRead, build);
+        return parseProgram(file.text, build);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -403,18 +445,31 @@ void printDiagnostics(const Diagnostics& diagnostics, PrintStream& out)
 
 Vector<uint8_t> encodeProgramText(StringView text, BuildContext& build)
 {
-    std::unique_ptr<Program> program = parseProgram(text, IRForm::AsRead, build);
+    std::unique_ptr<Program> program = parseProgram(text, build);
     if (!program)
         return { };
     return Vector<uint8_t>(program->buffer());
 }
 
+static bool hasStandIn(const RuntimeFunctionData& function)
+{
+    bool isHelperOfCompiler = std::ranges::any_of(function.implements, [](BuiltinID implemented) {
+        return BuiltinTable::singleton().at(implemented).holder == Builtins::CompilerHelpers;
+    });
+    return function.platforms.contains(targetOfThisBuild().platform) && !isHelperOfCompiler;
+}
+
+static String standInFunctionBody()
+{
+    return makeString("  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"printErr\"\n    v2 = String string=\""_s, lineOfCalledStandIn, "\"\n    v3 = Call v1, -, v2\n    Return\n}\n"_s);
+}
+
 String standInLibraryText(unsigned libraryFunction)
 {
     StringBuilder text;
-    text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+    text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n"_s, standInFunctionBody());
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
-        if (function.platforms.contains(targetOfThisBuild().platform))
+        if (hasStandIn(function))
             text.append("runtimefunction id="_s, tokenOf(BuiltinTable::singleton(), function.id), " function=f"_s, libraryFunction, '\n');
     }
     return text.toString();
@@ -463,18 +518,17 @@ String withStandInLibrary(const String& programText)
     Vector<uint32_t> standInIDs;
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
         uint32_t id = function.id.index();
-        if (function.platforms.contains(targetOfThisBuild().platform) && !ownLines.containsIf([&](const OwnLine& own) { return own.id == id; }))
+        if (hasStandIn(function) && !ownLines.containsIf([&](const OwnLine& own) { return own.id == id; }))
             standInIDs.append(id);
     }
     std::ranges::sort(standInIDs);
     std::ranges::stable_sort(ownLines, { }, &OwnLine::id);
 
-    // As a front end sends it: a registered function lies in a module of the library, which has no body.
     if (numberOfModules) {
         text.append("module m"_s, numberOfModules, " path=\"library\" displayPath=\"library\" flags=[IsLibrary]\n"_s);
-        text.append("function f"_s, numberOfFunctions, " name=\"library\" module=m"_s, numberOfModules, " role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+        text.append("function f"_s, numberOfFunctions, " name=\"library\" module=m"_s, numberOfModules, " role=Library results=[{type=anything}] {\n"_s, standInFunctionBody());
     } else
-        text.append("function f"_s, numberOfFunctions, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+        text.append("function f"_s, numberOfFunctions, " name=\"library\" role=Library results=[{type=anything}] {\n"_s, standInFunctionBody());
     size_t nextOwnLine = 0;
     auto appendOwnLinesBelow = [&](uint64_t id) {
         for (; nextOwnLine < ownLines.size() && ownLines[nextOwnLine].id < id; ++nextOwnLine)

@@ -1,0 +1,27 @@
+# const a = make(); if (a === undefined) return await x; return a;
+# b2 alone reads v2 behind the branch. b1 stands between the definition of v2 and that read in every order of the blocks, and leads to neither: the await holds nothing.
+# RUN: sweep-code
+# CHECK: # live at v4 []
+# CHECK: visits of operations: 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0
+
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: boolean @Boolean = TypeTest v2 testedType=undefined
+#     Branch v3 -> taken b1(), notTaken b2()
+#   b1():
+#     v4: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v4
+#   b2():
+#     Return v2
+# }
+# -- end of code

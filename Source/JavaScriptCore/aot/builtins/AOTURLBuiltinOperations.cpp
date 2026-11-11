@@ -241,7 +241,6 @@ static std::optional<unsigned> forEachPlainQueryPair(std::span<const Latin1Chara
 
 using NarrowCopy = Vector<Latin1Character, 128>;
 
-// The width is that of the storage now: what was 8-bit at one call may be 16-bit at the next, and its Latin-1 characters are copied then.
 static std::optional<std::span<const Latin1Character>> latin1SpanWithoutResolving(JSGlobalObject* globalObject, JSValue value, NarrowCopy& copy)
 {
     if (!value.isString() || asString(value)->isNonSubstringRope())

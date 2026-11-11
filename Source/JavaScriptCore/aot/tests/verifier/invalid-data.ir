@@ -1,5 +1,4 @@
 # a data tree: a hole is an element of an array, the digits of a BigInt are a decimal integer, an object has an object layout and each key once, and only a record takes keys that are not fields
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidData 10
 

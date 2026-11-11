@@ -18,9 +18,17 @@ public:
     {
     }
 
+    static ShownFrameFilter showingWhateverIsOnTop(bool hasShownFrame)
+    {
+        ShownFrameFilter filter(hasShownFrame);
+        filter.m_showsHiddenFrameOnTop = true;
+        return filter;
+    }
+
     bool shows(TraceVisibility visibility, bool isTailDeleted)
     {
-        bool isShown = !isTailDeleted && (visibility == TraceVisibility::Visible || (visibility == TraceVisibility::VisibleOnlyOnTop && !m_hasShownFrame));
+        bool isShownOnTop = visibility == TraceVisibility::VisibleOnlyOnTop || m_showsHiddenFrameOnTop;
+        bool isShown = !isTailDeleted && (visibility == TraceVisibility::Visible || (isShownOnTop && !m_hasShownFrame));
         m_hasShownFrame |= isShown;
         return isShown;
     }
@@ -29,6 +37,7 @@ public:
 
 private:
     bool m_hasShownFrame;
+    bool m_showsHiddenFrameOnTop { false };
 };
 
 } // namespace JSC::AOT

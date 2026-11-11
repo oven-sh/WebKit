@@ -1,0 +1,80 @@
+# a free name finds the binding of a script or a property of the global object. Where that property is a member which never changes, no script can declare the name in front of it: the run time refuses the declaration.
+# So the name is the built-in, when the program is built: nothing is looked up, and what is called is known
+# function waiting(run) { return new Promise(run); }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[callee]]: builtin(Promise) @Cell = Builtin builtin=Promise
+# CHECK: : Promise @JSValue = Construct
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: PropGet
+# A holder is found so too, and its member off it: function written(value) { return JSON.stringify(value); }
+# RUN(PATH): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# PATH-LABEL: code f2:Body
+# PATH-NOT: PropGet
+# PATH: : undefined|string @JSValue = CallBuiltin {{*}}overload=JSONStringify
+# function kind() { return typeof Promise; }
+# RUN(TYPEOF): walk f3 mechanisms=none+TypedOperations
+# TYPEOF-LABEL: code f3:Body
+# TYPEOF-NOT: PropGet
+# A name that the table does not have goes by its record: function other() { return sink; }
+# RUN(OTHER): walk f4 mechanisms=none+TypedOperations
+# OTHER-LABEL: code f4:Body
+# OTHER: : anything{{*}} = GetGlobalBinding key="sink" level=Expected [seesScriptBindings]
+# A name that the program stores is no constant: function stored(mine) { fetch = mine; return fetch; }
+# RUN(STORED): walk f5 mechanisms=none+TypedOperations
+# STORED-LABEL: code f5:Body
+# STORED: : anything{{*}} = GetGlobalBinding key="fetch" level=Expected [seesScriptBindings]
+# With typed operations withheld the name goes by its record.
+# RUN(CLOSED): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CLOSED-LABEL: code f1:Body
+# CLOSED: : anything{{*}} = GetGlobalBinding key="Promise" level=Expected [seesScriptBindings]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="waiting" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Promise" [isFreeName]
+    v3 = Construct v2, -, v0 calleeName="Promise"
+    Return v3
+}
+function f2 name="written" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="JSON" [isFreeName]
+    v3 = PropGet v2 key="stringify"
+    v4 = Call v3, v2, v0 calleeKey="stringify" calleeName="JSON.stringify"
+    Return v4
+}
+function f3 name="kind" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Promise" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+}
+function f4 name="other" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    Return v1
+}
+function f5 name="stored" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="fetch" mode=Sloppy [isFreeName]
+    v3 = PropGet v1 key="fetch" [isFreeName]
+    Return v3
+}

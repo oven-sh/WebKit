@@ -8,86 +8,38 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAllocationEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTShapeTestEmitter.h"
-#include "AOTStaticsEmitter.h"
-#include <wtf/BitVector.h>
-#include <wtf/StdLibExtras.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void ControlEmitter::generateJump(const TerminatorContext& terminator)
-{
-    generator().jumpTo(terminator, 0);
-}
-
-void ControlEmitter::generateBranch(const TerminatorContext& terminator)
-{
-    BranchTargets targets = branchTargetsOf(terminator);
-    branch(in<Condition>(terminator->conditionOperand()), targets);
-}
-
-void ControlEmitter::generateTestAndBranch(const TerminatorContext& terminator)
-{
-    generator().generateBranchCondition(terminator, terminator->conditionOperand(), branchTargetsOf(terminator));
-}
-
-BranchTargets ControlEmitter::branchTargetsOf(const TerminatorContext& terminator)
-{
-    return { countedEdgeTo(terminator, 0), countedEdgeTo(terminator, 1) };
-}
-
-B3::FrequentedBlock ControlEmitter::countedEdgeTo(const TerminatorContext& terminator, uint32_t targetIndex, std::span<const Operand> declaredResults)
-{
-    B3::FrequentedBlock edge = generator().edgeTo(terminator, targetIndex, declaredResults);
-    if (!inputs().branchCounters.isCounting())
-        return edge;
-    if (!m_countedBranches)
-        m_countedBranches = findCountedBranches(m_program, m_function);
-    auto* countedBranch = tryBinarySearch<CountedBranch, BlockID>(*m_countedBranches, m_countedBranches->size(), terminator.block(), [](const CountedBranch* candidate) {
-        return candidate->block;
-    });
-    if (!countedBranch)
-        return edge;
-    uint32_t ordinal = static_cast<uint32_t>(countedBranch - m_countedBranches->begin());
-    std::optional<uint32_t> number = inputs().branchCounters.counterFor(m_id, ordinal, counterSideOf(terminator.terminator(), targetIndex));
-    if (!number)
-        return edge;
-
-    LBasicBlock branchingBlock = m_out.m_block;
-    LBasicBlock countingBlock = newBlock();
-    m_out.appendTo(countingBlock);
-    TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-    m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
-    m_out.jump(edge.block());
-    m_out.appendTo(branchingBlock);
-    edge.block() = countingBlock;
-    return edge;
-}
-
 void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
 {
-    RELEASE_ASSERT(terminator->targets.size() == terminator->cases().size() + 1);
+    RELEASE_ASSERT(terminator.numberOfTargets() == terminator->cases().size() + 1);
     ValueID subject = terminator->subjectOperand();
-    B3::FrequentedBlock otherwise = countedEdgeTo(terminator, static_cast<uint32_t>(terminator->cases().size()));
+    BlockEdge otherwise = generator().edgeTo(terminator, static_cast<uint32_t>(terminator->cases().size()));
     switch (representationOf(subject)) {
     case Representation::Int32:
-        switchOnInteger(terminator, in<Word32>(subject).value(), B3::Int32, otherwise);
+        switchOnInteger(terminator, in<Word32>(subject).value(), Machine::Int32, otherwise);
         return;
     case Representation::Int64:
-        switchOnInteger(terminator, in<Integer>(subject).value(), B3::Int64, otherwise);
+        switchOnInteger(terminator, in<Integer>(subject).value(), Machine::Int64, otherwise);
         return;
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
+    case Representation::OptionalDouble:
     case Representation::Double: {
-        Number number = in<Number>(subject);
-        Integer truncated = emitter<ConversionEmitter>().toInteger(number);
+        static_assert(undefinedDouble > PNaNAsBits && nullDouble > PNaNAsBits && absentDouble > PNaNAsBits);
+        static_assert(undefinedDouble >> 52 == 0x7ff && nullDouble >> 52 == 0x7ff && absentDouble >> 52 == 0x7ff);
+        Number number = representationOf(subject) == Representation::Double ? in<Number>(subject) : Number(in<OptionalNumber>(subject).value());
+        Integer truncated = emitter<ConversionEmitter>().truncateUnchecked(number);
         LBasicBlock isIntegral = newBlock();
-        branch(equal(toNumber(truncated), number), { normalEdge(isIntegral), otherwise });
+        LBasicBlock isNoInteger = newBlock();
+        branch(equal(toNumber(truncated), number), { normalEdge(isIntegral), BlockEdge(isNoInteger, otherwise.edgeClass()) });
         m_out.appendTo(isIntegral);
-        switchOnInteger(terminator, truncated.value(), B3::Int64, otherwise);
+        BlockEdge rest = switchOnInteger(terminator, truncated.value(), Machine::Int64, otherwise);
+        m_out.appendTo(isNoInteger);
+        m_out.jump(rest);
         return;
     }
     case Representation::JSValue:
@@ -97,10 +49,8 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     case Representation::Void:
     case Representation::Boolean:
     case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         fail(terminator, InternalErrorKind::OpcodeWithoutCode);
         m_out.unreachable();
@@ -109,93 +59,210 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A table that has an entry for every integer of the subject's type is never left, and the back end sees that only where each of them is listed. Fewer integers than a table needs are told apart by comparisons, and there the rest costs none.
-static void listIntegersLeftToRest(const Type& subject, LType type, unsigned minCasesForJumpTable, Vector<SwitchTarget, 8>& targets, B3::FrequentedBlock otherwise)
+bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise, SwitchesBehindSwitch& takenIn)
 {
-    if (!subject.isInteger() || (type == B3::Int32 && !subject.integers.isSubsetOf(Range::int32())))
-        return;
-    Range integers = subject.integers;
-    uint64_t numberOfIntegers = static_cast<uint64_t>(integers.maximum - integers.minimum) + 1;
-    if (numberOfIntegers < minCasesForJumpTable || numberOfIntegers > 2 * static_cast<uint64_t>(targets.size()))
-        return;
-    BitVector isListed(numberOfIntegers);
-    for (const SwitchTarget& target : targets) {
-        if (!integers.contains(target.caseValue))
-            return;
-        isListed.quickSet(target.caseValue - integers.minimum);
-    }
-    for (uint64_t index = 0; index < numberOfIntegers; ++index) {
-        if (!isListed.quickGet(index))
-            targets.append(SwitchTarget { integers.minimum + static_cast<int64_t>(index), otherwise });
-    }
-}
-
-void ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue subject, LType type, B3::FrequentedBlock otherwise)
-{
-    RELEASE_ASSERT(subject->type() == type && (type == B3::Int32 || type == B3::Int64));
-    Vector<BlockID, 16> generatedBlocks = emitter<AllocationEmitter>().allocateByTable(terminator, subject);
-    if (std::optional<SwitchWindow> window = generatedBlocks.isEmpty() ? findSwitchWindow(terminator.terminator()) : std::nullopt) {
-        testBitsOfWindow(terminator, *window, subject, type, otherwise);
-        return;
-    }
     PayloadListView<int64_t> cases = terminator->cases();
-    Vector<SwitchTarget, 8> targets;
-    targets.reserveInitialCapacity(cases.size());
+    if (cases.size() < Machine::minCasesForJumpTable)
+        return false;
+
+    const Code& code = generator().code();
+    bool someEdgeBringsValues = false;
+    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesBehindEmptyBlocks;
+    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> blocksBehindAnswers;
+    Vector<BlockID, 8> passedBy;
+    auto blockBehindAnswerBroughtBy = [&](const Edge& bringing) {
+        if (bringing.arguments().size() != 1 || !code.isConstant(bringing.arguments()[0]) || code.at(bringing.arguments()[0]).opcode != Opcode::Boolean)
+            return BlockID();
+        bool answer = code.at(bringing.arguments()[0]).boolean();
+        return blocksBehindAnswers.ensure(bringing.to.index() * 2 + answer, [&] {
+            std::span<const ValueID> parameters = code.at(bringing.to).parameters();
+            if (parameters.size() != 1 || code.useCountOf(parameters[0]) != 1)
+                return BlockID();
+            BlockID block = bringing.to;
+            for (uint32_t numberPassed = 0; numberPassed < code.numberOfBlocks(); ++numberPassed) {
+                const Block& passed = code.at(block);
+                if (!code.valuesOf(block).empty() || (numberPassed && !passed.parameters().empty()))
+                    break;
+                if (passed.terminator.kind == TerminatorKind::Branch) {
+                    const Edge& chosen = code.at(answer ? passed.terminator.taken() : passed.terminator.notTaken());
+                    return passed.terminator.conditionOperand() == parameters[0] && chosen.arguments().empty() ? chosen.to : BlockID();
+                }
+                if (passed.terminator.kind != TerminatorKind::Jump || !code.at(passed.terminator.next()).arguments().empty())
+                    break;
+                block = code.at(passed.terminator.next()).to;
+            }
+            return BlockID();
+        }).iterator->value;
+    };
+    auto placeBehind = [&](EdgeID id) {
+        const Edge& edge = code.at(id);
+        someEdgeBringsValues |= !edge.arguments().empty();
+        BlockID block = edge.to;
+        while (passedBy.size() < code.numberOfBlocks()) {
+            if (auto known = placesBehindEmptyBlocks.find(block.index()); known != placesBehindEmptyBlocks.end()) {
+                block = known->value;
+                break;
+            }
+            const Block& passed = code.at(block);
+            if (!passed.parameters().empty() || !code.valuesOf(block).empty() || passed.terminator.kind != TerminatorKind::Jump)
+                break;
+            const Edge& next = code.at(passed.terminator.next());
+            BlockID behind = next.arguments().empty() ? next.to : blockBehindAnswerBroughtBy(next);
+            if (!behind)
+                break;
+            passedBy.append(block);
+            block = behind;
+        }
+        for (BlockID passed : passedBy)
+            placesBehindEmptyBlocks.set(passed.index(), block);
+        passedBy.shrink(0);
+        return block;
+    };
+
+    BlockID rest = placeBehind(terminator->otherwise());
+    BlockID place;
+    uint32_t firstCaseOfPlace = 0;
+    uint64_t numberOfListedCases = 0;
+    int64_t least = 0;
+    int64_t greatest = 0;
     for (uint32_t index = 0; index < cases.size(); ++index) {
         int64_t caseValue = cases[index];
-        if ((type == B3::Int32 && caseValue != static_cast<int32_t>(caseValue)) || generatedBlocks.contains(terminator->targets[index].block))
+        if (type == Machine::Int32 && caseValue != static_cast<int32_t>(caseValue))
             continue;
-        targets.append(SwitchTarget { caseValue, countedEdgeTo(terminator, index) });
+        BlockID behind = placeBehind(terminator->caseEdge(index));
+        if (behind == rest) {
+            takenIn.casesOfFirstThatLeadOn.set(index);
+            continue;
+        }
+        if (!place) {
+            place = behind;
+            firstCaseOfPlace = index;
+            least = greatest = caseValue;
+        } else if (behind != place)
+            return false;
+        least = std::min(least, caseValue);
+        greatest = std::max(greatest, caseValue);
+        ++numberOfListedCases;
+    }
+    while (place && !someEdgeBringsValues && !generator().isTakenIntoSwitchInFront(terminator.block()) && takenIn.casesThatLeadToPlace.size() < code.numberOfEdges()) {
+        const Block& behindOtherwise = code.at(rest);
+        const Terminator& next = behindOtherwise.terminator;
+        if (!behindOtherwise.parameters().empty() || !code.valuesOf(rest).empty() || next.kind != TerminatorKind::Switch || next.subjectOperand() != terminator->subjectOperand() || &next == &terminator.terminator())
+            break;
+        std::optional<BlockEdge> otherwiseOfNext = generator().edgeThatBringsNothing(next.otherwise());
+        if (!otherwiseOfNext)
+            break;
+        BlockID restOfNext = placeBehind(next.otherwise());
+        PayloadListView<int64_t> casesOfNext = next.cases();
+        size_t numberTakenInBefore = takenIn.casesThatLeadToPlace.size();
+        for (uint32_t index = 0; index < casesOfNext.size() && !someEdgeBringsValues; ++index) {
+            BlockID behind = placeBehind(next.caseEdge(index));
+            if (behind == restOfNext || (type == Machine::Int32 && casesOfNext[index] != static_cast<int32_t>(casesOfNext[index])))
+                continue;
+            someEdgeBringsValues |= behind != place;
+            takenIn.casesThatLeadToPlace.append(casesOfNext[index]);
+        }
+        if (someEdgeBringsValues) {
+            someEdgeBringsValues = false;
+            takenIn.casesThatLeadToPlace.shrink(numberTakenInBefore);
+            break;
+        }
+        takenIn.otherwise = otherwiseOfNext;
+        generator().noteSwitchTakenIntoSwitchInFront(rest);
+        rest = restOfNext;
+        build().statistics().count(StatisticID::SwitchesMergedIntoPredecessor);
+    }
+    if (takenIn.otherwise) {
+        takenIn.firstCaseOfPlace = firstCaseOfPlace;
+        otherwise = *takenIn.otherwise;
+        for (int64_t caseValue : takenIn.casesThatLeadToPlace) {
+            least = std::min(least, caseValue);
+            greatest = std::max(greatest, caseValue);
+            ++numberOfListedCases;
+        }
+    }
+    if (someEdgeBringsValues || numberOfListedCases < Machine::minCasesForJumpTable)
+        return false;
+    uint64_t span = static_cast<uint64_t>(greatest) - static_cast<uint64_t>(least) + 1;
+    constexpr uint64_t maxBytesOfTablePerCase = Machine::maxEntriesOfJumpTablePerCase * sizeof(int32_t);
+    if (span <= Machine::valuesInSwitchWindow || span > maxBytesOfTablePerCase * numberOfListedCases)
+        return false;
+
+    constexpr uint8_t leadsToPlace = 1;
+    constexpr uint8_t leadsToRest = 2;
+    Vector<uint8_t, 512> isListed(FillWith { }, static_cast<size_t>(span), static_cast<uint8_t>(0));
+    for (uint32_t index = 0; index < cases.size(); ++index) {
+        int64_t caseValue = cases[index];
+        if (caseValue < least || caseValue > greatest)
+            continue;
+        uint8_t& entry = isListed[static_cast<size_t>(static_cast<uint64_t>(caseValue) - static_cast<uint64_t>(least))];
+        RELEASE_ASSERT(!entry);
+        entry = placeBehind(terminator->caseEdge(index)) == place ? leadsToPlace : leadsToRest;
+    }
+    for (int64_t caseValue : takenIn.casesThatLeadToPlace)
+        isListed[static_cast<size_t>(static_cast<uint64_t>(caseValue) - static_cast<uint64_t>(least))] |= leadsToPlace;
+    for (uint8_t& entry : isListed)
+        entry &= leadsToPlace;
+    uint32_t constant = m_out.addConstantData(isListed.span(), ConstantKind::Unlabeled);
+    build().statistics().count(StatisticID::SwitchesLoweredToByteTables);
+
+    LBasicBlock isInTable = newBlock();
+    Integer position;
+    if (type == Machine::Int32) {
+        Word32 word = add(Word32(subject), word32(static_cast<int32_t>(0u - static_cast<uint32_t>(least))));
+        branch(below(word, word32(static_cast<int32_t>(span))), { normalEdge(isInTable), otherwise });
+        m_out.appendTo(isInTable);
+        position = zeroExtended(word);
+    } else {
+        position = add(Integer(subject), integer(static_cast<int64_t>(uint64_t { 0 } - static_cast<uint64_t>(least))));
+        branch(below(position, integer(static_cast<int64_t>(span))), { normalEdge(isInTable), otherwise });
+        m_out.appendTo(isInTable);
+    }
+    Pointer entry = offsetBy(Pointer(m_out.relocatable(SymbolSpace::Constant, constant)), position, 0);
+    Word32 byte(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTImage_tables, entry.value())));
+    branch(isNotZero(byte), { generator().edgeTo(terminator, firstCaseOfPlace), otherwise });
+    return true;
+}
+
+BlockEdge ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise)
+{
+    RELEASE_ASSERT(subject->type() == type && (type == Machine::Int32 || type == Machine::Int64));
+    SwitchesBehindSwitch takenIn;
+    if (testByteOfTableInPlaceOfSwitch(terminator, subject, type, otherwise, takenIn))
+        return takenIn.otherwise.value_or(otherwise);
+    PayloadListView<int64_t> cases = terminator->cases();
+    Vector<SwitchTarget, 8> targets;
+    targets.reserveInitialCapacity(cases.size() + takenIn.casesThatLeadToPlace.size());
+    for (uint32_t index = 0; index < cases.size(); ++index) {
+        int64_t caseValue = cases[index];
+        if ((type == Machine::Int32 && caseValue != static_cast<int32_t>(caseValue)) || (takenIn.otherwise && takenIn.casesOfFirstThatLeadOn.get(index)))
+            continue;
+        targets.append(SwitchTarget { caseValue, generator().edgeTo(terminator, index) });
+    }
+    if (takenIn.otherwise) {
+        otherwise = *takenIn.otherwise;
+        Vector<int64_t, 16> listed(targets.size(), [&](size_t index) { return targets[index].caseValue; });
+        std::ranges::sort(listed);
+        std::ranges::sort(takenIn.casesThatLeadToPlace);
+        takenIn.casesThatLeadToPlace.shrink(std::ranges::unique(takenIn.casesThatLeadToPlace).begin() - takenIn.casesThatLeadToPlace.begin());
+        for (int64_t caseValue : takenIn.casesThatLeadToPlace) {
+            if (!std::ranges::binary_search(listed, caseValue))
+                targets.append(SwitchTarget { caseValue, generator().edgeTo(terminator, takenIn.firstCaseOfPlace) });
+        }
     }
     if (targets.isEmpty()) {
-        m_out.jump(otherwise.block());
-        return;
+        m_out.jump(otherwise);
+        return otherwise;
     }
-    if (generatedBlocks.isEmpty())
-        listIntegersLeftToRest(typeOf(terminator->subjectOperand()), type, m_out.minCasesForJumpTable(), targets, otherwise);
     m_out.switchOn(subject, targets.span(), otherwise);
+    return otherwise;
 }
 
-void ControlEmitter::testBitsOfWindow(const TerminatorContext& terminator, const SwitchWindow& window, LValue subject, LType type, B3::FrequentedBlock otherwise)
+void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, Boxed subject, BlockEdge otherwise)
 {
-    auto constant = [&](int64_t value) {
-        return type == B3::Int32 ? m_out.constInt32(static_cast<int32_t>(value)) : m_out.constInt64(value);
-    };
-    build().statistics().count(StatisticID::SwitchesTestedByWindow);
-    LValue position = m_out.sub(subject, constant(window.first));
-    Condition isInWindow(m_out.below(position, constant(window.length)));
-    bool hasNoGap = window.hasNoGap();
-    if (hasNoGap && window.places.size() == 1) {
-        branch(isInWindow, { countedEdgeTo(terminator, window.places[0].firstCase), otherwise });
-        return;
-    }
-
-    LBasicBlock inWindow = newBlock();
-    branch(isInWindow, { normalEdge(inWindow), otherwise });
-    m_out.appendTo(inWindow);
-    LValue shift = type == B3::Int32 ? position : m_out.castToInt32(position);
-    for (size_t index = 0; index < window.places.size(); ++index) {
-        B3::FrequentedBlock place = countedEdgeTo(terminator, window.places[index].firstCase);
-        bool isLast = index + 1 == window.places.size();
-        if (isLast && hasNoGap) {
-            m_out.jump(place.block());
-            return;
-        }
-        Condition isListed(m_out.testNonZero64(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.places[index].values)), shift), 1));
-        if (isLast) {
-            branch(isListed, { place, otherwise });
-            return;
-        }
-        LBasicBlock next = newBlock();
-        branch(isListed, { place, normalEdge(next) });
-        m_out.appendTo(next);
-    }
-}
-
-void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, Boxed subject, B3::FrequentedBlock otherwise)
-{
-    if (terminator->cases().isEmpty() || !(typeOf(terminator->subjectOperand()).primitives & Primitive::Number)) {
-        m_out.jump(otherwise.block());
+    const Type& subjectType = typeOf(terminator->subjectOperand());
+    if (terminator->cases().isEmpty() || !(subjectType.primitives & Primitive::Number)) {
+        m_out.jump(otherwise);
         return;
     }
 
@@ -208,29 +275,31 @@ void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, B
     join.add(signExtended(unboxInt32(subject)));
 
     m_out.appendTo(isOtherSubject);
-    if (!typeOf(terminator->subjectOperand()).isNumber()) {
+    LBasicBlock isNoNumber = nullptr;
+    if (!subjectType.isNumber()) {
         LBasicBlock isDoubleSubject = newBlock();
-        LBasicBlock isNoNumber = newBlock();
-        branch(isNumber(subject), { normalEdge(isDoubleSubject), normalEdge(isNoNumber) });
-        // What the operation answers for it. The switch stays the only way to its targets, which lets the back end read the answers of the cases out of a table.
-        m_out.appendTo(isNoNumber);
-        join.add(integer(std::numeric_limits<int64_t>::min()));
+        isNoNumber = newBlock();
+        branch(isNumber(subject), { normalEdge(isDoubleSubject), BlockEdge(isNoNumber, otherwise.edgeClass()) });
         m_out.appendTo(isDoubleSubject);
     }
     join.add(callLeaf<Integer>(RuntimeOperation::TryConvertToInteger, { subject }));
 
-    switchOnInteger(terminator, join.finish().value(), B3::Int64, otherwise);
+    BlockEdge rest = switchOnInteger(terminator, join.finish().value(), Machine::Int64, otherwise);
+    if (isNoNumber) {
+        m_out.appendTo(isNoNumber);
+        m_out.jump(rest);
+    }
 }
 
 void ControlEmitter::generateSwitchOnShape(const TerminatorContext& terminator)
 {
     std::span<const LayoutSetID> cases = terminator->layoutSets();
-    RELEASE_ASSERT(terminator->targets.size() == cases.size() + 1);
-    Vector<B3::FrequentedBlock, 8> targets;
+    RELEASE_ASSERT(terminator.numberOfTargets() == cases.size() + 1);
+    Vector<BlockEdge, 8> targets;
     targets.reserveInitialCapacity(cases.size());
     for (uint32_t index = 0; index < cases.size(); ++index)
-        targets.append(countedEdgeTo(terminator, index));
-    B3::FrequentedBlock otherwise = countedEdgeTo(terminator, static_cast<uint32_t>(cases.size()));
+        targets.append(generator().edgeTo(terminator, index));
+    BlockEdge otherwise = generator().edgeTo(terminator, static_cast<uint32_t>(cases.size()));
     emitter<ShapeTestEmitter>().switchOnShape(in<CellPointer>(terminator->subjectOperand()), cases, targets.span(), otherwise);
 }
 
@@ -241,7 +310,7 @@ void ControlEmitter::generateThrow(const TerminatorContext& terminator)
 
 void ControlEmitter::generateRethrow(const TerminatorContext& terminator)
 {
-    emitter<ExceptionEmitter>().rethrow(terminator, CellPointer(get(terminator->exceptionOperand()).value));
+    emitter<ExceptionEmitter>().rethrow(terminator, in<CellPointer>(terminator->exceptionOperand()));
 }
 
 void ControlEmitter::generateUnreachable(const TerminatorContext&)

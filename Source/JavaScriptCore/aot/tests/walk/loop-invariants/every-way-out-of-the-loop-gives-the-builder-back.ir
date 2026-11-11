@@ -1,0 +1,156 @@
+# on each edge out of the loop of a growing text the builder goes back to the pool: the text is finished where it is read behind the edge, and let go where it is not
+# function read(n, part) { .. let s = ""; for (let i = 0; i < n; i++) s += part; return s; }
+# function dead(n, part) { .. let s = "", i = 0; for (; i < n; i++) s += part; return i; }   the one property that is changed: nobody reads the text behind the loop
+# function left(n, part) { .. let s = ""; for (let i = 0; i < n; i++) { s += part; if (i === 7) break; } return s; }   two edges, each hands the text on as an argument
+# function rows(n, part) { .. outer: for (let i = 0; i < n; i++) { let s = ""; for (let j = 0; j < n; j++) { s += part; if (j === 7) continue outer; } sink(s); } }   an edge that comes round the loop around leaves the loop of the text
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: StringBuilderFinish
+# RUN(KEPT): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# KEPT-NOT: StringBuilderDiscard
+# RUN(ALL): walk f1 f2 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderFinish
+# ALL-LABEL: code f2:Body
+# ALL: StringBuilderDiscard
+# RUN(DEAD): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# DEAD-LABEL: code f2:Body
+# DEAD: StringBuilderBegin
+# DEAD: isLoopHead=true
+# DEAD: StringBuilderDiscard
+# RUN(UNREAD): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# UNREAD-NOT: StringBuilderFinish
+# RUN(LEFT): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# LEFT-LABEL: code f3:Body
+# LEFT-COUNT-1: StringBuilderBegin
+# LEFT-COUNT-2: StringBuilderFinish
+# LEFT-NOT: StringBuilderFinish
+# RUN(ROWS): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# ROWS-LABEL: code f4:Body
+# ROWS: StringBuilderBegin
+# ROWS: StringBuilderFinish
+# RUN(OUTER): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# OUTER-LABEL: code f4:Body
+# OUTER: StringBuilderBegin
+# OUTER: StringBuilderDiscard
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="read" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = String string=""
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Add v6, v3
+    v11 = Increment v7
+    Jump -> next b2(v10, v11)
+  b4():
+    Return v6
+  b5():
+    Return v1
+}
+function f2 name="dead" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = String string=""
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Add v6, v3
+    v11 = Increment v7
+    Jump -> next b2(v10, v11)
+  b4():
+    Return v7
+  b5():
+    Return v1
+}
+function f3 name="left" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b6()
+  b1(v3):
+    v4 = String string=""
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b3(), notTaken b5(v6)
+  b3():
+    v10 = Add v6, v3
+    v11 = Integer integer=7
+    v12 = StrictEq v7, v11
+    Branch v12 -> taken b5(v10), notTaken b4()
+  b4():
+    v13 = Increment v7
+    Jump -> next b2(v10, v13)
+  b5(v14):
+    Return v14
+  b6():
+    Return v1
+}
+function f4 name="rows" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b9()
+  b1(v3):
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Integer
+    Jump -> next b2(v6)
+  b2(v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b3(), notTaken b8()
+  b3():
+    v10 = Increment v7
+    v11 = String string=""
+    v12 = Integer
+    Jump -> next b4(v11, v12)
+  b4(v13, v14):
+    LoopHint
+    v16 = Less v14, v0
+    Branch v16 -> taken b5(), notTaken b7()
+  b5():
+    v17 = Add v13, v3
+    v18 = Integer integer=7
+    v19 = StrictEq v14, v18
+    Branch v19 -> taken b2(v10), notTaken b6()
+  b6():
+    v20 = Increment v14
+    Jump -> next b4(v17, v20)
+  b7():
+    v21 = Call v5, -, v13
+    Jump -> next b2(v10)
+  b8():
+    Return v7
+  b9():
+    Return v1
+}

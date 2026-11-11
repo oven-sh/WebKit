@@ -1,0 +1,18 @@
+# the same functions with calls of built-ins withheld: nobody names a method, and each call is the call by name that it was
+# RUN(EXEC): bytes f1:Body mechanisms=all-BuiltinCalls
+# EXEC-LABEL: unit f1:Body
+# EXEC: CallMethod{{*}}count 1
+# RUN(NOEXEC): bytes f1:Body mechanisms=all-BuiltinCalls
+# NOEXEC-NOT: RegExpExec
+# RUN(NOMATCH): bytes f3:Body mechanisms=all-BuiltinCalls
+# NOMATCH-NOT: StringMatch
+# RUN(NOSOUND): bytes f4:Body mechanisms=all-BuiltinCalls
+# NOSOUND-NOT: StringIsWellFormed
+# RUN(PUSH): bytes f5:Body mechanisms=all-BuiltinCalls
+# PUSH-LABEL: unit f5:Body
+# PUSH: CallMethod{{*}}count 2
+# RUN(NOPUSH): bytes f5:Body mechanisms=all-BuiltinCalls
+# NOPUSH-NOT: ArrayPush
+# RUN(NOINDEX): bytes f6:Body mechanisms=all-BuiltinCalls
+# NOINDEX-NOT: StringIndexOf
+# PROGRAM-OF: method-with-a-stub-for-so-many-arguments-is-called-by-it.ir

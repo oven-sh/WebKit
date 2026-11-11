@@ -331,8 +331,8 @@ public:
         , m_image(image)
         , m_stack { stackBounds }
         , m_pc(top.pc)
-        , m_callerPCOfFramelessTop(top.callerPCOfFramelessTop)
-        , m_framePointerOfFrameWithoutRecord(top.framePointer)
+        , m_framelessTopCallerPC(top.framelessTopCallerPC)
+        , m_unrecordedFramePointer(top.framePointer)
     {
     }
 
@@ -374,7 +374,7 @@ protected:
     SUPPRESS_ASAN
     void advanceToParentFrame()
     {
-        if (const void* callerPC = std::exchange(m_callerPCOfFramelessTop, nullptr)) {
+        if (const void* callerPC = std::exchange(m_framelessTopCallerPC, nullptr)) {
             m_pc = callerPC;
             m_compiledFrames.reset();
             return;
@@ -388,7 +388,7 @@ protected:
             }
             m_compiledFrames.reset();
         }
-        m_framePointerOfFrameWithoutRecord = nullptr;
+        m_unrecordedFramePointer = nullptr;
         CallFrame* calleeFrame = m_callFrame;
         EntryFrame* calleeEntryFrame = m_entryFrame;
         m_pc = removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
@@ -399,7 +399,7 @@ protected:
             if (auto resumedFrame = AOT::findSampledTop(m_image, { calleeEntryFrame, nullptr, nullptr, calleeEntryFrame }, m_callFrame, m_stack.bounds)) {
                 m_callFrame = resumedFrame->callFrame;
                 m_pc = resumedFrame->pc;
-                m_framePointerOfFrameWithoutRecord = resumedFrame->framePointer;
+                m_unrecordedFramePointer = resumedFrame->framePointer;
             } else
                 m_pc = nullptr;
         }
@@ -416,7 +416,7 @@ protected:
     {
         if (!isAtTop() && isValidFramePointer(m_callFrame)) {
             if (!m_compiledFrames)
-                m_compiledFrames.emplace(m_image, m_callFrame, m_pc, m_stack, m_framePointerOfFrameWithoutRecord);
+                m_compiledFrames.emplace(m_image, m_callFrame, m_pc, m_stack, m_unrecordedFramePointer);
             if (*m_compiledFrames && (**m_compiledFrames).code.runsCompiledCode())
                 return;
             m_compiledFrames.reset();
@@ -427,8 +427,8 @@ protected:
     const AOT::Image& m_image;
     AOT::SuspendedThreadStack m_stack;
     const void* m_pc;
-    const void* m_callerPCOfFramelessTop;
-    CallFrame* m_framePointerOfFrameWithoutRecord;
+    const void* m_framelessTopCallerPC;
+    CallFrame* m_unrecordedFramePointer;
     std::optional<AOT::MachineFrameIterator<AOT::SuspendedThreadStack>> m_compiledFrames;
 };
 
@@ -732,7 +732,7 @@ static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned 
 #if ENABLE(AOT)
 using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
 
-static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, std::optional<AOT::Typed::FunctionID> innerEntry, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
+static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
 {
     AOT::CompiledFunctionID code = machineFrame.compiledCode;
     auto append = [&](const AOT::TraceFrame& compiledFrame) -> SamplingProfiler::StackFrame& {
@@ -740,12 +740,6 @@ static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStack
         frames.last().compiledFrame = compiledFrame;
         return frames.last();
     };
-
-    if (innerEntry) {
-        append({ code, *innerEntry, CallSiteIndex(), false, false });
-        shownFrames = AOT::ShownFrameFilter(true);
-        return;
-    }
 
     if (auto site = image.callSiteAt(code.index(), machineFrame.compiledCodeOffset)) {
         AOT::forEachShownFrame(code, *site, shownFrames, [&](const AOT::TraceFrame& compiledFrame) {
@@ -1005,8 +999,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 #endif
 #if ENABLE(AOT)
             } else if (unprocessedStackFrame.compiledCode) {
-                const AOT::Image& image = *m_vm.aotState().image;
-                appendCompiledFrames(image, unprocessedStackFrame, i ? std::nullopt : image.innerEntryContaining(unprocessedStackTrace.topPC), shownFrames, compiledSitePositions, stackTrace.frames);
+                appendCompiledFrames(*m_vm.aotState().image, unprocessedStackFrame, shownFrames, compiledSitePositions, stackTrace.frames);
                 continue;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
@@ -1142,7 +1135,7 @@ String SamplingProfiler::StackFrame::displayName(VM& vm)
         AOT::FunctionDescription description(compiledFrame.function);
         if (description.codeType() == ModuleCode)
             return "(module)"_s;
-        return description.nameInFrames(vm);
+        return description.stackTraceName(vm);
     }
 #endif
     {

@@ -11,7 +11,6 @@ function namesPlainData(type: ModelType): boolean {
   return type.parts.some(part => part.part === "Instance" && part.contents.some(held => namesPlainData(held.type)));
 }
 
-// "New plain data" says what a call makes: new objects and arrays that hold each other and primitives.
 export function checkOperandTypes({ overloads }: Pick<TableModel, "overloads">, problems: Problems): void {
   for (const overload of overloads) {
     for (const { operand, accepted, converted, refused } of operandsOf(overload)) {

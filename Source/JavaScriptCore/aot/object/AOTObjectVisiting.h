@@ -75,7 +75,6 @@ ALWAYS_INLINE const uint8_t* extensionStorageOrNull(const JSCell* cell, SlotData
         return *reinterpret_cast<const uint8_t* const*>(slot);
     ASSERT(extensionSlot.representation() == SlotRepresentation::Cell32);
     uint32_t word = *reinterpret_cast<const uint32_t*>(slot);
-    // The word names the address that lies offsetOfEmptyExtensionInCage in front of the extension, so it may be less than that of any cell.
     return word ? reinterpret_cast<const uint8_t*>(MarkedBlockCage::decode(cageBaseOf(cell), word)) + offsetOfEmptyExtensionInCage : nullptr;
 }
 
@@ -102,7 +101,6 @@ ALWAYS_INLINE void forEachReference(const JSCell* cell, const uint32_t* counts, 
     if (!extension)
         return;
     functor(Reference { Reference::Kind::Auxiliary, std::bit_cast<uintptr_t>(extension) });
-    // Read once: the mutator may set bits of granules that come after these, and those hold nothing that this visit could miss.
     uint64_t granuleBits = *reinterpret_cast<const uint64_t*>(extension + offsetOfExtensionGranuleBits);
     ExtensionReferences sets = extensionReferencesAt(header);
     for (uint64_t remaining = granuleBits & (sets.wide | sets.narrowInFirstHalf | sets.narrowInSecondHalf); remaining; remaining &= remaining - 1) {

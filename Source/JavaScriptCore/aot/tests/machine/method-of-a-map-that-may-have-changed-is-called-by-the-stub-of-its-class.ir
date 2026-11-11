@@ -1,0 +1,50 @@
+# function stored(k, look) { const map = new Map(); look(map); const old = map.get(k); map.set(k, 1); return [old]; }
+# The receiver is proven a Map, and code that nobody has seen may have hidden `get` under a property of its own or laid the map below something else.
+# The read and the call stay as they are written, and are one call of a stub that holds the name. The walk names what a map as its class makes it finds under the name,
+# so the stub is the one of that method: it looks at the bit that says that the object is as it was made, and looks the key up:
+# no words at the site, no look at the callee, no search for its boxed form. Whatever misses goes on to the call by name.
+# That it is a cell, and one of a Map, is proven: the stub is entered behind its two tests of that.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call {{*}}calleeKey="get" {{*}}methodOfReceiverAsMade=MapPrototypeGet
+# CHECK: = Call {{*}}calleeKey="set" {{*}}methodOfReceiverAsMade=MapPrototypeSet
+# RUN(BYTES): bytes f1:Body mechanisms=all
+# BYTES-LABEL: unit f1:Body
+# BYTES-NOT: Stub CallMethodAtSite
+# BYTES: Stub CallMethodOfProvenTable.MapGetAnyValue immediate (Name "get")
+# BYTES-NOT: Stub CallMethodAtSite
+# BYTES: Stub CallMethodOfProvenTable.MapSetAnyValue immediate (Name "set")
+# RUN(WITHHELD): bytes f1:Body mechanisms=all-BuiltinCalls
+# WITHHELD-NOT: BuiltinClass.Map
+# WITHHELD-NOT: Table.Map
+# It answers as the call by name does, whatever the map has become.
+# RUN(ANSWERS): run-in-shell globalThis.sink = stored => { print(stored(1, map => { map.set(1, "a"); })); print(stored(1, map => { map.get = () => "own"; })); print(stored(1, map => { Object.setPrototypeOf(map, { get() { return "moved"; }, set() { } }); })); print(stored(1, map => { map.extra = 1; map.set(1, "b"); })); };
+# ANSWERS: a
+# ANSWERS-NEXT: own
+# ANSWERS-NEXT: moved
+# ANSWERS-NEXT: b
+# ANSWERS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="stored" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Call v1, -, v3
+    v5 = PropGet v3 key="get"
+    v6 = Call v5, v3, v0 calleeKey="get"
+    v7 = Integer integer=1
+    v8 = PropGet v3 key="set"
+    v9 = Call v8, v3, v0, v7 calleeKey="set"
+    v10 = NewArray v6 contents=anything
+    Return v10
+}

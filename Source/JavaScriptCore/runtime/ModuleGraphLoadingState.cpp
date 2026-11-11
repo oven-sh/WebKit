@@ -61,6 +61,9 @@ void ModuleGraphLoadingState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_promise);
     visitor.append(thisObject->m_fulfillment);
+#if ENABLE(AOT)
+    visitor.append(thisObject->m_rootState);
+#endif
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_visited.begin(), thisObject->m_visited.end());
 }

@@ -1,0 +1,36 @@
+# one product does not pay for a test of a number outside a loop: the closed form is a call, and the test, the arm and the rejoin are more bytes than it saves. Two do
+# function once(n: number) { return n * n; }   function twice(n: number) { return (n * n) * n; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: Test
+# CHECK: = Mul {{*}}form=Generic
+# RUN(TWICE): walk f2 mechanisms=none+TypedOperations+Guesses
+# TWICE-LABEL: code f2:Body
+# TWICE: = TypeTest {{*}}testedType=number
+# TWICE-COUNT-2: = Mul {{*}}form=Numbers
+# TWICE-COUNT-2: = Mul {{*}}form=Generic
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    v2 = Mul v1, v1
+    Return v2
+}
+function f2 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    v2 = Mul v1, v1
+    v3 = Mul v2, v1
+    Return v3
+}

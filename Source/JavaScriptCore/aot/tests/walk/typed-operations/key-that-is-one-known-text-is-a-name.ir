@@ -1,0 +1,79 @@
+# an access under a key that the walk knows as one text, which is a name of the program and no key of elements, is the access by that name: every link of the chain takes it so
+# function kindOf(node) { const k = "kind"; return [node[k]]; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="kind"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = ElemGet
+# function hasKind(node) { const k = "kind"; return [k in node]; }
+# RUN(HAS): walk f2 mechanisms=none+TypedOperations
+# HAS-LABEL: code f2:Body
+# HAS: = PropHas {{*}}key="kind"
+# function setKind(node, v) { const k = "kind"; node[k] = v; }
+# RUN(SET): walk f3 mechanisms=none+TypedOperations
+# SET-LABEL: code f3:Body
+# SET: PropSet {{*}}key="kind"
+# the text of an index is a key of elements: function first(list) { return [list["1"]]; }
+# RUN(INDEX): walk f4 mechanisms=none+TypedOperations
+# INDEX-LABEL: code f4:Body
+# INDEX: = ElemGet
+# nobody knows the key: function any(node, k) { return [node[k]]; }
+# RUN(ANY): walk f5 mechanisms=none+TypedOperations
+# ANY-LABEL: code f5:Body
+# ANY: = ElemGet
+# f6 spells the name, so that the table of the program has its key: function named(node) { return node.kind; }
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="kind"
+    v2 = ElemGet v0, v1
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f2 name="hasKind" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="kind"
+    v2 = ElemHas v0, v1
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f3 name="setKind" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="kind"
+    ElemSet v0, v2, v1
+    v4 = Undefined
+    Return v4
+}
+function f4 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="1"
+    v2 = ElemGet v0, v1
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f5 name="any" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f6 name="named" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}

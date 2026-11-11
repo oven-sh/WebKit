@@ -1,0 +1,136 @@
+# a comparison narrows its operand on the edges behind its Branch, and the narrower name stands for the operand in all that the block on the edge dominates.
+# Each name is noted for the value and for all that had the value for their narrowest name, so twelve comparisons in one another leave a list of ninety names:
+# long enough that a name is found by its value and then asked whether the list of the block holds it. Each arm still takes the name of its own edge, and none of an arm beside it.
+# function steps(n) { if (n is an int32) { if (10 < n) { if (20 < n) { .. return n + 1; } return n - 1; } return n - 1; } return n; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: int[11, 2147483647] @JSValue = Narrowed
+# CHECK: int[-2147483649, 9] @Int64 = Decrement
+# CHECK: int[21, 2147483647] @JSValue = Narrowed
+# CHECK: int[10, 19] @Int32 = Decrement
+# CHECK: int[31, 2147483647] @JSValue = Narrowed
+# CHECK: int[20, 29] @Int32 = Decrement
+# CHECK: int[41, 2147483647] @JSValue = Narrowed
+# CHECK: int[30, 39] @Int32 = Decrement
+# CHECK: int[51, 2147483647] @JSValue = Narrowed
+# CHECK: int[40, 49] @Int32 = Decrement
+# CHECK: int[61, 2147483647] @JSValue = Narrowed
+# CHECK: int[50, 59] @Int32 = Decrement
+# CHECK: int[71, 2147483647] @JSValue = Narrowed
+# CHECK: int[60, 69] @Int32 = Decrement
+# CHECK: int[81, 2147483647] @JSValue = Narrowed
+# CHECK: int[70, 79] @Int32 = Decrement
+# CHECK: int[91, 2147483647] @JSValue = Narrowed
+# CHECK: int[80, 89] @Int32 = Decrement
+# CHECK: int[101, 2147483647] @JSValue = Narrowed
+# CHECK: int[90, 99] @Int32 = Decrement
+# CHECK: int[111, 2147483647] @JSValue = Narrowed
+# CHECK: int[100, 109] @Int32 = Decrement
+# CHECK: int[121, 2147483647] @JSValue = Narrowed
+# CHECK: int[122, 2147483648] @Int64 = Increment
+# CHECK: int[110, 119] @Int32 = Decrement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="steps" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b26()
+  b1(v2):
+    v3 = Integer integer=10
+    v4 = Less v3, v2
+    Branch v4 -> taken b2(), notTaken b25()
+  b2():
+    v5 = Integer integer=20
+    v6 = Less v5, v2
+    Branch v6 -> taken b3(), notTaken b24()
+  b3():
+    v7 = Integer integer=30
+    v8 = Less v7, v2
+    Branch v8 -> taken b4(), notTaken b23()
+  b4():
+    v9 = Integer integer=40
+    v10 = Less v9, v2
+    Branch v10 -> taken b5(), notTaken b22()
+  b5():
+    v11 = Integer integer=50
+    v12 = Less v11, v2
+    Branch v12 -> taken b6(), notTaken b21()
+  b6():
+    v13 = Integer integer=60
+    v14 = Less v13, v2
+    Branch v14 -> taken b7(), notTaken b20()
+  b7():
+    v15 = Integer integer=70
+    v16 = Less v15, v2
+    Branch v16 -> taken b8(), notTaken b19()
+  b8():
+    v17 = Integer integer=80
+    v18 = Less v17, v2
+    Branch v18 -> taken b9(), notTaken b18()
+  b9():
+    v19 = Integer integer=90
+    v20 = Less v19, v2
+    Branch v20 -> taken b10(), notTaken b17()
+  b10():
+    v21 = Integer integer=100
+    v22 = Less v21, v2
+    Branch v22 -> taken b11(), notTaken b16()
+  b11():
+    v23 = Integer integer=110
+    v24 = Less v23, v2
+    Branch v24 -> taken b12(), notTaken b15()
+  b12():
+    v25 = Integer integer=120
+    v26 = Less v25, v2
+    Branch v26 -> taken b13(), notTaken b14()
+  b13():
+    v27 = Increment v2
+    Return v27
+  b14():
+    v28 = Decrement v2
+    Return v28
+  b15():
+    v29 = Decrement v2
+    Return v29
+  b16():
+    v30 = Decrement v2
+    Return v30
+  b17():
+    v31 = Decrement v2
+    Return v31
+  b18():
+    v32 = Decrement v2
+    Return v32
+  b19():
+    v33 = Decrement v2
+    Return v33
+  b20():
+    v34 = Decrement v2
+    Return v34
+  b21():
+    v35 = Decrement v2
+    Return v35
+  b22():
+    v36 = Decrement v2
+    Return v36
+  b23():
+    v37 = Decrement v2
+    Return v37
+  b24():
+    v38 = Decrement v2
+    Return v38
+  b25():
+    v39 = Decrement v2
+    Return v39
+  b26():
+    Return v0
+}

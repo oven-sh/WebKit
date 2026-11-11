@@ -1,0 +1,91 @@
+# async function g(h, s, n) { let t = s; try { t = h + s; for (let k = 0; k < n; k++) t += k; await null; t = t + "-"; await null; } finally { L.push(String(t)); } }
+# The `finally` reads the text, so its builder is a cell of the heap, not room in the frame, and the ways into the handler keep it alive over the await. A cell may live over a suspension: it is a root of the saved frame. Only a builder that lies in the frame may not.
+# RUN: walk f1:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: [[builder]]: {{*}} = StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: [[await]]: {{*}} = AwaitBySavingFrame
+# CHECK: # live at [[await]] [{{*}}[[builder]]
+# RUN(FRAME): walk f1:CoroutineBody mechanisms=all
+# FRAME-LABEL: code f1:CoroutineBody
+# FRAME-NOT: = StackStringBuilderBegin
+# layout L904 kind=Closure
+variable g0 name="L" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/$bunfs/root/await.mjs" displayPath="await.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 14, 178, 194, 214] quotedSources=[{position=155 start=32 end=38}, {position=157 start=32 end=49}, {position=162 start=39 end=48}, {position=178 end=14}, {position=194 start=14 end=29}, {position=205 start=14 end=32}] quotedSourceText="g(\x22a\x22, \x22b\x22, 3)globalThis.sink(L)L.push(String(t))"} functionSource="const L = [];\x0aasync function g(h, s, n) { let t = s; try { t = h + s; for (let k = 0; k < n; k++) t += k; await null; t = t + \x22-\x22; await null; } finally { L.push(String(t)); } }\x0ag(\x22a\x22, \x22b\x22, 3);\x0aglobalThis.sink(L);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @10
+    PutModuleVariable v2 variable=g0 @6
+    v4 = String string="a" @180
+    v5 = String string="b" @185
+    v6 = Integer integer=3 @190
+    v7 = Call v1, -, v4, v5, v6 calleeName="g" @178
+    v8 = Builtin builtin=GlobalThis @194
+    v9 = PropGet v8 key="globalThis" [isFreeName] @194
+    v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]} @194
+    v11 = PropGet v10 key="sink" @194
+    v12 = Call v11, v10, v2 calleeKey="sink" calleeName="globalThis.sink" @205
+    v13 = Undefined @194
+    Return v13 @194
+}
+function f1 name="g" module=m0 position=14 sourceRange={start=14 end=177} flags=[IsAsync, HasThis, HasExplicitName] length=3 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: undefined|null|string, v3: anything):
+    v4 = Convert v2 declared={type=undefined|null|number|string flags=[IsExpected]} @50
+    Jump -> next b1() @53
+  b1() handler=b9(v4):
+    v5 = Add v1, v2 @67
+    v6 = Convert v5 declared={type=undefined|null|number|string flags=[IsExpected]} @59
+    Jump -> next b2() @59
+  b2() handler=b9(v6):
+    v7 = Integer @83
+    v8 = Convert v7 declared={type=number flags=[IsExpected]} @83
+    Jump -> next b3(v6, v8) @79
+  b3(v9, v10) handler=b9(v9):
+    LoopHint @79
+    v12 = Less v10, v3 @90
+    Branch v12 -> taken b4(), notTaken b6() @90
+  b4() handler=b9(v9):
+    v13 = Add v9, v10 @103
+    v14 = Convert v13 declared={type=undefined|null|number|string flags=[IsExpected]} @98
+    Jump -> next b5() @98
+  b5() handler=b9(v14):
+    v15 = Increment v10 @93
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @93
+    Jump -> next b3(v14, v16) @93
+  b6() handler=b9(v9):
+    v17 = Null @112
+    v18 = Await v17, v1, v2, v3, v0 @112
+    v19 = String string="-" @126
+    v20 = Add v9, v19 @126
+    v21 = Convert v20 declared={type=undefined|null|number|string flags=[IsExpected]} @118
+    Jump -> next b7() @118
+  b7() handler=b9(v21):
+    v22 = Null @137
+    v23 = Await v22, v1, v2, v3, v0 @137
+    Jump -> next b8() @131
+  b8():
+    v24 = Integer @131
+    v25 = Undefined @131
+    Jump -> next b10(v24, v25, v21) @131
+  b9(v26) role=CleanupHandler:
+    v27 = CatchValue @131
+    v28 = Integer integer=1 @131
+    Jump -> next b10(v28, v27, v26) @131
+  b10(v29, v30, v31):
+    v32 = GetModuleVariable variable=g0 @155
+    v33 = CheckInitialized v32 name="L" @155
+    v34 = PropGet v33 key="push" @155
+    v35 = Builtin builtin=String @162
+    v36 = Call v35, -, v31 calleeName="String" @162
+    v37 = Call v34, v33, v36 calleeKey="push" calleeName="L.push" @157
+    Switch v29 cases=[0] -> case b11(), otherwise b12() @155
+  b11():
+    v38 = Undefined @155
+    Return v38 @155
+  b12():
+    Throw v30 @155
+}
+data d0 root=Array{contents=anything} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]

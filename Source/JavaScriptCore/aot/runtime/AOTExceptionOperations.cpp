@@ -8,119 +8,88 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
 #include "AOTCallSiteTable.h"
+#include "AOTClassPrototype.h"
+#include "AOTBuiltinModules.h"
+#include "AOTClosure.h"
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
+#include "AOTEffectsNet.h"
+#include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTModuleHost.h"
+#include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPoisonedCell.h"
+#include "AOTPrimitives.h"
 #include "AOTProgramStrings.h"
-#include "AOTRuntimeCounters.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeReporter.h"
-#include "AOTRuntimeValidation.h"
+#include "AOTRuntimeTable.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsPolls.h"
+#include "AOTStubsValues.h"
 #include "AOTUnwinding.h"
+#include "DateInstance.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
+#include "FunctionExecutable.h"
 #include "IteratorOperations.h"
+#include "JSArrayBuffer.h"
 #include "JSCInlines.h"
+#include "JSInternalFieldObjectImpl.h"
+#include "JSMap.h"
+#include "JSPromise.h"
+#include "JSSet.h"
 #include "MarkedBlockCage.h"
 #include "OwedOutOfMemoryError.h"
+#include "RegExpObject.h"
 #include "SuppressedError.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <array>
+#include <wtf/CommaPrinter.h>
+#include <wtf/HashSet.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
-static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
+SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* callerStackPointer)
 {
-    const RuntimeType* result = instance->state->objects->layouts.typeWithIndex(type);
-    RELEASE_ASSERT(result);
-    return *result;
+    return removeCodePtrTag(static_cast<void* const*>(callerStackPointer)[isX86() ? -1 : -2]);
 }
 
-// generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
-SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfCaller)
+static bool hasCollectedInPolledCall(VM& vm, void* callerStackPointer, CallFrame* frameOfPollStub)
 {
-    return removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
-}
-
-// A tail call by value gives up a frame and returns to where that frame would have returned. Whoever holds the closure that runs above that place holds the callee from now on:
-// a caller that entered a function without its closure has a word for it in its own frame, and the adapter has the callee slot of its frame.
-SUPPRESS_ASAN static void passHolderToCalleeOfTailCall(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller, CallFrame* framePointerOfCaller)
-{
-    std::optional<FunctionID> function = functionOf(callee);
-    if (!function || !tables.recordsCalleesOf(*function))
-        return;
-    const void* returnAddress = returnAddressOfPolledCall(stackPointerOfCaller);
-    const VMState& state = vm.aotState();
-    const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
-    while (site && site->isStubReturnSite() && site->stubFrameKind == StubFrameKind::ArgumentList) {
-        auto* record = reinterpret_cast<CallerFrameAndPC*>(framePointerOfCaller);
-        stackPointerOfCaller = record + 1;
-        framePointerOfCaller = record->callerFrame;
-        site = state.callSiteCache->resolve(*state.image, removeCodePtrTag(record->returnPC));
-    }
-    if (!site)
-        return;
-    if (site->isStubReturnSite()) {
-        if (site->stubFrameKind == StubFrameKind::Adapter)
-            framePointerOfCaller->setCallee(asObject(callee));
-        return;
-    }
-    std::optional<CalleeOfSite> said = state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
-    // The tail call of a function that was inlined is a call of the machine, and the word is that of the inlined frame.
-    if (!said && site->site.isTailCall())
-        said = calleeOfCopiedFrame(*state.image, state.callSiteCache->inlineFrames(), site->code, { site->innermostFunction, site->site.callSite, site->site.inlineFrame, site->innermostIsInlinedConstructCall, false });
-    if (!said || said->isOwnFunctionObject())
-        return;
-    auto* frameRecord = reinterpret_cast<JSCell**>(static_cast<char*>(stackPointerOfCaller) + site->frame.frameSizeInBytes() - site->frame.bytesAboveFrameRecord());
-    frameRecord[said->wordInFrame()] = callee;
-}
-
-// The limit that sends a tail call here lies above every frame once a closure was renamed.
-static bool passHolderInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller)
-{
-    FunctionTables& tables = FunctionTables::of(*instance->vm);
-    if (!tables.recordsCalleesOfCallsByValue())
-        return false;
-    passHolderToCalleeOfTailCall(*instance->vm, tables, callee, stackPointerOfCaller, static_cast<CallFrame*>(framePointerOfCaller));
-    return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
-}
-
-static bool hasCollectedInPolledCall(VM& vm, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
-{
-    // Another stub may have made the polled call. generatePollBeforeEntering() sets up a frame record on x86-64 only.
     CallFrame* framePointerOfCaller = isX86() ? static_cast<CallFrame*>(frameOfPollStub->callerFrameOrEntryFrame()) : frameOfPollStub;
-    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreate(vm, framePointerOfCaller, returnAddressOfPolledCall(stackPointerOfCaller), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, stackPointerOfCaller);
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreate(vm, framePointerOfCaller, returnAddressOfPolledCall(callerStackPointer), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, callerStackPointer);
     return frames && !frames->isAtEnd() && frames->callSite().address == vm.aotState().returnAddressOfCallThatCollected;
 }
 
-// Out of line so the frame that a poll collects from has no slot that only the throw writes.
 static NEVER_INLINE void throwOwedOutOfMemoryError(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
 {
     DeferGCForAWhile deferGC(vm);
     throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
 }
 
-// The compiler does not see a poll inside a call stub: the call's IR operation may say that it neither collects nor throws.
-// A call inside which a collection has run says both. At any other call the error waits for the prologue of a function that may collect, or for a loop poll.
-static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
+static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* callerStackPointer, CallFrame* frameOfPollStub)
 {
     {
         DeferGCForAWhile deferGC(vm);
@@ -131,24 +100,23 @@ static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& sco
     }
     if (!vm.traps().needsOutOfMemoryError()) [[likely]]
         return;
-    if (!hasCollectedInPolledCall(vm, stackPointerOfCaller, frameOfPollStub) || vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm))
+    if (!hasCollectedInPolledCall(vm, callerStackPointer, frameOfPollStub) || vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm))
         return;
     throwOwedOutOfMemoryError(vm, globalObject, scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* stackPointerOfCaller))
+void collectInPlaceOfPollBehindOperation(VM& vm, JSCell* madeByOperation)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEntering);
-    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
-    OPERATION_RETURN(scope);
+    if (vm.aotState().returnAddressOfCallThatCollected != returnAddressOfInnermostCompiledCall(vm))
+        return;
+    vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm);
+    vm.writeBarrier(madeByOperation);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller))
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* callerStackPointer))
 {
-    if (passHolderInsteadOfPolling(instance, callee, stackPointerOfCaller, framePointerOfCaller))
-        return ExceptionOperationImplicitResult<void> { nullptr };
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
-    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEntering);
+    pollInCallStub(vm, globalObject, scope, callerStackPointer, callFrame);
     OPERATION_RETURN(scope);
 }
 
@@ -160,7 +128,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
     OPERATION_RETURN_IF_EXCEPTION(scope);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    // Thrown at such a poll, the error would pass the catch clause of the try block around the loop. It stays owed until a poll under a handler, a function entry or the return of an operation.
     if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !leavesOwedError) [[unlikely]]
         throwOwedOutOfMemoryError(vm, globalObject, scope);
     OPERATION_RETURN(scope);
@@ -184,7 +151,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologueWithoutCollecting, void*, (Instance* instance, uint8_t* returnAddress))
 {
-    // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPollAtPrologueWithoutCollecting);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -204,7 +170,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
     OPERATION_RETURN(scope);
 }
 
-// The program threw the value somewhere else, and a cleanup that took the value throws it on.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value, uint64_t kept))
 {
     AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, Entry::operationAOTThrowAfterCleanup);
@@ -219,10 +184,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
 
-// A `throw` that jumps to a cleanup of its function calls nothing else, and a stack trace finds the place of a frame by a return address.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance*))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance* instance))
 {
-    return std::bit_cast<uint64_t>(removeCodePtrTag(AOT_OPERATION_FRAME_RECORD()->returnPC));
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    const void* returnAddress = CompiledFrameIterator::topFrameReturnAddress(vm);
+    RELEASE_ASSERT(returnAddress);
+    return std::bit_cast<uint64_t>(returnAddress);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))
@@ -237,20 +205,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJS
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
-{
-    VM& vm = *instance->vm;
-    // A collection that starts here goes over the frames from this one.
-    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    DeferGC collectsWhatThrowingPutOff(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    Exception* exception = scope.exception();
-    RELEASE_ASSERT(exception && !vm.isTerminationException(exception));
-    JSValue value = exception->value();
-    scope.clearException();
-    return JSValue::encode(value);
-}
-
 static Exception* takePendingException(VM& vm)
 {
     DeferGC collectsWhatThrowingPutOff(vm);
@@ -261,33 +215,48 @@ static Exception* takePendingException(VM& vm)
     return exception;
 }
 
+struct ThrownValue {
+    JSValue value;
+    Exception* exception;
+};
+
+static ThrownValue takeThrownValue(VM& vm, Instance* instance)
+{
+    JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0));
+    if (!thrown) {
+        Exception* exception = takePendingException(vm);
+        return { exception->value(), exception };
+    }
+    if (thrown.isCell() && thrown.asCell()->type() == CellType) {
+        Exception* exception = uncheckedDowncast<Exception>(thrown.asCell());
+        return { exception->value(), exception };
+    }
+    return { thrown, nullptr };
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    return JSValue::encode(takeThrownValue(vm, instance).value);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    // Nobody lists the frames of a throw that compiled code catches further up.
-    if (JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0)))
-        return JSValue::encode(Exception::create(vm, thrown, Exception::StackCaptureAction::DoNotCaptureStack));
-    return JSValue::encode(takePendingException(vm));
+    ThrownValue thrown = takeThrownValue(vm, instance);
+    if (thrown.exception)
+        return JSValue::encode(thrown.exception);
+    return JSValue::encode(Exception::create(vm, thrown.value, Exception::StackCaptureAction::DoNotCaptureStack));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchValueAndException, UGPRPair, (Instance* instance))
 {
     VM& vm = *instance->vm;
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    Exception* exception = takePendingException(vm);
-    return makeUGPRPair(JSValue::encode(exception->value()), std::bit_cast<UCPURegister>(exception));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTReportMismatch);
-    JSValue decoded = JSValue::decode(value);
-    JSValue checked = decoded ? decoded : jsUndefined();
-    const RuntimeType& expected = runtimeTypeAt(instance, type);
-    if (!instance->state->objects->layouts.valueHasType(expected, checked)) [[unlikely]]
-        reportFailedCheck(*instance, typeSite, expected, checked);
-    OPERATION_RETURN(scope);
+    ThrownValue thrown = takeThrownValue(vm, instance);
+    return makeUGPRPair(JSValue::encode(thrown.value), std::bit_cast<UCPURegister>(thrown.exception));
 }
 
 static String nameOfFunctionOnTop(VM& vm)
@@ -300,6 +269,24 @@ static String nameOfFunctionOnTop(VM& vm)
     if (frames->isAtEnd())
         return { };
     return writtenFunctionName(FunctionDescription(frames->frame().function).sourceFunction());
+}
+
+static String importableModuleOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    String url = frames->frame().sourceURL();
+    return url.startsWith("node:"_s) || url.startsWith("bun:"_s) ? url : String();
+}
+
+static void reportUnreachableCall(VM& vm, const Identifier* name, ASCIILiteral missingUse)
+{
+    String called = name ? name->string() : nameOfFunctionOnTop(vm);
+    RuntimeCheckFailure failure("reachability check failed"_s);
+    failure.atTopCall(vm);
+    failure.detail(called.isEmpty() ? String("a function"_s) : makeString('\'', called, '\''), " was called, but it was not compiled into this executable because nothing seemed to ", missingUse, " it");
+    failure.report();
 }
 
 JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKind kind, const Identifier* name)
@@ -326,7 +313,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::StaticPrototypeKey:
         return createStaticFieldNamedPrototypeError(globalObject);
     case Typed::RuntimeErrorKind::IteratorResultNotObject:
-    case Typed::RuntimeErrorKind::IteratorIsNotAnObject:
+    case Typed::RuntimeErrorKind::IteratorNotObject:
         return createIteratorResultNotObjectError(globalObject);
     case Typed::RuntimeErrorKind::IteratorWithoutThrowMethod:
         return createYieldStarIteratorWithoutThrowError(globalObject);
@@ -342,22 +329,29 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::PrivateMethodWrite:
     case Typed::RuntimeErrorKind::PrivateAccessorWithoutSetter:
         return createUndefinedPrivateSetterError(globalObject);
-    case Typed::RuntimeErrorKind::PrivateStaticTestOfNonObject:
+    case Typed::RuntimeErrorKind::StaticPrivateInNotObject:
         return createStaticPrivateBrandOfNonObjectError(globalObject);
     case Typed::RuntimeErrorKind::SpreadResultNotObject:
         return createSpreadResultNotObjectError(globalObject);
-    case Typed::RuntimeErrorKind::NoSyncIteratorForAsyncIteration:
+    case Typed::RuntimeErrorKind::AsyncFromSyncIteratorMissing:
         return createTypeError(globalObject, "iterable should have an iterator symbol"_s);
-    case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
+    case Typed::RuntimeErrorKind::AsyncFromSyncIteratorNotObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
-    case Typed::RuntimeErrorKind::LeftOutOfExecutable:
-        if (checksClaimsAboutObjects(globalObject->vm()))
-            crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
-        if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
-            return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
-        return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
+    case Typed::RuntimeErrorKind::OmittedFromExecutable:
+        reportUnreachableCall(globalObject->vm(), name, "refer to"_s);
+        CRASH();
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
-        return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string()) : functionNotCompiledMessage());
+#if ASSERT_ENABLED || ASAN_ENABLED
+        if (isClosedWorld(*Image::current())) {
+            reportUnreachableCall(globalObject->vm(), name, "call"_s);
+            CRASH();
+        }
+#endif
+        if (!name || name->isEmpty())
+            return createError(globalObject, functionNotCompiledMessage());
+        if (String module = importableModuleOnTop(globalObject->vm()); !module.isNull())
+            return createError(globalObject, exportNotCompiledMessage(name->string(), module));
+        return createError(globalObject, functionNotCompiledMessage(name->string()));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -367,6 +361,597 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeError, JSCell*, (Instanc
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRuntimeError);
     DeferTerminationForAWhile deferTermination(vm);
     RELEASE_AND_RETURN(scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), nullptr));
+}
+
+static void printKindsOfNativeResult(PrintStream& out, uint32_t kinds)
+{
+    static constexpr std::array<ASCIILiteral, WrittenNativeResult::numberOfKinds> names { "undefined"_s, "null"_s, "boolean"_s, "number"_s, "string"_s, "symbol"_s, "bigint"_s, "object"_s };
+    if (!kinds) {
+        out.print("nothing"_s);
+        return;
+    }
+    CommaPrinter separator(" | "_s);
+    for (unsigned index = 0; index < names.size(); ++index) {
+        if (kinds & 1u << index)
+            out.print(separator, names[index]);
+    }
+}
+
+[[noreturn]] static void stopAtNativeResult(Instance& instance, CallerFrameAndPC* operationFrameRecord, JSValue found, WrittenNativeResult written)
+{
+    StringPrintStream declared;
+    printKindsOfNativeResult(declared, written.kinds);
+    RuntimeCheckFailure failure("type check failed"_s);
+    failure.atTopCall(*instance.vm, operationFrameRecord);
+    failure.detail("expected ", declared.toString(), ", found ");
+    if (found.isObject() && written.kinds & WrittenNativeResult::objectKind)
+        failure.detail("an object of another class (", asObject(found)->classInfo()->className, ")");
+    else if (found.isNumber() && written.kinds & WrittenNativeResult::numberKind)
+        failure.detail("a number outside the declared range");
+    else
+        failure.detail(reportedTypeName(found));
+    failure.detail(" in the result of ", written.constructs ? "new " : "", BuiltinTable::singleton().textOf(BuiltinID(written.builtin)));
+    failure.report();
+    CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instance* instance, EncodedJSValue found, uint32_t encodedWritten))
+{
+    stopAtNativeResult(*instance, AOT_OPERATION_FRAME_RECORD(), JSValue::decode(found), WrittenNativeResult::decode(encodedWritten));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopUnlessNativeResultIsIntegerAsWritten, void, (Instance* instance, EncodedJSValue found, uint32_t encodedWritten))
+{
+    Typed::Range written = WrittenNativeResult::decode(encodedWritten).writesLengths ? Typed::Range::int32OrLength() : Typed::Range::int32();
+    if (JSValue value = JSValue::decode(found); value.isDouble()) {
+        double number = value.asDouble();
+        if (number >= static_cast<double>(written.minimum) && number <= static_cast<double>(written.maximum) && std::bit_cast<uint64_t>(static_cast<double>(static_cast<int64_t>(number))) == std::bit_cast<uint64_t>(number))
+            return;
+    }
+    stopAtNativeResult(*instance, AOT_OPERATION_FRAME_RECORD(), JSValue::decode(found), WrittenNativeResult::decode(encodedWritten));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCheckFreshResult, void, (Instance* instance, EncodedJSValue encodedResult, uint64_t collectionsBefore, uint32_t builtin, EncodedJSValue receiver, EncodedJSValue firstArgument))
+{
+    JSValue result = JSValue::decode(encodedResult);
+    if (!result || !result.isObject())
+        return;
+    JSCell* cell = result.asCell();
+    VM& vm = *instance->vm;
+    Heap& heap = vm.heap;
+    uint64_t collections = heap.objectSpace().newlyAllocatedVersion();
+    struct FreshResults {
+        UncheckedKeyHashSet<JSCell*> cells;
+        std::optional<VMIdentifier> vm;
+        uint64_t collections { 0 };
+    };
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local FreshResults returned;
+    if (returned.vm != vm.identifier() || returned.collections != collections) {
+        returned.cells.clear();
+        returned.vm = vm.identifier();
+        returned.collections = collections;
+    }
+    ASCIILiteral finding;
+    if (encodedResult == receiver)
+        finding = "the result is the receiver"_s;
+    else if (encodedResult == firstArgument)
+        finding = "the result is the first argument"_s;
+    else if (!returned.cells.add(cell).isNewEntry)
+        finding = "an earlier call that is also declared fresh returned the same object"_s;
+    else if (collections == collectionsBefore && !heap.collectionScope() && cell->cellState() != CellState::DefinitelyWhite)
+        finding = "the result survived a collection that ended before the call"_s;
+    if (finding.isNull())
+        return;
+    RuntimeCheckFailure failure("fresh result check failed"_s);
+    failure.atTopCall(vm, AOT_OPERATION_FRAME_RECORD());
+    failure.detail(BuiltinTable::singleton().textOf(BuiltinID(static_cast<uint16_t>(builtin))), " is declared to return a fresh object, but ", finding);
+    failure.report();
+    CRASH();
+}
+
+static void stopIfSaidNeverToReachUnseenCode(VM& vm, const State& state, JSValue escapingValue)
+{
+    if (!escapingValue || !escapingValue.isCell())
+        return;
+    countEvent(vm, RuntimeCounterID::CellsPassedToUnknownCode);
+    JSCell* cell = escapingValue.asCell();
+    String escaped;
+    if (isCompiledObject(cell)) {
+        const LayoutData& layout = uncheckedDowncast<Object>(cell)->layout();
+        if (!layout.isSaidNeverToReachUnseenCode)
+            return;
+        escaped = reportedObjectName(layout);
+    } else if (std::optional<FunctionID> function = functionOf(cell)) {
+        if (!Image::current()->programTables().traceOfFunction(function->index()).closuresAreSaidNeverToReachUnseenCode)
+            return;
+        escaped = makeString("a closure of "_s, reportedFunctionName(sourceFunctionOf(*function)));
+    } else if (cell->isObject()) {
+        const ClassTable& classes = state.objects->classes;
+        ClassSide side = ClassSide::Prototype;
+        const LayoutData* layout = classes.classHeldBy(asObject(cell), side);
+        if (!layout && cell->classInfo() == ClassPrototype::info())
+            layout = classes.classOf(*uncheckedDowncast<ClassPrototype>(cell));
+        if (!layout || !layout->isSaidNeverToReachUnseenCode)
+            return;
+        escaped = makeString(side == ClassSide::Prototype ? "the prototype of "_s : "the constructor of "_s, reportedClassName(*layout));
+    } else
+        return;
+    RuntimeCheckFailure failure("escape check failed"_s);
+    failure.atTopCall(vm);
+    failure.detail(escaped, " was passed to code that the compiler did not see, but the compiler proved that it never escapes");
+    failure.report();
+    CRASH();
+}
+
+static void askWhatIsHandedToCalleeOfEngine(VM& vm, const State& state, const CallFrame* laid)
+{
+    JSValue called = laid->guaranteedJSValueCallee();
+    auto* callee = called.isCell() ? dynamicDowncast<JSFunction>(called.asCell()) : nullptr;
+    auto* executable = callee ? dynamicDowncast<FunctionExecutable>(callee->executable()) : nullptr;
+    if (!executable || executable->isBuiltinFunction())
+        return;
+    stopIfSaidNeverToReachUnseenCode(vm, state, laid->thisValue());
+    for (size_t argument = 0; argument < laid->argumentCount(); ++argument)
+        stopIfSaidNeverToReachUnseenCode(vm, state, laid->uncheckedArgument(argument));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* instance, JSCell* cell, uint32_t function, uint32_t position))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPoisonCell);
+    if (function & PoisonedCell::isFrameLaidForCalleeOfEngine) {
+        askWhatIsHandedToCalleeOfEngine(vm, *instance->state, reinterpret_cast<const CallFrame*>(cell));
+        return;
+    }
+    if (function & PoisonedCell::isLentForCallAhead) {
+        PoisonedCell::noteThatCellIsLent(cell, AOT_FRAME_RECORD_OF_THIS_FUNCTION()->callerFrame, function & ~PoisonedCell::isLentForCallAhead, position);
+        return;
+    }
+    countEvent(vm, PoisonedCell::tryPoison(vm, cell, function, position) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::UnpoisonableCellsSkipped);
+}
+
+static ASCIILiteral failedCheckOf(uint32_t source)
+{
+    using Typed::ProofSource;
+    if (source == static_cast<uint32_t>(ProofSource::RememberedFact))
+        return "redundancy elimination check failed"_s;
+    if (source == static_cast<uint32_t>(ProofSource::HoistedCall))
+        return "loop-invariant code motion check failed"_s;
+    if (source >= static_cast<uint32_t>(ProofSource::Lifetime))
+        return "lifetime check failed"_s;
+    return "type check failed"_s;
+}
+
+static void printExpectedType(PrintStream& out, uint32_t summary)
+{
+    namespace Primitive = Typed::Primitive;
+    static constexpr std::pair<uint16_t, ASCIILiteral> names[] = {
+        { Primitive::Undefined, "undefined"_s }, { Primitive::Null, "null"_s }, { Primitive::Boolean, "boolean"_s }, { Primitive::True, "true"_s }, { Primitive::False, "false"_s },
+        { Primitive::Number, "number"_s }, { Primitive::NumberWithoutFraction, "integer"_s }, { Primitive::Double, "double"_s }, { Primitive::Integer, "int32"_s }, { Primitive::WholeNumber, "integer"_s }, { Primitive::FractionalNumber, "double"_s },
+        { Primitive::String, "string"_s }, { Primitive::Symbol, "symbol"_s }, { Primitive::BigInt, "bigint"_s },
+    };
+    if (summary == (FalseProofWord::primitivesMask | FalseProofWord::objectBit)) {
+        out.print("a JavaScript value"_s);
+        return;
+    }
+    CommaPrinter separator(" | "_s);
+    uint32_t rest = summary;
+    for (auto [bits, name] : names) {
+        if ((rest & bits) != bits)
+            continue;
+        rest &= ~bits;
+        out.print(separator, name);
+    }
+    if (summary & FalseProofWord::stringLiteralBit)
+        out.print(separator, "string literal"_s);
+    if (summary & FalseProofWord::symbolLiteralBit)
+        out.print(separator, "unique symbol"_s);
+    if (summary & FalseProofWord::objectBit)
+        out.print(separator, "object"_s);
+}
+
+[[noreturn]] static void stopAtFalseProof(Instance& instance, RuntimeCheckFailure& failure, EncodedJSValue encodedFound, uint32_t source, uint32_t expectedType)
+{
+    using Typed::ProofSource;
+    static constexpr std::array descriptions {
+        "an argument"_s, "a call result"_s, "a property"_s, "a local variable"_s, "a captured variable"_s, "a closure variable"_s, "an element"_s, "the result of a built-in or indirect call"_s, "the result of an operation"_s, "a value narrowed by a branch"_s,
+        "a load or check that the compiler removed as redundant gives a different result here"_s, "a call that the compiler hoisted out of the loop returns a different result in this iteration"_s, "an object was used after the compiler ended its lifetime"_s,
+    };
+    static_assert(descriptions.size() == numberOfEnumerators<ProofSource> && !static_cast<uint32_t>(ProofSource::EntryParameter) && static_cast<uint32_t>(ProofSource::Lifetime) + 1 == descriptions.size());
+    JSValue found = JSValue::decode(encodedFound);
+    if (found && found.isCell() && found.asCell()->classInfo() == PoisonedCell::info())
+        PoisonedCell::stop(found.asCell());
+    ASCIILiteral description = descriptions[std::min<size_t>(source, descriptions.size() - 1)];
+    if (source >= static_cast<uint32_t>(ProofSource::RememberedFact))
+        failure.detail(description);
+    else {
+        if (expectedType) {
+            StringPrintStream type;
+            printExpectedType(type, expectedType);
+            failure.detail("expected ", type.toString(), ", ");
+        }
+        failure.detail("found ", found ? reportedTypeName(found) : source == static_cast<uint32_t>(ProofSource::Field) ? "an empty slot, undefined or null"_s : "an unexpected value"_s, " in ", description);
+    }
+    failure.report();
+    failure.crashInHost(instance.globalObject);
+    CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance* instance, EncodedJSValue encodedFound, uint32_t function, uint32_t, uint32_t falseProofWord))
+{
+    uint32_t source = FalseProofWord::sourceOf(falseProofWord);
+    RuntimeCheckFailure failure(failedCheckOf(source));
+    failure.atTopCall(*instance->vm, AOT_OPERATION_FRAME_RECORD()).inFunction(FunctionID(function));
+    stopAtFalseProof(*instance, failure, encodedFound, source, FalseProofWord::expectedTypeOf(falseProofWord));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleLoad, void, (Instance* instance, uint32_t function, uint32_t))
+{
+    RuntimeCheckFailure failure("load elimination check failed"_s);
+    failure.atTopCall(*instance->vm, AOT_OPERATION_FRAME_RECORD()).inFunction(FunctionID(function));
+    failure.detail("memory changed between a load and a later load that the compiler replaced with its result");
+    failure.report();
+    failure.crashInHost(instance->globalObject);
+    CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Instance* instance, uint32_t function))
+{
+    if (instance->state->functionsEnteredThatRunOnce.add(function).isNewEntry) [[likely]]
+        return;
+    RuntimeCheckFailure failure("run-once check failed"_s);
+    failure.inFunction(FunctionID(function));
+    failure.detail("the function was entered a second time, but the compiler proved that it runs at most once");
+    failure.report();
+    CRASH();
+}
+
+static bool isKnownToSayLessOfSecondDigest(uint32_t operationAndCalleeRows, uint64_t differs)
+{
+    unsigned calleeRow = operationAndCalleeRows >> 16;
+    unsigned row = calleeRow == Typed::noRowInEffectsNet ? operationAndCalleeRows & UINT16_MAX : calleeRow;
+    using Lane = Typed::SecondLaneInEffectsNet;
+    struct Row {
+        ASCIILiteral name;
+        std::initializer_list<Lane> lanes;
+    };
+    static const Row rows[] = {
+        { "runtime:operationAOTObjectCreate"_s, { Lane::NamedProperties } },
+        { "built-in:Object.create"_s, { Lane::NamedProperties } },
+        { "stub:BuiltinCell"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "stub:DidCreateFieldOfSlot"_s, { Lane::Structure } },
+        { "stub:PutSlotOrAdd"_s, { Lane::Structure } },
+        { "runtime:operationAOTDidCreateField"_s, { Lane::Structure } },
+        { "operation:GetConstructPrototype"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "operation:PropGet"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "operation:SuperGet"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "operation:CheckIterationRestart"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "operation:CheckInlineeFallback"_s, { Lane::Structure, Lane::NamedProperties } },
+    };
+    StringPrintStream name;
+    printRowOfEffectsNet(name, row);
+    String named = name.toString();
+    for (const Row& row : rows) {
+        if (named != row.name)
+            continue;
+        for (Lane lane : row.lanes)
+            differs &= ~(0xffull << static_cast<unsigned>(lane) * 8);
+        return !differs;
+    }
+    return false;
+}
+
+static void printWhoseWordsInEffectsNet(PrintStream& out, uint32_t operand)
+{
+    if (operand & Typed::variableInEffectsNet)
+        out.print("the value of module variable g", operand & (Typed::variableInEffectsNet - 1), " (not an operand of the call)");
+    else
+        out.print("operand ", operand);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instance* instance, uint32_t function, uint32_t position, uint32_t part, uint32_t rows, uint64_t differs))
+{
+    static constexpr std::array<ASCIILiteral, 5> names { "does nothing"_s, "runs no other code, but compiled code was entered"_s, "throws no language exception, but it threw one"_s, "does nothing"_s, "does not collect, but the heap was collected"_s };
+    static const bool goesOn = !!getenv("BUN_AOT_EFFECTS_NET_GOES_ON");
+    StringPrintStream said;
+    Typed::Opcode opcode = static_cast<Typed::Opcode>(rows & UINT16_MAX);
+    bool isOfTurn = opcode == Typed::Opcode::CheckIterationRestart || opcode == Typed::Opcode::CheckInlineeFallback || opcode == Typed::Opcode::CheckReloadBypass;
+    said.print(!isOfTurn ? "the declared effects of " : opcode == Typed::Opcode::CheckIterationRestart ? "a loop iteration restarts in the generic version, so the compiler's state" : opcode == Typed::Opcode::CheckInlineeFallback ? "an inlined call falls back to the real call, so the compiler's state" : "a loop iteration skips the loads that were hoisted for iterations without side effects, so the compiler's state");
+    if (!isOfTurn) {
+        printRowOfEffectsNet(said, rows & UINT16_MAX);
+        said.print(" and of ");
+    }
+    if (isOfTurn) {
+    } else if (rows >> 16 == Typed::noRowInEffectsNet && Typed::effectRuleOf(opcode) != Typed::EffectRule::Call && opcode != Typed::Opcode::CallTable)
+        said.print("the proven types of its operands");
+    else
+        printRowOfEffectsNet(said, rows >> 16);
+    if (isOfTurn && (part & 0xff) == static_cast<uint32_t>(Typed::PartOfEffects::RunsOtherCode))
+        said.print(opcode == Typed::Opcode::CheckReloadBypass ? " says that no other code ran in it, but an operation that may run other code has run since it began" : " says that nothing observable happened in it, but an operation that is observable if repeated has run since it began");
+    else if (part & Typed::speaksOfValueOfVariableInEffectsNet)
+        said.print(" says that every store of the iteration was undone, but module variable g", part >> 16 & (Typed::variableInEffectsNet - 1), " differs from its value at the loop header");
+    else if ((part & 0xff) == static_cast<uint32_t>(Typed::PartOfEffects::Writes)) {
+        said.print(isOfTurn ? " says that nothing in it wrote " : " say that the call does not write ");
+        CommaPrinter comma;
+        if (part >> 16 == Typed::noOperandInEffectsNet) {
+            static constexpr std::array<ASCIILiteral, Typed::heapsOfCountsInEffectsNet.size()> deeds {
+                "guards were invalidated"_s, "guards were armed or started"_s, "an unmodified built-in, or the prototype chain of its instances, was written"_s,
+                "a module variable, a static field or a statically allocated scope variable changed"_s,
+                "compiled code stored to a module variable"_s, "compiled code stored to a static field"_s, "compiled code stored to a statically allocated scope variable"_s
+            };
+            CommaPrinter commaOfDeeds;
+            StringPrintStream done;
+            Typed::AbstractHeapSet heaps;
+            for (unsigned count = 0; count < deeds.size(); ++count) {
+                if (!Typed::countInWordOfEffectsNet(differs, count))
+                    continue;
+                heaps.add(Typed::heapsOfCountsInEffectsNet[count]);
+                done.print(commaOfDeeds, deeds[count]);
+            }
+            for (Typed::AbstractHeap heap : heaps)
+                said.print(comma, Typed::nameOf(heap));
+            said.print(", but ", done.toString());
+            differs = 0;
+        }
+        if (part & Typed::speaksOfSecondDigestInEffectsNet) {
+            static constexpr std::array<ASCIILiteral, Typed::heapsOfSecondDigestInEffectsNet.size()> words {
+                "the structure"_s, "the prototype"_s, "the named properties"_s, "the bytes"_s, "the environment's variables"_s, "the entries"_s, "the internal fields"_s, "the RegExp state"_s
+            };
+            Typed::AbstractHeapSet heaps;
+            CommaPrinter commaOfWords;
+            StringPrintStream others;
+            for (unsigned lane = 0; lane < words.size(); ++lane) {
+                if (!(differs >> lane * 8 & 0xff))
+                    continue;
+                heaps.add(Typed::heapsOfSecondDigestInEffectsNet[lane]);
+                others.print(commaOfWords, words[lane]);
+            }
+            for (Typed::AbstractHeap heap : heaps)
+                said.print(comma, Typed::nameOf(heap));
+            said.print(", but these parts of ");
+            printWhoseWordsInEffectsNet(said, part >> 16);
+            said.print(" changed: ", others.toString());
+            if (isKnownToSayLessOfSecondDigest(rows, differs)) {
+                if (!goesOn)
+                    return;
+                said.print(" (a table entry that is known to declare less)");
+            }
+            differs = 0;
+        }
+        for (unsigned lane = 0; lane < Typed::heapsOfDigestInEffectsNet.size(); ++lane) {
+            if (differs >> lane * 8 & 0xff)
+                said.print(comma, Typed::nameOf(Typed::heapsOfDigestInEffectsNet[lane]));
+        }
+        if (part >> 16 != Typed::noOperandInEffectsNet && !(part & Typed::speaksOfSecondDigestInEffectsNet)) {
+            said.print(", but ");
+            printWhoseWordsInEffectsNet(said, part >> 16);
+            said.print(" changed there");
+        }
+    } else {
+        if (differs)
+            said.print(" (", BuiltinTable::singleton().textOf(BuiltinID(static_cast<uint16_t>(differs))), ")");
+        said.print(" say that the call ", names[std::min<size_t>(part, names.size() - 1)]);
+    }
+    if (goesOn && !noteFalseRowOfEffects(makeString(function, ':', position, ':', said.toString())))
+        return;
+    RuntimeCheckFailure failure("effects check failed"_s);
+    failure.atTopCall(*instance->vm, AOT_OPERATION_FRAME_RECORD()).inFunction(FunctionID(function));
+    failure.detail(said.toString());
+    failure.report();
+    if (!goesOn)
+        CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCollectionsForEffectsNet, uint64_t, (uint64_t vm))
+{
+    return reinterpret_cast<VM*>(vm)->heap.objectSpace().newlyAllocatedVersion();
+}
+
+static thread_local uint64_t t_restOfLastDigestForEffectsNet;
+
+static uint64_t digestOfLanesForEffectsNet(const std::array<uint64_t, 8>& hashes, uint64_t lanes)
+{
+    uint64_t digest = 0;
+    uint64_t rest = 0;
+    for (unsigned lane = 0; lane < hashes.size(); ++lane) {
+        if (lanes & 1ull << lane) {
+            digest |= (hashes[lane] >> 56) << lane * 8;
+            rest |= (hashes[lane] >> 48 & 0xff) << lane * 8;
+        }
+    }
+    t_restOfLastDigestForEffectsNet = rest;
+    return digest;
+}
+
+static uint64_t secondDigestForEffectsNet(JSCell* cell, uint64_t lanes)
+{
+    using Lane = Typed::SecondLaneInEffectsNet;
+    std::array<uint64_t, Typed::heapsOfSecondDigestInEffectsNet.size()> hashes;
+    hashes.fill(1);
+    auto mix = [&](Lane lane, uint64_t word) {
+        uint64_t& hash = hashes[static_cast<size_t>(lane)];
+        hash = (hash ^ word) * 0x9e3779b97f4a7c15ull;
+        hash ^= hash >> 29;
+    };
+    auto mixBytes = [&](Lane lane, const void* start, size_t numberOfBytes) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(start);
+        size_t offset = 0;
+        for (; offset + sizeof(uint64_t) <= numberOfBytes; offset += sizeof(uint64_t))
+            mix(lane, WTF::unalignedLoad<uint64_t>(bytes + offset));
+        for (; offset < numberOfBytes; ++offset)
+            mix(lane, bytes[offset]);
+    };
+    auto mixRestOfCell = [&](Lane lane, const JSCell* whole, size_t from) {
+        mixBytes(lane, reinterpret_cast<const uint8_t*>(whole) + from, whole->cellSize() - from);
+    };
+    auto mixEndsOfBytes = [&](Lane lane, const void* start, size_t numberOfBytes) {
+        constexpr size_t most = 4 * KB;
+        if (numberOfBytes <= 2 * most) {
+            mixBytes(lane, start, numberOfBytes);
+            return;
+        }
+        mixBytes(lane, start, most);
+        mixBytes(lane, static_cast<const uint8_t*>(start) + numberOfBytes - most, most);
+    };
+    auto mixNamedProperties = [&](JSObject* object) {
+        Structure* structure = object->structure();
+        constexpr PropertyOffset most = 128;
+        PropertyOffset last = structure->maxOffset();
+        for (PropertyOffset offset = 0; offset <= last; ++offset) {
+            if (offset == static_cast<PropertyOffset>(structure->inlineCapacity()) && offset < firstOutOfLineOffset)
+                offset = firstOutOfLineOffset;
+            if (offset == firstOutOfLineOffset + most && last - most > offset)
+                offset = last - most;
+            if (offset <= last)
+                mix(Lane::NamedProperties, JSValue::encode(object->getDirect(offset)));
+        }
+    };
+    auto mixEnvironment = [&](const JSCell* environment) {
+        mixBytes(Lane::Environment, reinterpret_cast<const uint8_t*>(environment) + offsetOfFirstEnvironmentVariable, uncheckedDowncast<Environment>(environment)->layout().size - offsetOfFirstEnvironmentVariable);
+    };
+
+    JSType type = cell->type();
+    if (type == CompiledEnvironmentType)
+        mixEnvironment(cell);
+    else if (cell->isObject()) {
+        JSObject* object = asObject(cell);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(cell);
+        Object* withExtraProperties = compiledObjectOrNull(cell);
+        if (withExtraProperties && !withExtraProperties->extraProperties())
+            withExtraProperties = nullptr;
+        if (withExtraProperties) {
+            const CompiledStructure& structure = withExtraProperties->compiledStructure();
+            mix(Lane::Structure, reinterpret_cast<uintptr_t>(&structure.layout()));
+            mix(Lane::Structure, structure.flags().toRaw());
+        } else
+            mix(Lane::Structure, cell->structureID().bits());
+        mix(Lane::Prototype, JSValue::encode(object->getPrototypeDirect()));
+        if (Object* compiled = compiledObjectOrNull(cell)) {
+            if (JSObject* extraProperties = compiled->extraProperties()) {
+                mix(Lane::NamedProperties, extraProperties->structureID().bits());
+                mixNamedProperties(extraProperties);
+            }
+        } else
+            mixNamedProperties(object);
+        if (isCompiledClosure(cell)) {
+            const Closure* closure = uncheckedDowncast<Closure>(cell);
+            if (closure->entry()) {
+                for (uint64_t reference : closure->captures().first(closure->numberOfReferences())) {
+                    JSValue captured = JSValue::decode(reference);
+                    if (captured && captured.isCell() && captured.asCell()->type() == CompiledEnvironmentType)
+                        mixEnvironment(captured.asCell());
+                }
+            }
+        } else if (isTypedArrayTypeIncludingDataView(type)) {
+            JSArrayBufferView* view = uncheckedDowncast<JSArrayBufferView>(cell);
+            if (const void* vector = view->vectorWithoutPACValidation(); vector && !view->isShared())
+                mixEndsOfBytes(Lane::BytesOfView, vector, view->byteLength());
+        } else if (type == ArrayBufferType) {
+            ArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(cell)->impl();
+            if (const void* data = buffer->data(); data && !buffer->isShared())
+                mixEndsOfBytes(Lane::BytesOfView, data, buffer->byteLength());
+        } else if (type == JSMapType || type == JSSetType) {
+            const JSCell* storage = WTF::unalignedLoad<const JSCell*>(bytes + (type == JSMapType ? JSMap::offsetOfStorage() : JSSet::offsetOfStorage()));
+            mix(Lane::Collection, reinterpret_cast<uintptr_t>(storage));
+            if (storage)
+                mixEndsOfBytes(Lane::Collection, reinterpret_cast<const uint8_t*>(storage) + sizeof(JSCell), storage->cellSize() - sizeof(JSCell));
+        } else if (type == JSPromiseType) {
+            mix(Lane::InternalFields, WTF::unalignedLoad<uint64_t>(bytes + JSPromise::offsetOfPacked()));
+            mix(Lane::InternalFields, WTF::unalignedLoad<uint64_t>(bytes + JSPromise::offsetOfSlot()));
+        } else if (type == JSDateType)
+            mix(Lane::InternalFields, WTF::unalignedLoad<uint64_t>(bytes + DateInstance::offsetOfInternalNumber()));
+        else if (type == RegExpObjectType) {
+            mix(Lane::RegExp, WTF::unalignedLoad<uint64_t>(bytes + RegExpObject::offsetOfRegExpAndFlags()));
+            mix(Lane::RegExp, WTF::unalignedLoad<uint64_t>(bytes + RegExpObject::offsetOfLastIndex()));
+        } else if (type == JSArrayIteratorType || type == JSMapIteratorType || type == JSSetIteratorType || type == JSStringIteratorType || type == JSIteratorHelperType
+            || type == JSWrapForValidIteratorType || type == JSRegExpStringIteratorType || type == JSAsyncFromSyncIteratorType)
+            mixRestOfCell(Lane::InternalFields, cell, JSInternalFieldObjectImpl<>::offsetOfInternalFields());
+    }
+    return digestOfLanesForEffectsNet(hashes, lanes);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDigestForEffectsNet, uint64_t, (EncodedJSValue encodedValue, uint64_t lanes))
+{
+    if (lanes & Typed::countsStoreInEffectsNet) {
+        reinterpret_cast<State*>(encodedValue)->countWriteForEffectsNet(static_cast<Typed::CountInEffectsNet>(lanes & 0xff));
+        return 0;
+    }
+    if (lanes & Typed::asksForCountsInEffectsNet) {
+        const State& state = *reinterpret_cast<const State*>(encodedValue);
+        uint64_t counts = 0;
+        for (unsigned count = 0; count < Typed::heapsOfCountsInEffectsNet.size(); ++count) {
+            if (lanes & 1ull << count)
+                counts |= Typed::wordOfCountInEffectsNet(state.writesCountedForEffectsNet[count], count);
+        }
+        return counts;
+    }
+    if (lanes & Typed::asksForRestOfLastDigestInEffectsNet)
+        return t_restOfLastDigestForEffectsNet;
+    t_restOfLastDigestForEffectsNet = 0;
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value || !value.isCell())
+        return 0;
+    if (lanes & Typed::asksForSecondDigestInEffectsNet)
+        return secondDigestForEffectsNet(value.asCell(), lanes);
+    std::array<uint64_t, Typed::heapsOfDigestInEffectsNet.size()> hashes;
+    hashes.fill(1);
+    auto mix = [&](unsigned lane, uint64_t word) {
+        hashes[lane] = (hashes[lane] ^ word) * 0x9e3779b97f4a7c15ull;
+        hashes[lane] ^= hashes[lane] >> 29;
+    };
+    auto mixWords = [&](unsigned lane, const void* start, size_t numberOfBytes) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(start);
+        for (size_t offset = 0; offset + sizeof(uint64_t) <= numberOfBytes; offset += sizeof(uint64_t))
+            mix(lane, WTF::unalignedLoad<uint64_t>(bytes + offset));
+    };
+    constexpr unsigned shapeWords = 0, orderWords = 1, objectFields = 2, arrayStorage = 4, elements = 5, stringStorage = 6, typedArrayStorage = 7;
+    static_assert(Typed::heapsOfDigestInEffectsNet[shapeWords] == Typed::AbstractHeap::ShapeWords && Typed::heapsOfDigestInEffectsNet[typedArrayStorage] == Typed::AbstractHeap::TypedArrayStorage);
+
+    JSCell* cell = value.asCell();
+    if (cell->isString()) {
+        if (const StringImpl* found = asString(cell)->tryGetValueImpl()) {
+            const uint8_t* impl = reinterpret_cast<const uint8_t*>(found);
+            mix(stringStorage, reinterpret_cast<uintptr_t>(impl));
+            mix(stringStorage, WTF::unalignedLoad<uint32_t>(impl + StringImpl::flagsOffset()));
+            mix(stringStorage, WTF::unalignedLoad<uint32_t>(impl + StringImpl::lengthMemoryOffset()));
+            mix(stringStorage, WTF::unalignedLoad<uint64_t>(impl + StringImpl::dataOffset()));
+        } else
+            mixWords(stringStorage, reinterpret_cast<const uint8_t*>(cell) + sizeof(JSCell), sizeof(JSRopeString) - sizeof(JSCell));
+    } else if (Object* compiled = compiledObjectOrNull(cell)) {
+        mix(shapeWords, compiled->shapeWord());
+        mix(orderWords, compiled->orderWord());
+        mixWords(objectFields, reinterpret_cast<const uint8_t*>(cell) + offsetOfFirstField, compiled->layout().size - offsetOfFirstField);
+    } else if (cell->isObject()) {
+        JSObject* object = asObject(cell);
+        Butterfly* butterfly = object->butterfly();
+        bool isArray = cell->type() == ArrayType || cell->type() == DerivedArrayType;
+        if (isArray) {
+            mix(arrayStorage, object->indexingTypeAndMisc() & AllArrayTypesAndHistory);
+            mix(arrayStorage, reinterpret_cast<uintptr_t>(butterfly));
+        }
+        if (butterfly && hasAnyArrayStorage(object->indexingType())) {
+            mix(arrayStorage, butterfly->arrayStorage()->length());
+            mix(arrayStorage, butterfly->arrayStorage()->vectorLength());
+        } else if (butterfly && hasIndexedProperties(object->indexingType())) {
+            mix(arrayStorage, butterfly->publicLength());
+            mix(arrayStorage, butterfly->vectorLength());
+            mixWords(elements, butterfly->contiguous().data(), std::min<size_t>(butterfly->publicLength(), butterfly->vectorLength()) * sizeof(EncodedJSValue));
+        }
+        if (isTypedArrayTypeIncludingDataView(cell->type())) {
+            JSArrayBufferView* view = uncheckedDowncast<JSArrayBufferView>(cell);
+            mix(typedArrayStorage, reinterpret_cast<uintptr_t>(view->vectorWithoutPACValidation()));
+            mix(typedArrayStorage, view->lengthRaw());
+            mix(typedArrayStorage, view->byteOffsetRaw());
+            mix(typedArrayStorage, static_cast<uint64_t>(view->mode()));
+            if (!view->isShared())
+                mix(typedArrayStorage, view->byteLength());
+        } else if (cell->type() == ArrayBufferType) {
+            if (ArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(cell)->impl(); !buffer->isShared()) {
+                mix(typedArrayStorage, reinterpret_cast<uintptr_t>(buffer->data()));
+                mix(typedArrayStorage, buffer->byteLength());
+            }
+        }
+    }
+    return digestOfLanesForEffectsNet(hashes, lanes);
 }
 
 static Identifier identifierOf(VM& vm, StringID text)
@@ -380,13 +965,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeErrorWithName, JSCell*, 
     DeferTerminationForAWhile deferTermination(vm);
     Identifier identifier = identifierOf(vm, StringID(name));
     RELEASE_AND_RETURN(scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), &identifier));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewFunctionThatThrows, JSCell*, (Instance* instance, EncodedJSValue getter, uint32_t name))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewFunctionThatThrows);
-    DeferTerminationForAWhile deferTermination(vm);
-    RELEASE_AND_RETURN(scope, standInForCompiledGetter(globalObject, asObject(JSValue::decode(getter)), identifierOf(vm, StringID(name)).string()));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuppressedError, JSCell*, (Instance* instance, EncodedJSValue error, EncodedJSValue suppressed))
@@ -429,7 +1007,7 @@ static ErrorInstance* createErrorWithMessage(Instance* instance, JSGlobalObject*
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowRuntimeError, void, (Instance* instance, uint32_t errorKind))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowRuntimeError);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowRuntimeError);
     throwException(globalObject, scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), nullptr));
     OPERATION_RETURN(scope);
 }
@@ -465,10 +1043,13 @@ static DecodedThrowSite decodeThrowSite(const uint64_t* registers, const uint32_
             localWords[1] = wordBehindCall(site, 1);
         words = localWords.data();
         break;
-    case ThrowSiteSource::WordInRegister:
-        localWords[0] = static_cast<uint32_t>(registers[static_cast<unsigned>(throwWordGPR)]);
+    case ThrowSiteSource::WordInRegister: {
+        uint64_t wordsInRegister = registers[static_cast<unsigned>(throwWordGPR)];
+        localWords[0] = static_cast<uint32_t>(wordsInRegister);
+        localWords[1] = static_cast<uint32_t>(wordsInRegister >> 32);
         words = localWords.data();
         break;
+    }
     case ThrowSiteSource::FaultSite: {
         auto faultSite = Image::current()->faultSiteAt(reinterpret_cast<const uint8_t*>(site) - sizeOfNearCall);
         RELEASE_ASSERT(faultSite);
@@ -492,9 +1073,12 @@ JSValue valueOfDecodedReference(const Instance* instance, uint64_t bits)
 
 static JSValue throwSiteValue(const Instance* instance, const uint64_t* registers, const DecodedThrowSite& decoded)
 {
+    if (static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::Void)
+        return jsUndefined();
     unsigned number = decoded.word.registerNumber;
+    RELEASE_ASSERT(number < ThrowSiteWord::numberOfStoredFPRs);
     uint64_t bits = registers[number];
-    uint64_t floatingPointBits = registers[ThrowSiteWord::numberOfRegistersPerBank + number];
+    uint64_t floatingPointBits = registers[ThrowSiteWord::numberOfStoredGPRs + number];
     JSValue value;
     switch (static_cast<Typed::Representation>(decoded.word.representation)) {
     case Typed::Representation::Void:
@@ -506,13 +1090,7 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
     case Typed::Representation::Int64:
         return jsNumber(static_cast<double>(static_cast<int64_t>(bits)));
     case Typed::Representation::Double:
-    case Typed::Representation::DoubleWithPayload:
-    case Typed::Representation::ImpureDouble:
         return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
-    case Typed::Representation::LiteralString:
-        if (isLiteralStringWord(bits))
-            return instance->state->strings->stringForLiteralStringWord(bits);
-        [[fallthrough]];
     case Typed::Representation::Cell:
         value = decoded.isFaultSite ? valueOfDecodedReference(instance, bits) : JSValue::decode(bits);
         return value ? value : jsUndefined();
@@ -552,15 +1130,66 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
     instance->runtime.exceptions.thrownValue = JSValue::encode(error);
 }
 
+[[noreturn]] static void stopAtFalseProofBehind(Instance& instance, const uint32_t* returnAddress, EncodedJSValue found, uint32_t source, uint32_t expectedType)
+{
+    RELEASE_ASSERT(Image::current()->locate(returnAddress).kind == CodeKind::Function);
+    RuntimeCheckFailure failure(failedCheckOf(source));
+    failure.atReturnAddress(returnAddress);
+    stopAtFalseProof(instance, failure, found, source, expectedType);
+}
+
+static uint32_t expectedTypeOfKinds(uint32_t kinds, JSValue found)
+{
+    if (!(kinds & KindsOfProof::everyObject) && found && found.isObject())
+        return 0;
+    uint16_t primitives = kinds & KindsOfProof::primitives;
+    if (primitives & KindsOfProof::everyNumber)
+        primitives |= Typed::Primitive::Number;
+    return FalseProofWord::summarize(primitives, kinds & KindsOfProof::everyObject);
+}
+
+static bool isEntryThatInspectorBroughtCallTo(VM& vm, const Instance& instance, const uint32_t* returnAddress, uint32_t source)
+{
+    if (source != static_cast<uint32_t>(Typed::ProofSource::EntryParameter) || !isAskedByCodeThatInspectorBrought(vm, instance, FrameThatAsks::IsAboveTheTopFrame))
+        return false;
+    const Image& image = *Image::current();
+    CodeLocation location = image.locate(returnAddress);
+    if (location.kind != CodeKind::Function)
+        return false;
+    std::optional<CallSiteRecord> record = image.callSiteAt(location.function, location.offset);
+    return !record || !record->inlineFrame;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopUnlessValueHasType, void, (Instance* instance, uint32_t kindsAndSource, uint32_t type, EncodedJSValue value))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTStopUnlessValueHasType);
+    const RuntimeLayoutTable& layouts = instance->state->objects->layouts;
+    const RuntimeType& expected = layouts.typeAt(type);
+    if (!layouts.valueHasType(expected, JSValue::decode(value))) [[unlikely]]
+        stopAtFalseProofBehind(*instance, static_cast<const uint32_t*>(std::bit_cast<const CallerFrameAndPC*>(callFrame)->returnPC), value, kindsAndSource >> KindsOfProof::shiftOfSource, FalseProofWord::summarize(expected.primitiveSet().toRaw(), expected.numberOfCellTests));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
-    // The fault handler has passed an address in a register that compiled code allocates like any other.
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowAtSite);
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
         const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));
+    if (decoded.word.stopsAtFalseProof()) {
+        EncodedJSValue found = static_cast<Typed::Representation>(decoded.word.representation) != Typed::Representation::Void ? registers[decoded.word.registerNumber] : 0;
+        uint32_t proofSource = FalseProofWord::sourceOf(decoded.a);
+        uint32_t expectedType = FalseProofWord::expectedTypeOf(decoded.a);
+        if (decoded.word.hasWideA) {
+            proofSource = decoded.a >> KindsOfProof::shiftOfSource;
+            expectedType = expectedTypeOfKinds(decoded.a & KindsOfProof::all, JSValue::decode(found));
+        }
+        if (isEntryThatInspectorBroughtCallTo(vm, *instance, site, proofSource)) {
+            throwTypeError(globalObject, scope, changeThatCompiledCodeRulesOutMessage("call this function with these values"_s));
+            OPERATION_RETURN(scope);
+        }
+        stopAtFalseProofBehind(*instance, site, found, proofSource, expectedType);
+    }
     if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
-        count(*instance, RuntimeCounterID::ThrownErrorsNotCreated);
         instance->runtime.exceptions.thrownValue = JSValue::encode(jsUndefined());
         OPERATION_RETURN(scope);
     }
@@ -582,7 +1211,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         throwUninitializedBinding(globalObject, scope, decoded.a);
         break;
     case ThrowKind::NotAFunction:
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? nameOfCalleeForwardedOnTop(vm) : Image::current()->text().view(StringID(decoded.a))));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::ErrorWithMessage:
         throwErrorWithMessage(instance, globalObject, scope, decoded);

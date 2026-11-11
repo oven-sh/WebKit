@@ -1,0 +1,54 @@
+# the callee is a built-in that the front end found by binding, and its operands are proven to be what a row takes: the call goes by the row of the overload. Its code in line answers for all that the row takes, so it stands in the place of the call
+# function larger(a, b) { if (typeof a === "number" && typeof b === "number") return [Math.hypot(a, b)]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK: mechanisms TypedOperations,DirectCalls,BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: : number @Double = CallInline {{*}}inlineBuiltin=MathHypot overload=MathHypot
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = Call v
+# function largerOfAny(a, b) { return [Math.hypot(a, b)]; }
+# To make a number of what nobody knows may run code. A function of Math makes a number of each argument, from the first to the last, and looks at nothing else:
+# the conversions that stand in front of the call are the ones that it makes, in its order, and behind them stands its code in line.
+# RUN(ANY): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ANY-LABEL: code f2:Body
+# ANY-COUNT-2: = ToNumber
+# ANY: : number @Double = CallInline {{*}}inlineBuiltin=MathHypot overload=MathHypot
+# RUN(ANYNEVER): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ANYNEVER-NOT: = Call v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="larger" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Builtin builtin=Math
+    v7 = Builtin builtin=MathHypot
+    v8 = Call v7, v6, v3, v5 calleeName="Math.hypot"
+    v9 = NewArray v8 contents=anything
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f2 name="largerOfAny" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=MathHypot
+    v4 = Call v3, v2, v0, v1 calleeName="Math.hypot"
+    v5 = NewArray v4 contents=anything
+    Return v5
+}

@@ -1,0 +1,51 @@
+# a call of a built-in looks at what it is handed: its rows go by the types of the operands. So it leans on a proof as an operator does, and the typed run of a guess goes on through it:
+# with the proof the call goes by one row, in a loop by its code in line. Without it a conversion stands in front of that code
+# function lengths(x: number, n) { let sum = 0; for (let i = 0; i < n; i++) sum = sum + Math.sqrt(x * x); return sum; }
+# The guard at the entry is withheld: with it the number is proven in the whole body.
+# RUN: walk f1 mechanisms=all-ParameterGuards-LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=number
+# CHECK-NEXT: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
+# CHECK: [[typed]]()
+# CHECK: = Mul {{*}}form=Numbers
+# CHECK: : number @Double = CallInline {{*}}inlineBuiltin=MathSqrt
+# CHECK: [[closed]]() frequency=Rare
+# CHECK: = Mul {{*}}form=Generic
+# CHECK: = ToNumber
+# CHECK: = CallInline {{*}}inlineBuiltin=MathSqrt
+# One test stands for the product and the call.
+# RUN(ONE): walk f1 mechanisms=all-ParameterGuards-LoopInvariants
+# ONE-COUNT-1: testedType=number
+# ONE-NOT: testedType=number
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="lengths" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|number flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|number, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Mul v0, v0
+    v9 = Builtin builtin=Math
+    v10 = Builtin builtin=MathSqrt
+    v11 = Call v10, v9, v8 calleeName="Math.sqrt"
+    v12 = Add v4, v11
+    v13 = Increment v5
+    Jump -> next b1(v12, v13)
+  b3():
+    Return v4
+}

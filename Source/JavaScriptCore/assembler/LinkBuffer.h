@@ -423,6 +423,9 @@ ALLOW_NONLITERAL_FORMAT_END
         return m_records->externalLinks;
     }
 
+    // A branch of code for an image could not be encoded, and was left as it was emitted. The code must not be used.
+    bool hasBranchOutOfReach() const { return m_hasBranchOutOfReach; }
+
     bool hasProcessAddress() const
     {
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
@@ -447,7 +450,7 @@ private:
 
 #if CPU(X86_64)
         Vector<X86JumpShift> jumpShifts;
-        size_t jumpShiftCursor { 0 };
+        Vector<uint32_t, 64> firstJumpShiftByStretch;
         Vector<X86EmittedJump> emittedJumps;
 #endif
         unsigned patchablePointerCount { 0 };
@@ -504,7 +507,10 @@ private:
     void takeRecords(MacroAssembler&);
     void finalizeRecords();
 #if CPU(X86_64)
-    JS_EXPORT_PRIVATE uint32_t jumpShiftAt(uint32_t offset) const;
+    uint32_t jumpShiftAt(uint32_t offset) const
+    {
+        return shortenedJumpShiftAt(m_records->jumpShifts.span(), m_records->firstJumpShiftByStretch.span(), offset);
+    }
 #endif
     JS_EXPORT_PRIVATE void didLinkCall(Call, AssemblerLabel emittedLabel, const void* target);
     JS_EXPORT_PRIVATE void didLinkJump(Jump, AssemblerLabel emittedLabel, BranchEncoding, const void* target);
@@ -556,6 +562,7 @@ private:
 #endif
     bool m_didAllocate { false };
     bool m_didFinalize { false };
+    bool m_hasBranchOutOfReach { false };
     AssemblerPolicy m_policy;
 #ifndef NDEBUG
     bool m_completed { false };

@@ -11,7 +11,9 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTImageTestSupport.h"
 #include "AOTInstance.h"
-#include "AOTPropertyCachesFront.h"
+#include "AOTStubBlob.h"
+#include "AOTStubCatalog.h"
+#include "AOTStubRecording.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsArrays.h"
@@ -22,10 +24,10 @@
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsCollections.h"
+#include "AOTStubsConstants.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsExceptions.h"
-#include "AOTStubsHashTables.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
 #include "AOTStubsPrimitiveFastPaths.h"
@@ -38,12 +40,10 @@
 #include "IndexingType.h"
 #include "JSCJSValueInlines.h"
 #include "JSObject.h"
-#include "PureNaN.h"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <utility>
-#include <wtf/DataLog.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
@@ -59,10 +59,8 @@ static constexpr GPRReg T13 = gprOf(StubRegister::T13);
 
 static constexpr std::array stepChecks { GeneratorStepCheck::IsUnmodifiedGenerator, GeneratorStepCheck::IsGenerator, GeneratorStepCheck::IsUnmodified, GeneratorStepCheck::None };
 static_assert(stepChecks.size() == descriptorOf(StubFamily::StepGenerator).numberOfForms);
-static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator, StepConsumer::AsyncFunctionAwaitingCall, StepConsumer::AsyncGeneratorAwaitingCall };
+static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator };
 static_assert(stepConsumers.size() == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
-static constexpr std::array generatorKinds { NewGeneratorKind::Sync, NewGeneratorKind::Async };
-static_assert(generatorKinds.size() == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 
 static StubBlob buildBlob(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
 {
@@ -187,25 +185,10 @@ static bool clobbersOperandOf(const StubSummary& summary, const StubSignature& s
     });
 }
 
-static bool containsArgumentGPR(const RegisterSet& registers)
-{
-    for (unsigned i = 0; i < numberOfArgumentGPRs; ++i) {
-        if (containsRegister(registers, argumentGPR(i)))
-            return true;
-    }
-    return false;
-}
-
 static bool mayThrowAndCollect(const StubCatalog& catalog, StubKey key)
 {
     Typed::Effects effects = catalog.effectsOf(key);
     return effects.mayThrow && effects.mayCollect;
-}
-
-static bool neitherThrowsNorCollects(const StubCatalog& catalog, StubKey key)
-{
-    Typed::Effects effects = catalog.effectsOf(key);
-    return !effects.mayThrow && !effects.mayCollect;
 }
 
 static EntrySet entrySetOf(std::initializer_list<Entry> entries)
@@ -247,7 +230,7 @@ static void testEntryPlacements()
 {
     Vector<StubKey> bodies = allStubBodies();
     for (const StubOptions& options : stubOptionVariants()) {
-        StubCatalog catalog(options, StubPolicy { });
+        StubCatalog catalog(options);
         StubBlob blob = buildFullBlob(catalog);
         checkEntryOffsets(blob, bodies);
         checkDistinctBodyOffsets(blob);
@@ -305,7 +288,7 @@ static void checkGeneratorBodySites(const StubCatalog& catalog, const StubBlob& 
 
 static void testReturnSites()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     StubBlob blob = buildFullBlob(catalog);
     checkSingleReturnSites(blob);
     checkGeneratorBodySites(catalog, blob);
@@ -323,12 +306,13 @@ static void checkEntries(const StubCatalog& catalog, StubKey body, std::initiali
 
 static void testBodyEntries()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     checkEntries(catalog, getByVal(false), { getByVal(false), getByVal(true) });
     checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces() });
-    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters() });
+    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters(), getByValAtConstantIndex() });
+    for (ECMAMode mode : { ECMAMode::strict(), ECMAMode::sloppy() })
+        checkEntries(catalog, putByVal(false, mode), { putByVal(false, mode), putByVal(true, mode), putByValAtConstantIndex(mode) });
     checkEntries(catalog, getByValCached(RegistersOfCaller::AreKept), { getByValCached(RegistersOfCaller::AreKept), getByValCachedCells(RegistersOfCaller::AreKept), getByValCachedAtPlace(RegistersOfCaller::AreKept), getByValCachedBehindPlaces(RegistersOfCaller::AreKept) });
-    // `sum += table["on" + kind]`: the sum stays in its register, whatever the read does on its way. A read by a key that is given loses every floating-point register that a call loses.
     for (BaseOfKeyedRead base : { BaseOfKeyedRead::IsCell, BaseOfKeyedRead::IsAnyValue }) {
         RegisterSet keptByRead = registersClobberedByOperations();
         keptByRead.exclude(catalog.summaryOf(getByValOfKeyOfPair(base)).clobbered);
@@ -336,19 +320,22 @@ static void testBodyEntries()
     }
     AOT_TEST_CHECK(catalog.summaryOf(getByValCachedCells()).clobbered.subsumes(registersClobberedByOperations()));
     checkEntries(catalog, getByIdAtSite(), { getByIdAtSite(), getByIdOfObjectAtSite() });
-    checkEntries(catalog, getByIdAtSiteHashed(), { getByIdAtSiteHashed() });
+    for (StubKey key : { getByIdCalledByCode(), getByIdCheckingColumn(), putByIdHashed(PutMode::Strict), putByIdHashed(PutMode::Define), putByIdAtSite(PutMode::Sloppy), readAtSite(ReceiverAtSite::IsAnyValue), readAtSite(ReceiverAtSite::IsCell), readTruthAtSite(ReceiverAtSite::IsAnyValue), readAtSiteAskingStructureFirst(ReceiverAtSite::IsCell), readTruthAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue), readAtSiteUnlessAsMade(), callMethodAtSite(0), callMethodAtSite(2), callMethodAtSite(2, 1), callMethodAtSite(3, 3) }) {
+        StubKey sibling = siblingUnderNameWithColumn(key).value();
+        AOT_TEST_CHECK(exists(sibling) && sibling != key && !siblingUnderNameWithColumn(sibling));
+        AOT_TEST_CHECK(catalog.summaryOf(key).clobbered.subsumes(catalog.summaryOf(sibling).clobbered));
+    }
     checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
-        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueNotClosure(count), callValueEngineCallee(count) });
+        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueFunctionOfEngine(count) });
         if (exists(callHostFunctionWithoutBoxedCall(count)))
-            checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionWithoutBoxedCall(count) });
+            checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionThatMayBeUnfetched(count), callHostFunctionWithoutBoxedCall(count) });
         else
             checkEntries(catalog, callHostFunction(count), { callHostFunction(count) });
     }
     checkEntries(catalog, callValueWithCount(), { callValueWithCount(), callCellWithCount() });
     checkEntries(catalog, arrayPush(), { arrayPush(), arrayPushOfKnownKind() });
-    checkEntries(catalog, arrayPushDouble(), { arrayPushDouble() });
 
     StubBlob blob = buildFullBlob(catalog);
     std::optional<uint32_t> offsetOfFirstEntry = blob.offsetOf(getByValCached());
@@ -375,6 +362,9 @@ static void checkKeyedAccessReferences(const StubCatalog& catalog)
     AOT_TEST_CHECK(refersOnceBy(catalog, putByValCached(PutMode::Strict), putByVal(false, ECMAMode::strict()), StubReference::Kind::Jump));
     AOT_TEST_CHECK(refersOnceBy(catalog, putByValCached(PutMode::Sloppy), putByVal(false, ECMAMode::sloppy()), StubReference::Kind::Jump));
     AOT_TEST_CHECK(!refersToFamily(catalog, defineByValCached(), StubFamily::PutByVal));
+    AOT_TEST_CHECK(refersOnceBy(catalog, defineByValCached(), storeElementOfCompiledObject(PutMode::Define), StubReference::Kind::Jump));
+    AOT_TEST_CHECK(refersOnceBy(catalog, putByVal(false, ECMAMode::strict()), storeElementOfCompiledObject(PutMode::Strict), StubReference::Kind::Jump));
+    AOT_TEST_CHECK(refersOnceBy(catalog, putByVal(false, ECMAMode::sloppy()), storeElementOfCompiledObject(PutMode::Sloppy), StubReference::Kind::Jump));
 
     checkHandlerReferences(catalog, getByValCached(), SlotHandlerTable::ReadByVal);
     checkHandlerReferences(catalog, putByValCached(PutMode::Strict), SlotHandlerTable::StoreStrictByVal);
@@ -405,16 +395,10 @@ static void checkHostCallReferences(const StubCatalog& catalog)
     constexpr std::pair<BoxedCallForm, StubFamily> boxedCallTargets[] = {
         { BoxedCallForm::ArrayPush, StubFamily::ArrayPushOfKnownKind }, { BoxedCallForm::ArraySlice, StubFamily::ArraySlice },
         { BoxedCallForm::MapDelete, StubFamily::MapDelete }, { BoxedCallForm::MapGet, StubFamily::MapGet }, { BoxedCallForm::MapHas, StubFamily::MapHas }, { BoxedCallForm::MapSet, StubFamily::MapSet },
-        { BoxedCallForm::SetAdd, StubFamily::SetAdd }, { BoxedCallForm::SetDelete, StubFamily::SetDelete }, { BoxedCallForm::SetHas, StubFamily::SetHas },
-        { BoxedCallForm::StringIndexOf, StubFamily::StringIndexOf }, { BoxedCallForm::StringStartsWith, StubFamily::StringStartsWith },
-        { BoxedCallForm::StringSlice, StubFamily::Substring }, { BoxedCallForm::StringSubstring, StubFamily::Substring }, { BoxedCallForm::StringCharAt, StubFamily::Substring },
-        { BoxedCallForm::StringEndsWith, StubFamily::CallOperation }, { BoxedCallForm::StringIncludes, StubFamily::CallOperation }, { BoxedCallForm::StringSplit, StubFamily::CallOperation },
-        { BoxedCallForm::StringReplace, StubFamily::StringReplaceRegExpMayNotMatch }, { BoxedCallForm::StringReplace, StubFamily::CallOperation }, { BoxedCallForm::StringReplaceAll, StubFamily::CallOperation },
-        { BoxedCallForm::RegExpTest, StubFamily::RegExpMatch },
-        { BoxedCallForm::StringToLowerCase, StubFamily::CallOperation }, { BoxedCallForm::StringToUpperCase, StubFamily::CallOperation },
-        { BoxedCallForm::StringTrimEnd, StubFamily::CallOperation }, { BoxedCallForm::StringTrimStart, StubFamily::CallOperation },
-        { BoxedCallForm::WeakMapGet, StubFamily::WeakMapGet }, { BoxedCallForm::WeakMapHas, StubFamily::WeakMapHas }, { BoxedCallForm::WeakMapSet, StubFamily::WeakMapSet },
-        { BoxedCallForm::WeakSetHas, StubFamily::WeakSetHas },
+        { BoxedCallForm::SetAdd, StubFamily::SetAdd }, { BoxedCallForm::SetHas, StubFamily::MapHas },
+        { BoxedCallForm::StringIndexOf, StubFamily::StringIndexOf },
+        { BoxedCallForm::StringSlice, StubFamily::Substring },
+        { BoxedCallForm::StringToLowerCase, StubFamily::CallOperation },
     };
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
         bool hasBoxedCalls = count >= BoxedCallEntry::minArgumentCount && count <= BoxedCallEntry::maxArgumentCount;
@@ -424,40 +408,25 @@ static void checkHostCallReferences(const StubCatalog& catalog)
         for (auto [form, family] : boxedCallTargets) {
             StubKey handler = callBoxedBuiltin(form, count);
             AOT_TEST_CHECK(refersOnceBy(catalog, callHostFunction(count), handler, StubReference::Kind::Jump));
-            AOT_TEST_CHECK(refersToFamily(catalog, handler, family) == acceptsArgumentCount(form, count));
-            AOT_TEST_CHECK(refersOnceBy(catalog, handler, callHostFunctionWithoutBoxedCall(count), StubReference::Kind::Jump));
+            bool callsOperationOfItsCount = count > 1 && (form == BoxedCallForm::ArrayPush || form == BoxedCallForm::StringIndexOf);
+            AOT_TEST_CHECK(refersToFamily(catalog, handler, family) == (acceptsArgumentCount(form, count) && !callsOperationOfItsCount));
+            AOT_TEST_CHECK(refersOnceBy(catalog, handler, fetchesFunctionOnlyToLeave(form, count) ? callHostFunctionThatMayBeUnfetched(count) : callHostFunctionWithoutBoxedCall(count), StubReference::Kind::Jump));
         }
-    }
-}
-
-static void checkMethodCallReferences(const StubCatalog& catalog)
-{
-    StubOptions validatingOptions;
-    validatingOptions.validates = true;
-    StubOptions wideOptions;
-    wideOptions.useWideReferences = true;
-    StubCatalog validatingCatalog(validatingOptions, StubPolicy { });
-    StubCatalog wideCatalog(wideOptions, StubPolicy { });
-    for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
-        AOT_TEST_CHECK(refersOnceBy(catalog, callMethodById(count), callFromArgumentListFrame(), StubReference::Kind::Jump));
-        AOT_TEST_CHECK(!numberOfReferences(validatingCatalog, callMethodById(count), callFromArgumentListFrame()));
-        AOT_TEST_CHECK(!numberOfReferences(wideCatalog, callMethodById(count), callFromArgumentListFrame()));
     }
 }
 
 static void testReferences()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     checkKeyedAccessReferences(catalog);
     checkResumptionReferences(catalog);
     checkExceptionReferences(catalog);
     checkHostCallReferences(catalog);
-    checkMethodCallReferences(catalog);
 }
 
 static void testReachability()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
 
     StubBlob keyedReadBlob = buildBlob(catalog, std::array { getByValCached() }, EntrySet { });
     for (StubKey key : { getByValCached(), getByValCachedCells(), getByVal(false), getByVal(true) })
@@ -476,19 +445,46 @@ static void testReachability()
     }
 }
 
+static void testStartOfModule()
+{
+    StubCatalog catalog(StubOptions { });
+    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTThrow }));
+    AOT_TEST_CHECK(std::ranges::count(catalog.recordingOf(startModule()).returnLabels, StubFrameKind::ModuleStart) == 1);
+    AOT_TEST_CHECK(refersToBody(catalog, startModule(), bodyOf(handleException(false))));
+    AOT_TEST_CHECK(mayThrowAndCollect(catalog, startModule()));
+    const StubSignature& signature = catalog.summaryOf(startModule()).signature;
+    AOT_TEST_CHECK(signature.numberOfOperands == 1 && signature.operands[0] == Reg(gprOf(StubRegister::A0)) && signature.firstResult == Reg(GPRInfo::returnValueGPR));
+    for (StubKey body : allStubBodies())
+        AOT_TEST_CHECK(body == startModule() || !catalog.recordingOf(body).returnLabels.contains(StubFrameKind::ModuleStart));
+
+    StubBlob blob = buildBlob(catalog, std::array { startModule() }, EntrySet { });
+    AOT_TEST_CHECK(blob.offsetOf(startModule()));
+    AOT_TEST_CHECK(numberOfSites(blob, StubFrameKind::ModuleStart) == 1 && bodiesContainingSites(blob, StubFrameKind::ModuleStart)[0] == startModule());
+    for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTAbandonModuleEvaluation })
+        AOT_TEST_CHECK(blob.entriesUsed.get(indexOf(entry)));
+
+    AOT_TEST_CHECK(refersOnceBy(catalog, startModuleThatRunTimeNames(), startModule(), StubReference::Kind::Jump));
+    StubBlob blobBehindWords = buildBlob(catalog, std::array { startModuleThatRunTimeNames() }, EntrySet { });
+    AOT_TEST_CHECK(blobBehindWords.offsetOf(startModuleThatRunTimeNames()) && blobBehindWords.offsetOf(startModule()) && numberOfSites(blobBehindWords, StubFrameKind::ModuleStart) == 1);
+
+    StubBlob blobWithoutStarts = buildBlob(catalog, std::array { newPromise() }, EntrySet { });
+    AOT_TEST_CHECK(!blobWithoutStarts.offsetOf(startModuleThatRunTimeNames()) && !blobWithoutStarts.offsetOf(startModule()) && !numberOfSites(blobWithoutStarts, StubFrameKind::ModuleStart));
+    for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTAbandonModuleEvaluation })
+        AOT_TEST_CHECK(!blobWithoutStarts.entriesUsed.get(indexOf(entry)));
+}
+
 static void testMissingKeys()
 {
     for (StubKey key : { newPromise(), toNumberAsDouble(), substring(), arraySlice(), arrayPush(), stringsAreEqual() })
         AOT_TEST_CHECK(exists(key) && !exists(key.withCallerFrame(CallerFrame::Frameless)));
     for (CallerFrame callerFrame : { CallerFrame::HasFrame, CallerFrame::Frameless }) {
-        AOT_TEST_CHECK(exists(pollAtLoop(callerFrame)) == isX86_64());
+        AOT_TEST_CHECK(exists(pollAtLoop(callerFrame)));
         AOT_TEST_CHECK(exists(throwAtSite(ThrowSiteSource::FaultSite, callerFrame)));
     }
 
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::NewGenerator).withForm(2)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(2)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
 }
 
@@ -506,7 +502,6 @@ static void checkCoroutineSummaries(const StubCatalog& catalog)
 {
     checkAwaitSummary(catalog, awaitBySavingFrame(), A1);
     checkAwaitSummary(catalog, awaitCallBySavingFrame(), R0);
-    checkAwaitSummary(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn), A1);
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, returnAsyncResult()));
 
     Typed::Effects effectsOfPromiseCreation = catalog.effectsOf(newPromise());
@@ -537,22 +532,11 @@ static void checkSubstringSummary(const StubCatalog& catalog)
         AOT_TEST_CHECK(!containsRegister(summary.clobbered, reg));
 }
 
-static void checkCallSummaries(const StubCatalog& catalog)
+static void checkTextSearchSummary(const StubCatalog& catalog)
 {
-    const RegisterSet& clobberedByResolvedCall = catalog.summaryOf(callResolvedValue()).clobbered;
-    for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
-        const StubSummary& summary = catalog.summaryOf(resolveCallValue(count));
-        AOT_TEST_CHECK(withoutMacroScratch(summary.clobbered) == setOf({ T11, T13 }));
-        AOT_TEST_CHECK(!containsArgumentGPR(summary.clobbered));
-        AOT_TEST_CHECK(neitherThrowsNorCollects(catalog, resolveCallValue(count)));
-        AOT_TEST_CHECK(!referencesOf(catalog, resolveCallValue(count)).isEmpty());
-        AOT_TEST_CHECK(numberOfReferences(catalog, resolveCallValue(count), callValueEngineCallee(count)) == 1);
-        for (const StubReference& reference : referencesOf(catalog, resolveCallValue(count))) {
-            AOT_TEST_CHECK(reference.kind == StubReference::Kind::ReturnedAddress);
-            AOT_TEST_CHECK(catalog.effectsOf(reference.target).mayThrow);
-            AOT_TEST_CHECK(clobberedByResolvedCall.subsumes(catalog.summaryOf(reference.target).clobbered));
-        }
-    }
+    const StubSummary& summary = catalog.summaryOf(findText8());
+    for (GPRReg reg : { A2, A3, gprOf(StubRegister::A4) })
+        AOT_TEST_CHECK(containsRegister(summary.clobbered, reg));
 }
 
 static void checkArrayCreationSummary(const StubCatalog& catalog, StubKey key, const StubSignature& largestLiteral)
@@ -570,27 +554,15 @@ static void checkArraySummaries(const StubCatalog& catalog)
     const StubSignature& largestLiteral = catalog.summaryOf(arrayLiteral(maxCount)).signature;
     AOT_TEST_CHECK(largestLiteral.numberOfOperands == maxCount);
     for (StubKey key : allStubKeys()) {
-        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end())
+        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end() && key.callerFrame() != CallerFrame::KeepsNoFPRs)
             checkArrayCreationSummary(catalog, key, largestLiteral);
     }
     checkArrayCreationSummary(catalog, newEmptyArrayAtSite(ArrayElementKind::Contiguous), largestLiteral);
+    for (EmptyArray few : { EmptyArray::Int32Capacity1, EmptyArray::Int32Capacity3 })
+        AOT_TEST_CHECK(refersToBody(catalog, newEmptyArrayAtSite(ArrayElementKind::Int32), bodyOf(newEmptyArray(few))));
 
     for (StubKey key : { arrayPush(), arrayPushOfKnownKind() })
         AOT_TEST_CHECK(!clobbersFPR(catalog.summaryOf(key)));
-    AOT_TEST_CHECK(!containsRegister(catalog.summaryOf(arrayPushDouble()).clobbered, FPRInfo::fpRegT0));
-}
-
-static void checkWeakMapGetSummary(const StubCatalog& catalog)
-{
-    constexpr HashTableRegisterPlan plan = hashTableRegisterPlan;
-    const StubSummary& summary = catalog.summaryOf(weakMapGet());
-    AOT_TEST_CHECK(neitherThrowsNorCollects(catalog, weakMapGet()));
-    AOT_TEST_CHECK(withoutMacroScratch(summary.clobbered) == setOf({
-        gprOf(plan.hash), gprOf(plan.table), gprOf(plan.cursor), gprOf(plan.keys), gprOf(plan.entry), gprOf(plan.candidate),
-        summary.signature.firstResult.gpr(),
-    }));
-    AOT_TEST_CHECK(!containsRegister(summary.clobbered, argumentGPR(1)));
-    AOT_TEST_CHECK(!clobbersFPR(summary));
 }
 
 static bool isLostInLeafCall(GPRReg reg)
@@ -600,9 +572,11 @@ static bool isLostInLeafCall(GPRReg reg)
 
 static void checkEqualitySummaries(const StubCatalog& catalog)
 {
-    const RegisterSet& clobberedByStrictEqual = catalog.summaryOf(equal(true)).clobbered;
-    for (GPRReg reg : { A1, A2, A3, T13, gprOf(StubRegister::T14) })
-        AOT_TEST_CHECK(!containsRegister(clobberedByStrictEqual, reg));
+    for (StubKey strictEqual : { equal(true), strictEqualInFlags() }) {
+        const RegisterSet& clobberedByStrictEqual = catalog.summaryOf(strictEqual).clobbered;
+        for (GPRReg reg : { A1, A2, A3, T13, gprOf(StubRegister::T14) })
+            AOT_TEST_CHECK(!containsRegister(clobberedByStrictEqual, reg));
+    }
 
     const StubSummary& stringEquality = catalog.summaryOf(stringsAreEqual());
     AOT_TEST_CHECK(stringEquality.signature.operands[0] == Reg(T11) && stringEquality.signature.operands[1] == Reg(T12));
@@ -610,30 +584,72 @@ static void checkEqualitySummaries(const StubCatalog& catalog)
         AOT_TEST_CHECK(containsRegister(stringEquality.clobbered, operand) == isLostInLeafCall(operand));
 }
 
-static void checkBoundMethodCall()
+static void checkClobbersOfRegisterVariants(const StubCatalog& catalog)
 {
-    constexpr uint32_t name = 5;
-    StubPolicy policy;
-    policy.namesWithOwnStubByAccess[static_cast<size_t>(Typed::Access::Read)].set(name);
-    StubCatalog catalog(StubOptions { }, WTF::move(policy));
-    AOT_TEST_CHECK(catalog.bindsImmediate(callMethodById(2), name));
-    AOT_TEST_CHECK(!catalog.bindsImmediate(callMethodById(2), name + 1));
+    unsigned numberOfKeysWithVariants = 0;
+    forEachKeyWithoutImmediate([&](StubKey key) {
+        RegisterSet clobbered;
+        unsigned numberOfVariants = 0;
+        forEachRegisterVariant(key, [&](StubKey variant) {
+            clobbered.merge(catalog.summaryOf(variant).clobbered);
+            ++numberOfVariants;
+        });
+        numberOfKeysWithVariants += numberOfVariants > 1;
+        AOT_TEST_CHECK(catalog.clobberedByRegisterVariantsOf(key) == clobbered);
+        AOT_TEST_CHECK(catalog.clobberedByRegisterVariantsOf(key) == clobbered);
+    });
+    AOT_TEST_CHECK(numberOfKeysWithVariants);
+#if CPU(X86_64)
+    for (GPRReg kept : { X86Registers::ecx, X86Registers::edx, X86Registers::esi, X86Registers::edi })
+        AOT_TEST_CHECK(!containsRegister(catalog.summaryOf(getByIdKeepingRegisters()).clobbered, kept));
+    AOT_TEST_CHECK(catalog.summaryOf(getById()).clobbered.subsumes(catalog.summaryOf(getByIdKeepingRegisters()).clobbered));
+#endif
+}
 
-    StubKey boundKey = callMethodById(2).withImmediate(name);
-    AOT_TEST_CHECK(catalog.dryRun(boundKey).body == boundKey);
+static void checkClobbersBesideResults(const StubCatalog& catalog)
+{
+    RegisterSet scratchRegistersOfAssembler = RegisterSet::macroClobberedGPRs();
+    scratchRegistersOfAssembler.merge(RegisterSet::macroClobberedFPRs());
+    for (CreatedConstant constant : { CreatedConstant::String, CreatedConstant::Key }) {
+        AOT_TEST_CHECK(scratchRegistersOfAssembler.subsumes(catalog.clobberedBesideResultByRegisterVariantsOf(createConstant(constant))));
+        for (GPRReg reg : allocatableGPRs) {
+            const StubSignature& signature = catalog.summaryOf(createConstant(constant).withOperandRegister(reg)).signature;
+            AOT_TEST_CHECK(signature.firstResult == Reg(reg) && signature.immediate == reg && !signature.numberOfOperands);
+        }
+    }
+
+    unsigned numberOfVariants = 0;
+    forEachKeyWithoutImmediate([&](StubKey key) {
+        if (key.operandRegister() || !namesRegisterOfResult(descriptorOf(key.family()).operandRegisters))
+            return;
+        const StubSummary& summary = catalog.summaryOf(key);
+        const RegisterSet& lost = catalog.clobberedBesideResultByRegisterVariantsOf(key);
+        AOT_TEST_CHECK(summary.signature.firstResult == Reg(GPRInfo::returnValueGPR) && !containsRegister(lost, GPRInfo::returnValueGPR));
+        forEachRegisterVariant(key, [&](StubKey variant) {
+            if (variant == key)
+                return;
+            ++numberOfVariants;
+            GPRReg reg = *variant.operandRegister();
+            const StubSignature& signature = catalog.summaryOf(variant).signature;
+            AOT_TEST_CHECK(signature.firstResult == Reg(reg) && signature.numberOfOperands == summary.signature.numberOfOperands && !containsRegister(lost, reg));
+            for (unsigned index = 0; index < signature.numberOfOperands; ++index)
+                AOT_TEST_CHECK(signature.operands[index] == summary.signature.operands[index] && signature.operands[index] != Reg(reg));
+        });
+    });
+    AOT_TEST_CHECK(!numberOfVariants == alternateResultGPRs().empty());
 }
 
 static void testSummaries()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
+    checkClobbersOfRegisterVariants(catalog);
+    checkClobbersBesideResults(catalog);
     checkCoroutineSummaries(catalog);
     checkNumberConversionSummary(catalog);
     checkSubstringSummary(catalog);
-    checkCallSummaries(catalog);
+    checkTextSearchSummary(catalog);
     checkArraySummaries(catalog);
-    checkWeakMapGetSummary(catalog);
     checkEqualitySummaries(catalog);
-    checkBoundMethodCall();
 }
 
 static void checkCoroutineOperations(const StubCatalog& catalog)
@@ -647,13 +663,12 @@ static void checkCoroutineOperations(const StubCatalog& catalog)
         operationsCalled.merge(operationsCalledBy(catalog, key));
     AOT_TEST_CHECK(operationsCalled == entrySetOf({ Entry::operationAOTNewPromise, Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitWithSavedFrame, Entry::operationAOTAwaitCallWithSavedFrame, Entry::operationAOTResolvePromiseOrReturnResult }));
 
-    AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody }));
     for (StepConsumer consumer : stepConsumers)
         AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());
     AOT_TEST_CHECK(operationsCalledBy(catalog, runAsyncGeneratorStep()) == entrySetOf({ Entry::operationAOTAsyncIteratorStep, Entry::operationAOTFinishAsyncIteratorStep }));
-    for (NewGeneratorKind kind : generatorKinds)
-        AOT_TEST_CHECK(operationsCalledBy(catalog, newGenerator(kind)) == entrySetOf({ Entry::operationAOTNewGenerator }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, newAsyncGenerator(GeneratorFunctionOrigin::Program)) == entrySetOf({ Entry::operationAOTNewAsyncGenerator }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, newAsyncGenerator(GeneratorFunctionOrigin::Library)) == entrySetOf({ Entry::operationAOTNewAsyncGenerator }));
 }
 
 static void checkCollectionOperations(const StubCatalog& catalog)
@@ -664,10 +679,9 @@ static void checkCollectionOperations(const StubCatalog& catalog)
     AOT_TEST_CHECK(refersToBody(catalog, mapSet(KeyComparison::Bits), newCompactTable(CompactTableOwner::Map)) && refersToBody(catalog, setAdd(KeyComparison::String), newCompactTable(CompactTableOwner::Set)));
     AOT_TEST_CHECK(operationsCalledBy(catalog, newCompactTable(CompactTableOwner::Map)) == entrySetOf({ Entry::operationAOTMapSet }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, newCompactTable(CompactTableOwner::Set)) == entrySetOf({ Entry::operationAOTSetAdd }));
-    AOT_TEST_CHECK(operationsCalledBy(catalog, mapDelete(KeyComparison::Bits)).isEmpty());
+    AOT_TEST_CHECK(operationsCalledBy(catalog, mapDelete(KeyComparison::Bits)) == entrySetOf({ Entry::operationAOTMapDelete }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, setDelete(KeyComparison::String)) == entrySetOf({ Entry::operationAOTSetDelete, Entry::operationAOTStringImplsAreEqual, Entry::operationAOTHashStringImpl }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, writeBarrier()).get(indexOf(Entry::operationAOTBarrierSlow)));
-    AOT_TEST_CHECK(operationsCalledBy(catalog, weakMapGet()).isEmpty());
 }
 
 static void checkAdapterOperations(const StubCatalog& catalog)
@@ -682,7 +696,7 @@ static void checkAdapterOperations(const StubCatalog& catalog)
 
 static void testOperationsCalled()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     checkCoroutineOperations(catalog);
     checkCollectionOperations(catalog);
     checkAdapterOperations(catalog);
@@ -692,8 +706,8 @@ static void testWideReferences()
 {
     StubOptions wideOptions;
     wideOptions.useWideReferences = true;
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
-    StubCatalog wideCatalog(wideOptions, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
+    StubCatalog wideCatalog(wideOptions);
 
     constexpr StubKey store = mapSet(KeyComparison::Bits);
     StubBlob blob = buildBlob(catalog, std::array { store }, EntrySet { });
@@ -702,92 +716,23 @@ static void testWideReferences()
     AOT_TEST_CHECK(operationsCalledBy(wideCatalog, store) == operationsCalledBy(catalog, store));
 }
 
-static bool haveSamePlacements(const StubBlob& first, const StubBlob& second)
+static void testImmediatesInKeys()
 {
-    return std::ranges::equal(first.placements, second.placements, { }, &StubPlacement::key, &StubPlacement::key)
-        && std::ranges::equal(first.placements, second.placements, { }, &StubPlacement::offset, &StubPlacement::offset);
-}
+    constexpr StubKey cell = builtinCell().withImmediate(7);
+    constexpr StubKey match = regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Exec);
+    static_assert(exists(cell) && exists(match) && !exists(match.withImmediate(1)));
 
-static void testLayoutSeed()
-{
-    StubOptions seededOptions;
-    seededOptions.layoutSeed = 1;
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
-    StubCatalog seededCatalog(seededOptions, StubPolicy { });
-    StubBlob blob = buildFullBlob(catalog);
-    StubBlob seededBlob = buildFullBlob(seededCatalog);
-    StubBlob repeatedBlob = buildFullBlob(seededCatalog);
+    StubCatalog catalog(StubOptions { });
+    AOT_TEST_CHECK(catalog.bindsImmediate(cell.withoutImmediate()));
+    AOT_TEST_CHECK(!catalog.bindsImmediate(createConstant(CreatedConstant::Key)) && !catalog.bindsImmediate(match));
 
-    AOT_TEST_CHECK(seededBlob.code.bytes == repeatedBlob.code.bytes);
-    AOT_TEST_CHECK(haveSamePlacements(seededBlob, repeatedBlob));
-    AOT_TEST_CHECK(std::ranges::equal(seededBlob.returnSites, repeatedBlob.returnSites, { }, &StubReturnSite::offset, &StubReturnSite::offset));
+    StubRecording recording = catalog.dryRun(cell);
+    AOT_TEST_CHECK(recording.references.size() == 1 && recording.references[0].target == cell.withoutImmediate() && recording.references[0].kind == StubReference::Kind::Jump);
 
-    AOT_TEST_CHECK(std::ranges::equal(blob.placements, seededBlob.placements, { }, &StubPlacement::key, &StubPlacement::key));
-    AOT_TEST_CHECK(!haveSamePlacements(blob, seededBlob));
-    AOT_TEST_CHECK(blob.entriesUsed == seededBlob.entriesUsed);
-    for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind)
-        AOT_TEST_CHECK(numberOfSites(blob, static_cast<StubFrameKind>(kind)) == numberOfSites(seededBlob, static_cast<StubFrameKind>(kind)));
-    checkDistinctBodyOffsets(seededBlob);
-}
-
-static void testAddressesInLargeBlob()
-{
-    // callMethodById() takes the address of callValueCell().
-    StubPolicy policy;
-    Vector<StubKey> keys { callMethodById(2) };
-    for (uint32_t name = 1; name <= RowDisplacementTable::maxColumn; ++name) {
-        policy.namesWithOwnStubByAccess[static_cast<size_t>(Typed::Access::Read)].set(name);
-        keys.append(getById().withImmediate(name));
-    }
-    for (uint32_t layoutSeed : { 0, 1 }) {
-        StubOptions options;
-        options.layoutSeed = layoutSeed;
-        StubCatalog catalog(options, StubPolicy { policy });
-        StubBlob blob = buildBlob(catalog, keys.span(), { });
-        AOT_TEST_CHECK(blob.code.bytes.size() > 8 * MB);
-        uint32_t furtherOfTheTwo = std::max(*blob.offsetOf(callMethodById(2)), *blob.offsetOf(callValueCell(2)));
-        for (StubKey key : keys.span().subspan(1))
-            AOT_TEST_CHECK(furtherOfTheTwo < *blob.offsetOf(key));
-        // With assertions the bodies in front of them are larger.
-        if (!ASSERT_ENABLED)
-            AOT_TEST_CHECK(furtherOfTheTwo < 1 * MB);
-    }
-}
-
-static unsigned numberOfRegExpCalls(const StubBlob& blob, StubKey thunk, uint16_t entry)
-{
-    CodeSymbol symbol { SymbolSpace::RegExp, *thunk.immediate(), entry };
-    return static_cast<unsigned>(std::ranges::count_if(blob.code.relocations, [&](const Relocation& relocation) {
-        return relocation.kind == RelocationKind::Call && relocation.codeSymbol() == symbol && bodyContaining(blob, relocation.offset) == thunk;
-    }));
-}
-
-static void testRegExpRelocations()
-{
-    constexpr uint32_t recordForBothWidths = 0;
-    constexpr uint32_t recordFor8BitSubjects = 1;
-    constexpr uint16_t entryFor8BitSubjects = 0;
-    constexpr uint16_t entryFor16BitSubjects = 1;
-    constexpr StubKey test = regExpMatchLiteral(Typed::RegExpMatchForm::Test, false);
-    constexpr StubKey globalExec = regExpMatchLiteral(Typed::RegExpMatchForm::Exec, true);
-
-    StubPolicy policy;
-    policy.regExpLiterals = { RegExpLiteralConstants { .matchesAtCodePointBoundaries = false }, RegExpLiteralConstants { .matchesAtCodePointBoundaries = true } };
-    StubCatalog catalog(StubOptions { }, WTF::move(policy));
-    AOT_TEST_CHECK(catalog.bindsImmediate(test, recordForBothWidths) && catalog.bindsImmediate(globalExec, recordFor8BitSubjects));
-    AOT_TEST_CHECK(buildBlob(catalog, std::array { test, globalExec }, EntrySet { }).code.relocations.isEmpty());
-
-    constexpr std::array thunksForBothWidths { test.withImmediate(recordForBothWidths), globalExec.withImmediate(recordForBothWidths) };
-    constexpr StubKey thunkFor8BitSubjects = test.withImmediate(recordFor8BitSubjects);
-    StubBlob blob = buildBlob(catalog, std::array { thunksForBothWidths[0], thunksForBothWidths[1], thunkFor8BitSubjects }, EntrySet { });
-    for (StubKey thunk : thunksForBothWidths) {
-        AOT_TEST_CHECK(blob.offsetOf(thunk));
-        AOT_TEST_CHECK(catalog.dryRun(thunk).symbols.size() == 2);
-        AOT_TEST_CHECK(numberOfRegExpCalls(blob, thunk, entryFor8BitSubjects) == 1 && numberOfRegExpCalls(blob, thunk, entryFor16BitSubjects) == 1);
-    }
-    AOT_TEST_CHECK(blob.offsetOf(thunkFor8BitSubjects));
-    AOT_TEST_CHECK(numberOfRegExpCalls(blob, thunkFor8BitSubjects, entryFor8BitSubjects) == 1 && !numberOfRegExpCalls(blob, thunkFor8BitSubjects, entryFor16BitSubjects));
-    AOT_TEST_CHECK(blob.code.relocations.size() == 2 * thunksForBothWidths.size() + 1);
+    StubBlob blob = buildBlob(catalog, std::array { cell }, EntrySet { });
+    std::optional<uint32_t> offset = blob.offsetOf(cell);
+    std::optional<uint32_t> offsetOfStubTakingImmediate = blob.offsetOf(cell.withoutImmediate());
+    AOT_TEST_CHECK(offset && offsetOfStubTakingImmediate && *offsetOfStubTakingImmediate < *offset);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -834,8 +779,6 @@ static_assert(static_cast<ptrdiff_t>(OBJECT_OFFSETOF(FakeArray, vectorLength)) -
 static constexpr uint64_t bitsOf(double number) { return std::bit_cast<uint64_t>(number); }
 static uint64_t boxed(JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
 
-static constexpr uint64_t hole = bitsOf(PNaN);
-
 static void checkFastPath(StubRun run, JSValue result)
 {
     AOT_TEST_CHECK(!run.calledOperation && run.result == boxed(result));
@@ -859,36 +802,6 @@ static void checkArrayPush(const Push& push)
     AOT_TEST_CHECK(!copyOnWriteArray.publicLength && !copyOnWriteArray.elements[0]);
 }
 
-static void checkArrayPushDouble(StubRunner& runner)
-{
-    constexpr StubKey key = arrayPushDouble();
-    FakeArray array(DoubleShape, { });
-    checkFastPath(runner.run(key, { array.address(), bitsOf(2.5) }), jsNumber(1));
-    checkFastPath(runner.run(key, { array.address(), bitsOf(4) }), jsNumber(2));
-    AOT_TEST_CHECK(runner.run(key, { array.address(), hole }).calledOperation);
-    AOT_TEST_CHECK(array.publicLength == 2 && array.elements[0] == bitsOf(2.5) && array.elements[1] == bitsOf(4));
-
-    FakeArray integers(Int32Shape, { });
-    AOT_TEST_CHECK(runner.run(key, { integers.address(), bitsOf(2.5) }).calledOperation);
-
-    FakeArray values(ContiguousShape, { });
-    checkFastPath(runner.run(key, { values.address(), bitsOf(2.5) }), jsNumber(1));
-    checkFastPath(runner.run(key, { values.address(), bitsOf(4) }), jsNumber(2));
-    AOT_TEST_CHECK(values.publicLength == 2 && values.elements[0] == boxed(jsDoubleNumber(2.5)) && values.elements[1] == boxed(jsNumber(4)));
-
-    FakeArray copyOnWriteIntegers(Int32Shape | CopyOnWrite, { });
-    AOT_TEST_CHECK(runner.run(key, { copyOnWriteIntegers.address(), bitsOf(2.5) }).calledOperation);
-    AOT_TEST_CHECK(!copyOnWriteIntegers.publicLength);
-
-    FakeArray arrayThatIsNotPristine(DoubleShape, { }, 0);
-    checkFastPath(runner.run(key, { arrayThatIsNotPristine.address(), bitsOf(2.5) }), jsNumber(1));
-    AOT_TEST_CHECK(arrayThatIsNotPristine.publicLength == 1 && arrayThatIsNotPristine.elements[0] == bitsOf(2.5));
-
-    FakeArray copyOnWriteArray(DoubleShape | CopyOnWrite, { });
-    AOT_TEST_CHECK(runner.run(key, { copyOnWriteArray.address(), bitsOf(2.5) }).calledOperation);
-    AOT_TEST_CHECK(!copyOnWriteArray.publicLength && !copyOnWriteArray.elements[0]);
-}
-
 static void testPushStubRegisters()
 {
     StubRunner runner;
@@ -898,38 +811,24 @@ static void testPushStubRegisters()
     checkArrayPush([&](FakeArray& array, JSValue value) {
         return runner.run(arrayPushOfKnownKind(), { array.address(), boxed(value), array.shapeAndWritability() });
     });
-    checkArrayPushDouble(runner);
 }
 
-// What a push of a number that compiled code holds as a double costs in the stubs, counted one by one. A number here may fall.
-static void testInstructionsOfPushedDoubles()
+enum class PushedOnto : uint8_t { Doubles, Integers, Values };
+
+template<PushedOnto onto, bool kindIsKnown, uint32_t budget>
+static void testInstructionsOfPush()
 {
-    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
-#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
     StubRunner runner;
     runner.setCountsInstructions(true);
-
-    struct Push {
-        ASCIILiteral what;
-        double number;
-        uint32_t budget;
-    };
-    const Push pushes[] = {
-        { "a fraction"_s, 2.5, 17 },
-        { "a whole number"_s, 4, 17 },
-        { "negative zero"_s, -0.0, 17 },
-    };
-    bool isWithinBudget = true;
-    for (const Push& push : pushes) {
-        FakeArray array(DoubleShape, { bitsOf(0.5) });
-        StubRun run = runner.run(arrayPushDouble(), { array.address(), bitsOf(push.number) });
-        checkFastPath(run, jsNumber(2));
-        AOT_TEST_CHECK(array.publicLength == 2 && array.elements[1] == bitsOf(push.number) && run.instructionsInStubs);
-        if (*run.instructionsInStubs != push.budget)
-            dataLogLn("a push of ", push.what, " onto an array of doubles: ", *run.instructionsInStubs, " instructions, the budget is ", push.budget);
-        isWithinBudget &= *run.instructionsInStubs <= push.budget;
-    }
-    AOT_TEST_CHECK(isWithinBudget);
+    const JSValue pushed = onto == PushedOnto::Doubles ? jsDoubleNumber(2.5) : jsNumber(7);
+    FakeArray array(onto == PushedOnto::Doubles ? DoubleShape : onto == PushedOnto::Integers ? Int32Shape : ContiguousShape, { onto == PushedOnto::Doubles ? bitsOf(0.5) : boxed(jsNumber(1)) });
+    StubRun run = kindIsKnown ? runner.run(arrayPushOfKnownKind(), { array.address(), boxed(pushed), array.shapeAndWritability() }) : runner.run(arrayPush(), { array.address(), boxed(pushed) });
+    checkFastPath(run, jsNumber(2));
+    AOT_TEST_CHECK(array.publicLength == 2 && array.elements[1] == (onto == PushedOnto::Doubles ? bitsOf(2.5) : boxed(pushed)) && run.instructionsInStubs);
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("a push: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
 #endif
 }
 
@@ -939,19 +838,26 @@ std::span<const NativeTest> stubBlobTests()
 {
     static constexpr NativeTest tests[] = {
         { "stub-blob/entry-placements"_s, testEntryPlacements },
+        { "stub-blob/instructions-of-pushes/a-double-onto-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, false, 26>> },
+        { "stub-blob/instructions-of-pushes/a-double-onto-doubles-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, true, 24>> },
+        { "stub-blob/instructions-of-pushes/an-integer-onto-integers"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Integers, false, 23>> },
+        { "stub-blob/instructions-of-pushes/an-integer-onto-integers-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Integers, true, 21>> },
+        { "stub-blob/instructions-of-pushes/a-number-onto-values"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Values, false, 19>> },
+        { "stub-blob/instructions-of-pushes/a-number-onto-values-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Values, true, 17>> },
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+        { "stub-blob/instructions-that-were-enough/a-push-of-a-double-onto-doubles-takes-24-not-17"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, true, 17>>, "lists: 24 instructions where the compiler before this one took 17"_s },
+#endif
         { "stub-blob/return-sites"_s, testReturnSites },
         { "stub-blob/body-entries"_s, testBodyEntries },
         { "stub-blob/references"_s, testReferences },
         { "stub-blob/reachability"_s, testReachability },
+        { "stub-blob/start-of-module"_s, testStartOfModule },
         { "stub-blob/missing-keys"_s, testMissingKeys },
         { "stub-blob/summaries"_s, testSummaries },
         { "stub-blob/operations-called"_s, testOperationsCalled },
         { "stub-blob/wide-references"_s, testWideReferences },
-        { "stub-blob/layout-seed"_s, testLayoutSeed },
-        { "stub-blob/addresses-in-large-blob"_s, testAddressesInLargeBlob },
-        { "stub-blob/regexp-relocations"_s, testRegExpRelocations },
+        { "stub-blob/immediates-in-keys"_s, testImmediatesInKeys },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
-        { "stub-blob/instructions-of-pushed-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPushedDoubles> },
     };
     return tests;
 }

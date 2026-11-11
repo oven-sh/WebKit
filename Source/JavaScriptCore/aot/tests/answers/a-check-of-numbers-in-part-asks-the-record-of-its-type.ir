@@ -1,0 +1,80 @@
+# function take(value) { return value; }
+# print(typeof id(take)(given));
+# print("went on");
+# The fault is written by hand in the IR below: `function f1 name="take" .. parameters=[{type=undefined|int[1, 9]|string flags=[IsFromCompiler]}]`.
+# The front end claims that the parameter holds undefined, a string or an integer from one to nine, and the function is called indirectly with whatever the shell's `given` holds.
+# No legal program makes the front end claim that.
+# With testing=CheckProofsAtRunTime, a type test that would be long as inline code (here, only some of the numbers) is one call of a stub.
+# The kinds that pass as a whole are stored next to the source of the proof. The rest is checked against the type's record in the image's tables.
+# What the stub cannot decide there (a double) is left to the runtime, which crashes with the same message.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM: CheckProof {{*}} checkedType=undefined|int[1, 9]|string typeWithoutProof={{*}}
+# RUN(SHORT): emit f1 mechanisms=all-Inlining
+# SHORT: NumberOf(
+# RUN(NEVER): emit f1 mechanisms=all-Inlining
+# NEVER-NOT: DoubleToInt
+# RUN(UNDEFINED): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = undefined;
+# UNDEFINED: undefined
+# UNDEFINED-NEXT: went on
+# RUN(TEXT): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = "text";
+# TEXT: string
+# TEXT-NEXT: went on
+# RUN(ONE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 1;
+# ONE: number
+# ONE-NEXT: went on
+# RUN(NINE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 9;
+# NINE: number
+# NINE-NEXT: went on
+# RUN(ZERO): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 0;
+# ZERO: bun: internal AOT error: type check failed
+# ZERO-NEXT: found int32 in
+# ZERO-NOT: went on
+# RUN(TEN): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 10;
+# TEN: bun: internal AOT error: type check failed
+# TEN-NEXT: found int32 in
+# TEN-NOT: went on
+# RUN(FRACTION): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 1.5;
+# FRACTION: bun: internal AOT error: type check failed
+# FRACTION-NEXT: found double in
+# FRACTION-NOT: went on
+# RUN(NOTANUMBER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = NaN;
+# NOTANUMBER: bun: internal AOT error: type check failed
+# NOTANUMBER-NEXT: found double in
+# NOTANUMBER-NOT: went on
+# RUN(NULL): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = null;
+# NULL: bun: internal AOT error: type check failed
+# NULL-NEXT: found null in
+# NULL-NOT: went on
+# RUN(OBJECT): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = {};
+# OBJECT: bun: internal AOT error: type check failed
+# OBJECT-NEXT: found object in
+# OBJECT-NOT: went on
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="id" [isFreeName]
+    v6 = Call v5, -, v1 calleeName="id"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="given" [isFreeName]
+    v9 = Call v6, -, v8
+    v10 = TypeOf v9
+    v11 = Call v3, -, v10 calleeName="print"
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="print" [isFreeName]
+    v14 = String string="went on"
+    v15 = Call v13, -, v14 calleeName="print"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="take" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int[1, 9]|string flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|int[1, 9]|string):
+    Return v0
+}
+entry module=m0

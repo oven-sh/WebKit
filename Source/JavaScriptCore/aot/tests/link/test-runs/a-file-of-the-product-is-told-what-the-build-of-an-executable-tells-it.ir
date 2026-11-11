@@ -1,0 +1,43 @@
+# a file that an executable holds too stores on a member that the table locks: the build of the executable stops at the statement, and the build of the test run warns of it and goes on: the test files that load it fail there
+# src/polyfill.js, of the product: Math.imul = () => 7   a.test.js: import "./src/polyfill.js"; Math.max = () => 7
+# the control: the same store in the file of the tests is reported by nobody: one diagnostic, at the store of the product
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks open
+# CHECK: open MathMax written-under-its-name
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/src/polyfill.js" displayPath="src/polyfill.js" flags=[HasReadOnlyBuiltins] body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="max" mode=Strict
+    v4 = PropGet v0 key="given" [isFreeName]
+    v5 = PropGet v1 key="imul"
+    v6 = Call v5, v1, v4, v4 calleeKey="imul"
+    v7 = PropGet v1 key="max"
+    v8 = Call v7, v1, v4 calleeKey="max"
+    Return v8
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="imul" mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f2 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="patched" module=m1 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

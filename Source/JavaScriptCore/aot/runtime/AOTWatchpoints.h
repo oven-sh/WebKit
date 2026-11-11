@@ -15,13 +15,11 @@
 
 namespace JSC { namespace AOT {
 
-// A watchpoint is not destroyed while it fires: its owner frees one that has fired at its next sweep or with the next watch in its place.
 class PropertyValueWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PropertyValueWatchpoint);
 public:
     using Callback = void (*)(PropertyValueWatchpoint&);
 
-    // Null where the holder has no own property of the name that can be watched, or its value is not accepted.
     static std::unique_ptr<PropertyValueWatchpoint> tryWatch(VM& vm, JSObject* holder, UniquedStringImpl* uid, const Invocable<bool(JSValue)> auto& accepts, Callback callback, void* owner, uint32_t number = 0)
     {
         ObjectPropertyCondition condition = generateConditionForSelfEquivalence(vm, nullptr, holder, uid);

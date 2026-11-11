@@ -38,7 +38,7 @@
 namespace JSC {
 
 static JSC_DECLARE_HOST_FUNCTION(objectProtoFuncValueOf);
-static JSC_DECLARE_HOST_FUNCTION(objectProtoFuncHasOwnProperty);
+JSC_DECLARE_HOST_FUNCTION(objectProtoFuncHasOwnProperty);
 static JSC_DECLARE_HOST_FUNCTION(objectProtoFuncIsPrototypeOf);
 static JSC_DECLARE_HOST_FUNCTION(objectProtoFuncDefineGetter);
 static JSC_DECLARE_HOST_FUNCTION(objectProtoFuncDefineSetter);

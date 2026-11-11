@@ -204,7 +204,7 @@ public:
     inline bool hasPrivateField(JSGlobalObject*, PropertyName);
     inline bool getPrivateField(JSGlobalObject*, PropertyName, PropertySlot&);
     inline void setPrivateField(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
-    inline void definePrivateField(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    inline void definePrivateField(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, unsigned attributes = 0);
     inline bool hasPrivateBrand(JSGlobalObject*, JSValue brand);
     inline void checkPrivateBrand(JSGlobalObject*, JSValue brand);
     inline void setPrivateBrand(JSGlobalObject*, JSValue brand);

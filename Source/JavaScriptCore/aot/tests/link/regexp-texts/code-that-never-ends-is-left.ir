@@ -1,0 +1,48 @@
+# The rehearsal goes through so many operations from one start, and calls so deep. What lies behind that is compiled when the program runs.
+# let n = 0; while (true) n++;  new RegExp("never");      function down(n) { return down(n + 1); }  new RegExp(down(0));      A start of its own: export function other() { return new RegExp("a" + "+b"); }
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /a+b/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="down" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=f2} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer
+    v3 = Call v1, -, v2
+    v4 = Construct v0, -, v3
+    Jump -> next b1(v2)
+  b1(v5: anything):
+    LoopHint
+    v7 = Increment v5
+    v8 = Boolean boolean=true
+    Branch v8 -> taken b1(v7), notTaken b2()
+  b2():
+    v9 = String string="never"
+    v10 = Construct v0, -, v9
+    Return v10
+}
+function f1 name="down" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Increment v0
+    v3 = Call v1, -, v2
+    ReturnCall v3
+}
+function f2 name="other" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="String" [isFreeName]
+    v4 = String string="+b"
+    v5 = Call v3, -, v4
+    v6 = Add v1, v5
+    v7 = Construct v0, -, v6
+    Return v7
+}

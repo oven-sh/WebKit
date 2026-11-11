@@ -1,0 +1,5 @@
+# the same function with folding withheld: the character is read when the program runs
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet
+# PROGRAM-OF: character-of-a-known-text-is-a-text.ir

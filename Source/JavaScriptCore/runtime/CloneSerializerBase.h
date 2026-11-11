@@ -735,7 +735,8 @@ protected:
                     break;
                 write(ObjectTag);
 #if ENABLE(AOT)
-                AOT::PropertyWalk::materializeLazyProperties(vm, inObject);
+                if (vm.hasCompiledCode()) [[unlikely]]
+                    AOT::PropertyWalk::materializeLazyProperties(vm, inObject);
 #endif
                 // At this point, all supported objects other than Object
                 // objects have been handled. If we reach this point and

@@ -30,6 +30,7 @@
 #include "OwedOutOfMemoryError.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
+#include "ReflectObject.h"
 #include "Symbol.h"
 
 #if ENABLE(AOT)
@@ -189,12 +190,13 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorSetPrototypeOf, (JSGlobalObject* globa
     return JSValue::encode(objectValue);
 }
 
-JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
+// Inlined into the host function.
+static ALWAYS_INLINE JSValue describeOwnProperty(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyDescriptor descriptor;
-    if (!object->getOwnPropertyDescriptor(globalObject, propertyName, descriptor))
+    if (!getReportedDescriptor(globalObject, object, propertyName, descriptor))
         RELEASE_AND_RETURN(scope, jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -202,6 +204,11 @@ JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, 
     scope.assertNoException();
     ASSERT(result);
     return result;
+}
+
+JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
+{
+    return describeOwnProperty(globalObject, object, propertyName);
 }
 
 JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject* globalObject, JSObject* object)
@@ -217,7 +224,7 @@ JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject* globalObject,
 
     for (auto& propertyName : properties) {
         PropertyDescriptor descriptor;
-        bool didGetDescriptor = object->getOwnPropertyDescriptor(globalObject, propertyName, descriptor);
+        bool didGetDescriptor = getReportedDescriptor(globalObject, object, propertyName, descriptor);
         RETURN_IF_EXCEPTION(scope, { });
 
         if (!didGetDescriptor)
@@ -243,7 +250,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorGetOwnPropertyDescriptor, (JSGlobalObj
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto propertyName = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    RELEASE_AND_RETURN(scope, JSValue::encode(objectConstructorGetOwnPropertyDescriptor(globalObject, object, propertyName)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(describeOwnProperty(globalObject, object, propertyName)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(objectConstructorGetOwnPropertyDescriptors, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -282,22 +289,25 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorKeys, (JSGlobalObject* globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
-void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+// goesOnKeyByKey is to a compiled target what !targetCanPerformFastPut is to an ordinary one: behind a source that objectAssignFast() would refuse, every later source of the call gives its names first and then its symbols.
+static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source, bool& goesOnKeyByKey)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (target->structure()->isCompiledStructure()) {
-        // As for an ordinary target that takes properties directly.
+    if (target->structure()->isCompiledStructure() && !goesOnKeyByKey) {
+        // Same as for an ordinary target that accepts direct property puts.
         if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source);
+        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source, goesOnKeyByKey);
         RETURN_IF_EXCEPTION(scope, void());
         if (didAssign)
             return;
     }
+#else
+    UNUSED_PARAM(goesOnKeyByKey);
 #endif
 
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.
@@ -333,6 +343,12 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
     }
 }
 
+void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+{
+    bool goesOnKeyByKey = false;
+    objectAssignGeneric(globalObject, vm, target, source, goesOnKeyByKey);
+}
+
 JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -349,7 +365,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
 #if ENABLE(AOT)
-    if (targetObject && !targetCanPerformFastPut)
+    if (targetObject && !targetCanPerformFastPut && vm.hasCompiledCode())
         targetCanPerformFastPut = AOT::PropertyWalk::wouldPerformFastPut(vm, targetObject);
 #endif
     unsigned argsCount = callFrame->argumentCount();
@@ -407,6 +423,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
 
     Vector<UniquedStringImpl*, 8> properties;
     MarkedArgumentBuffer values;
+    bool goesOnKeyByKey = false;
     for (unsigned i = 1; i < argsCount; ++i) {
         JSValue sourceValue = callFrame->uncheckedArgument(i);
         if (sourceValue.isUndefinedOrNull())
@@ -427,7 +444,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
         }
 
         targetCanPerformFastPut = false;
-        objectAssignGeneric(globalObject, vm, target, source);
+        objectAssignGeneric(globalObject, vm, target, source, goesOnKeyByKey);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(target);
@@ -1255,7 +1272,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
 
@@ -1267,6 +1284,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Sealed);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 #endif
@@ -1300,7 +1318,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    // The prototype object of a compiled class is an ordinary object once it has its members, and takes the one transition below like any other.
+    // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
 
@@ -1314,9 +1332,10 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
         AOT::PropertyWalk::prepareForFreeze(object);
         RETURN_IF_EXCEPTION(scope, nullptr);
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Frozen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
-    // A slim closure is an ordinary object once it has its properties: JSObject::freeze() gives it them and takes the one transition. Its `prototype` object is still made at the first read.
+    // Once its properties exist, a slim closure is an ordinary object: JSObject::freeze() creates them and takes the single transition. Its `prototype` object is still created on first read.
     if (isSlimClosureType(object->type()) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
         return object;

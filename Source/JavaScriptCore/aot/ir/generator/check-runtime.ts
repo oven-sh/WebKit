@@ -1,5 +1,6 @@
 import { kindText } from "./hash.ts";
-import type { InlineBuiltin, RuntimeOperation, RuntimeParameter, Schema, SchemaEnum } from "./model.ts";
+import { entriesOf } from "./model.ts";
+import type { Entry, HeapReference, InlineBuiltin, RuntimeOperation, RuntimeParameter, Schema, SchemaEnum } from "./model.ts";
 import type { ErrorList } from "./source.ts";
 
 export const runtimeValueKinds: ReadonlyMap<string, string> = new Map([
@@ -129,8 +130,107 @@ function checkInlineParameterType(type: SchemaEnum, errors: ErrorList): void {
   errors.add(type.location, `inline parameter ${description} ${type.name} has more than ${limit} members`);
 }
 
+const justifiedDifferences: ReadonlyMap<string, string> = new Map([
+  ["PrivateSet writes MemberGuards", "DefinesProperty speaks for every definer; a private name is no member, and a guard ends with a member"],
+  ["PrivateDefine writes MemberGuards", "as PrivateSet"],
+  ["InitializeBuiltin writes ExternalState", "it orders the operation among others in the IR; generated code has no load of that heap"],
+  ["PutSlotOrAdd leaves out ShapeWords", "a creation steps the key order of the Structure and may take the mark of birth off; the number of the shape is never rewritten and no mark is set, so a test that has passed still passes"],
+  ["PutSlotOrAdd names an index of ObjectFields", "the function lists the field under the key that it is handed; the value is stored in line"],
+  ["GetDeferredClosureSlot names an index of ObjectFields", "the function fills the slot that it is asked for"],
+  ["GetDeferredClosureSlotOrUndefined names an index of ObjectFields", "as GetDeferredClosureSlot"],
+  ["AppendHole names an index of Elements", "a row of the run time has no index; the receiver is a list"],
+  ["AppendElements names an index of Elements", "as AppendHole"],
+  ["AppendMembers names an index of Elements", "as AppendHole"],
+  ["AppendValuesOfMap names an index of Elements", "as AppendHole"],
+  ["SetArrayLength names an index of Elements", "as AppendHole"],
+  ["TruncateNewArray names an index of Elements", "as AppendHole"],
+  ["SortNumbers names an index of Elements", "as AppendHole"],
+  ["SetMappedArgument names an index of Elements", "a row of the run time has no index; the receiver is an arguments object"],
+  ["NewArray leaves out throws", "for want of memory alone: the cell is null and the next use faults"],
+  ["CreateRest leaves out throws", "as NewArray"],
+  ["NewRegExp leaves out throws", "as NewArray"],
+  ["NewTemplateObject leaves out throws", "as NewArray"],
+  ["CreateUnmappedArguments leaves out throws", "as NewArray"],
+  ["CreateMappedArguments leaves out throws", "as NewArray"],
+  ["EnumeratorGetByVal leaves out throws", "as NewArray: the key is a name of an enumerator that is current, and such an enumerator lists no accessor"],
+  ["Strcat leaves out StringBuilderContents", "the buffer behind a growing rope is the run time's own; it is no builder that compiled code holds"],
+]);
+
+function heapsLeftOut(declared: readonly HeapReference[], byFunction: readonly HeapReference[]): string[] {
+  return declared.filter(({ heap }) => !byFunction.some(other => other.heap === heap)).map(({ heap }) => heap.name);
+}
+
+function checkFunctionCoversOperation(entry: Entry, applied: Set<string>, errors: ErrorList): void {
+  const column = entry.columns.get("runtime");
+  if (column?.tag !== "RuntimeOperation") return;
+  const { effects: byFunction, name } = column.operation;
+  if (byFunction.isUnknownCode) return;
+  const differences: string[] = [];
+  if (entry.effects.isUnknownCode) differences.push("calls unknownCode");
+  if (!byFunction.writesAllHeaps) {
+    if (entry.effects.writesAllHeaps) differences.push("writes all");
+    for (const heap of heapsLeftOut(entry.effects.writes, byFunction.writes)) differences.push(`writes ${heap}`);
+  }
+  if (!byFunction.readsAllHeaps) {
+    if (entry.effects.readsAllHeaps) differences.push("reads all");
+    for (const heap of heapsLeftOut(entry.effects.reads, byFunction.reads)) differences.push(`reads ${heap}`);
+  }
+  for (const difference of differences) {
+    const line = `${entry.name} ${difference}`;
+    if (justifiedDifferences.has(line)) applied.add(line);
+    else errors.add(entry.location, `${line}, and runtime ${name} is declared not to: generated code is told only what both say`);
+  }
+}
+
+const bookkeepingHeaps: ReadonlySet<string> = new Set(["AllocatorState", "RuntimeState"]);
+
+function heapsNamedByIndexAlone(declared: readonly HeapReference[], byFunction: readonly HeapReference[]): string[] {
+  const isWhole = (references: readonly HeapReference[], heap: HeapReference["heap"]) =>
+    references.some(other => other.heap === heap && other.indexes.length === 0);
+  const heaps = new Set(declared.map(({ heap }) => heap));
+  return [...heaps].filter(heap => !isWhole(declared, heap) && isWhole(byFunction, heap)).map(heap => heap.name);
+}
+
+function checkOperationCoversFunction(entry: Entry, applied: Set<string>, errors: ErrorList): void {
+  const column = entry.columns.get("runtime");
+  if (column?.tag !== "RuntimeOperation") return;
+  const { effects: byFunction, name } = column.operation;
+  if (byFunction.isUnknownCode || byFunction.writesAllHeaps || entry.effects.isUnknownCode || entry.effects.writesAllHeaps) return;
+  for (const heap of heapsLeftOut(byFunction.writes, entry.effects.writes)) {
+    if (bookkeepingHeaps.has(heap)) continue;
+    const line = `${entry.name} leaves out ${heap}`;
+    if (justifiedDifferences.has(line)) applied.add(line);
+    else errors.add(entry.location, `runtime ${name} writes ${heap}, and ${entry.name} does not say so: what is remembered of that heap would outlive the operation`);
+  }
+  for (const heap of heapsNamedByIndexAlone(entry.effects.writes, byFunction.writes)) {
+    const line = `${entry.name} names an index of ${heap}`;
+    if (justifiedDifferences.has(line)) applied.add(line);
+    else errors.add(entry.location, `runtime ${name} writes all of ${heap}, and ${entry.name} names an index: what is remembered under another index would outlive the operation`);
+  }
+  for (const deed of ["throws", "collects"] as const) {
+    if (!byFunction[deed] || entry.effects[deed]) continue;
+    const line = `${entry.name} leaves out ${deed}`;
+    if (justifiedDifferences.has(line)) applied.add(line);
+    else errors.add(entry.location, `runtime ${name} ${deed}, and ${entry.name} does not say so`);
+  }
+}
+
+function checkFunctionsCoverOperations(schema: Schema, errors: ErrorList): void {
+  const applied = new Set<string>();
+  const entries = entriesOf(schema);
+  for (const entry of entries) checkFunctionCoversOperation(entry, applied, errors);
+  for (const entry of entries) checkOperationCoversFunction(entry, applied, errors);
+  for (const line of justifiedDifferences.keys()) {
+    if (applied.has(line)) continue;
+    const entry = entries.find(entry => line.startsWith(`${entry.name} `));
+    const location = entry?.location ?? schema.runtimeOperations[0]!.location;
+    errors.add(location, `"${line}" is listed in justifiedDifferences in check-runtime.ts, but the rows no longer differ that way`);
+  }
+}
+
 export function checkRuntime(schema: Schema, errors: ErrorList): void {
   for (const operation of schema.runtimeOperations) checkRuntimeOperation(operation, errors);
+  checkFunctionsCoverOperations(schema, errors);
   const parameterTypes = new Set<SchemaEnum>();
   for (const builtin of schema.inlineBuiltins) checkInlineBuiltin(builtin, parameterTypes, errors);
   for (const type of parameterTypes) checkInlineParameterType(type, errors);

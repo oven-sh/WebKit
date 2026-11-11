@@ -1,0 +1,7 @@
+# the same program with calls of built-ins withheld: the method is read and called by value
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls
+# NEVER-NOT: = ToString
+# PROGRAM-OF: to-string-of-a-primitive-is-the-conversion.ir

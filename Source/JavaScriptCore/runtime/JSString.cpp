@@ -111,13 +111,13 @@ bool JSString::equalResolvingRopes(JSString* other) const
         static_cast<const JSRopeString*>(this)->resolveRope(nullptr);
     else if (isRope() && other->isNonSubstringRope())
         static_cast<const JSRopeString*>(other)->resolveRope(nullptr);
-    // A piece of another string takes the characters of its equal as well: whoever compares it again finds them in one piece.
+    // A piece of another string takes the characters of its equal as well, where they are stored as wide as its own: whoever compares it again finds them in one piece.
     for (unsigned i = 0; i < 2; ++i) {
         const JSString* flat = operands[1 - i];
         if (!operands[i]->isRope() || flat->isRope())
             continue;
         StringImpl* impl = flat->valueInternal().impl();
-        if (impl && (impl->is8Bit() || !operands[i]->is8Bit()))
+        if (impl && impl->is8Bit() == operands[i]->is8Bit())
             static_cast<const JSRopeString*>(operands[i])->convertToNonRope(String { *impl });
     }
     return true;

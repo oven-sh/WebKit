@@ -1,0 +1,49 @@
+# the protocol begins by refusing undefined and null. So of a value that is proven a text beside the two, they are refused first, and what is left is a text, which is stepped by index: no arm of the protocol stands beside it,
+# each step hands out a text, and the looks at the loop know it, so the tally goes round as a number
+# function units(text) { let total = 0; for (const unit of text) total += unit.length; return total; }   units("abc"); units(undefined)
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[given]]: undefined|"abc" {{*}}entry=0
+# CHECK: [[text]]: "abc" {{*}} = RequireObjectCoercible [[given]] nullishAccess=Iterate
+# CHECK: ([[total]]: {{*}} @Double, {{*}}isLoopHead=true
+# CHECK: = GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: key="next"
+# NEVER-NOT: form=Generic
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="abc"
+    v2 = Undefined
+    v3 = Call v0, -, v1
+    v4 = Call v0, -, v2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v3, v4
+    Return v7
+}
+function f1 name="units" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2() handler=b4():
+    v8 = PropGet v7 key="length"
+    v9 = Add v3, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+  b4() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+}

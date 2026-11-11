@@ -8,14 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyVerifier.h"
 #include "AOTCheckLines.h"
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"
+#include "AOTMechanismWords.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
+#include "AOTProgramVerifier.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTestFile.h"
-#include "AOTTestSubcommands.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCConfig.h"
@@ -79,12 +83,15 @@ static void appendFailure(Vector<TestFailure>& failures, const RunDirective& run
     failures.append(TestFailure { line, makeString(run.command, ": "_s, sentence...) });
 }
 
-static size_t countOf(const Diagnostics& diagnostics, const DiagnosticName& name)
+static size_t countOf(const Diagnostics& diagnostics, const DiagnosticName& name, std::optional<FunctionID> function)
 {
+    auto isCounted = [&](const auto& reported, auto kind) {
+        return reported.kind == kind && (!function || reported.function == *function);
+    };
     return WTF::switchOn(name, [&](UserDiagnosticKind kind) -> size_t {
-        return std::ranges::count(diagnostics.userDiagnostics(), kind, &UserDiagnostic::kind);
+        return std::ranges::count_if(diagnostics.userDiagnostics(), [&](const UserDiagnostic& reported) { return isCounted(reported, kind); });
     }, [&](InternalErrorKind kind) -> size_t {
-        return std::ranges::count(diagnostics.internalErrors(), kind, &InternalError::kind);
+        return std::ranges::count_if(diagnostics.internalErrors(), [&](const InternalError& reported) { return isCounted(reported, kind); });
     });
 }
 
@@ -103,17 +110,19 @@ struct UnexpectedDiagnostics {
             return;
         seen.append(name);
         appendFailure(failures, run, run.line, "unexpected diagnostic "_s, nameOf(name), ": "_s, message);
+        failures.last().isInternalError = std::holds_alternative<InternalErrorKind>(name);
     }
 };
 
 static void compareDiagnostics(const TestFile& file, const RunDirective& run, const Diagnostics& diagnostics, Vector<TestFailure>& failures)
 {
     for (const ExpectedDiagnostic& expected : file.diagnostics) {
-        size_t count = countOf(diagnostics, expected.kind);
+        size_t count = countOf(diagnostics, expected.kind, expected.function);
+        String place = expected.function ? makeString(" of f"_s, expected.function->index()) : emptyString();
         if (!count)
-            appendFailure(failures, run, expected.line, "expected diagnostic "_s, nameOf(expected.kind), ", none was reported"_s);
+            appendFailure(failures, run, expected.line, "expected diagnostic "_s, nameOf(expected.kind), place, ", none was reported"_s);
         else if (expected.count && *expected.count != count)
-            appendFailure(failures, run, expected.line, "expected "_s, *expected.count, " of "_s, nameOf(expected.kind), ", got "_s, count);
+            appendFailure(failures, run, expected.line, "expected "_s, *expected.count, " of "_s, nameOf(expected.kind), place, ", got "_s, count);
     }
 
     UnexpectedDiagnostics unexpected { file, run, failures };
@@ -147,136 +156,188 @@ static void compareStatistics(const TestFile& file, const RunDirective& run, con
     }
 }
 
-static Vector<Wire::LossRecord> joinByLimit(std::span<const Wire::LossRecord> records)
+static bool takesUnverifiedProgram(const TestCommand& command)
 {
-    Vector<Wire::LossRecord> joined;
-    for (const Wire::LossRecord& record : records) {
-        size_t index = joined.findIf([&](const Wire::LossRecord& other) {
-            return other.limit == record.limit;
-        });
-        if (index == notFound)
-            joined.append(record);
-        else
-            joined[index].count += record.count;
-    }
-    return joined;
+    return command.name == "verify"_s || command.name == "print"_s;
 }
 
-template<typename ID>
-static void compareLossSubject(const ExpectedLoss& expected, const RunDirective& run, char letter, std::optional<ID> wanted, uint32_t actual, Vector<TestFailure>& failures)
+static String programTextFor(const TestCommand& command, const TestFile& file)
 {
-    if (!wanted || wanted->index() == actual)
-        return;
-    String actualWord = actual == Wire::none ? makeString(letter, '-') : makeString(letter, actual);
-    appendFailure(failures, run, expected.line, "limit "_s, nameOf(expected.limit), ": expected "_s, letter, wanted->index(), ", got "_s, actualWord);
+    switch (command.program) {
+    case ProgramOfCommand::None:
+        return { };
+    case ProgramOfCommand::AsWritten:
+        return file.text;
+    case ProgramOfCommand::WithLibrary:
+        return withStandInLibrary(file.text);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-enum class UnlistedLosses : uint8_t { Fail, Allow };
-
-static void compareLosses(const TestFile& file, const RunDirective& run, std::span<const Wire::LossRecord> records, UnlistedLosses unlistedLosses, Vector<TestFailure>& failures)
-{
-    Vector<Wire::LossRecord> joined = joinByLimit(records);
-    for (const ExpectedLoss& expected : file.losses) {
-        size_t index = joined.findIf([&](const Wire::LossRecord& record) {
-            return record.limit == expected.limit;
-        });
-        if (index == notFound) {
-            if (expected.count != 0u)
-                appendFailure(failures, run, expected.line, "expected a loss at limit "_s, nameOf(expected.limit), ", none was reported"_s);
-            continue;
-        }
-        const Wire::LossRecord& record = joined[index];
-        if (expected.count && *expected.count != record.count)
-            appendFailure(failures, run, expected.line, "limit "_s, nameOf(expected.limit), ": expected x"_s, *expected.count, ", got x"_s, record.count);
-        compareLossSubject(expected, run, 'f', expected.function, record.witness.function, failures);
-        compareLossSubject(expected, run, 'v', expected.value, record.witness.value, failures);
-        compareLossSubject(expected, run, 'L', expected.layout, record.layout, failures);
-    }
-
-    if (unlistedLosses == UnlistedLosses::Allow)
-        return;
-    for (const Wire::LossRecord& record : joined) {
-        bool isExpected = file.losses.containsIf([&](const ExpectedLoss& expected) {
-            return expected.limit == record.limit;
-        });
-        if (isExpected)
-            continue;
-        String function = record.witness.function == Wire::none ? "f-"_str : makeString('f', record.witness.function);
-        appendFailure(failures, run, run.line, "unexpected loss at limit "_s, nameOf(record.limit), " (x"_s, record.count, ", "_s, function, ')');
-    }
-}
-
-struct CommandResult {
-    String output;
-    Vector<Wire::LossRecord> losses;
+struct WordsOfRun {
+    Vector<String> arguments;
+    Mechanisms mechanisms;
 };
 
-static CommandResult runCommand(const TestCommand& command, const TestFile& file, const RunDirective& run, BuildContext& build)
+static String runCommand(const TestCommand& command, const TestFile& file, const WordsOfRun& words, BuildContext& build, const Wire::CompileOptions& options, Vector<String>* notesForFailure = nullptr)
 {
-    IRForm form = IRForm::AsRead;
+    String programText = programTextFor(command, file);
     std::unique_ptr<Program> program;
-    if (command.defaultForm) {
-        form = file.form.value_or(*command.defaultForm);
-        bool needsLibrary = form == IRForm::AsRead && command.programAsRead != ProgramAsRead::AsParsed;
-        program = parseProgram(needsLibrary ? withStandInLibrary(file.text) : file.text, form, build, VerifierInputs { .isOptimizing = file.isOptimizing });
-        if (!program) {
-            build.diagnostics().finish(nullptr);
-            return { emptyString(), build.takeLosses(nullptr) };
-        }
-        if (form == IRForm::AsRead && command.programAsRead == ProgramAsRead::TypedAndVerified && !runReadStage(*program, build)) {
+    if (command.program != ProgramOfCommand::None) {
+        program = parseProgram(programText, build);
+        bool isReadyForCommand = program && (takesUnverifiedProgram(command) || (verifyRecords(*program, build) && verifyBodies(*program, build)));
+        if (!isReadyForCommand) {
             build.diagnostics().finish(program.get());
-            return { emptyString(), build.takeLosses(program.get()) };
+            return emptyString();
         }
     }
 
     StringPrintStream out;
-    TestCommandContext context { WTF::move(program), form, run.arguments.span(), out, build };
-    context.isOptimizing = file.isOptimizing;
+    TestCommandContext context { WTF::move(program), words.arguments.span(), out, build };
+    context.options = &options;
+    context.sections = file.sections.span();
+    context.functionOfTypesLine = file.functionOfTypesLine;
+    context.programText = programText;
+    context.mechanisms = words.mechanisms;
     command.run(context);
     build.diagnostics().finish(context.program.get());
-    Vector<Wire::LossRecord> losses = WTF::move(context.losses);
-    losses.appendVector(build.takeLosses(context.program.get()));
-    return { out.toStringWithLatin1Fallback(), WTF::move(losses) };
+    if (notesForFailure)
+        *notesForFailure = WTF::move(context.notesForFailure);
+    return out.toStringWithLatin1Fallback();
 }
 
-static void runOneDirective(const TestFile& file, const RunDirective& run, const Wire::CompileOptions& options, const TestVariant& variant, Vector<TestFailure>& failures, Vector<RunOutput>* outputs)
+static bool runOneDirective(const TestFile& file, const RunDirective& run, const Wire::CompileOptions& optionsOfFile, std::optional<Mechanisms> mechanismsAskedFor, const TestVariant& variant, Vector<TestFailure>& failures, Vector<RunOutput>* outputs)
 {
     const TestCommand* command = findTestCommand(run.command);
     if (!command) {
         failures.append(TestFailure { run.line, makeString("unknown command "_s, run.command) });
-        return;
+        return true;
     }
-    if (!command->defaultForm && file.form) {
-        failures.append(TestFailure { file.formLine, makeString(run.command, " takes no program"_s) });
-        return;
+
+    WordsOfRun words { run.arguments, mechanismsOfProcess() };
+    if (std::optional<String> sentence = takeMechanismsWords(words.arguments, mechanismsAskedFor)) {
+        failures.append(TestFailure { run.line, WTF::move(*sentence) });
+        return true;
+    }
+    if (mechanismsAskedFor) {
+        if (!mechanismsOfProcess().containsAll(*mechanismsAskedFor))
+            return false;
+        words.mechanisms = *mechanismsAskedFor;
+    }
+    Wire::CompileOptions options = optionsOfFile;
+    std::optional<String> sentenceOfTestingWord;
+    words.arguments.removeAllMatching([&](const String& word) {
+        if (!word.startsWith("testing="_s))
+            return false;
+        std::optional<String> sentence = applyOptionWord(options, word);
+        if (sentence && !sentenceOfTestingWord)
+            sentenceOfTestingWord = WTF::move(sentence);
+        return true;
+    });
+    if (sentenceOfTestingWord) {
+        failures.append(TestFailure { run.line, WTF::move(*sentenceOfTestingWord) });
+        return true;
     }
 
     runOnBuildThread([&] {
+        ScopeOfTestThatRunsAsUsersBuild scopeOfChecks(!!file.asUsersBuild);
         BuildContext build(options);
-        CommandResult result = runCommand(*command, file, run, build);
+        Vector<String> notesForFailure;
+        String output = runCommand(*command, file, words, build, options, &notesForFailure);
         if (variant.onlyDiagnostic) {
             reportDiagnostic(*variant.onlyDiagnostic, run, build.diagnostics(), failures);
             if (outputs)
-                outputs->append(RunOutput { run.line, WTF::move(result.output) });
+                outputs->append(RunOutput { run.line, WTF::move(output) });
             return;
         }
 
+        size_t numberOfEarlierFailures = failures.size();
         compareDiagnostics(file, run, build.diagnostics(), failures);
         compareStatistics(file, run, build.statistics(), failures);
-        bool runsWholePipeline = command->programAsRead == ProgramAsRead::WithLibrary;
-        compareLosses(file, run, result.losses.span(), runsWholePipeline ? UnlistedLosses::Allow : UnlistedLosses::Fail, failures);
-        if (std::optional<CheckFailure> failure = matchCheckLines(file.checkLinesFor(run.prefix), result.output))
+        if (std::optional<CheckFailure> failure = matchCheckLines(file.checkLinesFor(run.prefix), output))
             appendFailure(failures, run, failure->line, failure->message);
+        if (failures.size() > numberOfEarlierFailures) {
+            for (const String& note : notesForFailure)
+                appendFailure(failures, run, run.line, note);
+        }
         if (outputs)
-            outputs->append(RunOutput { run.line, WTF::move(result.output) });
+            outputs->append(RunOutput { run.line, WTF::move(output) });
     });
+    return true;
+}
+
+static void reportBreachesOfClosure(const TestFile& file, const Wire::CompileOptions& options, Vector<TestFailure>& failures)
+{
+    const TestCommand* command = findTestCommand("closure"_s);
+    RELEASE_ASSERT(command);
+    runOnBuildThread([&] {
+        BuildContext build(options);
+        String output = runCommand(*command, file, WordsOfRun { { }, mechanismsOfProcess() }, build, options);
+        if (output.isEmpty())
+            return;
+        unsigned numberOfLines = 0;
+        for (size_t end = output.find('\n'); end != notFound; end = output.find('\n', end + 1))
+            ++numberOfLines;
+        failures.append(TestFailure { 1, makeString("Link's flow does not end closed, `closure` prints "_s, numberOfLines, " lines: "_s, StringView(output).left(output.find('\n'))) });
+    });
+}
+
+static void reportTablesThatHangOnOrder(const TestFile& file, const Wire::CompileOptions& options, Vector<TestFailure>& failures)
+{
+    const TestCommand* command = findTestCommand("link"_s);
+    RELEASE_ASSERT(command);
+    auto tablesIn = [&](ASCIILiteral reading, ASCIILiteral order) {
+        String output;
+        runOnBuildThread([&] {
+            BuildContext build(options);
+            WordsOfRun words { { }, mechanismsOfProcess() };
+            if (!reading.isNull())
+                words.arguments.append(reading);
+            if (!order.isNull())
+                words.arguments.append(order);
+            output = runCommand(*command, file, words, build, options);
+        });
+        return output;
+    };
+    for (ASCIILiteral reading : { ASCIILiteral(), "held"_s }) {
+        ASCIILiteral nameOfReading = reading.isNull() ? ""_s : " held"_s;
+        String tables = tablesIn(reading, { });
+        for (ASCIILiteral order : { "oldest-first"_s, "scattered"_s }) {
+            String others = tablesIn(reading, order);
+            if (others == tables)
+                continue;
+            if (file.hangsOnOrder)
+                return;
+            Vector<String> lines = tables.split('\n');
+            Vector<String> otherLines = others.split('\n');
+            size_t line = 0;
+            while (line < lines.size() && line < otherLines.size() && lines[line] == otherLines[line])
+                ++line;
+            failures.append(TestFailure { 1, makeString("Link's tables hang on the order of the worklist: `link"_s, nameOfReading, "` prints `"_s, line < lines.size() ? lines[line] : emptyString(), "`, `link"_s, nameOfReading, " "_s, order, "` prints `"_s, line < otherLines.size() ? otherLines[line] : emptyString(), '`') });
+            return;
+        }
+    }
+    if (file.hangsOnOrder && mechanismsOfProcess() == allMechanisms)
+        failures.append(TestFailure { file.hangsOnOrder->line, "Link's tables are the same in every order of the worklist: remove the HANGS-ON-ORDER line"_s });
+}
+
+static ASCIILiteral findWhatTurnsChecksOnFromOutside(const TestVariant& variant)
+{
+    if (ASSERT_ENABLED)
+        return "this testaot has assertions"_s;
+    if (ASAN_ENABLED)
+        return "this testaot has the sanitizer"_s;
+    if (Options::verifyAOTMachineCode())
+        return "verifyAOTMachineCode is set for the process"_s;
+    if (variant.optionWords.containsIf([](const String& word) { return word.startsWith("check="_s); }))
+        return "the command line asks for a check"_s;
+    return { };
 }
 
 Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const TestVariant& variant, std::optional<TestTodo>* todo, const String& folder)
 {
     TestFile file = parseTestFile(WTF::move(text), hostArchitecture(), folder);
     if (variant.onlyDiagnostic) {
-        // The plain run of the file says what is wrong with its directives, and a file that plants the cause of the diagnostic has nothing to show here.
         bool expectsDiagnostic = file.diagnostics.containsIf([&](const ExpectedDiagnostic& expected) {
             return expected.kind == *variant.onlyDiagnostic;
         });
@@ -292,29 +353,60 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
         *todo = file.todo;
 
     Vector<TestFailure> failures;
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    RELEASE_ASSERT(!applyOptionWord(options, "check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed"_s));
-    for (const OptionWord& optionWord : file.optionWords) {
-        if (std::optional<String> sentence = applyOptionWord(options, optionWord.word))
-            failures.append(TestFailure { optionWord.line, WTF::move(*sentence) });
-    }
-    for (const String& word : variant.optionWords) {
-        if (std::optional<String> sentence = applyOptionWord(options, word))
-            failures.append(TestFailure { 1, WTF::move(*sentence) });
-    }
+    Wire::CompileOptions options = makeOptionsOfTestedProgram();
+    if (file.asUsersBuild) {
+        for (const OptionWord& optionWord : file.optionWords) {
+            if (optionWord.word.startsWith("check="_s))
+                failures.append(TestFailure { optionWord.line, "a file with an AS-USERS-BUILD line asks for no check"_s });
+        }
+        for (const OptionWord& option : file.jscOptions) {
+            if (option.word.contains("verifyAOTMachineCode"_s))
+                failures.append(TestFailure { option.line, "a file with an AS-USERS-BUILD line does not set verifyAOTMachineCode"_s });
+        }
+        if (ASCIILiteral obstacle = findWhatTurnsChecksOnFromOutside(variant); !obstacle.isNull() && failures.isEmpty()) {
+            dataLogLn("NOT RUN, not as users build here: ", obstacle, ": AS-USERS-BUILD: ", file.asUsersBuild->reason);
+            if (todo)
+                *todo = std::nullopt;
+            return { };
+        }
+    } else
+        RELEASE_ASSERT(!applyOptionWord(options, "check=VerifyEachStage"_s));
+    std::optional<Mechanisms> mechanismsAskedFor;
+    auto applyWord = [&](const String& word, unsigned line) {
+        std::optional<String> sentence = isMechanismsWord(word) ? applyMechanismsWordAskedFor(mechanismsAskedFor, word) : applyOptionWord(options, word);
+        if (sentence)
+            failures.append(TestFailure { line, WTF::move(*sentence) });
+    };
+    for (const OptionWord& optionWord : file.optionWords)
+        applyWord(optionWord.word, optionWord.line);
+    for (const String& word : variant.optionWords)
+        applyWord(word, 1);
     OptionsStorage optionsOfProcess = g_jscConfig.options;
     auto restoreOptionsOfProcess = makeScopeExit([&] {
         g_jscConfig.options = optionsOfProcess;
     });
     for (const OptionWord& option : file.jscOptions) {
-        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), /* verify = */ false))
+        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), false))
             failures.append(TestFailure { option.line, makeString("unknown JSC option "_s, option.word) });
     }
     if (!failures.isEmpty())
         return failures;
 
-    for (const RunDirective& run : file.runs)
-        runOneDirective(file, run, options, variant, failures, outputs);
+    bool hasRun = false;
+    for (const RunDirective& run : file.runs) {
+        if (!run.isLeftOutUnderFurtherOptionWords || variant.optionWords.isEmpty())
+            hasRun |= runOneDirective(file, run, options, mechanismsAskedFor, variant, failures, outputs);
+    }
+    bool hasProgram = file.runs.containsIf([](const RunDirective& run) {
+        const TestCommand* command = findTestCommand(run.command);
+        return command && command->program != ProgramOfCommand::None;
+    });
+    if (hasRun && hasProgram && variant.optionWords.isEmpty() && !variant.onlyDiagnostic) {
+        reportBreachesOfClosure(file, options, failures);
+        reportTablesThatHangOnOrder(file, options, failures);
+    }
+    if (todo && !hasRun)
+        *todo = std::nullopt;
     std::ranges::stable_sort(failures, { }, &TestFailure::line);
     return failures;
 }
@@ -342,7 +434,6 @@ struct FileResult {
 
 static constexpr ASCIILiteral todoLineStart = "TODO "_s;
 
-// A stream that collects text cuts a very long string short.
 static void printLineByLine(PrintStream& out, StringView text)
 {
     constexpr size_t leastLengthOfPiece = 1 << 20;
@@ -362,8 +453,8 @@ static FileResult runOneFileInThisProcess(const String& path, const TestRunReque
     std::optional<TestTodo> todo;
     Vector<TestFailure> failures = runOneFile(path, request.showsOutput ? &outputs : nullptr, request.variant, &todo);
 
-    bool isPlainRun = request.variant.optionWords.isEmpty() && !request.variant.onlyDiagnostic;
-    bool isOwed = todo && !failures.isEmpty();
+    bool isPlainRun = request.variant.optionWords.isEmpty() && !request.variant.onlyDiagnostic && mechanismsOfProcess() == allMechanisms;
+    bool isOwed = todo && !failures.isEmpty() && !failures.containsIf([](const TestFailure& failure) { return failure.isInternalError; });
     if (todo && failures.isEmpty() && isPlainRun)
         failures.append(TestFailure { todo->line, "passes: remove the TODO line"_s });
 
@@ -410,6 +501,14 @@ static Vector<String> childArguments(std::span<const String> paths, const TestRu
     return arguments;
 }
 
+static ChildProcessResult runInChildProcess(const ChildProcessLauncher& launcher, std::span<const String> paths, const TestRunRequest& request)
+{
+    ChildProcessResult result = launcher.run(childArguments(paths, request).span());
+    for (ASCIILiteral lineEnd : { "\r\n"_s, "\n"_s })
+        result.output = makeStringByReplacingAll(result.output, makeString(lineAfterChildProcess, lineEnd), ""_s);
+    return result;
+}
+
 struct BatchResult {
     TestRunSummary summary;
     String report;
@@ -430,22 +529,6 @@ static void count(TestRunSummary& summary, FileOutcome outcome)
     }
 }
 
-static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
-{
-    ChildProcessResult result = launcher.run(childArguments(singleElementSpan(path), request).span());
-
-    StringView output = result.output;
-    if (result.exitedWith(exitCodeForFailure))
-        return { FileOutcome::Failed, output.left(startOfLastLines(output, 1)).toString() };
-    if (result.exitedWith(exitCodeForSuccess))
-        return { output.startsWith(todoLineStart) ? FileOutcome::Todo : FileOutcome::Passed, output.left(startOfLastLines(output, 1)).toString() };
-
-    StringView lastLines = output.substring(startOfLastLines(output, maxCrashOutputLinesShown));
-    ASCIILiteral lineEnd = lastLines.isEmpty() || lastLines.endsWith('\n') ? ""_s : "\n"_s;
-    return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
-}
-
-// "<passed> passed, <failed> failed, <todo> todo": the last line of a run.
 static std::optional<TestRunSummary> parseSummaryLine(StringView line)
 {
     TestRunSummary summary;
@@ -464,14 +547,32 @@ static std::optional<TestRunSummary> parseSummaryLine(StringView line)
     return index == std::size(words) ? std::optional(summary) : std::nullopt;
 }
 
-// Starting a process costs more than most tests, so a child runs several files. A child that crashes or hangs says nothing about
-// the files it did not reach: each file of its batch then runs in a process of its own.
+static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
+{
+    ChildProcessResult result = runInChildProcess(launcher, singleElementSpan(path), request);
+
+    StringView output = result.output;
+    size_t summaryStart = startOfLastLines(output, 1);
+    std::optional<TestRunSummary> summary = parseSummaryLine(output.substring(summaryStart));
+    bool hasComeToItsEnd = summary && summary->passed + summary->failed + summary->todo == 1;
+    if (hasComeToItsEnd && result.exitedWith(exitCodeForFailure))
+        return { FileOutcome::Failed, output.left(summaryStart).toString() };
+    if (hasComeToItsEnd && result.exitedWith(exitCodeForSuccess))
+        return { output.startsWith(todoLineStart) ? FileOutcome::Todo : FileOutcome::Passed, output.left(summaryStart).toString() };
+
+    StringView lastLines = output.substring(startOfLastLines(output, maxCrashOutputLinesShown));
+    ASCIILiteral lineEnd = lastLines.isEmpty() || lastLines.endsWith('\n') ? ""_s : "\n"_s;
+    return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
+}
+
 static constexpr unsigned filesPerChildProcess = 16;
 
 static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher, std::span<const String> paths, const TestRunRequest& request)
 {
+    BatchResult batch;
+    StringBuilder report;
     if (paths.size() > 1) {
-        ChildProcessResult result = launcher.run(childArguments(paths, request).span());
+        ChildProcessResult result = runInChildProcess(launcher, paths, request);
         if (result.exitedWith(exitCodeForSuccess) || result.exitedWith(exitCodeForFailure)) {
             StringView output = result.output;
             size_t summaryStart = startOfLastLines(output, 1);
@@ -479,10 +580,10 @@ static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher
             if (summary && summary->passed + summary->failed + summary->todo == paths.size())
                 return { *summary, output.left(summaryStart).toString() };
         }
+        if (result.hasCrashedOrHung())
+            report.append("The process of "_s, paths.size(), " files "_s, result.description(), '\n');
     }
 
-    BatchResult batch;
-    StringBuilder report;
     for (const String& path : paths) {
         FileResult result = runOneFileInChildProcess(launcher, path, request);
         count(batch.summary, result.outcome);
@@ -497,6 +598,8 @@ TestRunSummary runTestFiles(const TestRunRequest& request, PrintStream& out)
     Vector<String> files = collectTestFiles(request);
     TestRunSummary summary;
     if (!request.launcher || files.size() <= 1) {
+        if (!request.launcher)
+            printLineAfterEachChildProcess();
         for (const String& file : files) {
             FileResult result = runOneFileInThisProcess(file, request);
             count(summary, result.outcome);

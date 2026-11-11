@@ -1154,7 +1154,7 @@ void JSGlobalObject::init(VM& vm)
 
     m_hostFunctionStructure.set(vm, this, JSFunction::createStructure(vm, this, m_functionPrototype.get()));
 #if ENABLE(AOT)
-    m_hostFunctionStructure.set(vm, this, AOT::RuntimeHooks::structureOfHostFunctions(this, m_hostFunctionStructure.get()));
+    m_hostFunctionStructure.set(vm, this, AOT::RuntimeHooks::structureForHostFunctions(this, m_hostFunctionStructure.get()));
 #endif
 
     auto initFunctionStructures = [&] (FunctionStructures& structures) {
@@ -1171,7 +1171,7 @@ void JSGlobalObject::init(VM& vm)
     m_customGetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
 #if ENABLE(AOT)
-            init.set(AOT::RuntimeHooks::structureOfHostFunctions(init.owner, JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
+            init.set(AOT::RuntimeHooks::structureForHostFunctions(init.owner, JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
 #else
             init.set(JSCustomGetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
 #endif
@@ -1179,7 +1179,7 @@ void JSGlobalObject::init(VM& vm)
     m_customSetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
 #if ENABLE(AOT)
-            init.set(AOT::RuntimeHooks::structureOfHostFunctions(init.owner, JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
+            init.set(AOT::RuntimeHooks::structureForHostFunctions(init.owner, JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get())));
 #else
             init.set(JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
 #endif
@@ -3023,7 +3023,7 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
 
 #if ENABLE(AOT)
     if (aotInstance()) [[unlikely]]
-        AOT::RuntimeHooks::stopBecauseRealmHasABadTime();
+        AOT::RuntimeHooks::crashOnHavingABadTime();
 #endif
 
     // This must happen first, because the compiler thread may race with haveABadTime.

@@ -1,0 +1,107 @@
+# function* three() { yield 1; yield 2; yield 4; }
+# function nested() { let total = 0; for (const x of three()) for (const y of three()) total += x * y; return total; }
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell
+# ANSWER: 49
+# ANSWER-NEXT: exited with 0
+
+variable g0 name="three" module=m0 declared={type=function} initialization=Function function=f2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="nested"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="console" [isFreeName]
+    v4 = PropGet v3 key="log"
+    v5 = Call v4, v3, v1 calleeKey="log" calleeName="console.log"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="nested" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="three"
+    v2 = IteratorOpen v1
+    v3 = Integer
+    Jump -> next b2(v3)
+  b2(v4: anything):
+    LoopHint
+    v6 = IteratorResume v2
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    Return v4
+  b4():
+    Jump -> next b5()
+  b5() handler=b11():
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v9 calleeName="three"
+    v11 = IteratorOpen v10
+    Jump -> next b6(v4)
+  b6(v12: anything) handler=b11():
+    LoopHint
+    v14 = IteratorResume v11
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Branch v15 -> taken b7(), notTaken b8()
+  b7() handler=b11():
+    Jump -> next b2(v12)
+  b8() handler=b11():
+    Jump -> next b9()
+  b9() handler=b10():
+    v17 = Mul v8, v16
+    v18 = Add v12, v17
+    Jump -> next b6(v18)
+  b10() role=IterationCleanup subject=v11 handler=b11():
+    v19 = CatchException
+    IteratorClose v11 completion=Throw
+    Rethrow v19
+  b11() role=IterationCleanup subject=v2:
+    v21 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v21
+}
+function f2 name="three" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v5
+  b3():
+    Return v5
+  b4():
+    v7 = Integer integer=2
+    v8 = Yield v7
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5():
+    Throw v9
+  b6():
+    Return v9
+  b7():
+    v11 = Integer integer=4
+    v12 = Yield v11
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    Switch v14 cases=[1, 2] -> case b8(), case b9(), otherwise b10()
+  b8():
+    Throw v13
+  b9():
+    Return v13
+  b10():
+    v15 = Undefined
+    Return v15
+}

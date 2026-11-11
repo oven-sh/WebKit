@@ -1,0 +1,31 @@
+# Code mentions the cell of a built-in that it holds as a value.
+# export const buffer = new ArrayBuffer(8), maxByteLength = buffer.maxByteLength, byteLength = buffer.byteLength, bufferPrototype = ArrayBuffer.prototype, globalObject = globalThis
+# RUN(PROTOTYPE): bytes f0:Body
+# PROTOTYPE-LABEL: unit f0:Body
+# PROTOTYPE: BuiltinCell Object ArrayBufferPrototype
+# RUN(GLOBAL): bytes f0:Body
+# GLOBAL-LABEL: unit f0:Body
+# GLOBAL: BuiltinCell Object GlobalThis
+
+variable g0 name="buffer" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="maxByteLength" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="byteLength" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="bufferPrototype" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="globalObject" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 exports=[{name="buffer" variable=g0}, {name="bufferPrototype" variable=g3}, {name="byteLength" variable=g2}, {name="globalObject" variable=g4}, {name="maxByteLength" variable=g1}]
+entry module=m0 hostReads=[{exportName="buffer"}, {exportName="byteLength"}, {exportName="maxByteLength"}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ArrayBuffer
+    v1 = Integer integer=8
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="maxByteLength"
+    v4 = PropGet v2 key="byteLength"
+    v5 = Builtin builtin=ArrayBufferPrototype
+    v6 = Builtin builtin=GlobalThis
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v3 variable=g1
+    PutModuleVariable v4 variable=g2
+    PutModuleVariable v5 variable=g3
+    PutModuleVariable v6 variable=g4
+    Return
+}

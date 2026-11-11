@@ -9,25 +9,26 @@
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
 #include "B3Operations.h"
-#include "B3RelocatableValue.h"
+#include "JSCConfig.h"
 #include "LLIntData.h"
+#include "LLIntEntrypoint.h"
 #include "NativeCalleeRegistry.h"
 #include "Options.h"
 #include "WasmModuleInformation.h"
 #include "WasmOperations.h"
+#include "WasmSections.h"
+#include "WasmStreamingParser.h"
 #include <algorithm>
+#include <wtf/LEBDecoder.h>
 #include <wtf/SHA1.h>
 #include <wtf/TZoneMallocInlines.h>
-
-#if ENABLE(AOT)
-#include "AOTRuntimeReporter.h"
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace Wasm {
 
 using B3::operationMemoryMove;
+using B3::operationGCSafeMemoryMove;
 using B3::operationMemoryFill;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeInImage);
@@ -41,7 +42,6 @@ struct CodeInImage::PublishedImage {
 };
 
 constinit std::atomic<const CodeInImage::PublishedImage*> CodeInImage::s_lastPublished { nullptr };
-constinit std::array<std::atomic<unsigned>, numberOfInterpreterFallbackReasons> CodeInImage::s_interpreterFallbackCounts { };
 
 static std::array<void*, ImagePointerTable::numberOfOperations> imageCodeOperations()
 {
@@ -67,30 +67,24 @@ ImagePointerTable ImagePointerTable::forModule(const ModuleInformation& info, ui
     return { info.internalFunctionCount(), info.typeCount(), numberOfJSEntrypoints };
 }
 
-std::optional<uint32_t> runtimeFunctionSlot(B3::RuntimeFunction function)
-{
-    switch (function) {
-    case B3::RuntimeFunction::MemoryMove:
-        return ImagePointerTable::slotOf(ImageCodeOperation::operationMemoryMove);
-    case B3::RuntimeFunction::MemoryFill:
-        return ImagePointerTable::slotOf(ImageCodeOperation::operationMemoryFill);
-    case B3::RuntimeFunction::GCSafeMemoryMove:
-    case B3::RuntimeFunction::FmodDouble:
-    case B3::RuntimeFunction::CeilDouble:
-    case B3::RuntimeFunction::CeilFloat:
-    case B3::RuntimeFunction::FloorDouble:
-    case B3::RuntimeFunction::FloorFloat:
-    case B3::RuntimeFunction::TruncDouble:
-    case B3::RuntimeFunction::TruncFloat:
-        break;
-    }
-    return std::nullopt;
-}
-
 std::array<uint8_t, 20> CodeInImage::digestOf(std::span<const uint8_t> source)
 {
-    SHA1 sha1;
-    sha1.addBytes(source);
+    SourceHasher sha1;
+    constexpr size_t headerSize = 8;
+    size_t hashedEnd = 0;
+    size_t offset = std::min(headerSize, source.size());
+    while (offset < source.size()) {
+        Section section;
+        uint32_t payloadSize;
+        if (!decodeSection(source[offset++], section) || !WTF::LEBDecoder::decodeUInt32(source, offset, payloadSize) || payloadSize > source.size() - offset)
+            break;
+        if (section == Section::Data || section == Section::Custom) {
+            sha1.addBytes(source.subspan(hashedEnd, offset - hashedEnd));
+            hashedEnd = offset + payloadSize;
+        }
+        offset += payloadSize;
+    }
+    sha1.addBytes(source.subspan(hashedEnd));
     SHA1::Digest digest;
     sha1.computeHash(digest);
     return digest;
@@ -99,10 +93,8 @@ std::array<uint8_t, 20> CodeInImage::digestOf(std::span<const uint8_t> source)
 RegisterAtOffsetList CodeInImage::savedRegistersFrom(const SavedRegistersInImage& saved)
 {
     RegisterSet registers;
-    for (unsigned reg = 0; reg < 64; ++reg) {
-        if (saved.registers >> reg & 1)
-            registers.add(Reg::fromIndex(reg), IgnoreVectors);
-    }
+    for (uint64_t left = saved.registers; left; left &= left - 1)
+        registers.add(Reg::fromIndex(std::countr_zero(left)), IgnoreVectors);
     RegisterAtOffsetList list(registers);
     if (list.registerCount())
         list.adjustOffsets(saved.offsetOfFirst - list.at(0).offset());
@@ -124,6 +116,15 @@ bool CodeInImage::contains(const void* pc)
             return true;
     }
     return false;
+}
+
+CodePtr<ExceptionHandlerPtrTag> CodeInImage::catchRunwayFor(const void* pc)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        if (std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data()) < image->code.size())
+            return CodePtr<ExceptionHandlerPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image->code.data() + reinterpret_cast<const DirectoryInImage*>(image->directory.data())->catchRunway));
+    }
+    return nullptr;
 }
 
 bool CodeInImage::isInProcess()
@@ -162,6 +163,41 @@ static std::span<const DeclinedModuleInImage> declinedModulesIn(const uint8_t* d
     return { reinterpret_cast<const DeclinedModuleInImage*>(std::to_address(modulesIn(directory).end())), header.numberOfDeclinedModules };
 }
 
+const void* CodeInImage::framelessFaultStub(const void* pc)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        uintptr_t place = std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data());
+        if (place >= image->code.size())
+            continue;
+        const uint8_t* directory = image->directory.data();
+        for (auto& module : modulesIn(directory)) {
+            std::span ranges { reinterpret_cast<const FramelessRangeInImage*>(directory + module.framelessRanges), module.numberOfFramelessRanges };
+            auto next = std::ranges::upper_bound(ranges, place, { }, &FramelessRangeInImage::begin);
+            if (next != ranges.begin() && place < std::prev(next)->end)
+                return image->code.data() + reinterpret_cast<const DirectoryInImage*>(directory)->faultWithoutFrame;
+        }
+    }
+    return nullptr;
+}
+
+bool CodeInImage::isInFunction(const void* pc)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        uintptr_t place = std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data());
+        if (place >= image->code.size())
+            continue;
+        const uint8_t* directory = image->directory.data();
+        for (auto& module : modulesIn(directory)) {
+            for (uint32_t offset : module.functions) {
+                std::span functions { reinterpret_cast<const FunctionInImage*>(directory + offset), module.numberOfFunctions };
+                if (std::ranges::any_of(functions, [&](const FunctionInImage& function) { return place - function.entry < function.size; }))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 const ModuleInImage* CodeInImage::findRecord(const ModuleInformation& info)
 {
     if (!info.hasSourceDigest)
@@ -183,13 +219,31 @@ static bool usesDisabledVectors(const ModuleInImage& module)
     return module.usesVectors && !Options::useWasmSIMD();
 }
 
-static std::optional<InterpreterFallbackReason> fallbackReasonFor(const ModuleInImage& module, MemoryMode mode)
+ImageCodeFlavor CodeInImage::flavorFor(const ModuleInformation& info, MemoryMode mode)
 {
-    if (usesDisabledVectors(module))
-        return InterpreterFallbackReason::VectorsAreDisabled;
-    if (module.isForSignalingMemory && mode != MemoryMode::Signaling)
-        return InterpreterFallbackReason::MemoryChecksBounds;
-    return std::nullopt;
+    // A signaling memory exists only where the fault handler does.
+    if (mode == MemoryMode::Signaling)
+        return ImageCodeFlavor::Trapping;
+    // An instance without a memory has the mode of an empty one, and its code leaves nothing but null references to the fault handler.
+    if (!info.memoryCount() && Options::useWasmFaultSignalHandler())
+        return ImageCodeFlavor::Trapping;
+    return ImageCodeFlavor::Checking;
+}
+
+const ModuleInImage* CodeInImage::findBeforeParsing(std::span<const uint8_t> source, ModuleInformation& info)
+{
+    if (!needsSourceDigests())
+        return nullptr;
+    info.sourceDigest = digestOf(source);
+    info.sourceSize = source.size();
+    info.hasSourceDigest = true;
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        for (auto& module : modulesIn(image->directory.data())) {
+            if (module.sourceSize == info.sourceSize && module.digest == info.sourceDigest)
+                return usesDisabledVectors(module) ? nullptr : &module;
+        }
+    }
+    return nullptr;
 }
 
 const ModuleInImage* CodeInImage::find(const ModuleInformation& info)
@@ -213,29 +267,38 @@ bool CodeInImage::isModuleOfProgram(const ModuleInformation& info)
     return false;
 }
 
-std::span<const FunctionInImage> CodeInImage::functionsOf(const ModuleInImage& module)
+std::span<const FunctionInImage> CodeInImage::functionsOf(const ModuleInImage& module, ImageCodeFlavor flavor)
 {
-    return { reinterpret_cast<const FunctionInImage*>(imageHolding(module).directory.data() + module.functions), module.numberOfFunctions };
+    return { reinterpret_cast<const FunctionInImage*>(imageHolding(module).directory.data() + module.functions[static_cast<size_t>(flavor)]), module.numberOfFunctions };
 }
 
-std::optional<InterpreterFallbackReason> CodeInImage::fallbackReason(const ModuleInformation& info, MemoryMode mode)
+RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation& info, const IPIntCallees& ipintCallees, MemoryMode mode)
 {
     const ModuleInImage* module = findRecord(info);
-    return module ? fallbackReasonFor(*module, mode) : std::nullopt;
-}
-
-RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation& info, const IPIntCallees& ipintCallees, MemoryMode mode, CodePtr<WasmEntryPtrTag> interpreterEntrypoint)
-{
-    const ModuleInImage* module = findRecord(info);
-    if (!module || fallbackReasonFor(*module, mode))
+    if (!module || usesDisabledVectors(*module))
         return nullptr;
-    return adoptRef(*new CodeInImage(info, ipintCallees, *module, interpreterEntrypoint));
+    return adoptRef(*new CodeInImage(info, ipintCallees, *module, flavorFor(info, mode)));
 }
 
-CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipintCallees, const ModuleInImage& module, CodePtr<WasmEntryPtrTag> interpreterEntrypoint)
-    : m_callees(module.numberOfFunctions)
-    , m_importStubs(module.numberOfImportedFunctions)
-    , m_isForSignalingMemory(module.isForSignalingMemory)
+static FixedVector<HandlerInfo> handlersOf(const FunctionInImage& function, const HandlerInImage* handlersOfModule, std::span<const uint8_t> code)
+{
+    FixedVector<HandlerInfo> handlers(function.numberOfHandlers);
+    for (uint32_t index = 0; index < function.numberOfHandlers; ++index) {
+        const HandlerInImage& handler = handlersOfModule[function.firstHandler + index];
+        auto type = static_cast<HandlerType>(handler.type);
+        CodePtr<ExceptionHandlerPtrTag> place;
+        if (type != HandlerType::Delegate)
+            place = CodePtr<ExceptionHandlerPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(code.data() + handler.code));
+        handlers[index].initialize(UnlinkedHandlerInfo(type, handler.start, handler.end, 0, handler.tryDepth, handler.exceptionIndexOrDelegateTarget), place);
+    }
+    return handlers;
+}
+
+CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipintCallees, const ModuleInImage& module, ImageCodeFlavor flavor)
+    : m_importStubs(module.numberOfImportedFunctions)
+    , m_javaScriptImportStubs(module.numberOfImportedFunctions)
+    , m_flavor(flavor)
+    , m_servesEveryFlavor(module.functions[0] == module.functions[1])
 {
     ImagePointerTable table = ImagePointerTable::forModule(info, module.numberOfJSEntrypoints);
     m_pointers = FixedVector<void*>(table.size());
@@ -244,7 +307,12 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     for (uint32_t slot = 0; slot < ImagePointerTable::numberOfOperations; ++slot)
         m_pointers[slot] = operations[slot];
     m_pointers[ImagePointerTable::genericJSEntrypoint] = LLInt::getCodePtr<JSEntryPtrTag>(js_to_wasm_wrapper_entry).taggedPtr();
-    m_pointers[ImagePointerTable::interpreterEntrypoint] = interpreterEntrypoint.taggedPtr();
+    m_pointers[ImagePointerTable::defaultJSCall] = LLInt::defaultCall().code().taggedPtr();
+    m_pointers[ImagePointerTable::wasmToJSCallee] = CalleeBits::boxNativeCallee(&WasmToJSCallee::singleton());
+    m_pointers[ImagePointerTable::restoreFrameCallee] = CalleeBits::boxNativeCallee(&RestoreFrameCallee::singleton());
+    m_pointers[ImagePointerTable::restoreFrameReturnAddress] = reinterpret_cast<void*>(untagCodePtr<CFunctionPtrTag>(wasm_restore_frame_return));
+    m_pointers[ImagePointerTable::structureIDBase] = std::bit_cast<void*>(structureIDBase());
+    m_pointers[ImagePointerTable::throwFromFaultHandler] = LLInt::getCodePtr<CFunctionPtrTag>(wasm_throw_from_fault_handler_trampoline_reg_instance).taggedPtr();
 #if GIGACAGE_ENABLED
     m_pointers[ImagePointerTable::primitiveGigacageDisableRequest] = &Gigacage::disablePrimitiveGigacageRequested;
     m_pointers[ImagePointerTable::primitiveGigacageBase] = Gigacage::addressOfBasePtr(Gigacage::Primitive);
@@ -252,26 +320,21 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
 
     const PublishedImage& image = imageHolding(module);
     const uint8_t* directory = image.directory.data();
-    std::span functions = functionsOf(module);
+    std::span functions = functionsOf(module, flavor);
     auto* savedRegisters = reinterpret_cast<const SavedRegistersInImage*>(directory + module.savedRegisters);
-    Vector<Ref<OMGCallee>> calleesWithCode;
-    calleesWithCode.reserveInitialCapacity(functions.size());
+    auto* handlers = reinterpret_cast<const HandlerInImage*>(directory + module.handlers);
+    m_callees.reserveInitialCapacity(functions.size());
     for (size_t index = 0; index < functions.size(); ++index) {
         const FunctionInImage& function = functions[index];
-        uint32_t slot = table.callee(FunctionCodeIndex(index));
-        if (!function.hasCode) {
-            m_pointers[slot] = CalleeBits::boxNativeCallee(ipintCallees.at(index).ptr());
-            continue;
-        }
-        uint32_t end = index + 1 < functions.size() ? functions[index + 1].entry : module.functionsEnd;
         FunctionSpaceIndex functionIndexSpace = info.toSpaceIndex(FunctionCodeIndex(index));
         Ref<OMGCallee> callee = OMGCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { ipintCallees.at(index).get() });
-        callee->setCodeInImage(image.code.subspan(function.entry, end - function.entry), savedRegistersFrom(savedRegisters[function.savedRegisters]));
-        m_pointers[slot] = CalleeBits::boxNativeCallee(callee.ptr());
-        m_callees[index] = callee.copyRef();
-        calleesWithCode.append(WTF::move(callee));
+        callee->setCodeInImage(image.code.subspan(function.entry, function.size), savedRegistersFrom(savedRegisters[function.savedRegisters]));
+        if (function.numberOfHandlers)
+            callee->setExceptionHandlersInImage(handlersOf(function, handlers, image.code));
+        m_pointers[table.callee(FunctionCodeIndex(index))] = CalleeBits::boxNativeCallee(callee.ptr());
+        m_callees.append(WTF::move(callee));
     }
-    NativeCalleeRegistry::singleton().registerCallees(calleesWithCode);
+    NativeCalleeRegistry::singleton().registerCallees(m_callees);
 
     for (uint32_t type = 0; type < info.typeCount(); ++type)
         m_pointers[table.rtt(TypeSignatureIndex(type))] = const_cast<RTT*>(&info.rtt(TypeSignatureIndex(type)));
@@ -286,25 +349,36 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     }
 
     auto* importStubs = reinterpret_cast<const uint32_t*>(directory + module.importStubs);
-    for (unsigned index = 0; index < module.numberOfImportedFunctions; ++index)
+    auto* javaScriptImportStubs = reinterpret_cast<const uint32_t*>(directory + module.javaScriptImportStubs);
+    for (unsigned index = 0; index < module.numberOfImportedFunctions; ++index) {
         m_importStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image.code.data() + importStubs[index]));
-}
-
-void CodeInImage::didFallBackToInterpreter(InterpreterFallbackReason reason)
-{
-    if (s_interpreterFallbackCounts[static_cast<size_t>(reason)].fetch_add(1, std::memory_order_relaxed))
-        return;
-#if ENABLE(AOT)
-    AOT::reportInterpreterFallback(reason);
-#endif
-}
-
-unsigned CodeInImage::interpreterFallbackCount(InterpreterFallbackReason reason)
-{
-    return s_interpreterFallbackCounts[static_cast<size_t>(reason)].load(std::memory_order_relaxed);
+        m_javaScriptImportStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image.code.data() + javaScriptImportStubs[index]));
+    }
 }
 
 CodeInImage::~CodeInImage() = default;
+
+bool CodeInImage::holds(const Callee* callee, size_t functionCodeIndex) const
+{
+    if (m_callees[functionCodeIndex].ptr() == callee)
+        return true;
+    Locker locker { m_faultCalleesLock };
+    auto iterator = m_faultCallees.find(functionCodeIndex);
+    return iterator != m_faultCallees.end() && iterator->value.ptr() == callee;
+}
+
+Ref<OMGCallee> CodeInImage::calleeWithoutSavedRegisters(const void* pc)
+{
+    size_t index = m_callees.findIf([&](auto& callee) {
+        auto [start, end] = callee->range();
+        return start <= pc && pc < end;
+    });
+    RELEASE_ASSERT(index != notFound);
+    Locker locker { m_faultCalleesLock };
+    return m_faultCallees.ensure(index, [&] {
+        return OMGCallee::createWithoutSavedRegisters(m_callees[index].get());
+    }).iterator->value;
+}
 
 CodePtr<JSEntryPtrTag> CodeInImage::jsEntrypoint(const RTT& rtt) const
 {

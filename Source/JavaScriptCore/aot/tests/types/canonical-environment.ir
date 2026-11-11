@@ -2,9 +2,10 @@
 # RUN: canonical
 # CHECK: t0..t0 = env L0
 # CHECK-NEXT: t0..t1 = absent|env L0
-# CHECK-NEXT: t0..t2 = anything|absent
+# CHECK-NEXT: t0..t2 = absent|anything
 # CHECK-NEXT: laws hold
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment
-function f0 name="types" parameters=[{type=env L0}, {type=absent}, {type=undefined}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=env L0}, {type=absent}, {type=undefined}] results=[{type=undefined}]
+entry module=m0

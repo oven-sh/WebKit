@@ -1,0 +1,24 @@
+# interface Sum { total: number }  const sum = list.reduce<Sum>((held, x) => held, { total: 0 });  report(sum.total);
+# A type argument at a call of a declaration without a body says what the call is expected to give. No parser answers that call, so nobody makes a Sum out of sight: the layout keeps what is proven of it
+# RUN: link layouts fields mechanisms=all
+# CHECK: layout L0 changes=[] {{*}}stays-with-compiled-code
+# CHECK-NOT: parsers-may-make L0
+# CHECK: field L0.0 "total" proven=i32
+
+expectedresult x0 type=L0 layouts=[L0]
+layout L0 module=m0 fields=[{key="total" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = PropGet v0 key="answer" [isFreeName]
+    v3 = Call v2, - calleeName="answer" expectedResult=x0
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = PropGet v6 key="total"
+    v8 = Call v1, -, v7, v3 calleeName="report"
+    Return v8
+}

@@ -10,7 +10,7 @@
 
 #include "AOTInstance.h"
 #include "AOTRecordTypes.h"
-#include "AOTRelocation.h"
+#include "AOTRegExpRecord.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
@@ -21,8 +21,8 @@
 #include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include "JSString.h"
-#include "RegExp.h"
-#include "RegExpObject.h"
+#include <array>
+#include <bit>
 #include <optional>
 #include <wtf/text/StringImpl.h>
 
@@ -31,29 +31,56 @@ namespace JSC { namespace AOT {
 struct LiteralMatchRegisters {
     std::optional<GPRReg> regExpObject;
     GPRReg string;
+    GPRReg recordNumber;
     GPRReg scratch;
     GPRReg characters;
     GPRReg subjectLength;
 };
 
-// The object stays as created, so lastIndex holds a number, and nothing observes the conversion that RegExpBuiltinExec applies to it.
-struct LastIndexUse {
+struct LastIndexUseOfLiteral {
     bool isRead { false };
     bool isReset { false };
-    // Nobody sees the stores, unless the object refuses them.
     bool isStoredAndPutBack { false };
 };
 
 struct MatchFormTraits {
-    Entry genericOperation;
-    std::optional<RegExpMatchResult> resultOfStubForAnyRegExp;
-    bool takesStringFirst;
     bool createsCell;
     JSValue miss;
+    std::optional<RegExpMatchResult> resultOfStubForAnyRegExp;
+    std::optional<Entry> operationForAnyRegExp;
 };
 
-static constexpr uint16_t entryFor8BitSubjects = 0;
-static constexpr uint16_t entryFor16BitSubjects = 1;
+static constexpr unsigned literalRecordSizeShift = 5;
+static constexpr ptrdiff_t offsetOfLiteralRecordBitFields = OBJECT_OFFSETOF(ImageRegExp, rawFlags) + sizeof(ImageRegExp::rawFlags);
+static_assert(sizeof(ImageRegExp) == 1u << literalRecordSizeShift);
+static_assert(offsetOfLiteralRecordBitFields + 1 == OBJECT_OFFSETOF(ImageRegExp, rawSpecificPattern));
+
+static uint8_t literalRecordBitFields(const ImageRegExp& record)
+{
+    return std::bit_cast<std::array<uint8_t, sizeof(ImageRegExp)>>(record)[offsetOfLiteralRecordBitFields];
+}
+
+static uint8_t literalRecordFormBits()
+{
+    static_assert(!static_cast<uint8_t>(RegExpRecordForm::Code) && static_cast<uint8_t>(RegExpRecordForm::NoMetadata) == 3);
+    ImageRegExp record { };
+    record.rawForm = static_cast<uint8_t>(RegExpRecordForm::NoMetadata);
+    return literalRecordBitFields(record);
+}
+
+static uint8_t literalRecordNamedGroupsBit()
+{
+    ImageRegExp record { };
+    record.hasNamedGroups = 1;
+    return literalRecordBitFields(record);
+}
+
+static uint8_t literalRecordCodeFor8BitSubjectsAloneBit()
+{
+    ImageRegExp record { };
+    record.hasCodeFor8BitSubjectsAlone = 1;
+    return literalRecordBitFields(record);
+}
 
 StubSignature signatureOfRegExpMatchLiteral(StubKey key)
 {
@@ -61,115 +88,130 @@ StubSignature signatureOfRegExpMatchLiteral(StubKey key)
     if (takesRegExpObject(key))
         signature.addOperand(gprOf(StubRegister::A2));
     signature.immediate = gprOf(stubImmediateRegister);
-    signature.boundImmediates = StubBoundImmediates::Every;
-    return signature;
+    return takesRegExpObject(key) ? signature.fillingOperandInFront(1) : signature;
 }
 
-static MatchFormTraits traitsOf(RegExpMatchForm form)
+static MatchFormTraits traitsOfMatchForm(RegExpMatchForm form)
 {
     switch (form) {
     case RegExpMatchForm::Test:
-        return { Entry::operationAOTRegExpTestBoxed, RegExpMatchResult::BoxedBoolean, false, false, jsBoolean(false) };
+        return { false, jsBoolean(false), RegExpMatchResult::BoxedBoolean, std::nullopt };
     case RegExpMatchForm::Exec:
-        return { Entry::operationAOTRegExpExec, RegExpMatchResult::Array, false, true, jsNull() };
+        return { true, jsNull(), RegExpMatchResult::Array, std::nullopt };
     case RegExpMatchForm::Search:
-        return { Entry::operationAOTStringSearchRegExp, std::nullopt, true, false, jsNumber(-1) };
+        return { false, jsNumber(-1), std::nullopt, Entry::operationAOTStringSearchRegExp };
     case RegExpMatchForm::Match:
-        return { Entry::operationAOTStringMatchRegExp, std::nullopt, true, true, jsNull() };
+        return { true, jsNull(), std::nullopt, Entry::operationAOTStringMatchRegExp };
+    case RegExpMatchForm::Parts:
+        return { false, jsBoolean(false), RegExpMatchResult::Parts, std::nullopt };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static LastIndexUse lastIndexUseOf(RegExpMatchForm form, const RegExpLiteralConstants& constants)
+static LastIndexUseOfLiteral lastIndexUseOfLiteral(RegExpMatchForm form, bool isGlobal, bool usesLastIndex)
 {
-    const LastIndexUse useOfExec { .isRead = constants.usesLastIndex, .isReset = constants.usesLastIndex };
+    const LastIndexUseOfLiteral useOfExec { .isRead = usesLastIndex, .isReset = usesLastIndex };
     switch (form) {
     case RegExpMatchForm::Test:
     case RegExpMatchForm::Exec:
+    case RegExpMatchForm::Parts:
         return useOfExec;
     case RegExpMatchForm::Search:
-        return { .isStoredAndPutBack = constants.usesLastIndex };
+        return { .isStoredAndPutBack = usesLastIndex };
     case RegExpMatchForm::Match:
-        if (constants.isGlobal)
+        if (isGlobal)
             return { .isReset = true };
         return useOfExec;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What comes here most often is a subject that is a rope. The stub for any RegExp makes it flat and runs the code that the RegExp has. What it cannot do either it hands to the generic operation.
-static void callMatchingOperationAndReturn(StubAssembler& jit, RegExpMatchForm form, std::optional<GPRReg> regExpObject, GPRReg string)
+static void matchLiteralOutOfLineAndReturn(StubAssembler& jit, RegExpMatchForm form, std::optional<GPRReg> regExpObject, GPRReg string)
 {
     static_assert(operationArgumentGPR(2) == gprOf(StubRegister::A2) && operationArgumentGPR(3) == gprOf(StubRegister::A3));
-    const MatchFormTraits traits = traitsOf(form);
     if (!regExpObject) {
         RELEASE_ASSERT(string == operationArgumentGPR(1));
-        const GPRReg record = jit.reuseScratch(StubRegister::A2);
-        if (std::optional<uint32_t> boundRecord = jit.key().immediate())
-            jit.move(TrustedImm32(static_cast<int32_t>(*boundRecord)), record);
-        else
-            jit.move(jit.immediate(), record);
+        jit.move(jit.immediate(), jit.reuseScratch(StubRegister::A2));
         jit.move(TrustedImm32(static_cast<int32_t>(form)), jit.reuseScratch(StubRegister::A3));
         jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteralWithoutObject, { });
         return;
     }
+
+    const MatchFormTraits traits = traitsOfMatchForm(form);
     if (traits.resultOfStubForAnyRegExp) {
         checkStubOperands(regExpMatch(*traits.resultOfStubForAnyRegExp), { *regExpObject, string });
         jit.jumpToStub(regExpMatch(*traits.resultOfStubForAnyRegExp));
         return;
     }
     RELEASE_ASSERT(*regExpObject == operationArgumentGPR(1) && string == operationArgumentGPR(2));
-    if (traits.takesStringFirst)
-        jit.swap(*regExpObject, string);
-    jit.callOperationAndReturn(traits.genericOperation, { });
+    jit.swap(*regExpObject, string);
+    jit.callOperationAndReturn(*traits.operationForAnyRegExp, { });
 }
 
-// Returns the register that has the index where the match starts. Without one the match starts at 0.
-static std::optional<GPRReg> loadStart(StubAssembler& jit, const LiteralMatchRegisters& registers, LastIndexUse lastIndexUse, JumpList& outOfLine)
+static void loadRecordOfLiteral(StubAssembler& jit, GPRReg recordNumber, GPRReg record)
+{
+    jit.lshift32(recordNumber, TrustedImm32(literalRecordSizeShift), record);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.regExps)), record);
+}
+
+static void loadMatchingCodeOfLiteral(StubAssembler& jit, GPRReg impl, GPRReg record, JumpList& hasNoCode)
+{
+    const GPRReg code = record;
+    hasNoCode.append(jit.branchTest8(CCallHelpers::NonZero, Address(record, offsetOfLiteralRecordBitFields), TrustedImm32(literalRecordFormBits())));
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.load32(Address(record, OBJECT_OFFSETOF(ImageRegExp, codeFor8Bit)), code);
+    Jump is8Bit = jit.jump();
+    is16Bit.link(&jit);
+    hasNoCode.append(jit.branchTest16(CCallHelpers::NonZero, Address(record, OBJECT_OFFSETOF(ImageRegExp, rawFlags)), TrustedImm32(unicodeFlags)));
+    hasNoCode.append(jit.branchTest8(CCallHelpers::NonZero, Address(record, offsetOfLiteralRecordBitFields), TrustedImm32(literalRecordCodeFor8BitSubjectsAloneBit())));
+    jit.load32(Address(record, OBJECT_OFFSETOF(ImageRegExp, codeFor16Bit)), code);
+    is8Bit.link(&jit);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.regExpCode)), code);
+}
+
+static std::optional<GPRReg> loadStartOfLiteralMatch(StubAssembler& jit, const LiteralMatchRegisters& registers, LastIndexUseOfLiteral lastIndexUse, JumpList& outOfLine)
 {
     if (!lastIndexUse.isRead)
         return std::nullopt;
-    const GPRReg lastIndex = registers.scratch;
     const GPRReg start = jit.allocateScratch(StubRegister::A3);
-    jit.load64(Address(*registers.regExpObject, RegExpObject::offsetOfLastIndex()), lastIndex);
-    outOfLine.append(jit.branchIfNotInt32(lastIndex));
-    outOfLine.append(jit.branch32(CCallHelpers::LessThan, lastIndex, TrustedImm32(0)));
-    jit.zeroExtend32ToWord(lastIndex, start);
+    jit.load64(Address(*registers.regExpObject, RegExpObject::offsetOfLastIndex()), start);
+    outOfLine.append(jit.branchIfNotInt32(start));
+    outOfLine.append(jit.branch32(CCallHelpers::LessThan, start, TrustedImm32(0)));
+    jit.zeroExtend32ToWord(start, start);
     return start;
 }
 
-static void emitMatch(StubAssembler& jit, const LiteralMatchRegisters& registers, std::optional<GPRReg> start, CodeSymbol code)
+static void matchLiteral(StubAssembler& jit, const LiteralMatchRegisters& registers, std::optional<GPRReg> start)
 {
-    Vector<GPRReg, 2> savedOperands;
+    Vector<GPRReg, maxSavedOperandsOfMatch> savedOperands;
     if (registers.regExpObject)
         savedOperands.append(*registers.regExpObject);
     savedOperands.append(registers.string);
+    savedOperands.append(registers.recordNumber);
     RELEASE_ASSERT(registers.characters == gprOf(StubRegister::A0));
     callMatchingCodeInFrame(jit, savedOperands.span(), registers.subjectLength, start, registers.scratch, [&](GPRReg output) {
         loadMatchOutput(jit, output);
     }, [&] {
-        jit.callCode(code);
+        jit.call(registers.scratch, Yarr8BitPtrTag);
     });
 }
 
-// registers.scratch has the index where the match starts.
-static void finishMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMatchForm form, const RegExpLiteralConstants& constants, const LiteralMatchRegisters& registers)
+static void finishLiteralMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMatchForm form, const LiteralMatchRegisters& registers, bool advancesLastIndex, bool recordsMatch)
 {
     const GPRReg result = jit.result();
     const GPRReg offsets = registers.subjectLength;
     const GPRReg regExp = registers.characters;
-    const bool advancesLastIndex = form == RegExpMatchForm::Test && constants.usesLastIndex;
-    if (advancesLastIndex || constants.recordsMatch)
+    if (advancesLastIndex || recordsMatch)
         loadMatchOutput(jit, offsets);
     if (advancesLastIndex)
         storeEndOfMatchInLastIndex(jit, *registers.regExpObject, offsets, regExp);
-    if (constants.recordsMatch) {
+    if (recordsMatch) {
         loadRegExp(jit, *registers.regExpObject, regExp);
         recordMatch(jit, { .regExp = regExp, .string = registers.string, .offsets = offsets, .globalObject = jit.reuseScratch(StubRegister::T10), .scratch = registers.scratch });
     }
-    if (form == RegExpMatchForm::Test)
+    if (form == RegExpMatchForm::Test || form == RegExpMatchForm::Parts)
         jit.move(TrustedImm64(JSValue::encode(jsBoolean(true))), result);
-    else if (constants.recordsMatch) {
+    else if (recordsMatch) {
         loadMatchOutput(jit, result);
         jit.load32(matchOutputEntry(result, 0), result);
         boxInt32(jit, result, result);
@@ -178,35 +220,39 @@ static void finishMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMatchForm 
     jit.returnToCaller();
 }
 
-static void finishMatchAndReturn(StubAssembler& jit, RegExpMatchForm form, uint32_t record, const RegExpLiteralConstants& constants, const LiteralMatchRegisters& registers)
+static void finishLiteralMatchWithObjectAndReturn(StubAssembler& jit, RegExpMatchForm form, bool isGlobal, const LiteralMatchRegisters& registers)
 {
-    if (!traitsOf(form).createsCell) {
-        finishMatchWithoutCellAndReturn(jit, form, constants, registers);
-        return;
-    }
-    // String.prototype.match with a RegExp that is not global answers what exec answers.
-    const bool answersLikeExec = form == RegExpMatchForm::Exec || !constants.isGlobal;
-    if (registers.regExpObject && answersLikeExec) {
+    static_assert(operationArgumentGPR(3) == gprOf(StubRegister::A3) && operationArgumentGPR(4) == gprOf(StubRegister::A4));
+    if (form == RegExpMatchForm::Exec || !isGlobal) {
         checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithObject), { *registers.regExpObject, registers.string });
         jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithObject));
         return;
     }
+    RELEASE_ASSERT(*registers.regExpObject == operationArgumentGPR(1) && registers.string == operationArgumentGPR(2));
+    jit.move(registers.recordNumber, jit.reuseScratch(StubRegister::A3));
+    jit.move(TrustedImm32(static_cast<int32_t>(form)), jit.reuseScratch(StubRegister::A4));
+    jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteral, { });
+}
+
+static void finishLiteralMatchAndReturn(StubAssembler& jit, RegExpMatchForm form, const LiteralMatchRegisters& registers)
+{
     static_assert(operationArgumentGPR(3) == gprOf(StubRegister::A3) && operationArgumentGPR(4) == gprOf(StubRegister::A4));
-    if (!registers.regExpObject) {
-        RELEASE_ASSERT(answersLikeExec);
-        const GPRReg objectOrRecord = jit.reuseScratch(StubRegister::A1);
-        const GPRReg string = jit.reuseScratch(StubRegister::A2);
-        jit.move(registers.string, string);
-        if (!constants.hasNamedGroups) {
-            jit.move(TrustedImm32(static_cast<int32_t>(record)), objectOrRecord);
-            jit.move(TrustedImm32(static_cast<int32_t>(constants.numberOfGroups)), registers.scratch);
-            checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithoutObject), { objectOrRecord, string, registers.scratch });
-            jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithoutObject));
-            return;
-        }
-        jit.move(TrustedImm32(0), objectOrRecord);
-    }
-    jit.move(TrustedImm32(static_cast<int32_t>(record)), jit.reuseScratch(StubRegister::A3));
+    const GPRReg objectOrRecordNumber = jit.reuseScratch(StubRegister::A1);
+    const GPRReg string = jit.reuseScratch(StubRegister::A2);
+    const GPRReg record = registers.scratch;
+    const GPRReg recordNumber = registers.recordNumber;
+    jit.move(registers.string, string);
+    loadRecordOfLiteral(jit, recordNumber, record);
+    Jump hasNamedGroups = jit.branchTest8(CCallHelpers::NonZero, Address(record, offsetOfLiteralRecordBitFields), TrustedImm32(literalRecordNamedGroupsBit()));
+    const GPRReg numberOfGroups = jit.reuseScratch(stubImmediateRegister);
+    jit.move(recordNumber, objectOrRecordNumber);
+    jit.load32(Address(record, OBJECT_OFFSETOF(ImageRegExp, numSubpatterns)), numberOfGroups);
+    checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithoutObject), { objectOrRecordNumber, string, numberOfGroups });
+    jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithoutObject));
+
+    hasNamedGroups.link(&jit);
+    jit.move(TrustedImm32(0), objectOrRecordNumber);
+    jit.move(recordNumber, jit.reuseScratch(StubRegister::A3));
     jit.move(TrustedImm32(static_cast<int32_t>(form)), jit.reuseScratch(StubRegister::A4));
     jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteral, { });
 }
@@ -214,68 +260,65 @@ static void finishMatchAndReturn(StubAssembler& jit, RegExpMatchForm form, uint3
 void generateRegExpMatchLiteral(StubAssembler& jit)
 {
     static_assert(noMatch == -1);
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4, stubImmediateRegister, StubRegister::T11, StubRegister::T13), "the arguments of the matching code overwrite neither its address nor what the match frame saves");
     const RegExpMatchForm form = matchFormOf(jit.key());
     const bool takesObject = takesRegExpObject(jit.key());
+    const bool isGlobal = matchesGlobalLiteral(jit.key());
     const std::optional<GPRReg> regExpObject = takesObject ? std::optional<GPRReg>(jit.clobberOperand(0)) : std::nullopt;
     const GPRReg string = jit.clobberOperand(takesObject ? 1 : 0);
-    if (!jit.key().immediate()) {
-        callMatchingOperationAndReturn(jit, form, regExpObject, string);
-        return;
-    }
-
-    const uint32_t record = *jit.key().immediate();
-    const RegExpLiteralConstants constants = jit.bindingPolicy().regExpLiteral(record, matchesGlobalLiteral(jit.key()));
-    // What the policy says about a record it does not know asks for the object.
-    if (!regExpObject && (constants.usesLastIndex || constants.recordsMatch)) {
-        callMatchingOperationAndReturn(jit, form, regExpObject, string);
-        return;
-    }
-    const LastIndexUse lastIndexUse = lastIndexUseOf(form, constants);
-    // Only registers that an operation clobbers: the summary of the body without an immediate stands for every bound one.
-    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+    const bool usesLastIndex = takesObject && isGlobal;
+    const LastIndexUseOfLiteral lastIndexUse = lastIndexUseOfLiteral(form, isGlobal, usesLastIndex);
+    const GPRReg recordNumber = jit.immediate();
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
     const GPRReg impl = jit.allocateScratch(StubRegister::T10);
     const GPRReg characters = jit.allocateScratch(StubRegister::A0);
     const GPRReg subjectLength = jit.allocateScratch(StubRegister::T11);
-    const LiteralMatchRegisters registers { regExpObject, string, scratch, characters, subjectLength };
+    const LiteralMatchRegisters registers { regExpObject, string, recordNumber, scratch, characters, subjectLength };
     JumpList miss;
     JumpList outOfLine;
 
+    const bool matchesSubstringInPlace = form == RegExpMatchForm::Test || form == RegExpMatchForm::Search;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
-    outOfLine.append(jit.branchIfRopeStringImpl(impl));
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
     jit.loadPtr(Address(impl, StringImpl::dataOffset()), characters);
     jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), subjectLength);
+    Label hasCharacters = jit.label();
 
     if (lastIndexUse.isReset || lastIndexUse.isStoredAndPutBack)
         outOfLine.append(branchIfReadOnlyLastIndex(jit, *regExpObject));
 
-    const std::optional<GPRReg> start = loadStart(jit, registers, lastIndexUse, outOfLine);
-    if (start) {
-        jit.sub64(subjectLength, *start, scratch);
-        miss.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(static_cast<int64_t>(constants.minimumSize))));
-    } else if (constants.minimumSize)
-        miss.append(jit.branch32(CCallHelpers::Below, subjectLength, TrustedImm32(static_cast<int32_t>(constants.minimumSize))));
+    const std::optional<GPRReg> start = loadStartOfLiteralMatch(jit, registers, lastIndexUse, outOfLine);
+    if (start)
+        miss.append(jit.branch64(CCallHelpers::LessThan, subjectLength, *start));
 
-    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
-    emitMatch(jit, registers, start, { SymbolSpace::RegExp, record, entryFor8BitSubjects });
-    if (constants.matchesAtCodePointBoundaries)
-        outOfLine.append(is16Bit);
-    else {
-        Jump isMatched = jit.jump();
-        is16Bit.link(&jit);
-        emitMatch(jit, registers, start, { SymbolSpace::RegExp, record, entryFor16BitSubjects });
-        isMatched.link(&jit);
-    }
+    loadRecordOfLiteral(jit, recordNumber, scratch);
+    if (takesObject && !usesLastIndex)
+        outOfLine.append(jit.branchTest16(CCallHelpers::NonZero, Address(scratch, OBJECT_OFFSETOF(ImageRegExp, rawFlags)), TrustedImm32(stickyFlag)));
+    loadMatchingCodeOfLiteral(jit, impl, scratch, outOfLine);
+    matchLiteral(jit, registers, start);
     miss.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(noMatch))));
     outOfLine.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm32(0)));
-    finishMatchAndReturn(jit, form, record, constants, registers);
+    if (!traitsOfMatchForm(form).createsCell)
+        finishLiteralMatchWithoutCellAndReturn(jit, form, registers, (form == RegExpMatchForm::Test || form == RegExpMatchForm::Parts) && usesLastIndex, recordsMatchOfLiteral(jit.key()));
+    else if (takesObject)
+        finishLiteralMatchWithObjectAndReturn(jit, form, isGlobal, registers);
+    else
+        finishLiteralMatchAndReturn(jit, form, registers);
 
     miss.link(&jit);
     if (lastIndexUse.isReset)
         resetLastIndex(jit, *regExpObject);
-    returnResult(jit, TrustedImm64(JSValue::encode(traitsOf(form).miss)));
+    returnResult(jit, TrustedImm64(JSValue::encode(traitsOfMatchForm(form).miss)));
+
+    if (matchesSubstringInPlace) {
+        isRope.link(&jit);
+        loadSubstringCharacters(jit, string, impl, characters, subjectLength, outOfLine);
+        jit.jump().linkTo(hasCharacters, &jit);
+    } else
+        outOfLine.append(isRope);
 
     outOfLine.link(&jit);
-    callMatchingOperationAndReturn(jit, form, regExpObject, string);
+    matchLiteralOutOfLineAndReturn(jit, form, regExpObject, string);
 }
 
 } } // namespace JSC::AOT

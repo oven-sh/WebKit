@@ -1,0 +1,117 @@
+# for (const v of seen) t += v, with `seen: Set<number>`: that the turn runs no other code rests on a guard that leaves. The step goes by the table read at the entry of the loop all the same.
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3 1 3 x NaN 1
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=3
+    v4 = Call v0, -, v3
+    v5 = Call v1, -, v3
+    v6 = Call v2, -, v3
+    v7 = String string="x"
+    v8 = Call v2, -, v7
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="n"
+    v11 = Call v0, -, v10
+    v12 = Call v1, -, v10
+    v13 = String string=" "
+    v14 = Add v4, v13
+    v15 = Add v14, v5
+    v16 = Add v15, v13
+    v17 = Add v16, v6
+    v18 = Add v17, v13
+    v19 = Add v18, v8
+    v20 = Add v19, v13
+    v21 = Add v20, v11
+    v22 = Add v21, v13
+    v23 = Add v22, v12
+    v24 = PropGet v9 key="print" [isFreeName]
+    v25 = Call v24, -, v23
+    Return v25
+}
+function f1 name="sum" module=m0 flags=[IsChecked] parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Set
+    v2 = Construct v1 calleeName="Set"
+    v3 = Convert v2 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v4 = PropGet v3 key="add"
+    v5 = Call v4, v3, v0 calleeKey="add"
+    v6 = Integer
+    v7 = IteratorOpen v3
+    Jump -> next b1(v6)
+  b1(v8: number):
+    LoopHint
+    v10 = IteratorResume v7
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b4(), notTaken b2()
+  b2() handler=b3():
+    v13 = Convert v12 declared={type=number} illTypedCause=FromLooseType
+    v14 = Add v8, v13
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3() role=IterationCleanup subject=v7:
+    v16 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v16
+  b4():
+    Return v8
+}
+function f2 name="count" module=m0 flags=[IsChecked] parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Map
+    v2 = Construct v1 calleeName="Map"
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v4 = PropGet v3 key="set"
+    v5 = String string="k"
+    v6 = Call v4, v3, v5, v0 calleeKey="set"
+    v7 = Integer
+    v8 = IteratorOpen v3
+    Jump -> next b1(v7)
+  b1(v9: number):
+    LoopHint
+    v11 = IteratorResume v8
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Branch v12 -> taken b4(), notTaken b2()
+  b2() handler=b3():
+    v14 = Increment v9
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3() role=IterationCleanup subject=v8:
+    v16 = CatchException
+    IteratorClose v8 completion=Throw
+    Rethrow v16
+  b4():
+    Return v9
+}
+function f3 name="last" module=m0 parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Set
+    v2 = Construct v1 calleeName="Set"
+    v3 = PropGet v2 key="add"
+    v4 = Call v3, v2, v0 calleeKey="add"
+    v5 = Undefined
+    v6 = IteratorOpen v2
+    Jump -> next b1(v5)
+  b1(v7):
+    LoopHint
+    v9 = IteratorResume v6
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b4(), notTaken b2()
+  b2() handler=b3():
+    Jump -> next b1(v11)
+  b3() role=IterationCleanup subject=v6:
+    v12 = CatchException
+    IteratorClose v6 completion=Throw
+    Rethrow v12
+  b4():
+    Return v7
+}

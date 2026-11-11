@@ -1,0 +1,377 @@
+# keys.js:
+#   export const far = Symbol("far");
+#   export const word = "word";
+#   export let loose = Symbol("loose");
+#   export function loosen() { loose = Symbol("loosened"); }
+# main.js:
+#   import { far, word, loose } from "./keys.js";
+#   const near = Symbol("near");
+#   const pair = Symbol("pair");
+#   const shared = Symbol.for("shared");
+#   class Gauge {
+#     level = 1;
+#     [near](by) { return this.level + by; }
+#     [shared](by) { return this.level - by; }
+#     [far](by) { return this.level * by; }
+#     [word](by) { return by; }
+#     get [pair]() { return this.level; }
+#     set [pair](to) { this.level = to; }
+#     static [near]() { return 7; }
+#   }
+#   class Slack {
+#     [loose]() { return 0; }
+#   }
+#   const made = [];
+#   for (let i = 0; i < 2; i++) {
+#     const turn = Symbol("turn");
+#     made.push(class Turn { [turn]() { return i; } });
+#   }
+#   function sum(list) {
+#     let total = 0;
+#     for (let i = 0; i < list.length; i++) {
+#       const gauge = list[i];
+#       gauge[pair] = i;
+#       total += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]();
+#     }
+#     return total;
+#   }
+#   print(sum([new Gauge(), new Gauge(), new Gauge()]));
+#   print(made.length + Reflect.ownKeys(Slack.prototype).length);
+#   print(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length);
+# A MEMBER UNDER A COMPUTED KEY THAT THE PROGRAM SPELLS IS A MEMBER UNDER THAT KEY: a text, the one symbol of a call of Symbol that runs once, a registered symbol, and what a constant of a module holds of these.
+# A class with a member under a key that nobody knows has no typed form for any of its members: under that key may stand any name.
+# (The literal at the end is there for the text of this test alone: a key is in the table of a program that is read from text only where a record spells it.)
+# What moves (`let loose`) and what each turn of a loop makes anew stay computed.
+# RUN(MEMBERS): link members mechanisms=all
+# MEMBERS: member L0 Prototype 0 Method symbol("near")@m1:0 function=f5
+# MEMBERS: member L0 Prototype 1 Method Symbol.for("shared") function=f6
+# MEMBERS: member L0 Prototype 2 Method symbol("far")@m0:0 function=f7
+# MEMBERS: member L0 Prototype 3 Method "word" function=f8
+# MEMBERS: member L0 Prototype 4 Getter symbol("pair")@m1:1 function=f9
+# MEMBERS: member L0 Prototype 5 Setter symbol("pair")@m1:1 function=f10
+# MEMBERS: member L0 Static 6 Method symbol("near")@m1:0 function=f11
+# MEMBERS: member L1 Prototype 0 Method [computed]
+# MEMBERS: member L2 Prototype 0 Method [computed]
+# RUN(WALK): walk f3 mechanisms=all-Inlining
+# WALK-NOT: ElemGet
+# WALK-NOT: ElemSet
+# WALK: CallDirect {{*}} function=f10
+# WALK: CallDirect {{*}} function=f5
+# WALK: CallDirect {{*}} function=f7
+# WALK: CallDirect {{*}} function=f8
+# WALK: CallDirect {{*}} function=f9
+# WALK: CallDirect function=f11
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 38
+# ALL: 4
+# ALL: 4
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 38
+# NONE: 4
+# NONE: 4
+
+layout L0 kind=Instance name="Gauge" module=m1 position=147 constructor=f4 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Slack" module=m1 position=436 constructor=f12
+layout L2 kind=Instance name="Turn" module=m1 position=568 constructor=f14
+layout L3 module=m1 position=983 fields=[{key=symbol("far")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("near")@m1:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("pair")@m1:1 declared={type=anything} flags=[IsRequired]}, {key=Symbol.for("shared") declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 2, 0, 3] ownFieldCount=4
+# layout L135 kind=Closure
+variable g0 name="far" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="loose" module=m0 declared={type=undefined|null|symbol|absent flags=[IsExpected]}
+variable g2 name="word" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="near" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+variable g4 name="pair" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+variable g5 name="Gauge" module=m1 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m1 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m1 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/keys.js" displayPath="keys.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 34, 62, 98, 155] quotedSources=[{position=19 end=13}, {position=81 start=13 end=28}] quotedSourceText="Symbol(\x22far\x22)Symbol(\x22loose\x22)"} functionSource="export const far = Symbol(\x22far\x22);\x0aexport const word = \x22word\x22;\x0aexport let loose = Symbol(\x22loose\x22);\x0aexport function loosen() { loose = Symbol(\x22loosened\x22); }\x0a" namespaceLayout=L(m0)
+module m1 path="/$bunfs/root/main.js" displayPath="main.js" flags=[CachesEvaluationError] body=f2 requests=[{target=m0 completes=true}] positions={lineStarts=[0, 46, 75, 104, 141, 155, 168, 209, 252, 292, 320, 358, 396, 428, 430, 444, 470, 472, 489, 519, 550, 602, 604, 625, 642, 684, 711, 732, 824, 828, 844, 846, 899, 961, 1041] quotedSources=[{position=59 end=14}, {position=88 start=14 end=28}, {position=126 start=28 end=48}, {position=190 start=379 end=389}, {position=233 start=394 end=404}, {position=273 start=409 end=419}, {position=344 start=424 end=434}, {position=377 start=434 end=449}, {position=534 start=48 end=62}, {position=552 start=62 end=71}, {position=664 start=260 end=271}, {position=702 start=271 end=278}, {position=715 start=278 end=293}, {position=745 start=302 end=313}, {position=751 start=302 end=316}, {position=762 start=319 end=329}, {position=768 start=319 end=332}, {position=778 start=335 end=346}, {position=784 start=335 end=349}, {position=795 start=352 end=363}, {position=809 start=366 end=377}, {position=815 start=366 end=379}, {position=846 start=73 end=118}, {position=852 start=79 end=117}, {position=861 start=84 end=93}, {position=874 start=95 end=104}, {position=887 start=106 end=115}, {position=899 start=118 end=178}, {position=905 start=124 end=135}, {position=927 start=138 end=170}, {position=935 start=154 end=169}, {position=950 start=138 end=177}, {position=961 start=178 end=256}, {position=975 start=184 end=248}, {position=1030 start=184 end=255}] quotedSourceText="Symbol(\x22near\x22)Symbol(\x22pair\x22)Symbol.for(\x22shared\x22)Symbol(\x22turn\x22)made.push()print(sum([new Gauge, new Gauge, new Gauge]))print(made.length + Reflect.ownKeys(Slack.prototype).length)print(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length)i < list.lengthlist[i]gauge[pair] = itotal += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]()this.level + bythis.level - bythis.level * bythis.levelthis.level = to"} functionSource="import { far, word, loose } from \x22./keys.js\x22;\x0aconst near = Symbol(\x22near\x22);\x0aconst pair = Symbol(\x22pair\x22);\x0aconst shared = Symbol.for(\x22shared\x22);\x0aclass Gauge {\x0a  level = 1;\x0a  [near](by) { return this.level + by; }\x0a  [shared](by) { return this.level - by; }\x0a  [far](by) { return this.level * by; }\x0a  [word](by) { return by; }\x0a  get [pair]() { return this.level; }\x0a  set [pair](to) { this.level = to; }\x0a  static [near]() { return 7; }\x0a}\x0aclass Slack {\x0a  [loose]() { return 0; }\x0a}\x0aconst made = [];\x0afor (let i = 0; i < 2; i++) {\x0a  const turn = Symbol(\x22turn\x22);\x0a  made.push(class Turn { [turn]() { return i; } });\x0a}\x0afunction sum(list) {\x0a  let total = 0;\x0a  for (let i = 0; i < list.length; i++) {\x0a    const gauge = list[i];\x0a    gauge[pair] = i;\x0a    total += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]();\x0a  }\x0a  return total;\x0a}\x0aprint(sum([new Gauge(), new Gauge(), new Gauge()]));\x0aprint(made.length + Reflect.ownKeys(Slack.prototype).length);\x0aprint(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length);\x0a" namespaceLayout=L(m1)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Symbol @19
+    v3 = String string="far" @26
+    v4 = Call v2, -, v3 calleeName="Symbol" callNumber=0 @19
+    PutModuleVariable v4 variable=g0 @13
+    v6 = String string="word" @54
+    PutModuleVariable v6 variable=g2 @47
+    v8 = Builtin builtin=Symbol @81
+    v9 = String string="loose" @88
+    v10 = Call v8, -, v9 calleeName="Symbol" callNumber=1 @81
+    v11 = Convert v10 declared={type=undefined|null|symbol flags=[IsExpected]} @81
+    PutModuleVariable v11 variable=g1 @73
+    v13 = Undefined @98
+    Return v13 @98
+}
+function f1 name="loosen" module=m0 position=98 sourceRange={start=105 end=154} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewRuntimeError runtimeError=OmittedFromExecutable name="loosen" @98
+    Throw v0 @98
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Symbol @59
+    v3 = String string="near" @66
+    v4 = Call v2, -, v3 calleeName="Symbol" callNumber=0 @59
+    PutModuleVariable v4 variable=g3 @52
+    v6 = Builtin builtin=Symbol @88
+    v7 = String string="pair" @95
+    v8 = Call v6, -, v7 calleeName="Symbol" callNumber=1 @88
+    PutModuleVariable v8 variable=g4 @81
+    v10 = Builtin builtin=Symbol @119
+    v11 = Builtin builtin=SymbolFor @119
+    v12 = String string="shared" @130
+    v13 = Call v11, v10, v12 calleeName="Symbol.for" @126
+    v14 = NewClosure function=f4 @141
+    v15 = NewClass v14 layout=L0 @141
+    PutModuleVariable v15 variable=g6 @141
+    v17 = ToPropertyKey v4 @171
+    v18 = NewClosure function=f5 @170
+    SetFunctionName v18, v17 @170
+    DefineMethod v15, v18, v17 layout=L0 @170
+    v21 = ToPropertyKey v13 @212
+    v22 = NewClosure function=f6 @211
+    SetFunctionName v22, v21 @211
+    DefineMethod v15, v22, v21 layout=L0 index=1 @211
+    v25 = GetModuleVariable variable=g0 @255
+    v26 = CheckInitialized v25 name="far" @255
+    v27 = ToPropertyKey v26 @255
+    v28 = NewClosure function=f7 @254
+    SetFunctionName v28, v27 @254
+    DefineMethod v15, v28, v27 layout=L0 index=2 @254
+    v31 = GetModuleVariable variable=g2 @295
+    v32 = CheckInitialized v31 name="word" @295
+    v33 = ToPropertyKey v32 @295
+    v34 = NewClosure function=f8 @294
+    SetFunctionName v34, v33 @294
+    DefineMethod v15, v34, v33 layout=L0 index=3 @294
+    v37 = ToPropertyKey v8 @327
+    v38 = NewClosure function=f9 @326
+    SetFunctionName v38, v37 methodKind=Getter @326
+    DefineMethod v15, v38, v37 layout=L0 methodKind=Getter index=4 @326
+    v41 = ToPropertyKey v8 @365
+    v42 = NewClosure function=f10 @364
+    SetFunctionName v42, v41 methodKind=Setter @364
+    DefineMethod v15, v42, v41 layout=L0 methodKind=Setter index=5 @364
+    v45 = ToPropertyKey v4 @406
+    v46 = NewClosure function=f11 @405
+    SetFunctionName v46, v45 @405
+    DefineMethod v15, v46, v45 layout=L0 side=Static index=6 @405
+    v49 = FinishClass v15 layout=L0 @141
+    v50 = Convert v49 declared={type=f4 flags=[IsFromCompiler]} @141
+    v51 = Convert v49 declared={type=f4 flags=[IsFromCompiler]} @141
+    PutModuleVariable v51 variable=g5 @141
+    v53 = NewClosure function=f12 @430
+    v54 = NewClass v53 layout=L1 @430
+    PutModuleVariable v54 variable=g7 @430
+    v56 = GetModuleVariable variable=g1 @447
+    v57 = CheckInitialized v56 name="loose" @447
+    v58 = ToPropertyKey v57 @447
+    v59 = NewClosure function=f13 @446
+    SetFunctionName v59, v58 @446
+    DefineMethod v54, v59, v58 layout=L1 @446
+    v62 = FinishClass v54 layout=L1 @430
+    v63 = Convert v62 declared={type=f12 flags=[IsFromCompiler]} @430
+    v64 = Convert v62 declared={type=f12 flags=[IsFromCompiler]} @430
+    v65 = Data data=d0 @485
+    v66 = Integer @502
+    v67 = Convert v66 declared={type=number flags=[IsExpected]} @502
+    Jump -> next b1(v67) @498
+  b1(v68):
+    LoopHint @498
+    v70 = Integer integer=2 @509
+    v71 = Less v68, v70 @509
+    Branch v71 -> taken b2(), notTaken b3() @509
+  b2():
+    v72 = Builtin builtin=Symbol @534
+    v73 = String string="turn" @541
+    v74 = Call v72, -, v73 calleeName="Symbol" callNumber=3 @534
+    v75 = PropGet v65 key="push" @552
+    v76 = NewClosure function=f14 @562
+    v77 = NewClass v76 layout=L2 @562
+    v78 = ToPropertyKey v74 @576
+    v79 = NewClosure v68 function=f15 @575
+    SetFunctionName v79, v78 @575
+    DefineMethod v77, v79, v78 layout=L2 @575
+    v82 = FinishClass v77 layout=L2 @562
+    v83 = Convert v82 declared={type=f14 flags=[IsFromCompiler]} @562
+    v84 = Call v75, v65, v82 calleeKey="push" calleeName="made.push" @557
+    v85 = Increment v68 @512
+    v86 = Convert v85 declared={type=number flags=[IsExpected]} @512
+    Jump -> next b1(v86) @512
+  b3():
+    v87 = Builtin builtin=GlobalThis @846
+    v88 = PropGet v87 key="print" [isFreeName] @846
+    v89 = Construct v51 calleeName="Gauge" @861
+    v90 = Construct v51 calleeName="Gauge" @874
+    v91 = Construct v51 calleeName="Gauge" @887
+    v92 = NewArray v89, v90, v91 contents=anything @856
+    v93 = Call v1, -, v92 calleeName="sum" @852
+    v94 = Call v88, -, v93 calleeName="print" @846
+    v95 = Builtin builtin=GlobalThis @899
+    v96 = PropGet v95 key="print" [isFreeName] @899
+    v97 = PropGet v65 key="length" @905
+    v98 = Builtin builtin=Reflect @919
+    v99 = Builtin builtin=ReflectOwnKeys @919
+    v100 = PropGet v64 key="prototype" @935
+    v101 = Call v99, v98, v100 calleeName="Reflect.ownKeys" @927
+    v102 = PropGet v101 key="length" @950
+    v103 = Add v97, v102 @919
+    v104 = Call v96, -, v103 calleeName="print" @899
+    v105 = Builtin builtin=GlobalThis @961
+    v106 = PropGet v105 key="print" [isFreeName] @961
+    v107 = Builtin builtin=Reflect @967
+    v108 = Builtin builtin=ReflectOwnKeys @967
+    v109 = ToPropertyKey v4 @986
+    v110 = Integer integer=1 @993
+    v111 = NewObject layout=L3 @985
+    ElemDefine v111, v109, v110 @985
+    v113 = ToPropertyKey v8 @997
+    v114 = Integer integer=2 @1004
+    ElemDefine v111, v113, v114 @996
+    v116 = GetModuleVariable variable=g0 @1008
+    v117 = CheckInitialized v116 name="far" @1008
+    v118 = ToPropertyKey v117 @1008
+    v119 = Integer integer=3 @1014
+    ElemDefine v111, v118, v119 @1007
+    v121 = ToPropertyKey v13 @1018
+    v122 = Integer integer=4 @1027
+    ElemDefine v111, v121, v122 @1017
+    v124 = FinishObject v111 @983
+    v125 = Call v108, v107, v124 calleeName="Reflect.ownKeys" @975
+    v126 = PropGet v125 key="length" @1030
+    v127 = Call v106, -, v126 calleeName="print" @961
+    v128 = Undefined @961
+    Return v128 @961
+}
+function f3 name="sum" module=m1 position=604 sourceRange={start=604 end=845} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer @639
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @639
+    v3 = Integer @657
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @657
+    Jump -> next b1(v2, v4) @653
+  b1(v5, v6):
+    LoopHint @653
+    v8 = PropGet v0 key="length" @664
+    v9 = Less v6, v8 @664
+    Branch v9 -> taken b2(), notTaken b3() @664
+  b2():
+    v10 = ElemGet v0, v6 @702
+    v11 = GetModuleVariable variable=g4 @721
+    v12 = CheckInitialized v11 name="pair" @721
+    ElemSet v10, v12, v6 @715
+    v14 = GetModuleVariable variable=g3 @751
+    v15 = CheckInitialized v14 name="near" @751
+    v16 = ElemGet v10, v15 @745
+    v17 = Call v16, v10, v6 calleeName="gauge[near]" @751
+    v18 = GetModuleVariable variable=g0 @768
+    v19 = CheckInitialized v18 name="far" @768
+    v20 = ElemGet v10, v19 @762
+    v21 = Call v20, v10, v6 calleeName="gauge[far]" @768
+    v22 = Add v17, v21 @762
+    v23 = GetModuleVariable variable=g2 @784
+    v24 = CheckInitialized v23 name="word" @784
+    v25 = PropGet v10 key="word" @778
+    v26 = Call v25, v10, v6 calleeKey="word" calleeName="gauge[word]" @784
+    v27 = Add v22, v26 @778
+    v28 = GetModuleVariable variable=g4 @801
+    v29 = CheckInitialized v28 name="pair" @801
+    v30 = ElemGet v10, v29 @795
+    v31 = Add v27, v30 @795
+    v32 = GetModuleVariable variable=g5 @809
+    v33 = CheckInitialized v32 name="Gauge" @809
+    v34 = GetModuleVariable variable=g3 @815
+    v35 = CheckInitialized v34 name="near" @815
+    v36 = ElemGet v33, v35 @809
+    v37 = Call v36, v33 calleeName="Gauge[near]" @815
+    v38 = Add v31, v37 @809
+    v39 = Add v5, v38 @809
+    v40 = Convert v39 declared={type=number flags=[IsExpected]} @736
+    v41 = Increment v6 @677
+    v42 = Convert v41 declared={type=i32 flags=[IsExpected]} @677
+    Jump -> next b1(v40, v42) @677
+  b3():
+    Return v5 @837
+}
+function f4 name="Gauge" module=m1 position=147 sourceRange={start=141 end=429} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @147
+    v2 = NewObject v1 layout=L0 @147
+    v3 = Convert v2 declared={type=L0} @147
+    v4 = CallDirect v3 function=f16 @147
+    Return v3 @147
+}
+function f5 module=m1 position=170 sourceRange={start=170 end=208} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="level" @190
+    v3 = Add v2, v1 @203
+    Return v3 @203
+}
+function f6 module=m1 position=211 sourceRange={start=211 end=251} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="level" @233
+    v3 = Sub v2, v1 @246
+    Return v3 @246
+}
+function f7 module=m1 position=254 sourceRange={start=254 end=291} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="level" @273
+    v3 = Mul v2, v1 @286
+    Return v3 @286
+}
+function f8 module=m1 position=294 sourceRange={start=294 end=319} kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0 @314
+}
+function f9 module=m1 position=322 sourceRange={start=322 end=357} kind=Getter flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="level" @344
+    Return v1 @344
+}
+function f10 module=m1 position=360 sourceRange={start=360 end=395} kind=Setter flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="level" @377
+    v3 = Undefined @377
+    Return v3 @377
+}
+function f11 module=m1 position=398 sourceRange={start=405 end=427} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=7 @423
+    Return v0 @423
+}
+function f12 name="Slack" module=m1 position=436 sourceRange={start=430 end=471} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1 @436
+    v2 = NewObject v1 layout=L1 @436
+    v3 = Convert v2 declared={type=L1} @436
+    Return v3 @436
+}
+function f13 module=m1 position=446 sourceRange={start=446 end=469} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer @465
+    Return v0 @465
+}
+function f14 name="Turn" module=m1 position=568 sourceRange={start=562 end=599} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2 @568
+    v2 = NewObject v1 layout=L2 @568
+    v3 = Convert v2 declared={type=L2} @568
+    Return v3 @568
+}
+function f15 module=m1 position=575 sourceRange={start=575 end=597} kind=Method captures=[{type=number flags=[IsExpected] variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Return v0 @593
+}
+function f16 module=m1 position=147 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @147
+    v2 = Integer integer=1 @165
+    PropDefine v1, v2 key="level" @157
+    v4 = Undefined @147
+    Return v4 @147
+}
+data d0 root=Array{contents=anything} module=m1
+entry module=m1 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

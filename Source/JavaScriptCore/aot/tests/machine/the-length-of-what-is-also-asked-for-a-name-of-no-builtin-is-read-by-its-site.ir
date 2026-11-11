@@ -1,0 +1,54 @@
+# function bag(x) { return x.length === x.limit }   function list(x) { return x.length === x.indexOf }   function alone(x) { return x.length }
+# A closed read of `length` goes to a stub that asks for a list, a text, a view and a function first: an object of the program fails all of it and pays the road by name behind it. Where the same body also asks the value for a name
+# that the instances of no built-in class answer (`limit`), the text says that it is no list and no text: the read goes by its site's record like the others, behind the quick questions for a list and a text, which a list that bears names of the program answers (f1). A name that lists answer says nothing (f2); no other name says nothing (f3).
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PropGet {{*}}key="length" [receiverIsAskedForNameOfNoBuiltin]
+# RUN(LIST): walk f2:Body mechanisms=all
+# LIST-LABEL: code f2:Body
+# LIST-NOT: receiverIsAskedForNameOfNoBuiltin
+# LIST: Return
+# RUN(ALONE): walk f3:Body mechanisms=all
+# ALONE-LABEL: code f3:Body
+# ALONE-NOT: receiverIsAskedForNameOfNoBuiltin
+# ALONE: Return
+# RUN(BYTES): bytes f1:Body mechanisms=all
+# BYTES-LABEL: unit f1:Body
+# BYTES-NOT: GetLengthAtSite
+# BYTES: SiteCache {{*}}"length"
+# BYTES: Call Stub ReadLengthAtSite
+# RUN(STUB): bytes f2:Body mechanisms=all
+# STUB-LABEL: unit f2:Body
+# STUB: GetLengthAtSite
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="bag" module=m0 position=10 sourceRange={start=10 end=60} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length" @30
+    v2 = PropGet v0 key="limit" @45
+    v3 = StrictEq v1, v2 @30
+    Return v3 @30
+}
+function f2 name="list" module=m0 position=70 sourceRange={start=70 end=120} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length" @90
+    v2 = PropGet v0 key="indexOf" @105
+    v3 = StrictEq v1, v2 @90
+    Return v3 @90
+}
+function f3 name="alone" module=m0 position=130 sourceRange={start=130 end=160} length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length" @150
+    Return v1 @150
+}

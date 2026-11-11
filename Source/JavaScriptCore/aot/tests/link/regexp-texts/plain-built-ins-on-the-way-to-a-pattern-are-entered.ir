@@ -1,0 +1,91 @@
+# The list follows from the program alone. The plain built-ins, primitives in and a primitive out, readers of a list or of a Map, are among the most common calls of any program and fall under the rules for all: they are entered.
+# One whose work grows with a number that it is handed has a door of its own and is not: repeat.
+# new RegExp("s".toUpperCase() + "abc".startsWith("a")) . ("m".. + Math.max(1, 2)) . ("h".. + new Map().has("k")) . ("i".. + [1, 2].indexOf(2)) . ("n".. + Number.isInteger(3)) . ("p".. + parseInt("12px")) . ("r".. + "ab".repeat(2))
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /Hfalse/
+# CHECK: text /I1/
+# CHECK: text /M2/
+# CHECK: text /Ntrue/
+# CHECK: text /P12/
+# CHECK: text /Strue/
+# CHECK-NOT: text /R
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = String string="a"
+    v2 = PropGet v0 key="startsWith"
+    v3 = Call v2, v0, v1 calleeKey="startsWith"
+    v4 = String string="s"
+    v5 = PropGet v4 key="toUpperCase"
+    v6 = Call v5, v4 calleeKey="toUpperCase"
+    v7 = Builtin builtin=RegExp
+    v8 = Add v6, v3
+    v9 = Construct v7, -, v8
+    v10 = Builtin builtin=MathMax
+    v11 = Integer integer=1
+    v12 = Integer integer=2
+    v13 = Call v10, -, v11, v12
+    v14 = String string="m"
+    v15 = PropGet v14 key="toUpperCase"
+    v16 = Call v15, v14 calleeKey="toUpperCase"
+    v17 = Builtin builtin=RegExp
+    v18 = Add v16, v13
+    v19 = Construct v17, -, v18
+    v20 = Builtin builtin=Map
+    v21 = Construct v20, -
+    v22 = String string="k"
+    v23 = PropGet v21 key="has"
+    v24 = Call v23, v21, v22 calleeKey="has"
+    v25 = String string="h"
+    v26 = PropGet v25 key="toUpperCase"
+    v27 = Call v26, v25 calleeKey="toUpperCase"
+    v28 = Builtin builtin=RegExp
+    v29 = Add v27, v24
+    v30 = Construct v28, -, v29
+    v31 = Integer integer=1
+    v32 = Integer integer=2
+    v33 = NewArray v31, v32 contents=anything
+    v34 = Integer integer=2
+    v35 = PropGet v33 key="indexOf"
+    v36 = Call v35, v33, v34 calleeKey="indexOf"
+    v37 = String string="i"
+    v38 = PropGet v37 key="toUpperCase"
+    v39 = Call v38, v37 calleeKey="toUpperCase"
+    v40 = Builtin builtin=RegExp
+    v41 = Add v39, v36
+    v42 = Construct v40, -, v41
+    v43 = Builtin builtin=NumberIsInteger
+    v44 = Integer integer=3
+    v45 = Call v43, -, v44
+    v46 = String string="n"
+    v47 = PropGet v46 key="toUpperCase"
+    v48 = Call v47, v46 calleeKey="toUpperCase"
+    v49 = Builtin builtin=RegExp
+    v50 = Add v48, v45
+    v51 = Construct v49, -, v50
+    v52 = Builtin builtin=ParseInt
+    v53 = String string="12px"
+    v54 = Call v52, -, v53
+    v55 = String string="p"
+    v56 = PropGet v55 key="toUpperCase"
+    v57 = Call v56, v55 calleeKey="toUpperCase"
+    v58 = Builtin builtin=RegExp
+    v59 = Add v57, v54
+    v60 = Construct v58, -, v59
+    v61 = String string="ab"
+    v62 = Integer integer=2
+    v63 = PropGet v61 key="repeat"
+    v64 = Call v63, v61, v62 calleeKey="repeat"
+    v65 = String string="r"
+    v66 = PropGet v65 key="toUpperCase"
+    v67 = Call v66, v65 calleeKey="toUpperCase"
+    v68 = Builtin builtin=RegExp
+    v69 = Add v67, v64
+    v70 = Construct v68, -, v69
+    v71 = NewArray v9, v19, v30, v42, v51, v60, v70 contents=anything
+    Return v71
+}

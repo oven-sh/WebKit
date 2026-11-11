@@ -50,7 +50,7 @@
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromiseConstructor);
-static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
+JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncReject);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncWithResolvers);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncAny);

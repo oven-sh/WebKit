@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCompactTable.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "Identifier.h"
@@ -16,25 +15,35 @@
 #include "MarkedBlockCage.h"
 #include "RememberedSlot.h"
 #include <array>
+#include <bit>
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/BitSet.h>
+#include <wtf/ASCIICType.h>
+#include <wtf/Int128.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/RapidHash.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
 struct Instance;
 struct State;
 
+enum class UseOfJoinedText : uint8_t {
+    Unknown,
+    LikelyKey,
+    LikelyName,
+};
+
 class StringKeyCache {
     WTF_MAKE_NONCOPYABLE(StringKeyCache);
     WTF_MAKE_TZONE_ALLOCATED(StringKeyCache);
 public:
-    static constexpr size_t maxCaseConvertedStringLength = 64;
+    static constexpr size_t maxCachedKeyLength = 64;
 
     struct KeyByParts {
         static constexpr uint32_t maxNumberOfParts = 6;
@@ -51,6 +60,8 @@ public:
                     return false;
                 part = static_cast<uint32_t>(distance >> MarkedBlockCage::shift);
                 areCells |= 1u << index;
+            } else if (std::optional<int32_t> integer = value.tryGetAsInt32()) {
+                part = *integer;
             } else
                 return false;
             partPairs[index / 2] |= static_cast<uint64_t>(part) << (index % 2 * 32);
@@ -67,7 +78,7 @@ public:
         template<uint32_t count>
         ALWAYS_INLINE bool tryTake(uintptr_t cageBase, const EncodedJSValue* values)
         {
-            static_assert(count <= maxNumberOfParts);
+            static_assert(count && count <= maxNumberOfParts);
             uint32_t areCells = 0;
             uint64_t mixed = count;
             bool isTaken = [&]<size_t... index>(std::index_sequence<index...>) ALWAYS_INLINE_LAMBDA {
@@ -81,7 +92,7 @@ public:
 
         bool tryTake(uintptr_t cageBase, std::span<const EncodedJSValue> values)
         {
-            if (values.size() > maxNumberOfParts)
+            if (values.empty() || values.size() > maxNumberOfParts)
                 return false;
             uint32_t count = static_cast<uint32_t>(values.size());
             uint32_t areCells = 0;
@@ -94,7 +105,6 @@ public:
             return true;
         }
 
-        // Two parts as they are encoded, for the table of pairs.
         static constexpr uint32_t pairMark = 1u << 31;
         void takePair(EncodedJSValue first, EncodedJSValue second)
         {
@@ -130,31 +140,18 @@ public:
     }
     void cacheKeyByParts(const KeyByParts&, JSString*);
 
-    // The key of two parts that were joined before. A part is compared as it is encoded: a cell by its address, any other value by its bits. The stub ConcatenateKeyOfPair looks it up.
-    // Beside the key: what KeyedValuePlace says of the key and one Structure, so that a read by the two parts asks one table. The stub GetByValOfKeyOfPair copies it from there.
-    // It holds for as long as the place it was copied from would: forgetPlacesOfPairs().
     struct KeyOfPair {
-        // The two top bits of slotOfPlace say how the value is read, so that the usual reads compare nothing. x86-64 gets both from the flags of one shift.
-        // Under the first three kinds lies half the offset of the word in the cell, which is even.
         enum class Read : uint32_t {
-            // A field with the SlotRepresentation of that name.
             Int32,
             OptionalInt32,
-            // A whole word that holds an encoded value: a field with SlotRepresentation::JSValue or Cell, or an own value that lies in the cell.
-            // With isNarrowReference: a field with SlotRepresentation::Cell32 or OptionalCell32.
             EncodedValueOrNarrowReference,
             Other,
         };
         static constexpr uint32_t isNarrowReference = 1;
-        // The next two bits of Read::Other, above 28 bits.
         enum class OtherRead : uint32_t {
-            // Any other field that lies in the cell: its offset above the eight bits of its representation.
             Field,
-            // Slot::wordIndexFor() of an own value out of line, which is below zero.
             ValueOutOfLine,
-            // PropertyCacheWords::timesAbsencesWereForgotten as it was when nothing was found.
             Absence,
-            // hiddenWordOffset above wordIndex of a KeyedValuePlace::ExtraProperty.
             ExtraProperty,
         };
         static constexpr unsigned bitsBelowRead = 30;
@@ -164,7 +161,6 @@ public:
         static constexpr uint32_t maxOffsetOfOtherField = (1u << (bitsBelowOtherRead - bitsOfRepresentation)) - 1;
         static constexpr uint32_t markOf(Read read) { return static_cast<uint32_t>(read) << bitsBelowRead; }
         static constexpr uint32_t markOf(OtherRead read) { return markOf(Read::Other) | static_cast<uint32_t>(read) << bitsBelowOtherRead; }
-        // The place of one Structure gives way at every eighth read of an object of another. Objects of two that are read in turns would else write over one another at every read.
         static constexpr int32_t stepOfMisses = (UINT8_MAX + 1) / 8;
 
         EncodedJSValue first { 0 };
@@ -177,19 +173,18 @@ public:
     static constexpr unsigned keyOfPairSetShift = 6;
     static_assert(waysOfKeysOfPairs * sizeof(KeyOfPair) == 1 << keyOfPairSetShift);
     static constexpr uint32_t keyOfPairMultiplier = 0x9e3779b1u;
+    static constexpr uint32_t keyOfPairMultiplierOfSecond = 0x213bca7fu;
     static constexpr unsigned keyOfPairHashShift = 13;
     static constexpr uint64_t keyOfPairMaskFor(size_t tableSize) { return (tableSize / waysOfKeysOfPairs - 1) << keyOfPairSetShift; }
-    // Under the mask: how many bytes behind the start of the table the set of the pair lies.
     static constexpr uint32_t hashOfPair(EncodedJSValue first, EncodedJSValue second)
     {
-        uint32_t mixed = static_cast<uint32_t>(static_cast<uint64_t>(first) + (static_cast<uint64_t>(second) << 3));
+        uint32_t mixed = static_cast<uint32_t>(first) + static_cast<uint32_t>(second) * keyOfPairMultiplierOfSecond;
         return mixed * keyOfPairMultiplier >> keyOfPairHashShift;
     }
-    // One empty set, for an instance that has joined nothing yet.
     JS_EXPORT_PRIVATE static const KeyOfPair* noKeysOfPairs();
     void cacheKeyOfPair(EncodedJSValue first, EncodedJSValue second, JSString* key);
     void forgetPlacesOfPairs();
-    // What the last lookup by parts took and did not find, for whoever makes the key. No parts: countAndKinds is zero.
+    JS_EXPORT_PRIVATE static void forgetPlacesOfPairs(Instance&);
     KeyByParts& lastLookupByParts() { return m_lastLookupByParts; }
 
     ALWAYS_INLINE JSString* tryFindIntegerKey(uint32_t integer) const
@@ -202,18 +197,147 @@ public:
             return nullptr;
         return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
     }
-    // False where the table cannot name the key.
-    bool cacheIntegerKey(uint32_t integer, JSString* key);
-    // Every road to the text of an integer asks for it by the integer first, so the text is entered in no table by its characters.
-    JSString* makeIntegerKey(VM&, uint32_t integer, std::span<const Latin1Character>);
+    JSString* textOfInt32(VM&, int32_t);
 
-    size_t maxCachedKeyLength() const { return m_maxCachedKeyLength; }
-    // Null where there is no memory for the text.
+    struct FewCharacters {
+        static constexpr uint32_t bytesOfWord = sizeof(uint64_t);
+        static constexpr uint32_t mostCharacters = 2 * bytesOfWord;
+        static constexpr uint32_t limitOfIntegers = 100000000;
+
+        ALWAYS_INLINE bool tryAppend(uint64_t text, uint32_t size)
+        {
+            ASSERT(size && size <= sizeof(uint64_t));
+            uint32_t end = length + size;
+            if (end > mostCharacters)
+                return false;
+            if (length >= bytesOfWord)
+                last |= text << (8 * (length - bytesOfWord));
+            else {
+                first |= text << (8 * length);
+                if (end > bytesOfWord)
+                    last = text >> (8 * (bytesOfWord - length));
+            }
+            length = end;
+            return true;
+        }
+
+        ALWAYS_INLINE bool tryAppend(std::span<const Latin1Character> text)
+        {
+            const Latin1Character* from = text.data();
+            size_t size = text.size();
+            if (size == 1)
+                return tryAppend(*from, 1);
+            if (size > mostCharacters - length)
+                return false;
+            if (size >= sizeof(uint64_t)) {
+                if (!tryAppend(WTF::unalignedLoad<uint64_t>(from), sizeof(uint64_t)))
+                    return false;
+                uint32_t rest = static_cast<uint32_t>(size - sizeof(uint64_t));
+                return !rest || tryAppend(WTF::unalignedLoad<uint64_t>(from + rest) >> (8 * (sizeof(uint64_t) - rest)), rest);
+            }
+            if (size >= sizeof(uint32_t))
+                return tryAppend(WTF::unalignedLoad<uint32_t>(from) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(from + size - sizeof(uint32_t))) << (8 * (size - sizeof(uint32_t))), static_cast<uint32_t>(size));
+            return !size || tryAppend(from[0] | static_cast<uint64_t>(from[size / 2]) << (8 * (size / 2)) | static_cast<uint64_t>(from[size - 1]) << (8 * (size - 1)), static_cast<uint32_t>(size));
+        }
+
+        ALWAYS_INLINE bool tryAppendInteger(uint32_t integer)
+        {
+            constexpr uint32_t limitOfTwoDigits = 100;
+            if (integer - limitOfTwoDigits >= limitOfIntegers - limitOfTwoDigits) {
+                if (integer >= limitOfIntegers)
+                    return false;
+                uint32_t tens = integer * 103 >> 10;
+                uint32_t digits = (tens | (integer - 10 * tens) << 8) | 0x3030;
+                uint32_t leadingZeros = integer < 10;
+                return tryAppend(digits >> (8 * leadingZeros), 2 - leadingZeros);
+            }
+            if (integer < 10000) {
+                uint32_t pairs = integer / 100 | (integer % 100) << 16;
+                uint32_t tens = pairs * 103 >> 10 & 0x000f000f;
+                uint32_t digits = (tens | (pairs - 10 * tens) << 8) | 0x30303030;
+                uint32_t leadingZeros = integer < 1000;
+                return tryAppend(digits >> (8 * leadingZeros), 4 - leadingZeros);
+            }
+            uint64_t halves = integer / 10000 | static_cast<uint64_t>(integer % 10000) << 32;
+            uint64_t hundreds = halves * 10486 >> 20 & 0x0000007f0000007full;
+            uint64_t pairs = hundreds | (halves - 100 * hundreds) << 16;
+            uint64_t tens = pairs * 103 >> 10 & 0x000f000f000f000full;
+            uint64_t digits = tens | (pairs - 10 * tens) << 8;
+            uint32_t leadingZeros = static_cast<uint32_t>(std::countr_zero(digits)) / 8;
+            return tryAppend((digits | 0x3030303030303030ull) >> (8 * leadingZeros), 8 - leadingZeros);
+        }
+
+        uint64_t byteAt(uint32_t offset) const { return static_cast<uint8_t>(first >> (8 * offset)); }
+        std::array<Latin1Character, mostCharacters> text() const { return std::bit_cast<std::array<Latin1Character, mostCharacters>>(std::array<uint64_t, 2> { first, last }); }
+        ALWAYS_INLINE uint64_t lastEightBytes() const
+        {
+            ASSERT(length >= bytesOfWord);
+            uint32_t bytesBehindFirst = length - bytesOfWord;
+            return bytesBehindFirst == bytesOfWord ? last : first >> (8 * bytesBehindFirst) | (last << 1) << (8 * (bytesOfWord - bytesBehindFirst) - 1);
+        }
+
+        ALWAYS_INLINE unsigned hash() const
+        {
+            ASSERT(length && length <= mostCharacters);
+            constexpr auto mix = [](uint64_t a, uint64_t b) ALWAYS_INLINE_LAMBDA {
+                UInt128 product = static_cast<UInt128>(a) * b;
+                return std::pair<uint64_t, uint64_t> { static_cast<uint64_t>(product), static_cast<uint64_t>(product >> 64) };
+            };
+            constexpr std::array<uint64_t, 3> secret = RapidHash::secret;
+            constexpr auto seeds = mix(secret[0], secret[1]);
+            uint64_t a;
+            uint64_t b;
+            if (length >= bytesOfWord) [[likely]] {
+                uint64_t end = lastEightBytes();
+                a = first << 32 | end >> 32;
+                b = first >> 32 << 32 | static_cast<uint32_t>(end);
+            } else if (length >= sizeof(uint32_t))
+                a = b = first << 32 | static_cast<uint32_t>(first >> (8 * (length - sizeof(uint32_t))));
+            else {
+                a = byteAt(0) << 56 | byteAt(length / 2) << 32 | byteAt(length - 1);
+                b = 0;
+            }
+            auto [low, high] = mix(a ^ secret[1], b ^ seeds.first ^ seeds.second ^ length);
+            auto [lowOfHash, highOfHash] = mix(low ^ secret[0] ^ length, high ^ secret[1]);
+            unsigned hash = static_cast<unsigned>(lowOfHash ^ highOfHash) & RapidHash::maskHash;
+            return hash ? hash : 0x80000000 >> RapidHash::flagCount;
+        }
+
+        ALWAYS_INLINE bool isTextOf(const StringImpl& impl) const
+        {
+            ASSERT(length >= 2);
+            if (impl.length() != length || !impl.is8Bit())
+                return false;
+            const Latin1Character* other = impl.span8().data();
+            if (length >= bytesOfWord)
+                return WTF::unalignedLoad<uint64_t>(other) == first && WTF::unalignedLoad<uint64_t>(other + length - bytesOfWord) == lastEightBytes();
+            if (length >= sizeof(uint32_t))
+                return WTF::unalignedLoad<uint32_t>(other) == static_cast<uint32_t>(first) && WTF::unalignedLoad<uint32_t>(other + length - sizeof(uint32_t)) == static_cast<uint32_t>(first >> (8 * (length - sizeof(uint32_t))));
+            return other[0] == byteAt(0) && other[length / 2] == byteAt(length / 2) && other[length - 1] == byteAt(length - 1);
+        }
+
+        uint64_t first { 0 };
+        uint64_t last { 0 };
+        uint32_t length { 0 };
+    };
+    ALWAYS_INLINE JSString* tryFindCachedKey(const FewCharacters& characters, unsigned hash) const
+    {
+        size_t tableSize = m_cachedKeys.size();
+        if (!tableSize) [[unlikely]]
+            return nullptr;
+        const uint64_t* pair = m_cachedKeys.span().data() + firstIndex(hash, tableSize);
+        for (size_t i = 0; i < 2; ++i) {
+            if (pair[i] >> 32 != hash)
+                continue;
+            JSString* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(pair[i])));
+            if (characters.isTextOf(*candidate->tryGetValueImpl()))
+                return candidate;
+        }
+        return nullptr;
+    }
+
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
-    enum class EqualHashes : uint8_t { AreToldApart, LeaveUndecided };
-    // Calls nothing where equal hashes or a 16-bit key leave it undecided, which is then no answer.
-    template<EqualHashes equalHashes>
-    ALWAYS_INLINE std::optional<JSString*> lookUpCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
+    ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
         size_t tableSize = m_cachedKeys.size();
         if (!tableSize) [[unlikely]]
@@ -224,22 +348,12 @@ public:
             entry = pair[1];
             if (entry >> 32 != hash)
                 return nullptr;
-        } else if (pair[1] >> 32 == hash) [[unlikely]] {
-            if constexpr (equalHashes == EqualHashes::LeaveUndecided)
-                return std::nullopt;
-            else
-                return findAmongEqualHashes(pair, characters);
-        }
-        if constexpr (equalHashes == EqualHashes::LeaveUndecided) {
-            if (!cachedKey(entry)->tryGetValueImpl()->is8Bit()) [[unlikely]]
-                return std::nullopt;
-        }
+        } else if (pair[1] >> 32 == hash) [[unlikely]]
+            return findAmongEqualHashes(pair, characters);
         return matchingKey(entry, characters);
     }
-    ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const { return *lookUpCachedKey<EqualHashes::AreToldApart>(characters, hash); }
-    // Null where there is no memory for the text.
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
-    ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName = false)
+    ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName)
     {
         String text = isName ? nameWith(characters, hash) : String(StringImpl::tryCreate(characters, hash));
         if (text.isNull()) [[unlikely]]
@@ -256,7 +370,6 @@ public:
 
     static constexpr size_t maxIndexLength = 10;
     static constexpr size_t minReadableBytes = sizeof(uint64_t);
-    // Reads minReadableBytes whatever the length is.
     static ALWAYS_INLINE std::optional<uint32_t> tryParseIndex(std::span<const Latin1Character> characters)
     {
         size_t length = characters.size();
@@ -275,56 +388,27 @@ public:
     }
 
     enum class Lookup : uint8_t { Found, Absent, AbsentIndex };
-    // Integer keys are only cached by value. The hash is set when the result is Absent.
-    template<EqualHashes equalHashes = EqualHashes::AreToldApart>
-    ALWAYS_INLINE std::optional<Lookup> tryFindKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
+    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash, bool mayBeIndex = true) const
     {
-        ASSERT(characters.size() >= 2 && characters.size() <= m_maxCachedKeyLength);
-        if (characters.size() <= maxIndexLength) {
+        ASSERT(characters.size() >= 2 && characters.size() <= maxCachedKeyLength);
+        if (mayBeIndex && characters.size() <= maxIndexLength) {
             if (std::optional<uint32_t> index = tryParseIndex(characters)) {
                 key = *index <= INT32_MAX ? tryFindIntegerKey(*index) : nullptr;
                 return key ? Lookup::Found : Lookup::AbsentIndex;
             }
         }
         hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-        std::optional<JSString*> found = lookUpCachedKey<equalHashes>(characters, hash);
-        if (!found) [[unlikely]]
-            return std::nullopt;
-        key = *found;
+        key = tryFindCachedKey(characters, hash);
         return key ? Lookup::Found : Lookup::Absent;
     }
-    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const { return *tryFindKeyForText(characters, key, hash); }
-    JSString* caseConvertedString(VM&, std::span<const Latin1Character>);
-    // What the conversion of this very string gave the last time: a program lowers the same header names and method names over and over. A string never changes, so the answer holds while both live.
-    enum class LetterCase : uint8_t { Lower, Upper };
-    ALWAYS_INLINE JSString* tryFindCaseConversion(const JSString* source, LetterCase letterCase) const
-    {
-        uintptr_t distance = std::bit_cast<uintptr_t>(source) - m_cageBase;
-        if (distance >= MarkedBlockCage::maxSize)
-            return nullptr;
-        uint32_t encoded = static_cast<uint32_t>(distance >> MarkedBlockCage::shift);
-        for (size_t way = 0; way < waysOfCaseConversions; ++way) {
-            uint64_t entry = m_caseConversions[indexOfCaseConversion(encoded, letterCase, way)];
-            if (entry >> 32 == encoded)
-                return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
-        }
-        return nullptr;
-    }
-    void cacheCaseConversion(VM&, const JSString* source, LetterCase, JSString* converted);
-    // Where a string lies decides its hash, so the strings of one hash have four places, the one that came last in front. The two conversions of one string lie side by side.
-    static constexpr uint32_t caseConversionMultiplier = 0x9e3779b1u;
-    static constexpr unsigned caseConversionShift = 25;
-    AOT_CLASS_THRESHOLD(size_t, waysOfCaseConversions, 4);
-    static constexpr unsigned caseConversionSetShift = 3;
-    static constexpr size_t indexOfCaseConversion(uint32_t source, LetterCase letterCase, size_t way = 0) { return (source * caseConversionMultiplier >> caseConversionShift) << caseConversionSetShift | way << 1 | static_cast<size_t>(letterCase); }
-    static constexpr size_t numberOfCaseConversions = size_t { 1 } << (32 - caseConversionShift + caseConversionSetShift);
-    static_assert(2 * waysOfCaseConversions == 1u << caseConversionSetShift);
+
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
     static constexpr size_t minTableSize = 1 << 8;
-    AOT_CLASS_THRESHOLD(size_t, maxCachedKeyTableSize, 1 << 16);
-    AOT_CLASS_THRESHOLD(size_t, maxKeysByPartsTableSize, 1 << 14);
+    static constexpr size_t maxCachedKeyTableSize = 1 << 16;
+    static constexpr size_t maxKeysByPartsTableSize = 1 << 14;
+    static constexpr size_t maxIntegerKeyTableSize = 1 << 16;
 
     static size_t firstIndex(unsigned hash, size_t tableSize) { return hash & (tableSize - 1) & ~static_cast<size_t>(1); }
     static String nameWith(std::span<const Latin1Character> characters, unsigned hash)
@@ -369,24 +453,21 @@ private:
         if (evicts && ++m_keysByPartsEvictionCount > tableSize / 4) [[unlikely]]
             growKeysByParts();
     }
-    ALWAYS_INLINE JSString* cachedKey(uint64_t entry) const { return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry))); }
-    // A key that has named a property holds the atom of its characters, which may be a 16-bit string.
     ALWAYS_INLINE JSString* matchingKey(uint64_t entry, std::span<const Latin1Character> characters) const
     {
-        JSString* candidate = cachedKey(entry);
+        JSString* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
         const StringImpl& impl = *candidate->tryGetValueImpl();
         if (!impl.is8Bit()) [[unlikely]]
             return equal(&impl, characters) ? candidate : nullptr;
         return CompactTable::hasCharacters<Latin1Character>(impl, characters) ? candidate : nullptr;
     }
     JSString* findAmongEqualHashes(const uint64_t* pair, std::span<const Latin1Character>) const;
-    size_t removeDeadEntries(VM&, std::span<uint64_t>);
+    bool cacheIntegerKey(uint32_t integer, JSString* key);
+    size_t removeDeadCachedKeys(VM&);
     size_t removeDeadKeysByParts(VM&);
     size_t removeDeadKeysOfPairs(VM&);
-    size_t removeDeadCaseConversions(VM&);
     size_t removeDeadIntegerKeys(VM&);
     void resizeIntegerKeys(size_t tableSize);
-    // The table becomes an empty one of that size and its former entries are handed back. Where there is no memory for it, the table stays as it is: what it does not hold is made again.
     template<typename T>
     static std::optional<Vector<T>> tryResize(Vector<T>& table, size_t size)
     {
@@ -406,25 +487,21 @@ private:
     Instance& m_instance;
     uintptr_t m_cageBase;
     size_t m_cageSize;
-    size_t m_maxCachedKeyLength;
     Vector<uint64_t> m_cachedKeys;
     size_t m_cachedKeyEvictionCount { 0 };
-    AOT_CLASS_THRESHOLD(size_t, minIntegerKeyTableSize, 1 << 8);
-    AOT_CLASS_THRESHOLD(size_t, maxIntegerKeyTableSize, 1 << 16);
     Vector<uint64_t> m_integerKeys;
     size_t m_integerKeyEvictionCount { 0 };
     size_t m_integerKeysEnteredSinceSweep { 0 };
     Vector<KeyByParts> m_keysByParts;
+    size_t m_keysByPartsEvictionCount { 0 };
     KeyByParts m_lastLookupByParts;
     Vector<KeyOfPair> m_keysOfPairs;
     size_t m_keyOfPairEvictionCount { 0 };
-    size_t m_keysByPartsEvictionCount { 0 };
-    std::array<uint64_t, 256> m_caseConvertedStrings { };
-    std::array<uint64_t, numberOfCaseConversions> m_caseConversions { };
-    WTF::BitSet<(numberOfCaseConversions >> caseConversionSetShift)> m_hashesWithCaseConversions;
     RememberedSlotSet m_writtenSinceCollection;
 };
 
 } } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(AOT)

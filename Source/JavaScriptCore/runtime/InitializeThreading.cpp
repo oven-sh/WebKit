@@ -51,7 +51,6 @@
 #include "WasmThunks.h"
 #include <bmalloc/BPlatform.h>
 #include <mutex>
-#include <wtf/AutomaticThread.h>
 #include <wtf/Condition.h>
 #include <wtf/Threading.h>
 #include <wtf/threads/Signals.h>
@@ -157,10 +156,8 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
         }
 
 #if ENABLE(AOT)
-        if (Options::runsCompiledImage()) {
+        if (Options::runsCompiledImage())
             AOT::installFaultHandler();
-            AutomaticThread::setThreadsSayWhenTheyAreUp();
-        }
 #endif
 
         assertInvariants();

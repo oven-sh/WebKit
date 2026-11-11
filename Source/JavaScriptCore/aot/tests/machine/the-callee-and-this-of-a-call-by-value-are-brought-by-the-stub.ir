@@ -1,0 +1,35 @@
+# `held.run?.(1)`: the read of the method hands the callee back in the register of results, and the receiver waits in the register in which the read took it.
+# The convention of calls wants the callee and `this` elsewhere. The stub that calls by value brings both there in front of its entry: the place holds neither move.
+# RUN: bytes f1:Body mechanisms=all-Inlining
+# REQUIRES: x86_64
+# CHECK: Call Stub CallValue.Ordinary count 1, entered in front of two moves
+
+module m0 path="the-callee-and-this-of-a-call-by-value-are-brought-by-the-stub.js" displayPath="the-callee-and-this-of-a-call-by-value-are-brought-by-the-stub.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @50
+    v3 = PropGet v2 key="report" [isFreeName] @50
+    v4 = Call v3, -, v1 calleeName="report" @50
+    v5 = Undefined @50
+    Return v5 @50
+}
+function f1 name="runs" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="run" @29
+    v2 = TypeTest v1 testedType=undefined|null @29
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @29
+  b1(v3):
+    v4 = Undefined @29
+    Jump -> next b3(v4) @29
+  b2(v5):
+    v6 = Integer integer=1 @40
+    v7 = Call v5, v0, v6 calleeKey="run" calleeName="held.run" @34
+    Jump -> next b3(v7) @29
+  b3(v8):
+    v9 = Integer integer=1 @45
+    v10 = Add v8, v9 @45
+    Return v10 @45
+}

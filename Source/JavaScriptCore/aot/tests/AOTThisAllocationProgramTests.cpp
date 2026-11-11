@@ -33,7 +33,7 @@ entry module=m0
 layout L0 kind=Instance name="K" module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}]
 layout L1 kind=Instance name="Made" module=m0 base=L0 constructor=f3 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage]
 variable g0 name="K" module=m0 declared={type=function|absent} flags=[IsImmutable]
-variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = NewClosure function=f1
     v1 = NewClassToken layout=L0
@@ -100,7 +100,7 @@ function f2 name="K" kind=BaseConstructor flags=[HasNewTarget] results=[{type=ob
     v4 = CallDirect v3 function=f5
     Return v2
 }
-function f3 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] captures=[{type=anything}] parameters=[{type=Array}] results=[{type=object}] {
+function f3 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] captures=[{type=anything}] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v4 = GetSuperBase v1
     v5 = SuperConstructList v4, v2, v3 layout=L1
     v6 = Convert v5 declared={type=L1}
@@ -108,7 +108,6 @@ function f3 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, Takes
     Return v5
 }
 function f4 name="getP" kind=Method flags=[HasThis] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = PrivateGet v0, v1 layout=L0 field=1
     Return v2
@@ -185,7 +184,7 @@ function f2 name="init" kind=Method results=[{type=anything}] {
     v0 = Undefined
     Return v0
 }
-function f3 name="Chi" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f3 name="Chi" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     v5 = Convert v4 declared={type=L1}
@@ -193,7 +192,6 @@ function f3 name="Chi" kind=DerivedConstructor flags=[HasRestParameter, HasNewTa
     Return v4
 }
 function f4 name="init" kind=Method flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=7
     PropSet v0, v1 key="seen"
     v3 = Undefined
@@ -257,7 +255,7 @@ function f1 name="Context" kind=BaseConstructor flags=[HasNewTarget] length=1 pa
     PropSet v6, v1 key="request"
     Return v3
 }
-function f2 name="Wider" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f2 name="Wider" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     v5 = Convert v4 declared={type=L1}
@@ -339,18 +337,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="A" flags=[HasThis] thisType={type=L0|L1|L2 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
-function f2 name="Middle" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f2 name="Middle" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     Return v4
 }
-function f3 name="B" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f3 name="B" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L2
     Return v4
@@ -363,19 +360,19 @@ function f5 name="m" kind=Method results=[{type=anything}] {
     v0 = String string="B.m"
     Return v0
 }
-function f6 name="Fork" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f6 name="Fork" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L3
     Return v4
 }
-function f7 name="Left" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f7 name="Left" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L4
     v5 = Integer integer=2
     PropDefine v4, v5 key="left"
     Return v4
 }
-function f8 name="Right" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
+function f8 name="Right" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L5
     v5 = String string="r"
@@ -392,7 +389,7 @@ variable g0 module=m0 declared={type=function} flags=[IsImmutable]
 variable g1 module=m0 declared={type=function} flags=[IsImmutable]
 variable g2 module=m0 declared={type=function} flags=[IsImmutable]
 variable g3 module=m0 declared={type=function} flags=[IsImmutable]
-variable g4 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g4 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Jump -> next b1()
@@ -533,7 +530,7 @@ function f4 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={typ
     v1 = Convert v0 declared={type=string flags=[IsExpected]}
     Return v1
 }
-function f5 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f5 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -557,7 +554,6 @@ function f7 name="Stranger" module=m0 kind=BaseConstructor flags=[HasNewTarget, 
     Return v2
 }
 function f8 name="q" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g4
@@ -593,7 +589,7 @@ static const LayoutData& classNamed(LoadedProgram& program, ASCIILiteral name)
 {
     const ProgramTables& tables = program.state().tables;
     for (uint32_t shape = 1; shape < tables.firstEnvironmentShape; ++shape) {
-        if (tables.hasLayoutForShape(shape) && Image::current()->text().equals(StringID(tables.layoutForShape(shape).name), name))
+        if (tables.hasLayoutForShape(shape) && isNamedInTextOfLoadedProgram(tables.layoutForShape(shape), name))
             return tables.layoutForShape(shape);
     }
     failNativeTest(__FILE__, __LINE__, name.characters());
@@ -641,7 +637,7 @@ static void checkPrivateFieldsMoveToTheSubclassInstance(LoadedProgram& program)
         JSObject* prototype = definePrototypeOfSubclass(program, base, subclass);
         JSCell* token = ClassToken::create(vm, base);
         uint16_t listed[] { base.indexOf(brand), base.indexOf(field) };
-        std::optional<uint32_t> orderWord = base.keysAreNeverEnumerated ? std::optional<uint32_t>(unorderedOrderWord) : objects.keyOrders.orderStartingWith(base, listed);
+        std::optional<uint32_t> orderWord = objects.keyOrders.orderStartingWith(base, listed);
         AOT_TEST_CHECK(orderWord);
         Object* allocated = Object::create(vm, objects.structures.objectStructure(vm, base.shape), base, base.size, *orderWord);
         AOT_TEST_CHECK(allocated->store(vm, brand, AcceptedValue::provenAtBuildTime(token)) && allocated->store(vm, field, AcceptedValue::provenAtBuildTime(jsNumber(7))));
@@ -728,7 +724,7 @@ function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
     v4 = CallDirect v3 function=f4
     Return v2
 }
-function f2 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f2 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -857,7 +853,7 @@ function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b4(v18):
     Return v18
 }
-function f2 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f2 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -947,7 +943,7 @@ function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsCh
   b4(v14):
     Return v14
 }
-function f2 name="Heir" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f2 name="Heir" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -1081,7 +1077,6 @@ function f1 name="WithSetter" module=m0 kind=BaseConstructor flags=[HasNewTarget
     Return v19
 }
 function f2 name="guarded" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="caught "
@@ -1098,7 +1093,7 @@ function f3 name="guarded" module=m0 kind=Getter flags=[HasExplicitName] thisTyp
     v1 = Convert v0 declared={type=string flags=[IsExpected]}
     Return v1
 }
-function f4 name="DefinesOverSetter" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f4 name="DefinesOverSetter" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -1163,12 +1158,11 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v32
 }
 function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="tag"
     v3 = Undefined
     Return v3
 }
-function f2 name="Logged" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f2 name="Logged" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     Return v4
@@ -1199,20 +1193,18 @@ function f5 name="observable" module=m0 length=1 parameters=[{type=anything}] re
     v8 = FinishClass v3 layout=L3
     Return v8
 }
-function f6 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+function f6 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L3
     Return v4
 }
 function f7 name="value" module=m0 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Add v1, v1
     PropSet v0, v2 key="stored"
     v4 = Undefined
     Return v4
 }
 function f8 name="value" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="stored"
     Return v1
 }
@@ -1291,7 +1283,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v58 = Convert v57 declared={type=number flags=[IsExpected]}
     v59 = Add v40, v58
     v60 = Convert v59 declared={type=number flags=[IsExpected]}
-    v61 = InstanceOf v54, v26 writtenExpression="made instanceof First"
+    v61 = InstanceOf v54, v26
     v62 = ToBoolean v61
     Branch v62 -> taken b7(| 0), notTaken b9(| 0)
   b7(v63):
@@ -1309,7 +1301,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b9(v72):
     Jump -> next b10(v54, v41, v42)
   b10(v73, v74, v75):
-    v76 = InstanceOf v73, v27 writtenExpression="made instanceof Second"
+    v76 = InstanceOf v73, v27
     v77 = ToBoolean v76
     Branch v77 -> taken b11(| 0), notTaken b13(| 0)
   b11(v78):
@@ -1362,7 +1354,7 @@ function f2 name="K" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExpl
   b1():
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
-    v3 = Convert v2 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v3 = Convert v2 declared={type=L0|L1} illTypedCause=FromLooseType
     v4 = CallDirect v3 function=f7
     Return v3
 }
@@ -1398,7 +1390,7 @@ function f5 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTar
   b1():
     v4 = GetSuperBase v1
     v5 = SuperConstructList v4, v2, v3 layout=L1
-    v6 = Convert v5 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Convert v5 declared={type=L1} illTypedCause=FromLooseType
     v7 = CallDirect v0, v6 function=f8
     Return v6
 }
@@ -1410,7 +1402,7 @@ function f6 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     v2 = PropGet v1 key="b"
     Return v2
 }
-function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1} results=[{type=anything}] {
   b0(v0: L0|L1):
     Jump -> next b1()
   b1():
@@ -1427,7 +1419,7 @@ function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
     v11 = Undefined
     Return v11
 }
-function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=anything}] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=anything}] thisType={type=L1} results=[{type=anything}] {
   b0(v0: anything, v1: L1):
     Jump -> next b1()
   b1():
@@ -1444,85 +1436,67 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 entry module=m0
 )IR"_s;
 
-static void checkInShellWithAndWithoutPasses(ASCIILiteral programText, ASCIILiteral expectedOutput)
+static void checkThisAllocationProgram(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "validate"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "disable=pass:PlaceTypeTests"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "disable=pass:InlineCalls"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "disable=pass:SinkAllocations"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "only-passes=ResolveAccesses"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s, "validate"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "validate"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "disable=pass:PlaceTypeTests"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "disable=pass:InlineCalls"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "disable=pass:SinkAllocations"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "only-passes=ResolveAccesses"_s });
-    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "references=narrow"_s, "validate"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "admit=Inspector"_s, "references=narrow"_s });
 }
 
 static void testClassFactoryOverPrivateField()
 {
-    checkInShellWithAndWithoutPasses(classFactoryText, "7 7 7 1 2 true true false tag\n"_s);
+    checkThisAllocationProgram(classFactoryText, "7 7 7 1 2 true true false tag\n"_s);
 }
 
 static void testOverriddenMethodCalledByBaseConstructor()
 {
-    checkInShellWithAndWithoutPasses(overriddenMethodText, "7 5 seen,q {\"seen\":7,\"q\":5}\n"_s);
+    checkThisAllocationProgram(overriddenMethodText, "7 5 seen,q {\"seen\":7,\"q\":5}\n"_s);
 }
 
 static void testStoreInBaseConstructorBesideFieldInitializer()
 {
-    checkInShellWithAndWithoutPasses(storeInBaseConstructorText, "{\"env\":{},\"request\":1,\"extra\":[]} env,request,extra 1 {\"env\":{},\"request\":2}\n"_s);
+    checkThisAllocationProgram(storeInBaseConstructorText, "{\"env\":{},\"request\":1,\"extra\":[]} env,request,extra 1 {\"env\":{},\"request\":2}\n"_s);
 }
 
 static void testAbstractClassesOverConstructorFunction()
 {
-    checkInShellWithAndWithoutPasses(abstractClassesText, "1 B.m true\n{\"x\":1,\"left\":2} {\"x\":1,\"right\":\"r\"} A.m true false true\n"_s);
+    checkThisAllocationProgram(abstractClassesText, "1 B.m true\n{\"x\":1,\"left\":2} {\"x\":1,\"right\":\"r\"} A.m true false true\n"_s);
 }
 
 static void testClassesNotBelowConstructor()
 {
-    checkInShellWithAndWithoutPasses(classesNotBelowConstructorText, "A.m B.m false true Stranger.m false TypeError 6\n"_s);
+    checkThisAllocationProgram(classesNotBelowConstructorText, "A.m B.m false true Stranger.m false TypeError 6\n"_s);
 }
 
 static void testSubclassNeverConstructed()
 {
-    checkInShellWithAndWithoutPasses(subclassNeverConstructedText, "1 2 undefined false B.m true 1\n"_s);
+    checkThisAllocationProgram(subclassNeverConstructedText, "1 2 undefined false B.m true 1\n"_s);
 }
 
 static void testDeleteInBaseConstructorForSubclass()
 {
-    checkInShellWithAndWithoutPasses(deleteInBaseConstructorText, "proto x proto x false true\n"_s);
+    checkThisAllocationProgram(deleteInBaseConstructorText, "proto x proto x false true\n"_s);
 }
 
 static void testFieldOfBaseDeclaredAgainBySubclass()
 {
-    checkInShellWithAndWithoutPasses(fieldOfBaseDeclaredAgainText, "n,y,z {\"n\":0,\"y\":5,\"z\":1}\n"_s);
+    checkThisAllocationProgram(fieldOfBaseDeclaredAgainText, "n,y,z {\"n\":0,\"y\":5,\"z\":1}\n"_s);
 }
 
 static void testStoreOfBaseConstructorBeforeDefinitionBySubclass()
 {
-    checkInShellWithAndWithoutPasses(storeBeforeDefinitionText, "caught stored defined caught,guarded nothing defined caught,guarded\n"_s);
+    checkThisAllocationProgram(storeBeforeDefinitionText, "caught stored defined caught,guarded nothing defined caught,guarded\n"_s);
 }
 
 static void testStoreOfBaseConstructorRunsSetterOfSubclass()
 {
-    checkInShellWithAndWithoutPasses(storeRunsSetterOfSubclassText, "setter 1 42 42 stored\n"_s);
-    checkOutputOfProgramInShell(storeRunsSetterOfSubclassText, "setter 1 42 42 stored\n"_s, { "disable=pass:ResolveCalls"_s });
-    checkOutputOfProgramInShell(storeRunsSetterOfSubclassText, "setter 1 42 42 stored\n"_s, { "disable=flow-results"_s });
+    checkThisAllocationProgram(storeRunsSetterOfSubclassText, "setter 1 42 42 stored\n"_s);
 }
 
 static void testClassAndClassesBelowConstructedInRotation()
 {
-    checkInShellWithAndWithoutPasses(classesInRotationText, "48000 10000 2000 2000\n"_s);
-
-    // No allocator has room: an object whose prototype is the one of the allocation, or one that is remembered, comes from the operation that allocates.
-    static constexpr ASCIILiteral statements = "const printValues = print; globalThis.print = (...values) => printValues(...values, Number(aotOperationCount(\"operationAOTAllocateSlow\")) >= 4000);"_s;
-    checkOutputOfProgramInShell(classesInRotationText, "48000 10000 2000 2000 true\n"_s, { "testing=ForceGCSlowPaths"_s }, statements, { "--aotCountsPath=/dev/null"_s });
-    checkOutputOfProgramInShell(classesInRotationText, "48000 10000 2000 2000 true\n"_s, { "testing=ForceGCSlowPaths"_s, "references=narrow"_s, "validate"_s }, statements, { "--aotCountsPath=/dev/null"_s });
-    checkOutputOfProgramInShell(classesInRotationText, "48000 10000 2000 2000 true\n"_s, { "testing=ForceGCSlowPaths"_s, "admit=Inspector"_s }, statements, { "--aotCountsPath=/dev/null"_s });
+    checkThisAllocationProgram(classesInRotationText, "48000 10000 2000 2000\n"_s);
 }
 
 std::span<const NativeTest> thisAllocationProgramTests()

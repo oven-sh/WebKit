@@ -1,5 +1,5 @@
 # No line is implied: a function belongs to m0, which needs its line
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: IdOutOfRange
 
 function f0 name="f" results=[{type=undefined}] {

@@ -6,6 +6,7 @@ import {
   formatEnumerator,
   formatId,
   formatName,
+  hashOfText,
   joinBlocks,
   lengthOfCharacters,
   Pool,
@@ -25,7 +26,6 @@ import { cap } from "./support.ts";
 
 export const textNamesArray = "builtinTableTextNames";
 export const textNameSlotsArray = "builtinTableTextNameSlots";
-// Code of the engine names this one, so its type has a name that does not say how long it is.
 export const classTokensArray = "builtinTableClassTokens";
 export const classTokensType = "BuiltinClassTokenStorage";
 
@@ -33,7 +33,6 @@ interface TableArray {
   cppType: string;
   name: string;
   elements: readonly string[];
-  // Of a list of texts: one behind the other, each with a zero behind it.
   numberOfCharacters?: number;
 }
 
@@ -47,13 +46,8 @@ interface MemberNameClasses {
   classes: ModelClass[];
 }
 
-// FNV-1a over the tokens, each with a zero behind it. The engine makes the token of an entry from its text, and a test of the engine hashes what it makes.
 export function hashOfBuiltinTokens(model: TableModel): number {
-  let hash = 0x811c9dc5;
-  for (const { token } of model.builtins) {
-    for (const byte of Buffer.from(`${token}\0`, "latin1")) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
-  }
-  return hash;
+  return hashOfText(model.builtins.map(({ token }) => `${token}\0`).join(""));
 }
 
 export function slotTokenOf(slot: ModelSlot): string {
@@ -65,7 +59,6 @@ export interface NamedList<Item> {
   cppType: string;
   array: string;
   countName: string;
-  // In the order of the positions: what the engine declares, then the roles of the host, each by the bytes of its constant.
   items: readonly (readonly [constant: string, item: Item])[];
   format: (item: Item) => string;
 }
@@ -80,7 +73,6 @@ function orderNamedItems<Item>(
   );
 }
 
-// What hand-written C++ names is a position in one of these lists. The declarations of the engine alone say what is in them, so no entry of the host moves or adds a position.
 export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
   const isEngineRow = ({ origin }: { origin: string }): boolean => origin === "Engine";
   const builtins: NamedList<ModelBuiltin> = {
@@ -249,7 +241,6 @@ export function nameArraysOf(model: TableModel): NameArrays {
   };
 }
 
-// The zero behind the last text is the one that ends the literal.
 function emitTexts(declaration: string, texts: readonly string[], isDerived = false): string {
   const starts: number[] = [0];
   for (const text of texts) starts.push(starts[starts.length - 1] + lengthOfCharacters(text) + 1);
@@ -260,7 +251,6 @@ function emitTexts(declaration: string, texts: readonly string[], isDerived = fa
   return `${declaration} = ${isDerived ? "{ " : ""}{\n    ${texts.length},\n    {\n${rowsOfStarts.join("\n")}\n    },\n${literals.join("\n")}\n}${isDerived ? " }" : ""};`;
 }
 
-// The C++ compiler hashes the text names, so they have to be a constant expression.
 function emitNameArray({ cppType, name, elements, numberOfCharacters }: TableArray): string {
   if (numberOfCharacters === undefined) return emitArray(`constinit const ${cppType} ${name}`, elements);
   if (elements.length === 0) return "";
@@ -272,7 +262,6 @@ function emitNameArray({ cppType, name, elements, numberOfCharacters }: TableArr
   ]);
 }
 
-// builtinTableData does not reference this, so a link without IR text drops the tokens.
 function emitFunctionTokens(model: TableModel): string {
   const view = "constinit const BuiltinTexts builtinTableRuntimeFunctionTokens";
   if (model.functions.length === 0) return `${view} { };`;

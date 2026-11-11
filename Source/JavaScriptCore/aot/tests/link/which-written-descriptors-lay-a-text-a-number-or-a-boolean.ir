@@ -1,0 +1,83 @@
+# Object.defineProperty(Math, "k1", { value: 7 }) and nine more: which of them the scan says lay a text, a number or a boolean that is written.
+# Yes: 7, "t", true, 1.5. No: null and undefined (no text, number or boolean), a function, a value beside a getter (the call throws), a value that is stored over with a function, one of two values.
+# If the scan said yes of one of the last six, a function could be laid on a built-in under the word "a number": Bun's test/aot/engine-tests/link/built-in-that-native-code-hands-to-the-library-is-let-go-where-a-function-is-defined-on-it.ir.
+# RUN: summary f0
+# CHECK: v8 DefinesByDescriptor Builtin Math other=Allocation L0 under-a-name-that-nobody-else-names descriptor-in-sight lays-text-number-or-boolean
+# CHECK: v13 DefinesByDescriptor Builtin Math other=Allocation L0 under-a-name-that-nobody-else-names descriptor-in-sight lays-text-number-or-boolean
+# CHECK: v18 DefinesByDescriptor Builtin Math other=Allocation L0 under-a-name-that-nobody-else-names descriptor-in-sight lays-text-number-or-boolean
+# CHECK: v23 DefinesByDescriptor Builtin Math other=Allocation L0 under-a-name-that-nobody-else-names descriptor-in-sight lays-text-number-or-boolean
+# CHECK-NOT: lays-text-number-or-boolean
+# RUN(ALL): summary f0
+# ALL-COUNT-10: DefinesByDescriptor
+
+layout L0 fields=[{key="value" declared={type=anything}}, {key="get" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=Math
+    v3 = NewClosure function=f1
+    v4 = String string="k1"
+    v5 = Integer integer=7
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = Call v1, v0, v2, v4, v7 calleeName="Object.defineProperty"
+    v9 = String string="k2"
+    v10 = String string="t"
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    v13 = Call v1, v0, v2, v9, v12 calleeName="Object.defineProperty"
+    v14 = String string="k3"
+    v15 = Boolean boolean=true
+    v16 = NewObject -, v15 layout=L0 fields=[0]
+    v17 = FinishObject v16
+    v18 = Call v1, v0, v2, v14, v17 calleeName="Object.defineProperty"
+    v19 = String string="k4"
+    v20 = Double number=1.5
+    v21 = NewObject -, v20 layout=L0 fields=[0]
+    v22 = FinishObject v21
+    v23 = Call v1, v0, v2, v19, v22 calleeName="Object.defineProperty"
+    v24 = String string="k5"
+    v25 = Null
+    v26 = NewObject -, v25 layout=L0 fields=[0]
+    v27 = FinishObject v26
+    v28 = Call v1, v0, v2, v24, v27 calleeName="Object.defineProperty"
+    v29 = String string="k6"
+    v30 = Undefined
+    v31 = NewObject -, v30 layout=L0 fields=[0]
+    v32 = FinishObject v31
+    v33 = Call v1, v0, v2, v29, v32 calleeName="Object.defineProperty"
+    v34 = String string="k7"
+    v35 = NewObject -, v3 layout=L0 fields=[0]
+    v36 = FinishObject v35
+    v37 = Call v1, v0, v2, v34, v36 calleeName="Object.defineProperty"
+    v38 = String string="k8"
+    v39 = Integer integer=7
+    v40 = NewObject -, v39, v3 layout=L0 fields=[0, 1]
+    v41 = FinishObject v40
+    v42 = Call v1, v0, v2, v38, v41 calleeName="Object.defineProperty"
+    v43 = String string="k9"
+    v44 = Integer integer=7
+    v45 = NewObject -, v44 layout=L0 fields=[0]
+    v46 = FinishObject v45
+    PropSet v46, v3 key="value"
+    v48 = Call v1, v0, v2, v43, v46 calleeName="Object.defineProperty"
+    v49 = Integer integer=7
+    v50 = Builtin builtin=GlobalThis
+    v51 = PropGet v50 key="hidden" [isFreeName]
+    Branch v51 -> taken b1(v49), notTaken b1(v3)
+  b1(v52: anything):
+    v53 = String string="k10"
+    v54 = NewObject -, v52 layout=L0 fields=[0]
+    v55 = FinishObject v54
+    v56 = Call v1, v0, v2, v53, v55 calleeName="Object.defineProperty"
+    v57 = Undefined
+    Return v57
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -570,7 +570,7 @@ private:
             if (value->opcode() == Phi)
                 continue;
             if (Value* earlierLoad = appendEarlierLoad(block, path, value)) {
-                m_cloner.substitute(map, value, earlierLoad);
+                m_cloner.substituteOnOnePath(map, value, earlierLoad);
                 continue;
             }
             m_cloner.appendClone(value, block, map);
@@ -654,6 +654,23 @@ private:
         return true;
     }
 
+    // In a block that was merged into its predecessor, a Phi may follow the Upsilon that feeds it.
+    void addLocalPhiValues(BasicBlock* block)
+    {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            Value* phi = block->at(index);
+            if (phi->opcode() != Phi)
+                continue;
+            for (unsigned earlier = index; earlier--;) {
+                auto* upsilon = block->at(earlier)->as<UpsilonValue>();
+                if (upsilon && upsilon->phi() == phi) {
+                    m_phiValuesOnPath.append({ phi, upsilon->child(0) });
+                    break;
+                }
+            }
+        }
+    }
+
     void addUpsilonsAndSetsFrom(BasicBlock* block)
     {
         for (Value* value : *block) {
@@ -670,6 +687,7 @@ private:
             if (upsilon->phi()->owner == block)
                 m_phiValuesOnPath.append({ upsilon->phi(), upsilon->child(0) });
         }
+        addLocalPhiValues(block);
         m_path.append(block);
         addUpsilonsAndSetsFrom(block);
     }

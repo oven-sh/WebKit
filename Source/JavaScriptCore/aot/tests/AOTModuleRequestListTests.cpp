@@ -11,7 +11,6 @@
 #include "AOTModuleGraph.h"
 #include "AOTNativeTest.h"
 #include "AOTVector.h"
-#include <algorithm>
 #include <initializer_list>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
@@ -23,8 +22,6 @@ using Flags = OptionSet<Flag>;
 
 namespace {
 
-constexpr uint32_t defaultLimit = 8;
-
 enum class Body : bool { Absent, Present };
 enum class Edge : uint8_t { Static, Deferred, Require };
 
@@ -34,8 +31,7 @@ public:
     unsigned addData(Body body = Body::Absent) { return add(ModuleKind::Data, ExternalKind::UncompiledCode, SyntheticExportRule::None, body, { }); }
     unsigned addLibrarySource() { return add(ModuleKind::RuntimeSource, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, Body::Present, { }); }
     unsigned addCommonJS(Body body = Body::Present) { return add(ModuleKind::CommonJs, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, body, Flag::CapturesOnDemand); }
-    // What ES modules import in place of a CommonJS file whose names the build did not find.
-    unsigned addFaceThatCaptures() { return add(ModuleKind::SourceText, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, Body::Present, { }); }
+    unsigned addCapturingFacade() { return add(ModuleKind::SourceText, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, Body::Present, { }); }
     unsigned addRuntimeModule() { return add(ModuleKind::Runtime, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, Body::Absent, { }); }
     unsigned addUncompiledCode() { return add(ModuleKind::External, ExternalKind::UncompiledCode, SyntheticExportRule::None, Body::Absent, { }); }
 
@@ -45,9 +41,8 @@ public:
     }
 
     void addRequiredName(unsigned module) { ++m_nodes[module].numberOfRequiredNames; }
-    void nameInRequire(unsigned module) { m_modulesNamedByRequire.set(module); }
 
-    void compute(uint32_t maxContractedRequests = defaultLimit)
+    void compute()
     {
         ModuleData endRecord { };
         for (Node& node : m_nodes) {
@@ -59,22 +54,33 @@ public:
             endRecord.firstRequiredName = Number24(endRecord.firstRequiredName + node.numberOfRequiredNames);
         }
         m_modules.append(endRecord);
-        computeModuleFlags(m_modules.mutableSpan(), m_requests.span());
-        m_contracted = contractModuleRequests(m_modules.mutableSpan(), m_requests.span(), m_modulesNamedByRequire, maxContractedRequests);
-        AOT_TEST_CHECK(m_modules.last().firstLinkRequest == m_contracted.linkRequests.size());
-        AOT_TEST_CHECK(m_modules.last().firstEvaluationRequest == m_contracted.evaluationRequests.size());
+        Typed::StronglyConnectedComponents components = computeModuleFlags(m_modules.mutableSpan(), m_requests.span());
+        LinkRequestsOfModules linkRequests = contractLinkRequests(m_modules.mutableSpan(), m_requests.span(), components);
+        layLinkRequests(m_modules.mutableSpan(), linkRequests);
+        m_linkRequests = linkRequests.requests.map([](uint32_t module) { return static_cast<uint16_t>(module); });
     }
 
     Vector<LinkPlanStepData> planLink(unsigned entryPoint) { return planLinkOfEntryPoint(m_modules.mutableSpan(), m_requests.span(), ModuleID(entryPoint)); }
+    Vector<uint32_t> group(uint32_t endOfNumbers) { return groupModulesLoadedTogether(m_modules.mutableSpan(), m_requests.span(), findESModulesOfProgram(m_modules.span()), endOfNumbers); }
 
     unsigned size() const { return m_nodes.size(); }
     ModuleKind kindOf(unsigned module) const { return m_nodes[module].data.kind; }
     const ModuleData& data(unsigned module) const { return m_modules[module]; }
-    const ContractedModuleRequests& contracted() const { return m_contracted; }
+    ModuleNumbers linkRequests() const { return { m_linkRequests.span(), m_modules.size() }; }
+    std::span<const ModuleRequestData> requestsOfAllModules() const { return m_requests.span(); }
     bool resolvesNames(unsigned module) const { return !!m_nodes[module].numberOfRequiredNames; }
 
-    std::span<const uint32_t> linkRequests(unsigned module) const { return listOf(m_contracted.linkRequests, module, &ModuleData::firstLinkRequest); }
-    std::span<const uint32_t> evaluationRequests(unsigned module) const { return listOf(m_contracted.evaluationRequests, module, &ModuleData::firstEvaluationRequest); }
+    std::span<const ModuleRequestData> requests(unsigned module) const { return m_nodes[module].requests.span(); }
+
+    Vector<uint32_t> imports(unsigned module) const
+    {
+        Vector<uint32_t> targets;
+        for (const ModuleRequestData& request : m_nodes[module].requests) {
+            if (!request.isRequire && !request.isHoisted)
+                targets.append(request.target());
+        }
+        return targets;
+    }
 
     Vector<uint32_t> allRequests(unsigned module) const
     {
@@ -103,17 +109,10 @@ private:
         return m_nodes.size() - 1;
     }
 
-    std::span<const uint32_t> listOf(const Vector<uint32_t>& lists, unsigned module, Number24 ModuleData::* first) const
-    {
-        uint32_t start = m_modules[module].*first;
-        return lists.subspan(start, m_modules[module + 1].*first - start);
-    }
-
     Vector<Node> m_nodes;
     Vector<ModuleData> m_modules;
     Vector<ModuleRequestData> m_requests;
-    BitVector m_modulesNamedByRequire;
-    ContractedModuleRequests m_contracted;
+    Vector<uint16_t> m_linkRequests;
 };
 
 class RandomNumbers {
@@ -135,19 +134,7 @@ private:
 
 } // anonymous namespace
 
-static bool isList(std::span<const uint32_t> list, std::initializer_list<uint32_t> expected)
-{
-    return std::ranges::equal(list, expected);
-}
-
-static Vector<uint32_t> copyOf(std::span<const uint32_t> list)
-{
-    return Vector<uint32_t>(list);
-}
-
-// What the link of the run time does in the order in which it does it: it captures the exports of a leaf where it arrives, and resolves the names of a module when it leaves.
-template<typename TargetsFunctor>
-static void walkLink(const Graph& graph, unsigned module, const TargetsFunctor& targetsOf, BitVector& seen, Vector<uint32_t>& work)
+static void walkLink(const Graph& graph, unsigned module, BitVector& seen, Vector<uint32_t>& work)
 {
     const ModuleData& data = graph.data(module);
     if (!data.needsLink())
@@ -156,487 +143,21 @@ static void walkLink(const Graph& graph, unsigned module, const TargetsFunctor& 
         work.append(module);
         return;
     }
-    for (uint32_t target : targetsOf(module)) {
+    for (uint32_t target : graph.allRequests(module)) {
         if (!seen.quickSet(target))
-            walkLink(graph, target, targetsOf, seen, work);
+            walkLink(graph, target, seen, work);
     }
     if (graph.resolvesNames(module))
         work.append(module);
 }
 
-template<typename TargetsFunctor>
-static void walkEvaluation(const Graph& graph, unsigned module, const TargetsFunctor& targetsOf, BitVector& seen, Vector<uint32_t>& work)
-{
-    const ModuleData& data = graph.data(module);
-    if (data.isUncompiledCode()) {
-        work.append(module);
-        return;
-    }
-    if (!data.hasExportTable())
-        return;
-    for (uint32_t target : targetsOf(module)) {
-        if (!seen.quickSet(target))
-            walkEvaluation(graph, target, targetsOf, seen, work);
-    }
-    if (data.bodyFunction() || data.hasTopLevelAwait())
-        work.append(module);
-}
-
-template<typename TargetsFunctor>
-static Vector<uint32_t> linkWorkFrom(const Graph& graph, unsigned root, const TargetsFunctor& targetsOf)
+static Vector<uint32_t> linkWorkFrom(const Graph& graph, unsigned root)
 {
     Vector<uint32_t> work;
     BitVector seen(graph.size());
     seen.quickSet(root);
-    walkLink(graph, root, targetsOf, seen, work);
+    walkLink(graph, root, seen, work);
     return work;
-}
-
-template<typename TargetsFunctor>
-static Vector<uint32_t> evaluationWorkFrom(const Graph& graph, unsigned root, const TargetsFunctor& targetsOf)
-{
-    Vector<uint32_t> work;
-    BitVector seen(graph.size());
-    seen.quickSet(root);
-    walkEvaluation(graph, root, targetsOf, seen, work);
-    return work;
-}
-
-static void testModulesWithNothingToRunAreLeftOut()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned importer = graph.addSourceText();
-    unsigned leaf = graph.addSourceText();
-    unsigned data = graph.addData();
-    graph.request(root, importer);
-    graph.request(importer, leaf);
-    graph.request(importer, data);
-    graph.compute();
-    AOT_TEST_CHECK(graph.data(root).needsEvaluation());
-    AOT_TEST_CHECK(!graph.data(importer).needsEvaluation() && !graph.data(leaf).needsEvaluation() && !graph.data(data).needsEvaluation());
-    AOT_TEST_CHECK(graph.contracted().evaluationRequests.isEmpty() && graph.contracted().linkRequests.isEmpty());
-    AOT_TEST_CHECK(graph.contracted().modulesOverLimit.isEmpty());
-}
-
-static void testWorkThatNeedsEvaluation()
-{
-    Graph graph;
-    unsigned importerOfBody = graph.addSourceText();
-    unsigned withBody = graph.addData(Body::Present);
-    unsigned importerOfAwait = graph.addSourceText();
-    unsigned awaiting = graph.addSourceText(Body::Absent, Flag::HasTopLevelAwait);
-    unsigned importerOfUncompiled = graph.addSourceText();
-    unsigned uncompiled = graph.addUncompiledCode();
-    unsigned importerOfDeferring = graph.addSourceText();
-    unsigned deferring = graph.addSourceText();
-    unsigned deferred = graph.addSourceText();
-    unsigned importerOfNative = graph.addSourceText();
-    unsigned native = graph.addRuntimeModule();
-    unsigned importerOfLibrarySource = graph.addSourceText();
-    unsigned librarySource = graph.addLibrarySource();
-    graph.request(importerOfBody, withBody);
-    graph.request(importerOfAwait, awaiting);
-    graph.request(importerOfUncompiled, uncompiled);
-    graph.request(importerOfDeferring, deferring);
-    graph.request(deferring, deferred, Edge::Deferred);
-    graph.request(importerOfNative, native);
-    graph.request(importerOfLibrarySource, librarySource);
-    graph.compute();
-    for (unsigned module : { importerOfBody, withBody, importerOfAwait, awaiting, importerOfUncompiled, uncompiled, importerOfDeferring, deferring })
-        AOT_TEST_CHECK(graph.data(module).needsEvaluation());
-    for (unsigned module : { deferred, importerOfNative, native, importerOfLibrarySource, librarySource })
-        AOT_TEST_CHECK(!graph.data(module).needsEvaluation());
-}
-
-static void testListReplacesModuleInPlace()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned first = graph.addSourceText(Body::Present);
-    unsigned barrel = graph.addSourceText();
-    unsigned second = graph.addSourceText(Body::Present);
-    unsigned third = graph.addSourceText(Body::Present);
-    unsigned fourth = graph.addSourceText(Body::Present);
-    graph.request(root, first);
-    graph.request(root, barrel);
-    graph.request(root, fourth);
-    graph.request(barrel, second);
-    graph.request(barrel, third);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { first, second, third, fourth }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(barrel), { second, third }));
-    AOT_TEST_CHECK(graph.evaluationRequests(first).empty());
-}
-
-static void testLaterDuplicatesAreDropped()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned firstBarrel = graph.addSourceText();
-    unsigned secondBarrel = graph.addSourceText();
-    unsigned outerBarrel = graph.addSourceText();
-    unsigned first = graph.addSourceText(Body::Present);
-    unsigned second = graph.addSourceText(Body::Present);
-    graph.request(root, firstBarrel);
-    graph.request(root, outerBarrel);
-    graph.request(root, first);
-    graph.request(firstBarrel, second);
-    graph.request(secondBarrel, second);
-    graph.request(secondBarrel, first);
-    graph.request(outerBarrel, secondBarrel);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { second, first }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(outerBarrel), { second, first }));
-}
-
-static void testModuleThatRequestsItself()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned barrel = graph.addSourceText();
-    unsigned leaf = graph.addSourceText(Body::Present);
-    graph.request(root, root);
-    graph.request(root, barrel);
-    graph.request(barrel, barrel);
-    graph.request(barrel, leaf);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { leaf }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(barrel), { leaf }));
-}
-
-static void testModulesOfACycleStay()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned first = graph.addSourceText();
-    unsigned second = graph.addSourceText();
-    unsigned leaf = graph.addSourceText(Body::Present);
-    graph.request(root, first);
-    graph.request(first, second);
-    graph.request(second, first);
-    graph.request(second, leaf);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { first }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(first), { second }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(second), { first, leaf }));
-
-    Graph withNothingToRun;
-    unsigned importer = withNothingToRun.addSourceText(Body::Present);
-    unsigned left = withNothingToRun.addSourceText();
-    unsigned right = withNothingToRun.addSourceText();
-    withNothingToRun.request(importer, left);
-    withNothingToRun.request(left, right);
-    withNothingToRun.request(right, left);
-    withNothingToRun.compute();
-    AOT_TEST_CHECK(withNothingToRun.contracted().evaluationRequests.isEmpty());
-}
-
-static void testModuleThatReachesAnAwaitStays()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned importer = graph.addSourceText();
-    unsigned awaiting = graph.addSourceText(Body::Present, Flag::HasTopLevelAwait);
-    graph.request(root, importer);
-    graph.request(importer, awaiting);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { importer }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(importer), { awaiting }));
-}
-
-static void testModuleWithADeferredRequestHasNoList()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned deferring = graph.addSourceText();
-    unsigned eager = graph.addSourceText(Body::Present);
-    unsigned deferred = graph.addSourceText(Body::Present);
-    graph.request(root, deferring);
-    graph.request(deferring, eager);
-    graph.request(deferring, deferred, Edge::Deferred);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { deferring }));
-    AOT_TEST_CHECK(graph.evaluationRequests(deferring).empty());
-}
-
-static void testModuleThatARequireNamesStays()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned outerBarrel = graph.addSourceText();
-    unsigned barrel = graph.addSourceText();
-    unsigned leaf = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    graph.request(root, outerBarrel);
-    graph.request(outerBarrel, barrel);
-    graph.request(barrel, leaf);
-    graph.request(barrel, librarySource);
-    graph.nameInRequire(barrel);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { barrel }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(outerBarrel), { barrel }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(barrel), { leaf }));
-    AOT_TEST_CHECK(isList(graph.linkRequests(root), { librarySource }));
-}
-
-static void testModulesThatRanAtLinkAreNotEvaluated()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    unsigned native = graph.addRuntimeModule();
-    unsigned uncompiled = graph.addUncompiledCode();
-    unsigned leaf = graph.addSourceText(Body::Present);
-    graph.request(root, librarySource);
-    graph.request(root, native);
-    graph.request(root, uncompiled);
-    graph.request(root, leaf);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { uncompiled, leaf }));
-    AOT_TEST_CHECK(isList(graph.linkRequests(root), { librarySource, native, uncompiled }));
-    AOT_TEST_CHECK(graph.linkRequests(librarySource).empty() && graph.evaluationRequests(librarySource).empty());
-}
-
-// A CommonJS file runs where the evaluation comes to it, and what it requires runs inside its body.
-static void testCommonJSIsEvaluatedInTheOrderOfTheRequests()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned first = graph.addCommonJS();
-    unsigned calledByFirst = graph.addCommonJS(Body::Absent);
-    unsigned startedByFirst = graph.addCommonJS();
-    unsigned leaf = graph.addSourceText(Body::Present);
-    graph.request(root, first);
-    graph.request(root, leaf);
-    graph.request(first, calledByFirst, Edge::Require);
-    graph.request(first, startedByFirst, Edge::Require);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { first, leaf }));
-    AOT_TEST_CHECK(graph.evaluationRequests(first).empty() && graph.contracted().linkRequests.isEmpty());
-    AOT_TEST_CHECK(!graph.data(calledByFirst).needsEvaluation() && graph.data(startedByFirst).needsEvaluation());
-}
-
-static void testLinkFollowsRequire()
-{
-    Graph graph;
-    unsigned root = graph.addCommonJS();
-    unsigned required = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    unsigned back = graph.addCommonJS();
-    graph.request(root, required, Edge::Require);
-    graph.request(required, librarySource);
-    graph.request(required, back);
-    graph.request(back, root, Edge::Require);
-    graph.compute();
-    for (unsigned module : { root, required, back })
-        AOT_TEST_CHECK(graph.data(module).needsLink());
-    // The three are one cycle for a link, so none of them is replaced by its list.
-    AOT_TEST_CHECK(isList(graph.linkRequests(root), { required }) && isList(graph.linkRequests(required), { librarySource, back }) && isList(graph.linkRequests(back), { root }));
-    AOT_TEST_CHECK(graph.data(required).isSimple() && isList(graph.evaluationRequests(required), { back }));
-
-    Vector<LinkPlanStepData> plan = graph.planLink(root);
-    AOT_TEST_CHECK(plan.size() == 1 && plan[0].module == librarySource && !plan[0].resolvesNames);
-}
-
-static void testFaceThatCapturesIsAStepAndIsPassed()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned face = graph.addFaceThatCaptures();
-    unsigned file = graph.addCommonJS(Body::Absent);
-    unsigned required = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    graph.request(root, face);
-    graph.request(face, file, Edge::Require);
-    graph.request(file, required, Edge::Require);
-    graph.request(required, librarySource);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.linkRequests(root), { face }) && isList(graph.linkRequests(face), { librarySource }));
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { face }) && graph.evaluationRequests(face).empty());
-
-    Vector<LinkPlanStepData> plan = graph.planLink(root);
-    AOT_TEST_CHECK(plan.size() == 2 && plan[0].module == face && plan[1].module == librarySource && !plan[0].resolvesNames && !plan[1].resolvesNames);
-    AOT_TEST_CHECK(graph.data(face).isLinkedWithEntryPoint());
-}
-
-static void testLinkPassesThroughModulesWithoutLinkWork()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned withBody = graph.addSourceText(Body::Present);
-    unsigned withNames = graph.addSourceText();
-    unsigned withoutLink = graph.addSourceText(Body::Present);
-    unsigned first = graph.addLibrarySource();
-    unsigned second = graph.addRuntimeModule();
-    graph.request(root, withoutLink);
-    graph.request(root, withBody);
-    graph.request(root, withNames);
-    graph.request(withBody, first);
-    graph.request(withNames, first);
-    graph.request(withNames, second);
-    graph.addRequiredName(withNames);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.linkRequests(root), { first, withNames }));
-    AOT_TEST_CHECK(isList(graph.linkRequests(withBody), { first }));
-    AOT_TEST_CHECK(isList(graph.linkRequests(withNames), { first, second }));
-    AOT_TEST_CHECK(graph.linkRequests(withoutLink).empty());
-    AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { withoutLink, withBody }));
-}
-
-static void testLinkVisitsEveryModuleThatReachesUncompiledCode()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText();
-    unsigned importer = graph.addSourceText();
-    unsigned sibling = graph.addSourceText();
-    unsigned uncompiled = graph.addUncompiledCode();
-    unsigned librarySource = graph.addLibrarySource();
-    graph.request(root, importer);
-    graph.request(root, sibling);
-    graph.request(importer, uncompiled);
-    graph.request(sibling, librarySource);
-    graph.compute();
-    AOT_TEST_CHECK(isList(graph.linkRequests(root), { importer, librarySource }));
-    AOT_TEST_CHECK(isList(graph.linkRequests(importer), { uncompiled }));
-}
-
-static void testListOverTheLimitStaysWithItsModule()
-{
-    for (uint32_t limit : { 0u, 1u, 2u, 3u }) {
-        Graph graph;
-        unsigned root = graph.addSourceText(Body::Present);
-        unsigned barrel = graph.addSourceText();
-        unsigned emptyBarrel = graph.addSourceText();
-        unsigned first = graph.addSourceText(Body::Present);
-        unsigned second = graph.addSourceText(Body::Present);
-        unsigned third = graph.addSourceText(Body::Present);
-        unsigned librarySource = graph.addLibrarySource();
-        graph.request(root, emptyBarrel);
-        graph.request(root, barrel);
-        graph.request(emptyBarrel, librarySource);
-        for (unsigned target : { first, second, third })
-            graph.request(barrel, target);
-        graph.addRequiredName(root);
-        graph.compute(limit);
-        AOT_TEST_CHECK(isList(graph.evaluationRequests(barrel), { first, second, third }));
-        AOT_TEST_CHECK(graph.evaluationRequests(emptyBarrel).empty());
-        if (limit >= 3)
-            AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { first, second, third }));
-        else
-            AOT_TEST_CHECK(isList(graph.evaluationRequests(root), { barrel }));
-
-        if (limit >= 1)
-            AOT_TEST_CHECK(isList(graph.linkRequests(root), { librarySource }));
-        else
-            AOT_TEST_CHECK(isList(graph.linkRequests(root), { emptyBarrel }));
-
-        Vector<uint32_t> expectedOverLimit;
-        if (!limit)
-            expectedOverLimit.append(emptyBarrel);
-        if (limit < 3)
-            expectedOverLimit.append(barrel);
-        AOT_TEST_CHECK(graph.contracted().modulesOverLimit == expectedOverLimit);
-    }
-}
-
-static void testManyImportersOfOneLongList()
-{
-    constexpr unsigned numberOfImporters = 1000;
-    constexpr unsigned numberOfTargets = 100;
-    Graph graph;
-    unsigned barrel = graph.addSourceText();
-    for (unsigned index = 0; index < numberOfTargets; ++index)
-        graph.request(barrel, graph.addSourceText(Body::Present));
-    for (unsigned index = 0; index < numberOfImporters; ++index)
-        graph.request(graph.addSourceText(Body::Present), barrel);
-    graph.compute();
-    AOT_TEST_CHECK(graph.contracted().evaluationRequests.size() == numberOfImporters + numberOfTargets);
-}
-
-static void testLongChain()
-{
-    constexpr unsigned numberOfModules = 100000;
-    Graph graph;
-    for (unsigned module = 0; module + 2 < numberOfModules; ++module)
-        graph.addSourceText();
-    unsigned last = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    for (unsigned module = 0; module < last; ++module)
-        graph.request(module, module + 1);
-    graph.request(last, librarySource);
-    graph.compute();
-    for (unsigned module = 0; module < last; ++module) {
-        AOT_TEST_CHECK(isList(graph.evaluationRequests(module), { last }));
-        AOT_TEST_CHECK(isList(graph.linkRequests(module), { librarySource }));
-    }
-    AOT_TEST_CHECK(graph.evaluationRequests(last).empty());
-
-    Vector<LinkPlanStepData> plan = graph.planLink(0);
-    AOT_TEST_CHECK(plan.size() == 1 && plan[0].module == librarySource && !plan[0].resolvesNames);
-    for (unsigned module = 0; module <= last; ++module)
-        AOT_TEST_CHECK(graph.data(module).isLinkedWithEntryPoint());
-}
-
-static void testLinkPlan()
-{
-    Graph graph;
-    unsigned entryPoint = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned otherEntryPoint = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned withNames = graph.addSourceText();
-    unsigned between = graph.addSourceText();
-    unsigned withoutLink = graph.addSourceText(Body::Present);
-    unsigned notReached = graph.addSourceText();
-    unsigned first = graph.addLibrarySource();
-    unsigned second = graph.addRuntimeModule();
-    unsigned third = graph.addLibrarySource();
-    graph.request(entryPoint, withoutLink);
-    graph.request(entryPoint, withNames);
-    graph.request(entryPoint, otherEntryPoint);
-    graph.request(entryPoint, first);
-    graph.request(withNames, between);
-    graph.request(withNames, second);
-    graph.request(between, first);
-    graph.request(between, entryPoint);
-    graph.request(otherEntryPoint, third);
-    graph.request(notReached, third);
-    graph.addRequiredName(withNames);
-    graph.addRequiredName(entryPoint);
-    graph.compute();
-
-    Vector<LinkPlanStepData> plan = graph.planLink(entryPoint);
-    AOT_TEST_CHECK(plan.size() == 5);
-    AOT_TEST_CHECK(plan[0].module == first && !plan[0].resolvesNames);
-    AOT_TEST_CHECK(plan[1].module == second && !plan[1].resolvesNames);
-    AOT_TEST_CHECK(plan[2].module == withNames && plan[2].resolvesNames);
-    AOT_TEST_CHECK(plan[3].module == third && !plan[3].resolvesNames);
-    AOT_TEST_CHECK(plan[4].module == entryPoint && plan[4].resolvesNames);
-
-    for (unsigned module : { entryPoint, withNames, between })
-        AOT_TEST_CHECK(graph.data(module).isLinkedWithEntryPoint());
-    for (unsigned module : { otherEntryPoint, withoutLink, notReached, first, second, third })
-        AOT_TEST_CHECK(!graph.data(module).isLinkedWithEntryPoint());
-    AOT_TEST_CHECK(graph.data(entryPoint).hasLinkPlan() && !graph.data(otherEntryPoint).hasLinkPlan() && !graph.data(withNames).hasLinkPlan());
-}
-
-static void testEntryPointsWithoutLinkPlan()
-{
-    Graph graph;
-    unsigned withoutLink = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned leaf = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    unsigned reachesUncompiledCode = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned importer = graph.addSourceText();
-    unsigned uncompiled = graph.addUncompiledCode();
-    graph.request(withoutLink, leaf);
-    graph.request(reachesUncompiledCode, librarySource);
-    graph.request(reachesUncompiledCode, importer);
-    graph.request(importer, uncompiled);
-    graph.compute();
-    for (unsigned entryPoint : { withoutLink, librarySource, reachesUncompiledCode })
-        AOT_TEST_CHECK(graph.planLink(entryPoint).isEmpty());
-    for (unsigned module = 0; module < graph.size(); ++module)
-        AOT_TEST_CHECK(!graph.data(module).isLinkedWithEntryPoint());
 }
 
 static void addRandomModule(Graph& graph, RandomNumbers& random)
@@ -665,8 +186,6 @@ static void addRandomModule(Graph& graph, RandomNumbers& random)
     unsigned module = graph.addSourceText(random.below(3) ? Body::Absent : Body::Present, wireFlags);
     if (!random.below(5))
         graph.addRequiredName(module);
-    if (!random.below(8))
-        graph.nameInRequire(module);
 }
 
 static void addRandomRequests(Graph& graph, RandomNumbers& random, unsigned module)
@@ -675,7 +194,6 @@ static void addRandomRequests(Graph& graph, RandomNumbers& random, unsigned modu
         return;
     BitVector requested(graph.size());
     for (uint32_t count = random.below(5); count; --count) {
-        // Mostly forward, so that many modules are alone in their component.
         uint32_t target = random.below(4) ? module + random.below(graph.size() - module) : random.below(graph.size());
         if (!requested.quickSet(target))
             graph.request(module, target);
@@ -692,19 +210,8 @@ static void testWalksOfRandomGraphsDoTheSameWork()
             addRandomModule(graph, random);
         for (unsigned module = 0; module < numberOfModules; ++module)
             addRandomRequests(graph, random, module);
-        graph.compute(random.below(2) ? random.below(4) : defaultLimit);
-        auto allRequests = [&](unsigned module) {
-            return graph.allRequests(module);
-        };
+        graph.compute();
         for (unsigned root = 0; root < numberOfModules; ++root) {
-            Vector<uint32_t> linkWork = linkWorkFrom(graph, root, allRequests);
-            AOT_TEST_CHECK(linkWork == linkWorkFrom(graph, root, [&](unsigned module) {
-                return copyOf(graph.linkRequests(module));
-            }));
-            AOT_TEST_CHECK(evaluationWorkFrom(graph, root, allRequests) == evaluationWorkFrom(graph, root, [&](unsigned module) {
-                return copyOf(graph.evaluationRequests(module));
-            }));
-
             Graph withPlan = graph;
             Vector<LinkPlanStepData> plan = withPlan.planLink(root);
             const ModuleData& rootData = graph.data(root);
@@ -712,6 +219,7 @@ static void testWalksOfRandomGraphsDoTheSameWork()
                 AOT_TEST_CHECK(plan.isEmpty());
                 continue;
             }
+            Vector<uint32_t> linkWork = linkWorkFrom(graph, root);
             AOT_TEST_CHECK(plan.size() == linkWork.size());
             for (unsigned step = 0; step < plan.size(); ++step)
                 AOT_TEST_CHECK(plan[step].module == linkWork[step] && plan[step].resolvesNames == !graph.data(linkWork[step]).capturesExports());
@@ -719,29 +227,237 @@ static void testWalksOfRandomGraphsDoTheSameWork()
     }
 }
 
+namespace {
+
+struct LoadsOfGraph {
+    uint32_t moduleLoadedUnder(uint32_t target) const { return graph.data(target).isUncompiledCode() ? loadedInPlaceOfUncompiledCode : target; }
+    uint32_t headOf(uint32_t module) const { return graph.data(module).isHeadOfLoadGroup() ? module : graph.data(module).numberInLoadGroup(); }
+    bool isLoadedByGroups(uint32_t module) const { return (loadedGroups[headOf(module) / 64] >> (headOf(module) % 64) & 1) || loadedBesideGroups.get(module); }
+
+    void loadOneByOne(uint32_t root)
+    {
+        Vector<uint32_t> found;
+        if (!loadedOneByOne.set(root))
+            found.append(root);
+        while (!found.isEmpty()) {
+            for (uint32_t target : graph.imports(found.takeLast())) {
+                uint32_t imported = moduleLoadedUnder(target);
+                if (graph.data(imported).isESModuleOfProgram() && !loadedOneByOne.set(imported))
+                    found.append(imported);
+            }
+        }
+    }
+
+    const ModuleData& data(uint32_t module) const { return graph.data(module); }
+    std::span<const ModuleRequestData> requests(uint32_t module) const { return graph.requests(module); }
+    std::span<const uint32_t> groupsLoadedWith(uint32_t head) const
+    {
+        uint32_t first = graph.data(head).numberInLoadGroup();
+        return first ? lists.subspan(first, lists[first - 1]) : std::span<const uint32_t>();
+    }
+    uint32_t moduleLoadedBy(const ModuleRequestData& request) const { return moduleLoadedUnder(request.target()); }
+
+    const Graph& graph;
+    std::span<const uint32_t> lists;
+    uint32_t loadedInPlaceOfUncompiledCode;
+    BitVector loadedOneByOne { };
+    Vector<uint64_t> loadedGroups { };
+    BitVector loadedBesideGroups { };
+};
+
+} // anonymous namespace
+
+static void testGroupsOfRandomGraphsAreLoadedAsTheirModulesAre()
+{
+    RandomNumbers random(20261105);
+    unsigned numberBelowHeads = 0;
+    unsigned numberInCycles = 0;
+    unsigned numberThatRequestUncompiledCode = 0;
+    unsigned numberWithoutRoomForTheirLists = 0;
+    unsigned numberOfGraphsWithoutRoomForTheirModules = 0;
+    for (unsigned round = 0; round < 4000; ++round) {
+        Graph graph;
+        unsigned numberOfModules = 1 + random.below(24);
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            addRandomModule(graph, random);
+        for (unsigned module = 0; module < numberOfModules; ++module) {
+            addRandomRequests(graph, random, module);
+            if (graph.kindOf(module) == ModuleKind::SourceText && !random.below(6))
+                graph.request(module, random.below(numberOfModules), Edge::Require);
+        }
+        graph.compute();
+        uint32_t endOfNumbers = ModuleData::endOfNumbersInLoadGroups;
+        if (uint32_t draw = random.below(4); draw < 2)
+            endOfNumbers = draw ? numberOfModules + random.below(6) : 1 + random.below(numberOfModules);
+        Vector<uint32_t> lists = graph.group(endOfNumbers);
+        numberOfGraphsWithoutRoomForTheirModules += numberOfModules > endOfNumbers;
+        LoadsOfGraph loads { graph, lists.span(), random.below(numberOfModules) };
+        loads.loadedGroups.fill(0, numberOfModules / 64 + 1);
+        for (unsigned load = 0; load < numberOfModules; ++load) {
+            uint32_t root = random.below(numberOfModules);
+            if (!graph.data(root).isESModuleOfProgram())
+                continue;
+            loads.loadOneByOne(root);
+            noteGroupsLoadedWith(loads, root, loads.loadedGroups, loads.loadedBesideGroups);
+            for (unsigned module = 0; module < numberOfModules; ++module)
+                AOT_TEST_CHECK(!graph.data(module).isESModuleOfProgram() || loads.loadedOneByOne.get(module) == loads.isLoadedByGroups(module));
+        }
+        for (unsigned module = 0; module < numberOfModules; ++module) {
+            if (!graph.data(module).isESModuleOfProgram())
+                continue;
+            numberBelowHeads += graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::BelowHead;
+            numberWithoutRoomForTheirLists += numberOfModules <= endOfNumbers && graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::BelowHead && graph.data(module).numberInLoadGroup() == module;
+            numberInCycles += graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::InCycleWithHead;
+            numberThatRequestUncompiledCode += graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::HeadThatRequestsUncompiledCode;
+        }
+    }
+    AOT_TEST_CHECK(numberBelowHeads > 1000 && numberInCycles > 1000 && numberThatRequestUncompiledCode > 100 && numberWithoutRoomForTheirLists > 100 && numberOfGraphsWithoutRoomForTheirModules > 100);
+}
+
+namespace {
+
+struct StepsOfTestWalk {
+    struct Step {
+        uint32_t module;
+        StepOfLinkWalk kind;
+        bool resolvesNames;
+        friend bool operator==(const Step&, const Step&) = default;
+    };
+
+    uint32_t size() const { return static_cast<uint32_t>(steps.size()); }
+    void append(uint32_t module, StepOfLinkWalk kind, bool resolvesNames) { steps.append(Step { module, kind, resolvesNames }); }
+    uint32_t moduleAt(uint32_t step) const { return steps[step].module; }
+    void leave(uint32_t enter, bool resolvesNames) { append(steps[enter].module, StepOfLinkWalk::Leave, resolvesNames); }
+    void onlyBecomesLinked(uint32_t enter)
+    {
+        modulesThatOnlyBecomeLinked.append(steps[enter].module);
+        steps.shrink(enter);
+    }
+
+    Vector<Step> steps;
+    Vector<uint32_t> modulesThatOnlyBecomeLinked;
+};
+
+struct LinksOfGraph {
+    LinksOfGraph(const Graph& graph, bool loadsModulesIndividually)
+        : graph(graph)
+        , goesOneByOne(loadsModulesIndividually)
+    {
+        settled.fill(0, graph.size() / 64 + 1);
+    }
+
+    const ModuleData& data(uint32_t module) const { return graph.data(module); }
+    uint32_t leaderOf(uint32_t module) const { return graph.linkRequests()[data(module).firstLinkRequest]; }
+    bool isUnlinked(uint32_t module) const
+    {
+        if (!data(module).needsLink() || hasStatusOfItsOwn.get(module))
+            return false;
+        return goesOneByOne || !data(module).onlyPassesLinkOn() || !hasStatusOfItsOwn.get(leaderOf(module));
+    }
+    bool isSettledForLinks(uint32_t module) const
+    {
+        bool isSettled = !data(module).needsLink() || (!data(module).capturesExports() && !data(module).isUncompiledCode() && !isUnlinked(module));
+        if (isSettled)
+            settled[module / 64] |= 1ull << (module % 64);
+        return isSettled;
+    }
+    std::span<const uint64_t> modulesSettledForLinks() const { return settled.span(); }
+    bool loadsModulesIndividually() const { return goesOneByOne; }
+    bool goesByAllRequests(uint32_t module) const { return goesOneByOne || leadersThatGoByAllRequests.get(module); }
+    void didGetStateOfItsOwn(uint32_t module) const
+    {
+        if (!goesOneByOne)
+            leadersThatGoByAllRequests.set(leaderOf(module));
+    }
+    ModuleNumbers linkRequests() const { return graph.linkRequests(); }
+    uint32_t endOfLinkRequests(uint32_t module) const { return data(module + 1).firstLinkRequest; }
+    std::span<const ModuleRequestData> requests() const { return graph.requestsOfAllModules(); }
+    uint32_t endOfRequests(uint32_t module) const { return data(module + 1).firstRequest; }
+    bool resolvesNames(uint32_t module) const { return !data(module).capturesExports() && graph.resolvesNames(module); }
+
+    StepsOfTestWalk walkFrom(uint32_t root) const
+    {
+        StepsOfTestWalk steps;
+        walkModulesToLink(*this, root, steps);
+        return steps;
+    }
+
+    void finish(const StepsOfTestWalk& walk)
+    {
+        if (walk.steps.isEmpty())
+            return;
+        for (const StepsOfTestWalk::Step& step : walk.steps) {
+            if (step.kind == StepOfLinkWalk::Leave)
+                hasStatusOfItsOwn.set(step.module);
+        }
+        for (uint32_t module : walk.modulesThatOnlyBecomeLinked)
+            hasStatusOfItsOwn.set(module);
+    }
+
+    const Graph& graph;
+    bool goesOneByOne;
+    BitVector hasStatusOfItsOwn { };
+    mutable Vector<uint64_t> settled { };
+    mutable BitVector leadersThatGoByAllRequests { };
+};
+
+} // anonymous namespace
+
+static void testLinksOfRandomGraphsGoTheSameWayThroughLeaders()
+{
+    RandomNumbers random(20261105);
+    unsigned modulesThatOnlyPassOn = 0;
+    unsigned stepsLeftOut = 0;
+    unsigned modulesWithNothingToDo = 0;
+    unsigned walksThatBeginBelowLeaders = 0;
+    unsigned leadersThatWentByAllRequests = 0;
+    for (unsigned round = 0; round < 4000; ++round) {
+        Graph graph;
+        unsigned numberOfModules = 1 + random.below(40);
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            addRandomModule(graph, random);
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            addRandomRequests(graph, random, module);
+        graph.compute();
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            modulesThatOnlyPassOn += graph.data(module).onlyPassesLinkOn();
+
+        LinksOfGraph byModules(graph, true);
+        LinksOfGraph byLeaders(graph, false);
+        for (unsigned turn = 0; turn < 8; ++turn) {
+            uint32_t root = random.below(numberOfModules);
+            walksThatBeginBelowLeaders += graph.data(root).onlyPassesLinkOn() && byLeaders.isUnlinked(root);
+            StepsOfTestWalk walkByModules = byModules.walkFrom(root);
+            StepsOfTestWalk walkByLeaders = byLeaders.walkFrom(root);
+            AOT_TEST_CHECK(walkByModules.modulesThatOnlyBecomeLinked.isEmpty());
+            if (random.below(4)) {
+                byModules.finish(walkByModules);
+                byLeaders.finish(walkByLeaders);
+            }
+            AOT_TEST_CHECK(walkByLeaders.steps.size() <= walkByModules.steps.size());
+            stepsLeftOut += walkByModules.steps.size() - walkByLeaders.steps.size();
+            modulesWithNothingToDo += walkByLeaders.modulesThatOnlyBecomeLinked.size();
+            BitVector hasStepsByLeaders;
+            for (const StepsOfTestWalk::Step& step : walkByLeaders.steps)
+                hasStepsByLeaders.set(step.module);
+            auto isLeftOutByLeaders = [&](const StepsOfTestWalk::Step& step) { return !hasStepsByLeaders.get(step.module); };
+            for (const StepsOfTestWalk::Step& step : walkByModules.steps)
+                AOT_TEST_CHECK(!isLeftOutByLeaders(step) || step.kind == StepOfLinkWalk::Enter || (step.kind == StepOfLinkWalk::Leave && !step.resolvesNames));
+            walkByModules.steps.removeAllMatching(isLeftOutByLeaders);
+            AOT_TEST_CHECK(walkByModules.steps == walkByLeaders.steps);
+            for (unsigned module = 0; module < numberOfModules; ++module)
+                AOT_TEST_CHECK(byModules.isUnlinked(module) == byLeaders.isUnlinked(module));
+        }
+        leadersThatWentByAllRequests += byLeaders.leadersThatGoByAllRequests.bitCount();
+    }
+    AOT_TEST_CHECK(modulesThatOnlyPassOn > 4000 && stepsLeftOut > 4000 && modulesWithNothingToDo > 400 && walksThatBeginBelowLeaders > 400 && leadersThatWentByAllRequests > 400);
+}
+
 std::span<const NativeTest> moduleRequestListTests()
 {
     static constexpr NativeTest tests[] = {
-        { "module-request-lists/modules-with-nothing-to-run-are-left-out"_s, testModulesWithNothingToRunAreLeftOut },
-        { "module-request-lists/work-that-needs-evaluation"_s, testWorkThatNeedsEvaluation },
-        { "module-request-lists/list-replaces-module-in-place"_s, testListReplacesModuleInPlace },
-        { "module-request-lists/later-duplicates-are-dropped"_s, testLaterDuplicatesAreDropped },
-        { "module-request-lists/module-that-requests-itself"_s, testModuleThatRequestsItself },
-        { "module-request-lists/modules-of-a-cycle-stay"_s, testModulesOfACycleStay },
-        { "module-request-lists/module-that-reaches-an-await-stays"_s, testModuleThatReachesAnAwaitStays },
-        { "module-request-lists/module-with-a-deferred-request-has-no-list"_s, testModuleWithADeferredRequestHasNoList },
-        { "module-request-lists/module-that-a-require-names-stays"_s, testModuleThatARequireNamesStays },
-        { "module-request-lists/modules-that-ran-at-link-are-not-evaluated"_s, testModulesThatRanAtLinkAreNotEvaluated },
-        { "module-request-lists/commonjs-is-evaluated-in-the-order-of-the-requests"_s, testCommonJSIsEvaluatedInTheOrderOfTheRequests },
-        { "module-request-lists/link-follows-require"_s, testLinkFollowsRequire },
-        { "module-request-lists/face-that-captures-is-a-step-and-is-passed"_s, testFaceThatCapturesIsAStepAndIsPassed },
-        { "module-request-lists/link-passes-through-modules-without-link-work"_s, testLinkPassesThroughModulesWithoutLinkWork },
-        { "module-request-lists/link-visits-every-module-that-reaches-uncompiled-code"_s, testLinkVisitsEveryModuleThatReachesUncompiledCode },
-        { "module-request-lists/list-over-the-limit-stays-with-its-module"_s, testListOverTheLimitStaysWithItsModule },
-        { "module-request-lists/many-importers-of-one-long-list"_s, testManyImportersOfOneLongList },
-        { "module-request-lists/long-chain"_s, testLongChain },
-        { "module-request-lists/link-plan"_s, testLinkPlan },
-        { "module-request-lists/entry-points-without-link-plan"_s, testEntryPointsWithoutLinkPlan },
+        { "module-request-lists/groups-of-random-graphs-are-loaded-as-their-modules-are"_s, testGroupsOfRandomGraphsAreLoadedAsTheirModulesAre },
+        { "module-request-lists/links-of-random-graphs-go-the-same-way-through-leaders"_s, testLinksOfRandomGraphsGoTheSameWayThroughLeaders },
         { "module-request-lists/walks-of-random-graphs-do-the-same-work"_s, testWalksOfRandomGraphsDoTheSameWork },
     };
     return tests;

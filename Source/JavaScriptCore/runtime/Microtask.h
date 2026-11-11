@@ -56,7 +56,6 @@ enum class InternalMicrotask : uint8_t {
     AsyncFunctionResume,
 #if ENABLE(AOT)
     CompiledAsyncFunctionResume,
-    CompiledAsyncFunctionResumeAfterTurn,
 #endif
     AsyncFromSyncIteratorContinue,
     AsyncFromSyncIteratorDone,

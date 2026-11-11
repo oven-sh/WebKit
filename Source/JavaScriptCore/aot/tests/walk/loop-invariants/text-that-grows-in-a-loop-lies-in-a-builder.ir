@@ -1,0 +1,107 @@
+# a text that only grows in a loop lies in a builder: it is begun in front of the loop with what enters, each turn appends its parts, and the edge out of the loop makes the string
+# function grow() { let text = "a"; for (let i = 0; i < 100; i++) text = text + "k" + i; return text; }
+# function forked() { let text = "a", before = "a"; for (let i = 0; i < 100; i++) { before = text; text = text + "k" + i; } return before + text; }
+# the third is the first with a hint behind the growth that the older state is dead: a hint reads nothing, so it neither refuses the text nor gets a string
+# in the second the older state comes round beside the newer one. A builder holds one text, so nothing is begun. Both functions are handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: StringBuilderAppendConstant {{*}}string="a"
+# CHECK: isLoopHead=true
+# CHECK: StringBuilderAppendConstant {{*}}string="k"
+# CHECK: StringBuilderFinish
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderBegin
+# ALL: isLoopHead=true
+# ALL: StringBuilderAppendConstant {{*}}string="k"
+# ALL: StringBuilderFinish
+# RUN(STRING): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# STRING-LABEL: code f1:Body
+# STRING: [[text]]: {{*}}StringBuilderFinish
+# STRING: [[boxed]]: {{*}}= Box [[text]]
+# STRING: Return [[boxed]]
+# RUN(ROPES): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# ROPES-NOT: = Strcat
+# RUN(HINTED): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# HINTED-LABEL: code f3:Body
+# HINTED: StringBuilderBegin
+# HINTED: StringBuilderFinish
+# RUN(NOHINT): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NOHINT-NOT: StringBuilderToString
+# RUN(FORKED): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# FORKED-LABEL: code f2:Body
+# FORKED-NOT: StringBuilder
+# RUN(FORKEDALL): walk f2 mechanisms=all
+# FORKEDALL-LABEL: code f2:Body
+# FORKEDALL-NOT: StringBuilder
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="grow" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=100
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string="k"
+    v8 = Add v2, v7
+    v9 = Add v8, v3
+    v10 = Increment v3
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v2
+}
+function f2 name="forked" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer
+    Jump -> next b1(v0, v0, v1)
+  b1(v2, v3, v4):
+    LoopHint
+    v6 = Integer integer=100
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = String string="k"
+    v9 = Add v2, v8
+    v10 = Add v9, v4
+    v11 = Increment v4
+    Jump -> next b1(v10, v2, v11)
+  b3():
+    v12 = Add v3, v2
+    Return v12
+}
+function f3 name="hinted" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=100
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string="k"
+    v8 = Add v2, v7
+    v9 = Increment v3
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v2
+}

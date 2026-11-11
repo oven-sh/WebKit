@@ -14,7 +14,6 @@
 #include "RememberedSlot.h"
 #include <array>
 #include <bit>
-#include <memory>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -26,8 +25,6 @@ struct State;
 
 using ChainObjects = Vector<JSObject*, 4>;
 
-// A set of objects with false positives: it may report an object that was never added, but never misses one that was.
-// It keeps no object alive: a later object at the same address counts as the earlier one.
 class ObjectsSeen {
 public:
     void add(const JSObject* object) { m_words[hashOf(object) / 64] |= uint64_t { 1 } << hashOf(object) % 64; }
@@ -41,7 +38,6 @@ private:
 };
 
 enum class ChainWalkMode : uint8_t { MayAllocate, AllocatesNothing };
-// A kept answer holds until an object of the chain reports a change.
 enum class ChainWalkUse : uint8_t { KeptForReads, KeptForReadsThatAskObjects, KeptForStores, UsedAtOnce };
 enum class ChainWalkResult : uint8_t { Unknown, Absent, Found };
 
@@ -59,11 +55,10 @@ struct ChainWalk {
     ChainWalkResult result { ChainWalkResult::Unknown };
     bool didFlatten { false };
     bool passedSlotFilledWithoutReport { false };
+    bool passedEmptySlot { false };
     JSObject* firstObjectWithEmptySlot { nullptr };
-    // The cell whose storage has the property: the object of the chain, or the extra properties of a compiled one.
     JSObject* holder { nullptr };
     JSObject* owner { nullptr };
-    // Invalid for a field of a compiled object whose slot holds no boxed value in the cell: the walk says what a store meets there, and a read asks the holder.
     PropertyOffset offset { invalidOffset };
     unsigned attributes { 0 };
     ChainObjects changeableObjects;
@@ -71,7 +66,6 @@ struct ChainWalk {
 
 ChainWalk walkChain(const ChainWalkStart&, UniquedStringImpl*);
 
-// holder->getDirect(offset). A field of a compiled object has the offset of an inline property, and the Structure of such an object speaks of no inline storage.
 ALWAYS_INLINE JSValue valueAtOffset(const JSObject* holder, PropertyOffset offset)
 {
     if (isInlineOffset(offset))
@@ -116,9 +110,7 @@ public:
     ChainDependentOwnerID addOwner(ChainDependentOwner&);
 
     void add(std::span<JSObject* const> chainObjects, const ChainDependent&);
-    // What the engine remembers in the Structure about names above its objects is forgotten with the dependent.
     void addStateOfStructure(std::span<JSObject* const> chainObjects, Structure*, UniquedStringImpl*);
-    // Most objects that report a change are still being filled, and nothing has looked at them yet.
     void didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
     {
         if (m_objectsWithDependents.mayContain(changed))
@@ -144,18 +136,15 @@ private:
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
     using DependentSet = UncheckedKeyHashSet<ChainDependent, Hash, HashTraits>;
-    struct NameIndex {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NameIndex);
-        void add(const ChainDependent&);
-
-        UncheckedKeyHashMap<UniquedStringImpl*, Vector<ChainDependent, 1>> named;
-        Vector<ChainDependent> unnamed;
-    };
     struct ObjectDependents {
-        DependentSet set;
-        std::unique_ptr<NameIndex> index;
+        bool isEmpty() const { return onAnyName.isEmpty() && byName.isEmpty(); }
+        size_t size() const;
+        void forEach(const Invocable<void(const ChainDependent&)> auto&) const;
+        void removeIf(const Invocable<bool(const ChainDependent&)> auto&);
+
+        DependentSet onAnyName;
+        UncheckedKeyHashMap<UniquedStringImpl*, DependentSet> byName;
     };
-    static constexpr unsigned maxSizeWithoutIndex = 64;
 
     void dropDependentsOn(JSObject* changed, UniquedStringImpl* uidOrNull);
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final;
@@ -173,10 +162,9 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
-// NotSpelledByProgram: the name is no index either. No class declares a member under such a name.
+void didReplaceValueOnChainObject(VM&, JSObject* changed, UniquedStringImpl*);
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
-// The number of an owner means something to the ChainDependents that gave it out, and to no other.
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, ChainDependents& ofOwner, const ChainDependent&);
 
 PropertyWalk::Presence presenceForStructure(VM&, Structure*, UniquedStringImpl*);

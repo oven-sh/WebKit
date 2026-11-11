@@ -10,7 +10,6 @@
 
 #include "AOTClassToken.h"
 #include "AOTClosureWord.h"
-#include "AOTRuntimeValidation.h"
 #include "ArrayConventions.h"
 #include "CustomGetterSetter.h"
 #include "GetterSetter.h"
@@ -35,6 +34,7 @@ namespace JSC { namespace AOT {
 
 static_assert(sizeof(JSCell) == 8 && offsetOfShapeWord == 12);
 static_assert(offsetOfShapeWord + sizeof(uint32_t) <= MarkedBlock::atomSize);
+static_assert((tagOfLinkBetweenEnvironmentsHandedBack & JSValue::NotCellMask) && tagOfLinkBetweenEnvironmentsHandedBack < MarkedBlock::atomSize);
 
 enum class WordAtShapeOffset : uint8_t { Unlisted, ShapeWord, UpperHalfOfPointer, UpperHalfOfValue, UpperHalfOfClosureWord, BigIntHash, VectorLength, Zero, NotAValue };
 
@@ -47,7 +47,6 @@ static_assert(!canPassShapeTest(upperHalfOfClosureWordWithAllFlags(ClosureWord::
 
 static_assert(!canPassShapeTest(bigIntHashMask));
 
-// A vector length can contain shapeBlockMarker. The only JSCellButterfly that is a value is a class token: a longer one is storage that compiled code reaches through its owner.
 static constexpr uint32_t classTokenLengthBits = (1u << 17) - 1;
 static_assert(ClassToken::firstNameSlot + std::numeric_limits<decltype(LayoutData::numberOfFields)>::max() <= classTokenLengthBits);
 static_assert(!canPassShapeTest(classTokenLengthBits) && !mayBeUpperHalfOfSlimClosureWord(classTokenLengthBits));
@@ -180,7 +179,7 @@ void validateShapeWord(const JSCell* cell)
     uint32_t word = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const char*>(cell) + offsetOfShapeWord);
     bool isValid = isValidWord(type > LastJSCObjectType ? WordAtShapeOffset::UpperHalfOfPointer : wordAtShapeOffset(type), word);
     if (!isValid)
-        crashOnValidationFailure(cell->vm(), { ValidationFailureKind::ShapeWordInvalid, { }, { }, cell });
+        CRASH_WITH_INFO(std::bit_cast<uintptr_t>(cell));
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -1,0 +1,86 @@
+# a method of strings whose row is deterministic, on a known text and known primitives, is its answer: the engine gives it in the realm of the build
+# function place() { return ["a,b".indexOf(",")]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[place]]: {{*}} = Integer integer=1
+# CHECK: = NewArray [[place]]
+# function trimmed() { return [" x ".trim()]; }
+# RUN(TRIM): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# TRIM-LABEL: code f2:Body
+# TRIM: [[text]]: {{*}} = String string=made "x"
+# TRIM: = NewArray [[text]]
+# function verb() { return ["GET /x".slice(0, 3)]; }
+# RUN(SLICE): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# SLICE-LABEL: code f3:Body
+# SLICE: [[text]]: {{*}} = String string=made "GET"
+# SLICE: = NewArray [[text]]
+# f4, function loud() { return ["abc".toUpperCase()]; }: string-method-on-a-known-text-is-answered-by-the-engine.ir
+# nobody knows the text that is looked for: function anywhere(t) { if (typeof t === "string") return ["a,b".indexOf(t)]; }
+# RUN(UNKNOWN): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# UNKNOWN-LABEL: code f5:Body
+# UNKNOWN-NOT: = Integer integer=1
+# UNKNOWN: = NewArray
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="place" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a,b"
+    v1 = PropGet v0 key="indexOf"
+    v2 = String string=","
+    v3 = Call v1, v0, v2 calleeKey="indexOf"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f2 name="trimmed" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string=" x "
+    v1 = PropGet v0 key="trim"
+    v2 = Call v1, v0 calleeKey="trim"
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f3 name="verb" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="GET /x"
+    v1 = PropGet v0 key="slice"
+    v2 = Integer
+    v3 = Integer integer=3
+    v4 = Call v1, v0, v2, v3 calleeKey="slice"
+    v5 = NewArray v4 contents=anything
+    Return v5
+}
+function f4 name="loud" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = PropGet v0 key="toUpperCase"
+    v2 = Call v1, v0 calleeKey="toUpperCase"
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+function f5 name="anywhere" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = String string="a,b"
+    v4 = PropGet v3 key="indexOf"
+    v5 = Call v4, v3, v2 calleeKey="indexOf"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

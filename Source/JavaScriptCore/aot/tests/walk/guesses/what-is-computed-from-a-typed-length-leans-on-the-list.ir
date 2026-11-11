@@ -1,0 +1,41 @@
+# the row of a read by name says nothing of a length. The operation that takes its place behind a test of the class does, so the difference leans on the list as the length does: two operations, which pay for the test outside a loop
+# function last(parts: string[]) { return parts[parts.length - 1]; }   function size(parts: string[]) { return parts.length; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: [[isList]]: boolean {{*}}= TypeTest {{*}}testedType=Array
+# CHECK-NEXT: Branch [[isList]]
+# CHECK: [[length]]: {{*}}= GetArrayLength
+# CHECK: = Sub [[length]], {{*}}form=Integers
+# CHECK: frequency=Rare
+# CHECK-NEXT: = PropGet {{*}}key="length"
+# CHECK: = Sub {{*}}form=Generic
+# The length alone does not pay.
+# RUN(ALONE): walk f2 mechanisms=none+TypedOperations+Guesses
+# ALONE-LABEL: code f2:Body
+# ALONE-NOT: Test
+# ALONE: = PropGet {{*}}key="length"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=Array<string>}] results=[{type=anything}] {
+  b0(v0: Array<string>):
+    v1 = PropGet v0 key="length"
+    v2 = Integer integer=1
+    v3 = Sub v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+function f2 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=Array<string>}] results=[{type=anything}] {
+  b0(v0: Array<string>):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

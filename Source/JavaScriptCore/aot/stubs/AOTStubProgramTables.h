@@ -19,7 +19,6 @@ constexpr ptrdiff_t offsetOfProgramTableRange(ProgramTableIndex index)
     return OBJECT_OFFSETOF(ProgramTables, ranges) + static_cast<unsigned>(index) * sizeof(TableRange);
 }
 
-// In both functions, tables holds Instance::image.tables.
 inline Address programTableCount(GPRReg tables, ProgramTableIndex index)
 {
     return Address(tables, offsetOfProgramTableRange(index) + OBJECT_OFFSETOF(TableRange, count));
@@ -32,7 +31,6 @@ inline void loadProgramTable(StubAssembler& jit, GPRReg tables, ProgramTableInde
     jit.addPtr(tables, result);
 }
 
-// By closure number: it comes from a closure, or from the field of a closure that is yet to be made.
 inline void loadKindOfClosureFunction(StubAssembler& jit, GPRReg function, GPRReg kind)
 {
     static_assert(sizeof(FunctionKindData) == 2);

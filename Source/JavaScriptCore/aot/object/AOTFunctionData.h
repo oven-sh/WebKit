@@ -10,31 +10,27 @@
 #include "AOTRecordTypes.h"
 #include "AOTVarint.h"
 #include "CodeType.h"
-#include "LineColumn.h"
-#include <memory>
+#include "JSExportMacros.h"
+#include <bit>
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/ASCIICType.h>
-#include <wtf/IterationStatus.h>
-#include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
 enum class TraceVisibility : uint8_t;
 enum class StackTraceBuiltinKind : uint8_t;
 
-enum class CallableKind : uint8_t { Plain, Arrow, Method, Bound };
+enum class CallableKind : uint8_t { Plain, Arrow, Method };
 
 static constexpr unsigned classObjectClosureStructure = 4;
 static constexpr unsigned numberOfClosureStructures = classObjectClosureStructure + 1;
 static constexpr unsigned numberOfSlimClosureKinds = 2;
-// In FunctionKindData::accessorKind, beside the members of MethodKind: no accessor, and a stack frame shows another name once something has looked for the property `name` of the function object.
-static constexpr unsigned methodThatNotesLooksForName = 3;
 
 struct FunctionKindData {
-    uint16_t closureStructure : 3;
+    uint16_t closuresGetOnlyListedNames : 1;
+    uint16_t prototypePropertyStaysAsMade : 1;
+    uint16_t unusedKindBits : 1 { 0 };
     uint16_t isSlim : 1;
     uint16_t isAsync : 1;
     uint16_t isGenerator : 1;
@@ -50,16 +46,13 @@ struct FunctionKindData {
     constexpr unsigned closureStructureOfKind() const { return isConstructor ? classObjectClosureStructure : isAsync | isGenerator << 1; }
     constexpr unsigned slimClosureKind() const { return isAsync; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
-    constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
-    constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }
-    constexpr bool isBound() const { return callable() == CallableKind::Bound; }
+    constexpr MethodKind accessor() const { return static_cast<MethodKind>(accessorKind); }
     constexpr bool isConstructiblePlainFunction() const { return !isConstructor && callable() == CallableKind::Plain && !isAsync && !isGenerator; }
-    // The function object stays as it is: the name that the look brings into its frames is the one that the tables have.
-    constexpr bool notesLooksForNameInCell() const { return accessorKind == methodThatNotesLooksForName && !isBound(); }
-    constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
+    constexpr bool hasInitialNamePrefix() const { return accessor() != MethodKind::Method; }
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);
-static_assert(classObjectClosureStructure < 1 << 3);
+
+constexpr unsigned closureStructureOfGeneratorFunctions(bool isAsync) { return FunctionKindData { .isAsync = isAsync, .isGenerator = true }.closureStructureOfKind(); }
 
 struct FunctionTraceData {
     uint16_t visibilityBits : 2;
@@ -72,36 +65,33 @@ struct FunctionTraceData {
     uint16_t isNamedByOwner : 1;
     uint16_t isNakedConstructor : 1;
     uint16_t implementsBuiltin : 1;
-    // `{ [Symbol.dispose]() { } }`: the written name is what the property `name` holds. The engine gives such a function that property when the literal is evaluated, and the console goes on showing it without a name.
     uint16_t isNamedByComputedKey : 1;
-    // Its frames are named by the function object that runs in them.
-    uint16_t recordsCallee : 1;
-    // They are from the first time on that the run time sees a function object of the function get a displayName.
-    uint16_t recordsCalleeOnceRenamed : 1;
+    uint16_t makesPromiseOfCall : 1;
+    uint16_t closuresAreSaidNeverToReachUnseenCode : 1 { 0 };
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
-    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(builtinKindBits); }
+    static constexpr uint16_t kindBitsInsideHelperOfCompiler = 2;
+    bool isInsideHelperOfCompiler() const { return !implementsBuiltin && builtinKindBits == kindBitsInsideHelperOfCompiler; }
+    bool isHelperOfCompiler() const { return implementsBuiltin ? !builtinKindBits : isInsideHelperOfCompiler(); }
+    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(isInsideHelperOfCompiler() ? 0 : builtinKindBits); }
     CodeType codeType() const { return static_cast<CodeType>(codeTypeBits); }
 };
 static_assert(sizeof(FunctionTraceData) == 2 && isImageRecord<FunctionTraceData>);
 
-// A program has few different pairs of the two, so the image holds each pair once and, for every function, the number of its pair in one byte.
 struct FunctionRecordData {
     FunctionKindData kind;
     FunctionTraceData trace;
 };
 static_assert(sizeof(FunctionRecordData) == 4 && isImageRecord<FunctionRecordData>);
 
-// The number of a function whose pair is not among the most common ones. Its pair is listed under the function itself.
-static constexpr uint8_t functionRecordIsListedByFunction = 0xff;
+static constexpr uint8_t unsharedFunctionRecord = 0xff;
 
-struct FunctionRecordByFunctionData {
+struct UnsharedFunctionRecordData {
     uint32_t function;
     FunctionRecordData record;
 };
-static_assert(sizeof(FunctionRecordByFunctionData) == 8 && isImageRecord<FunctionRecordByFunctionData>);
+static_assert(sizeof(UnsharedFunctionRecordData) == 8 && isImageRecord<UnsharedFunctionRecordData>);
 
-// What the compiler says of one function. The image has the bits of every function, the source of the functions from the first derived one on, and the few functions that implement a built-in.
 struct FunctionTraceRecord : FunctionTraceData {
     uint32_t sourceFunctionIndex;
     uint32_t implementedBuiltinPlusOne;
@@ -115,13 +105,6 @@ struct FunctionTraceRecord : FunctionTraceData {
     }
 };
 
-// The functions from firstFunction up to the next run that are their own source have the name.
-struct FunctionNameRunData {
-    uint32_t firstFunction;
-    uint32_t name;
-};
-static_assert(sizeof(FunctionNameRunData) == 8 && isImageRecord<FunctionNameRunData>);
-
 struct ImplementedBuiltinData {
     uint32_t function;
     uint32_t builtin;
@@ -134,30 +117,8 @@ struct ConstructorData {
 };
 static_assert(sizeof(ConstructorData) == 8 && isImageRecord<ConstructorData>);
 
-struct BoundFunctionData {
-    uint32_t function;
-    uint32_t target;
-    uint32_t numberOfBoundArguments : 16;
-    uint32_t targetClosureSlotPlusOne : 16;
-    // The target constructs, so the bound function does: with the bound arguments that its closure holds, as values, one behind the other from this slot on.
-    uint32_t constructs : 1;
-    uint32_t firstArgumentSlot : 15;
-    uint32_t numberOfCapturedArguments : 16;
-
-    std::optional<unsigned> targetClosureSlot() const
-    {
-        if (!targetClosureSlotPlusOne)
-            return std::nullopt;
-        return targetClosureSlotPlusOne - 1;
-    }
-};
-static_assert(sizeof(BoundFunctionData) == 16 && isImageRecord<BoundFunctionData>);
-
-// Both functions by closure number.
 struct ConstructEntrypointData {
-    // The entrypoint allocates the object itself, and is entered only where the function is its own new.target. Under any other new.target [[Construct]] enters at the entry of [[Call]] with a new object.
     static constexpr uint32_t allocatesThis = 1u << 31;
-    // In place of an entrypoint: a plain function that only returns undefined, so the new object is all that its [[Construct]] makes. No stub looks for such a function here.
     static constexpr uint32_t onlyReturns = UINT32_MAX;
 
     uint32_t function;
@@ -167,462 +128,107 @@ struct ConstructEntrypointData {
 };
 static_assert(sizeof(ConstructEntrypointData) == 8 && isImageRecord<ConstructEntrypointData>);
 
-// Where a plain function makes a call in tail position. A function that is constructed is listed in stack traces until that call has returned, though its frame is gone.
-// In front of those of a function stands the place where it is listed while `this` is made for it, which a stub does before the function has a frame.
-// ProgramTables::placesOfTailCalls has them one behind the other, ascending by function. Each says how far it is from the one in front.
-struct TailCallPlace {
-    static constexpr uint32_t noCallee = UINT32_MAX;
-
-    void append(Vector<uint8_t>& bytes, const TailCallPlace& inFront) const
-    {
-        bool namesCallee = callee != noCallee;
-        bool isInOtherSource = sourcePlusOne != inFront.sourcePlusOne;
-        appendVarint(bytes, static_cast<uint64_t>(function - inFront.function) << 3 | isWhereThisIsMade << 2 | isInOtherSource << 1 | namesCallee);
-        if (isInOtherSource)
-            appendVarint(bytes, sourcePlusOne);
-        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(line) - inFront.line));
-        appendVarint(bytes, column);
-        if (namesCallee)
-            appendVarint(bytes, callee);
-    }
-
-    static TailCallPlace read(const uint8_t*& cursor, const TailCallPlace& inFront)
-    {
-        TailCallPlace place;
-        uint64_t head = readVarint(cursor);
-        place.function = inFront.function + static_cast<uint32_t>(head >> 3);
-        place.isWhereThisIsMade = head & 4;
-        place.sourcePlusOne = head & 2 ? static_cast<uint32_t>(readVarint(cursor)) : inFront.sourcePlusOne;
-        place.line = static_cast<uint32_t>(inFront.line + zigZagDecode(readVarint(cursor)));
-        place.column = static_cast<uint32_t>(readVarint(cursor));
-        if (head & 1)
-            place.callee = static_cast<uint32_t>(readVarint(cursor));
-        return place;
-    }
-
-    // Both as they are written. The callee is named where the function has several places and the call says whom it enters.
-    uint32_t function { 0 };
-    uint32_t callee { noCallee };
-    bool isWhereThisIsMade { false };
-    // All three are zero in an image without positions.
-    uint32_t sourcePlusOne { 0 };
-    uint32_t line { 0 };
-    uint32_t column { 0 };
-};
-
-inline void forEachTailCallPlace(std::span<const uint8_t> bytes, NOESCAPE const Invocable<IterationStatus(const TailCallPlace&)> auto& functor)
-{
-    TailCallPlace place;
-    for (const uint8_t* cursor = bytes.data(); cursor < std::to_address(bytes.end());) {
-        place = TailCallPlace::read(cursor, place);
-        if (functor(place) == IterationStatus::Done)
-            return;
-    }
-}
-
 struct ClosureFunctionRangeData {
     uint32_t first;
     uint32_t end;
     uint32_t omittedWordCount;
-    // The closure number of `first`. Not zero in an image that was built above others for the same realms: a closure says by its number which of them it is of.
-    uint32_t numbersBelow;
 };
-static_assert(sizeof(ClosureFunctionRangeData) == 16 && isImageRecord<ClosureFunctionRangeData>);
+static_assert(sizeof(ClosureFunctionRangeData) == 12 && isImageRecord<ClosureFunctionRangeData>);
 
-struct FunctionTexts {
+struct NumberGroup {
+    static constexpr unsigned size = 32;
+    static constexpr unsigned numberOfWords = 2;
+    static constexpr uint32_t isListedFlag = 1u << 31;
+    static constexpr size_t numberOfGroupWords(size_t numberOfEntries) { return (numberOfEntries + size - 1) / size * numberOfWords; }
+};
+
+class SparseNumberTable {
+public:
+    explicit SparseNumberTable(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t at(uint32_t entry) const
+    {
+        std::span group = m_words.subspan(entry / NumberGroup::size * NumberGroup::numberOfWords, NumberGroup::numberOfWords);
+        uint32_t bit = 1u << entry % NumberGroup::size;
+        if (!(group[0] & bit))
+            return 0;
+        uint32_t rank = std::popcount(group[0] & (bit - 1));
+        return group[1] & NumberGroup::isListedFlag ? m_words[(group[1] & ~NumberGroup::isListedFlag) + rank] : group[1] + rank;
+    }
+
+    JS_EXPORT_PRIVATE static Vector<uint32_t> create(std::span<const uint32_t> numbers);
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+class AscendingNumberTable {
+public:
+    static constexpr uint32_t maxSpan = 512;
+
+    explicit AscendingNumberTable(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t at(uint32_t index) const
+    {
+        std::span group = m_words.subspan(index / NumberGroup::size * NumberGroup::numberOfWords, NumberGroup::numberOfWords);
+        uint32_t entry = index % NumberGroup::size;
+        uint32_t place = group[1];
+        if (place & NumberGroup::isListedFlag)
+            return m_words[(place & ~NumberGroup::isListedFlag) + entry];
+        if (!entry)
+            return group[0];
+        uint32_t word = place / 32;
+        uint32_t bits = m_words[word] & ~0u << place % 32;
+        uint32_t onesLeft = entry;
+        while (static_cast<uint32_t>(std::popcount(bits)) < onesLeft) {
+            onesLeft -= std::popcount(bits);
+            bits = m_words[++word];
+        }
+        while (--onesLeft)
+            bits &= bits - 1;
+        uint32_t placeOfOne = word * 32 + std::countr_zero(bits);
+        return group[0] + (placeOfOne - place) - (entry - 1);
+    }
+
+    JS_EXPORT_PRIVATE static Vector<uint32_t> create(std::span<const uint32_t> numbers);
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+struct FunctionSources {
     uint32_t numberOfEntries;
     uint32_t entriesOffset;
-    uint32_t textOffset;
-    // One more PiecesOfModule follows them, which ends the pieces of the last.
-    uint32_t numberOfModulesWithPieces;
-    uint32_t modulesWithPiecesOffset;
-    uint32_t piecesOffset;
+    uint32_t sourceOffset;
+    uint32_t numberOfBlocks;
+    uint32_t blockEndsOffset;
+    uint32_t sourceSize;
 };
-static_assert(sizeof(FunctionTexts) == 24 && isImageRecord<FunctionTexts>);
+static_assert(sizeof(FunctionSources) == 24 && isImageRecord<FunctionSources>);
+static constexpr uint32_t sourceBlockSize = 64 * 1024;
 
-// The text is pieces of files with the types cut out, so a line and a column of a file lead into it only by way of these. In the order of the modules.
-// The pieces of a module follow one another as in its file, so a place lies in the last piece that starts at it or in front of it. Every number is a varint.
-//   A piece: how far its text starts behind the end of the piece before it (zigzag), times eight, plus what it is a part of, doubled, plus one; its size;
-//   how many lines it starts below the start of the piece before it; its column. See PieceOfKeptText::PartOf.
-//   A cut in that piece: how far it lies behind the cut before it, or behind the start of the piece, doubled; the columns that are gone, doubled, plus one where lines are gone too; then how many lines.
-//   Where lines are gone, the columns are those in front of what follows the cut on its line.
-// What it takes to find a place does not grow with the file: a module with many pieces has several of these records, each of which counts from nothing as the first does,
-// and the one that holds a place is found by where each starts; and a long piece comes in parts, so that no more than a part is followed character by character.
-struct PiecesOfModule {
-    static constexpr size_t bytesOfOneRecord = 2048;
-    static constexpr uint32_t bytesOfOnePart = 32768;
-
-    uint32_t module;
-    uint32_t start;
-};
-static_assert(sizeof(PiecesOfModule) == 8 && isImageRecord<PiecesOfModule>);
-
-struct PieceOfKeptText {
-    // Listed: how much of the longer piece lies in front of this part follows, and how much behind it.
-    enum class PartOf : uint8_t { Nothing, LongerPieceThatIsListed, SameAsPieceInFront };
-
-    static PieceOfKeptText read(const uint8_t*& cursor, const PieceOfKeptText& inFront)
-    {
-        uint64_t head = readVarint(cursor);
-        PieceOfKeptText piece;
-        piece.start = static_cast<uint32_t>(inFront.end + zigZagDecode(head >> 3));
-        piece.end = piece.start + static_cast<uint32_t>(readVarint(cursor));
-        piece.line = inFront.line + static_cast<uint32_t>(readVarint(cursor));
-        piece.column = static_cast<uint32_t>(readVarint(cursor));
-        switch (static_cast<PartOf>(head >> 1 & 3)) {
-        case PartOf::LongerPieceThatIsListed:
-            piece.startOfWhole = piece.start - static_cast<uint32_t>(readVarint(cursor));
-            piece.endOfWhole = piece.end + static_cast<uint32_t>(readVarint(cursor));
-            break;
-        case PartOf::SameAsPieceInFront:
-            piece.startOfWhole = inFront.startOfWhole;
-            piece.endOfWhole = inFront.endOfWhole;
-            break;
-        default:
-            piece.startOfWhole = piece.start;
-            piece.endOfWhole = piece.end;
-        }
-        return piece;
-    }
-
-    void appendTo(Vector<uint8_t>& bytes, const PieceOfKeptText& inFront) const
-    {
-        PartOf partOf = startOfWhole == start && endOfWhole == end ? PartOf::Nothing : startOfWhole == inFront.startOfWhole && endOfWhole == inFront.endOfWhole ? PartOf::SameAsPieceInFront : PartOf::LongerPieceThatIsListed;
-        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(start) - static_cast<int64_t>(inFront.end)) << 3 | static_cast<uint64_t>(partOf) << 1 | 1);
-        appendVarint(bytes, end - start);
-        appendVarint(bytes, line - inFront.line);
-        appendVarint(bytes, column);
-        if (partOf == PartOf::LongerPieceThatIsListed) {
-            appendVarint(bytes, start - startOfWhole);
-            appendVarint(bytes, endOfWhole - end);
-        }
-    }
-
-    bool startsBehind(LineColumn place) const { return line > place.line || (line == place.line && column > place.column); }
-
-    uint32_t start { 0 };
-    uint32_t end { 0 };
-    uint32_t line { 0 };
-    uint32_t column { 0 };
-    uint32_t startOfWhole { 0 };
-    uint32_t endOfWhole { 0 };
-};
-
-// Follows a piece of text through the file that it is from. A column counts units of UTF-16, and the text is UTF-8.
-struct PlaceOfTextInFile {
-    // Goes over the character at text[at] and answers where the next one starts.
-    size_t advanceOver(std::span<const uint8_t> text, size_t at)
-    {
-        uint8_t byte = text[at];
-        bool wasBehindCarriageReturn = std::exchange(isBehindCarriageReturn, byte == '\r');
-        if (byte == '\n' && wasBehindCarriageReturn)
-            return at + 1;
-        if (byte < 0x80) {
-            if (byte == '\n' || byte == '\r')
-                startLine();
-            else
-                ++column;
-            return at + 1;
-        }
-        size_t length = byte < 0xE0 ? 2 : byte < 0xF0 ? 3 : 4;
-        // U+2028 and U+2029
-        if (byte == 0xE2 && at + 2 < text.size() && text[at + 1] == 0x80 && (text[at + 2] == 0xA8 || text[at + 2] == 0xA9))
-            startLine();
-        else
-            column += length == 4 ? 2 : 1;
-        return at + length;
-    }
-
-    void advanceOverCut(uint32_t lines, uint32_t columns)
-    {
-        isBehindCarriageReturn = false;
-        line += lines;
-        column = lines ? columns + 1 : column + columns;
-    }
-
-    void startLine()
-    {
-        ++line;
-        column = 1;
-    }
-
-    uint32_t line;
-    uint32_t column;
-    bool isBehindCarriageReturn { false };
-};
-
-// `bun run` runs what Bun's transpiler prints of a file, and an error quotes that: the value in place of the name of a constant, an initializer in place of the
-// only use of a variable, `3` for `1 + 2`. These say what is printed in place of which piece of the text. In the order of the modules, and one more ends the bytes of the last.
-// The first byte of textPrintedInPlace says what a start counts from: 0, the start of the text of all functions; 1, the start of the file, for a test run, which reads the files.
-// A module with many pieces has several of these records, each of which counts from nothing as the first does: what is read for a part of the text does not grow with the file.
-struct TextPrintedInPlaceOfModule {
-    static constexpr size_t bytesOfOneRecord = 2048;
-
-    uint32_t module;
-    uint32_t start;
-};
-static_assert(sizeof(TextPrintedInPlaceOfModule) == 8 && isImageRecord<TextPrintedInPlaceOfModule>);
-
-// The pieces of a module ascend by their starts, and one that holds others stands in front of them. Every number is a varint.
-//   How far the piece starts behind the start of the piece before it; its size; then either
-//   the size of what is printed, doubled, and those bytes, or
-//   the size of another piece that is printed there too, times four, plus two where it is printed in round brackets, plus one; and how far that piece starts in front of this one (zigzag).
-// A file that `bun run` runs as it is written, such as the output of `bun build`, has one piece of no size.
-struct TextPrintedInPlace {
-    static bool sayFileRunsAsWritten(std::span<const TextPrintedInPlace> pieces) { return pieces.size() == 1 && !pieces[0].end; }
-
-    static Vector<TextPrintedInPlace> readAll(std::span<const uint8_t> bytes)
-    {
-        Vector<TextPrintedInPlace> pieces;
-        appendThoseThatStartIn(pieces, bytes, 0, std::numeric_limits<uint64_t>::max());
-        return pieces;
-    }
-
-    static void appendThoseThatStartIn(Vector<TextPrintedInPlace>& pieces, std::span<const uint8_t> bytes, uint64_t from, uint64_t to)
-    {
-        const uint8_t* cursor = bytes.data();
-        const uint8_t* end = std::to_address(bytes.end());
-        // A number takes ten bytes at the most, and the last piece may be cut short in a file that somebody has written by hand.
-        auto readNumber = [&] {
-            uint64_t number = 0;
-            for (unsigned shift = 0; cursor < end && shift < 64; shift += 7) {
-                uint8_t byte = *cursor++;
-                number |= static_cast<uint64_t>(byte & 0x7f) << shift;
-                if (!(byte & 0x80))
-                    break;
-            }
-            return number;
-        };
-        uint64_t start = 0;
-        while (cursor < end) {
-            start += readNumber();
-            uint64_t size = readNumber();
-            uint64_t printed = readNumber();
-            if (start + size > std::numeric_limits<uint32_t>::max() || start >= to)
-                break;
-            TextPrintedInPlace piece { static_cast<uint32_t>(start), static_cast<uint32_t>(start + size) };
-            if (printed & 1) {
-                int64_t startOfCopied = static_cast<int64_t>(start) - zigZagDecode(readNumber());
-                if (startOfCopied < 0 || static_cast<uint64_t>(startOfCopied) + (printed >> 2) > std::numeric_limits<uint32_t>::max())
-                    break;
-                // An initializer ends in front of the name that it replaces, and an operand is smaller than its operator. So to follow the copies comes to an end.
-                uint64_t endOfCopied = static_cast<uint64_t>(startOfCopied) + (printed >> 2);
-                bool isInFront = endOfCopied <= start;
-                bool isBeneath = static_cast<uint64_t>(startOfCopied) >= start && endOfCopied <= start + size && (printed >> 2) < size;
-                if (!isInFront && !isBeneath)
-                    continue;
-                piece.isCopy = true;
-                piece.isInBrackets = printed & 2;
-                piece.startOfCopied = static_cast<uint32_t>(startOfCopied);
-                piece.endOfCopied = static_cast<uint32_t>(startOfCopied + (printed >> 2));
-            } else {
-                if (printed >> 1 > static_cast<uint64_t>(end - cursor))
-                    break;
-                piece.bytes = { cursor, static_cast<size_t>(printed >> 1) };
-                cursor += printed >> 1;
-            }
-            if (start >= from)
-                pieces.append(piece);
-        }
-    }
-
-    void appendTo(Vector<uint8_t>& bytes, uint32_t startOfPieceInFront) const
-    {
-        appendVarint(bytes, start - startOfPieceInFront);
-        appendVarint(bytes, end - start);
-        if (!isCopy) {
-            appendVarint(bytes, static_cast<uint64_t>(this->bytes.size()) << 1);
-            bytes.append(this->bytes);
-            return;
-        }
-        appendVarint(bytes, static_cast<uint64_t>(endOfCopied - startOfCopied) << 2 | isInBrackets << 1 | 1);
-        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(start) - static_cast<int64_t>(startOfCopied)));
-    }
-
-    uint32_t start { 0 };
-    uint32_t end { 0 };
-    std::span<const uint8_t> bytes { };
-    bool isCopy { false };
-    bool isInBrackets { false };
-    uint32_t startOfCopied { 0 };
-    uint32_t endOfCopied { 0 };
-};
-
-// In front of what is printed in place of a key, so that nobody takes `a["b"]` for what the program has written: that is printed `a.b`. No text holds this byte, and whoever shows the text takes it out.
-// Behind the `/*` of the name that Bun prints behind the value of a member of an enum, `1 /* Green */`: a comment of the program is not printed.
-static constexpr uint8_t markOfPrintedKey = 1;
-
-// Behind the `[` or `{` of what is printed over several lines: one, and one more for each indentation of the line that holds the bracket. Whoever shows the text takes them out too.
-static constexpr uint8_t markOfIndentation = 2;
-
-// In front of and behind a function or a class as Bun's printer printed it at the build: it prints the statements of a body anew, and they are not what the file spells.
-// Nobody reads what stands between the two, and whoever shows the text takes them out. A list in such a function is quoted by itself, so the pieces beneath this one count.
-static constexpr uint8_t markOfTextFromPrinter = 3;
-
-inline bool isFromPrinter(const TextPrintedInPlace& piece)
-{
-    return !piece.isCopy && !piece.bytes.empty() && piece.bytes.front() == markOfTextFromPrinter;
-}
-
-// Behind the first mark may stand markOfDifferences, and then what is printed, a byte for a byte, but for
-//   copyOfWrittenText, how many bytes of the written text are passed over, how many are printed then;
-//   lineBreakWithIndentation, how often the next line is indented;
-//   textWithPieceOfItsOwn, how many bytes of the written text are passed over, in how many a function is written that has a piece of its own;
-//   writtenTextAsEscapes, how many bytes of the written text are passed over, how many are printed then, none of them ASCII, each character as Bun's printer escapes it.
-// The numbers are varints. There is no mark at the end.
-static constexpr uint8_t markOfDifferences = 4;
-static constexpr uint8_t copyOfWrittenText = 5;
-static constexpr uint8_t lineBreakWithIndentation = 6;
-static constexpr uint8_t textWithPieceOfItsOwn = 7;
-static constexpr uint8_t writtenTextAsEscapes = 8;
-
-template<typename Character>
-void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const TextPrintedInPlace> pieces)
-{
-    if (piece.bytes.size() < 2 || piece.bytes[1] != markOfDifferences) {
-        printed.append(byteCast<Character>(piece.bytes.subspan(1, piece.bytes.size() - std::min<size_t>(piece.bytes.size(), 2))));
-        return;
-    }
-    std::span<const Character> written = text.subspan(piece.start, piece.end - piece.start);
-    std::span<const uint8_t> differences = piece.bytes.subspan(2);
-    auto takeNumber = [&] {
-        uint64_t number = 0;
-        for (unsigned shift = 0; !differences.empty() && shift < 64; shift += 7) {
-            uint8_t byte = differences.front();
-            differences = differences.subspan(1);
-            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
-            if (!(byte & 0x80))
-                break;
-        }
-        return number;
-    };
-    while (!differences.empty()) {
-        uint8_t byte = differences.front();
-        differences = differences.subspan(1);
-        if (byte == copyOfWrittenText || byte == textWithPieceOfItsOwn) {
-            uint64_t passedOver = takeNumber();
-            uint64_t size = takeNumber();
-            if (passedOver > written.size() || size > written.size() - passedOver)
-                break;
-            size_t start = written.data() - text.data() + passedOver;
-            auto inner = std::ranges::lower_bound(pieces, start, { }, &TextPrintedInPlace::start);
-            while (byte == textWithPieceOfItsOwn && inner != pieces.end() && inner->start == start && (inner->end != start + size || !isFromPrinter(*inner) || &*inner == &piece))
-                ++inner;
-            if (byte == textWithPieceOfItsOwn && inner != pieces.end() && inner->start == start)
-                appendTextFromPrinterWithoutMarks(printed, text, *inner, pieces);
-            else
-                printed.append(written.subspan(passedOver, size));
-            written = written.subspan(passedOver + size);
-        } else if (byte == writtenTextAsEscapes) {
-            uint64_t passedOver = takeNumber();
-            uint64_t size = takeNumber();
-            if (passedOver > written.size() || size > written.size() - passedOver)
-                break;
-            auto appendEscape = [&](char letter, unsigned digits, uint32_t number) {
-                printed.append(static_cast<Character>('\\'));
-                printed.append(static_cast<Character>(letter));
-                while (digits--)
-                    printed.append(static_cast<Character>("0123456789ABCDEF"[(number >> (digits * 4)) & 15]));
-            };
-            for (std::span<const Character> escaped = written.subspan(passedOver, size); !escaped.empty();) {
-                uint8_t lead = static_cast<uint8_t>(escaped.front());
-                size_t length = lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-                if (lead < 0xC2 || length > escaped.size())
-                    break;
-                uint32_t character = lead & (0xFF >> (length + 1));
-                for (size_t index = 1; index < length; ++index)
-                    character = character << 6 | (static_cast<uint8_t>(escaped[index]) & 0x3F);
-                escaped = escaped.subspan(length);
-                if (character <= 0xFF)
-                    appendEscape('x', 2, character);
-                else if (character <= 0xFFFF)
-                    appendEscape('u', 4, character);
-                else {
-                    appendEscape('u', 4, 0xD800 + ((character - 0x10000) >> 10));
-                    appendEscape('u', 4, 0xDC00 + ((character - 0x10000) & 0x3FF));
-                }
-            }
-            written = written.subspan(passedOver + size);
-        } else if (byte == lineBreakWithIndentation) {
-            printed.append(static_cast<Character>('\n'));
-            printed.appendUsingFunctor(std::min<uint64_t>(takeNumber(), text.size()) * 2, [](size_t) {
-                return static_cast<Character>(' ');
-            });
-        } else
-            printed.append(static_cast<Character>(byte));
-    }
-}
-
-template<typename Character>
-void appendTextFromPrinter(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const TextPrintedInPlace> pieces)
-{
-    printed.append(static_cast<Character>(markOfTextFromPrinter));
-    appendTextFromPrinterWithoutMarks(printed, text, piece, pieces);
-    printed.append(static_cast<Character>(markOfTextFromPrinter));
-}
-
-// text[from, to) as `bun run` has it. `pieces` are those of the module, and count from the start of `text`.
-template<typename Character>
-void appendWithTextPrintedInPlace(Vector<Character>& printed, std::span<const Character> text, size_t from, size_t to, std::span<const TextPrintedInPlace> pieces)
-{
-    size_t at = from;
-    auto first = std::ranges::lower_bound(pieces, from, { }, &TextPrintedInPlace::start);
-    for (const TextPrintedInPlace& piece : pieces.subspan(first - pieces.begin())) {
-        if (piece.start >= to)
-            break;
-        // It stands in a piece that is done, or reaches out of the text that is asked for.
-        if (piece.start < at || piece.end > to || (piece.isCopy && piece.endOfCopied > text.size()))
-            continue;
-        printed.append(text.subspan(at, piece.start - at));
-        if (!printed.isEmpty() && printed.last() == '[')
-            printed.append(static_cast<Character>(markOfPrintedKey));
-        size_t startOfPrinted = printed.size();
-        if (piece.isCopy) {
-            if (piece.isInBrackets)
-                printed.append('(');
-            appendWithTextPrintedInPlace(printed, text, piece.startOfCopied, piece.endOfCopied, pieces);
-            if (piece.isInBrackets)
-                printed.append(')');
-        } else if (isFromPrinter(piece))
-            appendTextFromPrinter(printed, text, piece, pieces);
-        else {
-            size_t endOfOpening = 0;
-            if (piece.bytes.size() > 4 && piece.bytes[piece.bytes.size() - 2] == '*' && piece.bytes.back() == '/') {
-                for (endOfOpening = piece.bytes.size() - 2; endOfOpening > 1 && (piece.bytes[endOfOpening - 2] != '/' || piece.bytes[endOfOpening - 1] != '*'); --endOfOpening) { }
-            }
-            printed.append(byteCast<Character>(piece.bytes.first(endOfOpening)));
-            if (endOfOpening > 1)
-                printed.append(static_cast<Character>(markOfPrintedKey));
-            printed.append(byteCast<Character>(piece.bytes.subspan(endOfOpening)));
-        }
-        at = piece.end;
-        // `1.toString` is no program, so `1 .toString` is printed.
-        bool isNumber = printed.size() > startOfPrinted && isASCIIDigit(printed[startOfPrinted]) && std::ranges::all_of(printed.subspan(startOfPrinted), [](Character character) {
-            return isASCIIDigit(character) || character == '.' || character == 'e';
-        });
-        if (isNumber && at < text.size() && text[at] == '.')
-            printed.append(' ');
-    }
-    printed.append(text.subspan(at, to - at));
-}
-
-// In the order of the sources of the functions, so that both a function and its source lead to the text.
-struct FunctionTextEntry {
+struct FunctionSourceEntry {
     Number24 function;
     Number32 start;
     Number32 end;
 };
-static_assert(sizeof(FunctionTextEntry) == 11 && isImageRecord<FunctionTextEntry>);
+static_assert(sizeof(FunctionSourceEntry) == 11 && isImageRecord<FunctionSourceEntry>);
 
-// The text of a constructor is that of its class, and the constructor begins at its parameters. This is how many lines of the text stand above them, where there are any.
-// Ascending by the function, which is its own source.
-struct ConstructorLineData {
-    uint32_t function;
-    uint32_t linesOfTextAbove;
+struct QuotedSourceGroupData {
+    uint32_t module;
+    uint32_t line;
+    uint32_t column;
+    uint32_t offsetOfRows;
 };
-static_assert(sizeof(ConstructorLineData) == 8 && isImageRecord<ConstructorLineData>);
+static_assert(sizeof(QuotedSourceGroupData) == 16 && isImageRecord<QuotedSourceGroupData>);
+static constexpr unsigned quotedSourceGroupSize = 32;
 
-// In functionLengths and in closureCaptureCounts: the function stands in functionsWithLargeCounts.
 static constexpr uint8_t countsAreListed = UINT8_MAX;
 
 struct CaptureCounts {
@@ -634,7 +240,6 @@ struct CaptureCounts {
 };
 static_assert(CaptureCounts { 14, 14 }.encoded() != countsAreListed && CaptureCounts::decode(CaptureCounts { 3, 14 }.encoded()).captures == 14 && CaptureCounts { 0, 15 }.encoded() == countsAreListed);
 
-// In the order of the functions.
 struct FunctionWithLargeCountsData {
     Number24 function;
     CaptureCounts captureCounts;
@@ -644,29 +249,187 @@ struct FunctionWithLargeCountsData {
 };
 static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<FunctionWithLargeCountsData>);
 
+struct NamedCaptureData {
+    Number24 closureNumber;
+    uint8_t slot;
+    uint32_t name : 31;
+    uint32_t isVariableOfModule : 1;
+};
+static_assert(sizeof(NamedCaptureData) == 8 && isImageRecord<NamedCaptureData>);
+
+static constexpr uint32_t namedCaptureIsVariableOfModule = UINT8_MAX + 1;
+using NamedCaptureList = Vector<std::pair<uint32_t, uint32_t>, 8>;
+
+class RecentNamedCaptureLists {
+public:
+    size_t size() const { return m_placesFromLatest.size(); }
+    size_t find(const NamedCaptureList& list) const
+    {
+        uint32_t hash = hashOf(list);
+        return m_placesFromLatest.findIf([&](uint8_t place) {
+            return m_hashes[place] == hash && m_lists[place] == list;
+        });
+    }
+    const NamedCaptureList& moveToFront(size_t index)
+    {
+        uint8_t place = m_placesFromLatest[index];
+        m_placesFromLatest.removeAt(index);
+        m_placesFromLatest.insert(0, place);
+        return m_lists[place];
+    }
+    void add(const NamedCaptureList& list)
+    {
+        uint8_t place = static_cast<uint8_t>(m_lists.size());
+        if (m_placesFromLatest.size() == mostLists) {
+            place = m_placesFromLatest.takeLast();
+            m_lists[place] = list;
+            m_hashes[place] = hashOf(list);
+        } else {
+            m_lists.append(list);
+            m_hashes.append(hashOf(list));
+        }
+        m_placesFromLatest.insert(0, place);
+    }
+
+private:
+    static constexpr size_t mostLists = 64;
+
+    static uint32_t hashOf(const NamedCaptureList& list)
+    {
+        uint32_t hash = 0;
+        for (auto [slot, name] : list)
+            hash = (hash ^ slot ^ name) * 0x9e3779b1u;
+        return hash;
+    }
+
+    Vector<NamedCaptureList> m_lists;
+    Vector<uint32_t, mostLists> m_hashes;
+    Vector<uint8_t, mostLists> m_placesFromLatest;
+};
+
+class NamedCapturesWriter {
+public:
+    void append(uint32_t closureNumber, const NamedCaptureList& list)
+    {
+        RELEASE_ASSERT(!list.isEmpty() && closureNumber >= m_lastClosureNumber);
+        appendVarint(m_bytes, closureNumber - m_lastClosureNumber);
+        m_lastClosureNumber = closureNumber;
+        if (size_t index = m_recent.find(list); index != notFound) {
+            appendVarint(m_bytes, index << 1 | 1);
+            m_recent.moveToFront(index);
+            return;
+        }
+        m_recent.add(list);
+        if (std::ranges::all_of(list, [](const auto& capture) { return capture.first < 62; })) {
+            uint64_t slots = 0;
+            for (auto [slot, name] : list)
+                slots |= 1ull << slot;
+            appendVarint(m_bytes, slots << 1);
+            for (auto [slot, name] : list)
+                appendVarint(m_bytes, name);
+            return;
+        }
+        appendVarint(m_bytes, 0);
+        appendVarint(m_bytes, list.size());
+        for (auto [slot, name] : list) {
+            appendVarint(m_bytes, slot);
+            appendVarint(m_bytes, name);
+        }
+    }
+    const Vector<uint8_t>& bytes() const { return m_bytes; }
+
+private:
+    Vector<uint8_t> m_bytes;
+    RecentNamedCaptureLists m_recent;
+    uint32_t m_lastClosureNumber { 0 };
+};
+
+inline Vector<uint8_t> encodeNamedCaptures(std::span<const NamedCaptureData> rows)
+{
+    NamedCapturesWriter writer;
+    for (size_t first = 0; first < rows.size();) {
+        NamedCaptureList list;
+        size_t end = first;
+        for (; end < rows.size() && rows[end].closureNumber == rows[first].closureNumber; ++end)
+            list.append({ rows[end].slot | (rows[end].isVariableOfModule ? namedCaptureIsVariableOfModule : 0), rows[end].name });
+        writer.append(rows[first].closureNumber, list);
+        first = end;
+    }
+    return writer.bytes();
+}
+
+bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
+{
+    const uint8_t* cursor = bytes.data();
+    const uint8_t* end = cursor + bytes.size();
+    RecentNamedCaptureLists recent;
+    uint64_t closureNumber = 0;
+    auto visitAll = [&](const NamedCaptureList& list) {
+        for (auto [slot, name] : list)
+            visit(NamedCaptureData { Number24(static_cast<uint32_t>(closureNumber)), static_cast<uint8_t>(slot), name, !!(slot & namedCaptureIsVariableOfModule) });
+    };
+    while (cursor < end) {
+        closureNumber += readVarint(cursor);
+        if (cursor >= end || closureNumber > Number24::max)
+            return false;
+        uint64_t word = readVarint(cursor);
+        if (word & 1) {
+            if (word >> 1 >= recent.size())
+                return false;
+            visitAll(recent.moveToFront(word >> 1));
+            continue;
+        }
+        NamedCaptureList list;
+        if (uint64_t slots = word >> 1) {
+            for (uint32_t slot = 0; slots; ++slot, slots >>= 1) {
+                if (!(slots & 1))
+                    continue;
+                if (cursor >= end)
+                    return false;
+                list.append({ slot, static_cast<uint32_t>(readVarint(cursor)) });
+            }
+        } else {
+            if (cursor >= end)
+                return false;
+            uint64_t numberOfCaptures = readVarint(cursor);
+            for (uint64_t index = 0; index < numberOfCaptures; ++index) {
+                if (cursor >= end)
+                    return false;
+                uint64_t slot = readVarint(cursor);
+                if (cursor >= end || slot > (UINT8_MAX | namedCaptureIsVariableOfModule))
+                    return false;
+                list.append({ static_cast<uint32_t>(slot), static_cast<uint32_t>(readVarint(cursor)) });
+            }
+            if (list.isEmpty())
+                return false;
+        }
+        visitAll(list);
+        recent.add(list);
+    }
+    return cursor == end;
+}
+
 #define FOR_EACH_AOT_FUNCTION_PROGRAM_TABLE(v) \
     v(functionNames, Number24) \
     v(functionNameGroups, uint32_t) \
-    v(functionNameRuns, FunctionNameRunData) \
     v(functionRecordNumbers, uint8_t) \
     v(functionRecords, FunctionRecordData) \
-    v(functionRecordsByFunction, FunctionRecordByFunctionData) \
-    v(functionSources, Number24) \
-    v(closureFormsBySource, Number24) \
+    v(unsharedFunctionRecords, UnsharedFunctionRecordData) \
+    v(sourceFunctions, uint32_t) \
     v(implementedBuiltins, ImplementedBuiltinData) \
     v(closureFunctionKinds, FunctionKindData) \
     v(functionLengths, uint8_t) \
     v(closureCaptureCounts, uint8_t) \
     v(functionsWithLargeCounts, FunctionWithLargeCountsData) \
-    v(closureCellNumbers, Number24) \
-    v(functionTexts, FunctionTexts) \
-    v(constructorLines, ConstructorLineData) \
-    v(modulesWithTextPrintedInPlace, TextPrintedInPlaceOfModule) \
-    v(textPrintedInPlace, uint8_t) \
+    v(closureCells, uint32_t) \
+    v(namedCaptures, uint8_t) \
+    v(functionSources, FunctionSources) \
+    v(quotedSourceGroups, QuotedSourceGroupData) \
+    v(quotedSourceRows, uint8_t) \
+    v(quotedSourceText, uint8_t) \
+    v(quotedSourceBlocks, uint32_t) \
     v(constructors, ConstructorData) \
-    v(boundFunctions, BoundFunctionData) \
-    v(constructEntrypoints, ConstructEntrypointData) \
-    v(placesOfTailCalls, uint8_t)
+    v(constructEntrypoints, ConstructEntrypointData)
 
 } } // namespace JSC::AOT
 

@@ -1,0 +1,12 @@
+# the entry that makes `this` for whoever constructs by value: where no slot is typed the mark answers for no field, so nothing is looked at behind the body. Where fields wait, the birth is ended behind it
+# RUN: walk f1:AllocatingConstructEntry mechanisms=all
+# CHECK-LABEL: code f1:AllocatingConstructEntry
+# CHECK: = NewObject
+# RUN(NEVER): walk f1:AllocatingConstructEntry mechanisms=all-TypedSlots
+# NEVER-NOT: TryFinishBirth
+# RUN(WAITS): walk f1:AllocatingConstructEntry mechanisms=all
+# WAITS: = CallDirect {{*}}[{{*}}isConstruction]
+# WAITS: = TryFinishBirth
+# RUN(PLAIN): walk f1:AllocatingConstructEntry mechanisms=none
+# PLAIN-NOT: TryFinishBirth
+# PROGRAM-OF: ../typed-slots/new-with-a-known-tag-makes-the-member.ir

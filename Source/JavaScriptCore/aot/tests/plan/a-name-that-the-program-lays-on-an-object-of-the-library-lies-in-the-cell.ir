@@ -1,0 +1,54 @@
+# function OfLibrary() { this.own = 1; }      a function of Bun's own library
+# function OfProgram() { this.own = 1; }
+# function lay() { const a = new OfLibrary(); a.laid = 2; const b = new OfProgram(); b.laid = 2; return [a, b]; }
+# No layout lists `laid`: Link appends it to both. The library makes its objects one for a request or a connection and hands them over, and a framework that lays a name on one lays it on each: there the slot lies in the cell.
+# On an object of the program's own class a name that no constructor stores lies out of line, as ever: forty makers' names would lie in every object.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.1 "laid" appended
+# CHECK: field L1.1 "laid" appended
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject
+# PLAN: slot {{*}}"laid" {{*}}Inline
+# PLAN: layout L1 CompiledObject
+# PLAN-NOT: "laid" {{*}}Inline
+# PLAN: layout
+
+layout L0 kind=Instance name="OfLibrary" module=m0 constructor=f1 fields=[{key="own" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="OfProgram" module=m0 constructor=f2 fields=[{key="own" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 module=m0 fields=[{key="laid" declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="lay"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="OfLibrary" module=m0 role=Library flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="own"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="OfProgram" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="own"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="lay" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Construct v0, v0 calleeName="OfLibrary"
+    v2 = Integer integer=2
+    PropSet v1, v2 key="laid"
+    v4 = NewClosure function=f2
+    v5 = Construct v4, v4 calleeName="OfProgram"
+    PropSet v5, v2 key="laid"
+    v7 = NewArray v1, v5
+    Return v7
+}

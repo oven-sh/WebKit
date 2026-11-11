@@ -1,19 +1,19 @@
 # a diagnostic is expected by its kind, with a count
-# FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: TypeOutOfDate 1
+# DIAGNOSTIC: EntryParametersMismatch 1
 
 module m0 path="main.js" displayPath="main.js"
+entry module=m0
 function f0 name="staleType" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2: boolean = Add v0, v1
+  b0(v0: number, v1: boolean):
+    v2 = Add v0, v1
     v3 = Mul v0, v0
     v4 = Sub v3, v0
     Return v4
 }
-function f1 name="typeOfTheRule" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+function f1 name="typeOfTheSignature" parameters=[{type=number}, {type=number}] results=[{type=number}] {
   b0(v0: number, v1: number):
-    v2: number = Add v0, v1
+    v2 = Add v0, v1
     v3 = Mul v0, v0
     v4 = Sub v3, v0
     Return v4

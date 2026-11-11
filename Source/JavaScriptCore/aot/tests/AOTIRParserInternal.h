@@ -45,7 +45,6 @@ public:
     Vector<uint8_t> finish();
 
 private:
-    // The key is wider than the 32-bit hash it holds, so no hash is the table's empty or deleted key.
     using PositionsByHash = UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
     template<typename WireRecord> uint32_t internRecord(Vector<WireRecord>&, PositionsByHash&, const WireRecord&);
@@ -73,29 +72,20 @@ struct TextItem {
     Lexer::State body;
 };
 
-struct BodyScan {
+struct BodyTextScan {
     unsigned numberOfBlocks { 0 };
     uint32_t numberOfValues { 0 };
     bool leavesOutEntryHead { false };
 };
 
-struct ValueEngineFields {
-    FunctionID function;
-    ValueID value;
-    uint32_t typeWord { Wire::none };
-    uint32_t expectedWord { Wire::none };
-    std::optional<Representation> representation;
-};
-
 class TextParser {
     WTF_MAKE_NONCOPYABLE(TextParser);
 public:
-    TextParser(std::span<const uint8_t> text, IRForm, BuildContext&, const VerifierInputs&);
+    TextParser(std::span<const uint8_t> text, BuildContext&);
     ~TextParser();
 
     std::unique_ptr<Program> run();
 
-    IRForm form() const { return m_form; }
     const BuiltinTable& builtins() const { return m_builtins; }
     WireProgramBuilder& builder() { return m_builder; }
     void addPatch(ProgramPatch&& patch) { m_patches.append(WTF::move(patch)); }
@@ -139,7 +129,6 @@ public:
     void parseRecord(NOESCAPE const Invocable<void()> auto& fields);
 
     LayoutSetID parseLayoutSet();
-    CalleeSetID parseCalleeSet();
 
     BuiltinID parseBuiltin();
     BuiltinClassID parseBuiltinClass();
@@ -170,7 +159,7 @@ private:
     };
 
     struct BodyState {
-        BodyScan scan;
+        BodyTextScan scan;
         FunctionID function;
         BlockID block;
         ValueID value;
@@ -187,8 +176,8 @@ private:
     Token nextScannedToken(Lexer&);
     Token scanToEndOfLine(Lexer&);
     void scanFunctionEnd(Lexer&);
-    bool scanBody(Lexer::State, BodyScan&);
-    void scanBlockHead(Lexer&, BodyScan&);
+    bool scanBody(Lexer::State, BodyTextScan&);
+    void scanBlockHead(Lexer&, BodyTextScan&);
 
     void parseItem(const TextItem&);
     Wire::Body parseBody(const TextItem&, const Wire::Function&);
@@ -196,9 +185,8 @@ private:
     void parseBlockHead(uint32_t blockIndex, Wire::BlockHead&);
     void appendEntryParameters(const Wire::Function&, Wire::BlockHead&);
     void parseBlockParameter();
-    void appendBlockParameter(ValueID, uint32_t typeWord, ValueEngineFields&&);
+    void appendBlockParameter(uint32_t typeWord);
     void parseValue();
-    void parseEngineValueFields(ValueEngineFields&);
     void parseTerminator();
     void parseTarget();
     uint32_t parseBlockUseWord();
@@ -207,15 +195,11 @@ private:
     void parseTypePart(Wire::Type&, TypeParts&);
     void parseClassPart(TypeParts&, BuiltinClassID);
     Wire::PropertyKey parsePropertyKeyValue();
-    void completeType(uint32_t wireIndex, Type&) const;
 
     void applyPatches(Program&, std::span<const TypeID>);
-    void applyValueEngineFields(const PatchContext&) const;
 
     std::span<const uint8_t> m_text;
     Cursor m_cursor;
-    IRForm m_form;
-    VerifierInputs m_verifierInputs;
     BuildContext& m_build;
     const BuiltinTable& m_builtins;
     WireProgramBuilder m_builder;
@@ -223,9 +207,7 @@ private:
     ProgramScan m_scan;
     Vector<TextItem> m_items;
     Vector<ProgramPatch> m_patches;
-    Vector<ValueEngineFields> m_valueEngineFields;
     BodyState m_body;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<TypeParts>, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_engineTypeParts;
     bool m_layoutsAreExact { false };
     unsigned m_typeNesting { 0 };
     WTF::StackCheck m_stackCheck;

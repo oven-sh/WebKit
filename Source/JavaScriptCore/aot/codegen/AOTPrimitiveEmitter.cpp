@@ -8,66 +8,61 @@
 
 #if ENABLE(AOT)
 
+#include "AOTMachineTarget.h"
+#include "AOTPrimitives.h"
 #include "AOTStubRegisters.h"
-#include "AirArg.h"
-#include "B3StackmapGenerationParams.h"
-#include <algorithm>
-#include <limits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The back end is told that the type of a cell never changes (AOTHeaps.cpp). These do, in place: in row order ClassPrototype::convertToOrdinaryObject, SlimClosure::reify.
-// So a type is tested under that heap only by a range that holds both types of a row or neither. --aot-check=ClaimsToBackEnd | MovedLoads report every other change.
-static constexpr B3::WordChange changesOfCellTypeInPlace[] = {
+struct CellTypeChangeInPlace {
+    JSType from;
+    JSType to;
+};
+
+static constexpr CellTypeChangeInPlace changesOfCellTypeInPlace[] = {
     { ObjectType, FinalObjectType },
     { SlimClosureType, SlimClosureWithPropertiesType },
 };
 
-static constexpr bool isStableRange(JSTypeRange range)
+static constexpr bool isStableRangeOfCellTypes(JSTypeRange range)
 {
     auto contains = [&](JSType type) {
         return range.first <= type && type <= range.last;
     };
-    for (B3::WordChange change : changesOfCellTypeInPlace) {
-        if (contains(static_cast<JSType>(change.before)) != contains(static_cast<JSType>(change.after)))
+    for (CellTypeChangeInPlace change : changesOfCellTypeInPlace) {
+        if (contains(change.from) != contains(change.to))
             return false;
     }
     return true;
 }
 
-static constexpr bool isTakenInPlace(JSType type)
+static constexpr bool isCellTypeTakenInPlace(JSType type)
 {
-    for (B3::WordChange change : changesOfCellTypeInPlace) {
-        if (change.after == type)
+    for (CellTypeChangeInPlace change : changesOfCellTypeInPlace) {
+        if (change.to == type)
             return true;
     }
     return false;
 }
 
-static_assert(isStableRange({ StringType, StringType }) && isStableRange({ ObjectType, MaxJSType }) && isStableRange(slimClosureTypes) && isStableRange({ ArrayType, DerivedArrayType }) && isStableRange({ CompiledClosureType, CompiledClosureType }));
-static_assert(isStableRange({ CompiledObjectType, CompiledObjectType }) && isStableRange({ ObjectType, FinalObjectType }));
-static_assert(!isStableRange({ ObjectType, ObjectType }) && !isStableRange({ FinalObjectType, FinalObjectType }));
-static_assert(!isStableRange({ SlimClosureType, SlimClosureType }) && !isStableRange({ SlimClosureWithPropertiesType, SlimClosureWithPropertiesType }));
+static_assert(isStableRangeOfCellTypes({ StringType, StringType }) && isStableRangeOfCellTypes({ ObjectType, MaxJSType }) && isStableRangeOfCellTypes(slimClosureTypes) && isStableRangeOfCellTypes({ ArrayType, DerivedArrayType }) && isStableRangeOfCellTypes({ CompiledClosureType, CompiledClosureType }));
+static_assert(isStableRangeOfCellTypes({ CompiledObjectType, CompiledObjectType }) && isStableRangeOfCellTypes({ ObjectType, FinalObjectType }));
+static_assert(!isStableRangeOfCellTypes({ ObjectType, ObjectType }) && !isStableRangeOfCellTypes({ FinalObjectType, FinalObjectType }));
+static_assert(!isStableRangeOfCellTypes({ SlimClosureType, SlimClosureType }) && !isStableRangeOfCellTypes({ SlimClosureWithPropertiesType, SlimClosureWithPropertiesType }));
+static_assert(isCellTypeTakenInPlace(FinalObjectType) && isCellTypeTakenInPlace(SlimClosureWithPropertiesType) && !isCellTypeTakenInPlace(ObjectType) && !isCellTypeTakenInPlace(SlimClosureType));
 
 bool isStableCellTypeRange(JSTypeRange range)
 {
-    return isStableRange(range);
-}
-
-std::span<const B3::WordChange> cellTypeChangesInPlace()
-{
-    return changesOfCellTypeInPlace;
+    return isStableRangeOfCellTypes(range);
 }
 
 Condition PrimitiveEmitter::isUndefinedOrNull(Boxed value, uint16_t occurringPrimitives)
 {
-    // Within the bits of undefined lie undefined, null, the empty value, and UndefinedTag alone, which no value has.
     constexpr int64_t bitsOutsideUndefined = ~static_cast<int64_t>(JSValue::ValueUndefined);
     static_assert(JSValue::ValueUndefined == (JSValue::ValueNull | JSValue::UndefinedTag) && hasOneBitSet(JSValue::ValueNull) && hasOneBitSet(JSValue::UndefinedTag) && !JSValue::ValueEmpty);
-    static_assert(emptyLiteralStringWord > JSValue::ValueUndefined, "a literal string word is tested like a boxed value");
 
     bool mayBeEmpty = occurringPrimitives & Primitive::Absent;
-    if (!mayBeEmpty && B3::Air::Arg::isValidBitImm64Form(bitsOutsideUndefined))
+    if (!mayBeEmpty && Machine::isEncodableBitImmediate(Width64, bitsOutsideUndefined))
         return Condition(m_out.testIsZero64(value.value(), m_out.constInt64(bitsOutsideUndefined)));
     return Condition(m_out.equal(m_out.bitAnd(value.value(), ~JSValue::UndefinedTag), JSValue::ValueNull));
 }
@@ -110,11 +105,10 @@ Condition PrimitiveEmitter::hasCellTypeAbove(CellPointer cell, JSType type)
 
 Condition PrimitiveEmitter::hasOrHadCellType(CellPointer cell, JSType type)
 {
-    RELEASE_ASSERT(!isTakenInPlace(type));
+    RELEASE_ASSERT(!isCellTypeTakenInPlace(type));
     return equal(loadCellType(cell), type);
 }
 
-// A type that a cell takes or leaves in place is read as one of the bytes that change: alone, so that the comparison takes it from memory.
 Condition PrimitiveEmitter::hasMutableCellType(CellPointer cell, JSType type)
 {
     constexpr ptrdiff_t offsetInUsefulBytes = JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset();
@@ -158,12 +152,7 @@ Word32 PrimitiveEmitter::loadMutable32(ptrdiff_t offset)
     return Word32(m_out.load32(mutableInstanceField(offset)));
 }
 
-Integer PrimitiveEmitter::loadMutable64(ptrdiff_t offset)
-{
-    return Integer(m_out.load64(mutableInstanceField(offset)));
-}
-
-TypedPointer PrimitiveEmitter::instanceField(const B3::AbstractHeap& heap, ptrdiff_t offset)
+TypedPointer PrimitiveEmitter::instanceField(const Machine::AbstractHeap& heap, ptrdiff_t offset)
 {
     if (offset >= 0)
         return m_out.address(heap, m_instance, offset);
@@ -180,92 +169,65 @@ CellPointer PrimitiveEmitter::singleCharacterString(Word32 character)
 
 LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
 {
-    B3::PatchpointValue* count = m_out.patchpoint(B3::Int64);
+    Machine::PatchOperation* count = m_out.patchpoint(Machine::Int64);
     count->appendSomeRegister(bits);
-    count->effects = B3::Effects::none();
-    // B3 may count ahead of the branch that rules zero out, where nothing reads the count. With assertions the count of zero traps, so it stays behind the branch.
-    count->effects.controlDependent = ASSERT_ENABLED;
+    count->effects = Machine::Effects::none();
     count->setRunsWithoutFrame(true);
-    count->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    count->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
         jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
     });
     return count;
 }
 
-std::optional<MutatorFence> PrimitiveEmitter::mutatorFence()
+void PrimitiveEmitter::mutatorFence()
 {
-#if CPU(X86_64)
-    m_out.fence(&m_heaps.root, nullptr);
-    return std::nullopt;
-#else
-    LBasicBlock branchBlock = m_out.m_block;
+    m_owesFenceBehindStores = false;
+    if (isX86_64())
+        return;
+
     LBasicBlock fence = m_out.newBlock();
     LBasicBlock done = m_out.newBlock();
-    m_out.branch(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))), rareEdge(fence), normalEdge(done));
-    m_out.appendTo(fence);
-    m_out.fence(&m_heaps.root, nullptr);
+    LValue shouldBeFenced = m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(shouldBeFenced, rareEdge(fence), normalEdge(done));
+    m_out.appendToArm(fence, fork);
+    m_out.fence();
     m_out.jump(done);
-    m_out.appendTo(done);
-    return MutatorFence { branchBlock, done };
-#endif
+    m_out.appendToJoin(done, fork);
 }
 
 void PrimitiveEmitter::ensureStillAliveHere(CellPointer cell)
 {
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->effects.writesLocalState = true;
-    patchpoint->effects.reads = B3::HeapRange::top();
-    patchpoint->append(cell.value(), B3::ValueRep::ColdAny);
-    patchpoint->setRunsWithoutFrame(true);
-    patchpoint->onlyKeepsChildrenAlive = true;
-    patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    Machine::PatchOperation* patch = m_out.patchpoint(Machine::Void);
+    patch->effects = Machine::Effects::none();
+    patch->effects.writesLocalState = true;
+    patch->effects.reads = Machine::HeapSet::top();
+    patch->append(cell.value(), Machine::ValueRep::ColdAny);
+    patch->setRunsWithoutFrame(true);
+    patch->onlyKeepsChildrenAlive = true;
 }
 
-void pinRegisters(B3::Procedure& proc)
-{
-    proc.pinRegister(instanceGPR);
-    proc.pinRegister(cellCageBaseGPR);
-#if CPU(ARM64)
-    proc.pinRegister(GPRInfo::numberTagRegister);
-    proc.pinRegister(GPRInfo::notCellMaskRegister);
-    if (proc.mutableGPRs().contains(ARM64Registers::x18, IgnoreVectors))
-        proc.pinRegister(ARM64Registers::x18);
-#endif
-}
-
-static void publishDereferenceableBytes(B3::Procedure& proc, LValue pointer, size_t bytes)
-{
-    if (bytes)
-        proc.setKnownDereferenceableBytes(pointer, static_cast<uint32_t>(std::min<size_t>(bytes, std::numeric_limits<uint32_t>::max())));
-}
-
-void definePinnedValues(Output& out, B3::Procedure& proc, InstanceSizes sizes, PinnedValues& pinned)
+void definePinnedValues(Output& out, PinnedValues& pinned)
 {
     pinned.instance = out.argumentRegister(instanceGPR);
     pinned.cellCageBase = out.argumentRegister(cellCageBaseGPR);
     pinned.numberTag = out.constInt64(JSValue::NumberTag);
     pinned.notCellMask = out.constInt64(JSValue::NotCellMask);
     pinned.instancePrefix = out.add(pinned.instance, out.constIntPtr(-static_cast<ptrdiff_t>(sizeof(InstancePrefix))));
-    pinned.statics = out.add(pinned.instance, out.constIntPtr(InstanceLayout::offsetOfStatics(sizes)));
-
-    publishDereferenceableBytes(proc, pinned.instance, InstanceLayout::bytesReservedFromInstance(sizes));
-    publishDereferenceableBytes(proc, pinned.instancePrefix, sizeof(InstancePrefix));
-    publishDereferenceableBytes(proc, pinned.statics, sizes.sizeOfStatics);
 }
 
 static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && undefinedCell32 < minCell32);
 
-std::optional<NarrowReference> PrimitiveEmitter::narrowWordBehind(LiteralStringWord word)
+std::optional<Word32> PrimitiveEmitter::narrowWordBehind(OptionalInteger widened)
 {
-    B3::Value* value = word.value();
-    if (value->opcode() != B3::Select || value->child(2)->opcode() != B3::ZExt32)
+    LValue value = widened.value();
+    if (value->opcode() != Machine::Select || value->child(2)->opcode() != Machine::SExt32)
         return std::nullopt;
-    B3::Value* narrow = value->child(2)->child(0);
-    B3::Value* isReference = value->child(0);
-    if (isReference->opcode() != B3::AboveEqual || isReference->child(0) != narrow || !isReference->child(1)->isInt32(minCell32))
+    LValue narrow = value->child(2)->child(0);
+    LValue isMarker = value->child(0);
+    if (isMarker->opcode() != Machine::LessThan || isMarker->child(0) != narrow || !isMarker->child(1)->isInt32(minInlineInt32))
         return std::nullopt;
-    return NarrowReference(narrow);
+    return Word32(narrow);
 }
 
 } } } // namespace JSC::AOT::Typed

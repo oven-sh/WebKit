@@ -2175,11 +2175,10 @@ AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanc
     overflow.append(branchPtr(LessThan, framePointerGPR, memoryTempRegister));
     return overflow;
 #elif CPU(X86_64)
-    loadPtr(Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit()), scratchRegister());
     JumpList overflow;
-    // Because address is within 48bit, this addition never causes overflow.
-    addPtr(checkSize, scratchRegister());
-    overflow.append(branchPtr(LessThan, framePointerGPR, scratchRegister()));
+    // Because address is within 48bit, this subtraction never causes overflow.
+    addPtr(TrustedImm32(-checkSize.m_value), framePointerGPR, scratchRegister());
+    overflow.append(branchPtr(LessThan, scratchRegister(), Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit())));
     return overflow;
 #elif CPU(RISCV64)
     loadPtr(Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit()), memoryTempRegister);

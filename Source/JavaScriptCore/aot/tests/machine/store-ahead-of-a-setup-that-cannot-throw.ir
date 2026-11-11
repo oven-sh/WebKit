@@ -1,0 +1,41 @@
+# let last; function note(v) { last = v; if (v === undefined) return v; return leaf(v).y; }
+# the callers of note cover its stack test, so setting its frame up throws nothing, and the store that is written ahead may stay ahead: the way that returns at once has no frame
+# today a write ahead of the part that calls draws the frame up to the entry, as it must where the setup tests the stack and may throw behind the write
+# f1 = note, f2 = leaf. note is handed to sink
+# REQUIRES: unsanitized-code
+# RUN: allocate f1:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f1:Body
+# CHECK: headOfFramedPart =
+# RUN(NEVER): allocate f1:Body mechanisms=none+DirectCalls
+# NEVER-NOT: needsFrameAheadOfFramedPart
+
+variable g0 name="leaf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="note" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g1
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b2(), notTaken b1()
+  b1():
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0 calleeName="leaf"
+    v5 = PropGet v4 key="y"
+    Return v5
+  b2():
+    Return v0
+}
+function f2 name="leaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

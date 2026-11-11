@@ -1,0 +1,33 @@
+# const o = rest; finish(o)[0] = x; define(o, "name", x);   with nothing reading o
+# v4 stores through another name of the allocation. v5 is a definition by name whose bound is unknown code: its traits say that with these operands it writes into objects alone and runs nothing.
+# Both wait for v2, nothing needs v2, and all four go. v7 has the opcode of v5 and may write outside objects, so it stays, and keeps v6 with it.
+# v9 has the traits of v5 and is a store, which may end in a setter that writes into an object of its own choice. It stays, and keeps v8 with it.
+# RUN: sweep-code
+# CHECK: v2, v3, v4, v5
+# CHECK: v6: anything @Cell = CreateRest
+# CHECK: v7 @Void = PropDefine
+# CHECK: v8: anything @Cell = CreateRest
+# CHECK: v9 @Void = PropSet
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @Cell = CreateRest firstArgument=0 traits=[mayCollect, mayTouchMemory]
+#     v3: anything @Cell = FinishObject v2
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = PropDefine v2, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v6: anything @Cell = CreateRest firstArgument=1 traits=[mayCollect, mayTouchMemory]
+#     v7 @Void = PropDefine v6, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v8: anything @Cell = CreateRest firstArgument=2 traits=[mayCollect, mayTouchMemory]
+#     v9 @Void = PropSet v8, v1 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

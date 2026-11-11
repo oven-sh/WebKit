@@ -239,7 +239,7 @@ Value* RandomProgram::load(unsigned depth)
         result = m_block->appendNew<MemoryValue>(m_proc, narrowLoads[pick(std::size(narrowLoads))], Origin(), operand.base, operand.offset + static_cast<int32_t>(2 * pick(4)), operand.range);
     if (region == 2 && chance(50))
         result->setReadsMutability(Mutability::Immutable);
-    if (promisesMappedMemory(m_promiseRandom))
+    if (promisesMappedMemory(m_promiseRandom) && mayHaveKnownDereferenceableBytes(operand.base))
         m_proc.setKnownDereferenceableBytes(operand.base, mappedByteCount);
     if (result->type() == Int32)
         return make(chance(50) ? SExt32 : ZExt32, result);

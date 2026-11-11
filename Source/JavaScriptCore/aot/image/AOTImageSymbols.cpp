@@ -9,379 +9,556 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTBuiltinTable.h"
-#include "AOTFunctionDescriptions.h"
 #include "AOTIRProgram.h"
-#include "AOTIdentifierNumbering.h"
-#include "AOTProgramTables.h"
+#include "AOTRegExpRecord.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSort.h"
 #include "AOTStubDescriptor.h"
-#include "AOTWasmModules.h"
+#include "AOTWasmInterface.h"
+#include "YarrFlags.h"
 #include <algorithm>
+#include <array>
+#include <limits>
+#include <optional>
+#include <span>
 #include <tuple>
-#include <wtf/BitVector.h>
+#include <utility>
+#include <wtf/ASCIICType.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/DataLog.h>
-#include <wtf/FilePrintStream.h>
+#include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
-#include <wtf/StringPrintStream.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
 
-using SymbolKind = ImageSymbol::Kind;
+namespace {
 
-static String escapeForMapLine(StringView text)
-{
-    String result = text.toString();
-    for (auto [character, written] : { std::pair { "\\"_s, "\\\\"_s }, std::pair { "\t"_s, "\\t"_s }, std::pair { "\n"_s, "\\n"_s }, std::pair { "\r"_s, "\\r"_s } })
-        result = makeStringByReplacingAll(result, character, written);
-    return result;
-}
+struct ImageSymbol {
+    uint32_t offset;
+    uint32_t end;
+    uint32_t name;
+};
 
-static String textOf(const Typed::Program& program, StringID id)
-{
-    return id ? program.strings.toWTFString(id) : emptyString();
-}
+struct RegExpEntryInSymbols {
+    static constexpr uint32_t noRegExp = std::numeric_limits<uint32_t>::max();
 
-static String descriptionOf(const Typed::Program& program, const NumberedIdentifier& identifier)
-{
-    if (identifier.text)
-        return textOf(program, identifier.text);
-    if (!identifier.key || !program.at(identifier.key).symbol)
-        return emptyString();
-    BuiltinName name = program.builtinNameOf(identifier.key);
-    if (!name)
-        return emptyString();
-    return makeString("Symbol."_s, StringView(byteCast<Latin1Character>(program.builtins().textOf(name))));
-}
+    uint32_t offset;
+    uint32_t regExp;
+    bool isFor16BitSubjects;
+};
 
-static const ImageHeader& headerOf(std::span<const uint8_t> image)
-{
-    RELEASE_ASSERT(image.size() >= sizeof(ImageHeader));
-    return *reinterpret_cast<const ImageHeader*>(image.data());
-}
+class ImageSymbolTable {
+public:
+    void append(ASCIILiteral text) { m_names.append(byteCast<uint8_t>(text.span())); }
+    void append(std::span<const uint8_t> bytes) { m_names.append(bytes); }
 
-static String functionName(const Typed::Program& program, FunctionID id, const String& description)
-{
-    const Typed::Function& function = program.at(id);
-    if (function.isModuleBody()) {
-        if (!function.module)
-            return "(module)"_s;
-        return makeString("(module) "_s, textOf(program, program.at(function.module).displayPath));
+    void appendNumber(uint32_t number)
+    {
+        std::array<uint8_t, std::numeric_limits<uint32_t>::digits10 + 1> digits;
+        size_t first = digits.size();
+        do {
+            digits[--first] = static_cast<uint8_t>('0' + number % 10);
+            number /= 10;
+        } while (number);
+        m_names.append(std::span<const uint8_t>(digits).subspan(first));
     }
-    String name = description.left(description.find('\t'));
-    if (name.isEmpty())
-        name = "(anonymous)"_s;
-    if (function.isHiddenInStackTraces())
-        return makeString(name, " (entry)"_s);
-    return name;
+
+    void appendText(const Typed::StringTable& strings, StringID string)
+    {
+        size_t start = m_names.size();
+        if (strings.isAllASCII(string))
+            m_names.append(strings[string]);
+        else
+            m_names.append(byteCast<uint8_t>(strings.toWTFString(string).utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).span()));
+        for (uint8_t& byte : m_names.mutableSpan().subspan(start)) {
+            if (isASCII(byte) && !isASCIIPrintable(byte))
+                byte = ' ';
+        }
+    }
+
+    uint32_t endName()
+    {
+        m_names.append(0);
+        return std::exchange(m_startOfNextName, static_cast<uint32_t>(m_names.size()));
+    }
+
+    void add(uint32_t offset, uint32_t end, uint32_t name) { m_symbols.append({ offset, end, name }); }
+
+    Vector<uint8_t> takeText() { return std::exchange(m_names, { }); }
+
+    Vector<uint8_t> encode(const ImageHeader& header)
+    {
+        constexpr size_t wordsInHeader = 4;
+        constexpr size_t wordsInSymbol = 3;
+        AOT::stableSort(m_symbols, { }, &ImageSymbol::offset);
+
+        Vector<uint8_t> result;
+        result.reserveInitialCapacity((wordsInHeader + wordsInSymbol * m_symbols.size()) * sizeof(uint32_t) + m_names.size());
+        auto appendWord = [&](uint32_t word) {
+            for (unsigned shift = 0; shift < 32; shift += 8)
+                result.append(static_cast<uint8_t>(word >> shift));
+        };
+        appendWord(safeCast<uint32_t>(m_symbols.size()));
+        appendWord(safeCast<uint32_t>(m_names.size()));
+        appendWord(safeCast<uint32_t>(header.codeOffset));
+        appendWord(safeCast<uint32_t>(header.size - header.codeOffset));
+        for (size_t index = 0; index < m_symbols.size(); ++index) {
+            const ImageSymbol& symbol = m_symbols[index];
+            uint32_t end = index + 1 < m_symbols.size() ? std::min(symbol.end, m_symbols[index + 1].offset) : symbol.end;
+            appendWord(symbol.offset);
+            appendWord(end - symbol.offset);
+            appendWord(symbol.name);
+        }
+        result.appendVector(m_names);
+        return result;
+    }
+
+private:
+    Vector<ImageSymbol> m_symbols;
+    Vector<uint8_t> m_names;
+    uint32_t m_startOfNextName { 0 };
+};
+
+} // anonymous namespace
+
+static std::optional<unsigned> lineOfFunctionInSymbol(const Typed::Program& program, const Typed::Function& function)
+{
+    if (!hasModule(function.declarationLocation()))
+        return std::nullopt;
+    const auto& positions = program.at(function.module).positions;
+    if (positions.lineStarts.empty() && positions.columnAdjustments.isEmpty())
+        return std::nullopt;
+    return program.lineColumnFor(function.module, function.position).line;
 }
 
-static String stubName(StubKey key)
+static void appendFunctionToSymbolName(ImageSymbolTable& table, const Typed::Program& program, const Typed::Function& function)
 {
-    StringPrintStream out;
-    if (isOperationCallHead(key)) {
-        dump(out, key.withoutImmediate());
-        out.print(" to "_s, nameOf(entryAtOffset(*key.immediate())));
-    } else
-        dump(out, key);
-    return out.toString();
+    if (function.isModuleBody())
+        table.append("(module)"_s);
+    else if (function.name && function.name != program.strings.emptyString())
+        table.appendText(program.strings, function.name);
+    else
+        table.append("(anonymous)"_s);
+    if (!function.module)
+        return;
+    table.append(" "_s);
+    table.appendText(program.strings, program.at(function.module).displayPath);
+    if (function.isModuleBody())
+        return;
+    if (std::optional<unsigned> line = lineOfFunctionInSymbol(program, function)) {
+        table.append(":"_s);
+        table.appendNumber(*line);
+    }
 }
 
-Vector<ImageSymbol> collectSymbols(const ImageSymbolInputs& inputs)
+static void addSymbolsOfUnits(ImageSymbolTable& table, const Typed::Program& program, const BuiltImage& built, bool hidesNames)
 {
-    const BuiltImage& built = inputs.built;
     const CodeLayout& layout = built.layout;
-    const SharedCode& sharedCode = built.sharedCode;
-    Vector<ImageSymbol> symbols;
-    auto add = [&](SymbolKind kind, size_t offset, size_t size, String&& name = { }, uint32_t index = 0) {
-        symbols.append(ImageSymbol { kind, safeCast<uint32_t>(offset), safeCast<uint32_t>(size), index, { }, WTF::move(name) });
-    };
-
-    Vector<String> descriptions = describeFunctions(inputs.program, inputs.heat);
-    auto addFunction = [&](SymbolKind kind, uint32_t position, size_t size, FunctionID function) {
-        const String& description = descriptions[function.index()];
-        symbols.append(ImageSymbol { kind, layout.bodyStarts[position], safeCast<uint32_t>(size), position, function, functionName(inputs.program, function, description), description });
-    };
-    symbols.reserveCapacity(built.functions.size() + built.foldedFunctions.size());
-    for (uint32_t position = 0; position < built.functions.size(); ++position)
-        addFunction(SymbolKind::Function, position, built.functions[position].body.bytes.size(), built.functions[position].function);
-    CodeIndex index(built.functions.span());
-    for (const FoldedFunction& folded : built.foldedFunctions) {
-        if (std::optional<uint32_t> canonical = index.indexOf(folded.canonicalFunction))
-            addFunction(SymbolKind::FoldedFunction, *canonical, folded.size, folded.function);
+    RELEASE_ASSERT(layout.bodyStarts.size() == built.functions.size());
+    for (uint32_t position = 0; position < built.functions.size(); ++position) {
+        const CompiledCode& code = built.functions[position];
+        if (code.body.bytes.isEmpty())
+            continue;
+        if (hidesNames) {
+            table.append("(function "_s);
+            table.appendNumber(position + 1);
+            table.append(")"_s);
+        } else
+            appendFunctionToSymbolName(table, program, program.at(code.unit.function));
+        if (code.unit.role != Typed::CodeRole::Body) {
+            table.append(" "_s);
+            table.append(nameOf(code.unit.role));
+        }
+        table.add(layout.bodyStarts[position], layout.functionsEnd, table.endName());
     }
+}
 
-    for (uint32_t number = 0; number < layout.sharedCodeCopies.size(); ++number)
-        add(SymbolKind::SharedCodeCopy, layout.sharedCodeCopies[number], layout.sharedCodeSize, "(stubs of compiled code)"_s, number);
+static void appendStubToSymbolName(ImageSymbolTable& table, StubKey key)
+{
+    const StubDescriptor& descriptor = descriptorOf(key.family());
+    table.append(descriptor.name);
+    if (key.form() < descriptor.formNames.size()) {
+        table.append("."_s);
+        table.append(descriptor.formNames[key.form()]);
+    }
+    if (descriptor.axes.contains(StubAxis::Count)) {
+        table.append(".n"_s);
+        table.appendNumber(key.count());
+    }
+    switch (key.callerFrame()) {
+    case CallerFrame::HasFrame:
+        break;
+    case CallerFrame::Frameless:
+        table.append(".Frameless"_s);
+        break;
+    case CallerFrame::StubFrame:
+        table.append(".StubFrame"_s);
+        break;
+    case CallerFrame::KeepsNoFPRs:
+        table.append(".KeepsNoFPRs"_s);
+        break;
+    }
+    if (std::optional<GPRReg> operandRegister = key.operandRegister()) {
+        table.append("("_s);
+        table.append(Reg(*operandRegister).debugName());
+        table.append(")"_s);
+    }
+    if (isOperationCallHead(key)) {
+        table.append(" to "_s);
+        table.append(nameOf(entryAtOffset(*key.immediate())));
+    } else if (std::optional<uint32_t> immediate = key.immediate()) {
+        table.append("#"_s);
+        table.appendNumber(*immediate);
+    }
+}
+
+static void addSymbolsOfSharedCode(ImageSymbolTable& table, const BuiltImage& built)
+{
+    const SharedCode& sharedCode = built.sharedCode;
+    const CodeLayout& layout = built.layout;
+    auto addInEachCopy = [&](uint32_t offset, uint32_t name) {
+        for (uint32_t copy : layout.sharedCodeCopies)
+            table.add(copy + offset, copy + layout.sharedCodeSize, name);
+    };
 
     Vector<StubPlacement> placements = sharedCode.blob.placements;
-    AOT::sort(placements, [](const StubPlacement& a, const StubPlacement& b) {
-        return std::tie(a.offset, a.key) < std::tie(b.offset, b.key);
+    AOT::stableSort(placements, { }, &StubPlacement::offset);
+    removeRepeatedElements(placements, [](const StubPlacement& a, const StubPlacement& b) {
+        return a.offset == b.offset;
     });
-    for (size_t first = 0; first < placements.size();) {
-        uint32_t offset = placements[first].offset;
-        size_t next = first;
-        while (next < placements.size() && placements[next].offset == offset)
-            ++next;
-        size_t end = next < placements.size() ? placements[next].offset : sharedCode.blob.code.bytes.size();
-        for (; first < next; ++first)
-            add(SymbolKind::SharedCode, offset, end - offset, stubName(placements[first].key));
+    if (placements.isEmpty() || placements.first().offset) {
+        table.append("(stubs)"_s);
+        addInEachCopy(0, table.endName());
+    }
+    for (const StubPlacement& placement : placements) {
+        appendStubToSymbolName(table, placement.key);
+        addInEachCopy(placement.offset, table.endName());
     }
 
     const ArgumentThunks& thunks = sharedCode.argumentThunks;
     RELEASE_ASSERT(thunks.offsets.size() == sharedCode.argumentMoves.size());
-    for (size_t i = 0; i < thunks.offsets.size(); ++i) {
-        size_t end = i + 1 < thunks.offsets.size() ? thunks.offsets[i + 1] : thunks.code.bytes.size();
-        add(SymbolKind::SharedCode, sharedCode.argumentThunksOffset + thunks.offsets[i], end - thunks.offsets[i], makeString(stubName(StubKey::fromBits(sharedCode.argumentMoves[i]->at(0))), " with arguments"_s));
+    StubKey calleeOfName;
+    uint32_t name = 0;
+    for (size_t index = 0; index < thunks.offsets.size(); ++index) {
+        StubKey callee = calleeOfArgumentMoves(sharedCode.argumentMoves[index].span());
+        if (!index || callee != calleeOfName) {
+            appendStubToSymbolName(table, callee);
+            table.append(" with arguments"_s);
+            name = table.endName();
+            calleeOfName = callee;
+        }
+        addInEachCopy(sharedCode.argumentThunksOffset + thunks.offsets[index], name);
     }
 
-    const Vector<OutlinedBody>& outlinedBodies = built.outlining.bodies;
-    const OutlinedCode& outlinedCode = built.outlinedCode;
-    for (uint32_t number = 0; number < outlinedBodies.size(); ++number) {
-        if (outlinedBodies[number].singleCaller)
-            continue;
-        uint32_t indexWithinKind = outlinedCode.indexWithinKind[number];
-        add(SymbolKind::SharedCode, sharedCode.sharedBodiesOffset + outlinedCode.sharedBodies.offsets[indexWithinKind], outlinedCode.sharedBodies.sizeOf(indexWithinKind), makeString("outlined "_s, number));
+    if (sharedCode.veneersOffset < layout.sharedCodeSize) {
+        table.append("(veneers)"_s);
+        addInEachCopy(sharedCode.veneersOffset, table.endName());
     }
-    if (sharedCode.veneersOffset < layout.sharedCodeSize)
-        add(SymbolKind::SharedCode, sharedCode.veneersOffset, layout.sharedCodeSize - sharedCode.veneersOffset, "veneers"_s);
-    for (uint32_t number = 0; number < outlinedBodies.size(); ++number) {
-        OptionalIndex singleCaller = outlinedBodies[number].singleCaller;
-        if (!singleCaller)
+}
+
+static void appendRegExpToSymbolName(ImageSymbolTable& table, const Typed::Program& program, const ImageRegExp& record)
+{
+    table.append("/"_s);
+    table.appendText(program.strings, StringID(record.pattern));
+    table.append("/"_s);
+    table.append(byteCast<uint8_t>(Yarr::flagsString(record.flags()).span()));
+}
+
+static std::span<const ImageRegExp> regExpRecordsOf(const BuiltImage& built)
+{
+    RELEASE_ASSERT(built.image.size() >= sizeof(ImageHeader));
+    const ImageHeader& header = spanReinterpretCast<const ImageHeader>(built.image.span().first(sizeof(ImageHeader)))[0];
+    ImageSectionRange range = header.sections[static_cast<unsigned>(ImageSection::RegExps)];
+    return spanReinterpretCast<const ImageRegExp>(built.image.span().subspan(range.offset, range.size));
+}
+
+static Vector<RegExpEntryInSymbols> collectRegExpEntries(std::span<const ImageRegExp> records)
+{
+    Vector<RegExpEntryInSymbols> entries { RegExpEntryInSymbols { 0, RegExpEntryInSymbols::noRegExp, false } };
+    for (uint32_t number = 0; number < records.size(); ++number) {
+        const ImageRegExp& record = records[number];
+        if (record.form() != RegExpRecordForm::Code)
             continue;
-        uint32_t indexWithinKind = outlinedCode.indexWithinKind[number];
-        add(SymbolKind::OwnOutlinedBody, layout.ownBodyOffsets[indexWithinKind], outlinedCode.ownBodies.sizeOf(indexWithinKind), makeString("outlined "_s, number), *singleCaller);
+        entries.append({ record.codeFor8Bit, number, false });
+        entries.append({ record.codeFor16Bit, record.hasCodeFor8BitSubjectsAlone ? RegExpEntryInSymbols::noRegExp : number, true });
+    }
+    AOT::stableSort(entries, [](const RegExpEntryInSymbols& a, const RegExpEntryInSymbols& b) {
+        return std::tie(a.offset, a.regExp) < std::tie(b.offset, b.regExp);
+    });
+    removeRepeatedElements(entries, [](const RegExpEntryInSymbols& a, const RegExpEntryInSymbols& b) {
+        return a.offset == b.offset;
+    });
+    return entries;
+}
+
+static void addSymbolsOfRegExps(ImageSymbolTable& table, const Typed::Program& program, const BuiltImage& built, bool hidesNames)
+{
+    const uint32_t start = built.layout.regExpCodeOffset;
+    const uint32_t end = built.layout.executableSize;
+    if (start == end)
+        return;
+
+    std::span<const ImageRegExp> records = regExpRecordsOf(built);
+    for (const RegExpEntryInSymbols& entry : collectRegExpEntries(records)) {
+        if (entry.regExp == RegExpEntryInSymbols::noRegExp)
+            table.append("(regular expressions)"_s);
+        else if (hidesNames) {
+            table.append("(regular expression "_s);
+            table.appendNumber(entry.regExp);
+            table.append(")"_s);
+        } else
+            appendRegExpToSymbolName(table, program, records[entry.regExp]);
+        if (entry.regExp != RegExpEntryInSymbols::noRegExp && entry.isFor16BitSubjects)
+            table.append(" (16-bit)"_s);
+        table.add(start + entry.offset, end, table.endName());
+    }
+}
+
+Vector<uint8_t> encodeSymbols(const Typed::Program& program, const BuiltImage& built, BuildContext& context)
+{
+    RELEASE_ASSERT(built.image.size() >= sizeof(ImageHeader));
+    const ImageHeader& header = spanReinterpretCast<const ImageHeader>(built.image.span().first(sizeof(ImageHeader)))[0];
+    const CodeLayout& layout = built.layout;
+    bool hidesNames = context.options().obfuscates();
+
+    ImageSymbolTable table;
+    addSymbolsOfUnits(table, program, built, hidesNames);
+    addSymbolsOfSharedCode(table, built);
+    if (layout.ffiCodeSize) {
+        table.append("(FFI code)"_s);
+        table.add(layout.ffiCodeOffset, layout.ffiCodeOffset + layout.ffiCodeSize, table.endName());
+    }
+    addSymbolsOfRegExps(table, program, built, hidesNames);
+    return table.encode(header);
+}
+
+static void appendNumberToMapRow(ImageSymbolTable& table, uint32_t number)
+{
+    table.append("\t"_s);
+    table.appendNumber(number);
+}
+
+static void appendUnitsToMap(ImageSymbolTable& table, const Typed::Program& program, const BuiltImage& built)
+{
+    const CodeLayout& layout = built.layout;
+    RELEASE_ASSERT(layout.bodyStarts.size() == built.functions.size());
+    for (uint32_t position = 0; position < built.functions.size(); ++position) {
+        const CompiledCode& code = built.functions[position];
+        if (code.body.bytes.isEmpty())
+            continue;
+        const Typed::Function& function = program.at(code.unit.function);
+        table.append("F"_s);
+        appendNumberToMapRow(table, position);
+        appendNumberToMapRow(table, layout.bodyStarts[position]);
+        appendNumberToMapRow(table, safeCast<uint32_t>(code.body.bytes.size()));
+        appendNumberToMapRow(table, function.module ? function.module.index() + 1 : 0);
+        appendNumberToMapRow(table, code.unit.function.index());
+        appendNumberToMapRow(table, static_cast<uint32_t>(code.unit.role));
+        table.append("\t"_s);
+        if (function.name)
+            table.appendText(program.strings, function.name);
+        table.append("\t"_s);
+        table.append(nameOf(code.unit.role));
+        appendNumberToMapRow(table, code.unit.placeOfSelector());
+        table.append("\t"_s);
+        if (function.module)
+            table.appendText(program.strings, program.at(function.module).path);
+        appendNumberToMapRow(table, function.position);
+        table.append("\n"_s);
+
+        table.append("FO"_s);
+        for (const BytesOfForm& entry : code.measurements->bytesByForm) {
+            table.append("\t"_s);
+            table.append(nameOf(entry.opcode));
+            table.append("\t"_s);
+            table.append(nameOf(entry.form));
+            appendNumberToMapRow(table, entry.count);
+        }
+        table.append("\n"_s);
+
+        Vector<std::pair<StubKey, uint32_t>, 16> stubsCalled;
+        auto count = [&](StubKey called) {
+            auto counted = std::ranges::find(stubsCalled, called, &std::pair<StubKey, uint32_t>::first);
+            if (counted == stubsCalled.end())
+                stubsCalled.append({ called, 1 });
+            else
+                ++counted->second;
+        };
+        for (const Relocation& relocation : code.body.relocations) {
+            if (relocation.space == SymbolSpace::Stub)
+                count(code.body.stubKeys[relocation.symbol].withoutImmediate());
+            else if (relocation.space == SymbolSpace::ArgumentThunk)
+                count(calleeOfArgumentMoves(code.body.argumentMoves[relocation.symbol]).withoutImmediate());
+        }
+        table.append("FC"_s);
+        for (auto [called, times] : stubsCalled) {
+            table.append("\t"_s);
+            appendStubToSymbolName(table, called);
+            appendNumberToMapRow(table, times);
+        }
+        table.append("\n"_s);
+    }
+}
+
+static void appendSharedCodeToMap(ImageSymbolTable& table, const BuiltImage& built, uint32_t copy)
+{
+    const SharedCode& sharedCode = built.sharedCode;
+    auto beginRow = [&](uint32_t offset) {
+        table.append("T"_s);
+        appendNumberToMapRow(table, copy + offset);
+        table.append("\t"_s);
+    };
+
+    for (const StubPlacement& placement : sharedCode.blob.placements) {
+        beginRow(placement.offset);
+        appendStubToSymbolName(table, placement.key);
+        table.append("\n"_s);
     }
 
-    if (const RegExpSection& section = built.regExpSection; !section.bytes.isEmpty()) {
-        add(SymbolKind::RegExpSection, layout.regExpCodeOffset, section.bytes.size(), "(regular expressions)"_s);
-        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bodySizes;
-        BitVector hasCode(section.entries.size());
-        Vector<ImageSymbol> routines;
-        for (const RegExpSectionItem& item : section.items) {
-            switch (item.kind) {
-            case RegExpSectionItem::Kind::Body:
-                bodySizes.add(item.offset, item.size);
-                hasCode.quickSet(item.regExp);
-                break;
-            case RegExpSectionItem::Kind::DuplicateBody:
-                hasCode.quickSet(item.regExp);
-                break;
-            case RegExpSectionItem::Kind::Routine:
-                routines.append(ImageSymbol { .kind = SymbolKind::RegExpRoutine, .offset = layout.regExpCodeOffset + item.offset, .size = item.size });
-                break;
-            case RegExpSectionItem::Kind::Table:
-                break;
+    const ArgumentThunks& thunks = sharedCode.argumentThunks;
+    RELEASE_ASSERT(thunks.offsets.size() == sharedCode.argumentMoves.size());
+    for (size_t index = 0; index < thunks.offsets.size(); ++index) {
+        beginRow(sharedCode.argumentThunksOffset + thunks.offsets[index]);
+        appendStubToSymbolName(table, calleeOfArgumentMoves(sharedCode.argumentMoves[index].span()));
+        table.append(" with arguments\n"_s);
+    }
+
+    if (sharedCode.veneersOffset < built.layout.sharedCodeSize) {
+        beginRow(sharedCode.veneersOffset);
+        table.append("(veneers)\n"_s);
+    }
+}
+
+static void appendRegExpCodeToMap(ImageSymbolTable& table, const Typed::Program& program, const BuiltImage& built)
+{
+    const uint32_t start = built.layout.regExpCodeOffset;
+    const uint32_t end = built.layout.executableSize;
+    if (start == end)
+        return;
+
+    std::span<const ImageRegExp> records = regExpRecordsOf(built);
+    Vector<RegExpEntryInSymbols> entries = collectRegExpEntries(records);
+    for (size_t index = 0; index < entries.size(); ++index) {
+        const RegExpEntryInSymbols& entry = entries[index];
+        uint32_t endOfEntry = index + 1 < entries.size() ? entries[index + 1].offset : end - start;
+        bool belongsToOneRegExp = entry.regExp != RegExpEntryInSymbols::noRegExp;
+        table.append(belongsToOneRegExp ? "X"_s : "XR"_s);
+        appendNumberToMapRow(table, start + entry.offset);
+        appendNumberToMapRow(table, endOfEntry - entry.offset);
+        if (belongsToOneRegExp) {
+            const ImageRegExp& record = records[entry.regExp];
+            appendNumberToMapRow(table, entry.isFor16BitSubjects ? 16 : 8);
+            appendNumberToMapRow(table, record.rawFlags);
+            table.append("\t"_s);
+            appendRegExpToSymbolName(table, program, record);
+        }
+        table.append("\n"_s);
+    }
+}
+
+#if ENABLE(WEBASSEMBLY)
+static void appendWasmCodeToMap(ImageSymbolTable& table, const BuiltImage& built)
+{
+    RELEASE_ASSERT(built.image.size() >= sizeof(ImageHeader));
+    const ImageHeader& header = spanReinterpretCast<const ImageHeader>(built.image.span().first(sizeof(ImageHeader)))[0];
+    ImageSectionRange range = header.sections[static_cast<unsigned>(ImageSection::WebAssemblyDirectory)];
+    if (!range.size)
+        return;
+
+    std::span<const uint8_t> directory = built.image.span().subspan(range.offset, range.size);
+    uint32_t numberOfModules = spanReinterpretCast<const Wasm::DirectoryInImage>(directory.first(sizeof(Wasm::DirectoryInImage)))[0].numberOfModules;
+    auto modules = spanReinterpretCast<const Wasm::ModuleInImage>(directory.subspan(sizeof(Wasm::DirectoryInImage), numberOfModules * sizeof(Wasm::ModuleInImage)));
+    for (uint32_t moduleIndex = 0; moduleIndex < numberOfModules; ++moduleIndex) {
+        const Wasm::ModuleInImage& module = modules[moduleIndex];
+        table.append("WM"_s);
+        appendNumberToMapRow(table, moduleIndex);
+        appendNumberToMapRow(table, module.sourceSize);
+        appendNumberToMapRow(table, module.numberOfImportedFunctions);
+        appendNumberToMapRow(table, module.numberOfFunctions);
+        table.append("\n"_s);
+
+        auto functionsOf = [&](unsigned flavor) {
+            return spanReinterpretCast<const Wasm::FunctionInImage>(directory.subspan(module.functions[flavor], module.numberOfFunctions * sizeof(Wasm::FunctionInImage)));
+        };
+        for (unsigned flavor = 0; flavor < Wasm::numberOfImageCodeFlavors; ++flavor) {
+            auto functions = functionsOf(flavor);
+            for (uint32_t index = 0; index < module.numberOfFunctions; ++index) {
+                if (flavor && functions[index].entry == functionsOf(0)[index].entry)
+                    continue;
+                table.append("W"_s);
+                appendNumberToMapRow(table, built.layout.webAssemblyCodeOffset + functions[index].entry);
+                appendNumberToMapRow(table, functions[index].size);
+                appendNumberToMapRow(table, moduleIndex);
+                appendNumberToMapRow(table, module.numberOfImportedFunctions + index);
+                appendNumberToMapRow(table, flavor);
+                table.append("\n"_s);
             }
         }
-        for (size_t regExp : hasCode) {
-            String pattern = textOf(inputs.program, inputs.regExpRequests.all()[regExp].pattern);
-            for (uint32_t is16Bit : { 0u, 1u }) {
-                uint32_t entry = section.entries[regExp][is16Bit];
-                add(SymbolKind::RegExpBody, layout.regExpCodeOffset + entry, bodySizes.get(entry), String(pattern), safeCast<uint32_t>(regExp) << 1 | is16Bit);
-            }
-        }
-        symbols.appendVector(WTF::move(routines));
     }
-
-    if (mayHaveWebAssemblyModules(inputs.program) && layout.webAssemblyCodeOffset < layout.ffiCodeOffset)
-        add(SymbolKind::WebAssemblyCode, layout.webAssemblyCodeOffset, layout.ffiCodeOffset - layout.webAssemblyCodeOffset, "(WebAssembly code)"_s);
-    if (!built.constants.bytes.isEmpty())
-        add(SymbolKind::Constants, layout.constantsOffset, built.constants.bytes.size(), "(constants)"_s);
-    if (layout.ffiCodeSize)
-        add(SymbolKind::FFICode, layout.ffiCodeOffset, layout.ffiCodeSize, "(FFI code)"_s);
-    return symbols;
 }
+#endif
 
-Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol> symbols, std::span<const uint8_t> image)
+Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program& program, const BuiltImage& built)
 {
-    struct Entry {
-        uint32_t offset;
-        const String* name;
-        uint32_t nameOffset { 0 };
-    };
-    Vector<uint32_t, 4> sharedCodeCopies;
-    bool hasSharedCode = false;
-    for (const ImageSymbol& symbol : symbols) {
-        if (symbol.kind == SymbolKind::SharedCodeCopy)
-            sharedCodeCopies.append(symbol.offset);
-        hasSharedCode |= symbol.kind == SymbolKind::SharedCode;
-    }
+    const CodeLayout& layout = built.layout;
 
-    Vector<Entry> entries;
-    entries.reserveInitialCapacity(symbols.size());
-    for (const ImageSymbol& symbol : symbols) {
-        switch (symbol.kind) {
-        case SymbolKind::Function:
-        case SymbolKind::RegExpSection:
-        case SymbolKind::WebAssemblyCode:
-        case SymbolKind::Constants:
-        case SymbolKind::FFICode:
-            entries.append(Entry { symbol.offset, &symbol.name });
-            break;
-        case SymbolKind::SharedCode:
-            for (uint32_t sharedCodeCopy : sharedCodeCopies)
-                entries.append(Entry { sharedCodeCopy + symbol.offset, &symbol.name });
-            break;
-        case SymbolKind::SharedCodeCopy:
-            if (!hasSharedCode)
-                entries.append(Entry { symbol.offset, &symbol.name });
-            break;
-        case SymbolKind::FoldedFunction:
-        case SymbolKind::OwnOutlinedBody:
-        case SymbolKind::RegExpBody:
-        case SymbolKind::RegExpRoutine:
-            break;
+    ImageSymbolTable table;
+    appendUnitsToMap(table, program, built);
+    for (uint32_t copy : layout.sharedCodeCopies)
+        appendSharedCodeToMap(table, built, copy);
+    for (uint32_t copy : layout.sharedCodeCopies) {
+        for (const StubPlacement& placement : built.sharedCode.blob.placements) {
+            if (!neverReturns(placement.key))
+                continue;
+            table.append("TN"_s);
+            appendNumberToMapRow(table, copy + placement.offset);
+            table.append("\n"_s);
         }
     }
-    AOT::stableSort(entries, { }, &Entry::offset);
-    entries.shrink(std::ranges::unique(entries, { }, &Entry::offset).begin() - entries.begin());
-
-    Vector<uint8_t> names;
-    UncheckedKeyHashMap<String, uint32_t> nameOffsets;
-    for (Entry& entry : entries) {
-        entry.nameOffset = nameOffsets.ensure(*entry.name, [&] {
-            uint32_t offset = safeCast<uint32_t>(names.size());
-            names.append(byteCast<uint8_t>(entry.name->utf8().span()));
-            names.append(0);
-            return offset;
-        }).iterator->value;
+    table.append("R"_s);
+    appendNumberToMapRow(table, layout.functionsEnd);
+    table.append("\n"_s);
+    if (layout.ffiCodeSize) {
+        table.append("N"_s);
+        appendNumberToMapRow(table, layout.ffiCodeOffset);
+        appendNumberToMapRow(table, layout.ffiCodeSize);
+        table.append("\n"_s);
     }
-
-    const ImageHeader& header = headerOf(image);
-    Vector<uint8_t> result;
-    auto appendWord = [&](uint64_t word) {
-        for (unsigned shift = 0; shift < 32; shift += 8)
-            result.append(static_cast<uint8_t>(safeCast<uint32_t>(word) >> shift));
-    };
-    result.reserveInitialCapacity((4 + entries.size() * 3) * sizeof(uint32_t) + names.size());
-    appendWord(entries.size());
-    appendWord(names.size());
-    appendWord(header.codeOffset);
-    appendWord(header.size - header.codeOffset);
-    for (size_t i = 0; i < entries.size(); ++i) {
-        appendWord(entries[i].offset);
-        appendWord((i + 1 < entries.size() ? entries[i + 1].offset : safeCast<uint32_t>(header.codeSize)) - entries[i].offset);
-        appendWord(entries[i].nameOffset);
-    }
-    result.appendVector(names);
-    return result;
+#if ENABLE(WEBASSEMBLY)
+    appendWasmCodeToMap(table, built);
+#endif
+    appendRegExpCodeToMap(table, program, built);
+    return table.takeText();
 }
 
-static unsigned countDescribedTypes(std::span<const uint8_t> tableBytes)
+void writeMapFile(const UTF8CString& path, const Typed::Program& program, const BuiltImage& built, BuildContext&)
 {
-    if (tableBytes.empty())
-        return 0;
-    auto& tables = *reinterpret_cast<const ProgramTables*>(tableBytes.data());
-    Vector<uint32_t> typeOffsets(tables.types().subspan(1 + ProgramTables::numberOfTypeGroupWords(tables.numberOfTypes())));
-    AOT::sort(typeOffsets);
-    unsigned describedTypes = 0;
-    for (size_t i = 0; i < typeOffsets.size(); ++i)
-        describedTypes += typeOffsets[i] && (!i || typeOffsets[i] != typeOffsets[i - 1]);
-    return describedTypes;
-}
+    if (path.isEmpty())
+        return;
 
-void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols, const ImageSymbolInputs& inputs, std::span<const uint8_t> image, const BuildContext& context)
-{
-    // A build with several entry points compiles an image for each: the first map has the name that was asked for, the next ones that name and ".1", ".2" ..
-    // The layers and the pieces of a test run are built by a process each, which all get the one name from their environment: "%p" stands for the number of the process.
-    String name = makeStringByReplacingAll(String::fromUTF8(path.span()), "%p"_s, String::number(getCurrentProcessID()));
+    String name = makeStringByReplacingAll(String::fromUTF8ReplacingInvalidSequences(path.span()), "%p"_s, String::number(getCurrentProcessID()));
     unsigned number = [&] {
         static Lock lock;
-        static NeverDestroyed<HashMap<String, unsigned>> mapsWritten;
         Locker locker { lock };
+        static NeverDestroyed<HashMap<String, unsigned>> mapsWritten;
         return mapsWritten->add(name, 0).iterator->value++;
     }();
-    std::unique_ptr<FilePrintStream> map = FilePrintStream::open((number ? makeString(name, '.', number) : name).utf8(), "wb"_s);
-    if (!map) {
-        dataLogLn("AOT: cannot write the map file ", path);
-        return;
-    }
-    PrintStream& out = *map;
-    const BuiltImage& built = inputs.built;
-    const Typed::Program& program = inputs.program;
-    auto forEachSymbol = [&](SymbolKind kind, const auto& functor) {
-        for (const ImageSymbol& symbol : symbols) {
-            if (symbol.kind == kind)
-                functor(symbol);
-        }
-    };
-    auto printFunctionColumns = [&](const ImageSymbol& symbol) {
-        const Typed::Function& function = program.at(symbol.function);
-        out.println(symbol.offset, "\t", symbol.size, "\t", function.module ? function.module.index() + 1 : 0, "\t", symbol.function.index(), "\t", static_cast<unsigned>(function.role), "\t", symbol.description);
-    };
-    auto printOffsetAndSize = [&](SymbolKind kind, ASCIILiteral letters) {
-        forEachSymbol(kind, [&](const ImageSymbol& symbol) {
-            out.println(letters, "\t", symbol.offset, "\t", symbol.size);
-        });
-    };
+    if (number)
+        name = makeString(name, '.', number);
 
-    forEachSymbol(SymbolKind::Function, [&](const ImageSymbol& symbol) {
-        out.print("F\t", symbol.index, "\t");
-        printFunctionColumns(symbol);
-        if (const String& sizes = built.functions[symbol.index].sizesByOperation; !sizes.isNull())
-            out.println("O\t", symbol.index, sizes);
-    });
-    forEachSymbol(SymbolKind::FoldedFunction, [&](const ImageSymbol& symbol) {
-        out.print("A\t");
-        printFunctionColumns(symbol);
-    });
-
-    forEachSymbol(SymbolKind::SharedCodeCopy, [&](const ImageSymbol& symbol) {
-        out.println("C\t", symbol.offset);
-    });
-    forEachSymbol(SymbolKind::SharedCode, [&](const ImageSymbol& symbol) {
-        out.println("T\t", symbol.offset, "\t", symbol.name);
-    });
-    for (const StubPlacement& placement : built.sharedCode.blob.placements) {
-        if (neverReturns(placement.key))
-            out.println("TN\t", placement.offset);
-    }
-
-    if (!built.outlining.bodies.isEmpty())
-        out.println("Y\tO holds offsets of the functions before outlining");
-    forEachSymbol(SymbolKind::OwnOutlinedBody, [&](const ImageSymbol& symbol) {
-        out.println("U\t", symbol.offset, "\t", symbol.size, "\t", symbol.index, "\t", symbol.name);
-    });
-    for (size_t position = 0; position < built.outlining.sites.size(); ++position) {
-        if (built.outlining.sites[position].isEmpty())
-            continue;
-        out.print("P\t", position);
-        for (const OutlinedSite& site : built.outlining.sites[position])
-            out.print("\t", site.offset, "\t", site.length, "\t", site.body);
-        out.println();
-        if (built.outlinedCode.paddingBeforeAliases[position].isEmpty())
-            continue;
-        out.print("E\t", position);
-        for (auto [offset, size] : built.outlinedCode.paddingBeforeAliases[position])
-            out.print("\t", offset, "\t", size);
-        out.println();
-    }
-    out.println("R\t", built.layout.functionsEnd);
-
-    ImageSectionRange tables = headerOf(image).sections[static_cast<size_t>(ImageSection::ProgramTables)];
-    out.println("Z\t", tables.size, "\t0\t", countDescribedTypes(image.subspan(tables.offset, tables.size)));
-    const IdentifierNumbering& identifiers = context.identifierNumbering();
-    for (uint32_t identifier = 1; identifier < identifiers.count(); ++identifier)
-        out.println("I\t", identifier, "\t", escapeForMapLine(descriptionOf(program, identifiers.at(identifier))));
-
-    forEachSymbol(SymbolKind::RegExpBody, [&](const ImageSymbol& symbol) {
-        out.println("X\t", symbol.offset, "\t", symbol.size, "\t", symbol.index & 1 ? 16 : 8, "\t", inputs.regExpRequests.all()[symbol.index >> 1].flags.toRaw(), "\t", escapeForMapLine(symbol.name));
-    });
-    printOffsetAndSize(SymbolKind::RegExpRoutine, "XR"_s);
-    printOffsetAndSize(SymbolKind::Constants, "K"_s);
-    printOffsetAndSize(SymbolKind::FFICode, "N"_s);
-    if (!inputs.arrivalSites.isNull())
-        out.print(inputs.arrivalSites);
-    out.println("B\t", built.layout.codeSize);
+    Vector<uint8_t> rows = encodeRowsOfMapFile(program, built);
+    if (FileSystem::overwriteEntireFile(name, rows.span()) != rows.size())
+        dataLogLn("AOT: cannot write the map file ", name);
 }
 
 } } // namespace JSC::AOT

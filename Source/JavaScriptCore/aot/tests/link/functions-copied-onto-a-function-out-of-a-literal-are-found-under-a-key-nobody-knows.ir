@@ -1,0 +1,39 @@
+# function Holder() {} Object.assign(Holder, { used, unused }); Holder[hidden]()
+# A control of functions-copied-onto-a-function-out-of-a-literal-do-not-meet.ir.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+layout L0 fields=[{key="used" declared={type=anything}}, {key="unused" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectAssign
+    v6 = Call v5, v4, v0, v3 calleeKey="assign" calleeName="Object.assign"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="hidden" [isFreeName]
+    v9 = ElemGet v0, v8
+    v10 = Call v9, v0
+    Return v10
+}
+function f1 name="Holder" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="used" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="unused" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

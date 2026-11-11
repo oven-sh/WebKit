@@ -10,18 +10,19 @@
 
 #include "AOTChainDependents.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTInstance.h"
 #include "AOTKeyOrderTable.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesAnswers.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTSort.h"
+#include "AOTPropertyListCache.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
+#include "MarkedSpace.h"
+#include "StructureCache.h"
 #include <algorithm>
-#include <wtf/PrintStream.h>
-#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -42,35 +43,15 @@ AssignmentPlanCache::AssignmentPlanCache(State& state)
     , m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "assignment plans"_s, *this);
-    if (Options::aotCountsPath())
-        m_copyCounts = makeUnique<UncheckedKeyHashMap<String, uint32_t>>();
 }
 
 AssignmentPlanCache::~AssignmentPlanCache() = default;
 
-void AssignmentPlanCache::note(ASCIILiteral kind, ASCIILiteral what)
+NEVER_INLINE const ExcludedNameList& AssignmentPlanCache::addExcludedNames(const ExcludedRun& run)
 {
-    if (m_copyCounts)
-        ++m_copyCounts->add(makeString(kind, what), 0).iterator->value;
-}
-
-void AssignmentPlanCache::dumpCopies(PrintStream& out) const
-{
-    if (!m_copyCounts)
-        return;
-    auto lines = copyToVector(m_copyCounts->keys());
-    AOT::sort(lines, [](const String& a, const String& b) {
-        return codePointCompareLessThan(a, b);
-    });
-    for (const String& line : lines)
-        out.println(m_copyCounts->get(line), "\t"_s, line);
-}
-
-NEVER_INLINE const ExcludedNameList& AssignmentPlanCache::addExcludedNames(VM& vm, const ExcludedRun& run)
-{
-    ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
+    ProgramIdentifiers& identifiers = identifiersOf(m_state.instance);
     Vector<UniquedStringImpl*> names(run.identifiers.size(), [&](size_t index) {
-        return identifiers.identifier(run.identifiers[index]).impl();
+        return identifiers.uid(run.identifiers[index]);
     });
     auto list = makeUnique<ExcludedNameList>(WTF::move(names), run.numberPlusOne);
     const ExcludedNameList& added = *list;
@@ -86,19 +67,6 @@ const ExcludedNameList* AssignmentPlanCache::excludedListAt(std::span<UniquedStr
         return nullptr;
     const ExcludedNameList* list = m_excludedListsByAddress.get(names.data());
     return list && list->names().size() == names.size() ? list : nullptr;
-}
-
-bool AssignmentPlanCache::isSecondCopy(uint32_t hash)
-{
-    if (!m_copiesWithoutPlan)
-        m_copiesWithoutPlan = makeUnique<RememberedCopies>();
-    if (m_copiesWithoutPlan->testAndSet(hash % numberOfCopiesRemembered))
-        return true;
-    if (++m_numberOfCopiesWithoutPlan > numberOfCopiesRemembered / 2) {
-        m_copiesWithoutPlan->clearAll();
-        m_numberOfCopiesWithoutPlan = 0;
-    }
-    return false;
 }
 
 NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source, uint32_t hash)
@@ -127,7 +95,7 @@ NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* tar
     if (!plan.excludedList)
         plan.excludedNames.appendRange(source.excludedNames.begin(), source.excludedNames.end());
     didWritePlan(plan);
-    count(vm, RuntimeCounterID::AssignmentPlansMade);
+    countEvent(vm, RuntimeCounterID::AssignmentPlansCreated);
     fillPlan(vm, plan, setIndex * waysPerSet + static_cast<unsigned>(way - set.ways.begin()), target, extraProperties, source);
     didWritePlan(plan);
     return &plan;
@@ -208,20 +176,22 @@ struct AssignedProperty {
 
 }
 
-static bool hasForm(const FieldData* fieldOrNull)
+static bool hasFormOfItsOwn(const FieldData* fieldOrNull)
 {
     return fieldOrNull && fieldOrNull->flags & fieldAttributeFlags;
 }
 
-static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, const AssignmentSource& source)
+static std::optional<Vector<AssignedProperty, 16>> listOwnPropertiesOfAssignmentSource(VM& vm, const AssignmentSource& source)
 {
     Vector<AssignedProperty, 16> properties;
     if (const Object* compiledSource = source.compiledObject; compiledSource && source.propertyStorage) {
-        const Vector<PropertyListEntry>* listed = compiledSource->fieldsAndExtraPropertiesInKeyOrder(vm);
+        if (hasIndexedProperties(source.propertyStorage->indexingType()))
+            return std::nullopt;
+        const CachedPropertyList* listed = cachedPropertyList(vm, *compiledSource);
         if (!listed)
             return std::nullopt;
-        for (const PropertyListEntry& property : *listed) {
-            if (hasForm(property.field) || (property.field && isPreparedBeforeLookups(vm, property.name)))
+        for (const PropertyListEntry& property : listed->properties) {
+            if (hasFormOfItsOwn(property.field) || (property.field && isPreparedBeforeLookups(vm, property.name)))
                 return std::nullopt;
             properties.append({ property.name, property.field, property.offsetInExtraProperties });
         }
@@ -230,13 +200,13 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
     if (const Object* compiledSource = source.compiledObject) {
         ObjectModel& objects = *compiledSource->state().objects;
         const LayoutData& layout = compiledSource->layout();
-        auto entries = objects.keyOrders.entriesInOrder(layout, orderOf(source.orderWord)).first(countOf(source.orderWord));
+        auto entries = objects.keyOrders.entriesListedBy(layout, source.orderWord);
         properties.reserveInitialCapacity(entries.size());
         for (uint16_t index : entries) {
             if (index >= layout.numberOfFields)
                 return std::nullopt;
             const FieldData& field = layout.fields()[index];
-            if (field.attributes() || hasForm(&field))
+            if (field.attributes() || hasFormOfItsOwn(&field))
                 return std::nullopt;
             if (objects.layouts.hasSymbolKey(field) && isPreparedBeforeLookups(vm, objects.layouts.nameOf(vm, field)))
                 return std::nullopt;
@@ -246,7 +216,9 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
         return properties;
     }
     Structure* sourceStructure = source.object->structure();
-    if (!flattenOnce(vm, source.object) || source.object->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+    if (sourceStructure->isDictionary() && (!flattenOnce(vm, source.object) || sourceStructure->isDictionary() || source.object->structure() != sourceStructure))
+        return std::nullopt;
+    if (source.object->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         return std::nullopt;
     bool hasOnlyDataProperties = true;
     sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
@@ -263,7 +235,7 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
 
 static std::optional<Vector<AssignedProperty, 16>> listAssignedProperties(VM& vm, const AssignmentSource& source, const ExcludedNameList* excludedListOrNull)
 {
-    auto properties = listOwnProperties(vm, source);
+    auto properties = listOwnPropertiesOfAssignmentSource(vm, source);
     if (properties && !source.excludedNames.empty()) {
         properties->removeAllMatching([&](const AssignedProperty& property) {
             return excludedListOrNull ? excludedListOrNull->contains(property.name) : std::ranges::contains(source.excludedNames, property.name);
@@ -272,7 +244,7 @@ static std::optional<Vector<AssignedProperty, 16>> listAssignedProperties(VM& vm
     return properties;
 }
 
-static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::span<UniquedStringImpl* const> names, bool addsAllAtOnce)
+static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::span<UniquedStringImpl* const> names)
 {
     PropertyOffset offset = invalidOffset;
     Structure* existing = structure;
@@ -283,7 +255,7 @@ static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::spa
     }
     if (existing)
         return existing;
-    if (addsAllAtOnce && names.size() > 1) {
+    if (names.size() > 1) {
         if (Structure* created = Structure::createWithProperties(vm, structure, names, 0))
             return created->isDictionary() ? nullptr : created;
     }
@@ -293,6 +265,125 @@ static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::spa
             return nullptr;
     }
     return structure;
+}
+
+bool AssignmentPlanCache::isSecondCopy(uint32_t hash)
+{
+    if (!m_copiesWithoutPlan)
+        m_copiesWithoutPlan = makeUnique<RememberedCopies>();
+    if (m_copiesWithoutPlan->testAndSet(hash % numberOfCopiesRemembered))
+        return true;
+    if (++m_numberOfCopiesWithoutPlan > numberOfCopiesRemembered / 2) {
+        m_copiesWithoutPlan->clearAll();
+        m_numberOfCopiesWithoutPlan = 0;
+    }
+    return false;
+}
+
+void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second)
+{
+    struct PropertyOfCopyOfTwo {
+        AssignedProperty property;
+        unsigned source;
+    };
+    Vector<PropertyOfCopyOfTwo, 32> copied;
+    Vector<UniquedStringImpl*, 32> names;
+    std::array<const AssignmentSource*, 2> sources { first, second };
+    for (unsigned index = 0; index < sources.size(); ++index) {
+        if (!sources[index])
+            continue;
+        auto properties = listAssignedProperties(vm, *sources[index], nullptr);
+        if (!properties)
+            return;
+        for (const AssignedProperty& property : *properties) {
+            if (parseIndex(PropertyName(property.name)) || property.name == vm.propertyNames->underscoreProto.impl())
+                return;
+            if (size_t place = names.find(property.name); place != notFound) {
+                copied[place] = { property, index };
+                continue;
+            }
+            names.append(property.name);
+            copied.append({ property, index });
+            if (names.size() > JSFinalObject::maxInlineCapacity)
+                return;
+        }
+    }
+    constexpr size_t roomForPropertiesAddedLater = 1;
+    size_t cellSize = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(names.size() + roomForPropertiesAddedLater));
+    size_t inlineCapacity = (cellSize - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
+    if (names.isEmpty() || inlineCapacity > JSFinalObject::maxInlineCapacity)
+        return;
+    Structure* empty = realm->structureCache().emptyObjectStructureForPrototype(realm, realm->objectPrototype(), static_cast<unsigned>(inlineCapacity));
+    Structure* structure = structureWithAddedNames(vm, empty, names.span());
+    if (!structure)
+        return;
+
+    for (size_t place = 0; place < copied.size(); ++place) {
+        PropertyOffset offset = structure->get(vm, names[place]);
+        if (!isValidOffset(offset) || !isInlineOffset(offset))
+            return;
+        auto& [property, source] = copied[place];
+        if (property.field)
+            plan.sources[source].fields.appendField(*property.field, offset);
+        else
+            plan.sources[source].properties.appendProperty(property.offset, offset);
+    }
+    for (CopyOfTwoPlan::Source& source : plan.sources) {
+        source.fields.structure = structure;
+        source.properties.structure = structure;
+    }
+    plan.structure = structure;
+}
+
+CopyOfTwoPlan* AssignmentPlanCache::planForCopyOfTwo(VM& vm, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second)
+{
+    auto wordsOf = [](const AssignmentSource* source) -> uint64_t {
+        if (!source)
+            return 0;
+        return (static_cast<uint64_t>(source->object->structureID().bits()) << 32 | source->propertyStorageStructureID().bits()) ^ static_cast<uint64_t>(source->orderWord) * 0x9e3779b97f4a7c15ull;
+    };
+    uint32_t hash = WTF::intHash(static_cast<uint64_t>(wordsOf(first) ^ std::rotl(wordsOf(second), 29) * 0xc2b2ae3d27d4eb4full));
+    auto placeAt = [&](unsigned step) -> std::unique_ptr<CopyOfTwoPlan>& {
+        return m_copiesOfTwo[(hash + step) % numberOfCopiesOfTwo];
+    };
+    for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo; ++step) {
+        CopyOfTwoPlan* plan = placeAt(step).get();
+        if (plan && plan->isFor(first, second)) [[likely]] {
+            plan->visitsInVainLeft = CopyOfTwoPlan::maxVisitsInVain;
+            return plan;
+        }
+    }
+    if (!isSecondCopy(hash))
+        return nullptr;
+
+    std::unique_ptr<CopyOfTwoPlan>* place = nullptr;
+    for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo && !place; ++step) {
+        if (!placeAt(step))
+            place = &placeAt(step);
+    }
+    for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo && !place; ++step) {
+        if (!placeAt(step)->visitsInVainLeft)
+            place = &placeAt(step);
+        else
+            --placeAt(step)->visitsInVainLeft;
+    }
+    if (!place)
+        return nullptr;
+
+    *place = makeUnique<CopyOfTwoPlan>();
+    CopyOfTwoPlan& plan = **place;
+    std::array<const AssignmentSource*, 2> sources { first, second };
+    for (unsigned index = 0; index < sources.size(); ++index) {
+        if (!sources[index])
+            continue;
+        plan.sources[index].structure = sources[index]->object->structureID();
+        plan.sources[index].propertyStorage = sources[index]->propertyStorageStructureID();
+        plan.sources[index].orderWord = sources[index]->orderWord;
+    }
+    fillPlanForCopyOfTwo(vm, plan, realm, first, second);
+    m_writes.recordAll();
+    countEvent(vm, RuntimeCounterID::AssignmentPlansCreated);
+    return &plan;
 }
 
 void AssignmentPlanCache::growMappedCopies()
@@ -355,7 +446,7 @@ FieldMap* AssignmentPlanCache::fieldMapFor(const LayoutData& target, const Layou
 FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne)
 {
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
-    if (from.attributes() || hasForm(&from))
+    if (from.attributes() || hasFormOfItsOwn(&from))
         return { FieldMap::isNotServed };
     if (!layouts.hasStringKey(from) && !layouts.hasSymbolKey(from))
         return { FieldMap::isLeftOut };
@@ -365,14 +456,13 @@ FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutDat
     if (excludedRunNumberPlusOne && m_excludedListsByRun.get(excludedRunNumberPlusOne)->contains(name))
         return { FieldMap::isLeftOut };
     const FieldData* to = layouts.field(vm, target, name);
-    if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
+    if (!to || to->flags & (fieldAttributeFlags | fieldMayExistWithoutStorage))
         return { FieldMap::isNotServed };
     if (to->holdsRawValueFromBirth)
         return { FieldMap::isNotServed };
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)
         return { FieldMap::isNotServed };
-    // A granule starts as zeros, which have to say that the fields in it are absent. The copy fills a granule that holds one field.
     const SlotTraits traits = traitsOf(representation);
     if (to->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize)
         return { FieldMap::isNotServed };
@@ -383,124 +473,6 @@ FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutDat
         state |= FieldMap::testsUndefinedAndNull;
     uint8_t acceptedKinds = fit == SlotFit::IsTested ? kindsAlwaysAccepted(layouts.typeOf(*to)).toRaw() : 0;
     return { state, moveKindFor(from.slot.representation(), representation, fit), acceptedKinds };
-}
-
-void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second, bool isOrdinaryCopy)
-{
-    struct CopiedProperty {
-        AssignedProperty property;
-        unsigned source;
-    };
-    Vector<CopiedProperty, 32> copied;
-    Vector<UniquedStringImpl*, 32> names;
-    std::array<const AssignmentSource*, 2> sources { first, second };
-    for (unsigned index = 0; index < sources.size(); ++index) {
-        if (!sources[index])
-            continue;
-        auto properties = listAssignedProperties(vm, *sources[index], nullptr);
-        if (!properties)
-            return notePlanWithoutUse("a source of two has no list of its properties"_s);
-        for (const AssignedProperty& property : *properties) {
-            if (parseIndex(PropertyName(property.name)) || property.name == vm.propertyNames->underscoreProto.impl())
-                return notePlanWithoutUse("a name is an index or __proto__"_s);
-            if (size_t place = names.find(property.name); place != notFound) {
-                copied[place] = { property, index };
-                continue;
-            }
-            names.append(property.name);
-            copied.append({ property, index });
-            // Each name is looked for among those before it.
-            if (names.size() > JSFinalObject::maxInlineCapacity)
-                return notePlanWithoutUse("the properties of two sources do not fit a cell"_s);
-        }
-    }
-    size_t size = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(names.size() + 1));
-    unsigned inlineCapacity = static_cast<unsigned>((size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue));
-    bool fitsCell = isOrdinaryCopy ? names.size() < JSFinalObject::maxInlineCapacity : !names.isEmpty() && inlineCapacity <= JSFinalObject::maxInlineCapacity;
-    if (!fitsCell)
-        return notePlanWithoutUse("the properties of two sources do not fit a cell"_s);
-    Structure* empty = realm->structureCache().emptyObjectStructureForPrototype(realm, realm->objectPrototype(), std::min<unsigned>(inlineCapacity, JSFinalObject::maxInlineCapacity));
-    Structure* structure = structureWithAddedNames(vm, empty, names.span(), !isOrdinaryCopy);
-    if (!structure)
-        return notePlanWithoutUse("the names of two sources make a dictionary"_s);
-
-    for (size_t place = 0; place < copied.size(); ++place) {
-        PropertyOffset offset = structure->get(vm, names[place]);
-        if (!isInlineOffset(offset))
-            return notePlanWithoutUse("the properties of two sources do not fit a cell"_s);
-        auto& [property, source] = copied[place];
-        if (property.field)
-            plan.sources[source].fields.appendField(*property.field, offset);
-        else
-            plan.sources[source].properties.appendProperty(property.offset, offset);
-    }
-    for (CopyOfTwoPlan::Source& source : plan.sources) {
-        source.fields.structure = structure;
-        source.properties.structure = structure;
-    }
-    plan.structure = structure;
-}
-
-std::unique_ptr<FieldMovePlan> AssignmentPlanCache::createPlanForOrdinaryCopy(VM& vm, JSGlobalObject* realm, JSObject* source, const ExcludedRun& excluded)
-{
-    const Object* compiled = compiledObjectOrNull(source);
-    AssignmentSource from { source, compiled, compiled ? nullptr : source, compiled ? compiled->orderWord() & orderAndCountMask : 0 };
-    if (excluded.numberPlusOne)
-        from.excludedNames = excludedNames(vm, excluded).names();
-    CopyOfTwoPlan plan;
-    fillPlanForCopyOfTwo(vm, plan, realm, &from, nullptr, true);
-    return makeUnique<FieldMovePlan>(WTF::move(compiled ? plan.sources[0].fields : plan.sources[0].properties));
-}
-
-CopyOfTwoPlan* AssignmentPlanCache::planForCopyOfTwo(VM& vm, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second)
-{
-    auto wordsOf = [](const AssignmentSource* source) -> uint64_t {
-        if (!source)
-            return 0;
-        return (static_cast<uint64_t>(source->object->structureID().bits()) << 32 | source->propertyStorageStructureID().bits()) ^ static_cast<uint64_t>(source->orderWord) * 0x9e3779b97f4a7c15ull;
-    };
-    uint32_t hash = WTF::intHash(static_cast<uint64_t>(wordsOf(first) ^ std::rotl(wordsOf(second), 29) * 0xc2b2ae3d27d4eb4full));
-    auto placeAt = [&](unsigned step) -> std::unique_ptr<CopyOfTwoPlan>& {
-        return m_copiesOfTwo[(hash + step) % numberOfCopiesOfTwo];
-    };
-    for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo; ++step) {
-        CopyOfTwoPlan* plan = placeAt(step).get();
-        if (plan && plan->isFor(first, second)) [[likely]] {
-            plan->visitsInVainLeft = CopyOfTwoPlan::maxVisitsInVain;
-            return plan;
-        }
-    }
-    if (!isSecondCopy(hash))
-        return nullptr;
-
-    std::unique_ptr<CopyOfTwoPlan>* place = nullptr;
-    for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo && !place; ++step) {
-        if (!placeAt(step))
-            place = &placeAt(step);
-    }
-    for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo && !place; ++step) {
-        if (!placeAt(step)->visitsInVainLeft)
-            place = &placeAt(step);
-        else
-            --placeAt(step)->visitsInVainLeft;
-    }
-    if (!place)
-        return nullptr;
-
-    *place = makeUnique<CopyOfTwoPlan>();
-    CopyOfTwoPlan& plan = **place;
-    std::array<const AssignmentSource*, 2> sources { first, second };
-    for (unsigned index = 0; index < sources.size(); ++index) {
-        if (!sources[index])
-            continue;
-        plan.sources[index].structure = sources[index]->object->structureID();
-        plan.sources[index].propertyStorage = sources[index]->propertyStorageStructureID();
-        plan.sources[index].orderWord = sources[index]->orderWord;
-    }
-    fillPlanForCopyOfTwo(vm, plan, realm, first, second, false);
-    m_writes.recordAll();
-    count(vm, RuntimeCounterID::AssignmentPlansMade);
-    return &plan;
 }
 
 void AssignmentPlanCache::describeMove(VM& vm, AssignmentPlan::FieldStore& store, const LayoutData& target, bool sharesTypes)
@@ -522,7 +494,6 @@ void AssignmentPlanCache::describeMove(VM& vm, AssignmentPlan::FieldStore& store
         store.move = move;
         return;
     }
-    // Where a field lies in an Extension goes by the granules that the Extension has, which no plan knows.
     if (!sharesTypes || store.from->isOutOfLine() || !store.isDirect)
         return;
     FieldMap::Entry entry = describeMappedField(vm, target, *store.from, 0);
@@ -543,58 +514,78 @@ NEVER_INLINE void AssignmentPlanCache::describeMoves(AssignmentPlan& plan)
     plan.hasDescribedMoves = true;
     const LayoutData& layout = uncheckedDowncast<CompiledStructure>(plan.target.decode())->layout();
     for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
-        // A run copies such bits without a move.
         if (!store.copiesBitsUntested)
             describeMove(*m_state.instance.vm, store, layout, plan.sharesTypesWithSource);
     }
 }
 
+static bool slotHoldsIntegersBetween(SlotRepresentation representation, int64_t least, int64_t greatest)
+{
+    const SlotTraits traits = traitsOf(representation);
+    unsigned bits = traits.width * 8;
+    if (traits.valueKind == SlotValueKind::UnsignedInteger)
+        return bits < 64 && least >= 0 && greatest < 1ll << bits;
+    if (traits.valueKind != SlotValueKind::SignedInteger)
+        return false;
+    if (representation == SlotRepresentation::OptionalInt32)
+        return least >= minInlineInt32 && greatest <= INT32_MAX;
+    if (bits == 64)
+        return least >= -maxSlotInteger && greatest <= maxSlotInteger;
+    return least >= -(1ll << (bits - 1)) && greatest < 1ll << (bits - 1);
+}
+
+static bool isReifiedLazilyOnFunctions(VM& vm, UniquedStringImpl* name)
+{
+    const CommonIdentifiers& names = *vm.propertyNames;
+    return name == names.name.impl() || name == names.length.impl() || name == names.prototype.impl();
+}
+
 void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource& source)
 {
     Object* record = compiledObjectOrNull(target);
-    ASSERT(record || (source.defines && !extraProperties));
+    ASSERT(record || !extraProperties);
     if (!record)
         extraProperties = target;
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
     auto properties = listAssignedProperties(vm, source, plan.excludedList);
     if (!properties)
-        return notePlanWithoutUse("the source has no list of its properties"_s);
-    // A source of another image is listed and read by its own image, which also makes the closures that its fields defer. Its values are tested like those of an ordinary object.
+        return;
     bool sharesTypes = source.compiledObject && &source.compiledObject->state() == &m_state;
     plan.sharesTypesWithSource = sharesTypes;
     const LayoutData* layout = record ? &record->layout() : nullptr;
     JSGlobalObject* realm = target->structure()->realm();
     Structure* extraPropertiesBefore = extraProperties ? extraProperties->structure() : Instance::of(realm)->realm.emptyExtraPropertiesStructure;
-    if (extraProperties && (extraProperties->type() != FinalObjectType || extraPropertiesBefore->isDictionary()))
-        return notePlanWithoutUse("the extra properties of the target are a dictionary or no plain object"_s);
+    bool isClosure = !record && target->type() == CompiledClosureType;
+    if (extraProperties && ((extraProperties->type() != FinalObjectType && !isClosure) || extraPropertiesBefore->isDictionary()))
+        return;
     Vector<AssignmentPlan::FieldStore> fieldStores;
     Vector<AssignmentPlan::ExtraPropertyStore> extraPropertyStores;
     Vector<UniquedStringImpl*, 8> addedNames;
     Vector<size_t, 8> storesOfAddedNames;
-    Vector<UniquedStringImpl*, 8> creatableFieldNames;
+    Vector<UniquedStringImpl*, 8> namesOfFields;
     Vector<uint16_t> storesInSourceOrder;
     if (properties->size() >= AssignmentPlan::isExtraPropertyStore)
-        return notePlanWithoutUse("there are too many stores to number"_s);
+        return;
     if (record) {
         fieldStores.reserveInitialCapacity(properties->size());
         storesInSourceOrder.reserveInitialCapacity(properties->size());
     }
     bool hasStoredSymbol = false;
     for (auto& property : *properties) {
-        plan.storesNameBehindSymbol |= hasStoredSymbol && !property.name->isSymbol();
+        plan.storesNameAfterSymbol |= hasStoredSymbol && !property.name->isSymbol();
         hasStoredSymbol |= property.name->isSymbol();
         const FieldData* field = record ? layouts.field(vm, *layout, property.name) : nullptr;
         if (!field) {
             if (record && !layout->extraPropertiesSlot())
-                return notePlanWithoutUse("the layout of the target has no word for extra properties"_s);
+                return;
             unsigned attributes = 0;
             PropertyOffset offset = extraPropertiesBefore->get(vm, property.name, attributes);
             if (isValidOffset(offset)) {
                 if (attributes)
-                    return notePlanWithoutUse(record ? "an extra property of the target has attributes"_s : "a property of the ordinary target has attributes"_s);
+                    return;
             } else {
-                if (parseIndex(PropertyName(property.name)) || property.name == vm.propertyNames->underscoreProto.impl())
-                    return notePlanWithoutUse("a name is an index or __proto__"_s);
+                if (parseIndex(PropertyName(property.name)) || property.name == vm.propertyNames->underscoreProto.impl() || (isClosure && isReifiedLazilyOnFunctions(vm, property.name)))
+                    return;
                 ASSERT(!addedNames.contains(property.name));
                 addedNames.append(property.name);
                 storesOfAddedNames.append(extraPropertyStores.size());
@@ -604,12 +595,12 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             extraPropertyStores.append(AssignmentPlan::ExtraPropertyStore { .from = property.field, .sourceOffset = property.offset, .offset = offset, .name = property.name, .addsName = !isValidOffset(offset) });
             continue;
         }
-        if (field->flags & (fieldIsStoredOnce | fieldAttributeFlags))
-            return notePlanWithoutUse("a field of the target is stored once or has a form"_s);
+        if (field->flags & fieldAttributeFlags)
+            return;
         if (isPreparedBeforeLookups(vm, property.name))
-            return notePlanWithoutUse("the target is asked to prepare itself before a store to a field"_s);
+            return;
         if (extraProperties && isValidOffset(extraPropertiesBefore->get(vm, property.name)))
-            return notePlanWithoutUse("a field of the target lies among its extra properties"_s);
+            return;
         const SlotTraits traits = traitsOf(field->slot.representation());
         SlotFit fit = sharesTypes && property.field ? fitOf(layouts, *property.field, *field) : SlotFit::IsTested;
         storesInSourceOrder.append(static_cast<uint16_t>(fieldStores.size()));
@@ -636,7 +627,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             if (least <= greatest) {
                 store.leastInt32 = static_cast<int32_t>(least);
                 store.greatestInt32 = static_cast<int32_t>(greatest);
-                store.writesInt32AsItIs = holdsIntegersBetween(field->slot.representation(), least, greatest);
+                store.writesInt32AsItIs = slotHoldsIntegersBetween(field->slot.representation(), least, greatest);
             }
         }
         store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure
@@ -645,18 +636,17 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         plan.readsOutOfLineFields |= property.field && property.field->isOutOfLine();
         if (field->isOutOfLine())
             plan.granuleBitsFilled |= granuleBitOf(field->slot.offset);
-        if (layouts.mayBeAbsent(*field))
-            creatableFieldNames.append(property.name);
+        namesOfFields.append(property.name);
     }
     auto isIntercepted = [&](UniquedStringImpl* name) {
         return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, *m_state.chainDependents, ChainDependent { name, index, m_chainDependentOwner });
     };
-    if (std::ranges::any_of(addedNames.span(), isIntercepted) || std::ranges::any_of(creatableFieldNames.span(), isIntercepted))
-        return notePlanWithoutUse("a prototype intercepts a name that a store may create"_s);
+    if (std::ranges::any_of(addedNames.span(), isIntercepted) || std::ranges::any_of(namesOfFields.span(), isIntercepted))
+        return;
     if (!record || !extraPropertyStores.isEmpty()) {
-        Structure* extraPropertiesAfter = structureWithAddedNames(vm, extraPropertiesBefore, addedNames.span(), true);
+        Structure* extraPropertiesAfter = structureWithAddedNames(vm, extraPropertiesBefore, addedNames.span());
         if (!extraPropertiesAfter)
-            return notePlanWithoutUse(record ? "the added names make the extra properties a dictionary"_s : "the added names make the ordinary target a dictionary"_s);
+            return;
         for (size_t i = 0; i < addedNames.size(); ++i)
             extraPropertyStores[storesOfAddedNames[i]].offset = extraPropertiesAfter->get(vm, addedNames[i]);
         plan.extraPropertiesAfter = extraPropertiesAfter;
@@ -672,13 +662,10 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         if (record)
             plan.targetAfter = m_state.objects->structures.withExtraProperties(vm, record->compiledStructure(), extraPropertiesAfter);
     }
-    // A run adds its names by the Structure, so what a store by name reports for each object is reported here for all of them. A guard that a name has cleared stays cleared.
-    for (UniquedStringImpl* name : record ? addedNames.span() : std::span<UniquedStringImpl* const>()) {
-        layouts.willAddProperty(vm, *layout, name);
+    for (UniquedStringImpl* name : record && layout->isClass() ? addedNames.span() : std::span<UniquedStringImpl* const>())
         m_state.objects->classes.didShadowMember(*layout, name);
-    }
     plan.addsExtraProperties = !addedNames.isEmpty();
-    plan.storesOnlyFieldsThatFit = !creatableFieldNames.isEmpty() && extraPropertyStores.isEmpty() && !extraProperties && std::ranges::all_of(fieldStores, [](const AssignmentPlan::FieldStore& store) {
+    plan.storesOnlyFieldsThatFit = !fieldStores.isEmpty() && extraPropertyStores.isEmpty() && !extraProperties && std::ranges::all_of(fieldStores, [](const AssignmentPlan::FieldStore& store) {
         return store.sourceAlwaysFits && store.isDirect && store.from->slot.representation() != SlotRepresentation::DeferredClosure;
     });
     plan.fieldStores = WTF::move(fieldStores);

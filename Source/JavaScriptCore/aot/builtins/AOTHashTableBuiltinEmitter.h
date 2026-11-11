@@ -13,6 +13,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class HashTableOwner : uint8_t { Map, Set };
+enum class LookupAnswer : uint8_t { IsPresent, Value };
 
 class HashTableBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
@@ -24,31 +25,15 @@ public:
     Boxed normalizedKey(const OperationContext&, ValueID);
     Word32 hashOfBits(Boxed normalizedKey);
     Integer sizeOf(CellPointer table, HashTableOwner);
-    CellPointer moveTableToHeap(const OperationContext&, CellPointer owner);
+    Integer findPlace(const OperationContext&, ValueID map, ValueID key);
 
 private:
-    Boxed normalizedNumber(const OperationContext&, Number);
-    Word32 hashOfBitsByOneMultiplication(Boxed normalizedKey);
-    LValue tagsNearTag(LValue eightTags, LValue tag, uint8_t distance);
-    void lookUp(const InlineCall&, HashTableOwner, bool returnsValue);
-    bool hasReceiverThatLeavesLoop(const InlineCall&);
-    bool looksAmongTags(const InlineCall&);
-    bool looksIntoHomeSlot(const InlineCall&, KeyComparison);
-    Boxed lookUpInHomeSlot(const InlineCall&, CellPointer owner, Boxed key, KeyComparison, HashTableOwner, bool returnsValue);
-    Boxed lookUpAmongTags(const InlineCall&, CellPointer owner, CellPointer key, StubKey, bool returnsValue);
+    Boxed normalizedNumber(Number);
+    void lookUp(const InlineCall&, HashTableOwner, LookupAnswer);
+    Operand search(const OperationContext&, ValueID collection, ValueID key, HashTableOwner, LookupAnswer);
+    Operand lookUpByStub(const OperationContext&, CellPointer owner, Boxed key, StubKey, LookupAnswer);
     void insert(const InlineCall&, HashTableOwner);
     void generateSize(const InlineCall&, HashTableOwner);
-};
-
-class KeyPartsLookupEmitter final : public BuiltinFamilyEmitter {
-public:
-    explicit KeyPartsLookupEmitter(CodeGenerator&);
-
-    void generateMapGetByKeyParts(const ValueContext&);
-    void generateHasByKeyParts(const ValueContext&);
-
-private:
-    Pointer partsBuffer(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

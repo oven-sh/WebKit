@@ -9,21 +9,53 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinTable.h"
+#include "AOTCodeSites.h"
+#include "AOTCompileOptions.h"
 #include "AOTIdentifierTable.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTOperationData.h"
 #include "AOTRegExpRecord.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeFactsOfLayoutsIncludes.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTStubBlob.h"
 #include "AOTStubRegisters.h"
 #include "FFIStubs.h"
+#include "StructureRareDataInlines.h"
+#include "VMEntryRecord.h"
+#include "YarrInterpreter.h"
 #include <bit>
 #include <cstring>
 #include <iterator>
 
 namespace JSC { namespace AOT {
+
+static constexpr uint32_t hashOfNames(std::initializer_list<const char*> names)
+{
+    uint32_t hash = 0x811c9dc5;
+    for (const char* name : names) {
+        do
+            hash = (hash ^ static_cast<uint8_t>(*name)) * 0x01000193;
+        while (*name++);
+    }
+    return hash;
+}
+static_assert(hashOfNames({ "a", "b" }) != hashOfNames({ "b", "a" }) && hashOfNames({ "a", "b" }) != hashOfNames({ "ab" }) && hashOfNames({ "b", "a" }) != hashOfNames({ "ab" }));
+
+static constexpr uint32_t hashOfNamesOfEntries = hashOfNames({
+#define AOT_NAME_OF_ENTRY(name) #name,
+    FOR_EACH_AOT_RUNTIME_OPERATION(AOT_NAME_OF_ENTRY)
+    FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(AOT_NAME_OF_ENTRY, AOT_NAME_OF_ENTRY)
+    FOR_EACH_AOT_THUNK(AOT_NAME_OF_ENTRY)
+    FOR_EACH_AOT_POINTER(AOT_NAME_OF_ENTRY)
+#define AOT_STUB_FRONT_END(Operation, Family) #Operation,
+#include "AOTStubFamilies.def"
+#undef AOT_STUB_FRONT_END
+#undef AOT_NAME_OF_ENTRY
+});
 
 static constexpr ASCIILiteral namesOfFacts[] = {
 #define AOT_RUNTIME_FACT(name, value) name ""_s,
@@ -44,6 +76,8 @@ static constexpr uint32_t checkedRuntimeFact(uint64_t value)
     return static_cast<uint32_t>(value);
 }
 
+static_assert(sizeof(BuiltinPlatform) == sizeof(RuntimeDescription::platform));
+
 static constexpr DescribedRuntime thisRuntime = {
     {
         RuntimeDescription::expectedMagic,
@@ -51,17 +85,7 @@ static constexpr DescribedRuntime thisRuntime = {
         numberOfRuntimeFacts,
         CPUFeatureSet::buildTarget().bits(),
         static_cast<uint8_t>(hostArchitecture()),
-#if OS(LINUX)
-        RuntimeDescription::OperatingSystem::Linux,
-#elif OS(DARWIN)
-        RuntimeDescription::OperatingSystem::Darwin,
-#elif OS(WINDOWS)
-        RuntimeDescription::OperatingSystem::Windows,
-#elif OS(FREEBSD)
-        RuntimeDescription::OperatingSystem::FreeBSD,
-#else
-        RuntimeDescription::OperatingSystem::Other,
-#endif
+        static_cast<uint8_t>(targetOfThisBuild().platform),
         static_cast<uint8_t>(imageFormOfThisRuntime()),
         (ASSERT_ENABLED ? RuntimeDescription::Assertions : 0) | (ASAN_ENABLED ? RuntimeDescription::AddressSanitizer : 0),
         imageFormatVersion,
@@ -73,7 +97,6 @@ static constexpr DescribedRuntime thisRuntime = {
     },
 };
 
-// It lies beside imageStamp(), which every run time has, so that no linker leaves it out.
 extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION AOT_KEPT_BY_EVERY_LINKER constinit const DescribedRuntime describedRuntime = thisRuntime;
 
 std::span<const uint8_t> descriptionOfThisRuntime()
@@ -117,17 +140,11 @@ static std::optional<RuntimeDifference> findDifferenceFromThisTable(const Builti
     };
     static constexpr Fact facts[] = {
         { "the names of the built-ins in the order of their numbers"_s, &BuiltinTableDescription::hashOfBuiltinTokens },
-        { "the number of built-ins"_s, &BuiltinTableDescription::numberOfBuiltins },
-        { "the number of overloads of built-ins"_s, &BuiltinTableDescription::numberOfOverloads },
-        { "the number of types of built-ins"_s, &BuiltinTableDescription::numberOfTypes },
-        { "the number of classes of built-ins"_s, &BuiltinTableDescription::numberOfClasses },
-        { "the number of slots of built-ins"_s, &BuiltinTableDescription::numberOfSlots },
-        { "the number of layouts of built-ins"_s, &BuiltinTableDescription::numberOfLayouts },
-        { "the number of modules of the run time"_s, &BuiltinTableDescription::numberOfModules },
-        { "the number of functions of the run time"_s, &BuiltinTableDescription::numberOfFunctions },
+        { "the table of built-ins"_s, &BuiltinTableDescription::hashOfTable },
+        { "the table of native functions"_s, &BuiltinTableDescription::hashOfHostBindings },
     };
     if (there.size != sizeof(there))
-        return RuntimeDifference { };
+        return RuntimeDifference { "the size of the description of the table of built-ins"_s, sizeof(there), there.size };
     for (const Fact& fact : facts) {
         if (there.*fact.value != describedBuiltinTable.*fact.value)
             return RuntimeDifference { fact.name, describedBuiltinTable.*fact.value, there.*fact.value };
@@ -135,7 +152,7 @@ static std::optional<RuntimeDifference> findDifferenceFromThisTable(const Builti
     return std::nullopt;
 }
 
-std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other)
+std::optional<RuntimeDifference> findRuntimeDifference(std::span<const uint8_t> other)
 {
     if (BuiltinTableDescription table; other.size() >= sizeof(table)) {
         memcpy(&table, other.data(), sizeof(table));
@@ -153,8 +170,8 @@ std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const u
 
     if (there.architecture != here.architecture)
         return RuntimeDifference { "the architecture"_s, here.architecture, there.architecture };
-    if (there.operatingSystem != here.operatingSystem)
-        return RuntimeDifference { "the operating system"_s, static_cast<uint64_t>(here.operatingSystem), static_cast<uint64_t>(there.operatingSystem) };
+    if (there.platform != here.platform)
+        return RuntimeDifference { "the operating system"_s, here.platform, there.platform };
     if (there.imageForm > static_cast<uint8_t>(Wire::ImageForm::PositionIndependent))
         return RuntimeDifference { "the form of the image"_s, static_cast<uint64_t>(here.imageForm), static_cast<uint64_t>(there.imageForm) };
     if (there.imageFormatVersion != here.imageFormatVersion)

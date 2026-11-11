@@ -736,6 +736,7 @@ Move U:G:Ptr, D:G:Ptr /preservesFlagsOnARM64 /accessesMemoryFirst
     Tmp, Addr as storePtr
     Tmp, Index as storePtr
     x86_64: Imm, Addr as storePtr
+    x86_64: Imm, Index as storePtr
     arm64: ZeroReg, Tmp
     arm64: ZeroReg, Addr as storePtr
     arm64: ZeroReg, Index as storePtr
@@ -1656,6 +1657,8 @@ Branch32 U:G:32, U:G:32, U:G:32 /branch /accessesMemoryFirst
     x86_64: RelCond, Tmp, Addr
     x86_64: RelCond, Addr, Tmp
     x86_64: RelCond, Index, Imm
+    x86_64: RelCond, Tmp, Index
+    x86_64: RelCond, Index, Tmp
 
 64: Branch64 U:G:32, U:G:64, U:G:64 /branch /accessesMemoryFirst
     RelCond, Tmp, Tmp
@@ -1664,6 +1667,8 @@ Branch32 U:G:32, U:G:32, U:G:32 /branch /accessesMemoryFirst
     x86_64: RelCond, Addr, Tmp
     x86_64: RelCond, Addr, Imm
     x86_64: RelCond, Index, Tmp
+    x86_64: RelCond, Tmp, Index
+    x86_64: RelCond, Index, Imm
 
 BranchTest8 U:G:32, U:G:8, U:G:8 /branch /accessesMemoryFirst
     x86_64: ResCond, Addr, BitImm

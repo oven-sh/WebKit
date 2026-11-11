@@ -1,0 +1,65 @@
+# main.js: import "./a.js"; import "./b.js"; register(() => import("./b.js")); report("runs", "main.js")
+# a.js: import "./shared.js"; import "./only-a.js"; report("runs", "a.js")      b.js: import "./shared.js"; report("runs", "b.js")
+# Two ways lead to shared.js, and b.js is imported again once everything has run: each module runs once, in the order of the imports
+# RUN(NET): run-in-shell globalThis.report = (label, value) => print(label + ": " + value); globalThis.register = closure => { Promise.resolve().then(closure).then(() => print("imported again")); };
+# NET: runs: shared.js
+# NET-NEXT: runs: only-a.js
+# NET-NEXT: runs: a.js
+# NET-NEXT: runs: b.js
+# NET-NEXT: runs: main.js
+# NET-NEXT: imported again
+# NET-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/a.js" displayPath="a.js" body=f1 requests=[{target=m3 completes=true}, {target=m4 completes=true}]
+module m2 path="/b.js" displayPath="b.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/shared.js" displayPath="shared.js" body=f3
+module m4 path="/only-a.js" displayPath="only-a.js" body=f4
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v1 key="report" [isFreeName]
+    v5 = String string="runs"
+    v6 = String string="main.js"
+    v7 = Call v4, -, v5, v6
+    Return
+}
+function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="a.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="b" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="b.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="shared" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="shared.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="onlyA" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="only-a.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="importB" results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m0
+    Return v0
+}

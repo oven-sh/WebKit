@@ -1,0 +1,173 @@
+# what a handler edge hands over is read in a landing pad, and all the pads of a handler stand in a row just ahead of it, far behind the blocks that lead to them.
+# Between the last of those blocks and its pad such a value lies unread, so its place is another's there: values that follow each other take turns in two places, however long the try is.
+# Without that each has a word of its own, and every resumption clears that word: the frames here were 128 and 112 bytes, and a large async function had 36,368 bytes, 33,376 of them cleared each time.
+# async function waits(make, awaited) { let last = make(make); try { make(last); last = make(make); .. eight times ..; return await awaited; } catch { return make(last); } }
+# function calls(make, other) { the same, with make(other) in the place of the await }
+# The last value of `waits` is held by the await, and has its gap like the others. checkAllocation() forgets a spill on an edge into its gap, and finds every pad served.
+# REQUIRES: not-windows
+# RUN: allocate f1:CoroutineBody f2:Body mechanisms=none
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK-COUNT-9: 64 bits, gap
+# CHECK-NOT: gap
+# CHECK-LABEL: unit f2:Body
+# CHECK-COUNT-9: 64 bits, gap
+# CHECK-NOT: gap
+# REQUIRES(PLACES): x86_64 not-windows
+# RUN(PLACES): frame f1:CoroutineBody f2:Body mechanisms=none
+# PLACES-LABEL: unit f1:CoroutineBody
+# PLACES: bytesDeadAtSuspensions = 40
+# PLACES: s3 at -[[one]]
+# PLACES-NEXT: s4 at -[[other]]
+# PLACES-NEXT: s5 at -[[one]]
+# PLACES-NEXT: s6 at -[[other]]
+# PLACES-NEXT: s7 at -[[one]]
+# PLACES-NEXT: s8 at -[[other]]
+# PLACES-NEXT: s9 at -[[one]]
+# PLACES-NEXT: s10 at -[[other]]
+# PLACES-LABEL: unit f2:Body
+# PLACES: size = 48
+# PLACES: s2 at -[[third]]
+# PLACES-NEXT: s3 at -[[fourth]]
+# PLACES-NEXT: s4 at -[[third]]
+# PLACES-NEXT: s5 at -[[fourth]]
+# PLACES-NEXT: s6 at -[[third]]
+# PLACES-NEXT: s7 at -[[fourth]]
+# PLACES-NEXT: s8 at -[[third]]
+# PLACES-NEXT: s9 at -[[fourth]]
+# PLACES-NEXT: s10 at -[[third]]
+# REQUIRES(PLACESARM): arm64
+# RUN(PLACESARM): frame f1:CoroutineBody f2:Body mechanisms=none
+# PLACESARM-LABEL: unit f1:CoroutineBody
+# PLACESARM: s2 at -[[one]]
+# PLACESARM-NEXT: s3 at -[[other]]
+# PLACESARM-NEXT: s4 at -[[one]]
+# PLACESARM-NEXT: s5 at -[[other]]
+# PLACESARM-NEXT: s6 at -[[one]]
+# PLACESARM-NEXT: s7 at -[[other]]
+# PLACESARM-NEXT: s8 at -[[one]]
+# PLACESARM-NEXT: s9 at -[[other]]
+# PLACESARM-LABEL: unit f2:Body
+# PLACESARM: s1 at -[[third]]
+# PLACESARM-NEXT: s2 at -[[fourth]]
+# PLACESARM-NEXT: s3 at -[[third]]
+# PLACESARM-NEXT: s4 at -[[fourth]]
+# PLACESARM-NEXT: s5 at -[[third]]
+# PLACESARM-NEXT: s6 at -[[fourth]]
+# PLACESARM-NEXT: s7 at -[[third]]
+# PLACESARM-NEXT: s8 at -[[fourth]]
+# PLACESARM-NEXT: s9 at -[[third]]
+# REQUIRES(FRAME): x86_64 not-windows
+# RUN(FRAME): frame f1:CoroutineBody mechanisms=none
+# FRAME: size = 80
+# REQUIRES(ARM): arm64
+# RUN(ARM): frame f1:CoroutineBody mechanisms=none
+# ARM: size = 80
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v2
+    v4 = Call v0, -, v2, v3
+    v5 = Call v1, -, v2, v3
+    Return v5
+}
+function f1 name="waits" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v1, -, v1
+    Jump -> next b1()
+  b1() handler=b10(v3):
+    v4 = Call v1, -, v3
+    v5 = Call v1, -, v1
+    Jump -> next b2()
+  b2() handler=b10(v5):
+    v6 = Call v1, -, v5
+    v7 = Call v1, -, v1
+    Jump -> next b3()
+  b3() handler=b10(v7):
+    v8 = Call v1, -, v7
+    v9 = Call v1, -, v1
+    Jump -> next b4()
+  b4() handler=b10(v9):
+    v10 = Call v1, -, v9
+    v11 = Call v1, -, v1
+    Jump -> next b5()
+  b5() handler=b10(v11):
+    v12 = Call v1, -, v11
+    v13 = Call v1, -, v1
+    Jump -> next b6()
+  b6() handler=b10(v13):
+    v14 = Call v1, -, v13
+    v15 = Call v1, -, v1
+    Jump -> next b7()
+  b7() handler=b10(v15):
+    v16 = Call v1, -, v15
+    v17 = Call v1, -, v1
+    Jump -> next b8()
+  b8() handler=b10(v17):
+    v18 = Call v1, -, v17
+    v19 = Call v1, -, v1
+    Jump -> next b9()
+  b9() handler=b10(v19):
+    v20 = Await v2
+    Return v20
+  b10(v21) role=CatchHandler:
+    v22 = CatchValue
+    v23 = Call v1, -, v21
+    Return v23
+}
+function f2 name="calls" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v1, -, v1
+    Jump -> next b1()
+  b1() handler=b10(v3):
+    v4 = Call v1, -, v3
+    v5 = Call v1, -, v1
+    Jump -> next b2()
+  b2() handler=b10(v5):
+    v6 = Call v1, -, v5
+    v7 = Call v1, -, v1
+    Jump -> next b3()
+  b3() handler=b10(v7):
+    v8 = Call v1, -, v7
+    v9 = Call v1, -, v1
+    Jump -> next b4()
+  b4() handler=b10(v9):
+    v10 = Call v1, -, v9
+    v11 = Call v1, -, v1
+    Jump -> next b5()
+  b5() handler=b10(v11):
+    v12 = Call v1, -, v11
+    v13 = Call v1, -, v1
+    Jump -> next b6()
+  b6() handler=b10(v13):
+    v14 = Call v1, -, v13
+    v15 = Call v1, -, v1
+    Jump -> next b7()
+  b7() handler=b10(v15):
+    v16 = Call v1, -, v15
+    v17 = Call v1, -, v1
+    Jump -> next b8()
+  b8() handler=b10(v17):
+    v18 = Call v1, -, v17
+    v19 = Call v1, -, v1
+    Jump -> next b9()
+  b9() handler=b10(v19):
+    v20 = Call v1, -, v2
+    Return v20
+  b10(v21) role=CatchHandler:
+    v22 = CatchValue
+    v23 = Call v1, -, v21
+    Return v23
+}
+function f3 name="make" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = NewArray v0 contents=anything
+    Return v4
+}
+entry module=m0

@@ -1,0 +1,59 @@
+# type Pair = { name: string; [first]?: number; [second]?: number }
+# function fill(pair: Pair, a: number, b: number) { pair[first] = a; pair[second] = b; return pair[first]; }
+# function empty(): Pair { return { name: "empty" }; }
+# start(fill, empty); var first = Symbol("first"); start(fill, empty); var second = Symbol("second"); start(fill, empty);
+# `start` calls `fill` eight times with an object of the written type before either symbol is made, between the two, and behind both.
+# Early the first key is undefined, between the two the second, and such a key names the property "undefined".
+# The shell has run the same text itself: every answer is the same.
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: run-in-shell (function () { "use strict"; const told = (fill, empty) => { let text = ""; for (let turn = 0; turn < 8; turn++) { const o = empty(); text += String(fill(o, turn, turn + 1)) + " " + Reflect.ownKeys(o).map(String).join() + " " + String(o.undefined) + "; "; } return text; }; const twin = start => { function fill(pair, a, b) { pair[first] = a; pair[second] = b; return pair[first]; } function empty() { return { name: "empty" }; } start(fill, empty); var first = Symbol("first"); start(fill, empty); var second = Symbol("second"); start(fill, empty); }; const expected = []; twin((fill, empty) => { expected.push(told(fill, empty)); }); let round = 0; globalThis.start = (fill, empty) => { const got = told(fill, empty); print(got === expected[round] ? "round " + round + " is the same: " + got.slice(0, 60) : "round " + round + ": " + got + " and not " + expected[round]); round++; }; })();
+# CHECK: round 0 is the same: 1 name,undefined 1;
+# CHECK-NEXT: round 1 is the same: 0 name,undefined,Symbol(first) 1;
+# CHECK-NEXT: round 2 is the same: 0 name,Symbol(first),Symbol(second) undefined;
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="name" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key=symbol("first")@m0:0 declared={type=number}}, {key=symbol("second")@m0:1 declared={type=number}}] ownFieldCount=3
+variable g0 name="fill" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="first" module=m0 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} initialization=Undefined
+variable g2 name="second" module=m0 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} initialization=Undefined
+variable g3 name="empty" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="start" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g3
+    v4 = Call v1, -, v2, v3 calleeName="start"
+    v5 = Builtin builtin=Symbol
+    v6 = String string="first"
+    v7 = Call v5, -, v6 calleeName="Symbol" callNumber=0
+    PutModuleVariable v7 variable=g1
+    v9 = Call v1, -, v2, v3 calleeName="start"
+    v10 = String string="second"
+    v11 = Call v5, -, v10 calleeName="Symbol" callNumber=1
+    PutModuleVariable v11 variable=g2
+    v13 = Call v1, -, v2, v3 calleeName="start"
+    Return v13
+}
+function f1 name="fill" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: number, v2: number):
+    v3 = GetModuleVariable variable=g1
+    ElemSet v0, v3, v1 mode=Strict
+    v5 = GetModuleVariable variable=g2
+    ElemSet v0, v5, v2 mode=Strict
+    v7 = GetModuleVariable variable=g1
+    v8 = ElemGet v0, v7
+    Return v8
+}
+function f2 name="empty" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="empty"
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="name"
+    v3 = FinishObject v1
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}

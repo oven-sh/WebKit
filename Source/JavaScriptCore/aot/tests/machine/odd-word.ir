@@ -1,0 +1,44 @@
+# suspensions keep whole pairs of words. Below three words that they keep, nothing lies in the fourth: what is made and last read between two suspensions would be kept there, and every resumption would put it back on the stack
+# async function waits(make, awaited, last) { await awaited; const a = make(make), b = make(make), c = make(make); make(a); make(b); make(c); await awaited; return make(last); }
+# `make`, `awaited` and `last` are the three: they lie at -24, -32 and -40, and the next slot at -56
+# REQUIRES: x86_64 not-windows
+# RUN: frame f1:CoroutineBody mechanisms=none
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK-NOT: at -48
+# CHECK: s3 at -40
+# CHECK-NOT: at -48
+# CHECK: suspension {{*}}: dead words [6, 7, 8, 9, 10], holds s1 s2 s3
+# CHECK-NEXT: suspension {{*}}: dead words [3, 6, 7, 8, 9, 10], holds s2 s3
+# CHECK-NEXT: bytesKeptAtSuspensions = 24
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v1
+    v3 = Call v0, -, v1, v2, v1
+    Return v3
+}
+function f1 name="waits" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Await v2
+    v5 = Call v1, -, v1
+    v6 = Call v1, -, v1
+    v7 = Call v1, -, v1
+    v8 = Call v1, -, v5
+    v9 = Call v1, -, v6
+    v10 = Call v1, -, v7
+    v11 = Await v2
+    v12 = Call v1, -, v3
+    Return v12
+}
+function f2 name="make" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = NewArray v0 contents=anything
+    Return v4
+}
+entry module=m0

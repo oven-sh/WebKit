@@ -1,0 +1,158 @@
+# look 1 at a loop starts from what enters. A range that grew runs on that side to the end of what a double holds exactly, and look 2 checks that.
+# A relation narrows its operands on the edges behind its Branch, in the looks as in the walk, and the head gets what enters joined with what then came round. So a counter has the bounds that its comparison proves,
+# and the step behind the comparison is an operation on integers that tests nothing
+# RUN: walk f1 f2 f3 f4 f5 f6 mechanisms=none+TypedOperations+UnboxedNumbers
+# for (let i = 0; i < n; i++);  with an int32
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[i1]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
+# CHECK: [[test1]]: boolean @Boolean = Less [[i1]], {{*}}form=Integers
+# CHECK: [[below1]]: int[0, 2147483646] @Int32 = Narrowed [[i1]], [[test1]] [isOnTakenEdge]
+# CHECK: int[1, 2147483647] @Int32 = Increment [[below1]] form=Integers
+# for (let i = n; i > 0; i--);
+# CHECK-LABEL: code f2:Body
+# CHECK: ([[i2]]: i32 @Int32) {{*}}isLoopHead=true
+# CHECK: [[above2]]: int[1, 2147483647] @Int32 = Narrowed [[i2]],
+# CHECK: int[0, 2147483646] @Int32 = Decrement [[above2]] form=Integers
+# for (let i = 0; i < n; i += 2);  the last step may leave int32 by one
+# CHECK-LABEL: code f3:Body
+# CHECK: ([[i3]]: int[0, 2147483648] @Int64) {{*}}isLoopHead=true
+# CHECK: [[below3]]: int[0, 2147483646] @Int64 = Narrowed [[i3]],
+# CHECK: int[2, 2147483648] @Int64 = Add {{*}}form=Integers
+# let i = 0; do i++; while (i < n);  the edge that comes round hands on what the relation leaves
+# CHECK-LABEL: code f4:Body
+# CHECK: ([[i4]]: int[0, 2147483646] @Int32) {{*}}isLoopHead=true
+# CHECK: [[next4]]: int[1, 2147483647] @Int32 = Increment [[i4]] form=Integers
+# CHECK: [[below4]]: int[1, 2147483646] @Int32 = Narrowed [[next4]],
+# CHECK: Jump -> next {{*}}([[below4]])
+# for (let i = 0; i < x; i++);  nothing is proven of x, so nothing bounds the counter but what a double counts, and it comes round as the double that its step makes
+# CHECK-LABEL: code f5:Body
+# CHECK: ([[i5]]: int[0, 9007199254740992] @Double) {{*}}isLoopHead=true
+# CHECK: Increment [[i5]] form=Numbers
+# let s = 0; for (let i = 0; i < n; i++) s += i;  the sum still grows in look 2, so it is any number without a fraction
+# CHECK-LABEL: code f6:Body
+# CHECK: ([[s6]]: int|whole @Double, [[i6]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="up" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3)
+  b2(v4):
+    LoopHint
+    v6 = Less v4, v2
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Increment v4
+    Jump -> next b2(v7)
+  b4():
+    Return v4
+  b5():
+    Return v0
+}
+function f2 name="down" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v2)
+  b2(v4):
+    LoopHint
+    v6 = Greater v4, v3
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Decrement v4
+    Jump -> next b2(v7)
+  b4():
+    Return v4
+  b5():
+    Return v0
+}
+function f3 name="byTwo" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3)
+  b2(v4):
+    LoopHint
+    v6 = Less v4, v2
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer integer=2
+    v8 = Add v4, v7
+    Jump -> next b2(v8)
+  b4():
+    Return v4
+  b5():
+    Return v0
+}
+function f4 name="atLeastOnce" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b4()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3)
+  b2(v4):
+    LoopHint
+    v6 = Increment v4
+    v7 = Less v6, v2
+    Branch v7 -> taken b2(v6), notTaken b3()
+  b3():
+    Return v6
+  b4():
+    Return v0
+}
+function f5 name="againstAnything" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Increment v2
+    Jump -> next b1(v5)
+  b3():
+    Return v2
+}
+function f6 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3, v3)
+  b2(v4, v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Add v4, v5
+    v9 = Increment v5
+    Jump -> next b2(v8, v9)
+  b4():
+    Return v4
+  b5():
+    Return v0
+}

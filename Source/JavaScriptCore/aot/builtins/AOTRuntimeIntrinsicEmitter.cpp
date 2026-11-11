@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTGuardEmitter.h"
 #include "AOTInstance.h"
 #include "AOTTypeTable.h"
 #include "LinkTimeConstant.h"
@@ -34,23 +35,15 @@ void RuntimeIntrinsicEmitter::generateNativeBinding(const ValueContext& value)
 void RuntimeIntrinsicEmitter::generateLinkTimeConstant(const ValueContext& value)
 {
     uint32_t constant = static_cast<uint32_t>(toLinkTimeConstant(value->constant()));
-    auto fetchByOperation = [&](const CallOptions& options) {
-        return callOperation<CellPointer>(value, RuntimeOperation::LinkTimeConstant, { word32(constant) }, options);
-    };
-    if (value.shape() == CodeShape::Compact) {
-        defineAs(value, boxCell(fetchByOperation({ })), typeOf(value.id()));
-        return;
-    }
-
-    Integer fetched(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + constant * sizeof(EncodedJSValue))));
+    Integer fetched(m_out.load64(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + constant * sizeof(EncodedJSValue))));
     defineAs(value, boxCell(either<CellPointer>(isNotZero(fetched), [&] {
         return CellPointer(fetched.value());
     }, [&] {
-        return fetchByOperation({ .isOnRarePath = true });
+        return callOperation<CellPointer>(value, RuntimeOperation::LinkTimeConstant, { word32(constant) }, { .isOnRarePath = true });
     })), typeOf(value.id()));
 }
 
-Condition RuntimeIntrinsicEmitter::hasJSType(const Value& value, CellPointer cell)
+Condition RuntimeIntrinsicEmitter::hasJSType(const Operation& value, CellPointer cell)
 {
     JSType first = toJSType(value.first());
     JSType last = toJSType(value.last());
@@ -78,8 +71,33 @@ void RuntimeIntrinsicEmitter::generateHasJSType(const ValueContext& value)
     }), m_program.at(TypeTable::boolean));
 }
 
-// Where a pass knew the member, tests of the class stand in the place of the operation. What is left is a place where nobody knows.
 void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& value)
+{
+    if (value->receivers()) {
+        emitter<GuardEmitter>().defineWhetherDeclaredMemberIsFound(value);
+        return;
+    }
+    if (value.isBranchCondition()) {
+        branch(boolean(false), value.branchTargets());
+        return;
+    }
+    defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
+}
+
+void RuntimeIntrinsicEmitter::generateFindsNoMember(const ValueContext& value)
+{
+    if (value->receivers() || value->asksObjectByInquiry()) {
+        emitter<GuardEmitter>().defineWhetherNoMemberIsFound(value);
+        return;
+    }
+    if (value.isBranchCondition()) {
+        branch(boolean(false), value.branchTargets());
+        return;
+    }
+    defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
+}
+
+void RuntimeIntrinsicEmitter::generateIsPlainHeirOf(const ValueContext& value)
 {
     if (value.isBranchCondition()) {
         branch(boolean(false), value.branchTargets());
@@ -88,9 +106,48 @@ void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& va
     defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
 }
 
-TypedPointer RuntimeIntrinsicEmitter::internalField(const Value& value)
+void RuntimeIntrinsicEmitter::generateIsPrototypeChainPlain(const ValueContext& value)
 {
-    return m_out.address(cellOperand(value.objectOperand()).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[value.index()]);
+    if (!value->conditions().isEmpty()) {
+        emitter<GuardEmitter>().defineWhetherPrototypeChainIsPlain(value);
+        return;
+    }
+    generateIsPlainHeirOf(value);
+}
+
+void RuntimeIntrinsicEmitter::generateIsAsBorn(const ValueContext& value)
+{
+    generateIsPlainHeirOf(value);
+}
+
+void RuntimeIntrinsicEmitter::generateIsAsBornExceptForAddedNames(const ValueContext& value)
+{
+    generateIsPlainHeirOf(value);
+}
+
+void RuntimeIntrinsicEmitter::generateIsPlainInstanceOf(const ValueContext& value)
+{
+    if (value->receivers()) {
+        emitter<GuardEmitter>().defineWhetherObjectIsPlainInstance(value);
+        return;
+    }
+    if (value.isBranchCondition()) {
+        branch(boolean(false), value.branchTargets());
+        return;
+    }
+    defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
+}
+
+TypedPointer RuntimeIntrinsicEmitter::internalField(const Operation& value)
+{
+    CellPointer object = cellOperand(value.objectOperand());
+    static_assert(JSPromiseType + 1 == JSMapType && JSMapType + 1 == JSSetType);
+    if (build().options().recorded.validates) [[unlikely]] {
+        m_out.check(hasCellTypeIn(object, { JSPromiseType, JSSetType }).value())->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters&) {
+            jit.breakpoint();
+        });
+    }
+    return m_out.address(object.value(), m_heaps.JSInternalFieldObjectImpl_internalFields[value.index()]);
 }
 
 void RuntimeIntrinsicEmitter::generateGetInternalField(const ValueContext& value)
@@ -104,7 +161,7 @@ void RuntimeIntrinsicEmitter::generatePutInternalField(const ValueContext& value
     Boxed boxedValue = boxedOperand(value, stored);
     m_out.store64(boxedValue.value(), internalField(value.value()));
     CellPointer object = cellOperand(value->objectOperand());
-    barrierAfterStore(value, object, get(stored), typeOf(stored));
+    barrierAfterStore(value, object, typeOf(stored));
     defineAs(value, get(stored), typeOf(stored));
 }
 

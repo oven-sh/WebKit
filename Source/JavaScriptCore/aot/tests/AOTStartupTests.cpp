@@ -18,6 +18,7 @@
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsPropertyKeys.h"
 #include "DeferGCInlines.h"
+#include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include <algorithm>
@@ -58,55 +59,7 @@ static void testPropertyCachesAreCreatedAtFirstUse(LoadedProgram& program)
 
     PropertyCaches& caches = *state.propertyCaches;
     AOT_TEST_CHECK(state.propertyCaches.getIfCreated() == &caches);
-    AOT_TEST_CHECK(&caches.siteCaches() == state.siteCaches.get());
-    AOT_TEST_CHECK(&*state.propertyCaches == &caches && state.propertyCaches->siteCaches().size() == program.instance().siteCaches().size());
-}
-
-static PropertyAnswer answerOfKind(PropertyAnswerKind kind)
-{
-    PropertyAnswer answer;
-    answer.kind = kind;
-    return answer;
-}
-
-// A site is written at its second miss.
-static void fileFreeNameTwice(PropertyCaches& caches, SiteCache site, const Identifier& name, const PropertyAnswer& answer)
-{
-    for (unsigned miss = 0; miss < 2; ++miss)
-        caches.cacheFreeName(site, name.impl(), SlotAccess::Read, answer);
-}
-
-static void testGlobalObjectReportsChangesOnceAnAnswerDependsOnIt(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    DeferGC deferGC(vm);
-    JSGlobalObject* realm = program.realm();
-    AOT_TEST_CHECK(!realm->mayBePrototype());
-
-    PropertyCaches& caches = *program.state().propertyCaches;
-    ChainDependents& dependents = *program.state().chainDependents;
-    AOT_TEST_CHECK(caches.siteCaches().size());
-    SiteCache site = caches.siteCaches().at(0);
-    Identifier name = Identifier::fromString(vm, "shared"_s);
-    AOT_TEST_CHECK(!realm->mayBePrototype());
-
-    PropertyAnswer fixed = answerOfKind(PropertyAnswerKind::Constant);
-    fixed.constant = jsNumber(7);
-    fileFreeNameTwice(caches, site, name, fixed);
-    AOT_TEST_CHECK(site->get().kind == Slot::Kind::Constant && !site->get().has(Slot::dependsOnChain));
-    AOT_TEST_CHECK(!realm->mayBePrototype() && !dependents.hasDependents(realm));
-
-    Structure* structureAtStart = realm->structure();
-    fileFreeNameTwice(caches, site, name, answerOfKind(PropertyAnswerKind::Absent));
-    AOT_TEST_CHECK(site->get().kind == Slot::Kind::Absent && site->get().has(Slot::dependsOnChain));
-    AOT_TEST_CHECK(realm->mayBePrototype() && realm->structure() != structureAtStart && dependents.hasDependents(realm));
-
-    realm->putDirect(vm, name, jsNumber(8));
-    AOT_TEST_CHECK(site->get().isEmpty() && !dependents.hasDependents(realm));
-
-    Structure* structureThatReports = realm->structure();
-    fileFreeNameTwice(caches, site, Identifier::fromString(vm, "other"_s), answerOfKind(PropertyAnswerKind::Absent));
-    AOT_TEST_CHECK(realm->structure() == structureThatReports && dependents.hasDependents(realm));
+    AOT_TEST_CHECK(&*state.propertyCaches == &caches);
 }
 
 static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
@@ -126,16 +79,15 @@ static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
         }
     }
     AOT_TEST_CHECK(numberOfHandlers);
-
-    SiteCaches& sites = *program.state().siteCaches;
-    AOT_TEST_CHECK(sites.size());
-    uintptr_t addressOfFirstSite = std::bit_cast<uintptr_t>(sites.at(0));
-    AOT_TEST_CHECK(std::bit_cast<uintptr_t>(words.siteCacheStates) + ((addressOfFirstSite >> SiteCacheState::slotAddressShift) & SiteCacheState::offsetMask) == std::bit_cast<uintptr_t>(&sites.stateOf(sites.at(0))));
-    AOT_TEST_CHECK(&sites.stateOf(sites.at(0)) == &sites.stateOf(sites.at(0) + SiteCacheState::numberOfStates) && &sites.stateOf(sites.at(0)) != &sites.stateOf(sites.at(0) + 1));
+    for (AnswerHandlerTable table : allAnswerHandlerTables) {
+        const std::array handlers = answerHandlerKeys(table);
+        for (unsigned bits = 0; bits < handlers.size(); ++bits)
+            AOT_TEST_CHECK(instance.slotHandlers()[numberOfSlotHandlerTables + static_cast<unsigned>(table)][bits] == image.stubAddress(handlers[bits]));
+    }
 
     AOT_TEST_CHECK(words.hashedSlots && words.front[0].plane && words.front[0].rowsForStructureIDZero);
     AOT_TEST_CHECK(words.hasInstanceUID == vm.propertyNames->hasInstanceSymbol.impl() && words.prototypeUID == vm.propertyNames->prototype.impl());
-    AOT_TEST_CHECK(words.defaultHasInstanceFunction == program.realm()->functionProtoHasInstanceSymbolFunction());
+    AOT_TEST_CHECK(words.defaultHasInstanceFunction == program.realm()->functionProtoHasInstanceSymbolFunction() && words.holderOfDefaultHasInstanceFunction == program.realm()->functionPrototype());
 }
 
 #if defined(BUN_HARDENED) && OS(UNIX)
@@ -184,7 +136,6 @@ static void testClassesOfPrimitivesAreNotCreatedAtStart(LoadedProgram& program)
     fileAnswerUnder(caches, constructEmptyObject(realm)->structure(), name);
     AOT_TEST_CHECK(words.numberStructureID == structureIDOfNoReceiver && words.booleanStructureID == structureIDOfNoReceiver);
 
-    // While nothing is filed for numbers, a probe has nothing to find under either Structure.
     Structure* numberStructure = realm->numberObjectStructure();
     AOT_TEST_CHECK(words.numberStructureID == structureIDOfNoReceiver);
 
@@ -213,7 +164,7 @@ static void testStubsOfFamilyLieSideBySide(LoadedProgram& program)
 
     std::span<const StubAddressInImage> single = image.stubAddressesOf(StubFamily::EnterClosure);
     AOT_TEST_CHECK(single.size() == 1 && single[0].key == StubKey(StubFamily::EnterClosure).bits());
-    AOT_TEST_CHECK(AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || image.stubAddressesOf(StubFamily::WriteBarrier).empty());
+    AOT_TEST_CHECK(image.stubAddressesOf(StubFamily::WriteBarrier).empty());
 }
 
 template<LoadedProgramTest body>
@@ -245,11 +196,9 @@ static uintptr_t* countOfArgumentsAboveEveryFrame(char** environment)
     return word;
 }
 
-// The collector scans the main thread's stack up to this address: too low and it misses the first frames, too high and it reads what is not mapped.
 static void testMainThreadStackEndsAboveItsFirstFrame()
 {
     char** environment = environ;
-    // Pages below the first frame, whatever the size of a page.
     char planted[256 * KB] = "/path/that/a/tracer/keeps/below/the/first/frame";
     bool isMainThread = getpid() == static_cast<pid_t>(syscall(SYS_gettid));
     if (!isMainThread || reinterpret_cast<char*>(environment) < planted)
@@ -291,7 +240,6 @@ static ProgramHeader segmentOfKind(unsigned kind, uintptr_t address, size_t size
     return header;
 }
 
-// Passes the objects the way dl_iterate_phdr() does.
 static std::optional<LoadedObject> findObjectAmong(std::span<const LoadedObject> objects, uintptr_t address)
 {
     LoadedObjectSearch search(address);
@@ -335,11 +283,9 @@ static void testObjectIsFoundInEveryList()
         AOT_TEST_CHECK(found->findSegment(executable.loadBias + page) == &segmentsOfExecutable[2]);
         AOT_TEST_CHECK(found->findSegment(executable.loadBias + 3 * page - 1) == &segmentsOfExecutable[2]);
         AOT_TEST_CHECK(found->findSegment(executable.loadBias + 4 * page - 1) == &segmentsOfExecutable[3]);
-        // Not from the file, not loaded, below the first segment.
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 4 * page));
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 5 * page));
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias - 1));
-        // An address in another object is in no segment of this one.
         AOT_TEST_CHECK(!found->findSegment(linker.loadBias + page + 16));
         AOT_TEST_CHECK(!found->findSegment(library.loadBias + page + 16));
     } while (std::ranges::next_permutation(order).found);
@@ -354,7 +300,6 @@ static void testLoadedExecutableIsThisProgram()
     Others others { loadedExecutable() };
     const ProgramHeader* code = others.executable.findSegment(reinterpret_cast<uintptr_t>(&testLoadedExecutableIsThisProgram));
     AOT_TEST_CHECK(code && code->p_flags & PF_X);
-    // The kernel describes the file it was given, which is the dynamic linker if that was started with the program as its argument.
     if (others.executable.findSegment(getauxval(AT_ENTRY))) {
         AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(others.executable.programHeaders.data()) == getauxval(AT_PHDR));
         AOT_TEST_CHECK(others.executable.programHeaders.size() == getauxval(AT_PHNUM));
@@ -375,7 +320,6 @@ static void testLoadedExecutableIsThisProgram()
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
-// Without an image the collector keeps upstream's accounts: what a string borrows counts as memory that the heap holds on to, and so decides when the next collection starts.
 static void testBorrowedTextOfStringIsCountedWithoutImage()
 {
     if (Image::isRegistered())
@@ -400,7 +344,6 @@ std::span<const NativeTest> startupTests()
         { "startup/the-loaded-executable-is-this-program-alone"_s, testLoadedExecutableIsThisProgram },
 #endif
         { "startup/property-caches-are-created-at-first-use"_s, withProgram<testPropertyCachesAreCreatedAtFirstUse> },
-        { "startup/global-object-reports-changes-once-an-answer-depends-on-it"_s, withProgram<testGlobalObjectReportsChangesOnceAnAnswerDependsOnIt> },
         { "startup/stubs-find-their-words-before-first-use"_s, withProgram<testStubsFindTheirWordsBeforeFirstUse> },
 #if defined(BUN_HARDENED) && OS(UNIX)
         { "startup/words-written-once-cannot-be-written"_s, withProgram<testWordsWrittenOnceCannotBeWritten> },

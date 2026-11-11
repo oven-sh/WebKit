@@ -198,6 +198,7 @@ inline Policy randomProgramPolicy(RelocationLowering& lowering)
     policy.upstream.allowsSIMD = true;
     policy.loops.vectorizes = true;
     policy.loops.unrolls = true;
+    policy.loops.promotesMemory = true;
 
     policy.addressing.isPositionIndependent = true;
     policy.addressing.namesPinnedRegistersDirectly = true;

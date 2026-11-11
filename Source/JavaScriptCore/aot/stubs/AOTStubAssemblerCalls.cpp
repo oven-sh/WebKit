@@ -13,7 +13,6 @@
 #include "AOTStubsExceptions.h"
 #include "AOTVector.h"
 #include "VM.h"
-#include <algorithm>
 
 namespace JSC { namespace AOT {
 
@@ -34,7 +33,6 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     if (padding)
         subPtr(TrustedImm32(padding), stackPointerRegister);
     loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), leafFunctionGPR);
-    emitStackAlignmentCheck();
     CCallHelpers::call(Address(leafFunctionGPR, offsetInRuntimeTable(entry)), OperationPtrTag);
     if (padding)
         addPtr(TrustedImm32(padding), stackPointerRegister);
@@ -47,7 +45,6 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
 #endif
 }
 
-// An access that calls an accessor keeps few floating-point registers: storing and loading all of them was a third of the way to a getter and back.
 RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
 {
     constexpr unsigned numberKept = 2;
@@ -72,19 +69,21 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty() && key().callerFrame() != CallerFrame::Frameless);
     checkHasNoBorrowedFPRs();
     emitFunctionPrologue();
-#if CPU(X86_64)
-    // The size of the save area aligns the stack of a stub that has pushed nothing, and the prologue pushed one register.
-    subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
-#endif
-    // The stub returns behind the call, so what it has written itself is lost to its caller anyway.
-    RegisterSet lostAnyway = m_recording.clobbered();
-    lostAnyway.merge(RegisterSet::macroClobberedGPRs());
-    lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
-    RELEASE_ASSERT(!preservingCall.cellToKeep || !lostAnyway.contains(*preservingCall.cellToKeep, IgnoreVectors));
-    preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, [&](unsigned) {
-        emitCall();
-    });
-    // The epilogue takes the stack pointer from the frame pointer, so the padding is not taken off first.
+    if (!preservingCall.registersThatCalleeLoses.empty()) {
+        RELEASE_ASSERT(!preservingCall.cellsToKeep[0]);
+        preserving(preservingCall.registersThatCalleeLoses, [&] {
+            emitCall();
+        });
+    } else {
+        RegisterSet lostAnyway = m_recording.clobbered();
+        lostAnyway.merge(RegisterSet::macroClobberedGPRs());
+        lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
+        SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep, isX86_64() ? sizeof(CPURegister) : 0);
+        withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
+            emitCall();
+        });
+        loadSavedRegisters(area, StackPointerAfterLoads::IsLeftToEpilogue);
+    }
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
         RELEASE_ASSERT(!preservingCall.emitBeforeReturn);
@@ -106,41 +105,12 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
 
 void StubAssembler::exitOnMiss(Entry cachingOperation, const OperationCall& operationCall)
 {
-    m_recording.exits.append(StubExitRecord { StubExit::Miss, cachingOperation, RuntimeCounterID::None });
     callOperationAndReturn(cachingOperation, operationCall);
 }
 
-void StubAssembler::exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall& operationCall)
+void StubAssembler::exitOnCannot(Entry finisher, const OperationCall& operationCall)
 {
-    RELEASE_ASSERT(reason != RuntimeCounterID::None);
-    m_recording.exits.append(StubExitRecord { StubExit::Cannot, finisher, reason });
-    OperationCall callWithReason = operationCall;
-    auto unused = std::ranges::find_if(callWithReason.constantArguments, [](const auto& constant) {
-        return !constant;
-    });
-    RELEASE_ASSERT(unused != callWithReason.constantArguments.end());
-    *unused = OperationCall::ConstantArgument { reasonArgument, static_cast<uint32_t>(reason) };
-    callOperationAndReturn(finisher, callWithReason);
-}
-
-void StubAssembler::callEngineThunk(Entry pointer, GPRReg scratch)
-{
-    RELEASE_ASSERT(!isOperation(pointer) && canWrite(scratch));
-    recordClobber(scratch);
-    loadRuntimePointer(pointer, scratch);
-    call(scratch, JSEntryPtrTag);
-}
-
-void StubAssembler::callCode(CodeSymbol symbol)
-{
-    RELEASE_ASSERT(symbol.space == SymbolSpace::RegExp);
-    emitStackAlignmentCheck();
-    RegisterSet lost = registersClobberedByOperations();
-    if (!m_savedRegisterStack.isEmpty())
-        lost.exclude(m_savedRegisterStack.last());
-    m_recording.clobberedByCallees.merge(lost);
-    m_recording.symbols.appendIfNotContains(symbol);
-    m_relocations.call(symbol);
+    callOperationAndReturn(finisher, operationCall);
 }
 
 } } // namespace JSC::AOT

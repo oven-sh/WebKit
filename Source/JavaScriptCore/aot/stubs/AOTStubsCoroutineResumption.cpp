@@ -26,7 +26,6 @@ namespace JSC { namespace AOT {
 
 static constexpr int32_t generatorSlotOffset = Generator::generatorSlotInStubFrame * static_cast<int32_t>(sizeof(void*));
 static_assert(generatorSlotOffset < 0 && -generatorSlotOffset <= static_cast<int32_t>(stackAlignmentBytes()));
-// A body's first step may be a direct call, which tests the stack where its frame ends. A later step from the same caller has to fit wherever that one did.
 static constexpr int32_t sizeOfStepGeneratorFrame = sizeof(CallerFrameAndPC) + stackAlignmentBytes();
 
 CodePtr<JSEntryPtrTag> handlerOfJobEntrypoint() { return entrypointInCurrentImage(Image::FrequentStub::EnterHandlerOfJob, enterHandlerOfJob()); }
@@ -34,13 +33,15 @@ CodePtr<JSEntryPtrTag> savedFrameEntrypoint() { return entrypointInCurrentImage(
 
 static void emitUnmodifiedGeneratorCheck(StubAssembler& jit, GPRReg generator, GPRReg scratch, JumpList& otherwise)
 {
-    // The stored prototype is only known to be a cell while the flag is clear, so test the flag first.
     otherwise.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfHasOtherPrototype())));
     otherwise.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(generator, JSObject::butterflyOffset())));
+    jit.load32(Address(generator, JSCell::structureIDOffset()), scratch);
+    Jump isAsAllPlainOnesAreMade = jit.branch32(CCallHelpers::Equal, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.plainGeneratorHeader)));
     loadStructure(jit, generator, scratch);
     jit.loadPtr(Address(scratch, Structure::prototypeOffset()), scratch);
     jit.load32(Address(scratch, JSCell::structureIDOffset()), scratch);
     otherwise.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))));
+    isAsAllPlainOnesAreMade.link(&jit);
 }
 
 static void emitGeneratorClassCheck(StubAssembler& jit, GPRReg generator, GPRReg scratch, GPRReg other, JumpList& otherwise)
@@ -91,7 +92,6 @@ void generateStepGenerator(StubAssembler& jit)
     emitStepCheck(jit, check, generator, status, scratch, isNotStepped);
     jit.load32(Address(generator, Generator::offsetOfState()), status);
     isNotStepped.append(jit.branch32(CCallHelpers::LessThan, status, TrustedImm32(0)));
-    // A generator of another realm runs with that realm's instance register, which only the adapter sets up.
     jit.loadPtr(Address(generator, Generator::offsetOfSavedFrame()), saved);
     jit.load32(Address(saved, JSCell::structureIDOffset()), scratch);
     isNotStepped.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
@@ -106,10 +106,10 @@ void generateStepGenerator(StubAssembler& jit)
     jit.loadPtr(Address(fp, generatorSlotOffset), status);
     jit.emitFunctionEpilogue();
 
-    // A suspension stores its state. A body that returned left the state as it was.
     jit.load32(Address(status, Generator::offsetOfState()), scratch);
     Jump didYield = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(Generator::State::Running)));
     jit.store32(TrustedImm32(static_cast<int32_t>(Generator::State::Completed)), Address(status, Generator::offsetOfState()));
+    jit.storePtr(MacroAssembler::TrustedImmPtr(nullptr), Address(status, Generator::offsetOfSavedFrame()));
     jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Completed)), status);
     jit.returnToCaller();
 
@@ -126,11 +126,10 @@ void generateStepGenerator(StubAssembler& jit)
 StubSignature signatureOfEnterSavedFrame(StubKey) { return { }; }
 StubSignature signatureOfEnterHandlerOfJob(StubKey) { return { }; }
 
-// When a coroutine has left its frame, the adapter goes on with the frame that would be entered next anyway.
 void generateEnterSavedFrame(StubAssembler& jit)
 {
     const GPRReg scratch = jit.reuseScratch(StubRegister::T11);
-    emitEnterAdapter(jit, AdapterCaller::NativeCodeForJobOfCoroutine);
+    emitEnterAdapter(jit);
     const GPRReg saved = jit.reuseScratch(StubRegister::A0);
     const GPRReg mode = jit.reuseScratch(StubRegister::A1);
     const GPRReg value = jit.reuseScratch(StubRegister::A2);
@@ -146,7 +145,6 @@ void generateEnterSavedFrame(StubAssembler& jit)
 
     jit.move(calleeGPR, saved);
     jit.load32(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::ResumeMode))), mode);
-    // resumeModeBitsOfEngineMode as code.
     jit.lshift32(mode, TrustedImm32(1), scratch);
     jit.urshift32(TrustedImm32(1), mode);
     jit.or32(scratch, mode);
@@ -156,28 +154,12 @@ void generateEnterSavedFrame(StubAssembler& jit)
     jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)));
     jit.store64(scratch, endsJob);
 
-    Jump isHeapFrame = jit.branchTest8(CCallHelpers::NonZero, Address(saved, SavedFrame::offsetOfFlags()), TrustedImm32(SavedFrame::isHeapFrameFlag));
     Label enter = jit.label();
     jit.callStub(restoreSavedFrameToStack());
-    Label returnedToAdapter = jit.bindReturnLabel(StubFrameKind::SavedFrameAdapter);
-    // Only a generator that the engine resumes comes here with a heap frame, and only at the entry of the adapter: a job never does. The function returns where a restored frame returns.
-    jit.addOutOfLinePart([isHeapFrame, returnedToAdapter, saved, scratch](StubAssembler& jit) {
-        isHeapFrame.link(&jit);
-#if CPU(X86_64)
-        jit.loadLabelAddress(returnedToAdapter, scratch);
-        jit.push(scratch);
-#else
-        jit.loadLabelAddress(returnedToAdapter, CCallHelpers::linkRegister);
-#endif
-        jit.loadPtr(Address(saved, SavedFrame::offsetOfResumeAddress()), scratch);
-        jit.farJump(scratch, JSEntryPtrTag);
-    });
-    // Every way out of a restored frame comes through here.
+    jit.bindReturnLabel(StubFrameKind::SavedFrameAdapter);
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
 
-    // C++ reads what the body of a generator returns. Nobody reads what an async function returns, so from the first test on the result register is free.
     JumpList leave;
-    // Whatever left last has seen to its own resumption.
     JumpList leaveWithSentinel;
     JumpList entersDriver;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
@@ -188,7 +170,6 @@ void generateEnterSavedFrame(StubAssembler& jit)
 
     jit.loadPtr(coroutineWord(AOT_INSTANCE_OFFSET(coroutines.waiterToResume)), next);
     Jump hasNoWaiter = jit.branchTestPtr(CCallHelpers::Zero, next);
-    // The waiter runs under the async context that it has captured. Where the adapter cannot put it in place, resumeRemainingWaiters does.
     emitPutAsyncContextOfJobInPlace(jit, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.waiterAsyncContext)), scratch, value, leave);
     jit.load64(coroutineWord(AOT_INSTANCE_OFFSET(coroutines.waiterResolution)), value);
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.waiterToResume)));
@@ -253,11 +234,9 @@ void generateEnterSavedFrame(StubAssembler& jit)
     hasModeOfFunction.link(&jit);
     emitTakeFunctionResumeJob(jit, { next, slot, scratch }, saved, value, leaveWithSentinel);
 
-    // The stack walkers, SavedFrame::forFrame and the collector find the running SavedFrame in the callee slot.
     hasFrame.link(&jit);
     jit.storePtr(saved, calleeSlot);
     jit.storePtr(saved, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
-    // A stack trace goes on from the context of the entry to the functions that await it. The adapter is entered from the entry frame.
     jit.loadPtr(Address(fp), next);
     jit.storePtr(saved, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
     jit.store8(TrustedImm32(SavedFrame::isEnteredByJobLoopFlag), Address(saved, SavedFrame::offsetOfFlags()));
@@ -290,7 +269,6 @@ void generateEnterSavedFrame(StubAssembler& jit)
         jit.jump().linkTo(takeJob, &jit);
     }
 
-    // What runInternalMicrotask does for a PromiseReactionJob. A throw leaves through the entry frame, and whoever entered the adapter rejects the promise.
     {
         const GPRReg promise = driver;
         const GPRReg handler = mode;
@@ -329,17 +307,15 @@ void generateEnterSavedFrame(StubAssembler& jit)
         jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseOfEnteredHandler)));
         jit.jump().linkTo(takeJob, &jit);
 
-        // What it does for a BunPerformMicrotaskJob. Whoever entered the adapter reports what the function throws.
         callsFunction.link(&jit);
         emitTakePerformMicrotaskJob(jit, { next, slot, scratch }, handler, leaveWithSentinel);
         Label entersFunction = jit.label();
         callHandler(false, leaveWithSentinel);
         jit.jump().linkTo(takeJob, &jit);
 
-        // The arguments lie where the adapter finds those of a coroutine: the promise, the handler, what the handler is called with. Without a promise the function is called without an argument.
         jit.align();
         jit.bindEntry(enterHandlerOfJob());
-        emitEnterAdapter(jit, AdapterCaller::NativeCodeForJobOfCoroutine);
+        emitEnterAdapter(jit);
         jit.load8(coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)), scratch);
         jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)));
         jit.store64(scratch, endsJob);
@@ -418,7 +394,6 @@ void emitMoveRegistersSavedInFrame(StubAssembler& jit, GPRReg word, unsigned shi
 
 struct RestoredFrame { GPRReg saved, mode, value, count, scratch; };
 
-// The frame has the words kept, the words skipped above them, which SavedFrame::skippedAtTopFor counts, and the words skipped below them.
 static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept, GPRReg skippedAtBottom, GPRReg inFrame)
 {
     jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWords()), kept);
@@ -436,8 +411,6 @@ static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept
     jit.add32(kept, inFrame);
 }
 
-// Checks the stack, pushes the frame record, copies the words kept to their place below it and clears the words skipped below them:
-// a frame that goes on at the address it had before would find there what it left.
 #if CPU(X86_64)
 static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
 {
@@ -459,11 +432,16 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     jit.subPtr(scratch, sp);
     jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), destination);
     Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom);
-    jit.move(TrustedImm32(0), scratch);
+    jit.moveZeroToDouble(pair);
+    Jump isMultipleOfFour = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom, TrustedImm32(2));
+    jit.storeVector(pair, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -16));
+    Jump isCleared = jit.branchSub32(CCallHelpers::Zero, TrustedImm32(2), skippedAtBottom);
+    isMultipleOfFour.link(&jit);
     Label clearNext = jit.label();
-    jit.store64(scratch, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -8));
-    jit.store64(scratch, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -16));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), skippedAtBottom).linkTo(clearNext, &jit);
+    jit.storeVector(pair, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -16));
+    jit.storeVector(pair, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -32));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(4), skippedAtBottom).linkTo(clearNext, &jit);
+    isCleared.link(&jit);
     skipsNothing.link(&jit);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
     Jump isSmall = jit.branch32(CCallHelpers::Below, count, TrustedImm32(SavedFrame::minWordsForStringMove));
@@ -539,7 +517,6 @@ static void emitContinueAtSite(StubAssembler& jit, const RestoredFrame& frame)
     jit.load8(Address(saved, SavedFrame::offsetOfFlags()), flags);
     jit.loadPtr(Address(saved, SavedFrame::offsetOfResumeAddress()), resumeAddress);
     jit.move(value, result);
-    // Any other frame leaves the word alone, so a generator that is stepped by the frame that may continue does not take the right away.
     Jump isNotEnteredByJobLoop = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(SavedFrame::isEnteredByJobLoopFlag));
     Jump mustSuspendAtAwaits = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend)));
     jit.storePtr(fp, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
@@ -547,16 +524,13 @@ static void emitContinueAtSite(StubAssembler& jit, const RestoredFrame& frame)
     mustSuspendAtAwaits.link(&jit);
     Jump isAtYield = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(SavedFrame::isSuspendedAtYieldFlag));
     Jump throws = jit.branchTest32(CCallHelpers::NonZero, mode, TrustedImm32(static_cast<int32_t>(ResumeMode::Throw)));
-    // The site of a StepAsyncGenerator reads the status of the step. The site of an await ignores the register.
     jit.urshift32(TrustedImm32(SavedFrame::stepStatusShift), resumeMode);
-    // The tag makes the assembler record that compiled code runs: the clobbers and effects of the stubs that call this one are computed from that.
     jit.farJump(resumeAddress, JSEntryPtrTag);
 
     isAtYield.link(&jit);
     jit.move(mode, resumeMode);
     jit.farJump(resumeAddress, JSEntryPtrTag);
 
-    // The throw is raised at the call site of the suspension, whose landing pad is the handler of its block.
     throws.link(&jit);
     jit.store64(value, Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.thrownValue)));
 #if CPU(X86_64)
@@ -567,6 +541,32 @@ static void emitContinueAtSite(StubAssembler& jit, const RestoredFrame& frame)
     jit.jumpToStub(handleException(false));
 }
 
+static void emitContinueAtEntrypoint(StubAssembler& jit, const RestoredFrame& frame)
+{
+    const auto [saved, mode, value, flags, resumeAddress] = frame;
+    const GPRReg frameOfBody = jit.reuseScratch(StubRegister::T10);
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11));
+    static_assert(static_cast<int32_t>(ResumeMode::Throw) == 1 && !(static_cast<int32_t>(ResumeMode::Next) & 1));
+    RELEASE_ASSERT(noOverlap(saved, mode, value, flags, resumeAddress, frameOfBody));
+
+    jit.store32(TrustedImm32(0), Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+    jit.load8(Address(saved, SavedFrame::offsetOfFlags()), flags);
+    jit.loadPtr(Address(saved, SavedFrame::offsetOfResumeAddress()), resumeAddress);
+    Jump isNotEnteredByJobLoop = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(SavedFrame::isEnteredByJobLoopFlag));
+    Jump mustSuspendAtAwaits = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend)));
+    jit.subPtr(sp, TrustedImm32(static_cast<int32_t>(prologueStackPointerDelta())), frameOfBody);
+    jit.storePtr(frameOfBody, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+    isNotEnteredByJobLoop.link(&jit);
+    mustSuspendAtAwaits.link(&jit);
+    Jump isAtYield = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(SavedFrame::isSuspendedAtYieldFlag));
+    jit.and32(TrustedImm32(static_cast<int32_t>(ResumeMode::Throw)), mode);
+    jit.lshift32(TrustedImm32(SavedFrame::throwsIntoAwaitShift), mode);
+    jit.urshift32(TrustedImm32(SavedFrame::stepStatusShift), flags);
+    jit.or32(flags, mode);
+    isAtYield.link(&jit);
+    jit.farJump(resumeAddress, JSEntryPtrTag);
+}
+
 StubSignature signatureOfEnterGeneratorFrame(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
 void generateEnterGeneratorFrame(StubAssembler& jit)
@@ -575,7 +575,7 @@ void generateEnterGeneratorFrame(StubAssembler& jit)
     const GPRReg resumeAddress = jit.allocateScratch(StubRegister::T11);
     RELEASE_ASSERT(noOverlap(saved, jit.operand(1), jit.operand(2), resumeAddress, instanceGPR));
     checkStubOperands(restoreSavedFrameToStack(), { saved, jit.operand(1), jit.operand(2) });
-    Jump isHeapFrame = jit.branchTest8(CCallHelpers::NonZero, Address(saved, SavedFrame::offsetOfFlags()), TrustedImm32(SavedFrame::isHeapFrameFlag));
+    Jump isHeapFrame = jit.branchTest8(CCallHelpers::NonZero, Address(saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(SavedFrame::liesOnHeapBit));
     jit.jumpToStub(restoreSavedFrameToStack());
     isHeapFrame.link(&jit);
     jit.loadPtr(Address(saved, SavedFrame::offsetOfResumeAddress()), resumeAddress);
@@ -584,7 +584,6 @@ void generateEnterGeneratorFrame(StubAssembler& jit)
 
 StubSignature signatureOfRestoreSavedFrameToStack(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
-// The frame record is pushed here, so the frame's return address is the label after the call of this stub, which tells who resumed the frame.
 void generateRestoreSavedFrameToStack(StubAssembler& jit)
 {
     const RestoredFrame frame {
@@ -594,20 +593,18 @@ void generateRestoreSavedFrameToStack(StubAssembler& jit)
         .count = jit.allocateScratch(StubRegister::T9),
         .scratch = jit.allocateScratch(StubRegister::T11),
     };
+    Jump liesOnHeap = jit.branchTest8(CCallHelpers::NonZero, Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(SavedFrame::liesOnHeapBit));
     emitCopyFrameToStack(jit, frame);
 
-    // Leaving the function, and the unwinder when it passes the frame, reload callee saves from the frame's save area.
     const GPRReg bits = frame.scratch;
     jit.load8(Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), bits);
     emitMoveRegistersSavedInFrame(jit, bits, 0, RegistersSavedInFrame::AreStored);
 #if CPU(X86_64)
-    // A function that does not save the register leaves with it as it is, so it has to stay the resumer's.
     Jump doesNotSavePreservedRegister = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
     jit.load64(Address(frame.saved, SavedFrame::offsetOfPreservedRegister()), SavedFrame::preservedRegister);
     doesNotSavePreservedRegister.link(&jit);
 #endif
 
-    // From here on the words of the SavedFrame are stale, so it lists none of them. Until the copy is done a marker may read them.
     const Address version(frame.saved, SavedFrame::offsetOfVersion());
     jit.add32(TrustedImm32(1), version);
     jit.storeFence();
@@ -616,6 +613,9 @@ void generateRestoreSavedFrameToStack(StubAssembler& jit)
     jit.add32(TrustedImm32(1), version);
 
     emitContinueAtSite(jit, frame);
+
+    liesOnHeap.link(&jit);
+    emitContinueAtEntrypoint(jit, frame);
 }
 
 } } // namespace JSC::AOT

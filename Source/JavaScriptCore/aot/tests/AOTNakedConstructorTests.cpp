@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCallee.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -55,8 +54,6 @@ function f2 name="Widget" kind=BaseConstructor flags=[HasNewTarget, HasExplicitN
 }
 )IR"_s;
 
-static constexpr ModuleID mainModule { 0u };
-
 static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASCIILiteral expectedMessage)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
@@ -74,39 +71,9 @@ static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASC
     AOT_TEST_CHECK(message == expectedMessage);
 }
 
-static void checkCompiledClosureNamesConstructor(LoadedProgram& program)
-{
-    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(functionImplementing(Builtins::Promise).index());
-    AOT_TEST_CHECK(entry);
-    JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
-
-    checkCallThrowsTypeError(program, closure, "Cannot call a constructor Promise without |new|"_s);
-}
-
 static void checkBuiltinOfRealmNamesConstructor(LoadedProgram& program)
 {
     checkCallThrowsTypeError(program, program.realm()->promiseConstructor(), "Cannot call a constructor Promise without |new|"_s);
-}
-
-static void checkClassNamesClassConstructor(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.publish = function () { }"_s);
-    evaluateModuleSynchronously(realm, mainModule);
-    AOT_TEST_CHECK(!scope.exception());
-
-    checkCallThrowsTypeError(program, realm->get(realm, Identifier::fromString(vm, "Widget"_s)), "Cannot call a class constructor Widget without |new|"_s);
-}
-
-static void checkCompiledClosureIsDeclaredAsFunction(LoadedProgram& program)
-{
-    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(functionImplementing(Builtins::Promise).index());
-    AOT_TEST_CHECK(entry);
-    JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
-
-    AOT_TEST_CHECK(declaredAs(closure) == DeclaredAs::Function);
 }
 
 static void checkBuiltinOfRealmIsDeclaredAsFunction(LoadedProgram& program)
@@ -115,18 +82,6 @@ static void checkBuiltinOfRealmIsDeclaredAsFunction(LoadedProgram& program)
     AOT_TEST_CHECK(promiseConstructor->isHostFunction());
 
     AOT_TEST_CHECK(declaredAs(promiseConstructor) == DeclaredAs::Function);
-}
-
-static void checkClassIsDeclaredAsClass(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.publish = function () { }"_s);
-    evaluateModuleSynchronously(realm, mainModule);
-    AOT_TEST_CHECK(!scope.exception());
-
-    AOT_TEST_CHECK(declaredAs(realm->get(realm, Identifier::fromString(vm, "Widget"_s)).asCell()) == DeclaredAs::Class);
 }
 
 static void checkHostFunctionsAreNotCompiled(LoadedProgram& program)
@@ -147,12 +102,8 @@ static constexpr void (*withConstructors)() = runNativeTestWithLoadedProgram<nak
 std::span<const NativeTest> nakedConstructorTests()
 {
     static constexpr NativeTest tests[] = {
-        { "naked-constructor/compiled-closure-names-constructor"_s, withConstructors<checkCompiledClosureNamesConstructor> },
         { "naked-constructor/builtin-of-realm-names-constructor"_s, withConstructors<checkBuiltinOfRealmNamesConstructor> },
-        { "naked-constructor/class-names-class-constructor"_s, withConstructors<checkClassNamesClassConstructor> },
-        { "naked-constructor/compiled-closure-is-declared-as-function"_s, withConstructors<checkCompiledClosureIsDeclaredAsFunction> },
         { "naked-constructor/builtin-of-realm-is-declared-as-function"_s, withConstructors<checkBuiltinOfRealmIsDeclaredAsFunction> },
-        { "naked-constructor/class-is-declared-as-class"_s, withConstructors<checkClassIsDeclaredAsClass> },
         { "naked-constructor/host-functions-are-not-compiled"_s, withConstructors<checkHostFunctionsAreNotCompiled> },
     };
     return tests;

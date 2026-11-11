@@ -15,6 +15,7 @@
 #include "CallFrame.h"
 #include "Interpreter.h"
 #include "JSArray.h"
+#include "JSCellButterfly.h"
 #include "StackAlignment.h"
 #include "StackManager.h"
 #include <array>
@@ -31,9 +32,7 @@ void emitAlignedSizeOfWords(StubAssembler& jit, GPRReg count, int32_t extraWords
 
 static_assert(gprOf(StubRegister::A0) == argumentGPR(0));
 StubSignature signatureOfCallWithArray(StubKey) { return callConventionSignature({ StubRegister::A0 }); }
-StubSignature signatureOfCallWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfTailCallWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2) }); }
-StubSignature signatureOfSuperConstructWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2) }); }
 StubSignature signatureOfSuperConstructWithArray(StubKey) { return StubSignature::withGPRResult({ calleeGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfReturnFromArgumentListFrame(StubKey) { return { }; }
 
@@ -43,6 +42,8 @@ StubSignature signatureOfCallFromArgumentListFrame(StubKey)
     signature.addOperand(valueEntryGPR);
     return signature;
 }
+
+StubSignature signatureOfCallFromArgumentListFrameWithWords(StubKey key) { return signatureOfCallFromArgumentListFrame(key); }
 
 void emitLoadArgumentRegistersFromList(StubAssembler& jit, const ArgumentList& list, unsigned firstRegister)
 {
@@ -112,71 +113,6 @@ static void branchIfNotCompiledCallee(StubAssembler& jit, GPRReg scratch, JumpLi
     isClosure.link(&jit);
 }
 
-void generateCallWithList(StubAssembler& jit)
-{
-    jit.setCallPosition(static_cast<CallPosition>(jit.key().form()));
-    const CallRegisters registers = CallRegisters::allocate(jit);
-    const ArgumentList list { countGPR, registers.scratch };
-    jit.zeroExtend32ToWord(jit.clobberOperand(2), list.count);
-    jit.move(jit.clobberOperand(3), list.words);
-    Jump exceedsArgumentRegisters = jit.branch32(CCallHelpers::Above, list.count, TrustedImm32(numberOfArgumentGPRs));
-    emitLoadArgumentRegistersFromList(jit, list);
-    jit.jumpToStub(callValueWithCount(jit.callPosition()));
-
-    exceedsArgumentRegisters.link(&jit);
-    constexpr GPRReg index = argumentGPR(0);
-    constexpr GPRReg temporary = argumentGPR(1);
-    const GPRReg words = registers.word;
-    ASSERT(noOverlap(list.count, list.words, words, index, temporary));
-    JumpList doesNotFitOnStack;
-    Jump isLong = jit.branch32(CCallHelpers::Above, list.count, TrustedImm32(maxListLengthCopiedTwice));
-    Label usesListFrame = jit.label();
-    emitAlignedSizeOfWords(jit, list.count, 0, words);
-    jit.subPtr(sp, words, temporary);
-    jit.subPtr(TrustedImm32(sizeof(CallerFrameAndPC)), temporary);
-    doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Below, temporary, softStackLimit()));
-    jit.emitFunctionPrologue();
-    jit.subPtr(sp, words, words);
-    jit.move(words, sp);
-    jit.move(list.count, index);
-    emitCopyFromLastWord(jit, Address(list.words), Address(words), index, temporary);
-    emitPopArgumentRegisters(jit, words);
-    emitCallValueFromArgumentListFrame(jit);
-
-    isLong.link(&jit);
-    JumpList isEngineCallee;
-    doesNotFitOnStack.append(jit.branch32(CCallHelpers::Above, list.count, TrustedImm32(maxArguments)));
-    branchIfNotCompiledCallee(jit, temporary, isEngineCallee);
-    jit.jump().linkTo(usesListFrame, &jit);
-
-    isEngineCallee.link(&jit);
-    jit.move(calleeGPR, registers.word);
-    jit.callOperationAndReturn(Entry::operationAOTCallEngineCallee, { .secondArgumentIn = registers.word, .thirdArgumentIn = thisGPR, .fourthArgumentIn = list.count, .fifthArgumentIn = list.words });
-
-    doesNotFitOnStack.link(&jit);
-    emitThrowStackOverflow(jit);
-}
-
-void generateSuperConstructWithList(StubAssembler& jit)
-{
-    constexpr unsigned numberOfRegistersForList = numberOfArgumentGPRs - 1;
-    const CallRegisters registers = CallRegisters::allocate(jit);
-    const GPRReg newTarget = jit.operand(1);
-    const ArgumentList list { jit.clobberRegister(countGPR), registers.scratch };
-    jit.zeroExtend32ToWord(jit.clobberOperand(2), list.count);
-    jit.move(jit.clobberOperand(3), list.words);
-    Jump exceedsArgumentRegisters = jit.branch32(CCallHelpers::Above, list.count, TrustedImm32(numberOfRegistersForList));
-    emitLoadArgumentRegistersFromList(jit, list, 1);
-    jit.add32(TrustedImm32(1), countGPR);
-    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.clobberRegister(thisGPR));
-    jit.jumpToStub(constructValue(ConstructSyntax::SuperCall));
-
-    exceedsArgumentRegisters.link(&jit);
-    jit.move(calleeGPR, registers.word);
-    jit.callOperationAndReturn(Entry::operationAOTSuperConstruct, { .secondArgumentIn = registers.word, .thirdArgumentIn = newTarget, .fourthArgumentIn = list.count, .fifthArgumentIn = list.words });
-}
-
-// super(...list). The elements of a short list that has every element go into the registers behind new.target.
 void generateSuperConstructWithArray(StubAssembler& jit)
 {
     const CallRegisters registers = CallRegisters::allocate(jit);
@@ -283,7 +219,6 @@ void generateTailCallWithList(StubAssembler& jit)
     emitAlignedSizeOfWords(jit, count, 0, destination);
     jit.subPtr(frame, destination, destination);
     doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Above, destination, frame));
-    // A signal handler may run on this stack, so nothing is stored below sp.
     Jump isAboveStackPointer = jit.branchPtr(CCallHelpers::BelowOrEqual, sp, destination);
     doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Below, destination, softStackLimit()));
     jit.move(destination, sp);
@@ -318,11 +253,27 @@ void generateCallWithArray(StubAssembler& jit)
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const GPRReg preservedList = registers.word;
     const GPRReg storage = registers.scratch;
-    JumpList genericPath;
+    JumpList isReadByOperation;
+    JumpList doesNotFitOnStack;
+
+    auto loadElement = [&](auto address, bool holdsDoubles, GPRReg result) {
+        if (holdsDoubles) {
+            JumpList isHole;
+            jit.loadDouble(address, number);
+            jit.move(TrustedImm64(JSValue::ValueUndefined), result);
+            boxDouble(jit, PureDouble::branchIfNaN(jit, number, isHole), result);
+            isHole.link(&jit);
+            return;
+        }
+        jit.load64(address, result);
+        Jump isPresent = jit.branchTest64(CCallHelpers::NonZero, result);
+        jit.move(TrustedImm64(JSValue::ValueUndefined), result);
+        isPresent.link(&jit);
+    };
 
     jit.move(list, preservedList);
     jit.load8(Address(list, JSCell::indexingTypeAndMiscOffset()), mode);
-    genericPath.append(branchIfNotPristine(jit, list));
+    isReadByOperation.append(branchIfNotPristine(jit, list));
     jit.loadPtr(Address(list, JSObject::butterflyOffset()), storage);
     jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), countGPR);
     Jump exceedsArgumentRegisters = jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(numberOfArgumentGPRs));
@@ -330,24 +281,23 @@ void generateCallWithArray(StubAssembler& jit)
     Jump hasDoubleShape = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(DoubleShape));
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(ContiguousShape));
     Jump hasInt32Shape = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(Int32Shape));
-    genericPath.append(jit.branch32(CCallHelpers::NotEqual, mode, TrustedImm32(UndecidedShape)));
-    genericPath.append(jit.branchTest32(CCallHelpers::NonZero, countGPR));
+    isReadByOperation.append(jit.branch32(CCallHelpers::NotEqual, mode, TrustedImm32(UndecidedShape)));
+    std::array<JumpList, numberOfArgumentGPRs> isPastLength;
+    isPastLength[0].append(jit.jump());
     hasInt32Shape.link(&jit);
     isContiguous.link(&jit);
 
-    std::array<JumpList, numberOfArgumentGPRs> isPastLength;
+    Label fitsInArgumentRegisters = jit.label();
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i) {
         isPastLength[i].append(jit.branch32(CCallHelpers::BelowOrEqual, countGPR, TrustedImm32(i)));
-        jit.load64(Address(storage, i * sizeof(EncodedJSValue)), argumentGPR(i));
-        genericPath.append(jit.branchTest64(CCallHelpers::Zero, argumentGPR(i)));
+        loadElement(Address(storage, i * sizeof(EncodedJSValue)), false, argumentGPR(i));
     }
     jit.jumpToStub(callValueWithCount(jit.callPosition()));
 
     hasDoubleShape.link(&jit);
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i) {
         isPastLength[i].append(jit.branch32(CCallHelpers::BelowOrEqual, countGPR, TrustedImm32(i)));
-        jit.loadDouble(Address(storage, i * sizeof(double)), number);
-        boxDouble(jit, PureDouble::branchIfNaN(jit, number, genericPath), argumentGPR(i));
+        loadElement(Address(storage, i * sizeof(double)), true, argumentGPR(i));
     }
     jit.jumpToStub(callValueWithCount(jit.callPosition()));
 
@@ -360,30 +310,17 @@ void generateCallWithArray(StubAssembler& jit)
     auto copyToListFrameAndCall = [&](bool holdsDoubles) {
         const GPRReg frameList = preservedList;
         const GPRReg index = mode;
-        jit.move(countGPR, index);
-        Label testPrevious = jit.label();
-        jit.sub32(TrustedImm32(1), index);
-        if (holdsDoubles) {
-            jit.loadDouble(BaseIndex(storage, index, CCallHelpers::TimesEight), number);
-            genericPath.append(jit.branchIfNaN(number));
-        } else {
-            jit.load64(BaseIndex(storage, index, CCallHelpers::TimesEight), element);
-            genericPath.append(jit.branchTest64(CCallHelpers::Zero, element));
-        }
-        jit.branchTest32(CCallHelpers::NonZero, index).linkTo(testPrevious, &jit);
         emitDropArgumentListFrames(jit, element);
         emitAlignedSizeOfWords(jit, countGPR, 0, index);
         jit.subPtr(sp, index, element);
-        genericPath.append(jit.branchPtr(CCallHelpers::Below, element, softStackLimit()));
+        doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Below, element, softStackLimit()));
         jit.emitFunctionPrologue();
         jit.subPtr(sp, index, frameList);
         jit.move(frameList, sp);
         jit.move(countGPR, index);
         Label copyPrevious = jit.label();
         jit.sub32(TrustedImm32(1), index);
-        jit.load64(BaseIndex(storage, index, CCallHelpers::TimesEight), element);
-        if (holdsDoubles)
-            boxDoubleBits(jit, PureDoubleBits::loadedAgainBehindTestForNaN(element));
+        loadElement(BaseIndex(storage, index, CCallHelpers::TimesEight), holdsDoubles, element);
         jit.store64(element, BaseIndex(frameList, index, CCallHelpers::TimesEight));
         jit.branchTest32(CCallHelpers::NonZero, index).linkTo(copyPrevious, &jit);
         emitPopArgumentRegisters(jit, frameList);
@@ -395,7 +332,7 @@ void generateCallWithArray(StubAssembler& jit)
     jit.and32(TrustedImm32(IndexingShapeMask), mode);
     Jump longListHoldsDoubles = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(DoubleShape));
     Jump longListIsContiguous = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(ContiguousShape));
-    genericPath.append(jit.branch32(CCallHelpers::NotEqual, mode, TrustedImm32(Int32Shape)));
+    isReadByOperation.append(jit.branch32(CCallHelpers::NotEqual, mode, TrustedImm32(Int32Shape)));
     longListIsContiguous.link(&jit);
     copyToListFrameAndCall(false);
     longListHoldsDoubles.link(&jit);
@@ -403,11 +340,10 @@ void generateCallWithArray(StubAssembler& jit)
 
     isLong.link(&jit);
     JumpList isEngineCallee;
-    genericPath.append(jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(maxArguments)));
+    doesNotFitOnStack.append(jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(maxArguments)));
     branchIfNotCompiledCallee(jit, element, isEngineCallee);
     jit.jump().linkTo(usesListFrame, &jit);
 
-    // A tail call out of a function that the interpreter entered. The callee's frame replaces the adapter's, which a call from C++ would keep on the stack.
     isEngineCallee.link(&jit);
     for (StubFrameKind kind : { StubFrameKind::Adapter, StubFrameKind::ArgumentList }) {
         Address returnAddressOfKind(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(kind));
@@ -419,17 +355,42 @@ void generateCallWithArray(StubAssembler& jit)
         jit.branchPtr(CCallHelpers::Equal, element, returnAddressOfKind).linkTo(usesListFrame, &jit);
 #endif
     }
-
-    genericPath.link(&jit);
-    emitDropArgumentListFrames(jit, element);
     ASSERT(noOverlap(operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), calleeGPR, thisGPR, preservedList));
     jit.move(calleeGPR, operationArgumentGPR(1));
     jit.move(thisGPR, operationArgumentGPR(2));
     jit.move(preservedList, operationArgumentGPR(3));
     jit.callOperationAndReturn(Entry::operationAOTApply, { });
+
+    isReadByOperation.link(&jit);
+    emitDropArgumentListFrames(jit, element);
+    jit.emitFunctionPrologue();
+    jit.preserving({ thisGPR, calleeGPR }, [&] {
+        jit.move(preservedList, operationArgumentGPR(1));
+        jit.move(instanceGPR, operationArgumentGPR(0));
+        jit.callOperation(Entry::operationAOTReadArgumentList, jit.reuseScratch(StubRegister::Operation));
+        jit.move(GPRInfo::returnValueGPR, storage);
+    });
+    jit.emitFunctionEpilogue();
+    Jump hasThrown = jit.branchTestPtr(CCallHelpers::Zero, storage);
+    jit.addPtr(TrustedImm32(static_cast<int32_t>(JSCellButterfly::offsetOfData())), storage);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), countGPR);
+    jit.branch32(CCallHelpers::BelowOrEqual, countGPR, TrustedImm32(numberOfArgumentGPRs)).linkTo(fitsInArgumentRegisters, &jit);
+    jit.move(TrustedImm32(ContiguousShape), mode);
+    jit.jump().linkTo(usesListFrame, &jit);
+
+    hasThrown.link(&jit);
+    jit.jumpToExceptionHandler();
+
+    doesNotFitOnStack.link(&jit);
+    emitThrowStackOverflow(jit);
 }
 
-// The frame kind has one return address, so every stub calls from here: a return that is paired with a call is predicted.
+void generateCallFromArgumentListFrameWithWords(StubAssembler& jit)
+{
+    emitMoveStackWordsToArgumentListFrame(jit, jit.key().count(), jit.key().form() ? sizeOfSpilledArgumentRegisters : 0);
+    jit.jumpToStub(callFromArgumentListFrame());
+}
+
 void generateCallFromArgumentListFrame(StubAssembler& jit)
 {
     jit.call(valueEntryGPR, JSEntryPtrTag);

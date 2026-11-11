@@ -1,0 +1,25 @@
+# If a name counted as spelled only where an operation names a property, a store under a name out of the program's own texts would lay an extra property where the layout has a slot for it
+# type Three = { a?: number; b?: number; c?: number }  const made: Three = {};  for (const name of [text("a"), ..data: "b"]) made[name] = 1;  hold(made);
+# Nothing stores under any of the three BY NAME (IsNeverWritten). `a` stands in a String operation, `b` in the constant data, and a type alone spells `c`: two keep their place in the record.
+# RUN: plan layouts
+# CHECK: layout L0 CompiledObject
+# CHECK: slot 0 "a" {{*}}record=0
+# CHECK: slot 1 "b" {{*}}record=1
+# CHECK-NOT: slot 2 "c" {{*}}record=
+
+layout L0 fields=[{key="a" declared={type=undefined|number} flags=[IsNeverWritten]}, {key="b" declared={type=undefined|number} flags=[IsNeverWritten]}, {key="c" declared={type=undefined|number} flags=[IsNeverWritten]}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="b"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = String string="a"
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="hold" [isFreeName]
+    v6 = Call v5, -, v0 calleeName="hold"
+    v7 = Undefined
+    Return v7
+}

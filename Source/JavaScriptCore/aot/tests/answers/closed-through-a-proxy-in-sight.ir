@@ -1,0 +1,43 @@
+# const kept = { a: 1 }, other = { a: 1 };  Object.freeze(new Proxy(kept, {}));
+# kept.a = 2;  other.a = 2;  print(kept.a);  print(other.a);      the two stores as sloppy code writes them: the one that the frozen object refuses is dropped
+# kept.a = 3;                                                      as strict code writes it: it throws
+# Both objects are made in sight, so each is known not to be frozen where it is made. The proxy holds `kept`, and whoever closes the proxy closes `kept`: what was known of it ends there.
+# RUN: run-in-shell
+# CHECK: 1
+# CHECK-NEXT: 2
+# CHECK-NEXT: TypeError: Attempted to assign to readonly property
+# CHECK-NOT: exited with 0
+# CHECK: exited with 3
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject layout=L1
+    v6 = FinishObject v5
+    v7 = Builtin builtin=Proxy
+    v8 = Construct v7, -, v2, v6 calleeName="Proxy"
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectFreeze
+    v11 = Call v10, v9, v8 calleeName="Object.freeze"
+    v12 = Integer integer=2
+    PropSet v2, v12 key="a" mode=Sloppy
+    PropSet v4, v12 key="a" mode=Sloppy
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="print" [isFreeName]
+    v17 = PropGet v2 key="a"
+    v18 = Call v16, -, v17 calleeName="print"
+    v19 = PropGet v4 key="a"
+    v20 = Call v16, -, v19 calleeName="print"
+    v21 = Integer integer=3
+    PropSet v2, v21 key="a"
+    v23 = Undefined
+    Return v23
+}

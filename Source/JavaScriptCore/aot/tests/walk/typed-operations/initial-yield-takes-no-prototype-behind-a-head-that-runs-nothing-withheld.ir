@@ -1,0 +1,6 @@
+# the same program with typed operations withheld: every body reads `prototype` of its function in front of its initial yield
+# PROGRAM-OF: initial-yield-takes-no-prototype-behind-a-head-that-runs-nothing.ir
+# RUN(WITHHELD): walk f1:CoroutineBody mechanisms=none
+# WITHHELD-LABEL: code f1:CoroutineBody
+# WITHHELD: TakeGeneratorPrototype
+# WITHHELD: = YieldBySavingFrame

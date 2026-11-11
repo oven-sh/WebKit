@@ -1,0 +1,142 @@
+# Functions that meet are united into a family, and each family has a receiver, a row of parameters and a result of its own. If all that have ever met anybody shared one row, the number that is passed to nine of them would arrive at the other nine, and their text at the first nine.
+# A call may pass fewer arguments than a member takes, so `undefined` is among what arrives.
+# function callFew(held, x) { return held(x); }  function callMany(held, x) { return held(x); }  callFew(<one of nine>, 1);  callMany(<one of nine others>, "text");
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f3 
+# HELD-NEXT: parameter 0 expected=undefined|i32 proven=undefined|i32
+# HELD: function f7 
+# HELD-NEXT: parameter 0 expected=undefined|i32 proven=undefined|i32
+# HELD: function f8 
+# HELD-NEXT: parameter 0 expected=undefined|string proven=undefined|string
+# HELD: function f12 
+# HELD-NEXT: parameter 0 expected=undefined|string proven=undefined|string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = NewClosure function=f9
+    v9 = NewClosure function=f10
+    v10 = NewClosure function=f11
+    v11 = NewClosure function=f12
+    v12 = Integer integer=1
+    v13 = String string="text"
+    v14 = NewClosure function=f13
+    v15 = NewClosure function=f14
+    v16 = NewClosure function=f15
+    v17 = NewClosure function=f16
+    v18 = NewClosure function=f17
+    v19 = NewClosure function=f18
+    v20 = NewClosure function=f19
+    v21 = NewClosure function=f20
+    v22 = Call v0, -, v2, v12 calleeName="callFew"
+    v23 = Call v0, -, v3, v12 calleeName="callFew"
+    v24 = Call v0, -, v4, v12 calleeName="callFew"
+    v25 = Call v0, -, v5, v12 calleeName="callFew"
+    v26 = Call v0, -, v6, v12 calleeName="callFew"
+    v27 = Call v0, -, v14, v12 calleeName="callFew"
+    v28 = Call v0, -, v15, v12 calleeName="callFew"
+    v29 = Call v0, -, v16, v12 calleeName="callFew"
+    v30 = Call v0, -, v17, v12 calleeName="callFew"
+    v31 = Call v1, -, v7, v13 calleeName="callMany"
+    v32 = Call v1, -, v8, v13 calleeName="callMany"
+    v33 = Call v1, -, v9, v13 calleeName="callMany"
+    v34 = Call v1, -, v10, v13 calleeName="callMany"
+    v35 = Call v1, -, v11, v13 calleeName="callMany"
+    v36 = Call v1, -, v18, v13 calleeName="callMany"
+    v37 = Call v1, -, v19, v13 calleeName="callMany"
+    v38 = Call v1, -, v20, v13 calleeName="callMany"
+    v39 = Call v1, -, v21, v13 calleeName="callMany"
+    v40 = Undefined
+    Return v40
+}
+function f1 name="callFew" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="held"
+    Return v2
+}
+function f2 name="callMany" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="held"
+    Return v2
+}
+function f3 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f8 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f9 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f10 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f11 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f12 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f13 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f14 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f15 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f16 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f17 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f18 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f19 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f20 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

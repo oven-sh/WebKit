@@ -1,0 +1,89 @@
+# A closure of the frame has one more word behind its captures: the address of its copy in the heap, or nothing. A slot of the frame is used again, by the next turn, the next loan and the next call, so every making zeroes the word.
+# function twice(job) { return job() + job(); }  function once(k) { return twice(() => k) + 1; }  function turns(k) { let got = k; while (got) got = twice(() => k); return got; }
+# function nine(k) { return twice(() => k + k + k + k + k + k + k + k + k) + 1; }, with a capture for each mention.  publish(once, turns, nine);
+# Outside of loops a slim closure is filled by the stub, which knows the number of captures and zeroes the word itself: the code stores nothing there.
+# RUN(STUB): emit f2 mechanisms=all-Inlining
+# STUB-LABEL: unit f2:Body
+# STUB-NOT: = Store({{*}}frameSlots
+# STUB: = Return(
+# In a loop the code fills the closure itself: header, word, one capture at 16, the word at 24.
+# RUN(LOOP): emit f3 mechanisms=all-Inlining
+# LOOP-LABEL: unit f3:Body
+# LOOP: = Store({{*}}offset = 24, frameSlots
+# A closure with nine captures has the full form, which the code always fills itself: the captures begin at 40, the word lies at 112.
+# RUN(FULL): emit f4 mechanisms=all-Inlining
+# FULL-LABEL: unit f4:Body
+# FULL: = Store({{*}}offset = 112, frameSlots
+# RUN(LENT): walk f2 f3 f4 mechanisms=all-Inlining
+# LENT-LABEL: code f2:Body
+# LENT: = NewClosure {{*}}function=f5 {{*}}storage=Frame
+# LENT-LABEL: code f3:Body
+# LENT: = NewClosure {{*}}function=f5 {{*}}storage=Frame
+# LENT-LABEL: code f4:Body
+# LENT: = NewClosure {{*}}function=f6 {{*}}storage=Frame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2 calleeName="publish"
+    Return v5
+}
+function f1 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Call v0 calleeName="job"
+    v2 = Call v0 calleeName="job"
+    v3 = Add v1, v2
+    Return v3
+}
+function f2 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f5
+    v2 = CallDirect v1 function=f1
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+function f3 name="turns" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1(v0)
+  b1(v1: anything):
+    LoopHint
+    v3 = ToBoolean v1
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = NewClosure v0 function=f5
+    v5 = CallDirect v4 function=f1
+    Jump -> next b1(v5)
+  b3():
+    Return v1
+}
+function f4 name="nine" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0, v0, v0, v0, v0, v0, v0, v0, v0 function=f6
+    v2 = CallDirect v1 function=f1
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+function f5 name="job" module=m0 kind=Arrow captures=[{type=anything variableName="k"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="sum" module=m0 kind=Arrow captures=[{type=anything variableName="a"}, {type=anything variableName="b"}, {type=anything variableName="c"}, {type=anything variableName="d"}, {type=anything variableName="e"}, {type=anything variableName="f"}, {type=anything variableName="g"}, {type=anything variableName="h"}, {type=anything variableName="i"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything):
+    v9 = Add v0, v1
+    v10 = Add v9, v2
+    v11 = Add v10, v3
+    v12 = Add v11, v4
+    v13 = Add v12, v5
+    v14 = Add v13, v6
+    v15 = Add v14, v7
+    v16 = Add v15, v8
+    Return v16
+}

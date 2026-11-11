@@ -98,7 +98,7 @@ protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 
 #if ENABLE(AOT)
-    // They refuse only in a realm whose built-ins are locked. OverridesPut is not among the flags above: the constructor sets it on the Structure in such a realm alone,
+    // They reject writes only in a realm whose built-ins are locked. OverridesPut is not among the flags above: the constructor sets it on the Structure only in such a realm,
     // so that elsewhere a store to a native constructor, or to a class that extends one, is cached like any other.
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);

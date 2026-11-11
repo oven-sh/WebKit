@@ -1,0 +1,71 @@
+# a part of which nothing is known may run code to give its text. It is converted where the join stands, with the hint of the join, and what the conversion gives is appended: the text lies in a builder all the same
+# function joined(x) { let out = ""; for (let i = 0; i < 16; i++) out += x; return out; }   the sum converts as `"" + x` does
+# function both(a, b) { let out = ""; for (let i = 0; i < 16; i++) out = `${out}${a}${b}`; return out; }   both conversions stand in front of the first append
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: StringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: = Add
+# CHECK: StringBuilderAppendString
+# CHECK: StringBuilderFinish
+# RUN(ORDER): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# ORDER-LABEL: code f2:Body
+# ORDER: StringBuilderBegin
+# ORDER: isLoopHead=true
+# ORDER: = ToString
+# ORDER-NOT: StringBuilderAppend
+# ORDER: = ToString
+# ORDER: StringBuilderAppendString
+# ORDER: StringBuilderAppendString
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NEVER-NOT: = Strcat
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: StringBuilderBegin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="joined" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Integer integer=16
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v3, v0
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v3
+}
+function f2 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=16
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Strcat v4, v0, v1
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
+}

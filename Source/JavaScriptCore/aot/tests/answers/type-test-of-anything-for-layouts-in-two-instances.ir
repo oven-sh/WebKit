@@ -1,0 +1,269 @@
+# The program of objects-of-another-instance-in-typed-slots.ir, and behind it:
+# function tell(value) { return value.who(); }   function tellIfAny(value) { return value === undefined ? -1 : value.who(); }
+# In both the text tests `value`, which may be anything, for Thing | Other in front of the call, in tellIfAny beside undefined. What passes is asked `who` here. What fails is handed to the shell's callWho(), which asks it `who`: whichever way a value takes, the answer is the same.
+# One heap holds two instances of the image, as there. The objects of both have the same shapes, and `who` answers with the `mark` of the instance that made its object.
+# Among other objects the code of such a test asks for the instance behind the shape, and behind its passing edge nobody asks again: `who` is entered without its function object, with the variables of the instance that runs.
+# So an object of the other instance that passed would be answered for with the wrong `mark`. It is turned away, and goes by name.
+# function pick(value): Thing | Other { return value; }   function tellPicked(value) { return pick(value).who(); }   pick() promises its result, so the test behind the call may have its code where a misfit lands alone.
+# tellBesideList tests for Thing | Array, and a list passes that nobody asks. tellFailed calls `who` where the test for Thing | Other has failed, which is where an object of the other instance arrives. In all three the object is asked in front of the call.
+# LIBRARY: own
+# OPTIONS: several-realms
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; globalThis.id = () => 1; second.id = () => 2; globalThis.callWho = second.callWho = value => value.who(); const kitOf = f => ({ thing: f[0], other: f[1], tell: f[7], tellIfAny: f[8], tellPicked: f[9], tellBesideList: f[10], tellFailed: f[11] }); const twin = (id, register) => { class Thing { constructor(tag) { this.tag = tag; } who() { return mark; } } class Other { constructor(tag) { this.tag = tag; } who() { return mark + 100; } } class Box { constructor(held) { this.held = held; } ask() { return this.held.who(); } askSplit() { return this.held.who(); } } var mark = id(0); function thing() { return new Thing(1); } function other() { return new Other(1); } function box(held) { return new Box(held); } function put(box, held) { box.held = held; } function whoIs(thing) { return thing.who(); } function ask(box) { return box.ask(); } function askSplit(box) { return box.askSplit(); } function tell(value) { return value.who(); } function tellIfAny(value) { return value === undefined ? -1 : value.who(); } function pick(value) { return value; } function tellPicked(value) { return pick(value).who(); } function tellBesideList(value) { return value.who(); } function tellFailed(value) { return value.who(); } register(thing, other, box, put, whoIs, ask, askSplit, tell, tellIfAny, tellPicked, tellBesideList, tellFailed); }; const rows = (a, b) => { const said = []; const say = (label, run) => { try { said.push(label + " " + String(run())); } catch (error) { said.push(label + " throws " + error.name); } }; const sides = [[a, b], [b, a]]; for (let side = 0; side < 2; side++) { const x = sides[side][0], y = sides[side][1]; const told = value => [x, y].map(kit => kit.tell(value) + "," + kit.tellIfAny(value) + "," + kit.tellPicked(value) + "," + kit.tellBesideList(value) + "," + kit.tellFailed(value)).join(","); say("own thing", () => told(x.thing())); say("own other", () => told(x.other())); say("their thing", () => told(y.thing())); say("their other", () => told(y.other())); say("a stranger", () => told({ who() { return 7; } })); say("nothing", () => x.tellIfAny(undefined) + "," + y.tellIfAny(undefined)); say("nothing told", () => x.tell(undefined)); say("null", () => x.tellIfAny(null)); say("a number", () => told(5)); say("a list", () => x.tellBesideList([])); say("in turn", () => { let sum = 0; const values = [x.thing(), y.thing(), x.other(), y.other(), undefined]; for (let i = 0; i < 400; i++) { const value = values[i % 5]; sum += x.tellIfAny(value) * (i % 7); if (value) sum += x.tell(value) + x.tellPicked(value) + x.tellBesideList(value) + x.tellFailed(value); } return sum; }); } return said; }; const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const twins = { }; twin(() => 1, (...f) => { twins.first = kitOf(f); }); twin(() => 2, (...f) => { twins.second = kitOf(f); }); const got = rows(kits.first, kits.second), expected = rows(twins.first, twins.second); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("row " + n + ": " + got[n].slice(0, 120) + " and not " + expected[n].slice(0, 120)); } print(same + " of " + expected.length); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: 22 of 22
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance name="Thing" module=m0 constructor=f1 fields=[{key="tag" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Other" module=m0 constructor=f3 fields=[{key="tag" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="Box" module=m0 constructor=f5 fields=[{key="held" declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="mark" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="Thing" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="Other" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 name="Box" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/again.cjs" displayPath="again.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f15 exportsVariable=g4
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="who"
+    v4 = FinishClass v1 layout=L0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v5 variable=g1
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L1
+    v9 = NewClosure function=f4
+    DefineMethod v8, v9 layout=L1 key="who"
+    v11 = FinishClass v8 layout=L1
+    v12 = Convert v11 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v12 variable=g2
+    v14 = NewClosure function=f5
+    v15 = NewClass v14 layout=L2
+    v16 = NewClosure function=f6
+    DefineMethod v15, v16 layout=L2 key="ask"
+    v18 = NewClosure function=f7
+    DefineMethod v15, v18 layout=L2 index=1 key="askSplit"
+    v20 = FinishClass v15 layout=L2
+    v21 = Convert v20 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v21 variable=g3
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="id" [isFreeName]
+    v25 = Integer
+    v26 = Call v24, -, v25 calleeName="id"
+    PutModuleVariable v26 variable=g0
+    v28 = NewClosure function=f8
+    v29 = NewClosure function=f9
+    v30 = NewClosure function=f10
+    v31 = NewClosure function=f11
+    v32 = NewClosure function=f12
+    v33 = NewClosure function=f13
+    v34 = NewClosure function=f14
+    v35 = NewClosure function=f16
+    v36 = NewClosure function=f17
+    v37 = NewClosure function=f19
+    v38 = NewClosure function=f20
+    v39 = NewClosure function=f21
+    v40 = PropGet v23 key="register" [isFreeName]
+    v41 = Call v40, -, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39 calleeName="register"
+    v42 = Undefined
+    Return v42
+}
+function f1 name="Thing" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0} illTypedCause=FromLooseType
+    PropSet v4, v1 key="tag"
+    Return v4
+}
+function f2 name="who" module=m0 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}
+function f3 name="Other" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1} illTypedCause=FromLooseType
+    PropSet v4, v1 key="tag"
+    Return v4
+}
+function f4 name="who" module=m0 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=100
+    v3 = Add v1, v2
+    Return v3
+}
+function f5 name="Box" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything, v1: undefined|null|L0|L1):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Convert v3 declared={type=L2} illTypedCause=FromLooseType
+    PropSet v4, v1 key="held"
+    Return v4
+}
+function f6 name="ask" module=m0 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="held"
+    v2 = PropGet v1 key="who"
+    v3 = Call v2, v1 calleeKey="who" calleeName="this.held.who"
+    Return v3
+}
+function f7 name="askSplit" module=m0 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="held"
+    v2 = Convert v1 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}
+    v3 = TypeTest v2 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = PropGet v4 key="who"
+    v6 = Call v5, v4 calleeKey="who" calleeName="held.who"
+    Return v6
+  b2(v7):
+    v8 = PropGet v7 key="who"
+    v9 = Call v8, v7 calleeKey="who" calleeName="held.who"
+    Return v9
+}
+function f8 name="thing" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="Thing"
+    v2 = Integer integer=1
+    v3 = Construct v1, -, v2 calleeName="Thing"
+    Return v3
+}
+function f9 name="other" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="Other"
+    v2 = Integer integer=1
+    v3 = Construct v1, -, v2 calleeName="Other"
+    Return v3
+}
+function f10 name="box" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3
+    v2 = CheckInitialized v1 name="Box"
+    v3 = Convert v0 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v4 = Construct v2, -, v3 calleeName="Box"
+    Return v4
+}
+function f11 name="put" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held"
+    v3 = Undefined
+    Return v3
+}
+function f12 name="whoIs" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="who"
+    v2 = Call v1, v0 calleeKey="who" calleeName="thing.who"
+    Return v2
+}
+function f13 name="ask" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2):
+    v1 = PropGet v0 key="ask"
+    v2 = Call v1, v0 calleeKey="ask" calleeName="box.ask"
+    Return v2
+}
+function f14 name="askSplit" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2):
+    v1 = PropGet v0 key="askSplit"
+    v2 = Call v1, v0 calleeKey="askSplit" calleeName="box.askSplit"
+    Return v2
+}
+function f15 name="again" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    Return
+}
+function f16 name="tell" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0|L1
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = TypeTest v2 testedType=L0
+    Branch v3 -> taken b3(| 0), notTaken b4(| 0)
+  b2(v4):
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="callWho" [isFreeName]
+    v7 = Call v6, -, v4 calleeName="callWho"
+    Return v7
+  b3(v8):
+    v9 = PropGet v8 key="who"
+    v10 = Call v9, v8 calleeKey="who" calleeName="value.who"
+    Return v10
+  b4(v11):
+    v12 = PropGet v11 key="who"
+    v13 = Call v12, v11 calleeKey="who" calleeName="value.who"
+    Return v13
+}
+function f17 name="tellIfAny" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|L0|L1
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b3(| 0), notTaken b4(| 0)
+  b2(v4):
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="callWho" [isFreeName]
+    v7 = Call v6, -, v4 calleeName="callWho"
+    Return v7
+  b3(v8):
+    v9 = Integer integer=-1
+    Return v9
+  b4(v10):
+    v11 = PropGet v10 key="who"
+    v12 = Call v11, v10 calleeKey="who" calleeName="value.who"
+    Return v12
+}
+function f18 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0|L1}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f19 name="tellPicked" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f18
+    v2 = TypeTest v1 testedType=L0|L1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = PropGet v3 key="who"
+    v5 = Call v4, v3 calleeKey="who" calleeName="picked.who"
+    Return v5
+  b2(v6):
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="callWho" [isFreeName]
+    v9 = Call v8, -, v6 calleeName="callWho"
+    Return v9
+}
+function f20 name="tellBesideList" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0|Array
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="who"
+    v4 = Call v3, v2 calleeKey="who" calleeName="value.who"
+    Return v4
+  b2(v5):
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="callWho" [isFreeName]
+    v8 = Call v7, -, v5 calleeName="callWho"
+    Return v8
+}
+function f21 name="tellFailed" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0|L1
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="callWho" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="callWho"
+    Return v5
+  b2(v6):
+    v7 = PropGet v6 key="who"
+    v8 = Call v7, v6 calleeKey="who" calleeName="value.who"
+    Return v8
+}

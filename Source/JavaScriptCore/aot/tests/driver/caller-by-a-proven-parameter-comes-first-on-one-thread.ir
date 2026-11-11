@@ -1,0 +1,6 @@
+# One thread takes the units in one order, in which no cycle is ever done too early. What the queue asks of a mention follows from the tables alone, so it is asked here as with any number of threads
+# OPTIONS: threads=1
+# RUN: units-with-code f1:CoroutineBody f3:CoroutineBody mechanisms=all
+# CHECK: unit f1:CoroutineBody {{*}} bytes
+# CHECK: unit f3:CoroutineBody {{*}} bytes
+# PROGRAM-OF: ../link/caller-by-a-proven-parameter-is-a-referrer.ir

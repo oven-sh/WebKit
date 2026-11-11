@@ -1,0 +1,123 @@
+#   const first = Symbol("first");
+#   const second = Symbol("second");
+#   let spare = id(second);
+#   function keep() { return spare; }
+#   function define() { return class Held { [first]() { return "found under first"; } }; }
+#   function ask(held) { return held[first](); }
+#   const Held = define();
+#   print(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length);
+#   print(ask(new Held()));
+#   print("went on");
+# This tests the entry check at a member's definition. Where the program spells out the key of a member that is defined under a computed key, the class's record names that key.
+# Link's proofs and the guards rely on that record.
+# So the runtime checks each definition whose key is a run-time value against the name in the record: operationAOTDefineMethod, ClassTable::holdDefinitionToNameInRecord().
+# The injected fault is one that no source program can express: the store to `spare` goes into the variable of `first` here, which is a constant.
+# So the class is defined under `second` while its record says `first`.
+# Without the entry check the program printed "found under first" and continued.
+# RUN(MEMBERS): link members mechanisms=all
+# MEMBERS: member L0 Prototype 0 Method symbol("first")@m0:0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL-NOT: found under first
+# ALL-NOT: went on
+# ALL: crashed with
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE-NOT: found under first
+# NONE-NOT: went on
+# NONE: crashed with
+
+layout L0 kind=Instance name="Held" module=m0 position=155 constructor=f4
+layout L1 module=m0 position=313 fields=[{key=symbol("first")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("second")@m0:1 declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+# layout L133 kind=Closure
+variable g0 name="first" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="spare" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/$bunfs/root/main.js" displayPath="main.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 31, 64, 88, 122, 209, 254, 277, 351, 375, 393] quotedSources=[{position=14 end=15}, {position=46 start=15 end=31}, {position=76 start=31 end=41}, {position=237 start=157 end=168}, {position=242 start=157 end=170}, {position=267 start=41 end=49}, {position=277 start=49 end=121}, {position=305 start=69 end=113}, {position=340 start=69 end=120}, {position=351 start=121 end=141}, {position=357 start=127 end=140}, {position=365 start=131 end=139}, {position=375 start=141 end=157}] quotedSourceText="Symbol(\x22first\x22)Symbol(\x22second\x22)id(second)define()print(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length)print(ask(new Held))print(\x22went on\x22)held[first]()"} functionSource="const first = Symbol(\x22first\x22);\x0aconst second = Symbol(\x22second\x22);\x0alet spare = id(second);\x0afunction keep() { return spare; }\x0afunction define() { return class Held { [first]() { return \x22found under first\x22; } }; }\x0afunction ask(held) { return held[first](); }\x0aconst Held = define();\x0aprint(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length);\x0aprint(ask(new Held()));\x0aprint(\x22went on\x22);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=Symbol @14
+    v7 = String string="first" @21
+    v8 = Call v6, -, v7 calleeName="Symbol" callNumber=0 @14
+    PutModuleVariable v8 variable=g0 @6
+    v10 = Builtin builtin=Symbol @46
+    v11 = String string="second" @53
+    v12 = Call v10, -, v11 calleeName="Symbol" callNumber=1 @46
+    v13 = Builtin builtin=GlobalThis @76
+    v14 = PropGet v13 key="id" [isFreeName] @76
+    v15 = Call v14, -, v12 calleeName="id" @76
+    PutModuleVariable v15 variable=g0 @68
+    v17 = Call v3 calleeName="define" @267
+    v18 = Builtin builtin=GlobalThis @277
+    v19 = PropGet v18 key="print" [isFreeName] @277
+    v20 = TypeOf v1 @283
+    v21 = Builtin builtin=Reflect @297
+    v22 = Builtin builtin=ReflectOwnKeys @297
+    v23 = ToPropertyKey v8 @316
+    v24 = Integer integer=1 @324
+    v25 = NewObject layout=L1 @315
+    ElemDefine v25, v23, v24 @315
+    v27 = ToPropertyKey v12 @328
+    v28 = Integer integer=2 @337
+    ElemDefine v25, v27, v28 @327
+    v30 = FinishObject v25 @313
+    v31 = Call v22, v21, v30 calleeName="Reflect.ownKeys" @305
+    v32 = PropGet v31 key="length" @340
+    v33 = Add v20, v32 @297
+    v34 = Call v19, -, v33 calleeName="print" @277
+    v35 = Builtin builtin=GlobalThis @351
+    v36 = PropGet v35 key="print" [isFreeName] @351
+    v37 = Construct v17 calleeName="Held" @365
+    v38 = Call v5, -, v37 calleeName="ask" @357
+    v39 = Call v36, -, v38 calleeName="print" @351
+    v40 = Builtin builtin=GlobalThis @375
+    v41 = PropGet v40 key="print" [isFreeName] @375
+    v42 = String string="went on" @381
+    v43 = Call v41, -, v42 calleeName="print" @375
+    v44 = Undefined @375
+    Return v44 @375
+}
+function f1 name="keep" module=m0 position=88 sourceRange={start=88 end=121} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1 @113
+    v1 = CheckInitialized v0 name="spare" @113
+    Return v1 @113
+}
+function f2 name="define" module=m0 position=122 sourceRange={start=122 end=208} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4 @149
+    v1 = NewClass v0 layout=L0 @149
+    v2 = GetModuleVariable variable=g0 @163
+    v3 = CheckInitialized v2 name="first" @163
+    v4 = ToPropertyKey v3 @163
+    v5 = NewClosure function=f5 @162
+    SetFunctionName v5, v4 @162
+    DefineMethod v1, v5, v4 layout=L0 @162
+    v8 = FinishClass v1 layout=L0 @149
+    v9 = Convert v8 declared={type=f4 flags=[IsFromCompiler]} @149
+    Return v8 @149
+}
+function f3 name="ask" module=m0 position=209 sourceRange={start=209 end=253} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = GetModuleVariable variable=g0 @242
+    v2 = CheckInitialized v1 name="first" @242
+    v3 = ElemGet v0, v2 @237
+    v4 = Call v3, v0 calleeName="held[first]" @242
+    ReturnCall v4 @242
+}
+function f4 name="Held" module=m0 position=155 sourceRange={start=149 end=205} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @155
+    v2 = NewObject v1 layout=L0 @155
+    v3 = Convert v2 declared={type=L0} @155
+    Return v3 @155
+}
+function f5 module=m0 position=162 sourceRange={start=162 end=203} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="found under first" @181
+    Return v0 @181
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

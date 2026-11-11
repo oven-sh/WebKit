@@ -1,0 +1,35 @@
+# No row of Reflect.has takes a number for its target, so Link knows that the call throws. The TypeError is thrown by the text of Reflect.has itself, which the call enters like any other: the code of the library behind the built-in is in the image
+# Reflect.has(1, "a");
+# LIBRARY: own
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup called-out-of-sight ReflectHas
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+# RUN(IMAGE): image ProgramTables
+# IMAGE: compiledRuntimeFunction ReflectObjectHas
+# IMAGE-NOT: compiledRuntimeFunction ReflectObjectGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ReflectObjectGet function=f2
+runtimefunction id=ReflectObjectHas function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Reflect
+    v1 = Builtin builtin=ReflectHas
+    v2 = Integer integer=1
+    v3 = String string="a"
+    v4 = Call v1, v0, v2, v3 calleeName="Reflect.has"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="has" module=m1 kind=Method role=Library flags=[HasExplicitName] length=2 enclosingRuntimeFunction=ReflectObjectHas thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="get" module=m1 kind=Method role=Library flags=[HasExplicitName] length=2 enclosingRuntimeFunction=ReflectObjectGet thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

@@ -1,0 +1,97 @@
+# toString() of a proven number, boolean or BigInt, with no radix or with ten, is the operator ToString. Any other radix goes by the row of the method
+# f1 = decimal, f2 = ten, f3 = flag, f4 = big, f5 = binary
+# function decimal(n) { return typeof n === "number" ? n.toString() : ""; }
+# function ten(n) { return typeof n === "number" ? n.toString(10) : ""; }
+# function flag(b) { return typeof b === "boolean" ? b.toString() : ""; }
+# function big(i) { return typeof i === "bigint" ? i.toString() : ""; }
+# function binary(n) { return typeof n === "number" ? n.toString(2) : ""; }
+# by hand, so that each function reads the value that its test hands on. The front end writes the tested parameter itself behind the test, and the walk does not give that the narrower name
+# REPEAT: f = 1 2 3 4; name = DECIMAL TEN FLAG BIG
+# RUN(%(name)): walk f%(f) mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# %(name)-LABEL: code f%(f):Body
+# %(name): = ToString
+# RUN(NO%(name)): walk f%(f) mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NO%(name)-NOT: = Call
+# END REPEAT
+# RUN(OTHER): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# OTHER-LABEL: code f5:Body
+# OTHER: NumberToString
+# RUN(NEVER): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = ToString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="decimal" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="toString"
+    v4 = Call v3, v2 calleeKey="toString" calleeName="n.toString"
+    Return v4
+  b2():
+    v5 = String string=""
+    Return v5
+}
+function f2 name="ten" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="toString"
+    v4 = Integer integer=10
+    v5 = Call v3, v2, v4 calleeKey="toString" calleeName="n.toString"
+    Return v5
+  b2():
+    v6 = String string=""
+    Return v6
+}
+function f3 name="flag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=boolean
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="toString"
+    v4 = Call v3, v2 calleeKey="toString" calleeName="b.toString"
+    Return v4
+  b2():
+    v5 = String string=""
+    Return v5
+}
+function f4 name="big" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=bigint
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="toString"
+    v4 = Call v3, v2 calleeKey="toString" calleeName="i.toString"
+    Return v4
+  b2():
+    v5 = String string=""
+    Return v5
+}
+function f5 name="binary" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="toString"
+    v4 = Integer integer=2
+    v5 = Call v3, v2, v4 calleeKey="toString" calleeName="n.toString"
+    Return v5
+  b2():
+    v6 = String string=""
+    Return v6
+}

@@ -1,0 +1,5 @@
+# the same program with typed operations withheld: the read stays by name
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet
+# PROGRAM-OF: private-alias-of-a-built-in-that-is-read-is-the-member.ir

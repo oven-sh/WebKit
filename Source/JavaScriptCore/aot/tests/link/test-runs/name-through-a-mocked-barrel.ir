@@ -1,0 +1,41 @@
+# what the barrel exports is the variable of lib.js, and a mock of the barrel answers for whoever has the name through it. Neither lib.js nor the variable has a flag that says so
+# lib.js: export const text = "real"   barrel.js, which a test mocks: export * from "./lib.js"   main.test.js: import * as barrel from "./barrel.js"; out = barrel.text
+# the control: the same name read off the object of lib.js itself, which nobody mocks and which leads to no mock
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link variables mechanisms=all
+# CHECK-NOT: variable g1 proven=
+# CHECK: variable g2 proven={{*}}string
+# RUN(MOCKS): test-run
+# MOCKS: through-mock m1 "text"
+# MOCKS-NOT: through-mock m2
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/barrel.js" displayPath="barrel.js" flags=[MayBeMocked] body=f1 requests=[{target=m2 completes=true}] exports=[{name="text" variable=g0 isFromStarExport=true}]
+module m2 path="/lib.js" displayPath="lib.js" body=f2 exports=[{name="text" variable=g0}]
+entry module=m0
+variable g0 name="text" module=m2 declared={type=anything}
+variable g1 name="out" module=m0 declared={type=anything}
+variable g2 name="straight" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="text"
+    PutModuleVariable v1 variable=g1
+    v3 = ModuleNamespace module=m2
+    v4 = PropGet v3 key="text"
+    PutModuleVariable v4 variable=g2
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}

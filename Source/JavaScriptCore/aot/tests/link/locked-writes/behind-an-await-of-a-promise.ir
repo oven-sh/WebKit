@@ -1,0 +1,25 @@
+# a promise may never be settled, or be rejected: a warning
+# await Promise.resolve(1); Array.prototype.push = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks mechanisms=all
+
+module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise @1
+    v1 = PropGet v0 key="resolve" @1
+    v2 = Integer integer=1 @1
+    v3 = Call v1, v0, v2 calleeKey="resolve" @1
+    v4 = Await v3 @1
+    v5 = Builtin builtin=ArrayPrototype @2
+    v6 = NewClosure function=f1 @2
+    PropSet v5, v6 key="push" @3
+    v8 = Undefined @4
+    Return v8 @4
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}

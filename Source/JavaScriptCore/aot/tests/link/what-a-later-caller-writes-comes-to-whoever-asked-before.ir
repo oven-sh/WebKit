@@ -1,0 +1,58 @@
+# The first caller writes one argument, so when the rest lists are passed on nobody has written at the places that `take` asks for. The caller that does is found only behind `take`. If a place were tied to those alone who ask once somebody has written there, `take` would be proven to get `undefined` twice while `again()` brings it 2 and "x".
+#   function take(a, b) { return again(); }  function again() { return wrap(true, 2, "x"); }  function between(first, ...rest) { return take(...rest); }  function wrap(...list) { return between(...list); }  wrap(false);
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known
+# CHECK-NEXT: parameter 0 expected=undefined|i32 proven=undefined|int[0, 2147483647]
+# CHECK-NEXT: parameter 1 expected=undefined|string proven=undefined|string
+# CHECK: function f3 callers-known
+# CHECK-NEXT: parameter 0 expected=boolean proven=boolean
+
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    PutModuleVariable v2 variable=g1
+    v4 = NewClosure function=f4
+    PutModuleVariable v4 variable=g2
+    v6 = NewClosure function=f1
+    PutModuleVariable v6 variable=g3
+    v8 = Boolean
+    v9 = Call v6, -, v8 calleeName="wrap"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="wrap" module=m0 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = GetModuleVariable variable=g1
+    v2 = CallList v1, -, v0 calleeName="between"
+    Return v2
+}
+function f2 name="take" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g2
+    v3 = Call v2, - calleeName="again"
+    Return v3
+}
+function f3 name="between" module=m0 flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = GetModuleVariable variable=g0
+    v3 = CallList v2, -, v1 calleeName="take"
+    Return v3
+}
+function f4 name="again" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = Boolean boolean=true
+    v2 = Integer integer=2
+    v3 = String string="x"
+    v4 = Call v0, -, v1, v2, v3 calleeName="wrap"
+    Return v4
+}

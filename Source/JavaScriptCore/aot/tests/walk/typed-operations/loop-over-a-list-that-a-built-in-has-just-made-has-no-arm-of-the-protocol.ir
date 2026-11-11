@@ -1,0 +1,85 @@
+# a list that a function of the engine has made by its row one operation earlier is as its class makes it: the loop steps it by index, with no test in front and no arm of the protocol
+# function keys(o) { for (const k of Object.keys(o)) keep(k); }
+# function looked(o) { const list = Object.keys(o); keep(list); for (const k of list) keep(k); }
+# both are handed to sink, so nothing is known of who calls them
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: inlineBuiltin=OwnPropertyKeys
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayLength
+# CHECK: = GetArrayElement
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: IsPristine
+# NEVER-NOT: @@iterator
+# NEVER-NOT: key="next"
+# code that nobody has seen has had the list in hand, so the list is asked, and the protocol stands by
+# RUN(LOOKED): walk f2 mechanisms=all
+# LOOKED-LABEL: code f2:Body
+# LOOKED: = IsPristine {{*}}builtinClass=Array
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="keys" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="keys"
+    v3 = Call v2, v1, v0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Undefined
+    Return v9
+  b3() handler=b4():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="keep" [isFreeName]
+    v12 = Call v11, -, v8
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+}
+function f2 name="looked" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="keys"
+    v3 = Call v2, v1, v0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="keep" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = IteratorResume v7
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v12 = Undefined
+    Return v12
+  b3() handler=b4():
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="keep" [isFreeName]
+    v15 = Call v14, -, v11
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v7:
+    v16 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v16
+}

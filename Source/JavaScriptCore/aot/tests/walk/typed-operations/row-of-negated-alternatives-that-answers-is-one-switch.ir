@@ -1,0 +1,54 @@
+# the mirror of a row of `||`: behind `&&` the edges have changed places and each comparison stands below a LogicalNot. Every listed case brings the last join false, whatever else brings it true
+# function isOther(kind) { return kind !== 1 && kind !== 4 && kind !== 9; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: Switch {{*}}cases=[1, 4, 9] -> case [[listed]](), case [[listed]](), case [[listed]](), otherwise [[rest]]()
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: Branch
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD-NOT: Switch
+# RUN(SHELL): run-in-shell globalThis.sink = isOther => { print([isOther(0), isOther(1), isOther(4), isOther(9), isOther(9.5), isOther("4"), isOther(undefined)].join()); };
+# SHELL: true,false,false,false,true,true,true
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="isOther" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    v3 = LogicalNot v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Jump -> next b3()
+  b2(v6):
+    Jump -> next b4(v6)
+  b3():
+    v7 = Integer integer=4
+    v8 = StrictEq v0, v7
+    v9 = LogicalNot v8
+    Jump -> next b4(v9)
+  b4(v10):
+    v11 = ToBoolean v10
+    Branch v11 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v12):
+    Jump -> next b7()
+  b6(v13):
+    Jump -> next b8(v13)
+  b7():
+    v14 = Integer integer=9
+    v15 = StrictEq v0, v14
+    v16 = LogicalNot v15
+    Jump -> next b8(v16)
+  b8(v17):
+    Return v17
+}

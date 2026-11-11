@@ -1,0 +1,28 @@
+# If a built-in that a read finds counted as let go at once, `list.constructor === Array` would hand out `Array`, below it `Array.prototype`, and with that every method of lists:
+# the code of the library behind all of them would be entered from outside, in a program that calls none
+# print([].constructor === 1);
+# The flow follows the object like any value. Here it is compared and goes nowhere.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = PropGet v0 key="constructor"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="print" [isFreeName]
+    v6 = Call v5, -, v3 calleeName="print"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

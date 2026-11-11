@@ -8,15 +8,11 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFunctionAnalyses.h"
 #include "AOTReaderInternal.h"
-#include "AOTTypePropagation.h"
+#include "AOTSort.h"
 #include "AOTVector.h"
-#include "AOTVerifierInternal.h"
 #include "LineColumn.h"
 #include "PureNaN.h"
-#include <algorithm>
-#include <climits>
 #include <limits>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -24,23 +20,20 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr PlacedTableSizes unboundedTableSizes { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
-
-std::unique_ptr<Program> parseProgram(StringView text, IRForm form, BuildContext& build, const VerifierInputs& inputs)
+std::unique_ptr<Program> parseProgram(StringView text, BuildContext& build)
 {
-    // ASCII is its own UTF-8. The text of a large program is over the length that the conversion takes.
     if (text.is8Bit() && text.containsOnlyASCII())
-        return TextParser(byteCast<uint8_t>(text.span8()), form, build, inputs).run();
+        return TextParser(byteCast<uint8_t>(text.span8()), build).run();
     CString utf8 = text.utf8();
-    return TextParser(byteCast<uint8_t>(utf8.span()), form, build, inputs).run();
+    return TextParser(byteCast<uint8_t>(utf8.span()), build).run();
 }
 
-static bool endsLine(const Token& token)
+static bool endsLineOfIRText(const Token& token)
 {
     return token.kind == TokenKind::EndOfLine || token.kind == TokenKind::EndOfFile;
 }
 
-static std::optional<ProgramList> findList(const Token& keyword)
+static std::optional<ProgramList> findProgramList(const Token& keyword)
 {
     for (ProgramList list : allMembersOf<ProgramList>) {
         std::optional<ASCIILiteral> candidate = keywordOf(list);
@@ -57,7 +50,7 @@ static std::optional<ModuleKind> scanModuleKind(std::span<const uint8_t> text, L
     unsigned nesting = 0;
     Token name;
     Token separator;
-    for (Token current = lexer.next(); !endsLine(current); current = lexer.next()) {
+    for (Token current = lexer.next(); !endsLineOfIRText(current); current = lexer.next()) {
         if (!nesting && name.isWord("kind"_s) && separator.kind == TokenKind::Equal)
             return current.kind == TokenKind::Word ? parseEnum<ModuleKind>(current.view()) : std::nullopt;
         if (current.kind == TokenKind::LeftBrace || current.kind == TokenKind::LeftBracket)
@@ -84,151 +77,8 @@ static bool hasOnlyByteEscapes(std::span<const uint8_t> stringText)
     return true;
 }
 
-static bool canHaveExpectedTypes(IRForm form)
-{
-    switch (form) {
-    case IRForm::AsRead:
-    case IRForm::Prepared:
-        return true;
-    case IRForm::Selected:
-    case IRForm::Placed:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// A pass that moves the body of a function into an appended function leaves one of these under the id of the function.
-static bool canBeRoleOfFunctionAsRead(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-    case FunctionRole::StubBody:
-        return true;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-        return static_cast<unsigned>(role) < numberOfWireEnumerators<FunctionRole>;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// Passes append the functions they derive, so the functions as read end at the first function that only a pass can have appended.
-static unsigned countFunctionsAsRead(const Program& program)
-{
-    auto firstDerivedFunction = std::ranges::find_if(program.functions, [](const Function& function) {
-        return !canBeRoleOfFunctionAsRead(function.role) || function.derivation != Derivation { };
-    });
-    return static_cast<unsigned>(firstDerivedFunction - program.functions.begin());
-}
-
-// Typing follows operands and runs before dominance is verified. Only in form AsRead does the order of the blocks rule a cycle of operands out.
-static ValueID findValueInOperandCycle(const Function& function)
-{
-    enum class State : uint8_t { Unvisited, OnPath, Finished };
-    Vector<State> states(FillWith { }, function.values.size(), State::Unvisited);
-    Vector<ValueID> worklist;
-    for (size_t index = 0; index < function.values.size(); ++index) {
-        worklist.append(ValueID(index));
-        while (!worklist.isEmpty()) {
-            ValueID value = worklist.last();
-            State& state = states[value.index()];
-            if (state != State::Unvisited) {
-                state = State::Finished;
-                worklist.removeLast();
-                continue;
-            }
-
-            state = State::OnPath;
-            bool closesCycle = false;
-            function.at(value).forEachChild([&](ValueID operand) {
-                State operandState = states[operand.index()];
-                closesCycle |= operandState == State::OnPath;
-                if (operandState == State::Unvisited)
-                    worklist.append(operand);
-            });
-            if (closesCycle)
-                return value;
-        }
-    }
-    return { };
-}
-
-// The reader has not seen the engine's fields, and typing follows the ids in them.
-static bool verifyPatchedReferences(const Program& program, IRForm form, BuildContext& build, const VerifierInputs& inputs)
-{
-    if (!ProgramVerifier(program, form, build, inputs).runIDs())
-        return false;
-
-    bool isValid = true;
-    for (size_t index = 0; index < program.functions.size(); ++index) {
-        FunctionID id(index);
-        const Function& function = program.functions[index];
-        FunctionVerifier verifier(program, id, function, form, build, inputs);
-        if (!verifier.runStructure()) {
-            build.diagnostics().append(verifier.takeErrors());
-            isValid = false;
-            continue;
-        }
-        if (ValueID value = findValueInOperandCycle(function)) {
-            build.diagnostics().add(InternalError { .kind = InternalErrorKind::UseNotDominated, .function = id, .value = value });
-            isValid = false;
-        }
-    }
-    return isValid;
-}
-
-static TypePropagationOutcome typeFunction(const TypePropagationInputs& inputs, IRForm form)
-{
-    if (canHaveExpectedTypes(form))
-        return typeValuesFromNever(inputs);
-
-    TypePropagation propagation(inputs);
-    propagation.restartAllValues();
-    propagation.solveTypes();
-    return propagation.finish();
-}
-
-static bool typeAllFunctions(Program& program, IRForm form, BuildContext& build)
-{
-    bool hasCutFunction = false;
-    TypeArena types(program.types);
-    for (size_t index = 0; index < program.functions.size(); ++index) {
-        Function& function = program.functions[index];
-        if (!function.hasBody())
-            continue;
-        FunctionID id(index);
-        FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, id }, function);
-        if (!typeFunction({ program, id, function, analyses, types, build }, form).didChangeControlFlow())
-            continue;
-        // Cutting a block renumbers the values, which the text names by number.
-        build.diagnostics().add(InternalError { .kind = InternalErrorKind::ValueAfterNever, .function = id });
-        hasCutFunction = true;
-    }
-    return !hasCutFunction;
-}
-
 template<typename WireRecord, typename EngineRecord, typename Record>
-static void appendLine(TextParser& parser, const WireRecord& wire, EngineRecord engineFields, Vector<Record> Program::* records)
+static void appendProgramRecord(TextParser& parser, const WireRecord& wire, EngineRecord engineFields, Vector<Record> Program::* records)
 {
     Vector<WireRecord>& wireRecords = parser.builder().sections().template listOf<WireRecord>();
     parser.addPatch([records, index = wireRecords.size(), engineFields = WTF::move(engineFields)](PatchContext& context) {
@@ -238,7 +88,7 @@ static void appendLine(TextParser& parser, const WireRecord& wire, EngineRecord 
 }
 
 template<typename WireRecord, typename EngineRecord, typename Record>
-static void parseLine(TextParser& parser, Vector<Record> Program::* records)
+static void parseProgramRecord(TextParser& parser, Vector<Record> Program::* records)
 {
     WireRecord wire;
     if constexpr (requires { parseFields(parser, wire); }) {
@@ -247,9 +97,11 @@ static void parseLine(TextParser& parser, Vector<Record> Program::* records)
     } else {
         EngineRecord engineFields;
         parseFields(parser, wire, engineFields);
-        appendLine(parser, wire, WTF::move(engineFields), records);
+        appendProgramRecord(parser, wire, WTF::move(engineFields), records);
     }
 }
+
+TextParser::~TextParser() = default;
 
 std::unique_ptr<Program> TextParser::run()
 {
@@ -257,42 +109,21 @@ std::unique_ptr<Program> TextParser::run()
         return nullptr;
 
     m_program = makeUnique<Program>(m_builtins);
+    AOT::stableSort(m_items, { }, &TextItem::list);
     for (const TextItem& item : m_items) {
         parseItem(item);
         if (hasFailed())
             return nullptr;
     }
 
-    if (m_form == IRForm::Placed && !m_verifierInputs.placed)
-        m_verifierInputs.placed = &unboundedTableSizes;
-    m_verifierInputs.hasUncheckedRecords = m_form != IRForm::AsRead;
+    typeWordOfAnything();
 
-    m_program->adoptBuffer(m_builder.finish());
-    Reader reader(*m_program, m_form, m_build);
-    reader.setTypeCompletion([&](uint32_t wireIndex, Type& type) {
-        completeType(wireIndex, type);
-    });
-    VerifierInputs inputsOfReader = m_verifierInputs;
-    inputsOfReader.lacksEngineFields = true;
-    reader.setVerifierInputs(inputsOfReader);
+    m_program->adoptBuffer(m_builder.finish().releaseBuffer());
+    Reader reader(*m_program, m_build);
     if (!reader.run())
         return nullptr;
 
-    applyPatches(*m_program, reader.typesAsRead());
-    if (m_form == IRForm::AsRead)
-        return WTF::move(m_program);
-
-    m_program->collectConstructionStarts();
-    m_program->setNumberOfFunctionsAsRead(countFunctionsAsRead(*m_program));
-    if (!verifyPatchedReferences(*m_program, m_form, m_build, m_verifierInputs))
-        return nullptr;
-    m_program->indexClasses();
-    m_program->indexNames();
-    if (!typeAllFunctions(*m_program, m_form, m_build))
-        return nullptr;
-    applyValueEngineFields({ *m_program, reader.typesAsRead() });
-    if (!verifyProgram(*m_program, m_form, m_build, m_verifierInputs))
-        return nullptr;
+    applyPatches(*m_program, m_program->types.typesOfWireIndexes());
     return WTF::move(m_program);
 }
 
@@ -307,7 +138,7 @@ Token TextParser::nextScannedToken(Lexer& lexer)
 Token TextParser::scanToEndOfLine(Lexer& lexer)
 {
     Token last;
-    for (Token current = nextScannedToken(lexer); !hasFailed() && !endsLine(current); current = nextScannedToken(lexer))
+    for (Token current = nextScannedToken(lexer); !hasFailed() && !endsLineOfIRText(current); current = nextScannedToken(lexer))
         last = current;
     return last;
 }
@@ -325,15 +156,15 @@ bool TextParser::scanItems()
     for (const TextItem& item : m_items) {
         if (item.list != ProgramList::Modules)
             continue;
-        bool hasNamespaceLayout = scanModuleKind(m_text, item.start) == ModuleKind::SourceText;
-        m_scan.namespaceLayoutRanks.append(hasNamespaceLayout ? std::optional(m_scan.numberOfNamespaceLayouts++) : std::nullopt);
+        std::optional<ModuleKind> kind = scanModuleKind(m_text, item.start);
+        m_scan.namespaceLayoutRanks.append(kind && hasNamespaceLayout(*kind) ? std::optional(m_scan.numberOfNamespaceLayouts++) : std::nullopt);
     }
     return !hasFailed();
 }
 
 void TextParser::scanItem(Lexer& lexer, const Token& keyword)
 {
-    std::optional<ProgramList> list = findList(keyword);
+    std::optional<ProgramList> list = findProgramList(keyword);
     if (!list) {
         fail(InternalErrorKind::IRTextError, keyword.position);
         return;
@@ -374,11 +205,11 @@ void TextParser::scanFunctionEnd(Lexer& lexer)
     }
 }
 
-void TextParser::scanBlockHead(Lexer& lexer, BodyScan& scan)
+void TextParser::scanBlockHead(Lexer& lexer, BodyTextScan& scan)
 {
     unsigned nesting = 0;
     bool isInParameterList = true;
-    for (Token current = lexer.next(); !endsLine(current); current = lexer.next()) {
+    for (Token current = lexer.next(); !endsLineOfIRText(current); current = lexer.next()) {
         if (!isInParameterList)
             continue;
         if (current.kind == TokenKind::LeftParenthesis)
@@ -392,7 +223,7 @@ void TextParser::scanBlockHead(Lexer& lexer, BodyScan& scan)
     }
 }
 
-bool TextParser::scanBody(Lexer::State start, BodyScan& scan)
+bool TextParser::scanBody(Lexer::State start, BodyTextScan& scan)
 {
     scan = { };
     Lexer lexer(m_text);
@@ -424,59 +255,64 @@ void TextParser::parseItem(const TextItem& item)
 
     switch (item.list) {
     case ProgramList::TypeSites:
-        parseLine<Wire::TypeSite, TypeSite>(*this, &Program::typeSites);
+        parseProgramRecord<Wire::TypeSite, TypeSite>(*this, &Program::typeSites);
         break;
     case ProgramList::ExpectedResults:
-        parseLine<Wire::ExpectedResult, ExpectedResult>(*this, &Program::expectedResults);
+        parseProgramRecord<Wire::ExpectedResult, ExpectedResult>(*this, &Program::expectedResults);
         break;
     case ProgramList::Layouts:
-        parseLine<Wire::Layout, LayoutRecord>(*this, &Program::layouts);
+        parseProgramRecord<Wire::Layout, LayoutRecord>(*this, &Program::layouts);
         break;
     case ProgramList::Variables:
-        parseLine<Wire::Variable, Variable>(*this, &Program::variables);
+        parseProgramRecord<Wire::Variable, Variable>(*this, &Program::variables);
         break;
     case ProgramList::Modules:
-        parseLine<Wire::Module, Module>(*this, &Program::modules);
+        parseProgramRecord<Wire::Module, Module>(*this, &Program::modules);
         break;
     case ProgramList::ModuleFailures:
-        parseLine<Wire::ModuleFailure, ModuleFailure>(*this, &Program::moduleFailures);
+        parseProgramRecord<Wire::ModuleFailure, ModuleFailure>(*this, &Program::moduleFailures);
         break;
     case ProgramList::AmbiguousExports:
-        parseLine<Wire::AmbiguousExport, AmbiguousExport>(*this, &Program::ambiguousExports);
+        parseProgramRecord<Wire::AmbiguousExport, AmbiguousExport>(*this, &Program::ambiguousExports);
         break;
     case ProgramList::SourceStamps:
-        parseLine<Wire::SourceStamp, SourceStamp>(*this, &Program::sourceStamps);
+        parseProgramRecord<Wire::SourceStamp, SourceStamp>(*this, &Program::sourceStamps);
+        break;
+    case ProgramList::DeclaredRecords:
+        parseProgramRecord<Wire::DeclaredRecord, DeclaredRecord>(*this, &Program::declaredRecords);
         break;
     case ProgramList::EvalScopes:
-        parseLine<Wire::EvalScope, EvalScope>(*this, &Program::evalScopes);
+        parseProgramRecord<Wire::EvalScope, EvalScope>(*this, &Program::evalScopes);
         break;
     case ProgramList::Functions: {
         Wire::Function wire;
-        // Wire type 0 is whichever type the text names first.
         wire.thisType.type = typeWordOfAnything();
         FunctionRecord engineFields;
         parseFields(*this, wire, engineFields);
         wire.body = parseBody(item, wire);
-        appendLine(*this, wire, WTF::move(engineFields), &Program::functions);
+        appendProgramRecord(*this, wire, WTF::move(engineFields), &Program::functions);
         break;
     }
     case ProgramList::Data:
-        parseLine<Wire::Data, Data>(*this, &Program::data);
+        parseProgramRecord<Wire::Data, Data>(*this, &Program::data);
         break;
     case ProgramList::Entries:
-        parseLine<Wire::Entry, Entry>(*this, &Program::entries);
+        parseProgramRecord<Wire::Entry, Entry>(*this, &Program::entries);
         break;
     case ProgramList::RuntimeFunctions:
-        parseLine<Wire::RuntimeFunctionEntry, RuntimeFunctionEntry>(*this, &Program::runtimeFunctions);
+        parseProgramRecord<Wire::RuntimeFunctionEntry, RuntimeFunctionEntry>(*this, &Program::runtimeFunctions);
         break;
     case ProgramList::WebAssemblyModules:
-        parseLine<Wire::WebAssemblyModule, WebAssemblyModule>(*this, &Program::webAssemblyModules);
+        parseProgramRecord<Wire::WebAssemblyModule, WebAssemblyModule>(*this, &Program::webAssemblyModules);
         break;
     case ProgramList::ReplaceableBuiltins:
-        parseLine<Wire::ReplaceableBuiltin, ReplaceableBuiltin>(*this, &Program::replaceableBuiltins);
+        parseProgramRecord<Wire::ReplaceableBuiltin, ReplaceableBuiltin>(*this, &Program::replaceableBuiltins);
         break;
     case ProgramList::OpenedNames:
-        parseLine<Wire::OpenedName, OpenedName>(*this, &Program::openedNames);
+        parseProgramRecord<Wire::OpenedName, OpenedName>(*this, &Program::openedNames);
+        break;
+    case ProgramList::BuiltinsUsedAtStart:
+        parseProgramRecord<Wire::BuiltinUsedAtStart, BuiltinUsedAtStart>(*this, &Program::builtinsUsedAtStart);
         break;
     case ProgramList::Bytes:
     case ProgramList::Words:
@@ -493,6 +329,7 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::SyntheticExports:
     case ProgramList::RequiredNames:
     case ProgramList::ColumnAdjustments:
+    case ProgramList::QuotedSources:
     case ProgramList::EvalBindings:
     case ProgramList::Code:
     case ProgramList::DataNodes:
@@ -590,7 +427,6 @@ uint32_t TextParser::parseUInt32(uint32_t maximum)
 
 uint64_t TextParser::parseUInt64()
 {
-    // A number above the int64 range is a Decimal token, whose double has lost digits.
     std::optional<uint64_t> value;
     if (at(TokenKind::Integer) || at(TokenKind::Decimal))
         value = parseInteger<uint64_t>(token().view());
@@ -641,10 +477,9 @@ bool TextParser::parseBool()
     return false;
 }
 
-// The reader of a program as read derives layouts from those of the text and places them after the layouts of built-ins and namespaces. The text numbers them after its own.
 uint32_t TextParser::layoutWordOf(uint32_t numberInText)
 {
-    if (m_form != IRForm::AsRead || numberInText < countOf(ProgramList::Layouts))
+    if (numberInText < countOf(ProgramList::Layouts))
         return numberInText;
     uint64_t word = static_cast<uint64_t>(numberInText) + m_builtins.layoutCount() + m_scan.numberOfNamespaceLayouts;
     if (word >= Wire::none) {
@@ -701,33 +536,6 @@ void TextParser::applyPatches(Program& program, std::span<const TypeID> types)
     PatchContext context { program, types };
     for (ProgramPatch& patch : m_patches)
         patch(context);
-    applyValueEngineFields(context);
-}
-
-void TextParser::applyValueEngineFields(const PatchContext& context) const
-{
-    for (const ValueEngineFields& fields : m_valueEngineFields) {
-        Function& function = context.program.at(fields.function);
-        Value& value = function.edit(fields.value);
-        if (fields.typeWord != Wire::none)
-            value.type = context.type(fields.typeWord);
-        if (fields.expectedWord != Wire::none)
-            value.setExpected(ExpectedType(context.type(fields.expectedWord)));
-        if (fields.representation) {
-            value.representation = *fields.representation;
-            function.representationsAreChosen = true;
-        }
-    }
-
-    // An operation without a result has no `vN` in the text that could state its representation.
-    for (Function& function : context.program.functions) {
-        if (!function.representationsAreChosen)
-            continue;
-        for (Value& value : function.editAllValues()) {
-            if (resultRuleOf(value.opcode) == ResultRule::None)
-                value.representation = Representation::Void;
-        }
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,101 @@
+# const a = { part: 1.5, whole: 7, first: 7 }, b = { whole: "w", part: 2.5, second: 2.5 }, c = { part: "p", whole: "x", more: 1 };   const o = never ? one of two other literals or a text : which ? a : b;   show(o.part, o.whole);
+# The two reads run once, so they have no place. Three layouts have both names, and none is written as a kind of another; four layouts and a text meet in `o`, and a text has no slots, so the reads look the names up. Two of them hold `part` as a raw number, two hold `whole` as any value: both reads ask as every read by name does (the first went by the majority and asked the table of fields first).
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# PLAN: layout L0 CompiledObject
+# PLAN-NEXT: slot 0 "part" OptionalDouble Inline
+# PLAN-NEXT: slot 1 "whole" OptionalInt64 Inline
+# PLAN: layout L1 CompiledObject
+# PLAN-NEXT: slot 0 "whole" JSValue Inline
+# PLAN-NEXT: slot 1 "part" OptionalDouble Inline
+# PLAN: layout L2 CompiledObject
+# PLAN-NEXT: slot 0 "part" Cell32 Inline
+# PLAN-NEXT: slot 1 "whole" Cell32 Inline
+# RUN(CODE): bytes f0:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CODE: GetById{{*}} immediate mention
+# CODE: GetById{{*}} immediate mention
+# RUN(FIRST): run-in-shell globalThis.which = true; globalThis.never = false; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# FIRST: 1.5 7
+# FIRST-NEXT: p x
+# FIRST-NEXT: exited with 0
+# RUN(SECOND): run-in-shell globalThis.which = false; globalThis.never = false; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# SECOND: 2.5 w
+# SECOND-NEXT: p x
+# SECOND-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="part" declared={type=anything} flags=[IsRequired]}, {key="whole" declared={type=anything} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L1 module=m0 fields=[{key="whole" declared={type=anything} flags=[IsRequired]}, {key="part" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L2 module=m0 fields=[{key="part" declared={type=anything} flags=[IsRequired]}, {key="whole" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L3 module=m0 fields=[{key="other3" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="other4" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L5 module=m0 fields=[{key="other5" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = Double number=1.5
+    v3 = Integer integer=7
+    v4 = NewObject layout=L0
+    PropDefine v4, v2 key="part"
+    PropDefine v4, v3 key="whole"
+    PropDefine v4, v3 key="first"
+    v8 = FinishObject v4
+    v9 = String string="w"
+    v10 = Double number=2.5
+    v11 = NewObject layout=L1
+    PropDefine v11, v9 key="whole"
+    PropDefine v11, v10 key="part"
+    PropDefine v11, v10 key="second"
+    v15 = FinishObject v11
+    v16 = String string="p"
+    v17 = String string="x"
+    v18 = Integer integer=1
+    v19 = NewObject layout=L2
+    PropDefine v19, v16 key="part"
+    PropDefine v19, v17 key="whole"
+    PropDefine v19, v18 key="more"
+    v23 = FinishObject v19
+    v24 = NewObject layout=L3
+    PropDefine v24, v18 key="other3"
+    v26 = FinishObject v24
+    v27 = NewObject layout=L4
+    PropDefine v27, v18 key="other4"
+    v29 = FinishObject v27
+    v30 = NewObject layout=L5
+    PropDefine v30, v18 key="other5"
+    v32 = FinishObject v30
+    v33 = PropGet v0 key="which" [isFreeName]
+    v34 = PropGet v0 key="never" [isFreeName]
+    Branch v34 -> taken b1(), notTaken b6()
+  b1():
+    Branch v33 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b9(v26, v23)
+  b3():
+    Branch v34 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b9(v29, v23)
+  b5():
+    Jump -> next b9(v16, v23)
+  b6():
+    Branch v33 -> taken b7(), notTaken b8()
+  b7():
+    Jump -> next b9(v8, v23)
+  b8():
+    Jump -> next b9(v15, v23)
+  b9(v35, v36):
+    v37 = PropGet v35 key="part" @10
+    v38 = PropGet v35 key="whole" @20
+    v39 = Call v1, -, v37, v38
+    Branch v33 -> taken b10(), notTaken b11()
+  b10():
+    Jump -> next b12(v36, v8)
+  b11():
+    Jump -> next b12(v36, v15)
+  b12(v40, v41):
+    v42 = PropGet v40 key="part" @30
+    v43 = PropGet v40 key="whole" @40
+    v44 = Call v1, -, v42, v43
+    Return v44
+}

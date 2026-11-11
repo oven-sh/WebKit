@@ -4,7 +4,6 @@ const ownProperties = ["ObjectFields", "NamedProperties", "Elements", "ArrayStor
 const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
 const memberGuards = ["MemberGuards"];
-// An array under a prototype that may hold indexed accessors gets a storage that asks it at every store.
 const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
 
 const operandCodeEffects = { capability: "js", runsOnlyOperandCode: true } as const;
@@ -99,7 +98,6 @@ export default b.declarations(
           args: { ...keyedArguments, receiver: b.any },
           returns: b.any,
           throws: true,
-          // The getter that is found on the target runs with the receiver as `this`: it is called on what it does not hang above.
           uses: { target: [b.everything, b.readByKey(key), b.accessorReadByKey("Getter", key, b.nativeMemory)], receiver: [b.everything] },
           implementation: b.compiled("ReflectObject", "get"),
         },
@@ -118,7 +116,6 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
-        fieldsForm: "OwnPropertyDescriptorFields",
         implementation: b.inline("ObjectGetOwnPropertyDescriptor", { otherwise: b.hostCall }),
       },
       getPrototypeOf: {
@@ -141,16 +138,17 @@ export default b.declarations(
         ...operandCodeEffects,
         args: { target: b.object },
         returns: b.bool,
-        uses: { target: b.ownPropertyTraps },
+        uses: { target: [...b.ownPropertyTraps] },
         reads: ownProperties,
         implementation: b.hostCall,
       },
       ownKeys: {
         ...operandCodeEffects,
         args: { target: b.object },
-        returns: b.instance("Array").holding({ element: b.union(b.string, b.symbol) }).fresh.dense,
+        returns: b.instance("Array").exactly.holding({ element: b.union(b.string, b.symbol) }).fresh.dense,
         uses: { target: [b.runs("OwnKeys")] },
         reads: ownProperties,
+        writes: ["ShapeWords", "NamedProperties", ...memberGuards],
         implementation: b.inline("OwnPropertyKeys", { parameters: ["All"], otherwise: b.hostCall }),
       },
       preventExtensions: {
@@ -179,7 +177,6 @@ export default b.declarations(
           args: { ...keyedArguments, value: b.any, receiver: b.any },
           returns: b.bool,
           throws: true,
-          // As in `get`: the setter that is found on the target runs with the receiver as `this`. Where none is found the value is defined on the receiver.
           uses: {
             target: [
               b.accessorReadByKey("Setter", key, b.nativeCell(setterForReceiverCell)),
@@ -189,7 +186,6 @@ export default b.declarations(
                 args: [b.operand("value")],
                 result: "Ignored",
               }),
-              // The receiver may be the target itself, or a proxy of it.
               b.definesName(key, b.operand("value")),
               b.storedByKey(key, b.operand("value")),
               ...b.ownPropertyTraps,

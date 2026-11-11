@@ -1,0 +1,62 @@
+# the relation on the edge that comes round vouches only for what it is asked of, for one step, and for what comes round: a test of another value cuts nothing; what enters from in front may be the greatest int32;
+# below an int32 there is no room for two more. Each of the three steps is reported
+# function other(to: int32): int32 { let i: int32 = 0; do i++; while (to > 0); return i; }  function enters(to: int32, from: int32): int32 { let i: int32 = from; do i++; while (i < to); return i; }
+# function two(to: int32): int32 { let i: int32 = 0; do i += 2; while (i < to); return i; }
+# DIAGNOSTIC: UnprovenInt32 3
+# RUN: walk f1 f2 f3 mechanisms=none
+# CHECK-LABEL: code f1:Body
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1
+    v1 = PropGet v0 key="sink" [isFreeName] @1
+    v2 = NewClosure function=f1 @1
+    v3 = NewClosure function=f2 @1
+    v4 = NewClosure function=f3 @1
+    v5 = Call v1, -, v2, v3, v4 @1
+    Return v5 @1
+}
+function f1 name="other" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer @2
+    v2 = Convert v1 declared={type=i32} @2
+    Jump -> next b1(v2) @2
+  b1(v3: i32):
+    LoopHint @2
+    v5 = Increment v3 @3
+    v6 = Convert v5 declared={type=i32 flags=[IsInt32Promise]} @3
+    v7 = Integer @4
+    v8 = Greater v0, v7 @4
+    Branch v8 -> taken b1(v6), notTaken b2() @4
+  b2():
+    Return v6 @5
+}
+function f2 name="enters" module=m0 length=2 thisType={type=anything} parameters=[{type=i32}, {type=i32}] results=[{type=number}] {
+  b0(v0: i32, v1: i32):
+    Jump -> next b1(v1) @6
+  b1(v2: i32):
+    LoopHint @6
+    v4 = Increment v2 @7
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @7
+    v6 = Less v5, v0 @8
+    Branch v6 -> taken b1(v5), notTaken b2() @8
+  b2():
+    Return v5 @9
+}
+function f3 name="two" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer @10
+    v2 = Convert v1 declared={type=i32} @10
+    Jump -> next b1(v2) @10
+  b1(v3: i32):
+    LoopHint @10
+    v5 = Integer integer=2 @11
+    v6 = Add v3, v5 @11
+    v7 = Convert v6 declared={type=i32 flags=[IsInt32Promise]} @11
+    v8 = Less v7, v0 @12
+    Branch v8 -> taken b1(v7), notTaken b2() @12
+  b2():
+    Return v7 @13
+}

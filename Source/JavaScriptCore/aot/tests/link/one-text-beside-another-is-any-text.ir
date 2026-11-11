@@ -1,0 +1,26 @@
+# If two texts that meet at a node were kept as a set, a type would grow with the program, and Link would no longer be linear in its edges
+# function kindOf(s) { return s.kind; }  const s = { kind: "circle" };  s.kind = "square";  kindOf(s);
+# The twin of one-text-lies-in-a-field-of-each-member.ir. The ladder has one rung for one text. Two texts are any text: there are no sets of literals.
+# RUN: link fields functions mechanisms=all
+# CHECK: field L0.0 "kind" proven=string
+# CHECK: function f1 {{*}}result=string
+
+layout L0 name="Shape" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="kind" value=String{value="circle"}}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Data data=d0
+    v2 = String string="square"
+    PropSet v1, v2 key="kind"
+    v4 = Call v0, -, v1 calleeName="kindOf"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}

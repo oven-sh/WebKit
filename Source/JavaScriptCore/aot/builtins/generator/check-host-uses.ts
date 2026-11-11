@@ -7,6 +7,7 @@ import type {
   ModelHostUse,
   ModelHostUses,
   ModelHostValue,
+  ModelModule,
   ModelModuleLoad,
   ModelName,
   ModelOperand,
@@ -16,13 +17,9 @@ import type {
 } from "./model.ts";
 import type { BuiltinKind } from "./vocabulary.ts";
 
-type CheckedModel = Pick<
-  TableModel,
-  "builtins" | "overloads" | "startup" | "hostObjects" | "namedMemberCalls" | "hostMethodCalls"
->;
+type CheckedModel = Pick<TableModel, "builtins" | "overloads" | "startup" | "hostObjects">;
 
 interface DescribedUses {
-  /** Names the row, as a message starts. */
   row: string;
   uses: ModelHostUses;
 }
@@ -69,10 +66,6 @@ function collectWrittenUses(model: CheckedModel): DescribedUses[] {
         uses,
       })),
     ),
-    ...model.hostMethodCalls.map(({ name, cell, call }) => ({
-      row: `a host method named ${name.text} uses what lies in ${cell.text}`,
-      uses: [{ path: [], read: "Called", call }] satisfies ModelHostUse[],
-    })),
   ];
 }
 
@@ -108,6 +101,7 @@ function checkCall(row: string, call: ModelHostCall, problems: Problems): void {
   }
   for (const value of valuesOfCall(call)) {
     if (value.place !== "NewValue") continue;
+    if (value.holdsWhatIsThrown) problems.add(null, `${row}: what is thrown is said of an argument of a callback or of a handler of an overload alone`);
     const { isAnything, hasAnyObject, hasAnyFunction, hasPlainData, primitives, integers, stringLiterals, parts } =
       value.type;
     const isNever =
@@ -163,6 +157,17 @@ function collectWrittenCells(model: CheckedModel, written: readonly DescribedUse
   return cells;
 }
 
+export function cellsFilledByCalledFunctionsAlone(model: CheckedModel): ModelName[] {
+  const filledOtherwise = new Set([...cellsWrittenByOverloads(model.overloads), ...model.hostObjects.map(({ cell }) => cell)]);
+  const cells = new Set<ModelName>();
+  for (const { uses } of collectWrittenUses(model)) {
+    forEachUse(uses, use => {
+      if (use.read === "Kept" && !filledOtherwise.has(use.cell)) cells.add(use.cell);
+    });
+  }
+  return [...cells].sort((left, right) => left.number - right.number);
+}
+
 function collectReadValues(model: CheckedModel, written: readonly DescribedUses[]): DescribedValue[] {
   const values: DescribedValue[] = [];
   for (const { row, uses } of written) {
@@ -179,12 +184,6 @@ function collectReadValues(model: CheckedModel, written: readonly DescribedUses[
       });
     }
   }
-  for (const { name, arguments: passed } of model.namedMemberCalls) {
-    for (const value of passed) values.push({ row: `the call of a member named ${name.text}`, value });
-  }
-  for (const { name, cell } of model.hostMethodCalls) {
-    values.push({ row: `a host method named ${name.text}`, value: { place: "NativeCell", cell } });
-  }
   return values;
 }
 
@@ -197,6 +196,93 @@ function checkCells(model: CheckedModel, written: readonly DescribedUses[], prob
       `${row}: nothing puts a value into the native cell ${value.cell.text}: no b.keptIn, no b.hostObject and no operand of an overload`,
     );
   }
+}
+
+const placesOfOperands: readonly ModelPlace["place"][] = ["Operand", "Member", "OwnValues", "IteratedValues", "Slot"];
+
+function checkCellsHoldingOnlyWhatIsStored(model: CheckedModel, written: readonly DescribedUses[], problems: Problems): void {
+  const cells = new Set(
+    model.overloads.flatMap(({ flow }) =>
+      flow.transfers.flatMap(({ from }) => (from.place === "NativeCell" && from.holdsOnlyWhatIsStored ? [from.cell] : [])),
+    ),
+  );
+  const refuse = (cell: ModelName, filler: string) => {
+    if (cells.has(cell))
+      problems.add(null, `the native cell ${cell.text} is said to hold only what rows store there out of their operands, and ${filler}`);
+  };
+  for (const { flow } of model.overloads) {
+    for (const { from, to } of flow.transfers) {
+      if (to.place === "NativeCell" && !placesOfOperands.includes(from.place)) refuse(to.cell, `a row stores ${from.place} there`);
+    }
+    for (const cell of flow.callbacks.flatMap(({ resultTo }) => cellOf(resultTo))) refuse(cell, "a row stores there what a callback answers");
+    for (const cell of flow.propertyActions.flatMap(({ value }) => cellOf(value))) refuse(cell, "a row reads or stores a property through it");
+  }
+  const filled = new Set(cellsWrittenByOverloads(model.overloads));
+  for (const cell of cells) {
+    if (!filled.has(cell)) refuse(cell, "no row stores anything there");
+  }
+  for (const { cell } of model.hostObjects) refuse(cell, "a host object lies there");
+  for (const { uses } of written) {
+    forEachUse(uses, use => {
+      if (use.read === "Kept") refuse(use.cell, "what a function answers that the host calls is kept there");
+    });
+  }
+}
+
+export interface NativeReads {
+  readsEveryExport: boolean;
+  names: Map<number, ModelName>;
+  namesWithOtherUses: Set<number>;
+}
+
+export function collectNativeReads(model: Pick<TableModel, "builtins" | "startup">): Map<ModelModule, NativeReads> {
+  const reads = new Map<ModelModule, NativeReads>();
+  const loads = [...model.builtins.flatMap(builtin => builtin.attachments.moduleLoads), ...model.startup.loads];
+  for (const { module, exports } of loads) {
+    let read = reads.get(module);
+    if (read === undefined)
+      reads.set(module, (read = { readsEveryExport: false, names: new Map(), namesWithOtherUses: new Set() }));
+    if (exports === null) read.readsEveryExport = true;
+    else
+      for (const { name, uses } of exports) {
+        read.names.set(name.number, name);
+        const isMemberOnly = !!uses?.length && uses.every(use => use.read === "Kept" && use.path.length > 0);
+        if (!isMemberOnly) read.namesWithOtherUses.add(name.number);
+      }
+  }
+  return reads;
+}
+
+function checkMemberOnlyCells(model: CheckedModel, problems: Problems): void {
+  const flows = model.overloads.map(({ flow }) => flow);
+  const called = new Set(flows.flatMap(({ handlerCalls }) => handlerCalls.flatMap(({ callee }) => cellOf(callee))));
+  const cellsReadAsValues = new Set(
+    flows.flatMap(({ transfers, callbacks, propertyActions, handlerCalls }) =>
+      [
+        ...transfers.map(({ from }) => from),
+        ...callbacks.flatMap(callback => [callback.newTarget, callback.thisValue, callback.spreadArguments, ...callback.arguments]),
+        ...propertyActions.map(({ value }) => value),
+        ...handlerCalls.flatMap(handlerCall => [handlerCall.thisValue, ...handlerCall.arguments]),
+      ].flatMap(cellOf),
+    ),
+  );
+  const reads = collectNativeReads(model);
+  const checkLoads = (owner: ModelBuiltin | null, loads: readonly ModelModuleLoad[]) => {
+    for (const { module, exports } of loads) {
+      const read = reads.get(module)!;
+      for (const { name, uses } of exports ?? []) {
+        if (read.readsEveryExport || read.namesWithOtherUses.has(name.number)) continue;
+        for (const use of uses ?? []) {
+          if (use.read !== "Kept") continue;
+          const row = `${describeOwner(owner)} reads ${name.text} of ${module.specifier}: members of it alone are kept, in the native cell ${use.cell.text}`;
+          if (!called.has(use.cell)) problems.add(null, `${row}, and no row calls what lies there`);
+          if (cellsReadAsValues.has(use.cell)) problems.add(null, `${row}, and a row hands out what lies there`);
+        }
+      }
+    }
+  };
+  for (const builtin of model.builtins) checkLoads(builtin, builtin.attachments.moduleLoads);
+  checkLoads(null, model.startup.loads);
 }
 
 function checkHostObjects({ hostObjects }: CheckedModel, problems: Problems): void {
@@ -224,64 +310,28 @@ function checkHostObjects({ hostObjects }: CheckedModel, problems: Problems): vo
   }
 }
 
-function checkNamedMemberCalls({ namedMemberCalls, overloads }: CheckedModel, problems: Problems): void {
-  const calledNames = new Set(
-    overloads.flatMap(({ receiver, parameters }) =>
-      [...(receiver === null ? [] : [receiver]), ...parameters].flatMap(parameter => parameter.calledMembers),
-    ),
-  );
-  const names = new Set<ModelName>();
-  for (const { name, source } of namedMemberCalls) {
-    if (names.has(name)) problems.add(source, `two rows say what native code passes to a member named ${name.text}`);
-    names.add(name);
-    if (!calledNames.has(name))
-      problems.add(source, `no operand has b.calls("${name.text}"), so nothing calls a member of that name`);
-  }
-}
-
-function checkHostMethodCalls({ hostMethodCalls, startup }: CheckedModel, problems: Problems): void {
-  for (const { name, source } of hostMethodCalls) {
-    if (startup.namesOfMethodsCallingLoads.includes(name)) continue;
-    problems.add(
-      source,
-      `${name.text} is not among namesOfMethodsCallingLoads of b.startup, so nothing says that the host has methods of that name`,
-    );
-  }
-}
-
-const isIndex = (text: string): boolean => String(Number(text) >>> 0) === text;
-
-// The list lets what a program stores under another name stay in the program. That takes one object of the realm that a program can store to, and a chain above it that the table knows.
-export function checkNamesReadByNativeCode(
-  { namesReadByNativeCode }: Pick<TableModel, "namesReadByNativeCode">,
-  problems: Problems,
-): void {
-  for (const { holder, names, namesOnlyInspected } of namesReadByNativeCode) {
-    const refuse = (reason: string) =>
-      problems.add(null, `${holder.text} lists the names that native code reads, and ${reason}`);
-    // A class of a module's native binding has one prototype, whatever module object leads to it.
-    if (holder.scope !== "Realm" && holder.kind !== "Prototype") refuse("every module has an object of its own");
-    if (holder.sameObjectAs !== null)
-      refuse(`it is the same object as ${holder.sameObjectAs.text}, where the list belongs`);
-    if (holder.flags.includes("IsGlobalObject")) refuse("native code finds every global variable on the global object");
-    if (holder.flags.includes("IsLockedObject")) refuse("it is locked, so a program puts nothing there");
-    if (holder.prototype.link === "Unknown") refuse("nothing says what lies above it, where a lookup goes on");
-    names.forEach((name, position) => {
-      if (position > 0 && names[position - 1] === name) refuse(`${name.text} is listed twice`);
-      if (name.kind === "Text" && isIndex(name.text)) refuse(`${name.text} is an index`);
-    });
-    for (const name of namesOnlyInspected) {
-      if (!names.includes(name)) refuse(`${name.text}, which it only inspects, is not among them`);
+function checkClassesWithHostMethods({ builtins, startup }: CheckedModel, problems: Problems): void {
+  for (const { name, kind, holder, text } of builtins) {
+    if (kind !== "DataProperty" || !startup.namesOfMethodsCallingLoads.includes(name)) continue;
+    let isMarked = false;
+    for (let current = holder?.instanceClass ?? null; current !== null; current = current.parent) {
+      isMarked ||= current.constructor?.marks.includes("InstancesHaveMethodCalledWithStartupLoads") ?? false;
+    }
+    if (holder?.kind === "Prototype" && !isMarked) {
+      problems.add(
+        null,
+        `${text} holds a native method that calls what the host loads at start-up, and the class is not marked InstancesHaveMethodCalledWithStartupLoads`,
+      );
     }
   }
 }
 
-// What native code does with a value that it got hold of by itself. Every built-in and every native cell that a row names is there, and takes what the row gives it.
 export function checkHostUses(model: CheckedModel, problems: Problems): void {
   const written = collectWrittenUses(model);
   for (const { row, uses } of written) forEachUse(uses, use => checkUse(row, use, problems));
   checkCells(model, written, problems);
+  checkCellsHoldingOnlyWhatIsStored(model, written, problems);
+  checkMemberOnlyCells(model, problems);
   checkHostObjects(model, problems);
-  checkNamedMemberCalls(model, problems);
-  checkHostMethodCalls(model, problems);
+  checkClassesWithHostMethods(model, problems);
 }

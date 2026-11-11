@@ -1,0 +1,46 @@
+# the read at the head of the loop stands in front of the loop. Where it throws there no turn has begun, so its handler is handed what enters the loop, and not the parameter of the head
+# let step; function count(n) { let s = 0, list = 0; try { do { list = [list, step]; s++; } while (s < n); } catch { return s; } return list; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+UnboxedNumbers+Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Box
+# CHECK: = GetModuleVariable {{*}}variable=g0
+# CHECK-NOT: = Box
+# CHECK: ([[counter]]: {{*}}isLoopHead=true
+# CHECK: = Box [[counter]]
+
+variable g0 name="step" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    PutModuleVariable v3 variable=g0
+    Return v3
+}
+function f1 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b6()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3, v3)
+  b2(v4, v5) handler=b5(v4):
+    LoopHint
+    v7 = GetModuleVariable variable=g0
+    v8 = NewArray v5, v7 contents=anything
+    v9 = Increment v4
+    Jump -> next b3()
+  b3() handler=b5(v9):
+    v10 = Less v9, v2
+    Branch v10 -> taken b2(v9, v8), notTaken b4()
+  b4():
+    Return v8
+  b5(v11) role=CatchHandler:
+    v12 = CatchValue
+    Return v11
+  b6():
+    Return v0
+}

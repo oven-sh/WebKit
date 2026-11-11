@@ -1,0 +1,66 @@
+# If an import() of a module that has begun took the steps of the require() around it, it would settle ahead of an import() that was called before it
+# main.js: register(() => require("./first.js"))    first.js: import "./early.js"; import "./late.js"; print("first")
+# early.js: print("early"); keep("early-late", import("./late.js"))    late.js: print("late"); keep("late-first", import("./first.js"))
+# late.js has not begun when early.js calls for it, first.js is being evaluated when late.js calls for it. Neither call is a part of the graph that the require() loads: the steps of both are jobs, in the order of the calls.
+# RUN(NONE): run-in-shell mechanisms=none globalThis.keep = (name, promise) => { promise.then(() => print(name + " settled"), error => print(name + " failed")); }; globalThis.register = load => { load(); print("required"); };
+# NONE: early
+# NONE-NEXT: late
+# NONE-NEXT: first
+# NONE-NEXT: required
+# NONE-NEXT: early-late settled
+# NONE-NEXT: late-first settled
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.keep = (name, promise) => { promise.then(() => print(name + " settled"), error => print(name + " failed")); }; globalThis.register = load => { load(); print("required"); };
+# ALL: early
+# ALL-NEXT: late
+# ALL-NEXT: first
+# ALL-NEXT: required
+# ALL-NEXT: early-late settled
+# ALL-NEXT: late-first settled
+# ALL-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}]
+module m2 path="/early.js" displayPath="early.js" body=f2
+module m3 path="/late.js" displayPath="late.js" body=f3
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="first"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="early" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="early"
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="keep" [isFreeName]
+    v5 = String string="early-late"
+    v6 = ImportModule module=m3 referrer=m2
+    v7 = Call v4, -, v5, v6
+    Return
+}
+function f3 name="late" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="late"
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="keep" [isFreeName]
+    v5 = String string="late-first"
+    v6 = ImportModule module=m1 referrer=m3
+    v7 = Call v4, -, v5, v6
+    Return
+}
+function f4 name="requireFirst" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    Return
+}

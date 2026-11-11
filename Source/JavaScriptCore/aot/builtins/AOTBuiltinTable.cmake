@@ -39,12 +39,15 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES aot/tests/host
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/ArrayIteratorPrototype.ts
+    aot/builtins/handwritten/ArrayPrototype.ts
     aot/builtins/handwritten/AsyncDisposableStackPrototype.ts
     aot/builtins/handwritten/DisposableStackPrototype.ts
     aot/builtins/handwritten/FunctionPrototype.ts
     aot/builtins/handwritten/GeneratorPrototype.ts
     aot/builtins/handwritten/IteratorOperations.ts
+    aot/builtins/handwritten/JSIteratorConstructor.ts
     aot/builtins/handwritten/JSIteratorHelperPrototype.ts
+    aot/builtins/handwritten/JSIteratorPrototype.ts
     aot/builtins/handwritten/MapPrototype.ts
     aot/builtins/handwritten/ObjectConstructor.ts
     aot/builtins/handwritten/MapIteratorPrototype.ts
@@ -53,10 +56,9 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/TypedArrayPrototype.ts
 )
 
+# The files of the functions that a row names as its model. No row names one.
+# Nothing stands between the name and the parenthesis: aot/builtins/generator/support.ts takes every word there for a path, "" and the words of a comment too.
 set(JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS
-    aot/builtins/models/Arrays.ts
-    aot/builtins/models/Collections.ts
-    aot/builtins/models/Objects.ts
 )
 
 # What aot/builtins/generator/engine.ts writes. A build makes these files: none is checked in.

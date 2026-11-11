@@ -1,0 +1,11 @@
+# The four come to the parameter in the order in which the worklist takes the calls, and the number of their set goes by the clock. If either showed in a table, two builds of one program would differ
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known one-callee {{*}}result=null|true|int[0, 2147483647]|string returns=
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3
+# RUN(OLDEST): link functions oldest-first mechanisms=all
+# OLDEST: function f1 callers-known one-callee {{*}}result=null|true|int[0, 2147483647]|string returns=
+# OLDEST-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3
+# RUN(SCATTERED): link functions scattered mechanisms=all
+# SCATTERED: function f1 callers-known one-callee {{*}}result=null|true|int[0, 2147483647]|string returns=
+# SCATTERED-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3
+# PROGRAM-OF: four-layouts-are-a-set.ir

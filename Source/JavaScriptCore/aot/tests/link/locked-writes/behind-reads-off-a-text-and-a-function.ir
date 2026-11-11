@@ -1,0 +1,23 @@
+# the twin of behind-a-read-off-null.ir: a text has a length, a function a name and a call of it comes back: every run comes to the store: the build stops
+# "abc".length; (() => {}).name; (() => {})(); Array.prototype.push = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc" @1
+    v1 = PropGet v0 key="length" @1
+    v2 = NewClosure function=f1 @1
+    v3 = PropGet v2 key="name" @1
+    v4 = Call v2, - @1
+    v5 = Builtin builtin=ArrayPrototype @2
+    PropSet v5, v2 key="push" @3
+    Return v1 @4
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}

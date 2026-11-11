@@ -1,0 +1,13 @@
+# behind the call that takes it the words of a closure of the frame belong to the next one: no second call reads them
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: f4 Body b0 v4 (Call): a closure of the frame is taken twice: v2 (NewClosure)
+# PROGRAM-OF: ../closures-lent/loan-of-a-closure-is-written-into-its-record.ir
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim loan=LeftToStubOfCall
+#     v3: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v4
+# }
+# -- end of code

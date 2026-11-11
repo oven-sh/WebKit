@@ -1,0 +1,49 @@
+# If a member stayed in sight where a set reaches unseen code, that code could call it with anything while the compiled program trusts what Link proved of its parameter.
+# function take(f) { return sink(f); }  take(first);  take(second);  third(1);
+# The set is what is expected there, in held() alone: linked() proves no more than a function.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK-NEXT: parameter 0 {{*}}proven=function
+# CHECK: function f4 callers-known
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f1 
+# HELD-NEXT: parameter 0 {{*}}proven=f2|f3
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f2 callers-known
+# NEVER-NOT: function f3 callers-known
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1 calleeName="take"
+    v4 = Call v0, -, v2 calleeName="take"
+    v5 = NewClosure function=f4
+    v6 = Integer integer=1
+    v7 = Call v5, -, v6 calleeName="third"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="third" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

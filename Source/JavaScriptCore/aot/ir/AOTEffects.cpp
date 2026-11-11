@@ -8,58 +8,13 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
-#include "AOTEffectsDescription.h"
-#include "AOTEffectsOfOperands.h"
-#include "AOTHeldOperands.h"
-#include "AOTIR.h"
 #include <array>
-#include <wtf/BitVector.h>
-#include <wtf/CommaPrinter.h>
-#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void Effects::dump(PrintStream& out) const
-{
-    if (isPure()) {
-        out.print("none"_s);
-        return;
-    }
-    if (withoutSuspension() == unknownCode()) {
-        out.print("unknownCode"_s);
-        if (maySuspend)
-            out.print(" suspends"_s);
-        return;
-    }
-    CommaPrinter separator(" "_s);
-    if (!reads.isEmpty())
-        out.print(separator, "reads("_s, reads, ")"_s);
-    if (!writes.isEmpty())
-        out.print(separator, "writes("_s, writes, ")"_s);
-    if (mayThrow)
-        out.print(separator, mayThrowByRule() ? "throws"_s : mayThrowOtherThanStackOverflow() ? "throwsForLackOfMemory"_s : "throwsForLackOfStack"_s);
-    if (mayCollect)
-        out.print(separator, "collects"_s);
-    if (mayCallUnknownCode)
-        out.print(separator, "callsUnknownCode"_s);
-    if (maySuspend)
-        out.print(separator, "suspends"_s);
-    if (mayBeTerminated)
-        out.print(separator, "terminates"_s);
-}
-
-void EffectsOnEdges::dump(PrintStream& out) const
-{
-    out.print(normal);
-    if (*this != onBothEdges(normal))
-        out.print(" | on throw: "_s, handler);
-}
-
 namespace {
 
-// Most operations share their bound with others: the table holds each bound once.
 template<size_t capacity>
 struct DistinctBounds {
     std::array<uint8_t, numberOfOpcodes> rowOf { };
@@ -94,157 +49,63 @@ constexpr auto distinctBounds = [] {
 
 } // anonymous namespace
 
-const Effects& declaredBoundInTable(Opcode opcode)
-{
-    return distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(opcode)]];
-}
+constinit const std::array<uint8_t, numberOfOpcodes>& rowsOfDeclaredBoundsByOpcode = distinctBounds.rowOf;
+constinit const std::span<const Effects> declaredBoundsInRows(distinctBounds.rows);
+
+constinit const OpcodeSet opcodesWithPureBoundInTable = [] {
+    OpcodeSet opcodes;
+    for (Opcode member : allMembersOf<Opcode>) {
+        if (distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(member)]].isPure())
+            opcodes.add(member);
+    }
+    return opcodes;
+}();
+
+constinit const OpcodeSet opcodesWithSuspendingBoundInTable = [] {
+    OpcodeSet opcodes;
+    for (Opcode member : allMembersOf<Opcode>) {
+        if (distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(member)]].maySuspend)
+            opcodes.add(member);
+    }
+    return opcodes;
+}();
 
 namespace {
 
-class RowWithoutPayloadBuilder {
+class ExactBoundDetector {
 public:
-    void reads(const MemoryLocation& location) { m_effects.reads.add(location); }
-    void writes(const MemoryLocation& location) { m_effects.writes.add(location); }
-    void readsAtPayload(AbstractHeap) { m_namesPlaceByPayload = true; }
-    void writesAtPayload(AbstractHeap) { m_namesPlaceByPayload = true; }
-    void readsAllHeaps() { m_effects.reads = LocationMasks::top(); }
-    void throws() { m_effects.mayThrow = true; }
-    void collects() { m_effects.mayCollect = true; }
-    void suspends() { m_effects.maySuspend = true; }
-    void terminates() { m_effects.mayBeTerminated = true; }
-    void unknownCode() { m_effects.merge(Effects::unknownCode()); }
+    constexpr void reads(const MemoryLocation& location) { m_boundIsExact &= location.isEntireHeap(); }
+    constexpr void writes(const MemoryLocation& location) { m_boundIsExact &= location.isEntireHeap(); }
+    constexpr void readsAtPayload(AbstractHeap) { m_boundIsExact = false; }
+    constexpr void writesAtPayload(AbstractHeap) { m_boundIsExact = false; }
+    constexpr void readsAllHeaps() { }
+    constexpr void throws() { }
+    constexpr void collects() { }
+    constexpr void suspends() { }
+    constexpr void terminates() { }
+    constexpr void unknownCode() { }
+    constexpr void asOverload() { m_boundIsExact = false; }
 
-    const Effects& effects() const LIFETIME_BOUND { return m_effects; }
-    bool namesPlaceByPayload() const { return m_namesPlaceByPayload; }
+    constexpr bool boundIsExact() const { return m_boundIsExact; }
 
 private:
-    Effects m_effects { Effects::none() };
-    bool m_namesPlaceByPayload { false };
-};
-
-struct RowsWithoutPayload {
-    std::array<Effects, numberOfOpcodes> effects;
-    OpcodeSet opcodes;
+    bool m_boundIsExact { true };
 };
 
 } // anonymous namespace
 
-const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode)
-{
-    static const RowsWithoutPayload& rows = *[] {
-        auto result = makeUniqueWithoutFastMallocCheck<RowsWithoutPayload>();
-        for (Opcode member : allMembersOf<Opcode>) {
-            RowWithoutPayloadBuilder builder;
-            forEachDeclaredEffect(member, builder);
-            if (builder.namesPlaceByPayload())
-                continue;
-            result->effects[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
-            result->opcodes.add(member);
-        }
-        return result.release();
-    }();
-    return rows.opcodes.contains(opcode) ? &rows.effects[static_cast<unsigned>(opcode)] : nullptr;
-}
-
-EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Value& value)
-{
-    return resolveEffects(context, describeEffects(context.program, function, value, &context.summaries));
-}
-
-EffectsOnEdges effectsOf(const EffectContext& context, const Function& function, const Terminator& terminator)
-{
-    return resolveEffects(context, describeEffects(context.program, function, terminator));
-}
-
-static BitVector mappedEntryParameters(const Function& callee, const Value& call)
-{
-    unsigned numberOfParameters = callee.numberOfEntryParameters();
-    bool isCalledByValue = Value::opcodesWithCallees.contains(call.opcode);
-    BitVector mapped(numberOfParameters);
-    call.forEachOperand([&](ValueID, uint32_t index) {
-        if (call.operandUses(index).containsAny(callingUses) || isHeldOperand(call, index))
-            return;
-        std::optional<uint32_t> parameter = isCalledByValue ? entryParameterOf(callee, call, index) : call.variadicOperandIndex(index);
-        if (parameter && *parameter < numberOfParameters)
-            mapped.quickSet(*parameter);
-    });
-    return mapped;
-}
-
-static void addMemory(EffectsOnEdges& effects, const OperandMemory& memory)
-{
-    effects.normal.reads.merge(memory.reads);
-    effects.normal.writes.merge(memory.writes);
-    if (!effects.mayThrow())
-        return;
-    effects.handler.reads.merge(memory.reads);
-    effects.handler.writes.merge(memory.writes);
-}
-
-static EffectsOnEdges calleeEffectsBeyondOperands(const EffectContext& context, FunctionID id, const Value& call)
-{
-    const Function& callee = context.program.at(id);
-    CalleeSummary summary(context, id);
-    BitVector mapped = mappedEntryParameters(callee, call);
-    EffectsOnEdges effects = summary->elsewhere();
-    for (unsigned parameter = 0; parameter < callee.numberOfEntryParameters(); ++parameter) {
-        if (!mapped.quickGet(parameter))
-            addMemory(effects, summary->memory(parameter));
+constinit const OpcodeSet opcodesWithExactBoundsInTable = [] {
+    OpcodeSet result;
+    for (Opcode member : allMembersOf<Opcode>) {
+        ExactBoundDetector detector;
+        forEachDeclaredEffect(member, detector);
+        if (detector.boundIsExact())
+            result.add(member);
     }
-    return effects;
-}
+    return result;
+}();
 
-static EffectsOnEdges callEffectsBeyondOperands(const EffectContext& context, const Function& function, const Value& call, const EffectsOnEdges& effects)
-{
-    CalleeList callees = calleesThatBoundEffectsOf(context.program, call);
-    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
-    if (!functions)
-        return effects;
-    EffectDescription description = describeEffects(context.program, function, call);
-    description.functions.clear();
-    for (FunctionID callee : functions->value())
-        description.own.merge(calleeEffectsBeyondOperands(context, callee, call));
-    return resolveEffects(context, description);
-}
-
-static EffectsOnEdges confinedEffectsBeyondOperands(const EffectContext& context, const Function& function, const Value& value)
-{
-    EffectDescription description = describeEffects(context.program, function, value);
-    description.own.normal.writes.remove(perObjectHeaps);
-    description.own.handler.writes.remove(perObjectHeaps);
-    return resolveEffects(context, description);
-}
-
-EffectsOnEdges effectsBeyondOperands(const EffectContext& context, const Function& function, const Value& value, const EffectsOnEdges& effects)
-{
-    if (effectRuleOf(value.opcode) == EffectRule::Call)
-        return effects.normal.mayRunOtherCode() ? effects : callEffectsBeyondOperands(context, function, value, effects);
-    if (effects.onAnyEdge().mayRunOtherCode())
-        return effects;
-    switch (confinementOf(value.opcode)) {
-    case OperandConfinement::Unknown:
-        return effects;
-    case OperandConfinement::WritesOnlyNamedOperands:
-        return confinedEffectsBeyondOperands(context, function, value);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-LocationOverlap overlapOfWrites(const Program& program, const Function& function, const Value& writer, const Effects& effectsOfWriter, const MemoryLocation& location)
-{
-    MemoryAccess access = memoryAccessOf(function, writer);
-    switch (access.kind) {
-    case MemoryAccess::Kind::NotExact:
-        return effectsOfWriter.writes.overlaps(program, location) ? LocationOverlap::May : LocationOverlap::None;
-    case MemoryAccess::Kind::Read:
-        return LocationOverlap::None;
-    case MemoryAccess::Kind::Write:
-        return overlapOf(program, access.location, location);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-namespace {
+namespace EffectsAlgebra {
 
 constexpr LocationMasks masksAt(AbstractHeap heap, uint64_t mask)
 {
@@ -279,6 +140,12 @@ constexpr Effects withThrow(Effects effects)
     return effects;
 }
 
+constexpr Effects withKindOfThrow(Effects effects, ThrowEffect kind)
+{
+    effects.mayThrow = kind;
+    return effects;
+}
+
 constexpr Effects withCollection(Effects effects)
 {
     effects.mayCollect = true;
@@ -303,11 +170,6 @@ constexpr Effects withTermination(Effects effects)
     return effects;
 }
 
-constexpr bool mergeChanges(Effects target, const Effects& source)
-{
-    return target.merge(source);
-}
-
 constexpr Effects merged(Effects target, const Effects& source)
 {
     target.merge(source);
@@ -324,6 +186,11 @@ constexpr LocationMasks runtimeState = LocationMasks(AbstractHeapSet { AbstractH
 constexpr LocationMasks fieldA = masksAt(AbstractHeap::ObjectFields, 1);
 constexpr LocationMasks fieldB = masksAt(AbstractHeap::ObjectFields, 2);
 constexpr LocationMasks fieldsAB = masksAt(AbstractHeap::ObjectFields, 3);
+
+constexpr ThrowEffect neverThrows = ThrowEffect(false);
+constexpr ThrowEffect stackOverflow = ThrowEffect::onlyStackOverflow();
+constexpr ThrowEffect lackOfMemory = ThrowEffect::onlyForLackOfMemory();
+constexpr ThrowEffect throwsByRule = ThrowEffect(true);
 
 constexpr Effects noEffects = Effects::none();
 constexpr Effects unknownCode = Effects::unknownCode();
@@ -369,16 +236,12 @@ static_assert(!fieldA.intersectedWith(fieldB).contains(AbstractHeap::ObjectField
 static_assert(fieldA.without({ AbstractHeap::ObjectFields }).isEmpty());
 static_assert(!fieldA.containsEntire(AbstractHeap::ObjectFields));
 static_assert(objectFields.containsEntire(AbstractHeap::ObjectFields));
-static_assert(!readOf(fieldA).interferesWith(writeOf(fieldB)));
-static_assert(readOf(fieldA).interferesWith(writeOf(fieldsAB)));
-static_assert(!writeOf(fieldA).interferesWith(writeOf(fieldB)));
 static_assert(masksAt(AbstractHeap::ObjectFields, 0).isEmpty());
 static_assert(masksAt(AbstractHeap::OrderWords, 1).maskOf(AbstractHeap::OrderWords) == LocationMasks::entireHeap);
 
+
 static_assert(Effects() != unknownCode);
-static_assert(Effects().withoutSuspension() == unknownCode);
 static_assert(withSuspension(unknownCode) == Effects());
-static_assert(withSuspension(allocation).withoutSuspension() == allocation);
 
 static_assert(noEffects.isPure());
 static_assert(!unknownCode.isPure());
@@ -398,72 +261,43 @@ static_assert(!writeOf(objectFields).isRemovableWhenUnused());
 static_assert(!writeOf(unionOf(objectFields, runtimeState)).isRemovableWhenUnused());
 static_assert(!writeOf(unionOf(objectFields, allocatorState)).isRemovableWhenUnused());
 
-static_assert(readOf(objectFields).interferesWith(writeOf(objectFields)));
-static_assert(writeOf(objectFields).interferesWith(readOf(objectFields)));
-static_assert(!readOf(objectFields).interferesWith(writeOf(moduleVariables)));
-static_assert(!writeOf(moduleVariables).interferesWith(readOf(objectFields)));
-static_assert(writeOf(objectFields).interferesWith(writeOf(objectFields)));
-static_assert(!writeOf(objectFields).interferesWith(writeOf(moduleVariables)));
-static_assert(!readOf(objectFields).interferesWith(readOf(objectFields)));
-static_assert(withThrow(noEffects).interferesWith(withThrow(noEffects)));
-static_assert(withThrow(noEffects).interferesWith(withSuspension(noEffects)));
-static_assert(withUnknownCall(noEffects).interferesWith(withThrow(noEffects)));
-static_assert(!withThrow(noEffects).interferesWith(readOf(objectFields)));
-static_assert(!readOf(objectFields).interferesWith(withThrow(noEffects)));
-static_assert(withThrow(noEffects).interferesWith(writeOf(objectFields)));
-static_assert(writeOf(objectFields).interferesWith(withThrow(noEffects)));
-static_assert(writeOf(objectFields).interferesWith(withSuspension(noEffects)));
-static_assert(withSuspension(noEffects).interferesWith(readOf(objectFields)));
-static_assert(readOf(objectFields).interferesWith(withSuspension(noEffects)));
-static_assert(withUnknownCall(noEffects).interferesWith(readOf(objectFields)));
-static_assert(readOf(objectFields).interferesWith(withUnknownCall(noEffects)));
-static_assert(!withSuspension(noEffects).interferesWith(withCollection(noEffects)));
-static_assert(!withUnknownCall(noEffects).interferesWith(noEffects));
-static_assert(!withCollection(noEffects).interferesWith(withCollection(noEffects)));
-static_assert(!withCollection(noEffects).interferesWith(writeOf(objectFields)));
-static_assert(!withCollection(noEffects).interferesWith(withThrow(noEffects)));
-static_assert(!noEffects.interferesWith(unknownCode));
-static_assert(readOf(objectFields).interferesWith(unknownCode));
-static_assert(!allocation.interferesWith(unknownCode));
-static_assert(!unknownCode.interferesWith(allocation));
-static_assert(!withCollection(writeOf(allocatorState)).interferesWith(unknownCode));
-static_assert(!unknownCode.interferesWith(withCollection(writeOf(allocatorState))));
-static_assert(!allocation.interferesWith(Effects()));
-static_assert(!Effects().interferesWith(allocation));
-static_assert(!allocation.interferesWith(allocation));
-static_assert(!allocation.interferesWith(withThrow(noEffects)));
-static_assert(!withSuspension(noEffects).interferesWith(allocation));
-static_assert(!allocation.interferesWith(runtimeStateUpdate));
-static_assert(runtimeStateUpdate.interferesWith(unknownCode));
-static_assert(unknownCode.interferesWith(runtimeStateUpdate));
-static_assert(withCollection(writeOf(runtimeState)).interferesWith(unknownCode));
-static_assert(unknownCode.interferesWith(withCollection(writeOf(runtimeState))));
-static_assert(runtimeStateUpdate.interferesWith(runtimeStateUpdate));
-static_assert(readOf(runtimeState).interferesWith(unknownCode));
-static_assert(withThrow(allocation).interferesWith(unknownCode));
-static_assert(merged(allocation, writeOf(objectFields)).interferesWith(readOf(objectFields)));
-static_assert(readOf(objectFields).interferesWith(merged(allocation, writeOf(objectFields))));
-static_assert(merged(allocation, readOf(objectFields)).interferesWith(unknownCode));
-
-static_assert(!mergeChanges(unknownCode, allocation));
-static_assert(!mergeChanges(allocation, allocation));
-static_assert(!mergeChanges(allocation, noEffects));
-static_assert(mergeChanges(allocation, withThrow(noEffects)));
-static_assert(mergeChanges(allocation, readOf(objectFields)));
-static_assert(mergeChanges(allocation, writeOf(objectFields)));
-static_assert(mergeChanges(unknownCode, withSuspension(noEffects)));
 static_assert(merged(unknownCode, withSuspension(noEffects)) == Effects());
 static_assert(merged(readOf(objectFields), withThrow(writeOf(moduleVariables))) == withThrow(merged(writeOf(moduleVariables), readOf(objectFields))));
 static_assert(merged(noEffects, allocation) == allocation);
 
 static_assert(Effects().intersectedWith(noEffects) == noEffects);
+static_assert(noEffects.intersectedWith(Effects()) == noEffects);
 static_assert(Effects().intersectedWith(allocation) == allocation);
+static_assert(allocation.intersectedWith(Effects()) == allocation);
+static_assert(allocation.intersectedWith(allocation) == allocation);
+static_assert(unknownCode.intersectedWith(allocation) == allocation);
+static_assert(Effects().intersectedWith(unknownCode) == unknownCode);
+static_assert(Effects().intersectedWith(Effects()) == Effects());
 static_assert(withThrow(readOf(unionOf(objectFields, shapeWords))).intersectedWith(withCollection(readOf(shapeWords))) == readOf(shapeWords));
+static_assert(allocation.intersectedWith(runtimeStateUpdate) == withCollection(noEffects));
+static_assert(readOf(objectFields).intersectedWith(writeOf(objectFields)) == noEffects);
+static_assert(readOf(fieldsAB).intersectedWith(readOf(fieldB)) == readOf(fieldB));
+static_assert(readOf(fieldA).intersectedWith(readOf(fieldB)) == noEffects);
+static_assert(writeOf(fieldsAB).intersectedWith(writeOf(fieldB)) == writeOf(fieldB));
+static_assert(writeOf(fieldA).intersectedWith(writeOf(fieldB)) == noEffects);
+static_assert(writeOf(fieldA).intersectedWith(unknownCode) == writeOf(fieldA));
+static_assert(withThrow(noEffects).intersectedWith(unknownCode) == withThrow(noEffects));
+static_assert(withCollection(noEffects).intersectedWith(unknownCode) == withCollection(noEffects));
+static_assert(withUnknownCall(noEffects).intersectedWith(unknownCode) == withUnknownCall(noEffects));
+static_assert(withTermination(noEffects).intersectedWith(unknownCode) == withTermination(noEffects));
+static_assert(withSuspension(noEffects).intersectedWith(unknownCode) == noEffects);
+static_assert(withSuspension(noEffects).intersectedWith(Effects()) == withSuspension(noEffects));
+static_assert(unknownCode.intersectedWith(withKindOfThrow(noEffects, lackOfMemory)) == withKindOfThrow(noEffects, lackOfMemory));
+static_assert(withKindOfThrow(noEffects, stackOverflow).intersectedWith(unknownCode) == withKindOfThrow(noEffects, stackOverflow));
+static_assert(withThrow(allocation).intersectedWith(withKindOfThrow(allocation, lackOfMemory)).isRemovableWhenUnused());
 
 static_assert(noEffects.isSubsetOf(allocation));
 static_assert(allocation.isSubsetOf(unknownCode));
 static_assert(!unknownCode.isSubsetOf(allocation));
 static_assert(!withThrow(allocation).isSubsetOf(allocation));
+static_assert(neverThrows.isSubsetOf(stackOverflow) && stackOverflow.isSubsetOf(lackOfMemory) && lackOfMemory.isSubsetOf(throwsByRule));
+static_assert(!throwsByRule.isSubsetOf(lackOfMemory) && !lackOfMemory.isSubsetOf(stackOverflow) && !stackOverflow.isSubsetOf(neverThrows));
+static_assert(!withThrow(allocation).isSubsetOf(withKindOfThrow(allocation, lackOfMemory)));
 static_assert(writeOf(fieldA).isSubsetOf(writeOf(fieldsAB)));
 static_assert(!writeOf(fieldsAB).isSubsetOf(writeOf(fieldA)));
 static_assert(!writeOf(fieldA).isSubsetOf(readOf(fieldA)));
@@ -474,26 +308,22 @@ static_assert(!withTermination(noEffects).isRemovableWhenUnused());
 static_assert(!withTermination(noEffects).alwaysCompletes());
 static_assert(withThrow(noEffects).alwaysCompletes());
 static_assert(!unknownCode.alwaysCompletes());
-static_assert(withTermination(noEffects).interferesWith(writeOf(objectFields)));
 static_assert(unknownCode.mayBeTerminated);
 
 static_assert(EffectTraits(noEffects).isPure());
-static_assert(EffectTraits(Effects()) == EffectTraits::all());
 static_assert(!EffectTraits(readOf(objectFields)).isPure() && EffectTraits(readOf(objectFields)).isUnobservable());
-static_assert(EffectTraits(allocation).isRemovableWhenUnused() && !EffectTraits(allocation).mayWriteWhatIsSeen() && EffectTraits(allocation).mayTouchMemory());
+static_assert(EffectTraits(allocation).isRemovableWhenUnused() && !EffectTraits(allocation).mayWriteObservableState() && EffectTraits(allocation).mayTouchMemory());
 static_assert(!EffectTraits(writeOf(objectFields)).isRemovableWhenUnused());
 static_assert(!EffectTraits(withThrow(allocation)).isRemovableWhenUnused());
 static_assert(EffectTraits(withThrow(noEffects)).alwaysCompletes() && EffectTraits(withThrow(noEffects)).mayExitSideways());
 static_assert(!EffectTraits(withTermination(noEffects)).alwaysCompletes());
 static_assert(EffectTraits(withSuspension(noEffects)).mayRunOtherCode() && EffectTraits(withUnknownCall(noEffects)).mayRunOtherCode());
-static_assert(EffectTraitsOnEdges(EffectsOnEdges::onBothEdges(withThrow(allocation))).anyEdge == EffectTraits(withThrow(allocation)));
+static_assert(EffectTraits(writeOf(objectFields)).mayWriteObservableState() && !EffectTraits(writeOf(objectFields)).mayWriteOutsideObjects());
+static_assert(EffectTraits(writeOf(moduleVariables)).mayWriteOutsideObjects() && EffectTraits(unknownCode).mayWriteOutsideObjects());
+static_assert(!EffectTraits(allocation).mayWriteOutsideObjects() && !EffectTraits(runtimeStateUpdate).mayWriteOutsideObjects());
+static_assert(EffectTraits::fromBits(EffectTraits(unknownCode).bits()) == EffectTraits(unknownCode));
 
-static_assert(EffectsOnEdges::onBothEdges(allocation).handler == noEffects);
-static_assert(EffectsOnEdges::onBothEdges(withThrow(allocation)).handler == withThrow(allocation));
-static_assert(EffectsOnEdges::none().isSubsetOf(EffectsOnEdges::unknownCode()));
-static_assert(EffectsOnEdges::unknownCode().onAnyEdge() == unknownCode);
-
-} // anonymous namespace
+} // namespace EffectsAlgebra
 
 } } } // namespace JSC::AOT::Typed
 

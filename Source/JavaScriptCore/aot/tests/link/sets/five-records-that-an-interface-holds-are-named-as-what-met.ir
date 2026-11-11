@@ -1,0 +1,56 @@
+# What the flow proves of a value may not hang on what an interface somewhere happens to hold: by its names a record is a member of interfaces that its own text never meets, and whether such a set is a family hangs on every other set of the program.
+# interface Shape { }  type A, B, C, D, E, F: Shape  function area(s) { return 1; }  function same(s) { return s; }  area(a); area(b); area(c); area(d); area(same(e));
+# The flow climbs from a layout to a class with what extends it and to nothing else that is written. The five records are strangers that met: they are named, and F, which never comes, is not. Behind the flow both sets are families, the five within the six.
+# RUN: link families functions layouts mechanisms=all
+# CHECK: family [[met]] [L1, L2, L3, L4, L5]
+# CHECK: family [[shape]] [L1, L2, L3, L4, L5, L6]
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L1|L2|L3|L4|L5
+# CHECK: layout L1 family=[[met]] changes=[] stays-with-compiled-code
+# CHECK: layout L2 family=[[met]] changes=[] stays-with-compiled-code
+# CHECK: layout L3 family=[[met]] changes=[] stays-with-compiled-code
+# CHECK: layout L4 family=[[met]] changes=[] stays-with-compiled-code
+# CHECK: layout L5 family=[[met]] changes=[] stays-with-compiled-code
+
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="A" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="B" module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="C" module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="D" module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L5 name="E" module=m0 fields=[{key="e" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L6 name="F" module=m0 fields=[{key="f" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L3 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L4 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v0 layout=L5 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewClosure function=f1
+    v12 = Call v11, -, v2 calleeName="area"
+    v13 = Call v11, -, v4 calleeName="area"
+    v14 = Call v11, -, v6 calleeName="area"
+    v15 = Call v11, -, v8 calleeName="area"
+    v16 = NewClosure function=f2
+    v17 = Call v16, -, v10 calleeName="same"
+    v18 = Call v11, -, v17 calleeName="area"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

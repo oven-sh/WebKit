@@ -9,20 +9,21 @@
 
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCalls.h"
-#include "AOTThreshold.h"
 
 namespace JSC { namespace AOT {
 
 constexpr StubKey callWithArray(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallWithArray).withForm(static_cast<uint8_t>(position)); }
-constexpr StubKey callWithList(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallWithList).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey tailCallWithList() { return StubKey(StubFamily::TailCallWithList); }
-constexpr StubKey superConstructWithList() { return StubKey(StubFamily::SuperConstructWithList); }
 constexpr StubKey superConstructWithArray() { return StubKey(StubFamily::SuperConstructWithArray); }
 constexpr StubKey callFromArgumentListFrame() { return StubKey(StubFamily::CallFromArgumentListFrame); }
 constexpr StubKey returnFromArgumentListFrame() { return StubKey(StubFamily::ReturnFromArgumentListFrame); }
+constexpr StubKey callFromArgumentListFrameWithWords(unsigned numberOfWords, unsigned bytesAboveFrameRecord)
+{
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(numberOfWords && numberOfWords <= StubKey::maxCount && (!bytesAboveFrameRecord || bytesAboveFrameRecord == sizeOfSpilledArgumentRegisters));
+    return StubKey(StubFamily::CallFromArgumentListFrameWithWords).withForm(!!bytesAboveFrameRecord).withCount(numberOfWords);
+}
 
-// An engine callee gets a frame of its own below the list frame.
-AOT_THRESHOLD(unsigned, maxListLengthCopiedTwice, 4096);
+static constexpr unsigned maxListLengthCopiedTwice = 4096;
 
 struct ArgumentList {
     GPRReg count;
@@ -30,11 +31,8 @@ struct ArgumentList {
 };
 
 void emitLoadArgumentRegistersFromList(StubAssembler&, const ArgumentList&, unsigned firstRegister = 0);
-// The bytes that count + extraWords words take on the stack.
 void emitAlignedSizeOfWords(StubAssembler&, GPRReg count, int32_t extraWords, GPRReg size);
-// index is the number of words, zero-extended, which is not zero.
 void emitCopyFromLastWord(StubAssembler&, Address source, Address destination, GPRReg index, GPRReg word);
-// count is not zero. Leaves it in index.
 void emitCopyFromFirstWord(StubAssembler&, GPRReg source, GPRReg destination, GPRReg count, GPRReg index, GPRReg word);
 
 } } // namespace JSC::AOT

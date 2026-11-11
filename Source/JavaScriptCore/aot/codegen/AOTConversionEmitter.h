@@ -8,11 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTRepresentationRules.h"
 #include "AOTSlotRepresentation.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTStubsArithmetic.h"
 #include <array>
 #include <limits>
+#include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -24,41 +26,48 @@ public:
     {
     }
 
-    // B3 moves code without branches out of a loop and leaves a branch where it stands.
-    enum class NumberUnboxing : uint8_t { Branches, ComputesBothSides };
-
-    Boxed box(const OperationContext& context, Operand operand, const Type& type) { return box(context, operand, type, isSeldomEntered(context)); }
-    // In the arm of an operation that seldom runs, however often its block is entered: a number is boxed by the stub.
-    Boxed boxInArm(const OperationContext& context, Operand operand, const Type& type) { return box(context, operand, type, true); }
-    Operand unbox(Boxed, const Type&, Representation, NumberUnboxing = NumberUnboxing::Branches);
+    Boxed box(const OperationContext&, Operand, const Type&);
+    Operand inFormOfType(Operand operand, const Type& type) { return operand.is<Boxed>() && type.isInt32() ? Operand(boxInt32(unbox(operand.as<Boxed>(), type, Representation::Int32).as<Word32>())) : operand; }
+    Operand unbox(Boxed, const Type&, Representation);
     Operand toOptional(Operand, const Type&, Representation);
-    // For the code of an operation whose result is produced in one representation and wanted in another.
     Operand inRepresentation(const OperationContext&, Operand produced, const Type& producedType, Representation wanted);
 
-    // A number kept as Double, DoubleWithPayload or ImpureDouble.
     Boxed boxNumber(Operand);
-    Boxed boxDouble(Number value) { return Boxed(m_out.sub(m_out.bitCast(value.value(), B3::Int64), m_numberTag)); }
+    Boxed boxDouble(Number value) { return Boxed(m_out.sub(m_out.bitCast(value.value(), Machine::Int64), m_numberTag)); }
     Boxed boxNumberByStub(Number value) { return boxByStub(BoxedNumberForm::Double, value.value()); }
+    Boxed boxNumberByStub(OptionalNumber value) { return boxByStub(BoxedNumberForm::OptionalDouble, value.value()); }
     Boxed boxInteger(Integer, Range);
     Number toNumber(Integer, Range);
     Integer toInteger(Number);
-#if CPU(ARM64)
-    // NaN is 0, and a number beyond int64 is the nearest int64.
-    Integer toNearestInteger(Number);
-#endif
-    // The result, without rounding, of the integer arithmetic that made a number.
+    Integer toInteger(Number, Range, bool standsInLoop);
+    Word32 int32OrElse(Number, LBasicBlock isNoInt32);
+    Word32 int32OrElse(Integer, Range, LBasicBlock isNoInt32);
+    Integer truncateUnchecked(Number);
+    Word32 truncateToWord(Number value) { return low32(truncateUnchecked(value)); }
     std::optional<Integer> exactIntegerBehind(Number);
+    void noteIntegerBehind(Number number, LValue integer) { m_integersNotedBehindNumbers.add(number.value(), integer); }
+    void noteIndexBehind(Number number, Integer index) { m_indexesBehindNumbers.add(number.value(), index.value()); }
+    std::optional<Integer> indexBehind(Number number) const
+    {
+        LValue index = m_indexesBehindNumbers.get(number.value());
+        return index ? std::optional(Integer(index)) : std::nullopt;
+    }
+    void noteInt32ElementBehindNumberOrNaN(Number number, Boxed element)
+    {
+        if (number.value()->opcode() == Machine::Select)
+            m_int32ElementsBehindNumbersOrNaN.add(number.value(), element.value());
+    }
+    void noteNumberOfInt32Element(Number number) { m_numbersOfInt32Elements.add(number.value()); }
     Integer widen(Word32, Range);
+    Word32 lowHalfOfIntegerToldInsideInt32(Integer);
     Word32 narrow(Integer value) { return low32(value); }
-    // A number beyond int64 is a multiple of 2^11, and what toInteger() makes of it, or of NaN, ends in as many zeros: whoever looks at so many of the lowest bits alone needs no test of the number.
     enum class BitsOfInt32 : uint8_t { All, Lowest };
-    static constexpr unsigned numberOfLowestBits = std::numeric_limits<int64_t>::digits - (std::numeric_limits<double>::digits - 1);
-    Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All, ValueID irValue = { });
-    // What a read of bytes as a number answers: every NaN is the one NaN.
+    static constexpr unsigned numberOfLowestBits = numberOfLowestBitsOfInt32;
+    Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All);
+    Word32 truncateNullableNumber(Boxed);
+    Word32 toInt32OfBoxedNumber(Boxed);
     Number purified(Number);
-    // A NaN keeps the sign that arithmetic gave it and none of its other bits.
     Number withoutPayload(Number);
-    Number withoutBitsOfAnyNaN(Operand operand) { return operand.is<ImpureNumber>() ? purified(Number(operand.value)) : withoutPayload(Number(operand.as<NumberWithPayload>().value())); }
 
     Operand decode(NarrowReference, const Type&, Representation);
     NarrowReference compress(Operand, const Type&);
@@ -67,100 +76,66 @@ public:
     Operand fromBits(Integer, Representation);
     static uint64_t markerBits(uint16_t primitive, Representation);
     Condition isMarker(Operand);
-    Condition isMarker(Operand operand, uint64_t marker) { return equal(bitsOf(operand), static_cast<int64_t>(marker)); }
+    Condition isNullOrAbsent(OptionalNumber);
+    Condition isMarker(Operand operand, uint64_t marker)
+    {
+        if (std::optional<Word32> narrow = operand.is<OptionalInteger>() ? narrowWordBehind(operand.as<OptionalInteger>()) : std::nullopt)
+            return equal(*narrow, marker == integerMarkers.absent ? absentInt32 : marker == integerMarkers.undefined ? undefinedInt32 : nullInt32);
+        return equal(bitsOf(operand), static_cast<int64_t>(marker));
+    }
     Condition isAbsent(Operand);
     Operand withoutMarkers(Operand);
 
-    // Code on an edge runs as seldom as the rarer of its ends and has the more compact of their shapes, whatever the context of the terminator says.
-    struct PlaceOnEdge {
-        Expected<BlockFrequency> frequency;
-        CodeShape shape;
-    };
-    // Answers with the place that was set before.
-    std::optional<PlaceOnEdge> setPlaceOnEdge(std::optional<PlaceOnEdge> place) { return std::exchange(m_placeOnEdge, place); }
-
-    // Once the whole function is emitted.
-    void placeExactIntegers();
-
-    LiteralStringWord literalStringConstant(StringID);
-    LiteralStringWord toLiteralString(CellPointer string);
-    LiteralStringWord toLiteralString(Operand, const Type&);
-    Boxed boxLiteralString(const OperationContext&, LiteralStringWord, const Type&);
-    Condition isStringCell(LiteralStringWord);
-
 private:
+    enum class ExactIntegerUse : bool { Whole, Truncated };
     struct ExactInteger {
-        Integer value;
+        LValue value { nullptr };
         bool mayBeRounded { false };
-        std::optional<Word32> word { };
-        // Set where the integer is tested: it is the number only while this holds.
         Condition holdsWhile { };
     };
-    // What is known of the integer behind a number before any code computes it.
     struct IntegerBehindNumber {
         Range range;
         bool mayBeRounded { false };
-        // The range holds only behind a test: each integer behind the number whose size nothing bounds is an int32.
         bool isTested { false };
+        bool holdsElementOfList { false };
+        bool asksWhetherWideIntegerIsInt32 { false };
         int64_t largestSumOfOtherTerms { 0 };
     };
     using IntegersBehindNumbers = UncheckedKeyHashMap<LValue, std::optional<IntegerBehindNumber>>;
     using ExactIntegers = UncheckedKeyHashMap<LValue, std::optional<ExactInteger>>;
-    std::optional<ExactInteger> findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested = true);
-    bool holdsJoinedInteger(LValue number);
-    struct ConvertedIntegers {
-        LValue first { nullptr };
-        bool areSeveral { false };
-    };
-    bool convertsSeveralIntegers(LValue number);
-    bool isInLoopCarriedIntegerCycle(ValueID);
-    bool isInLoopWithLongIterations(ValueID);
-    bool isMadeOutsideLoopOf(LValue user, LValue number);
-    void computeValueCycles();
+    std::optional<ExactInteger> findExactIntegerBehind(LValue number, ExactIntegerUse);
+    ValueID parameterOfLoopHeadFedBy(ValueID);
+    bool comesRoundToIntegerBehind(LValue number);
     std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
-    ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, const ExactIntegers& operands);
-    ExactInteger wholeNumberReadFromStorage(LValue);
-    // In front of the value that has this index in the block.
-    struct PlaceInBlock {
-        LBasicBlock block { nullptr };
-        unsigned index { 0 };
-    };
-    struct CodeOfExactInteger {
-        LValue value { nullptr };
-        LValue number { nullptr };
-        PlaceInBlock place;
-    };
-    struct UseOfExactInteger {
-        unsigned code { 0 };
-        PlaceInBlock place;
-    };
-    PlaceInBlock placeOfNextValue() const { return { m_out.m_block, static_cast<unsigned>(m_out.m_block->size()) }; }
-    void rememberCodeOfExactInteger(LValue number, PlaceInBlock start);
-    void useExactInteger(LValue);
+    ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, bool inWords, const ExactIntegers& operands);
+    std::optional<Integer> findTruncation(Number);
+#if CPU(ARM64)
+    bool convertsWithJavaScriptSemantics();
+    Integer exactInt32OrAllOnes(Number);
+#endif
     Word32 toInt32OfAnyNumber(Number, BitsOfInt32);
     Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
     Integer integerPartOf(Operand, const Type&);
     Number numberPartOf(Operand, const Type&);
-    Boxed box(const OperationContext&, Operand, const Type&, bool isSeldomEntered);
-    Boxed boxOptional(Operand, const Type&, bool isSeldomEntered);
-    bool isSeldomEntered(const OperationContext&) const;
-    CodeShape shapeAt(const OperationContext& context) const { return m_placeOnEdge ? m_placeOnEdge->shape : context.shape(); }
+    Boxed boxOptional(Operand, const Type&);
     Boxed boxByStub(BoxedNumberForm, LValue);
     Integer quietNaNWithSignOf(Integer bits) { return Integer(m_out.shl(m_out.bitOr(m_out.lShr(bits.value(), 51), 1), 51)); }
-    Operand unboxOptional(Boxed, const Type&, Representation, NumberUnboxing);
+    Operand unboxOptional(Boxed, const Type&, Representation);
+    Number unboxDoubleThatIsAsked(Boxed);
+    void stopUnlessBoxHolds(Boxed, TypeID kinds);
+    void stopUnlessToldRangeHolds(Condition);
 
-    std::optional<PlaceOnEdge> m_placeOnEdge;
-    UncheckedKeyHashMap<LValue, bool> m_holdsJoinedInteger;
-    UncheckedKeyHashMap<LValue, ConvertedIntegers> m_convertedIntegers;
-    std::optional<StronglyConnectedComponents> m_valueCycles;
-    BitVector m_cyclesWithIntegers;
-    UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loopsWithLongIterations;
-    // By whether what was read may be tested.
+    bool m_boxesNumbersByStub { false };
+    Place m_placeThatBoxesByStub { Place::Anywhere };
+    UncheckedKeyHashMap<LValue, LValue> m_integersNotedBehindNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_indexesBehindNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_int32ElementsBehindNumbersOrNaN;
+    UncheckedKeyHashSet<LValue> m_numbersOfInt32Elements;
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
-    std::array<ExactIntegers, 2> m_exactIntegers;
-    Vector<CodeOfExactInteger> m_codeOfExactIntegers;
-    UncheckedKeyHashMap<LValue, unsigned> m_indexOfCodeOfExactInteger;
-    Vector<UseOfExactInteger> m_usesOfExactIntegersInOtherBlocks;
+    UncheckedKeyHashMap<LValue, bool> m_holdsIntegerThatComesRound;
+    LValue m_integerThatComesRound { nullptr };
+    Vector<ValueID> m_parametersOfLoopHeadsFed;
+    BitVector m_valuesFollowed;
 
     using PrimitiveEmitter::compress;
     using PrimitiveEmitter::decode;

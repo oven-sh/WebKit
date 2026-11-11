@@ -15,22 +15,27 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTPhaseTimes.h"
+#include "AOTRuntimeReporter.h"
+#include "AOTRuntimeTable.h"
 #include "AOTVector.h"
 #include "AbstractModuleRecord.h"
 #include "ConsoleClient.h"
 #include "CustomGetterSetter.h"
 #include "Exception.h"
 #include "GlobalObjectMethodTable.h"
+#include "HeapIterationScope.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "MarkedBlockCage.h"
+#include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
 #include "Options.h"
 #include "PropertyNameArray.h"
 #include "ScriptArguments.h"
+#include "ScriptFetchParameters.h"
 #include "Symbol.h"
 #include <array>
 #include <atomic>
@@ -63,14 +68,19 @@ namespace JSC::AOT::Shell {
 
 static JSC_DECLARE_HOST_FUNCTION(functionRunCompiledEntryPoint);
 static JSC_DECLARE_HOST_FUNCTION(functionReportRejectedEntryPoint);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTRuntimeCounters);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTInstructionCount);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTBuiltinEntries);
 static JSC_DECLARE_HOST_FUNCTION(functionRequire);
 static JSC_DECLARE_HOST_FUNCTION(functionSetRequireCacheEntry);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideRequire);
-static JSC_DECLARE_HOST_FUNCTION(functionStoreInSlotWithoutTest);
+static JSC_DECLARE_HOST_FUNCTION(functionFilesInRequireCache);
+static JSC_DECLARE_HOST_FUNCTION(functionDeleteRequireCacheEntry);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTRuntimeCounters);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTInstructionsOfThread);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTPlaceOfProperty);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTMarksOfObject);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTAddExtraPropertyUnseen);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTFindObjectOfLayout);
 static JSC_DECLARE_HOST_FUNCTION(functionLockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell);
@@ -83,15 +93,20 @@ static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 15> functionNames {
+static constexpr std::array<ASCIILiteral, 20> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
+    "filesInRequireCache"_s,
+    "deleteRequireCacheEntry"_s,
     "aotOperationCount"_s,
     "aotRuntimeCounters"_s,
-    "aotInstructionCount"_s,
-    "aotBuiltinEntries"_s,
-    "storeInSlotWithoutTest"_s,
+    "aotInstructionsOfThread"_s,
+    "aotPlaceOfProperty"_s,
+    "aotMarksOfObject"_s,
+    "aotStoreIntoSlotUntested"_s,
+    "aotAddExtraPropertyUnseen"_s,
+    "aotFindObjectOfLayout"_s,
     "lockCell"_s,
     "unlockCell"_s,
     "callWhileAnotherThreadLocksCell"_s,
@@ -116,7 +131,6 @@ static std::optional<MappedImage> mapFile(const char* path)
     LARGE_INTEGER size;
     if (file == INVALID_HANDLE_VALUE || !GetFileSizeEx(file, &size))
         return std::nullopt;
-    // As MAP_PRIVATE elsewhere: the image is brought to its address in the process's own copy of the pages.
     HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_WRITECOPY, 0, 0, nullptr);
     void* bytes = mapping ? MapViewOfFile(mapping, FILE_MAP_COPY, 0, 0, 0) : nullptr;
     if (!bytes)
@@ -135,8 +149,7 @@ static std::optional<MappedImage> mapFile(const char* path)
 }
 #endif
 
-// The table of built-ins describes a realm with the globals Bun turns on, and an image may name any of them.
-void enableGlobalsOfBuiltinTable()
+void enableBuiltinTableGlobals()
 {
     if (!Options::aotImagePath())
         return;
@@ -235,14 +248,18 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObjec
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!Options::aotCountsPath() || !Image::isRegistered())
+    const RuntimeCounts* counts = vm.aotState().counts.get();
+    if (!counts)
         return JSValue::encode(jsNull());
     String name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned index = 0; index < numberOfEntries; ++index) {
         Entry entry = static_cast<Entry>(index);
-        if (name == nameOf(entry))
-            return JSValue::encode(jsNumber(static_cast<double>(operationCallCount(vm, entry))));
+        if (name != nameOf(entry))
+            continue;
+        if (!countsCallsOf(entry))
+            return throwVMError(globalObject, scope, makeString("the calls of "_s, name, " are not counted"_s));
+        return JSValue::encode(jsNumber(static_cast<double>(counts->numberOfCalls(entry))));
     }
     return throwVMError(globalObject, scope, makeString("there is no operation "_s, name));
 }
@@ -250,35 +267,131 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObjec
 JSC_DEFINE_HOST_FUNCTION(functionAOTRuntimeCounters, (JSGlobalObject* globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!Image::isRegistered())
+    const RuntimeCounts* counts = vm.aotState().counts.get();
+    if (!counts)
         return JSValue::encode(jsEmptyString(vm));
     StringPrintStream out;
-    dumpCounts(vm, out);
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, out.toString())));
+    counts->dump(out);
+    return JSValue::encode(jsString(vm, out.toString()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionAOTInstructionCount, (JSGlobalObject*, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(functionAOTInstructionsOfThread, (JSGlobalObject*, CallFrame*))
 {
-    std::optional<uint64_t> count = InstructionCounts::ofCurrentThread();
-    return JSValue::encode(count ? jsNumber(static_cast<double>(*count)) : jsNull());
+    std::optional<uint64_t> instructions = InstructionCounts::ofCurrentThread();
+    return JSValue::encode(instructions ? jsNumber(static_cast<double>(*instructions)) : jsNull());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionAOTBuiltinEntries, (JSGlobalObject* globalObject, CallFrame*))
-{
-    return JSValue::encode(BuiltinTable::singleton().describeForTesting(globalObject));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionStoreInSlotWithoutTest, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionAOTPlaceOfProperty, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Object* object = compiledObjectOrNull(callFrame->argument(0));
+    if (!object)
+        return JSValue::encode(jsNull());
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    const FieldData* field = object ? object->fieldNamed(object->state(), name) : nullptr;
-    if (!field || !object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2))))
-        return throwVMError(globalObject, scope, "the object has no slot of that name that can hold the value"_s);
+    const FieldData* field = object->fieldNamed(object->state(), name);
+    if (field && object->isInSlot(*field))
+        return JSValue::encode(jsNontrivialString(vm, "slot"_s));
+    JSObject* extra = object->extraProperties();
+    bool isAmongExtraProperties = extra && extra->getDirect(vm, name);
+    if (field)
+        return JSValue::encode(jsNontrivialString(vm, isAmongExtraProperties ? "beside its slot"_s : "absent"_s));
+    return JSValue::encode(jsNontrivialString(vm, isAmongExtraProperties ? "extra property"_s : "absent, and no field"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTMarksOfObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    if (!object)
+        return JSValue::encode(jsNull());
+    const std::pair<bool, ASCIILiteral> marks[] = {
+        { object->isNotExtensible(), "notExtensible"_s },
+        { object->isSealed(), "sealed"_s },
+        { object->isFrozen(), "frozen"_s },
+        { object->hasExtraProperties(), "extraProperties"_s },
+        { !!(object->orderWord() & orderWordHasFieldOutsideSlot), "fieldOutsideSlot"_s },
+        { object->compiledStructure().hasOtherPrototype(), "otherPrototype"_s },
+        { object->mayBePrototype(), "isPrototype"_s },
+    };
+    StringBuilder words;
+    for (auto [holds, word] : marks) {
+        if (holds)
+            words.append(words.isEmpty() ? ""_s : " "_s, word);
+    }
+    return JSValue::encode(jsString(vm, words.toString()));
+}
+
+// A DOOR LEFT OPEN ON PURPOSE, for red controls alone: the value goes into the slot of the field with no look at the type that the slot is held to, as no road of the run time lets it.
+JSC_DEFINE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    if (!object)
+        return JSValue::encode(jsBoolean(false));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    const FieldData* field = object->fieldNamed(object->state(), name);
+    return JSValue::encode(jsBoolean(field && object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2)))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTAddExtraPropertyUnseen, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    JSObject* extraProperties = object ? object->extraProperties() : nullptr;
+    if (!extraProperties)
+        return JSValue::encode(jsBoolean(false));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    extraProperties->putDirect(vm, name, callFrame->argument(2));
+    return JSValue::encode(jsBoolean(true));
+}
+
+// So a test gets hold of an object of which the compiler has proven that nothing but compiled code ever sees it, and does to it what is ruled out: a false proof made on purpose. Null: there is none.
+JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t layout = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    Object* found = nullptr;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            Object* object = isJSCellKind(kind) ? compiledObjectOrNull(static_cast<JSCell*>(cell)) : nullptr;
+            if (!object || object->layout().index != layout)
+                return IterationStatus::Continue;
+            found = object;
+            return IterationStatus::Done;
+        });
+    }
+    return JSValue::encode(found ? JSValue(found) : jsNull());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFilesInRequireCache, (JSGlobalObject* globalObject, CallFrame*))
+{
+    StringBuilder files;
+    forEachRequireCacheKey(globalObject, [&](const String& path) {
+        if (findModule(path))
+            files.append(files.isEmpty() ? ""_s : ","_s, path);
+    });
+    return JSValue::encode(jsString(globalObject->vm(), files.toString()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionDeleteRequireCacheEntry, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String key = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<ModuleID> module = findModule(key);
+    if (!module)
+        return throwVMError(globalObject, scope, makeString("there is no module "_s, key));
+    didDeleteRequireCacheEntry(globalObject, *module);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsUndefined());
 }
 
@@ -325,7 +438,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell, (JSGlobalObjec
     return JSValue::encode(result);
 }
 
-// Requests termination when the loader resolves that module, as a watchdog thread would at that moment.
 JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationOnResolve, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -339,7 +451,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationOnResolve, (JSGlobalObject* g
     return JSValue::encode(jsUndefined());
 }
 
-// What a host does for a call with a time limit. Returns whether a termination was pending.
 JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -352,7 +463,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* glob
     return JSValue::encode(jsBoolean(wasPending));
 }
 
-// As a watchdog thread that fires behind the last check of a native caller. The callee gets the arguments behind itself.
 template<bool isConstruct>
 static EncodedJSValue requestTerminationAndEnter(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
@@ -382,7 +492,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAndConstruct, (JSGlobalObject
     return requestTerminationAndEnter<true>(globalObject, callFrame);
 }
 
-// An image locks `console`, so no script can give the shell one that prints.
 class ConsoleOfShell final : public ConsoleClient {
     WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleOfShell);
@@ -440,11 +549,16 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionRunCompiledEntryPoint, 1 },
         { functionSetRequireCacheEntry, 2 },
         { functionOverrideRequire, 1 },
+        { functionFilesInRequireCache, 0 },
+        { functionDeleteRequireCacheEntry, 1 },
         { functionAOTOperationCount, 1 },
         { functionAOTRuntimeCounters, 0 },
-        { functionAOTInstructionCount, 0 },
-        { functionAOTBuiltinEntries, 0 },
-        { functionStoreInSlotWithoutTest, 3 },
+        { functionAOTInstructionsOfThread, 0 },
+        { functionAOTPlaceOfProperty, 2 },
+        { functionAOTMarksOfObject, 1 },
+        { functionAOTStoreIntoSlotUntested, 3 },
+        { functionAOTAddExtraPropertyUnseen, 3 },
+        { functionAOTFindObjectOfLayout, 1 },
         { functionLockCell, 1 },
         { functionUnlockCell, 1 },
         { functionCallWhileAnotherThreadLocksCell, 2 },
@@ -467,7 +581,7 @@ std::span<const ASCIILiteral> shellFunctionNames()
     return functionNames;
 }
 
-bool isKeyOfCompiledModule(const String& key)
+bool isCompiledModuleKey(const String& key)
 {
     std::optional<ModuleID> module = findModule(key);
     if (module && s_terminateOnResolveModule == module) [[unlikely]] {
@@ -526,7 +640,6 @@ JSC_DEFINE_CUSTOM_GETTER(getChildrenOfModuleObject, (JSGlobalObject* globalObjec
     return JSValue::encode(areShown ? JSValue(children) : jsUndefined());
 }
 
-// Compiled code calls a function that the table lists under an object of the host without testing that it is there.
 static void addMissingHostFunctions(JSGlobalObject* globalObject, JSObject* object, BuiltinID holder)
 {
     VM& vm = globalObject->vm();
@@ -585,7 +698,7 @@ static void createModuleObject(JSGlobalObject* globalObject, JSString* path, Mod
     objects.require = createRequireFunction(globalObject);
 }
 
-static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleObjects& objects)
+static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleID, ModuleObjects& objects)
 {
     objects.module = importMeta;
     objects.require = createRequireFunction(globalObject);
@@ -719,6 +832,16 @@ static JSObject* createAsyncModuleRequiredError(JSGlobalObject* globalObject, co
     return createTypeError(globalObject, makeString("require() async module \""_s, path, "\" is unsupported. use \"await import()\" instead."_s));
 }
 
+static std::optional<ModuleID> findModuleWithAttributes(JSGlobalObject* globalObject, const String& path, const ScriptFetchParameters& attributes)
+{
+    String pathOfForm = makeString(path, '?', attributes.hostDefinedImportType());
+    for (ModuleID form : importAttributeVariants(globalObject, path)) {
+        if (modulePath(form) == pathOfForm)
+            return form;
+    }
+    return std::nullopt;
+}
+
 constinit const ModuleHost moduleHost {
     .createModuleObject = createModuleObject,
     .createRequirer = createRequirer,
@@ -730,8 +853,8 @@ constinit const ModuleHost moduleHost {
     .requireCache = nullptr,
     .requireExtensions = nullptr,
     .createAsyncModuleRequiredError = createAsyncModuleRequiredError,
-    .createEmptyJSONBodyError = nullptr,
     .createLoadError = nullptr,
+    .findModuleWithAttributes = findModuleWithAttributes,
 };
 
 } // namespace JSC::AOT::Shell

@@ -94,7 +94,6 @@ function typePickedFor(table: NaturalTable, classes: readonly OperandClass[]): T
   return row?.type ?? table.otherwise;
 }
 
-// A type only grows while values are typed, and a wider operand has the class Any.
 function checkTableIsMonotone(table: NaturalTable, errors: ErrorList): void {
   for (const classes of classTuples(table.arity)) {
     classes.forEach((operandClass, index) => {
@@ -129,7 +128,6 @@ function hasPayloadField(entry: Entry, name: string): boolean {
 function checkNaturalRule(entry: Entry, natural: NaturalResult, context: Context): void {
   switch (natural.tag) {
     case "SameAs":
-      // Whoever follows pointers asks the uses, not the rule of the type.
       if (natural.operand.uses.uses.some(member => member.name === "Returns")) return;
       context.errors.add(
         natural.operand.location,

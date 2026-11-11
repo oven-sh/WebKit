@@ -1,0 +1,79 @@
+# const tag = Symbol("tag");
+# function tagOf(o) { return o[tag]; }
+# function setTag(o, v) { o[tag] = v; }
+# function make(v) { return { name: "made", [tag]: v }; }
+# function late() { return { name: "late" }; }
+# register(tagOf, setTag, make, {}, tag, late);
+# One heap holds two instances of the image: the shell makes a second global of the same VM, which has the module host too, and runs the entry module in both.
+# Another file of the program may run a second time, so nothing says that the program runs in one global, and the image lets a second global have an instance.
+# Each instance has made a symbol of its own. The symbol of the instance that runs names the field of an object of that instance and nothing in an object of the other:
+# there the read finds nothing, and the store adds a second symbol beside the field. What either files for an object of the other is never what the other finds, with the slot filled, emptied and filled again.
+# An object whose slot is still empty stands below an object of this global, of the other instance's and of a third: a setter that arrives there under the symbol stops the very next store from filling the slot.
+# At the end the shell runs the same text twice itself: every answer is the same.
+# LIBRARY: own
+# OPTIONS: several-realms
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(), third = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; const kitOf = f => ({ tagOf: f[0], setTag: f[1], make: f[2], bare: f[3], tag: f[4], late: f[5] }); const twin = register => { const tag = Symbol("tag"); function tagOf(o) { return o[tag]; } function setTag(o, v) { o[tag] = v; } function make(v) { return { name: "made", [tag]: v }; } function late() { return { name: "late" }; } register(tagOf, setTag, make, {}, tag, late); }; const rows = (a, b) => { const said = []; const say = (label, run) => { try { said.push(label + " " + String(run())); } catch (error) { said.push(label + " throws " + error.name); } }; const sides = [[a, b], [b, a]]; for (let side = 0; side < 2; side++) { const x = sides[side][0], y = sides[side][1]; const symbols = o => Object.getOwnPropertySymbols(o).map(s => s === x.tag ? "x" : s === y.tag ? "y" : "?").join(""); const both = o => String(x.tagOf(o)) + "," + String(y.tagOf(o)) + "," + symbols(o); const box = x.make(-1); for (let turn = 0; turn < 8; turn++) say("they read ours", () => both(box)); for (let turn = 0; turn < 8; turn++) say("they store in ours", () => { y.setTag(box, 100 + turn); return both(box); }); for (let turn = 0; turn < 8; turn++) say("we store in ours", () => { x.setTag(box, turn); return both(box); }); for (let turn = 0; turn < 8; turn++) say("bare", () => { x.setTag(x.bare, turn); return both(x.bare); }); const heir = Object.create(x.make(5)); for (let turn = 0; turn < 8; turn++) say("heir", () => both(heir)); say("heir stored by them", () => { y.setTag(heir, 6); return both(heir); }); say("deleted", () => { const made = x.make(1); y.setTag(made, 7); let text = ""; for (let i = 0; i < 40; i++) text += String(y.tagOf(made)); delete made[x.tag]; for (let i = 0; i < 40; i++) text += String(x.tagOf(made)) + String(y.tagOf(made)); x.setTag(made, 3); return text + both(made); }); say("in turn", () => { let text = ""; const boxes = [x.make(1), y.make(2)]; for (let i = 0; i < 400; i++) { const who = i & 1 ? y : x, what = boxes[(i >> 1) & 1]; if (i % 5 === 0) who.setTag(what, i); text += String(who.tagOf(what)) + ";"; } return text + both(boxes[0]) + both(boxes[1]); }); for (const realm of [globalThis, second, third]) say("a setter arrives above", () => { const above = realm.Object(); let text = ""; for (let turn = 0; turn < 40; turn++) { const o = Object.setPrototypeOf(x.late(), above); if (turn === 20) Object.defineProperty(above, x.tag, { set(v) { this.caught = v; }, configurable: true }); x.setTag(o, turn); text += Object.getOwnPropertySymbols(o).length; } return text; }); say("same symbol", () => x.tag === y.tag); } return said; }; const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const twins = { }; twin((...f) => { twins.first = kitOf(f); }); twin((...f) => { twins.second = kitOf(f); }); const got = rows(kits.first, kits.second), expected = rows(twins.first, twins.second); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("row " + n + ": " + got[n].slice(0, 120) + " and not " + expected[n].slice(0, 120)); } print(same + " of " + expected.length); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: 94 of 94
+# CHECK-NEXT: exited with 0
+
+layout L0 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key=symbol("tag")@m0:0 declared={type=number flags=[IsExpected]}}] ownFieldCount=2
+layout L1
+variable g0 name="tag" module=m0 declared={type=undefined|null|symbol flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/again.cjs" displayPath="again.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="tag"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    v3 = Convert v2 declared={type=undefined|null|symbol flags=[IsExpected]}
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f4
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = NewObject layout=L1
+    v11 = FinishObject v10
+    v12 = NewClosure function=f5
+    v13 = Call v9, -, v5, v6, v7, v11, v3, v12 calleeName="register"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="tagOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="setTag" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    ElemSet v0, v2, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f3 name="again" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    Return
+}
+function f4 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = String string="made"
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="name"
+    v4 = GetModuleVariable variable=g0
+    v5 = ToPropertyKey v4
+    ElemDefine v2, v5, v0
+    v7 = FinishObject v2
+    Return v7
+}
+function f5 name="late" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="late"
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="name"
+    v3 = FinishObject v1
+    Return v3
+}

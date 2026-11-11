@@ -1,0 +1,111 @@
+# a value against a written text, outside of loops: one call of the stub. Nothing of the value, of its cell or of a StringImpl is read in line
+# function isText(part) { return part === "text"; }
+# function isTextAmongStrings(part) { return typeof part === "string" ? part === "text" : false; }   the stub for strings is called
+# function isLongerText(part) { return part === "a-longer-text"; }   the text fits no register, so the stub takes its number
+# function countTexts(next, times) { let count = 0; for (let i = 0; i < times; i++) if (next(i) === "text") count++; return count; }   in a loop the length and the characters are read in line, and nothing is asked of the flags of the cell
+# A rope, a piece of a longer string, a 16-bit copy and a string put together at run time equal the text all the same.
+# The shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: emit f1:Body f2:Body f3:Body f4:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: = Load
+# CHECK: = Patch(
+# CHECK-NOT: = Load
+# CHECK-NOT: = Patch(
+# CHECK-LABEL: unit f2:Body
+# CHECK-NOT: = Load{{*}}JSCell_typeInfoFlags
+# CHECK-NOT: StringImpl_
+# CHECK-NOT: characters8
+# CHECK: = Patch(
+# CHECK-NOT: = Load{{*}}JSCell_typeInfoFlags
+# CHECK-NOT: StringImpl_
+# CHECK-NOT: characters8
+# CHECK-NOT: = Patch(
+# CHECK-LABEL: unit f3:Body
+# CHECK-NOT: = Load
+# CHECK: = Patch(
+# CHECK-NOT: = Load
+# CHECK-NOT: = Patch(
+# CHECK-LABEL: unit f4:Body
+# CHECK-NOT: = Load{{*}}JSCell_typeInfoFlags
+# CHECK: StringImpl_data
+# CHECK: characters8
+# RUN(BYTES): bytes f1:Body f2:Body f3:Body mechanisms=none+TypedOperations
+# BYTES-LABEL: unit f1:Body
+# BYTES: {{*}} ValueEqualsLiteralOfLength count 4
+# BYTES-NOT: EqualsLiteral
+# BYTES-LABEL: unit f2:Body
+# BYTES: {{*}} StringEqualsLiteralOfLength count 4
+# BYTES-NOT: EqualsLiteral
+# BYTES-LABEL: unit f3:Body
+# BYTES: Number String "a-longer-text"
+# BYTES: {{*}} ValueEqualsLiteral
+# BYTES-NOT: EqualsLiteral
+# RUN(SHELL): run-in-shell globalThis.publish = (isText, isTextAmongStrings, isLongerText, countTexts) => { const join = (a, b) => a + b; const texts = ["text", join("te", "xt"), join(join("t", "e"), join("x", "t")), "atextb".slice(1, 5), "textĀ".slice(0, 4), "textĀ".replace("Ā", ""), String.fromCharCode(116, 101, 120, 116), "TEXT".toLowerCase()]; const others = ["test", join("te", "st"), "atestb".slice(1, 5), "testĀ".slice(0, 4), "tex", "texts", join("text", "s"), "", "texĀ", new String("text"), Symbol("text"), 4, 0.5, 4n, true, null, undefined, {}, ["text"]]; print(texts.map(isText).join()); print(others.map(isText).join()); print(texts.map(isTextAmongStrings).join()); print(others.map(isTextAmongStrings).join()); print(["a-longer-text", join("a-longer", "-text"), "xa-longer-textx".slice(1, 14), "a-longer-textĀ".slice(0, 13)].map(isLongerText).join()); print(["a-longer-test", join("a-longer", "-test"), "a-longer-tex", "text", 13, null].map(isLongerText).join()); const all = texts.concat(others); print(countTexts(i => all[i], all.length)); };
+# SHELL: true,true,true,true,true,true,true,true
+# SHELL-NEXT: false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false
+# SHELL-NEXT: true,true,true,true,true,true,true,true
+# SHELL-NEXT: false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false
+# SHELL-NEXT: true,true,true,true
+# SHELL-NEXT: false,false,false,false,false,false
+# SHELL-NEXT: 8
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return
+}
+function f1 name="isText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="text"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f2 name="isTextAmongStrings" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = String string="text"
+    v4 = StrictEq v2, v3
+    Return v4
+  b2(v5):
+    v6 = Boolean
+    Return v6
+}
+function f3 name="isLongerText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a-longer-text"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f4 name="countTexts" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = Less v3, v1
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = Call v0, -, v3
+    v8 = String string="text"
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Increment v4
+    Jump -> next b5(v10)
+  b4():
+    Jump -> next b5(v4)
+  b5(v11: anything):
+    v12 = Increment v3
+    Jump -> next b1(v12, v11)
+  b6():
+    Return v4
+}

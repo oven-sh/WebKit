@@ -7,16 +7,50 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNumbering.h"
+#include "AOTRecordTypes.h"
 #include "AOTStringUses.h"
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
-
-class ImagesBelow;
 
 struct NumberedIdentifier {
     PropertyKeyID key;
     StringID text;
 };
+
+struct NameCandidate {
+    NumberedIdentifier identifier;
+    bool hasPromisedColumn { false };
+    bool isEngineSymbol { false };
+    uint32_t numberOfFunctions { 0 };
+    FunctionByModule firstFunction;
+
+    bool isLookedUpByCode() const { return numberOfFunctions || firstFunction.function; }
+};
+
+struct NamesAndStringsToNumber {
+    Vector<NameCandidate> names;
+    BitVector numberedConstants;
+    Vector<StringID> codedStrings;
+    Vector<FunctionByModule> firstFunctionsNamingTexts;
+};
+
+constexpr bool isKindOfEngineSymbol(PropertyKeyKind kind)
+{
+    switch (kind) {
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+        return true;
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::CreatedSymbol:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
 
 class IdentifierNumbering {
 public:
@@ -29,27 +63,19 @@ public:
     }
 
     uint32_t count() const { return m_identifiers.size(); }
-    // A smaller number is one that an image below gave out. Not every such number names something in this program.
-    uint32_t first() const { return m_first; }
     uint32_t countWithLookupTableColumn() const { return m_countWithLookupTableColumn; }
-    // The table of fields goes on past the columns of the front table, up to the last name that code looks up.
     uint32_t countWithFieldTableColumn() const { return m_countWithFieldTableColumn; }
     bool hasFieldTableColumn(uint32_t number) const { return number && number < m_countWithFieldTableColumn; }
 
 private:
-    friend IdentifierNumbering numberIdentifiers(const Typed::Program&, const KeyUses&, const BitVector& keysWithColumn, BuildContext&);
+    friend struct ImageNumbersBuilder;
 
     Vector<uint32_t> m_numbersByKey;
     Vector<uint32_t> m_numbersByText;
     Vector<NumberedIdentifier> m_identifiers { NumberedIdentifier { } };
-    uint32_t m_first { 0 };
     uint32_t m_countWithLookupTableColumn { 1 };
     uint32_t m_countWithFieldTableColumn { 1 };
 };
-
-IdentifierNumbering numberIdentifiers(const Typed::Program&, const KeyUses&, const BitVector& keysWithColumn, BuildContext&);
-// The number that the images below have for the key, or for the text of a name without a key.
-std::optional<uint32_t> numberInImagesBelow(const Typed::Program&, PropertyKeyID, StringID text, const ImagesBelow&);
 
 } } // namespace JSC::AOT
 

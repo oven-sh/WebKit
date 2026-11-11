@@ -1,0 +1,25 @@
+# The list follows from the program alone. let o = {}; while (true) o = Object.create(o);
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /A/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a"
+    v2 = PropGet v1 key="toUpperCase"
+    v3 = Call v2, v1 calleeKey="toUpperCase"
+    v4 = Construct v0, -, v3
+    v5 = Builtin builtin=ObjectCreate
+    v6 = NewObject layout=L0
+    Jump -> next b1(v6)
+  b1(v7: anything):
+    LoopHint
+    v9 = Call v5, -, v7
+    v10 = Boolean boolean=true
+    Branch v10 -> taken b1(v9), notTaken b2()
+  b2():
+    Return v4
+}

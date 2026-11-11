@@ -1,0 +1,72 @@
+# function stride(a, b, c) { var step; switch (arguments.length) { case 1: step = 1; break; case 2: step = 2; break; default: step = 3; } var n = 0; for (var v = 0; v < 6; v += step) n += v; return n; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += stride(0, 0) + stride(0); return total; }   run(globalThis.count)
+# RUN(ANSWER): run-in-shell globalThis.count = 10;
+# ANSWER: 210
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="stride" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="run" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v1 calleeName="run"
+    v4 = PropGet v0 key="print" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = Undefined
+    Return v6
+}
+function f1 name="stride" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v0, v4, v1, v2, v3
+    v6 = PropGet v5 key="length"
+    Switch v6 cases=[1, 2] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v7):
+    v8 = Integer integer=1
+    Jump -> next b4(v8)
+  b2(v9):
+    v10 = Integer integer=2
+    Jump -> next b4(v10)
+  b3():
+    v11 = Integer integer=3
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = Integer
+    v14 = Integer
+    Jump -> next b5(v13, v14)
+  b5(v15, v16):
+    LoopHint
+    v18 = Integer integer=6
+    v19 = Less v16, v18
+    Branch v19 -> taken b6(), notTaken b7()
+  b6():
+    v20 = Add v15, v16
+    v21 = Add v16, v12
+    Jump -> next b5(v20, v21)
+  b7():
+    Return v15
+}
+function f2 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Integer
+    v9 = Call v7, -, v8, v8 calleeName="stride"
+    v10 = Call v7, -, v8 calleeName="stride"
+    v11 = Add v9, v10
+    v12 = Add v3, v11
+    v13 = Increment v4
+    Jump -> next b1(v12, v13)
+  b3():
+    Return v3
+}

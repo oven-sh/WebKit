@@ -29,7 +29,6 @@ inline constexpr uint16_t BigInt = static_cast<uint16_t>(PrimitiveSet::BigInt);
 inline constexpr uint16_t Absent = static_cast<uint16_t>(PrimitiveSet::Absent);
 inline constexpr uint16_t LiteralString = static_cast<uint16_t>(PrimitiveSet::LiteralString);
 inline constexpr uint16_t LiteralSymbol = static_cast<uint16_t>(PrimitiveSet::LiteralSymbol);
-// The word may be anything. It takes the representation of the rest of the type, and only a cast that names a fact takes it away.
 inline constexpr uint16_t Unspecified = static_cast<uint16_t>(PrimitiveSet::Unspecified);
 
 inline constexpr uint16_t Boolean = False | True;
@@ -47,6 +46,7 @@ inline constexpr uint16_t Defined = All | Absent | LiteralString | LiteralSymbol
 inline constexpr uint16_t cellPrimitives = Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt;
 
 inline constexpr int64_t maxExactInteger = 1ll << 53;
+inline constexpr int64_t magnitudeWithoutFractions = 1ll << 52;
 inline constexpr int64_t maxTypedArrayLength = 1ll << 32;
 inline constexpr int64_t maxTrackedInteger = Wire::MaxTrackedInteger;
 
@@ -75,7 +75,9 @@ struct Range {
 
     static constexpr Range full() { return { -maxTrackedInteger, maxTrackedInteger }; }
     static constexpr Range exact() { return { -maxExactInteger, maxExactInteger }; }
+    static constexpr Range aroundEveryFraction() { return { -magnitudeWithoutFractions, magnitudeWithoutFractions }; }
     static constexpr Range int32() { return { INT32_MIN, INT32_MAX }; }
+    static constexpr Range int32OrLength() { return { INT32_MIN, 1ll << 32 }; }
     static constexpr Range uint32() { return { 0, UINT32_MAX }; }
     static constexpr Range length() { return { 0, INT32_MAX }; }
     static constexpr Range empty() { return { 1, 0 }; }
@@ -94,7 +96,6 @@ struct Range {
         return { std::min(minimum, other.minimum), std::max(maximum, other.maximum) };
     }
     constexpr Range intersectWith(Range other) const { return { std::max(minimum, other.minimum), std::min(maximum, other.maximum) }; }
-    constexpr Range widenedFrom(Range previous) const;
     friend constexpr bool operator==(Range, Range) = default;
 };
 
@@ -116,18 +117,6 @@ constexpr int64_t widenedMinimum(int64_t minimum)
     return -maxTrackedInteger;
 }
 
-constexpr Range Range::widenedFrom(Range previous) const
-{
-    if (isEmpty() || previous.isEmpty())
-        return *this;
-    Range result = *this;
-    if (minimum < previous.minimum)
-        result.minimum = widenedMinimum(minimum);
-    if (maximum > previous.maximum)
-        result.maximum = widenedMaximum(maximum);
-    return result;
-}
-
 static_assert(Primitive::Defined == (1u << numberOfEnumerators<PrimitiveSet>) - 1);
 static_assert(!(Primitive::All & (Primitive::Absent | Primitive::LiteralString | Primitive::LiteralSymbol | Primitive::Unspecified)));
 static_assert(static_cast<double>(maxTrackedInteger + 1) == 0x1p62);
@@ -137,8 +126,6 @@ static_assert(primitiveOfNumber(1) == PrimitiveSet::Integer);
 static_assert(primitiveOfNumber(-0.0) == PrimitiveSet::WholeNumber);
 static_assert(primitiveOfNumber(0x1p62) == PrimitiveSet::WholeNumber);
 static_assert(primitiveOfNumber(0.5) == PrimitiveSet::FractionalNumber);
-static_assert(Range { 0, 5 }.widenedFrom({ 0, 4 }) == Range::length());
-static_assert(Range { -1, 4 }.widenedFrom({ 0, 4 }) == Range { INT32_MIN, 4 });
 
 } } } // namespace JSC::AOT::Typed
 

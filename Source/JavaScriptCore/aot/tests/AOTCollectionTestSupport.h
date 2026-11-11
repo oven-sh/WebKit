@@ -24,7 +24,6 @@ inline void collectWithCollectorHooks(VM& vm, CollectionScope scope)
     AOT_TEST_CHECK(vm.heap.lastCollectionScope() == scope);
 }
 
-// A collection gives back a block in which nothing is left alive, and nothing of such a block can be read.
 inline bool hasSurvivedCollection(VM& vm, JSCell* cell)
 {
     if (!cell->isPreciseAllocation() && !vm.heap.objectSpace().blocks().set().contains(MarkedBlock::blockFor(cell)))

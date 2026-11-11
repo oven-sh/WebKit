@@ -12,6 +12,7 @@
 #include "GPRInfo.h"
 #include "MacroAssembler.h"
 #include "RegisterSet.h"
+#include <algorithm>
 #include <array>
 #include <span>
 
@@ -56,7 +57,6 @@ inline RegisterSet registersClobberedByPreserveMostLeaves()
 {
     RegisterSet clobbered = registersClobberedByOperations();
 #if AOT_LEAVES_PRESERVE_MOST && CPU(X86_64)
-    // preserve_most also saves rax and rdx in a function that returns nothing in them. No stub relies on that.
     clobbered.exclude(RegisterSet(X86Registers::ecx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10));
 #elif AOT_LEAVES_PRESERVE_MOST && CPU(ARM64)
     clobbered.exclude(RegisterSet(ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15));
@@ -139,7 +139,6 @@ constexpr GPRReg gprOf(StubRegister reg)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The numbers of the machine registers behind the names on both ISAs, whichever one this build is for: what a stub says of its registers is said of both.
 inline constexpr unsigned numberOfStubRegisters = static_cast<unsigned>(StubRegister::Operation) + 1;
 inline constexpr uint8_t noMachineRegister = 0xff;
 inline constexpr std::array<uint8_t, numberOfStubRegisters> stubRegistersOnX86_64 { 0, 7, 6, 2, 1, 8, 9, noMachineRegister, noMachineRegister, 10, 8, 9, 7, 12, 1, 10, 1, 2, 0 };
@@ -188,18 +187,48 @@ inline constexpr GPRReg preservingCallImmediateGPR = ARM64Registers::x9;
 inline constexpr GPRReg leafFunctionGPR = ARM64Registers::x16;
 #endif
 
-constexpr std::span<const GPRReg> alternateReceiverGPRs()
+constexpr std::span<const GPRReg> alternateResultGPRs()
 {
 #if CPU(X86_64)
-    static constexpr GPRReg registers[] = { X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::eax, X86Registers::edi, X86Registers::r8, X86Registers::r15 };
+    static constexpr GPRReg registers[] = { X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::esi, X86Registers::r8, X86Registers::r15 };
     return registers;
 #elif CPU(ARM64)
     return { };
 #endif
 }
 
+constexpr std::span<const GPRReg> fewAlternateResultGPRs()
+{
+#if CPU(X86_64)
+    static constexpr GPRReg registers[] = { X86Registers::ebx, X86Registers::esi, X86Registers::r15 };
+    return registers;
+#elif CPU(ARM64)
+    return { };
+#endif
+}
+
+#if CPU(X86_64)
+inline constexpr std::array<GPRReg, 11> allocatableGPRs { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10, X86Registers::r12, X86Registers::r15 };
+inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::s_scratchRegister;
+#elif CPU(ARM64)
+inline constexpr std::array<GPRReg, 22> allocatableGPRs {
+    ARM64Registers::x0, ARM64Registers::x1, ARM64Registers::x2, ARM64Registers::x3, ARM64Registers::x4, ARM64Registers::x5, ARM64Registers::x6, ARM64Registers::x7,
+    ARM64Registers::x8, ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15,
+    ARM64Registers::x19, ARM64Registers::x20, ARM64Registers::x21, ARM64Registers::x22, ARM64Registers::x23, ARM64Registers::x24
+};
+inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::memoryTempRegister;
+#endif
+
 inline constexpr StubRegister firstStubOperandRegister = StubRegister::R0;
+inline constexpr StubRegister receiverAtSiteRegister = StubRegister::A2;
 inline constexpr StubRegister stubImmediateRegister = StubRegister::T9;
+#if CPU(X86_64)
+inline constexpr StubRegister shortStubImmediateRegister = StubRegister::T12;
+inline constexpr StubRegister scratchBesideShortStubImmediate = StubRegister::T9;
+#else
+inline constexpr StubRegister shortStubImmediateRegister = StubRegister::T9;
+inline constexpr StubRegister scratchBesideShortStubImmediate = StubRegister::T12;
+#endif
 #if CPU(X86_64)
 inline constexpr StubRegister copyEndOffsetRegister = StubRegister::T10;
 #elif CPU(ARM64)
@@ -207,6 +236,21 @@ inline constexpr StubRegister copyEndOffsetRegister = StubRegister::T14;
 #endif
 
 static_assert(gprOf(StubRegister::R0) == GPRInfo::returnValueGPR);
+static_assert([] {
+    for (GPRReg reg : alternateResultGPRs()) {
+        if (!noOverlap(reg, gprOf(StubRegister::R0), gprOf(StubRegister::T9), gprOf(StubRegister::T11), gprOf(StubRegister::T12), gprOf(StubRegister::T13)))
+            return false;
+    }
+    for (GPRReg reg : fewAlternateResultGPRs()) {
+        if (std::ranges::find(alternateResultGPRs(), reg) == alternateResultGPRs().end() || reg == gprOf(StubRegister::T10))
+            return false;
+        for (unsigned index = 2; index < numberOfOperationArgumentGPRs; ++index) {
+            if (reg == operationArgumentGPR(index))
+                return false;
+        }
+    }
+    return true;
+}());
 static_assert(gprOf(StubRegister::A0) == GPRInfo::argumentGPR0 && gprOf(StubRegister::A1) == GPRInfo::argumentGPR1 && gprOf(StubRegister::A2) == GPRInfo::argumentGPR2);
 static_assert(gprOf(StubRegister::A3) == GPRInfo::argumentGPR3 && gprOf(StubRegister::A4) == GPRInfo::argumentGPR4 && gprOf(StubRegister::A5) == GPRInfo::argumentGPR5);
 #if CPU(ARM64)

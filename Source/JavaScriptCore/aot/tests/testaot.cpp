@@ -7,6 +7,7 @@
 
 #include <wtf/DataLog.h>
 #include <wtf/MainThread.h>
+#include <wtf/StringPrintStream.h>
 
 #if OS(WINDOWS)
 #include <fcntl.h>
@@ -16,32 +17,36 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyVerifier.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTChildProcess.h"
-#include "AOTCompileOptionWords.h"
 #include "AOTCrashExitCode.h"
 #include "AOTDiagnostics.h"
+#include "AOTEffectsDeclared.h"
+#include "AOTEffectsNet.h"
+#include "AOTIRPrinter.h"
 #include "AOTImageFormat.h"
-#include "AOTLimits.h"
+#include "AOTMechanismWords.h"
 #include "AOTNativeTest.h"
-#include "AOTPass.h"
-#include "AOTPassID.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramTables.h"
 #include "AOTRuntimeDescription.h"
+#include "AOTRuntimeReporter.h"
+#include "AOTRuntimeTable.h"
 #include "AOTSchemaEnums.h"
-#include "AOTTestCommand.h"
+#include "AOTStubDescriptor.h"
+#include "AOTStubRecording.h"
+#include "AOTTestHarness.h"
 #include "AOTTestRunner.h"
-#include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
-#include "AOTValueFlowWidenedReport.h"
-#include "AOTValueFlowWidenedSolve.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "InitializeThreading.h"
 #include "JSCConfig.h"
 #include "Options.h"
 #include <algorithm>
+#include <stdlib.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
 #include <wtf/StdLibExtras.h>
@@ -51,7 +56,7 @@ namespace JSC { namespace AOT {
 
 using namespace Typed;
 
-enum class Subcommand : uint8_t { All, Run, Native, List, Print, Compile, WriteOut, FuzzReader };
+enum class Subcommand : uint8_t { All, Run, Native, List, Command, Print, Compile, WriteOut, FuzzAllocation };
 
 struct SubcommandEntry {
     ASCIILiteral name;
@@ -62,31 +67,41 @@ struct SubcommandEntry {
 
 static constexpr ASCIILiteral filterFlag = "--filter"_s;
 static constexpr ASCIILiteral jobsFlag = "--jobs"_s;
+static constexpr ASCIILiteral programOfTagFlag = "--program-of-tag"_s;
+static constexpr ASCIILiteral wireFlag = "--wire"_s;
+static constexpr ASCIILiteral showRefusedBodiesFlag = "--show-refused-bodies"_s;
 
 static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, singleProcessRunFlag, optionFlag, onlyDiagnosticFlag };
 static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag, nativeTestPartFlag };
-static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s, "--command"_s };
-static constexpr ASCIILiteral compileFlags[] { "--output"_s };
-static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
+static constexpr ASCIILiteral commandFlags[] { programOfTagFlag };
+static constexpr ASCIILiteral printFlags[] { wireFlag, programOfTagFlag };
+static constexpr ASCIILiteral compileFlags[] { "--output"_s, programOfTagFlag };
+static constexpr ASCIILiteral fuzzAllocationFlags[] { "--seed"_s, "--count"_s, "--blocks"_s, "--show"_s };
 
 static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
     { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--single-process] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
     { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
-    { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics|image-format"_s },
-    { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command=\"<command> { argument }\"] { option word }"_s },
-    { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
+    { "list"_s, Subcommand::List, { }, "commands|options|mechanisms|statistics|diagnostics|image-format|rows-of-effects"_s },
+    { "<command>"_s, Subcommand::Command, commandFlags, "<program> { argument } { option word } [mechanisms=<list>] [--program-of-tag]"_s },
+    { "print"_s, Subcommand::Print, printFlags, "<program> --wire"_s },
+    { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word | statistic } [mechanisms=<list>] [--program-of-tag]"_s },
     { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
-    { "fuzz-reader"_s, Subcommand::FuzzReader, fuzzReaderFlags, "[--seed=<n>] [--count=<n>] [<program>..]"_s },
+    { "fuzz-allocation"_s, Subcommand::FuzzAllocation, fuzzAllocationFlags, "[--seed=<n>] [--count=<n>] [--blocks=<n>] [--show=<seed>]"_s },
 };
 
 static const SubcommandEntry* findSubcommand(StringView name)
 {
+    const SubcommandEntry* commandEntry = nullptr;
     for (const SubcommandEntry& entry : subcommandEntries) {
+        if (entry.subcommand == Subcommand::Command) {
+            commandEntry = &entry;
+            continue;
+        }
         if (name == entry.name)
             return &entry;
     }
-    return nullptr;
+    return findTestCommand(name) ? commandEntry : nullptr;
 }
 
 template<typename... Types>
@@ -104,6 +119,8 @@ static int reportUsage(std::optional<Subcommand> subcommand = std::nullopt)
         if (!subcommand || entry.subcommand == *subcommand)
             errors.println("usage: testaot ", entry.name, " ", entry.synopsis);
     }
+    errors.println("each takes ", mechanismsFlag, "=<list>: `testaot list mechanisms` prints the grammar");
+    errors.println("each takes ", showRefusedBodiesFlag, ": each body that the verifier of bodies refuses is printed to stderr");
     return exitCodeForInvalidCommandLine;
 }
 
@@ -113,9 +130,18 @@ static StringView flagNameOf(StringView argument)
     return equalsSign == notFound ? argument : argument.left(equalsSign);
 }
 
+static bool containsFlag(std::span<const String> arguments, ASCIILiteral flag)
+{
+    return std::ranges::any_of(arguments, [&](const String& argument) {
+        return flagNameOf(argument) == flag;
+    });
+}
+
 struct CommandLine {
     Vector<String> arguments;
     Vector<String> jscOptions;
+    String mechanismsArgument;
+    bool showsRefusedBodies { false };
 };
 
 static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std::span<const ASCIILiteral> ownFlags)
@@ -123,11 +149,19 @@ static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std
     CommandLine commandLine;
     for (const char* argument : arguments) {
         StringView flagName = flagNameOf(StringView::fromLatin1(argument));
+        if (flagName == mechanismsFlag) {
+            commandLine.mechanismsArgument = String::fromLatin1(argument);
+            continue;
+        }
+        if (flagName == showRefusedBodiesFlag) {
+            commandLine.showsRefusedBodies = true;
+            continue;
+        }
         bool isOwnFlag = std::ranges::any_of(ownFlags, [&](ASCIILiteral flag) {
             return flagName == flag;
         });
         if (flagName.startsWith("--"_s) && !isOwnFlag) {
-            if (!JSC::Options::setOption(unsafeSpan(argument).subspan(2).data(), /* verify = */ false)) {
+            if (!JSC::Options::setOption(unsafeSpan(argument).subspan(2).data(), false)) {
                 reportError(exitCodeForInvalidCommandLine, "testaot: unknown option ", argument);
                 return std::nullopt;
             }
@@ -148,10 +182,7 @@ static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std
 static int reportTestResults(PrintStream& out, const NativeTestSummary& nativeTests, const TestRunSummary& files)
 {
     unsigned failed = nativeTests.failed + files.failed;
-    out.print(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", files.todo, " todo");
-    if (nativeTests.leftOut)
-        out.print(", ", nativeTests.leftOut, " left out: they need entries of Bun, and this program has the table of the stand-in host");
-    out.println();
+    out.println(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", nativeTests.todo + files.todo, " todo");
     return failed ? exitCodeForFailure : exitCodeForSuccess;
 }
 
@@ -269,25 +300,9 @@ static int runNativeSubcommand(std::span<const String> arguments, const ChildPro
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     NativeTestSummary summary = runNativeTests(request, out);
     int exitCode = reportTestResults(out, summary, { });
-    if (!summary.passed && !summary.failed && !summary.leftOut && hasFilter && request.part.count == 1)
+    if (!summary.passed && !summary.failed && !summary.todo && hasFilter && request.part.count == 1)
         return reportError(exitCodeForFailure, "testaot: no native test matches ", request.filter);
     return exitCode;
-}
-
-static void listPasses(PrintStream& out)
-{
-    for (PassID pass : allMembersOf<PassID>) {
-        if (pass != PassID::None)
-            out.println(nameOf(pass));
-    }
-}
-
-static void listLimits(PrintStream& out)
-{
-    for (LimitID limit : allMembersOf<LimitID>) {
-        if (limit != LimitID::None)
-            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), isLoweredByAll(limit) ? "" : " fixed", " ", purposeOf(limit));
-    }
 }
 
 static void listStatistics(PrintStream& out)
@@ -310,19 +325,65 @@ static void listDiagnostics(PrintStream& out)
     }
 }
 
-// For tools that read an executable without these headers. The facts are the ones that the executable's run time states about itself, so a tool can tell whether this list is about that run time.
 static void listImageFormat(PrintStream& out)
 {
     std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
     auto facts = spanReinterpretCast<const uint32_t>(descriptionOfThisRuntime().subspan(sizeof(RuntimeDescription)));
     for (size_t i = 0; i < names.size(); ++i)
         out.println("fact ", facts[i], " ", names[i]);
-#define AOT_PRINT_IMAGE_SECTION(name, Element, statistic) out.println("section " #name);
+#define AOT_PRINT_IMAGE_SECTION(name, Element) out.println("section " #name);
     FOR_EACH_AOT_IMAGE_SECTION(AOT_PRINT_IMAGE_SECTION)
 #undef AOT_PRINT_IMAGE_SECTION
     out.println("offset ProgramTables::firstEnvironmentShape ", offsetof(ProgramTables, firstEnvironmentShape));
     out.println("offset ProgramTables::closureFunctions ", offsetof(ProgramTables, closureFunctions));
     out.println("offset ProgramTables::ranges ", offsetof(ProgramTables, ranges));
+}
+
+static void listRowsOfEffects(PrintStream& out)
+{
+    auto print = [&](ASCIILiteral part, unsigned row) {
+        out.print("effects:", part, ":");
+        printRowOfEffectsNet(out, row);
+        out.println();
+    };
+    auto printParts = [&](unsigned row, bool runsNoOtherCode, bool throwsNothing, bool leavesHeapsAlone, bool doesNotCollect) {
+        if (runsNoOtherCode)
+            print("runs-no-other-code"_s, row);
+        if (throwsNothing)
+            print("throws-nothing"_s, row);
+        if (leavesHeapsAlone)
+            print("leaves-heaps-alone"_s, row);
+        if (doesNotCollect)
+            print("does-not-collect"_s, row);
+    };
+    auto printEffects = [&](unsigned row, const Typed::Effects& effects) {
+        printParts(row, !effects.mayRunOtherCode(), !effects.mayThrowByRule(), !!Typed::lanesNotWrittenInEffectsNet(effects), !effects.mayCollect);
+    };
+    for (Typed::Opcode opcode : allMembersOf<Typed::Opcode>)
+        printEffects(Typed::firstOperationRowInEffectsNet + static_cast<unsigned>(opcode), Typed::declaredBoundOf(opcode));
+    for (unsigned entry = 0; entry < numberOfEntries; ++entry) {
+        if (runtimeOperationOf(static_cast<AOT::Entry>(entry)))
+            printEffects(Typed::firstRuntimeOperationRowInEffectsNet + entry, effectsOf(static_cast<AOT::Entry>(entry)));
+    }
+    for (unsigned family = 0; family < numberOfStubFamilies; ++family)
+        print("any"_s, Typed::firstStubRowInEffectsNet + family);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (unsigned builtin = 1; builtin < table.builtinCount(); ++builtin) {
+        bool runsNoOtherCode = false;
+        bool throwsNothing = false;
+        bool leavesHeapsAlone = false;
+        bool doesNotCollect = false;
+        for (const BuiltinOverload& overload : table.overloadsOf(BuiltinID(builtin))) {
+            if (overload.isUndeclared())
+                continue;
+            bool runsOperandCodeAtMost = overload.effects.capability != BuiltinCapability::JS || overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
+            runsNoOtherCode |= runsOperandCodeAtMost;
+            leavesHeapsAlone |= runsOperandCodeAtMost;
+            throwsNothing |= !overload.throws();
+            doesNotCollect |= overload.effects.capability == BuiltinCapability::None;
+        }
+        printParts(Typed::firstBuiltinRowInEffectsNet + builtin, runsNoOtherCode, throwsNothing, leavesHeapsAlone, doesNotCollect);
+    }
 }
 
 struct ListEntry {
@@ -332,12 +393,12 @@ struct ListEntry {
 
 static constexpr ListEntry listEntries[] {
     { "commands"_s, listTestCommands },
-    { "passes"_s, listPasses },
     { "options"_s, listOptionWords },
-    { "limits"_s, listLimits },
+    { "mechanisms"_s, listMechanismsWord },
     { "statistics"_s, listStatistics },
     { "diagnostics"_s, listDiagnostics },
     { "image-format"_s, listImageFormat },
+    { "rows-of-effects"_s, listRowsOfEffects },
 };
 
 static int runListSubcommand(std::span<const String> arguments)
@@ -377,17 +438,14 @@ int main(int argc, char** argv)
 
 #if OS(WINDOWS)
     terminateWithExceptionCodeOnCrash();
-    // A line ends the same way on every system.
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
 #endif
 
     JSC::Config::configureForTesting();
-    // As Bun says where it runs compiled code: on macOS a process without the JIT that says nothing has no SharedArrayBuffer.
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 
     WTF::initializeMainThread();
-    Typed::reportWhatIsFoundOnlyFromLessBy(Typed::reportWhatIsFoundOnlyFromLessInWords);
 
     std::span<char*> commandLine = unsafeMakeSpan(argv, static_cast<size_t>(argc));
     const SubcommandEntry* entry = commandLine.size() > 1 ? findSubcommand(StringView::fromLatin1(commandLine[1])) : nullptr;
@@ -409,7 +467,7 @@ int main(int argc, char** argv)
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)
-                JSC::Options::setOption(byteCast<char>(option.utf8().span().subspan(2).data()), /* verify = */ false);
+                JSC::Options::setOption(byteCast<char>(option.utf8().span().subspan(2).data()), false);
         }
         JSC::Options::notifyOptionsChanged();
     }
@@ -419,6 +477,23 @@ int main(int argc, char** argv)
 
     checkTestCommandNames();
     setProgramPath(String::fromUTF8(commandLine[0]));
+
+    if (const String& argument = parsedCommandLine->mechanismsArgument; !argument.isNull()) {
+        Mechanisms mechanisms = allMechanisms;
+        if (std::optional<String> sentence = applyMechanismsWord(mechanisms, StringView(argument).substring(2)))
+            return reportError(exitCodeForInvalidCommandLine, "testaot: ", argument, ": ", *sentence);
+        setMechanismsOfProcess(mechanisms);
+        parsedCommandLine->jscOptions.append(argument);
+    }
+
+    if (parsedCommandLine->showsRefusedBodies) {
+        Typed::printerOfBodiesForVerifier = [](const Typed::Program& program, Typed::FunctionID id, ASCIILiteral heading) {
+            StringPrintStream out;
+            Typed::printFunction(out, program, id);
+            dataLogLn("=== ", heading, "\n", out.toString());
+        };
+        parsedCommandLine->jscOptions.append(String(showRefusedBodiesFlag));
+    }
 
     std::span<const String> arguments = parsedCommandLine->arguments.span();
     auto createLauncher = [&] {
@@ -438,13 +513,18 @@ int main(int argc, char** argv)
     case Subcommand::List:
         return runListSubcommand(arguments);
     case Subcommand::Print:
-        return runPrintSubcommand(arguments);
+        if (containsFlag(arguments, wireFlag))
+            return runPrintSubcommand(arguments);
+        [[fallthrough]];
+    case Subcommand::Command:
+        enterTemporaryFolder();
+        return runCommandSubcommand(StringView::fromLatin1(commandLine[1]), arguments);
     case Subcommand::Compile:
         return runCompileSubcommand(arguments);
     case Subcommand::WriteOut:
         return runWriteOutSubcommand(arguments);
-    case Subcommand::FuzzReader:
-        return runFuzzReaderSubcommand(arguments);
+    case Subcommand::FuzzAllocation:
+        return runFuzzAllocationSubcommand(arguments);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

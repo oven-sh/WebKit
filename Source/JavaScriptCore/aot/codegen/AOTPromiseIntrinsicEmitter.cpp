@@ -28,21 +28,15 @@ CellPointer PromiseIntrinsicEmitter::newPromise(const OperationContext& context)
 
 void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)
 {
-    const Value& definition = m_function.at(value->constructorOperand());
+    const Operation& definition = operationAt(value->constructorOperand());
     if (definition.opcode == Opcode::Builtin && m_builtins.canonicalID(definition.builtin()) == m_builtins.canonicalID(m_builtins.at(BuiltinClasses::Promise).constructor)) {
         define(value, newPromise(value));
         return;
     }
 
     Boxed constructor = in<Boxed>(value->constructorOperand());
-    if (value.shape() == CodeShape::Compact) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::CreatePromise, { constructor }));
-        return;
-    }
-
-    // The word is empty until operationAOTCreatePromise or operationAOTLinkTimeConstant fills it, and no value is empty.
     constexpr ptrdiff_t offset = AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + static_cast<size_t>(LinkTimeConstant::Promise) * sizeof(EncodedJSValue);
-    Condition isPromiseConstructor = equal(constructor, Boxed(m_out.load64(mutableInstanceField(offset))));
+    Condition isPromiseConstructor = equal(constructor, Boxed(m_out.load64(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, offset))));
     define(value, either<CellPointer>(isPromiseConstructor, [&] {
         return newPromise(value);
     }, [&] {
@@ -56,28 +50,30 @@ Condition PromiseIntrinsicEmitter::hasPromiseStructure(CellPointer cell)
     return equal(structureID, loadImmutable32(offsetOfPromiseHeader));
 }
 
-void PromiseIntrinsicEmitter::fulfillWithoutBarrier(CellPointer promise, Boxed value)
+void PromiseIntrinsicEmitter::fulfillWithoutBarrier(CellPointer promise, Boxed value, bool mayStoreCell)
 {
+    CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(mayStoreCell));
     storeField(promise, m_heaps.JSPromise_slot, value);
     storeField(promise, m_heaps.JSPromise_packed, integer(static_cast<int64_t>(fulfilledPromiseBits)));
 }
 
 void PromiseIntrinsicEmitter::fulfillAtStore(const ValueContext& store, CellPointer promise, Boxed value, const Type& valueType)
 {
-    fulfillWithoutBarrier(promise, value);
-    barrierAfterStore(store, promise, value, valueType);
+    fulfillWithoutBarrier(promise, value, valueType.hasCells());
+    barrierAfterStore(store, promise, valueType);
 }
 
 void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
 {
     CellPointer promise = in<CellPointer>(value->promiseOperand());
     Boxed resolution = in<Boxed>(value->valueOperand());
-    const Type& resolutionType = typeOf(value->valueOperand());
-    if (value.shape() == CodeShape::Compact) {
+    if (value->valueHasFailedTestForNoThen()) {
+        m_out.noteForm(Form::Runtime, StateOfKnowledge::FailsTest);
         callVoidOperation(value, RuntimeOperation::ResolvePromise, { promise, resolution });
         return;
     }
-
+    m_out.noteForm(Form::Open, StateOfKnowledge::NeedsTest);
+    const Type& resolutionType = typeOf(value->valueOperand());
     LBasicBlock otherwise = newBlock();
     LBasicBlock continuation = newBlock();
     branchUnless(isZero(loadField<Integer>(promise, m_heaps.JSPromise_packed)), otherwise);
@@ -91,6 +87,13 @@ void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
+}
+
+void PromiseIntrinsicEmitter::generateFulfillFreshPromise(const ValueContext& value)
+{
+    ValueID fulfillment = value->valueOperand();
+    CellPointer promise = in<CellPointer>(value->promiseOperand());
+    fulfillAtStore(value, promise, in<Boxed>(fulfillment), typeOf(fulfillment));
 }
 
 } } } // namespace JSC::AOT::Typed

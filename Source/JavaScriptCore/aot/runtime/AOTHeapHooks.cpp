@@ -8,17 +8,13 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCheckedFrameCells.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTEmptyPages.h"
-#include "AOTFunctionTables.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
-#include "AOTModuleEnvironment.h"
 #include "AOTObject.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
 #include "AOTVMState.h"
@@ -36,11 +32,11 @@
 #include <algorithm>
 #include <span>
 #include <type_traits>
-#include <wtf/DataLog.h>
+
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram();
 #include <wtf/Locker.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/Threading.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
@@ -54,13 +50,13 @@ static void visitRootsOfCompiledCode(VM& vm, Visitor& visitor)
     VMState& state = vm.aotState();
     state.caches->visitRoots(visitor, volatility);
 
+    SetRootMarkReasonScope scopeOfWhatFollowsRealms(visitor, RootMarkReason::Output);
     Locker locker { state.instancesLock };
     for (Instance* instance : state.instances) {
         if (!visitor.isMarked(livenessToken(instance)))
             continue;
         CacheRegistry& caches = *instance->state->caches;
         caches.visitRoots(visitor, volatility);
-        // "At" runs once per stop of the mutator, so it misses a realm first reached during draining. The GC verifier always needs these roots.
         if (volatility == RootVolatility::GreyedByMarking && (std::is_same_v<Visitor, AbstractSlotVisitor> || !caches.hasVisitedExecutionRoots()))
             caches.visitRoots(visitor, RootVolatility::GreyedByExecution);
     }
@@ -96,48 +92,13 @@ void initializeCollectorWords(VM& vm, Instance& instance)
     instance.heap.storedCellLog = &vm.heap.storedCellLog();
     instance.heap.mutatorMarkStack = &HeapUtil::mutatorMarkStack(vm.heap);
     instance.heap.barriersExecuted = &HeapUtil::barriersExecuted(vm.heap);
-    instance.heap.recordedCallees = FunctionTables::recordedCalleesOf(vm.aotState().functionTables.get());
     auto* headSegmentWord = std::bit_cast<MutatorMarkStackLayout::Segment**>(std::bit_cast<uint8_t*>(instance.heap.mutatorMarkStack) + MutatorMarkStackLayout::offsetOfHeadSegment());
     RELEASE_ASSERT(*headSegmentWord == MutatorMarkStackLayout::headSegmentOf(*instance.heap.mutatorMarkStack));
 }
 
-void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
-{
-    if (!Thread::currentSingleton().stack().contains(const_cast<JSCell*>(cell)) && !CheckedFrameCells::isInRange(cell)) [[likely]]
-        return;
-    crashOnValidationFailure(vm, { ValidationFailureKind::FunctionCellInFrameGotProperties, functionOf(cell).value_or(FunctionID()), { }, cell });
-}
-
 namespace HeapHooks {
 
-template<typename Visitor>
-static ALWAYS_INLINE void visitCheckedFrameCells(VM& vm, Visitor& visitor)
-{
-    if (!CheckedFrameCells::isInUse()) [[likely]]
-        return;
-    if (CheckedFrameCells* cells = CheckedFrameCells::find(vm))
-        cells->visitLiveCells(visitor);
-}
-
-void visitCalleesOfFrames(VM& vm, SlotVisitor& visitor, uint64_t phase)
-{
-    for (auto& parts : vm.aotState().parts) {
-        if (auto& tables = parts.functionTables)
-            tables->visitRecordedCallees(vm, visitor, phase);
-    }
-    visitCheckedFrameCells(vm, visitor);
-}
-
-void visitCalleesOfFrames(VM& vm, AbstractSlotVisitor& visitor, uint64_t phase)
-{
-    for (auto& parts : vm.aotState().parts) {
-        if (auto& tables = parts.functionTables)
-            tables->visitRecordedCallees(vm, visitor, phase);
-    }
-    visitCheckedFrameCells(vm, visitor);
-}
-
-void finalize(VM& vm, CollectionScope scope, uint64_t phase)
+void finalize(VM& vm, CollectionScope scope)
 {
     VMState& state = vm.aotState();
     {
@@ -145,23 +106,19 @@ void finalize(VM& vm, CollectionScope scope, uint64_t phase)
         state.instances.removeAllMatching([&](Instance* instance) {
             if (vm.heap.isMarked(livenessToken(instance)))
                 return false;
-            if (auto& tables = state.parts[instance->program->position()].functionTables; tables && instance->state)
-                tables->forgetDisplayNamesOf(*instance->state);
             state.instancesToDestroy.append(instance);
             return true;
         });
         state.didChangeInstances();
     }
+    if (state.realmWhoseDatesAreWrittenInPlace && !vm.heap.isMarked(state.realmWhoseDatesAreWrittenInPlace))
+        state.realmWhoseDatesAreWrittenInPlace = nullptr;
 
-    for (auto& parts : state.parts) {
-        if (parts.functionTables)
-            parts.functionTables->finalizeRecordedCallees(vm, phase);
-    }
-
-    CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;
-    state.caches->finalize(vm, scope, validation);
+    state.caches->finalize(vm, scope);
     for (Instance* instance : state.instances)
-        instance->state->caches->finalize(vm, scope, validation);
+        instance->state->caches->finalize(vm, scope);
+    if (!std::exchange(state.didFinishCollection, true))
+        Bun__didFinishFirstCollectionOfCompiledProgram();
 }
 
 void didChangeBarrierThreshold(VM& vm, unsigned threshold, bool mutatorShouldBeFenced)
@@ -192,18 +149,15 @@ void didFindNoRoomWhereCollectionMayRun(VM& vm)
     vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
 }
 
-bool isModuleEnvironment(JSCell* cell)
-{
-    return cell->classInfo() == ModuleEnvironment::info();
-}
-
-String nameOfCompiledCallee(JSCell* cell)
+String compiledCalleeName(JSCell* cell)
 {
     return CompiledCallee::isCompiledCallee(cell) ? CompiledCallee::name(asObject(cell)) : String();
 }
 
-std::span<const uint32_t> offsetsOfNarrowReferences(const Structure* structure)
+std::span<const uint32_t> narrowReferenceOffsets(const Structure* structure)
 {
+    if (!MarkedBlock::isAtomAligned(structure))
+        return { };
     if (!structure->isCompiledStructure() || !uncheckedDowncast<CompiledStructure>(structure)->describesObject())
         return { };
     std::span<const uint32_t> table = inlineReferenceTableOf(uncheckedDowncast<CompiledStructure>(structure)->layout());
@@ -217,14 +171,9 @@ void willWorkOnThisThread(VM& vm)
     Image::setCurrentOfThread(vm.aotState().image);
 }
 
-void crashOnCellVisitMismatch(VM& vm, const JSCell* cell)
+void crashOnCellVisitMismatch(VM&, const JSCell* cell)
 {
-    crashOnValidationFailure(vm, { ValidationFailureKind::VisitedCellsDiffer, { }, { }, cell });
-}
-
-void validateSlotsOf(VM& vm, const JSCell* cell)
-{
-    validateSlotTypes(vm, *uncheckedDowncast<Object>(cell));
+    CRASH_WITH_INFO(std::bit_cast<uintptr_t>(cell));
 }
 
 } // namespace HeapHooks
@@ -234,7 +183,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CacheRegistry);
 CacheRegistry::CacheRegistry() = default;
 CacheRegistry::~CacheRegistry() = default;
 
-// Reading a zero-filled page that was never written does not commit it. Writing does.
 static void zeroNonzeroPieces(std::span<uint8_t> bytes)
 {
     constexpr size_t pieceSize = 4 * KB;
@@ -246,10 +194,37 @@ static void zeroNonzeroPieces(std::span<uint8_t> bytes)
     }
 }
 
-[[noreturn]] static void crashOnUnrecordedWrite(VM& vm, ASCIILiteral name)
+#if OS(LINUX)
+static constexpr bool pageGivenBackStaysAwayWhenRead = true;
+#else
+static constexpr bool pageGivenBackStaysAwayWhenRead = false;
+#endif
+
+static void zeroNonzeroPiecesAndGiveBackWholePages(std::span<uint8_t> bytes)
 {
-    dataLogLn("AOT: cache \"", name, "\" was written without a record");
-    crashOnValidationFailure(vm, { ValidationFailureKind::CacheEntryDropped, { }, { }, { } });
+    size_t pieceSize = pageSize();
+    std::span<uint8_t> pagesToGiveBack;
+    auto giveBack = [&] {
+        if (!pagesToGiveBack.empty())
+            decommitPagesOfZeros(pagesToGiveBack.data(), pagesToGiveBack.size());
+        pagesToGiveBack = { };
+    };
+    while (!bytes.empty()) {
+        size_t upToNextPage = pieceSize - reinterpret_cast<uintptr_t>(bytes.data()) % pieceSize;
+        auto piece = bytes.first(std::min(bytes.size(), upToNextPage));
+        bytes = bytes.subspan(piece.size());
+        if (holdsOnlyZeros(piece))
+            continue;
+        zeroSpan(piece);
+        if (piece.size() != pieceSize)
+            continue;
+        if (pagesToGiveBack.empty() || pagesToGiveBack.data() + pagesToGiveBack.size() != piece.data()) {
+            giveBack();
+            pagesToGiveBack = piece;
+        } else
+            pagesToGiveBack = { pagesToGiveBack.data(), pagesToGiveBack.size() + pieceSize };
+    }
+    giveBack();
 }
 
 void CacheRegistry::append(Entry&& entry)
@@ -278,7 +253,23 @@ void CacheRegistry::addStrongRoots(ASCIILiteral name, std::span<JSCell* const> c
     append(WTF::move(entry));
 }
 
-void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear)
+void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear, const uint8_t* mayBeFilled)
+{
+    Entry entry {
+        .kind = CacheKind::ClearedEachCollection,
+        .name = name,
+        .owner = zeroedByClear.data(),
+        .size = zeroedByClear.size(),
+        .mayBeFilled = mayBeFilled,
+    };
+    entry.clear = [](Entry& entry) {
+        if (!entry.mayBeFilled || *entry.mayBeFilled)
+            zeroNonzeroPieces(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
+    };
+    append(WTF::move(entry));
+}
+
+void CacheRegistry::addClearedAndGivenBackEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear)
 {
     Entry entry {
         .kind = CacheKind::ClearedEachCollection,
@@ -287,7 +278,11 @@ void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_
         .size = zeroedByClear.size(),
     };
     entry.clear = [](Entry& entry) {
-        zeroNonzeroPieces(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
+        auto bytes = unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size);
+        if (pageGivenBackStaysAwayWhenRead)
+            zeroNonzeroPiecesAndGiveBackWholePages(bytes);
+        else
+            zeroNonzeroPieces(bytes);
     };
     append(WTF::move(entry));
 }
@@ -306,7 +301,6 @@ void CacheRegistry::visitRoots(Visitor& visitor, RootVolatility volatility)
             entry.visitWithAbstractSlotVisitor(entry, visitor);
     }
 
-    // The GC verifier marks on its own and leaves the state of the real collection alone.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         if (volatility == RootVolatility::GreyedByExecution)
             m_hasVisitedExecutionRoots = true;
@@ -316,9 +310,8 @@ void CacheRegistry::visitRoots(Visitor& visitor, RootVolatility volatility)
 template void CacheRegistry::visitRoots<SlotVisitor>(SlotVisitor&, RootVolatility);
 template void CacheRegistry::visitRoots<AbstractSlotVisitor>(AbstractSlotVisitor&, RootVolatility);
 
-void CacheRegistry::finalize(VM& vm, CollectionScope scope, CacheValidation validation)
+void CacheRegistry::finalize(VM& vm, CollectionScope scope)
 {
-    bool shouldValidate = validation == CacheValidation::On;
     for (Entry& entry : m_entries) {
         switch (entry.kind) {
         case CacheKind::StrongRoots:
@@ -326,14 +319,9 @@ void CacheRegistry::finalize(VM& vm, CollectionScope scope, CacheValidation vali
             break;
         case CacheKind::WeakByKey:
             entry.removeDeadEntries(entry, vm, scope);
-            // An Eden collection kills young cells only, and a store of a young cell is recorded. So the regions it skipped have no dead entry.
-            if (shouldValidate && scope == CollectionScope::Eden && entry.removeDeadEntries(entry, vm, CollectionScope::Full))
-                crashOnUnrecordedWrite(vm, entry.name);
             break;
         case CacheKind::ClearedEachCollection:
             entry.clear(entry);
-            if (shouldValidate && entry.size && !holdsOnlyZeros(unsafeMakeSpan(static_cast<const uint8_t*>(entry.owner), entry.size)))
-                crashOnUnrecordedWrite(vm, entry.name);
             break;
         }
     }
@@ -360,21 +348,26 @@ void ImmortalCells::add(JSCell* cell)
 {
     ASSERT(cell);
     Locker locker { m_state.caches->lock() };
-    m_cells.append(cell);
+    if (!m_last || m_last->size == Segment::capacity) {
+        Segment* segment = static_cast<Segment*>(m_state.instance.vm->aotState().pages->allocate(sizeof(Segment)));
+        segment->next = nullptr;
+        segment->size = 0;
+        (m_last ? m_last->next : m_first) = segment;
+        m_last = segment;
+    }
+    m_last->cells[m_last->size++] = cell;
 }
 
 template<typename Functor>
-ALWAYS_INLINE void ImmortalCells::forEachSegment(size_t firstIndex, const Functor& functor)
+ALWAYS_INLINE void ImmortalCells::forEachSegment(Segment* first, size_t firstInSegment, const Functor& functor)
 {
-    size_t size = m_cells.size();
-    for (size_t begin = firstIndex; begin < size;) {
-        size_t end = std::min(begin - begin % cellsPerSegment + cellsPerSegment, size);
-        functor(unsafeMakeSpan(&m_cells[begin], end - begin));
-        begin = end;
+    for (Segment* segment = first; segment; segment = segment->next) {
+        if (segment->size > firstInSegment)
+            functor(unsafeMakeSpan(segment->cells, segment->size).subspan(firstInSegment));
+        firstInSegment = 0;
     }
 }
 
-// Needs no lock: a segment never moves, and these cells were added before the visit that deferred them.
 static void visitDeferredSegment(SlotVisitor& visitor, void* segment, size_t begin, size_t end)
 {
     appendRoots(visitor, [&](auto& appender) ALWAYS_INLINE_LAMBDA {
@@ -386,26 +379,30 @@ static void visitDeferredSegment(SlotVisitor& visitor, void* segment, size_t beg
 template<typename Visitor>
 void ImmortalCells::visitRoots(Visitor& visitor)
 {
-    size_t first = 0;
+    Segment* first = m_first;
+    size_t firstInSegment = 0;
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         JSC::Heap& heap = m_state.instance.vm->heap;
         HeapVersion version = heap.objectSpace().newlyAllocatedVersion();
         bool isFirstVisitInCollection = version != m_lastVisitVersion;
         m_lastVisitVersion = version;
         bool visitsEveryCell = isFirstVisitInCollection && heap.collectionScope() != CollectionScope::Eden;
-        if (!visitsEveryCell)
-            first = m_numberOfCellsVisited;
-        m_numberOfCellsVisited = m_cells.size();
+        if (!visitsEveryCell && m_lastVisited) {
+            first = m_lastVisited;
+            firstInSegment = m_numberVisitedInLastVisited;
+        }
+        m_lastVisited = m_last;
+        m_numberVisitedInLastVisited = m_last ? m_last->size : 0;
 
         if (visitsEveryCell && visitor.defersRootRegions()) {
-            forEachSegment(0, [&](std::span<JSCell*> cells) {
+            forEachSegment(m_first, 0, [&](std::span<JSCell*> cells) {
                 visitor.deferRootRegion({ visitDeferredSegment, cells.data(), 0, cells.size() });
             });
             return;
         }
     }
     appendRoots(visitor, [&](auto& appender) ALWAYS_INLINE_LAMBDA {
-        forEachSegment(first, [&](std::span<JSCell*> cells) ALWAYS_INLINE_LAMBDA {
+        forEachSegment(first, firstInSegment, [&](std::span<JSCell*> cells) ALWAYS_INLINE_LAMBDA {
             for (JSCell* cell : cells)
                 appender.appendUnbarriered(cell);
         });
@@ -419,6 +416,16 @@ ImmortalCells::ImmortalCells(State& state)
     : m_state(state)
 {
     state.caches->add(CacheKind::StrongRoots, "immortal cells"_s, *this, RootVolatility::GreyedByExecution);
+}
+
+ImmortalCells::~ImmortalCells()
+{
+    PagesOfVM& pages = *m_state.instance.vm->aotState().pages;
+    for (Segment* segment = m_first; segment;) {
+        Segment* next = segment->next;
+        pages.release(segment, sizeof(Segment));
+        segment = next;
+    }
 }
 
 } } // namespace JSC::AOT

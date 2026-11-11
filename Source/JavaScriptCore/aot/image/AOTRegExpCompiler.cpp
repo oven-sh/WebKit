@@ -10,11 +10,13 @@
 
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
+#include "AOTRegExpFlags.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
+#include <algorithm>
+#include <cstdlib>
 #include <utility>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/HashMap.h>
@@ -23,8 +25,9 @@
 
 namespace JSC::AOT {
 
-static constexpr size_t dataAlignment = 8;
-static constexpr int64_t regExpReachSlack = 16;
+static constexpr size_t regExpDataAlignment = 8;
+static constexpr unsigned maxRegExpPatternLengthWithCode = Typed::longestRegExpPatternWithCode;
+static constexpr PCRelativeReach reachOfRegExpTables = PCRelativeReach::Far;
 
 static void invalidateIfTempRegister([[maybe_unused]] CCallHelpers& jit, [[maybe_unused]] GPRReg reg)
 {
@@ -49,18 +52,10 @@ static Yarr::JITFailureReason toJITFailureReason(LinkFailure failure)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static size_t sizeWithPrivateCopies(const RelocatableCode& body, const Vector<RegExpSymbol>& symbols)
-{
-    size_t size = body.bytes.size();
-    for (auto& symbol : symbols)
-        size += maxPrivateCopySize(symbol);
-    return size;
-}
-
-ImageCodeAddressing::ImageCodeAddressing(CCallHelpers& jit, PCRelativeReach reach, const AssemblerPolicy& policy, BuildContext* context)
+ImageCodeAddressing::ImageCodeAddressing(CCallHelpers& jit, PCRelativeReach reachWithinBody, const AssemblerPolicy& policy, BuildContext* context)
     : CodeAddressing(jit)
     , m_recorder(jit, policy)
-    , m_reach(reach)
+    , m_reach(reachWithinBody)
     , m_context(context)
     , m_returnAddressesAreInReach(std::make_shared<bool>(true))
 {
@@ -74,18 +69,18 @@ void ImageCodeAddressing::moveAddressOfSymbol(RegExpSymbol&& symbol, GPRReg dest
 
 void ImageCodeAddressing::moveAddress(Yarr::SharedTableID id, GPRReg dest)
 {
-    moveAddressOfSymbol(id, dest, PCRelativeReach::Far);
+    moveAddressOfSymbol(id, dest, reachOfRegExpTables);
 }
 
 void ImageCodeAddressing::moveAddress(const Yarr::ClassTable& table, GPRReg dest)
 {
-    moveAddressOfSymbol(Yarr::ClassTable(table), dest, m_reach);
+    moveAddressOfSymbol(Yarr::ClassTable(table), dest, reachOfRegExpTables);
 }
 
 void ImageCodeAddressing::moveAddressOfData(std::span<const uint8_t> bytes, GPRReg dest)
 {
     RELEASE_ASSERT(!bytes.empty());
-    moveAddressOfSymbol(PlainData { Vector<uint8_t>(bytes) }, dest, m_reach);
+    moveAddressOfSymbol(PlainData { Vector<uint8_t>(bytes) }, dest, reachOfRegExpTables);
 }
 
 MacroAssembler::Jump ImageCodeAddressing::branchTestTableByte(MacroAssembler::ResultCondition condition, GPRReg character, RegExpSymbol&& table, PCRelativeReach reach, uint8_t bit)
@@ -110,7 +105,7 @@ MacroAssembler::Jump ImageCodeAddressing::branchTestBuiltInClassTable(MacroAssem
         fail(Yarr::JITFailureReason::UnlistedSharedTable);
         return m_jit.jump();
     }
-    return branchTestTableByte(condition, character, Yarr::SharedTableID::BuiltInClassBitPlanes, PCRelativeReach::Far, *bitPlane);
+    return branchTestTableByte(condition, character, Yarr::SharedTableID::BuiltInClassBitPlanes, reachOfRegExpTables, *bitPlane);
 }
 
 MacroAssembler::Jump ImageCodeAddressing::branchTestLatin1Table(MacroAssembler::ResultCondition condition, GPRReg character, const Yarr::CharacterClass::ByteTable& table)
@@ -121,34 +116,20 @@ MacroAssembler::Jump ImageCodeAddressing::branchTestLatin1Table(MacroAssembler::
             members.set(index);
     }
     uint8_t bit = Latin1BitPlane::preferredBit(members);
-    return branchTestTableByte(condition, character, Latin1BitPlane { members, bit }, m_reach, bit);
+    return branchTestTableByte(condition, character, Latin1BitPlane { members, bit }, reachOfRegExpTables, bit);
 }
 
 void ImageCodeAddressing::canonicalizeLatin1(GPRReg character)
 {
     GPRReg scratch = m_jit.scratchRegister();
     RELEASE_ASSERT(character != scratch);
-    m_recorder.moveAddress(symbolFor(Yarr::SharedTableID::Latin1Canonicalization), scratch, PCRelativeReach::Far);
+    m_recorder.moveAddress(symbolFor(Yarr::SharedTableID::Latin1Canonicalization), scratch, reachOfRegExpTables);
     m_jit.load16(MacroAssembler::BaseIndex(scratch, character, MacroAssembler::TimesTwo), character);
 }
 
-bool ImageCodeAddressing::tryLoadConstant(uint64_t constant, GPRReg dest)
+bool ImageCodeAddressing::tryLoadConstant(uint64_t, GPRReg)
 {
-    AOT_THRESHOLD(unsigned, minInstructionsReplacedByLoad, 3);
-    if (!isARM64() || m_reach != PCRelativeReach::Near || ARM64LogicalImmediate::create64(constant).isValid())
-        return false;
-    unsigned zeroHalfwords = 0;
-    unsigned onesHalfwords = 0;
-    for (unsigned shift = 0; shift < 64; shift += 16) {
-        uint16_t halfword = static_cast<uint16_t>(constant >> shift);
-        zeroHalfwords += !halfword;
-        onesHalfwords += halfword == 0xffff;
-    }
-    if (4 - (zeroHalfwords >= onesHalfwords ? zeroHalfwords : onesHalfwords) < minInstructionsReplacedByLoad)
-        return false;
-    invalidateIfTempRegister(m_jit, dest);
-    m_recorder.load64(symbolFor(Literal64 { constant }), dest);
-    return true;
+    return false;
 }
 
 void ImageCodeAddressing::callRoutine(const Yarr::SharedRoutine& routine)
@@ -189,8 +170,7 @@ RegExpCodeOrFailureReason ImageCodeAddressing::takeCode()
     auto body = m_recorder.finalize(LinkBuffer::Profile::YarrJIT, m_context);
     if (!body)
         return makeUnexpected(toJITFailureReason(body.error()));
-    // layOutRegExpSection relies on this: a body and a private copy of every symbol, placed side by side, span less than the near reach.
-    if (!*m_returnAddressesAreInReach || (m_reach == PCRelativeReach::Near && static_cast<int64_t>(sizeWithPrivateCopies(*body, m_symbols)) >= MacroAssembler::relocationReach(RelocationKind::AddressNear) - regExpReachSlack))
+    if (!*m_returnAddressesAreInReach)
         return makeUnexpected(Yarr::JITFailureReason::OutOfPCRelativeReach);
 
     auto code = makeUnique<RegExpCode>();
@@ -202,9 +182,31 @@ RegExpCodeOrFailureReason ImageCodeAddressing::takeCode()
 
 CodeSymbol ImageCodeAddressing::symbolFor(RegExpSymbol&& symbol)
 {
-    size_t index = m_symbols.find(symbol);
+    static constexpr size_t mostSymbolsSearchedOneByOne = 16;
+    auto keyOf = [](const RegExpSymbol& symbol) {
+        return computeHash(symbol) >> 1;
+    };
+    size_t index = notFound;
+    if (m_symbols.size() <= mostSymbolsSearchedOneByOne)
+        index = m_symbols.find(symbol);
+    else {
+        if (m_symbolsByHash.isEmpty()) {
+            for (uint32_t known = 0; known < m_symbols.size(); ++known)
+                m_symbolsByHash.add(keyOf(m_symbols[known]), Vector<uint32_t, 1>()).iterator->value.append(known);
+        }
+        if (auto iterator = m_symbolsByHash.find(keyOf(symbol)); iterator != m_symbolsByHash.end()) {
+            for (uint32_t known : iterator->value) {
+                if (m_symbols[known] == symbol) {
+                    index = known;
+                    break;
+                }
+            }
+        }
+    }
     if (index == notFound) {
         index = m_symbols.size();
+        if (!m_symbolsByHash.isEmpty())
+            m_symbolsByHash.add(keyOf(symbol), Vector<uint32_t, 1>()).iterator->value.append(static_cast<uint32_t>(index));
         m_symbols.append(WTF::move(symbol));
     }
     return { SymbolSpace::RegExp, static_cast<uint32_t>(index) };
@@ -239,20 +241,28 @@ RegExpCodeOrFailureReason compileFailureRoutine(const AssemblerPolicy& policy, B
     return addressing.takeCode();
 }
 
-size_t maxPrivateCopySize(const RegExpSymbol& symbol)
+static size_t maxRegExpTableSize(const RegExpSymbol& symbol)
 {
     return WTF::switchOn(symbol,
         [](Yarr::SharedTableID) -> size_t { return 0; },
-        [](const PlainData& data) -> size_t { return roundUpToMultipleOf<dataAlignment>(data.bytes.size()) + dataAlignment; },
-        [](const Latin1BitPlane&) -> size_t { return Yarr::CharacterClass::latin1TableSize + dataAlignment; },
+        [](const PlainData& data) -> size_t { return roundUpToMultipleOf<regExpDataAlignment>(data.bytes.size()) + regExpDataAlignment; },
+        [](const Latin1BitPlane&) -> size_t { return Yarr::CharacterClass::latin1TableSize + regExpDataAlignment; },
         [](const Yarr::ClassTable& table) -> size_t {
             Yarr::ClassTablePacker packer;
             packer.add(table);
             packer.pack();
-            return packer.bytes().size() + dataAlignment;
+            return packer.bytes().size() + regExpDataAlignment;
         },
         [](const Yarr::SharedRoutine&) -> size_t { return 0; },
-        [](const Literal64&) -> size_t { return sizeof(Literal64::value) + dataAlignment; });
+        [](const Literal64&) -> size_t { return sizeof(Literal64::value) + regExpDataAlignment; });
+}
+
+static size_t sizeOfRegExpBodyAndTables(const RelocatableCode& body, const Vector<RegExpSymbol>& symbols)
+{
+    size_t size = body.bytes.size();
+    for (auto& symbol : symbols)
+        size += maxRegExpTableSize(symbol);
+    return size;
 }
 
 size_t CompiledRegExp::codeSize() const
@@ -260,12 +270,12 @@ size_t CompiledRegExp::codeSize() const
     size_t size = 0;
     for (auto& codeForCharSize : code) {
         if (codeForCharSize)
-            size += sizeWithPrivateCopies(codeForCharSize->body, codeForCharSize->symbols);
+            size += sizeOfRegExpBodyAndTables(codeForCharSize->body, codeForCharSize->symbols);
     }
     return size;
 }
 
-static RegExpDeclineReason declineReasonFor(Yarr::JITFailureReason reason)
+static RegExpDeclineReason regExpDeclineReasonFor(Yarr::JITFailureReason reason)
 {
     switch (reason) {
     case Yarr::JITFailureReason::ParenthesisNestedTooDeep:
@@ -310,11 +320,11 @@ static bool needsProcessAddress(Yarr::JITFailureReason reason)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static RegExpCodeOrFailureReason generate(const RegExpCompilerInputs& inputs, const Yarr::YarrPattern& pattern, Yarr::CharSize charSize, PCRelativeReach reach)
+static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& inputs, const Yarr::YarrPattern& pattern, Yarr::CharSize charSize, Yarr::CodeSizePolicy sizePolicy, PCRelativeReach reachWithinBody)
 {
     Yarr::YarrCodeBlock codeBlock(nullptr);
     Yarr::CodeGenerationPolicy policy;
-    policy.sizePolicy = reach == PCRelativeReach::Near ? Yarr::CodeSizePolicy::Compact : Yarr::CodeSizePolicy::MostCompact;
+    policy.sizePolicy = sizePolicy;
     Yarr::CodeGenerationRequest request {
         .pattern = pattern,
         .patternString = inputs.pattern,
@@ -324,7 +334,7 @@ static RegExpCodeOrFailureReason generate(const RegExpCompilerInputs& inputs, co
         .codeBlock = &codeBlock,
         .policy = policy,
         .createCodeAddressing = [&](CCallHelpers& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
-            return makeUnique<ImageCodeAddressing>(jit, reach, inputs.assemblerPolicy, inputs.context);
+            return makeUnique<ImageCodeAddressing>(jit, reachWithinBody, inputs.assemblerPolicy, inputs.context);
         },
     };
 
@@ -335,61 +345,10 @@ static RegExpCodeOrFailureReason generate(const RegExpCompilerInputs& inputs, co
     RegExpCodeOrFailureReason code = static_cast<ImageCodeAddressing&>(generated->addressing()).takeCode();
     if (code) {
         (*code)->hasElidedFrame = generated->hasElidedFrame();
+        (*code)->handsLongSearchesOver = generated->handsLongSearchesOver();
         (*code)->analysisLimitHits = pattern.m_firstFollowSets.limitHits() + generated->classTableLimitHits();
     }
     return code;
-}
-
-static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction)
-{
-    for (auto& alternative : disjunction.m_alternatives) {
-        for (const Yarr::PatternTerm& term : alternative->m_terms) {
-            switch (term.type) {
-            case Yarr::PatternTerm::Type::AssertionBOL:
-            case Yarr::PatternTerm::Type::AssertionEOL:
-            case Yarr::PatternTerm::Type::AssertionWordBoundary:
-            case Yarr::PatternTerm::Type::ParentheticalAssertion:
-            case Yarr::PatternTerm::Type::NumberedBackReference:
-            case Yarr::PatternTerm::Type::NamedBackReference:
-            case Yarr::PatternTerm::Type::NumberedForwardReference:
-            case Yarr::PatternTerm::Type::NamedForwardReference:
-                break;
-            case Yarr::PatternTerm::Type::PatternCharacter:
-                if (term.patternCharacter > 0xff)
-                    return false;
-                break;
-            case Yarr::PatternTerm::Type::CharacterClass: {
-                const Yarr::CharacterClass& characterClass = *term.characterClass;
-                bool holdsWideCharacter = characterClass.hasStrings()
-                    || std::ranges::any_of(characterClass.m_matches32, [](char32_t character) { return character > 0xff; })
-                    || std::ranges::any_of(characterClass.m_ranges32, [](const Yarr::CharacterRange& range) { return range.end > 0xff; });
-                if (term.invert() || holdsWideCharacter)
-                    return false;
-                break;
-            }
-            case Yarr::PatternTerm::Type::ParenthesesSubpattern:
-                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction))
-                    return false;
-                break;
-            case Yarr::PatternTerm::Type::DotStarEnclosure:
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-// A pattern that has to match its subject from end to end with characters of one byte matches no subject that holds a wider one: an address, a version, a name.
-static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
-{
-    if (pattern.multiline() || pattern.ignoreCase() || pattern.m_containsModifiers)
-        return false;
-    for (auto& alternative : pattern.m_body->m_alternatives) {
-        auto& terms = alternative->m_terms;
-        if (terms.size() < 2 || terms.first().type != Yarr::PatternTerm::Type::AssertionBOL || terms.last().type != Yarr::PatternTerm::Type::AssertionEOL)
-            return false;
-    }
-    return consumesOnly8BitCharacters(*pattern.m_body);
 }
 
 NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
@@ -399,10 +358,9 @@ NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
         return { .form = RegExpRecordForm::NoMetadata, .reason = summary.exceedsParenthesesDepth ? RegExpDeclineReason::NestedTooDeep : RegExpDeclineReason::NotSupportedByCodeGenerator };
     if (!summary.atom.isNull())
         return { .form = RegExpRecordForm::Atom };
-    if (inputs.pattern.length() > (inputs.context ? inputs.context->limit(LimitID::RegExpPatternLengthWithCode) : Limits::regExpPatternLengthWithCode))
+    if (inputs.pattern.length() > maxRegExpPatternLengthWithCode)
         return { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::PatternTooLong };
 
-    // Not hasStackForRegExpCompiler(): the 16 KB it adds are for the frames between a caller that tests it and this one.
     RELEASE_ASSERT(StackCheck(Thread::currentSingleton().stack(), regExpCompilerStackSize).isSafeToRecurse());
     Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
     Yarr::YarrPattern yarrPattern(inputs.pattern, inputs.flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed);
@@ -412,16 +370,16 @@ NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
 
     CompiledRegExp result { .form = RegExpRecordForm::Code };
     for (auto charSize : { Yarr::CharSize::Char8, Yarr::CharSize::Char16 }) {
-        if (charSize == Yarr::CharSize::Char16 && inputs.codeFor16BitSubjects == RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject && matchesOnlyWhole8BitSubjects(yarrPattern))
+        if (charSize == Yarr::CharSize::Char16 && inputs.codeFor16BitSubjects == RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject && summary.matchesOnlyWhole8BitSubjects)
             break;
-        RegExpCodeOrFailureReason code = generate(inputs, yarrPattern, charSize, PCRelativeReach::Near);
+        RegExpCodeOrFailureReason code = generateRegExpCode(inputs, yarrPattern, charSize, Yarr::CodeSizePolicy::Compact, PCRelativeReach::Near);
         if (!code && code.error() == Yarr::JITFailureReason::OutOfPCRelativeReach)
-            code = generate(inputs, yarrPattern, charSize, PCRelativeReach::Far);
+            code = generateRegExpCode(inputs, yarrPattern, charSize, Yarr::CodeSizePolicy::MostCompact, PCRelativeReach::Far);
         if (!code) {
             RELEASE_ASSERT(code.error() != Yarr::JITFailureReason::ParenthesisNestedTooDeep);
             if (inputs.context && needsProcessAddress(code.error()))
                 inputs.context->diagnostics().add(InternalError { .kind = InternalErrorKind::ProcessAddressInImageCode });
-            return { .form = RegExpRecordForm::NoCode, .reason = declineReasonFor(code.error()) };
+            return { .form = RegExpRecordForm::NoCode, .reason = regExpDeclineReasonFor(code.error()) };
         }
         result.code[charSize == Yarr::CharSize::Char16] = WTF::move(*code);
     }
@@ -433,45 +391,21 @@ uint32_t CompiledRegExps::numberWithForm(RegExpRecordForm form) const
     return static_cast<uint32_t>(std::ranges::count(results, form, &CompiledRegExp::form));
 }
 
-static LimitID limitOf(RegExpDeclineReason reason)
+static LimitID limitBehindRegExpDecline(RegExpDeclineReason reason)
 {
     switch (reason) {
-    case RegExpDeclineReason::NestedTooDeep:
-        return LimitID::RegExpNestingDepthWithCode;
-    case RegExpDeclineReason::PatternTooLong:
-        return LimitID::RegExpPatternLengthWithCode;
-    case RegExpDeclineReason::CandidateBudgetExhausted:
-        return LimitID::RegExpCandidateCodeBytesPerSite;
     case RegExpDeclineReason::SectionFull:
         return LimitID::RegExpSectionSize;
     case RegExpDeclineReason::NotSupportedByCodeGenerator:
+    case RegExpDeclineReason::NestedTooDeep:
     case RegExpDeclineReason::CodeTooLarge:
-    case RegExpDeclineReason::TextKnownAtRunTime:
+    case RegExpDeclineReason::PatternTooLong:
         return LimitID::None;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void applyCandidateBudget(const RegExpRequests& requests, CompiledRegExps& compiled, BuildContext& context)
-{
-    uint64_t budget = context.limit(LimitID::RegExpCandidateCodeBytesPerSite);
-    std::span<const RegExpRequest> candidates = requests.candidates();
-    std::span<CompiledRegExp> results = compiled.results.mutableSpan().subspan(requests.literals().size());
-    UncheckedKeyHashMap<std::pair<FunctionID, ValueID>, uint64_t> bytesBySite;
-    for (size_t index = 0; index < candidates.size(); ++index) {
-        uint64_t size = results[index].codeSize();
-        if (!size || candidates[index].origin == RegExpRequestOrigin::Evaluated)
-            continue;
-        const RegExpSite& site = candidates[index].sites.first();
-        uint64_t& chargedBytes = bytesBySite.add(std::pair { site.function, site.value }, 0).iterator->value;
-        if (chargedBytes + size > budget)
-            results[index] = { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::CandidateBudgetExhausted };
-        else
-            chargedBytes += size;
-    }
-}
-
-static void applySectionSizeLimit(CompiledRegExps& compiled, BuildContext& context)
+static void applyRegExpSectionSizeLimit(CompiledRegExps& compiled, BuildContext& context)
 {
     uint64_t maxCodeSize = context.limit(LimitID::RegExpSectionSize) / 2;
     uint64_t totalSize = 0;
@@ -484,51 +418,27 @@ static void applySectionSizeLimit(CompiledRegExps& compiled, BuildContext& conte
     }
 }
 
-static void reportDecline(const RegExpRequest& request, RegExpDeclineReason reason, BuildContext& context)
+static void reportRegExpDecline(const RegExpRequest& request, RegExpDeclineReason reason, BuildContext& context)
 {
-    LimitID limit = limitOf(reason);
-    for (const RegExpSite& site : request.sites) {
-        context.diagnostics().add(UserDiagnostic {
-            .kind = UserDiagnosticKind::RegExpWithoutCode,
-            .function = site.function,
-            .value = site.value,
-            .limit = limit,
-            .count = static_cast<uint32_t>(reason),
-            .location = site.location,
-        });
-    }
-    if (limit == LimitID::None)
-        return;
-    const RegExpSite& firstSite = request.sites.first();
-    context.gaveUp(limit, Subject { .function = firstSite.function, .value = firstSite.value, .location = firstSite.location });
+    context.diagnostics().add(UserDiagnostic {
+        .kind = UserDiagnosticKind::RegExpWithoutCode,
+        .limit = limitBehindRegExpDecline(reason),
+        .count = static_cast<uint32_t>(reason),
+        .text = request.pattern,
+    });
 }
 
-static void countResult(Statistics& statistics, const RegExpRequest& request, const CompiledRegExp& result)
+static void countRegExpResult(Statistics& statistics, const CompiledRegExp& result)
 {
-    bool isCandidate = request.origin != RegExpRequestOrigin::Literal;
     switch (result.form) {
-    case RegExpRecordForm::Code: {
-        uint64_t analysisLimitHits = 0;
-        uint64_t elidedFrames = 0;
-        for (auto& code : result.code) {
-            if (!code)
-                continue;
-            analysisLimitHits += code->analysisLimitHits;
-            elidedFrames += code->hasElidedFrame;
-        }
+    case RegExpRecordForm::Code:
         statistics.count(StatisticID::RegExpsCompiled);
-        statistics.count(StatisticID::RegExpAnalysisLimitHits, analysisLimitHits);
-        statistics.count(StatisticID::RegExpFramesElided, elidedFrames);
-        statistics.count(StatisticID::RegExpCandidatesCompiled, isCandidate);
         return;
-    }
     case RegExpRecordForm::NoCode:
     case RegExpRecordForm::NoMetadata:
         statistics.count(StatisticID::RegExpsInterpreted);
-        statistics.count(StatisticID::RegExpCandidatesDropped, isCandidate);
         return;
     case RegExpRecordForm::Atom:
-        statistics.count(StatisticID::RegExpAtoms);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -545,20 +455,25 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         const RegExpRequest& request = allRequests[index];
         Vector<char16_t> patternBuffer;
         StringView pattern = program.strings.viewOf(request.pattern, patternBuffer);
-        const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
-        RegExpCodeFor16BitSubjects codeFor16BitSubjects = request.origin == RegExpRequestOrigin::Literal ? RegExpCodeFor16BitSubjects::Always : RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject;
-        compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, codeFor16BitSubjects });
+        auto compile = [&] {
+            const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
+            compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject });
+        };
+        if (hasStackForRegExpCompiler())
+            compile();
+        else
+            runOnBuildThread(compile);
     });
 
-    applyCandidateBudget(requests, compiled, context);
-    applySectionSizeLimit(compiled, context);
+    applyRegExpSectionSizeLimit(compiled, context);
 
     for (size_t index = 0; index < allRequests.size(); ++index) {
         const RegExpRequest& request = allRequests[index];
         const CompiledRegExp& result = compiled.results[index];
         if (result.reason)
-            reportDecline(request, *result.reason, context);
-        countResult(context.statistics(), request, result);
+            reportRegExpDecline(request, *result.reason, context);
+        countRegExpResult(context.statistics(), result);
+        context.statistics().count(StatisticID::RegExpCandidatesCompiled, request.origin != RegExpRequestOrigin::Literal && result.form == RegExpRecordForm::Code);
 
         const RegExpSummary* summary = summaries.summaryIfComputed(request.pattern, request.flags);
         RELEASE_ASSERT(summary);

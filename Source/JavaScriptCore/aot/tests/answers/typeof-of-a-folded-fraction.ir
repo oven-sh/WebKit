@@ -1,0 +1,90 @@
+# function numbersGetText(extra: unknown) { const list: number[] = []; for (let i = 0; i < 6; i++) list.push(i * 0.5); (list as unknown[]).push(extra); let text = ""; for (let i = 0; i < list.length; i++) text += typeof list[i] + ","; sink(list); return text; }
+# Every `typeof` of an element may fold, and each takes the cell of the literal "number", whose word in the table of the instance is zero until the first taker has it made on its rare arm.
+# The call on that arm says that it writes the word, so the zero that was read ahead of it is not found again behind it.
+# RUN: run-in-shell globalThis.report = value => print(String(value)); globalThis.sink = value => {};
+# CHECK: number,number,number,number,number,number,number,
+# CHECK-NEXT: number,number,number,number,number,number,string,
+# CHECK-NEXT: number,number,number,number,number,number,undefined,
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Double number=1.5
+    v4 = Call v2, -, v3 calleeName="numbersGetText"
+    v5 = Call v1, -, v4 calleeName="report"
+    v6 = String string="six"
+    v7 = Call v2, -, v6 calleeName="numbersGetText"
+    v8 = Call v1, -, v7 calleeName="report"
+    v9 = Undefined
+    v10 = Call v2, -, v9 calleeName="numbersGetText"
+    v11 = Call v1, -, v10 calleeName="report"
+    Return v11
+}
+function f1 name="numbersGetText" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b2(v4)
+  b2(v5: number):
+    LoopHint
+    v7 = Integer integer=6
+    v8 = Less v5, v7
+    Branch v8 -> taken b3(), notTaken b5()
+  b3():
+    v9 = PropGet v2 key="push"
+    v10 = Double number=0.5
+    v11 = Mul v5, v10
+    v12 = Call v9, v2, v11 calleeKey="push" calleeName="list.push"
+    v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody
+    Jump -> next b4()
+  b4():
+    v14 = Increment v5
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b2(v15)
+  b5():
+    v16 = Convert v2 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v17 = PropGet v16 key="push"
+    v18 = Call v17, v16, v0 calleeKey="push" calleeName="list.push"
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v20 = String string=""
+    v21 = Convert v20 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v22 = Integer
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b6(v21, v23)
+  b6(v24: undefined|null|string, v25: number):
+    LoopHint
+    v27 = Convert v25 declared={type=i32 flags=[IsExpected]}
+    v28 = PropGet v2 key="length"
+    v29 = Convert v28 declared={type=number} illTypedCause=Assertion
+    v30 = Less v27, v29
+    Branch v30 -> taken b7(), notTaken b9()
+  b7():
+    v31 = ElemGet v2, v27
+    v32 = Convert v31 declared={type=number} illTypedCause=FromLooseType
+    v33 = TypeOf v32
+    v34 = String string=","
+    v35 = Add v33, v34
+    v36 = Add v24, v35
+    v37 = Convert v36 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b8()
+  b8():
+    v38 = Increment v27
+    v39 = Convert v38 declared={type=number}
+    Jump -> next b6(v37, v39)
+  b9():
+    v40 = Builtin builtin=GlobalThis
+    v41 = PropGet v40 key="sink" [isFreeName]
+    v42 = Call v41, -, v2 calleeName="sink"
+    v43 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v43
+}

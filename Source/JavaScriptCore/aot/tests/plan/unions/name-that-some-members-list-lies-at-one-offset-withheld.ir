@@ -1,0 +1,9 @@
+# the same program with typed operations withheld: every layout has its fields in the order of declaration, so `kind` lies second in the one and first in the other. The cells are as large as with the mechanism
+# RUN: plan layouts mechanisms=none
+# CHECK: layout L0 CompiledObject size=48
+# CHECK-NEXT: slot 0 "a" {{*}}offset=[[first]]
+# CHECK-NEXT: slot 1 "kind" {{*}}offset=[[second]]
+# CHECK: layout L1 CompiledObject size=48
+# CHECK-NEXT: slot 0 "kind" {{*}}offset=[[first]]
+# CHECK-NEXT: slot 1 "b" {{*}}offset=[[second]]
+# PROGRAM-OF: name-that-some-members-list-lies-at-one-offset.ir

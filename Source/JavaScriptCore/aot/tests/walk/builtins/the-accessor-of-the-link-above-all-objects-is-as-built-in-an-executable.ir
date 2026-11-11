@@ -1,0 +1,41 @@
+# $findsDeclaredMember(Object.prototype, "__proto__") ? $getPrototypeOf(made) : made.__proto__
+# A birth in the library spares a read of `__proto__` where nobody can have laid another accessor above all objects. An executable locks the member, whatever names its text adds to the
+# prototype of functions (f2): the answer is a yes at the build, and nothing of the question or of the read by name is left.
+# RUN(LOCKED): walk f1 mechanisms=all
+# LOCKED-LABEL: code f1:Body
+# LOCKED-NOT: FindsDeclaredMember
+# LOCKED-NOT: IsMemberAsBuilt
+# LOCKED-NOT: PropGet
+# LOCKED: Return
+
+openedname holder=FunctionPrototype name="madeUp"
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = NewClosure function=f2
+    v3 = Call v2, -
+    Return v1
+}
+function f1 name="asksAccessorOfLink" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = FindsDeclaredMember v0 key="__proto__"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Boolean boolean=true
+    Return v2
+  b2():
+    v3 = PropGet v0 key="__proto__"
+    Return v3
+}
+function f2 name="addsNameToFunctions" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=FunctionPrototype
+    v1 = Undefined
+    PropSet v0, v1 key="madeUp"
+    Return v1
+}

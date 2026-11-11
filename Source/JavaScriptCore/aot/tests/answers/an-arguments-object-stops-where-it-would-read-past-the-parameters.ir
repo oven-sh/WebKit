@@ -1,0 +1,45 @@
+# An arguments object takes `count - length of the rest list` words out of the buffer of the parameters. This body makes the object BEHIND a store that empties the list, as no front end writes it and as an arm of the walk once did:
+# three arguments, one parameter, an empty list: two words past the buffer. The stub is told how many words lie there and stops the process in front of the first read, whatever the compiler promised.
+# function late(first, ...others) { others.length = 0; return keep(<arguments, made here>); }  many ? late("a", "b", "c") : late("a")
+# RUN: run-in-shell globalThis.keep = list => print(list.length); globalThis.many = false;
+# CHECK: 1
+# CHECK-NOT: crashed with
+# CHECK: exited with 0
+# RUN(PAST): run-in-shell globalThis.keep = list => print("kept", list.length); globalThis.many = true;
+# PAST-NOT: kept
+# PAST-NOT: exited with 0
+# PAST-NOT: printed nothing
+# RUN(CLOSED): run-in-shell mechanisms=none globalThis.keep = list => print("kept", list.length); globalThis.many = true;
+# CLOSED-NOT: kept
+# CLOSED-NOT: exited with 0
+# CLOSED-NOT: printed nothing
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = String string="a"
+    v3 = PropGet v0 key="many" [isFreeName]
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = String string="b"
+    v6 = String string="c"
+    v7 = Call v1, -, v2, v5, v6
+    Return
+  b2():
+    v8 = Call v1, -, v2
+    Return
+}
+function f1 name="late" module=m0 flags=[HasArgumentCount, HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: Array):
+    v3 = Integer integer=0
+    PropSet v2, v3 key="length"
+    v5 = CreateUnmappedArguments v0, v2, v1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="keep" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v8
+}

@@ -388,53 +388,77 @@ private:
         for (const NaturalLoop* outer = loops.innerMostOuterLoop(loop); outer; outer = loops.innerMostOuterLoop(*outer))
             ++rotation.depth;
 
-        unsigned numberOfCopiedValues = 0;
-        for (BasicBlock* block = loop.header();;) {
-            if (block != loop.header() && (block->numPredecessors() != 1 || loops.headerOf(block)))
-                return;
-            if (loops.innerMostLoopOf(block) != &loop)
-                return;
-            for (Value* value : *block) {
-                if (!canCloneForLoop(value))
-                    return;
-                numberOfCopiedValues += emitsInstructions(value);
-            }
-            if (numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop)) {
-                m_proc.didReachLimit(Limit::MaxCopiedValuesPerRotatedLoop, loop.header()->at(0)->origin());
-                return;
-            }
-            rotation.testBlocks.append(block);
-
-            BasicBlock* next = nullptr;
-            if (block->last()->opcode() == Jump)
-                next = block->successorBlock(0);
-            else if (block->last()->opcode() == Branch) {
-                for (unsigned i = 0; i < 2; ++i) {
-                    const FrequentedBlock& staying = block->successor(i);
-                    const FrequentedBlock& other = block->successor(1 - i);
-                    if (!loops.belongsTo(staying.block(), loop) || staying.isRare())
-                        continue;
-                    bool otherIsRare = other.isRare();
-                    bool otherLeaves = !loops.belongsTo(other.block(), loop);
-                    if (otherLeaves && otherIsRare) {
-                        next = staying.block();
-                        break;
-                    }
-                    if (!otherLeaves && !(otherIsRare && leadsBackToHeaderOnly(loops, loop, other.block(), staying.block())))
-                        continue;
-                    if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
-                        return;
-                    rotation.body = staying.block();
-                    addTestsFoldedOnBackEdges(loops, loop, rotation, numberOfCopiedValues);
-                    rotation.induction = findInduction(loop.header());
-                    m_rotations.append(WTF::move(rotation));
-                    return;
+        struct TestAtTop {
+            unsigned numberOfTestBlocks;
+            unsigned numberOfCopiedValues;
+            BasicBlock* body;
+        };
+        std::optional<InductionRecord> induction = findInduction(loop.header());
+        std::optional<TestAtTop> testOfCounterThatLeavesRarely;
+        auto findTestThatLeavesOften = [&]() -> std::optional<TestAtTop> {
+            unsigned numberOfCopiedValues = 0;
+            for (BasicBlock* block = loop.header();;) {
+                if (block != loop.header() && (block->numPredecessors() != 1 || loops.headerOf(block)))
+                    return std::nullopt;
+                if (loops.innerMostLoopOf(block) != &loop)
+                    return std::nullopt;
+                for (Value* value : *block) {
+                    if (!canCloneForLoop(value))
+                        return std::nullopt;
+                    numberOfCopiedValues += emitsInstructions(value);
                 }
+                if (numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop)) {
+                    m_proc.didReachLimit(Limit::MaxCopiedValuesPerRotatedLoop, loop.header()->at(0)->origin());
+                    return std::nullopt;
+                }
+                rotation.testBlocks.append(block);
+
+                BasicBlock* next = nullptr;
+                if (block->last()->opcode() == Jump)
+                    next = block->successorBlock(0);
+                else if (block->last()->opcode() == Branch) {
+                    for (unsigned i = 0; i < 2; ++i) {
+                        const FrequentedBlock& staying = block->successor(i);
+                        const FrequentedBlock& other = block->successor(1 - i);
+                        if (!loops.belongsTo(staying.block(), loop) || staying.isRare())
+                            continue;
+                        bool otherIsRare = other.isRare();
+                        bool otherLeaves = !loops.belongsTo(other.block(), loop);
+                        bool bodyCanBeHeader = staying.block() != loop.header() && !loops.headerOf(staying.block()) && !rotation.latches.contains(block);
+                        TestAtTop test { static_cast<unsigned>(rotation.testBlocks.size()), numberOfCopiedValues, staying.block() };
+                        if (otherLeaves && otherIsRare) {
+                            if (bodyCanBeHeader && induction && induction->test == block->last()->child(0))
+                                testOfCounterThatLeavesRarely = test;
+                            next = staying.block();
+                            break;
+                        }
+                        if (!otherLeaves && !(otherIsRare && leadsBackToHeaderOnly(loops, loop, other.block(), staying.block())))
+                            continue;
+                        if (!bodyCanBeHeader)
+                            return std::nullopt;
+                        return test;
+                    }
+                }
+                if (!next || next == loop.header() || !loops.belongsTo(next, loop))
+                    return std::nullopt;
+                block = next;
             }
-            if (!next || next == loop.header() || !loops.belongsTo(next, loop))
-                return;
-            block = next;
+        };
+        std::optional<TestAtTop> test = findTestThatLeavesOften();
+        if (!test && testOfCounterThatLeavesRarely) {
+            bool hasTestAtEnd = std::ranges::any_of(rotation.latches, [&](BasicBlock* latch) {
+                return isBottomTested(loops, loop, latch);
+            });
+            if (!hasTestAtEnd)
+                test = testOfCounterThatLeavesRarely;
         }
+        if (!test)
+            return;
+        rotation.testBlocks.shrink(test->numberOfTestBlocks);
+        rotation.body = test->body;
+        addTestsFoldedOnBackEdges(loops, loop, rotation, test->numberOfCopiedValues);
+        rotation.induction = induction;
+        m_rotations.append(WTF::move(rotation));
     }
 
     // `i++; continue;` and the `i++` at the end of the body are two Adds. When every latch passes the same phi + constant to the header, compute it once at the top of the body.

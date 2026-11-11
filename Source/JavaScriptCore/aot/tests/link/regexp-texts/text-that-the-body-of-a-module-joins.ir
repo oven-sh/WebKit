@@ -1,0 +1,49 @@
+# A text that arrives at RegExp and is listed gets a record and code in the image. The code that makes the text is rehearsed in a realm of the build.
+# const letters = String.raw`[a-z\d]`; const word = /\w+/; const both = [letters, word.source].join("|");
+# export const whole = new RegExp(`^(?:${both})$`, "i"), start = RegExp("x" + letters.slice(1, -1));
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-2: text /
+# CHECK-NOT: text /
+# RUN(WHOLE): regexp-texts mechanisms=all
+# WHOLE: text /^(?:[a-z\d]|\w+)$/i
+# RUN(START): regexp-texts mechanisms=all
+# START: text /xa-z\d/
+# No call goes by a row, so nothing is listed.
+# RUN(WITHHELD): regexp-texts mechanisms=all-BuiltinCalls
+# WITHHELD-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="whole" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="start" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = Builtin builtin=StringRaw
+    v2 = NewTemplateObject templateStrings=[{cooked="[a-zd]" raw="[a-z\\d]"}]
+    v3 = Call v1, v0, v2
+    v4 = NewRegExp pattern="\\w+"
+    v5 = PropGet v4 key="source"
+    v6 = NewArray v3, v5 contents=anything
+    v7 = PropGet v6 key="join"
+    v8 = String string="|"
+    v9 = Call v7, v6, v8 calleeKey="join"
+    v10 = Builtin builtin=RegExp
+    v11 = String string="^(?:"
+    v12 = ToString v9
+    v13 = String string=")$"
+    v14 = Strcat v11, v12, v13
+    v15 = String string="i"
+    v16 = Construct v10, -, v14, v15
+    PutModuleVariable v16 variable=g0
+    v18 = String string="x"
+    v19 = PropGet v3 key="slice"
+    v20 = Integer integer=1
+    v21 = Integer integer=-1
+    v22 = Call v19, v3, v20, v21 calleeKey="slice"
+    v23 = Add v18, v22
+    v24 = Call v10, -, v23
+    PutModuleVariable v24 variable=g1
+    v26 = Undefined
+    Return v26
+}

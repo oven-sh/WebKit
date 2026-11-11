@@ -1,0 +1,41 @@
+# The list follows from the program alone. Only the built-ins of which it is written down how their work grows are entered; any other gives what nobody knows.
+# new RegExp("a" + Math.cbrt(4)) . ("b" + Math.hypot(3, 4)) . ("c" + Number("3")) . ("z+" + 1): Number is written down, Math.cbrt and Math.hypot are not.
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /a
+# CHECK-NOT: text /b
+# CHECK: text /c3/
+# CHECK: text /z+1/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Math
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = Integer integer=4
+    v5 = PropGet v1 key="cbrt"
+    v6 = Call v5, v1, v4 calleeKey="cbrt"
+    v7 = String string="a"
+    v8 = Add v7, v6
+    v9 = Construct v0, -, v8
+    v10 = PropGet v1 key="hypot"
+    v11 = Call v10, v1, v3, v4 calleeKey="hypot"
+    v12 = String string="b"
+    v13 = Add v12, v11
+    v14 = Construct v0, -, v13
+    v15 = Builtin builtin=Number
+    v16 = String string="3"
+    v17 = Call v15, -, v16
+    v18 = String string="c"
+    v19 = Add v18, v17
+    v20 = Construct v0, -, v19
+    v21 = String string="z+"
+    v22 = Integer integer=1
+    v23 = Add v21, v22
+    v24 = Construct v0, -, v23
+    v25 = NewArray v9, v14, v20, v24 contents=anything
+    Return v25
+}

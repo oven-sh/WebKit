@@ -1,0 +1,84 @@
+# A written descriptor under a name that nobody else names leaves no access, and the layout is not opened. What it lays lies on the object all the same: whoever lists what the object holds, or reads under a computed key, may find it.
+#   function make() { const made = { b: "y" }; Object.defineProperty(made, "laidForNobody", { value: 42, enumerable: true }); return made; }
+#   function list(o) { return Object.values(o)[1]; }   function look(o, key) { return o[key]; }   function walk(o) { let last; for (const key in o) last = o[key]; return last; }
+# When nothing brought it to them, `list` was proven undefined|string and `look` and `walk` undefined|null|string|object: `typeof found === "number"` was folded to false, silently.
+# RUN: summary f1
+# CHECK: change {{*}}DefinesByDescriptor {{*}}under-a-name-that-nobody-else-names descriptor-in-sight
+# The object is handed to nobody: its maker answers its layout.
+# RUN(SHUT): link functions layouts mechanisms=all
+# SHUT: function f1 {{*}}result=L1
+# SHUT: layout L1 changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
+# RUN(FOUND): link functions accesses mechanisms=all
+# FOUND-NOT: function f2 {{*}}result=
+# FOUND-NOT: function f3 {{*}}result=
+# FOUND-NOT: function f4 {{*}}result=
+# FOUND-NOT: read f2
+# FOUND-NOT: read f3
+# FOUND-NOT: read f4
+
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = PropGet v4 key="keyOutOfSight" [isFreeName]
+    v7 = Call v0
+    v8 = Call v1, -, v7
+    v9 = Call v2, -, v7, v6
+    v10 = Call v3, -, v7
+    v11 = Call v5, -, v8, v9, v10
+    Return v11
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="y"
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = String string="laidForNobody"
+    v6 = Integer integer=42
+    v7 = Boolean boolean=true
+    v8 = NewObject -, v6, v7 layout=L0 fields=[4, 1]
+    v9 = FinishObject v8
+    v10 = Call v4, v3, v2, v5, v9 calleeName="Object.defineProperty"
+    Return v2
+}
+function f2 name="list" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, v1, v0 calleeName="Object.values"
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4
+    Return v5
+}
+function f3 name="look" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f4 name="walk" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = ForInOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ForInStep v2, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3():
+    v8 = ElemGet v0, v7
+    Jump -> next b1(v8)
+}

@@ -1,0 +1,32 @@
+# with every mechanism withheld: one shape for each layout in use, objects in front of environments, no shape for a layout that is never allocated, and a word of the statics for each variable.
+# A variable that is born as a function holds nothing until the first read makes the closure
+# RUN: plan layouts shapes variables mechanisms=none
+# CHECK: layout L0 CompiledObject size=[[size]] shapes=1..1
+# CHECK: layout L1 None never-allocated
+# CHECK: shapes
+# CHECK: shape 1 L0
+# CHECK: variable g0 Statics JSValue Plain
+# CHECK-NEXT: variable g1 Statics JSValue FunctionAsZero function=f1
+# RUN(BAD): plan slots
+# BAD: bad argument slots
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="Never" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsNeverAllocated] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything}
+variable g1 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="x"
+    v3 = FinishObject v1
+    PutModuleVariable v3 variable=g0
+    Return v3
+}
+function f1 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

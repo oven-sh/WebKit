@@ -1,0 +1,64 @@
+# function Sym(this: Sym, a: number) { this.a = a; this.b = a; this.c = a; }
+# show(Sym); show(new Sym(size));
+# RUN(NEW): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") print(JSON.stringify(x)); };
+# NEW: {"a":3,"b":3,"c":3}
+# NEW-NEXT: exited with 0
+# RUN(CALLED): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") return print(JSON.stringify(x)); const o = new x(1); x.call(o, 2); print(JSON.stringify(o)); const p = { c: 0 }; x.call(p, 4); print(JSON.stringify(p)); };
+# CALLED: {"a":2,"b":2,"c":2}
+# CALLED-NEXT: {"c":4,"a":4,"b":4}
+# CALLED-NEXT: {"a":3,"b":3,"c":3}
+# CALLED-NEXT: exited with 0
+# RUN(PARTLY): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") return print(JSON.stringify(x)); const o = new x(1); delete o.a; x.call(o, 2); print(JSON.stringify(o)); };
+# PARTLY: {"b":2,"c":2,"a":2}
+# PARTLY-NEXT: {"a":3,"b":3,"c":3}
+# PARTLY-NEXT: exited with 0
+# RUN(EMPTIED): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") return print(JSON.stringify(x)); const o = new x(1); delete o.a; delete o.b; delete o.c; x.call(o, 7); print(JSON.stringify(o)); };
+# EMPTIED: {"a":7,"b":7,"c":7}
+# EMPTIED-NEXT: {"a":3,"b":3,"c":3}
+# EMPTIED-NEXT: exited with 0
+# RUN(EXTRA): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") return print(JSON.stringify(x)); const o = new x(1); delete o.a; delete o.b; delete o.c; o.z = 1; x.call(o, 7); print(JSON.stringify(o)); };
+# EXTRA: {"z":1,"a":7,"b":7,"c":7}
+# EXTRA-NEXT: {"a":3,"b":3,"c":3}
+# EXTRA-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") return print(JSON.stringify(x)); const o = new x(1); delete o.a; delete o.b; delete o.c; Object.preventExtensions(o); try { x.call(o, 7); } catch (e) { print(e instanceof TypeError); } print(JSON.stringify(o)); };
+# CLOSED: true
+# CLOSED-NEXT: {}
+# CLOSED-NEXT: {"a":3,"b":3,"c":3}
+# CLOSED-NEXT: exited with 0
+# RUN(ENTERED): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") return print(JSON.stringify(x), x.marked); print(JSON.stringify(new x(5))); print(JSON.stringify(new x(6))); x.prototype = { marked: 1 }; const o = new x(7); print(JSON.stringify(o), o.marked); };
+# ENTERED: {"a":5,"b":5,"c":5}
+# ENTERED-NEXT: {"a":6,"b":6,"c":6}
+# ENTERED-NEXT: {"a":7,"b":7,"c":7} 1
+# ENTERED-NEXT: {"a":3,"b":3,"c":3} 1
+# ENTERED-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") print(JSON.stringify(x)); else Object.defineProperty(x.prototype, "b", { set(v) { this.z = v; } }); };
+# SETTER: {"a":3,"z":3,"c":3}
+# SETTER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Sym" module=m0 constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="Sym" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="size" [isFreeName]
+    v2 = PropGet v0 key="show" [isFreeName]
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v2, -, v3 calleeName="show"
+    v5 = Convert v1 declared={type=number}
+    v6 = Construct v3, -, v5 calleeName="Sym"
+    v7 = Call v2, -, v6 calleeName="show"
+    Return v7
+}
+function f1 name="Sym" module=m0 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Convert v1 declared={type=number}
+    PropSet v0, v2 key="a"
+    v4 = Convert v1 declared={type=number}
+    PropSet v0, v4 key="b"
+    v6 = Convert v1 declared={type=number}
+    PropSet v0, v6 key="c"
+    v8 = Undefined
+    Return v8
+}

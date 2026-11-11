@@ -1,6 +1,7 @@
 list(TRANSFORM JavaScriptCore_AOT_PROGRAM_SOURCES PREPEND ../ OUTPUT_VARIABLE aotProgramSources)
 list(TRANSFORM JavaScriptCore_AOT_SHELL_SOURCES PREPEND ../ OUTPUT_VARIABLE aotShellSources)
 list(TRANSFORM JavaScriptCore_AOT_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotTestSources)
+list(TRANSFORM JavaScriptCore_AOT_STAND_IN_HOST_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotStandInHostTestSources)
 list(APPEND aotTestSources ${JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES})
 
 # A static JavaScriptCore leaves the table of built-ins to the program that links it. Compiled once, for all of them.
@@ -120,6 +121,11 @@ if (USE_BUN_JSC_ADDITIONS)
     # static JavaScriptCore (ENABLE_STATIC_JSC=ON), which every lane and the development configuration build.
     set(testaotObjects_LIBRARY_TYPE OBJECT)
     set(testaotObjects_SOURCES ${aotTestSources})
+    # The compiler asks ICU in the process of the build, which in a test is testaot: it needs the shell's hook for the repacked data (aot/tests/AOTICUDataOfTestProgram.cpp).
+    if (BUN_ICU_ZSTD_SOURCE_DIR)
+        set_source_files_properties(../aot/tests/AOTICUDataOfTestProgram.cpp PROPERTIES COMPILE_DEFINITIONS "BUN_ICU_ZSTD=1")
+        set(testaotObjects_C_SOURCES ${jsc_ZSTD_DECODER_SOURCES})
+    endif ()
     set(testaotObjects_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testaotObjects_PRIVATE_LIBRARIES WebKit::JavaScriptCore WebKit::WTF WebKit::bmalloc)
     WEBKIT_LIBRARY_DECLARE(testaotObjects)
@@ -129,7 +135,7 @@ if (USE_BUN_JSC_ADDITIONS)
     add_library(jscLibrary STATIC $<FILTER:$<TARGET_OBJECTS:jsc>,EXCLUDE,ExternalMimallocShims>)
     set_target_properties(jscLibrary PROPERTIES OUTPUT_NAME jsc-objects LINKER_LANGUAGE CXX)
 
-    set(testaot_SOURCES $<TARGET_OBJECTS:testaotObjects> ${aotBuiltinTableObjects})
+    set(testaot_SOURCES $<TARGET_OBJECTS:testaotObjects> ${aotBuiltinTableObjects} ${aotStandInHostTestSources})
     set(testaot_DEPENDENCIES testaotLibrary jscLibrary)
     set(testaot_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testaot_FRAMEWORKS ${jsc_FRAMEWORKS})
@@ -143,6 +149,15 @@ if (USE_BUN_JSC_ADDITIONS)
     endif ()
 
     WEBKIT_EXECUTABLE_DECLARE(testaot)
+endif ()
+
+if (APPLE AND ENABLE_SANITIZERS)
+    # With the sanitizer's checks each of these has about 128 MB of code, which is as far as a branch reaches on arm64.
+    foreach (program jsc testFFI testaot)
+        if (TARGET ${program})
+            target_link_options(${program} PRIVATE "LINKER:-dead_strip")
+        endif ()
+    endforeach ()
 endif ()
 
 if (APPLE)
@@ -226,6 +241,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../b3/testb3_bun_strided_range_checks.cpp
         ../b3/testb3_bun_thread_jumps.cpp
         ../b3/testb3_bun_unroll_loops.cpp
+        ../b3/testb3_bun_promote_loop_memory.cpp
         ../b3/testb3_bun_vectorize_loops.cpp
         ../b3/testb3_bun_version_counted_loops.cpp
         ../b3/testb3_bun_version_loops.cpp

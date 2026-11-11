@@ -1,0 +1,67 @@
+# function Base(a) { this.a = a; }   function Below(a, b) { Base.call(this, a); this.b = b; }   Below.prototype = Object.create(Base.prototype);
+# function make(Maker, n: number) { const item = new Maker(n, 2); return item.b + item.a; }   print(make(Below, 5));   print(make(Below, "x"));
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell
+# ANSWER: 7
+# ANSWER-NEXT: 2x
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectCreate
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="prototype"
+    v6 = Convert v5 declared={type=undefined|null|object flags=[IsExpected]}
+    v7 = Call v3, v2, v6 calleeName="Object.create"
+    PropSet v1, v7 key="prototype"
+    v9 = NewClosure function=f3
+    v10 = Integer integer=5
+    v11 = String string="x"
+    v12 = Call v9, -, v1, v10 calleeName="make"
+    v13 = Call v9, -, v1, v11 calleeName="make"
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="print" [isFreeName]
+    v16 = Call v15, -, v12
+    v17 = PropGet v14 key="print" [isFreeName]
+    v18 = Call v17, -, v13
+    v19 = Undefined
+    Return v19
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="a"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="Below" module=m0 flags=[HasThis, HasExplicitName] length=2 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="call"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = Convert v0 declared={type=anything flags=[IsExpected]}
+    v7 = Call v5, v3, v6, v1 calleeKey="call" calleeName="Base.call"
+    v8 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v8, v2 key="b"
+    v10 = Undefined
+    Return v10
+}
+function f3 name="make" module=m0 parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=2
+    v3 = Construct v0, -, v1, v2 calleeName="Maker"
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = PropGet v4 key="b"
+    v6 = PropGet v4 key="a"
+    v7 = Add v5, v6
+    Return v7
+}

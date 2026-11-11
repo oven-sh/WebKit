@@ -5,7 +5,6 @@ import {
   engineTypesInDependencyOrder,
   isBorrowedSpan,
   isEmbeddedInEngineRecords,
-  twoWordScalars,
 } from "./cpp-types.ts";
 import {
   blocks,
@@ -17,8 +16,9 @@ import {
   indentation,
   inNamespace,
   pack,
+  type Lines,
 } from "./lines.ts";
-import type { Entry, Field, Kind, Schema, SchemaType, Variant } from "./model.ts";
+import type { Entry, Field, Kind, Parameter, Schema, SchemaType, Variant } from "./model.ts";
 import { entriesOf, fieldsOf, isId, isNested, nameOf } from "./model.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 import { SchemaError } from "./source.ts";
@@ -33,6 +33,42 @@ interface PrintedValue {
   readonly inAbi: boolean;
   readonly isPayload: boolean;
   readonly guard: string | null;
+}
+
+interface EntryEnum {
+  readonly enumName: string;
+  readonly concept: string;
+  readonly tagOf: string;
+  readonly subject: string;
+  readonly templateName: string;
+  readonly cursor: string;
+  readonly recordOfCode: string;
+}
+
+const opcodes: EntryEnum = {
+  enumName: "Opcode",
+  concept: "HoldsOpcode",
+  tagOf: "opcodeOf",
+  subject: "value",
+  templateName: "printFieldsOfOperation",
+  cursor: "BodyValue",
+  recordOfCode: "Operation",
+};
+
+const terminatorKinds: EntryEnum = {
+  enumName: "TerminatorKind",
+  concept: "HoldsTerminatorKind",
+  tagOf: "terminatorKindOf",
+  subject: "terminator",
+  templateName: "printFieldsOfTerminator",
+  cursor: "BodyTerminator",
+  recordOfCode: "Terminator",
+};
+
+const entryEnums: readonly EntryEnum[] = [opcodes, terminatorKinds];
+
+function holdersOf(entryEnum: EntryEnum): string[] {
+  return [entryEnum.cursor, entryEnum.recordOfCode];
 }
 
 function isList(kind: Kind): kind is ListKind {
@@ -54,8 +90,9 @@ function printerHeader(schema: Schema): string[] {
     if (type.tag === "Record") records.push(`void printFields(IRPrinter&, const ${engineRecordNameOf(type.record)}&);`);
     else variants.push(`void printVariant(IRPrinter&, const ${type.variant.name}&);`);
   }
-  const entries = ["void printFields(IRPrinter&, const Value&);", "void printFields(IRPrinter&, const Terminator&);"];
-  return cppHeader([], inNamespace("Typed", blocks(records, variants, entries)));
+  const recordsOfCode = entryEnums.map(({ recordOfCode }) => `struct ${recordOfCode};`);
+  const entries = entryEnums.flatMap(holdersOf).map(holder => `void printFields(IRPrinter&, const ${holder}&);`);
+  return cppHeader([], inNamespace("Typed", blocks(recordsOfCode, records, variants, entries)));
 }
 
 export function printedFields(schema: Schema, type: SchemaType): readonly Field[] {
@@ -104,10 +141,8 @@ function hasEngineMembers(schema: Schema, kind: Kind): boolean {
 }
 
 function listPresenceTest(kind: ListKind, expression: string, isPayload: boolean): string {
-  const element = kind.element;
-  const isDecodedOnRead = isNested(element) || (element.tag === "Scalar" && twoWordScalars.has(element.scalar));
-  const isStandardSpan = isPayload ? !isDecodedOnRead : isBorrowedSpan(kind);
-  return isStandardSpan ? `!${expression}.empty()` : `!${expression}.isEmpty()`;
+  if (isPayload) return `${expression}.size()`;
+  return isBorrowedSpan(kind) ? `!${expression}.empty()` : `!${expression}.isEmpty()`;
 }
 
 export function presenceTest(
@@ -177,6 +212,11 @@ function valueStatements(schema: Schema, value: PrintedValue): string[] {
   }
 }
 
+function conditional(head: string, body: Lines): string[] {
+  if (body.length === 1) return [head, indentation + body[0]];
+  return [`${head} {`, ...indent(body), "}"];
+}
+
 function printStatements(schema: Schema, value: PrintedValue): string[] {
   const { kind, expression } = value;
   const body = valueStatements(schema, value);
@@ -185,9 +225,7 @@ function printStatements(schema: Schema, value: PrintedValue): string[] {
       ? listPresenceTest(kind, expression, true)
       : presenceTest(schema, kind, value.isOptional, expression, value.inAbi, false);
   const test = value.guard === null ? presence : presence === null ? value.guard : `${value.guard} && ${presence}`;
-  if (test === null) return body;
-  if (body.length === 1) return [`if (${test})`, indentation + body[0]];
-  return [`if (${test}) {`, ...indent(body), "}"];
+  return test === null ? body : conditional(`if (${test})`, body);
 }
 
 function fieldsFunction(
@@ -346,15 +384,21 @@ function recordPrinterSource(schema: Schema): string[] {
   return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
 }
 
-const entryHelpers = `template<typename Entry>
-static void printOperands(IRPrinter& printer, const Instruction& instruction, Entry entry)
+const holdsEngineFields = "holdsEngineFields<Holder>";
+
+const isNotCursor = entryEnums.map(({ cursor }) => `!std::is_same_v<Holder, ${cursor}>`).join(" && ");
+
+const holderTrait = [`template<typename Holder> static constexpr bool holdsEngineFields = ${isNotCursor};`];
+
+const entryHelpers = `template<typename Holder, typename Entry>
+static void printOperands(IRPrinter& printer, const Holder& holder, Entry entry)
 {
     Vector<ValueID, 8> operands;
     for (uint32_t i = 0; i < numberOfNamedOperandsOf(entry); ++i) {
         if (!operandInfoOf(entry, i).isEngineOnly)
-            operands.append(instruction.operand(i));
+            operands.append(holder.operand(i));
     }
-    operands.append(instruction.variadicOperands());
+    operands.append(holder.variadicOperands());
     while (!operands.isEmpty() && !operands.last())
         operands.removeLast();
     ASCIILiteral separator = " "_s;
@@ -373,50 +417,78 @@ function optionalByName(schema: Schema): Set<string> {
   return new Set(optionalFields.map(field => field.name));
 }
 
-function printEntry(schema: Schema, entry: Entry, subject: string, optionalNames: ReadonlySet<string>): string[] {
-  const statements = entry.parameters.flatMap(parameter => {
-    if (parameter.tag === "Operand") {
-      if (!parameter.isEngine || parameter.isVariadic) return [];
-      const operand = `${subject}.operand(${parameter.index})`;
-      return [
-        `if (printsEngineFields && ${operand})`,
-        `${indentation}printer.field(${cppLiteral(parameter.name)}, ${operand});`,
-      ];
-    }
-    return printStatements(schema, {
-      name: parameter.name,
-      kind: parameter.kind,
-      isOptional: isId(parameter.kind) ? parameter.isOptional : optionalNames.has(parameter.name),
-      expression: `${subject}.${parameter.name}()`,
-      inAbi: false,
-      isPayload: true,
-      guard: parameter.isEngine ? "printsEngineFields" : null,
-    });
+function printParameter(
+  schema: Schema,
+  parameter: Parameter,
+  subject: string,
+  optionalNames: ReadonlySet<string>,
+): string[] {
+  if (parameter.tag === "Operand") {
+    if (!parameter.isEngine || parameter.isVariadic) return [];
+    const operand = `${subject}.operand(${parameter.index})`;
+    return conditional(`if (printsEngineFields && ${operand})`, [
+      `printer.field(${cppLiteral(parameter.name)}, ${operand});`,
+    ]);
+  }
+  return printStatements(schema, {
+    name: parameter.name,
+    kind: parameter.kind,
+    isOptional: isId(parameter.kind) ? parameter.isOptional : optionalNames.has(parameter.name),
+    expression: `${subject}.${parameter.name}()`,
+    inAbi: false,
+    isPayload: true,
+    guard: parameter.isEngine ? "printsEngineFields" : null,
   });
+}
+
+function printEntry(schema: Schema, entry: Entry, subject: string, optionalNames: ReadonlySet<string>): string[] {
+  const statements: string[] = [];
+  let engineStatements: string[] = [];
+  const closeEngineStatements = (): void => {
+    if (engineStatements.length > 0)
+      statements.push(...conditional(`if constexpr (${holdsEngineFields})`, engineStatements));
+    engineStatements = [];
+  };
+  for (const parameter of entry.parameters) {
+    const printed = printParameter(schema, parameter, subject, optionalNames);
+    if (printed.length === 0) continue;
+    if (parameter.isEngine || !entry.isWire) {
+      engineStatements.push(...printed);
+      continue;
+    }
+    closeEngineStatements();
+    statements.push(...printed);
+  }
+  closeEngineStatements();
   return [...statements, "break;"];
 }
 
-function entryFunction(
-  schema: Schema,
-  entries: readonly Entry[],
-  typeName: string,
-  subject: string,
-  tag: string,
-  enumName: string,
-): string[] {
+function entryTemplate(schema: Schema, entries: readonly Entry[], entryEnum: EntryEnum): string[] {
+  const { enumName, concept, tagOf, subject, templateName } = entryEnum;
   const optionalNames = optionalByName(schema);
   const cases = entries.map(entry => ({ label: entry.name, body: printEntry(schema, entry, subject, optionalNames) }));
   return [
-    `void printFields(IRPrinter& printer, const ${typeName}& ${subject})`,
+    `template<${concept} Holder>`,
+    `static void ${templateName}(IRPrinter& printer, const Holder& ${subject})`,
     "{",
-    `${indentation}printOperands(printer, ${subject}, ${subject}.${tag});`,
-    `${indentation}bool printsEngineFields = printer.printsEngineFields();`,
+    `${indentation}printOperands(printer, ${subject}, ${tagOf}(${subject}));`,
+    `${indentation}bool printsEngineFields = ${holdsEngineFields} && printer.printsEngineFields();`,
     `${indentation}UNUSED_VARIABLE(printsEngineFields);`,
-    `${indentation}switch (${subject}.${tag}) {`,
+    `${indentation}switch (${tagOf}(${subject})) {`,
     ...groupedCases(enumName, cases),
     `${indentation}}`,
     "}",
   ];
+}
+
+function entryFunctions(entryEnum: EntryEnum): string[][] {
+  const { subject, templateName } = entryEnum;
+  return holdersOf(entryEnum).map(holder => [
+    `void printFields(IRPrinter& printer, const ${holder}& ${subject})`,
+    "{",
+    `${indentation}${templateName}(printer, ${subject});`,
+    "}",
+  ]);
 }
 
 function entryPrinterSource(schema: Schema): string[] {
@@ -425,11 +497,13 @@ function entryPrinterSource(schema: Schema): string[] {
   const body = blocks(
     printRecordHelpers,
     ...zeroFunctions(schema, closureOfZeroTests(schema, payloadTypes)),
+    holderTrait,
     entryHelpers,
-    entryFunction(schema, schema.operations, "Value", "value", "opcode", "Opcode"),
-    entryFunction(schema, schema.terminators, "Terminator", "terminator", "kind", "TerminatorKind"),
+    entryTemplate(schema, schema.operations, opcodes),
+    entryTemplate(schema, schema.terminators, terminatorKinds),
+    ...entryEnums.flatMap(entryFunctions),
   );
-  return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
+  return cppSource(['"AOTIRPrinter.h"', '"AOTCode.h"', "<bit>", "<type_traits>"], inNamespace("Typed", body));
 }
 
 export function closureOfZeroTests(schema: Schema, names: Iterable<string>): Set<string> {

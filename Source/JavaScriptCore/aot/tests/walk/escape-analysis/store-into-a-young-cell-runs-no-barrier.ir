@@ -1,0 +1,102 @@
+# the cell was made behind the last safepoint and nothing else names it, so the collector cannot have marked it: the store runs no barrier. The second store lays what lies there already, and goes
+# function make(v) { const o = { x: v }; o.y = v; o.x = v; return o; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = PutSlotOrAdd {{*}}key="y"{{*}}OwnerIsYoung
+# a call stands between the making and the store. The object is still fresh, so the store is typed, and the collector may have marked the cell
+# function called(v, f) { const o = { x: v }; f(); o.y = v; return o; }
+# RUN(CALL): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CALL-LABEL: code f2:Body
+# CALL: = PutSlotOrAdd {{*}}key="y"
+# RUN(CALLNOT): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CALLNOT-NOT: OwnerIsYoung
+# a variable of the module names the cell, and nothing collects: the marker runs beside the program and finds the cell there
+# function published(v) { const o = { x: v }; kept = o; o.y = v; return o; }
+# RUN(SEEN): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# SEEN-LABEL: code f3:Body
+# SEEN: = PutModuleVariable
+# SEEN: = PutSlot{{*}}key="y"
+# RUN(SEENNOT): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# SEENNOT-NOT: OwnerIsYoung
+# the second allocation may collect: the first cell is old, the second is young
+# function two(v) { const o = { x: v }; const p = { x: v }; o.y = v; p.y = v; return [o, p]; }
+# RUN(TWO): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# TWO-LABEL: code f4:Body
+# TWO: = PutSlotOrAdd {{*}}key="y"
+# TWO-NOT: OwnerIsYoung
+# TWO: = PutSlotOrAdd {{*}}key="y"{{*}}OwnerIsYoung
+# an old object holds the young one: the barrier of that store has the old one looked at again, and the marker goes on from there
+# function held(v) { const p = { x: v }; const o = { x: v }; p.y = o; o.y = v; return p; }
+# RUN(HELD): walk f5 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# HELD-LABEL: code f5:Body
+# HELD: = PutSlotOrAdd
+# HELD: = PutSlotOrAdd
+# RUN(HELDNOT): walk f5 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# HELDNOT-NOT: OwnerIsYoung
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v8
+    v10 = NewClosure function=f5
+    v11 = Call v1, -, v10
+    Return v11
+}
+function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PropSet v2, v0 key="y" mode=Strict
+    PropSet v2, v0 key="x" mode=Strict
+    Return v2
+}
+function f2 name="called" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Call v1, -
+    PropSet v3, v0 key="y" mode=Strict
+    Return v3
+}
+function f3 name="published" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    PropSet v2, v0 key="y" mode=Strict
+    Return v2
+}
+function f4 name="two" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PropSet v2, v0 key="y" mode=Strict
+    PropSet v4, v0 key="y" mode=Strict
+    PutModuleVariable v2 variable=g0
+    Return v4
+}
+function f5 name="held" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PropSet v2, v4 key="y" mode=Strict
+    PropSet v4, v0 key="y" mode=Strict
+    Return v2
+}

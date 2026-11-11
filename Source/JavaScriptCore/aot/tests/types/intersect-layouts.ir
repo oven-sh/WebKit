@@ -1,5 +1,5 @@
 # Layout sets meet in their common members and differ by the members removed. A member of a set is no function and no instance of a built-in class.
-# RUN: intersect
+# RUN: intersect L0|L1|L2 L1 L1|L3 function object L0|L1 L3 undefined|L1 Array<number>
 # CHECK: t0 & t1 = L1
 # CHECK-NEXT: t0 - t1 = L0|L2
 # CHECK-NEXT: t0 & t2 = L1
@@ -37,4 +37,5 @@ layout L0 name="Shape"
 layout L1 name="Circle" supertypes=[L0]
 layout L2 name="Square" supertypes=[L0]
 layout L3 name="Other"
-function f0 name="types" parameters=[{type=L0|L1|L2}, {type=L1}, {type=L1|L3}, {type=function}, {type=object}, {type=L0|L1}, {type=L3}, {type=undefined|L1}, {type=Array<number>}] results=[{type=undefined}]
+function f0 name="types" role=Signature results=[{type=undefined}]
+entry module=m0

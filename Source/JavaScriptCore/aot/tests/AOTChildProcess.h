@@ -17,28 +17,28 @@ enum class ChildProcessOutcome : uint8_t { Exited, Crashed, Hung, NotStarted };
 
 struct ChildProcessResult {
     bool exitedWith(int exitCode) const { return outcome == ChildProcessOutcome::Exited && code == exitCode; }
+    bool hasCrashedOrHung() const { return outcome == ChildProcessOutcome::Crashed || outcome == ChildProcessOutcome::Hung; }
     String description() const;
+    String descriptionOfOutcome() const;
 
     ChildProcessOutcome outcome { ChildProcessOutcome::NotStarted };
     int code { 0 };
     String output;
+    String commandLine { };
 };
 
 void setProgramPath(String&&);
 const String& programPath();
 
-// Gives this process a folder of its own for temporary files, inside the folder of the process that started it. What this
-// process starts inherits it. The folder goes when this process exits, and ChildProcessLauncher removes it after a child that
-// ended in any other way.
 void enterTemporaryFolder();
 String temporaryFolder();
 
-// Before this process dies of a trap, it prints the thread, the registers, the return addresses and the top of the stack.
 void installTrapReporter();
+
+inline constexpr const char* crashRequestVariable = "TESTAOT_CRASH_ON_REQUEST";
 
 inline constexpr ASCIILiteral lineAfterChildProcess = "a child process has ended"_s;
 
-// Whoever waits for the output of this process takes a long silence for a hang. A test that starts many processes in a row prints nothing of its own.
 void printLineAfterEachChildProcess();
 
 class ChildProcessLauncher {

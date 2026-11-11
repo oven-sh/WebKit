@@ -22,16 +22,28 @@ public:
     void generateGetCollectionIteratorTable(const ValueContext&);
     void generatePutCollectionIteratorTable(const ValueContext&);
     void generateIsCollectionIteratorClosedMark(const ValueContext&);
-    void generateIsCollectionTableFull(const ValueContext&);
-    void generateReserveCollectionCapacity(const ValueContext&);
+    void generateGetValueAtPlaceInMap(const ValueContext&);
+    void generateFindKeyInMap(const ValueContext&);
+    void generateMovesOfEntriesInCollections(const ValueContext&);
+    void generateTryPutValueAtPlaceInMap(const ValueContext&);
 
 private:
     enum class Collection : uint8_t { Map, Set };
 
     class TableReader;
 
-    std::optional<bool> isTakenForNumberAfter(const ValueContext& step, uint32_t result);
+    struct InlineWidths {
+        bool keysAreWide { false };
+        bool readsKeysOfBothWidths { false };
+        std::optional<bool> valuesAreWide;
+    };
+
     void generateNext(Collection, const ValueContext&);
+    InlineWidths inlineWidthsOf(Collection, ValueID collection);
+    Integer movesOfEntriesInCollections();
+
+    ValueID m_forwardedTableRead;
+    LValue m_forwardedTable { nullptr };
 };
 
 } } } // namespace JSC::AOT::Typed

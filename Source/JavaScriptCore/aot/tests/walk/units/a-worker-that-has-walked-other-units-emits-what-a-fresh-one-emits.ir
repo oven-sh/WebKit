@@ -1,0 +1,59 @@
+# function pick(crate): Plank { return crate.plank; }  function width(crate) { const p = pick(crate); return [p.wide, p.long]; }  and two more of its kind
+# A Walker is made for one unit and dies with it. What a worker hands on from unit to unit is `KeptBetweenUnits`: answers about the program, the same whoever asks first.
+# So a worker that has walked other units emits what a fresh one emits. On one thread each of the three is walked behind the others.
+# The red control: a-word-that-outlives-a-unit-is-found-by-a-fresh-worker.ir
+# OPTIONS: threads=1
+# RUN: same-bytes-alone mechanisms=all
+# CHECK: f2:Body same:
+# CHECK: f3:Body same:
+# CHECK: f4:Body same:
+# RUN(GUESSES): walk f4 mechanisms=all
+# GUESSES: = ShapeTest {{*}} layouts=[L0]
+
+layout L0 name="Plank" module=m0 fields=[{key="wide" declared={type=anything} flags=[IsRequired]}, {key="long" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="wide"
+    PropDefine v2, v1 key="long"
+    v5 = FinishObject v2
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v5, v6, v7, v8
+    Return v9
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="plank"
+    v2 = Convert v1 declared={type=L0}
+    Return v2
+}
+function f2 name="width" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = PropGet v1 key="wide"
+    v3 = PropGet v1 key="long"
+    v4 = NewArray v2, v3
+    Return v4
+}
+function f3 name="length" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = PropGet v1 key="long"
+    v3 = PropGet v1 key="wide"
+    v4 = NewArray v2, v3
+    Return v4
+}
+function f4 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = PropGet v1 key="wide"
+    v3 = PropGet v1 key="long"
+    v4 = NewArray v3, v2, v3
+    Return v4
+}

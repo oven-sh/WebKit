@@ -721,6 +721,7 @@ public:
         RELEASE_ASSERT(isExtendedExpression());
         return m_bits;
     }
+    uint64_t bits() const { return m_bits; }
 
 private:
     uint64_t m_bits;
@@ -729,44 +730,77 @@ private:
 
 using I64InitExpr = I32InitExpr;
 
-class Segment final : public TrailingArray<Segment, uint8_t> {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Segment);
-    WTF_MAKE_NONCOPYABLE(Segment);
-    WTF_MAKE_NONMOVABLE(Segment);
-    using Base = TrailingArray<Segment, uint8_t>;
-    friend Base;
-public:
+struct Segment {
     enum class Kind : uint8_t {
         Active,
         Passive,
     };
 
-    uint8_t& byte(uint32_t pos)
+    bool isActive() const { return kind == Kind::Active; }
+    bool isPassive() const { return kind == Kind::Passive; }
+
+    Kind kind;
+    uint32_t memoryIndex;
+    std::optional<I32InitExpr> offsetIfActive;
+    std::span<const uint8_t> bytes;
+};
+
+// The data segments of a module, in one buffer with a short header each, because there may be very many short ones.
+class Segments {
+public:
+    // Only a module with a Data Count section names its segments by index.
+    bool tryReserve(size_t numberOfSegments, size_t numberOfBytes, size_t numberOfIndices);
+    [[nodiscard]] bool tryAppend(const Segment&);
+
+    size_t size() const { return m_size; }
+    size_t sizeInBytes() const { return m_buffer.size(); }
+    // Advances the offset to the next segment.
+    Segment readAt(size_t& place) const
     {
-        return Base::at(pos);
+        Header header = read<Header>(place);
+        uint32_t size = header.size & ~hasLongHeaderBit;
+        Segment segment { Segment::Kind::Active, 0, I32InitExpr::constValue(header.offset), { } };
+        if (header.size & hasLongHeaderBit) [[unlikely]]
+            readLongHeader(place, segment);
+        segment.bytes = m_buffer.subspan(place, size);
+        place += size;
+        return segment;
     }
-    uint32_t sizeInBytes() const { return Base::size(); }
-
-    Segment(size_t sizeInBytes, Kind passedKind, std::optional<I32InitExpr>&& passedOffsetIfActive, uint32_t memoryIndex = 0)
-        : Base(sizeInBytes)
-        , m_kind(passedKind)
-        , m_offsetIfActive(WTF::move(passedOffsetIfActive))
-        , m_memoryIndex(memoryIndex)
+    Segment operator[](size_t index) const
     {
+        size_t place = m_segmentOffsets[index];
+        return readAt(place);
     }
-
-    static std::unique_ptr<Segment> tryCreate(std::optional<I32InitExpr>, uint32_t, Kind, uint32_t memoryIndex = 0);
-
-    bool isActive() const { return m_kind == Kind::Active; }
-    bool isPassive() const { return m_kind == Kind::Passive; }
-    Kind kind() const { return m_kind; }
-    std::optional<I32InitExpr> offsetIfActive() const { return m_offsetIfActive; }
-    uint32_t memoryIndex() const { return m_memoryIndex; }
 
 private:
-    const Kind m_kind;
-    const std::optional<I32InitExpr> m_offsetIfActive;
-    const uint32_t m_memoryIndex;
+    // The whole header of an active segment of memory 0 at a constant 32-bit offset.
+    struct Header {
+        uint32_t size;
+        uint32_t offset;
+    };
+    struct LongHeader {
+        uint64_t offset;
+        uint32_t memoryIndex;
+        bool isPassive;
+        bool isGlobalImport;
+        bool isExtendedExpression;
+    };
+    static constexpr uint32_t hasLongHeaderBit = 1u << 31;
+
+    template<typename T>
+    T read(size_t& place) const
+    {
+        T result;
+        memcpySpan(asMutableByteSpan(result), m_buffer.subspan(place, sizeof(T)));
+        place += sizeof(T);
+        return result;
+    }
+    void readLongHeader(size_t& place, Segment&) const;
+
+    Vector<uint8_t> m_buffer;
+    Vector<uint32_t> m_segmentOffsets;
+    size_t m_size { 0 };
+    bool m_hasIndices { false };
 };
 
 struct Element {

@@ -10,17 +10,14 @@
 
 #include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinIDTypes.h"
-#include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTBuiltinTableRealm.h"
-#include "AOTCompactTable.h"
+#include "AOTCellFormat.h"
 #include "AOTConvention.h"
-#include "AOTFrameArrays.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
@@ -35,7 +32,6 @@
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSObjectVisitInlines.h"
-#include "JSSetInlines.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -53,12 +49,18 @@ static NEVER_INLINE bool appendBoxedDoubles(JSGlobalObject* globalObject, VM& vm
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, boxed.span());
 }
 
-// NaN stands for a hole in Double storage.
 static bool holdsOnlyNumbersForDoubleStorage(std::span<const EncodedJSValue> values)
 {
     return std::ranges::all_of(values, [](EncodedJSValue encoded) {
         JSValue value = JSValue::decode(encoded);
         return value.isInt32() || (value.isDouble() && !std::isnan(value.asDouble()));
+    });
+}
+
+static bool holdsOnlyInt32s(std::span<const EncodedJSValue> values)
+{
+    return std::ranges::all_of(values, [](EncodedJSValue encoded) {
+        return JSValue::decode(encoded).isInt32();
     });
 }
 
@@ -71,6 +73,8 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
             return false;
         if (hasContiguous(target->indexingType()) && copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
             return appendBoxedDoubles(globalObject, vm, target, source->butterfly()->contiguousDouble().data(), length);
+        if (hasInt32(target->indexingType()))
+            target->tryMakeWritableDouble(vm);
     } else if (hasInt32(type) || hasContiguous(type)) {
         if (containsHole(source->butterfly()->contiguous().data(), length))
             return false;
@@ -80,32 +84,26 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
             return target->appendMemcpy(globalObject, vm, target->length(), hasDouble(targetType) ? ArrayWithDouble : ArrayWithContiguous, values);
         if (hasContiguous(type) && hasDouble(targetType) && holdsOnlyNumbersForDoubleStorage(values))
             return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithDouble, values);
+        if (hasContiguous(type) && hasInt32(targetType) && holdsOnlyInt32s(values))
+            return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithInt32, values);
+        if (hasContiguous(type) && hasInt32(targetType) && holdsOnlyNumbersForDoubleStorage(values) && target->tryMakeWritableDouble(vm).data())
+            return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithDouble, values);
     } else
         return false;
     return target->appendMemcpy(globalObject, vm, target->length(), source);
 }
 
-// A hole reads as undefined when no prototype of the source holds an indexed element.
-static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
+static ALWAYS_INLINE bool isPlainTarget(JSArray* target)
 {
-    IndexingType type = source->indexingType();
-    unsigned length = source->length();
-    if (!hasInt32(type) && !hasDouble(type) && !hasContiguous(type))
-        return false;
-    if (source->structure()->holesMustForwardToPrototype(source) || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
-        return false;
-    auto valueAt = [&](unsigned i) {
-        if (hasDouble(type)) {
-            double number = source->butterfly()->contiguousDouble().data()[i];
-            return std::isnan(number) ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, number);
-        }
-        JSValue value = source->butterfly()->contiguous().data()[i].get();
-        return value ? value : jsUndefined();
-    };
-    // `[...list]`: the target is new and empty, so its storage is made once, at its final size and for any value.
+    IndexingType type = target->indexingType();
+    return !isCopyOnWrite(target->indexingMode()) && (hasInt32(type) || hasDouble(type) || hasContiguous(type)) && !target->structure()->outOfLineCapacity() && !target->structure()->hasElementsStartOffset();
+}
+
+template<typename ValueAt>
+static ALWAYS_INLINE bool tryFillEmptyTarget(VM& vm, JSArray* target, unsigned length, NOESCAPE const ValueAt& valueAt)
+{
     IndexingType targetType = target->indexingType();
-    bool targetIsPlain = !isCopyOnWrite(target->indexingMode()) && (hasInt32(targetType) || hasDouble(targetType) || hasContiguous(targetType)) && !target->structure()->outOfLineCapacity() && !target->structure()->hasElementsStartOffset();
-    if (!target->length() && length && targetIsPlain) {
+    if (!target->length() && length && isPlainTarget(target)) {
         if (hasContiguous(targetType) && target->butterfly()->vectorLength() >= length) {
             Butterfly* butterfly = target->butterfly();
             butterfly->setPublicLength(length);
@@ -115,7 +113,6 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
             return true;
         }
         unsigned vectorLength = length | 1;
-        // Ahead of the DeferGC: the transition may make a Structure, and where there is no room for one the collector has to run.
         StructureID oldStructureID = target->structureID();
         Structure* oldStructure = oldStructureID.decode();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -137,7 +134,27 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
             return true;
         }
     }
-    // The source keeps these values alive.
+    return false;
+}
+
+static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
+{
+    IndexingType type = source->indexingType();
+    unsigned length = source->length();
+    if (!hasInt32(type) && !hasDouble(type) && !hasContiguous(type))
+        return false;
+    if (source->structure()->holesMustForwardToPrototype(source) || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
+        return false;
+    auto valueAt = [&](unsigned i) {
+        if (hasDouble(type)) {
+            double number = source->butterfly()->contiguousDouble().data()[i];
+            return std::isnan(number) ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, number);
+        }
+        JSValue value = source->butterfly()->contiguous().data()[i].get();
+        return value ? value : jsUndefined();
+    };
+    if (tryFillEmptyTarget(vm, target, length, valueAt))
+        return true;
     Vector<EncodedJSValue, 16> values(length, [&](size_t i) {
         return JSValue::encode(valueAt(i));
     });
@@ -146,45 +163,60 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values.span());
 }
 
-static bool tryAppendFrameArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* frameArray)
+static bool tryFillWithCodePoints(Instance& instance, JSArray* target, std::span<const char16_t> units)
 {
-    Butterfly* elements = frameArray->butterfly();
-    std::span<const EncodedJSValue> values { std::bit_cast<const EncodedJSValue*>(elements->contiguous().data()), elements->publicLength() };
-    return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values);
+    VM& vm = *instance.vm;
+    if (target->length() || !isPlainTarget(target) || !target->tryMakeWritableContiguous(vm).data() || !target->ensureLength(vm, static_cast<unsigned>(units.size())))
+        return false;
+    unsigned count = 0;
+    for (size_t i = 0; i < units.size(); ++i) {
+        bool isPair = U16_IS_LEAD(units[i]) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1]);
+        JSString* character = isPair ? jsNontrivialString(vm, String(units.subspan(i, 2))) : stringOfCharacter(instance, units[i]);
+        i += isPair;
+        target->butterfly()->contiguous().at(target, count++).set(vm, target, character);
+    }
+    target->butterfly()->setPublicLength(count);
+    return true;
 }
 
-JSArray* copyFrameArrayToHeap(Instance* instance, JSCell* frameArray)
+bool tryAppendCharacters(Instance& instance, JSArray* target, JSString* string)
 {
-    Butterfly* elements = uncheckedDowncast<JSArray>(frameArray)->butterfly();
-    unsigned length = elements->publicLength();
-    JSArray* copy = JSArray::create(*instance->vm, instance->globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
-    for (unsigned index = 0; index < length; ++index)
-        copy->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(elements->contiguous().atUnsafe(index).get());
-    return copy;
-}
-
-// An array that takes no more elements, one whose length is fixed, and one below a prototype with elements of its own keep a map beside the vector or store the slow way. A frozen one may keep its elements where they were.
-static bool mayRefuseOrRunOtherCode(JSArray* array)
-{
-    IndexingType type = array->indexingType();
-    if (hasAnyArrayStorage(type))
-        return hasSlowPutArrayStorage(type) || array->butterfly()->arrayStorage()->m_sparseMap;
-    return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
+    JSGlobalObject* globalObject = instance.globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (view->isEmpty())
+        return true;
+    if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + view->length()))
+        return false;
+    if (!view->is8Bit()) {
+        bool isFilled = tryFillWithCodePoints(instance, target, view->span16());
+        ensureStillAliveHere(string);
+        return isFilled;
+    }
+    std::span<const Latin1Character> characters = view->span8();
+    bool isFilled = tryFillEmptyTarget(vm, target, static_cast<unsigned>(characters.size()), [&](unsigned i) {
+        return JSValue(vm.smallStrings.singleCharacterString(characters[i]));
+    });
+    ensureStillAliveHere(string);
+    return isFilled;
 }
 
 static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // No dense storage holds more, and element by element the rest would go into a sparse map.
     if (static_cast<uint64_t>(target->length()) + source->length() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return;
     }
-    bool isAppended = isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source);
+    if (!source->length())
+        return;
+    bool isAppended = tryAppendArray(globalObject, vm, target, source);
     RETURN_IF_EXCEPTION(scope, void());
     if (isAppended)
         return;
-    isAppended = !isFrameArray(source) && tryAppendArrayWithHoles(globalObject, vm, target, source);
+    isAppended = tryAppendArrayWithHoles(globalObject, vm, target, source);
     RETURN_IF_EXCEPTION(scope, void());
     if (isAppended)
         return;
@@ -197,13 +229,61 @@ static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target
     }
 }
 
+void appendElementsOfList(JSGlobalObject* globalObject, JSArray* target, JSArray* source)
+{
+    appendElements(globalObject, globalObject->vm(), target, source);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
+    if (array->indexingMode() != ArrayWithInt32)
+        return;
+    array->tryMakeWritableDouble(vm);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t room))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity);
+    IndexingType mode = array->indexingMode();
+    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
+        return;
+    unsigned vectorLength = array->butterfly()->vectorLength();
+    if (room > MAX_STORAGE_VECTOR_LENGTH || room <= vectorLength)
+        return;
+    unsigned publicLength = array->butterfly()->publicLength();
+    unsigned lengthThatGrowsToRoom = static_cast<unsigned>(room - room / 4 - room / 16);
+    ASSERT(nextLength(lengthThatGrowsToRoom) >= room);
+    if (array->ensureLength(vm, std::max(lengthThatGrowsToRoom, vectorLength + 1)))
+        array->butterfly()->setPublicLength(publicLength);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLength, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLength);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLength);
+    PutPropertySlot slot(array, true);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLengthInSloppyCode, void, (Instance* instance, JSCell* cell, uint32_t length))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetArrayLengthInSloppyCode);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSetArrayLengthInSloppyCode);
+    PutPropertySlot slot(array, false);
+    array->methodTable()->put(array, globalObject, vm.propertyNames->length, jsNumber(length), slot);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendElements);
     JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTAppendElements);
-    // A list that is being made is none of these: the array is the receiver of Array.prototype.push, which refuses, runs the code of others and counts past the last index in a frame of its own.
-    if (hasAnyArrayStorage(target->indexingType()) || mayRefuseOrRunOtherCode(target)) [[unlikely]] {
+    if (hasAnyArrayStorage(target->indexingType()) || mayRejectOrInterceptWrites(target)) [[unlikely]] {
         MarkedArgumentBuffer elements;
         for (unsigned i = 0, length = source->length(); i < length; ++i) {
             elements.append(source->getIndex(globalObject, i));
@@ -226,28 +306,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendHole, JSCell*, (Instance* instance, J
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTAppendHole);
     array->setLength(globalObject, array->length() + 1, true);
     OPERATION_RETURN(scope, array);
-}
-
-void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t additional)
-{
-    IndexingType mode = array->indexingMode();
-    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
-        return;
-    if (additional > runtimeLimitValue(vm, LimitID::MaxReservedArrayCapacity)) {
-        countLimitHit(vm, LimitID::MaxReservedArrayCapacity);
-        return;
-    }
-    unsigned publicLength = array->butterfly()->publicLength();
-    uint64_t vectorLength = publicLength + additional;
-    if (vectorLength > MAX_STORAGE_VECTOR_LENGTH)
-        return;
-
-    // ensureLength(length) makes room for nextLength(length) elements.
-    unsigned length = static_cast<unsigned>(vectorLength - vectorLength / 3);
-    ASSERT(nextLength(length) >= vectorLength);
-    if (length <= array->butterfly()->vectorLength() || !array->ensureLength(vm, length))
-        return;
-    array->butterfly()->setPublicLength(publicLength);
 }
 
 JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom)
@@ -273,108 +331,62 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
     return std::bit_cast<JSArray*>(cell);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t additional))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance* instance, JSCell* cell, uint32_t capacityAndKind))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
-    reserveArrayCapacity(vm, cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity), additional);
-}
-
-// How many of the elements are numbers that Double storage can hold, from the first on. NaN stands for a hole there.
-static unsigned countLeadingNumbersAndHoles(const Butterfly* values, bool& holdsNumber)
-{
-    unsigned publicLength = values->publicLength();
-    for (unsigned i = 0; i < publicLength; ++i) {
-        JSValue value = values->contiguous().atUnsafe(i).get();
-        if (!value)
-            continue;
-        if (!value.isNumber() || std::isnan(value.asNumber()))
-            return i;
-        holdsNumber = true;
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfList);
+    JSArray* list = cellArgument<JSArray>(cell, Entry::operationAOTNewArrayOfList);
+    unsigned capacity = capacityAndKind >> 1;
+    IndexingType kindOfList = list->indexingType();
+    if (hasDouble(kindOfList)) {
+        size_t count = list->butterfly()->publicLength();
+        bool holdsValues = capacityAndKind & 1 || std::ranges::any_of(std::span { list->butterfly()->contiguousDouble().data(), count }, [](double fraction) {
+            return fraction != fraction;
+        });
+        Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsValues ? ArrayWithContiguous : ArrayWithDouble);
+        if (capacity < count || capacity > maxHoleArrayCapacity || (holdsValues ? !hasContiguous(structure->indexingType()) : !hasDouble(structure->indexingType())) || structure->outOfLineCapacity())
+            OPERATION_RETURN(scope, nullptr);
+        JSArray* array = tryCreateArrayWithStorage(vm, structure, count, capacity);
+        if (!array)
+            OPERATION_RETURN(scope, nullptr);
+        for (size_t index = 0; index < count; ++index) {
+            double fraction = list->butterfly()->contiguousDouble().atUnsafe(index);
+            if (!holdsValues)
+                array->butterfly()->contiguousDouble().atUnsafe(index) = fraction;
+            else
+                array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(fraction != fraction ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, fraction));
+        }
+        vm.mutatorFence();
+        OPERATION_RETURN(scope, array);
     }
-    return publicLength;
-}
-
-// General code makes an array with storage for any value, also where all that it stores are numbers.
-static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSArray* array)
-{
-    constexpr uint32_t costOfLook = 16;
-    constexpr uint32_t worthOfConversion = 64;
-    uint32_t& lookedAtInVain = instance->arrays.elementsLookedAtInVain;
-    // The place has said which it is.
-    uint8_t& shortYoungArraysConverted = instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
-    if (lookedAtInVain >= ArrayWords::maxElementsLookedAtInVain || array == instance->arrays.lastArrayLookedAtInVain) {
-        shortYoungArraysConverted = ArrayWords::maxShortYoungArraysConverted;
-        return;
-    }
-    if (array->cellState() != CellState::PossiblyBlack && array->butterfly()->publicLength() < ArrayWords::minLengthThatPaysAtOnce)
-        ++shortYoungArraysConverted;
-
-    Structure* structure = array->structure();
-    bool isPlainArray = structure == globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous) && !isCopyOnWrite(array->indexingMode()) && !structure->outOfLineCapacity();
-    Butterfly* values = array->butterfly();
-    unsigned publicLength = values->publicLength();
-    bool holdsNumber = false;
-    unsigned numberOfLeadingNumbers = isPlainArray ? countLeadingNumbersAndHoles(values, holdsNumber) : 0;
-    if (numberOfLeadingNumbers < publicLength || !holdsNumber) {
-        lookedAtInVain = std::min<uint64_t>(static_cast<uint64_t>(lookedAtInVain) + costOfLook + numberOfLeadingNumbers, ArrayWords::maxElementsLookedAtInVain);
-        instance->arrays.lastArrayLookedAtInVain = array;
-        return;
-    }
-
-    unsigned vectorLength = values->vectorLength();
-    Butterfly* numbers = Butterfly::tryCreateUninitialized(vm, array, 0, 0, true, vectorLength * sizeof(double));
-    if (!numbers)
-        return;
-    numbers->setVectorLength(vectorLength);
-    numbers->setPublicLength(publicLength);
-    for (unsigned i = 0; i < vectorLength; ++i) {
-        JSValue value = i < publicLength ? values->contiguous().atUnsafe(i).get() : JSValue();
-        numbers->contiguousDouble().atUnsafe(i) = value ? value.asNumber() : PNaN;
-    }
-    array->nukeStructureAndSetButterfly(vm, structure->id(), numbers);
-    array->setStructure(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
-    lookedAtInVain -= std::min(lookedAtInVain, worthOfConversion);
-}
-
-// What a native function or general code has just made: an array of the realm with storage of its own.
-static bool tryConvertPlainInt32Array(JSGlobalObject* globalObject, VM& vm, JSArray* array)
-{
-    Structure* structure = array->structure();
-    if (structure != globalObject->originalArrayStructureForIndexingType(ArrayWithInt32) || array->indexingMode() != ArrayWithInt32 || structure->transitionWatchpointSetIsStillValid())
-        return false;
-    Butterfly* values = array->butterfly();
-    for (unsigned i = values->vectorLength(); i--;) {
-        JSValue value = values->contiguous().atUnsafe(i).get();
-        values->contiguousDouble().atUnsafe(i) = value.isInt32() ? value.asInt32() : PNaN;
-    }
-    array->setStructure(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
-    return true;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
-    DeferTerminationForAWhile deferTermination(vm);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
-    // An array that refuses stays as it was, and goes on failing the test for Double storage.
-    if (tryConvertPlainInt32Array(globalObject, vm, array))
-        return;
-    if (hasInt32(array->indexingType()) || hasUndecided(array->indexingType()))
-        array->tryMakeWritableDouble(vm);
-    else if (hasContiguous(array->indexingType()))
-        convertStorageOfNumbers(instance, globalObject, vm, array);
+    if (!hasInt32(kindOfList) && !hasContiguous(kindOfList))
+        OPERATION_RETURN(scope, nullptr);
+    std::span<const WriteBarrier<Unknown>> elements { list->butterfly()->contiguous().data(), list->butterfly()->publicLength() };
+    if (capacity < elements.size() || capacity > maxHoleArrayCapacity)
+        OPERATION_RETURN(scope, nullptr);
+    bool isContiguous = capacityAndKind & 1 || std::ranges::any_of(elements, [](const WriteBarrier<Unknown>& element) {
+        return !element || !element.get().isInt32();
+    });
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(isContiguous ? ArrayWithContiguous : ArrayWithInt32);
+    if ((isContiguous ? !hasContiguous(structure->indexingType()) : !hasInt32(structure->indexingType())) || structure->outOfLineCapacity())
+        OPERATION_RETURN(scope, nullptr);
+    JSArray* array = tryCreateArrayWithStorage(vm, structure, elements.size(), capacity);
+    if (!array)
+        OPERATION_RETURN(scope, nullptr);
+    elements = { list->butterfly()->contiguous().data(), elements.size() };
+    for (size_t index = 0; index < elements.size(); ++index)
+        array->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(elements[index] ? elements[index].get() : jsUndefined());
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, array);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArray);
-    static_assert(storageOfItsOwnInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
+    static_assert(maxValuesInArrayLiteral < int32ValuesInArrayLiteralCount && int32ValuesInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
     unsigned emptyCapacity = count >> capacityShiftInArrayLiteralCount;
-    bool hasStorageOfItsOwn = count & storageOfItsOwnInArrayLiteralCount;
     bool holdsInt32 = count & int32ValuesInArrayLiteralCount;
-    static_assert(int32ValuesInArrayLiteralCount < storageOfItsOwnInArrayLiteralCount);
     count &= int32ValuesInArrayLiteralCount - 1;
-    if (emptyCapacity && count) [[unlikely]]
+    if (count > maxValuesInArrayLiteral || (emptyCapacity && count)) [[unlikely]]
         crashOnWrongOperand(Entry::operationAOTNewArray);
     auto valueAt = [&](uint32_t i) {
         return holdsInt32 ? jsNumber(static_cast<int32_t>(values[i])) : JSValue::decode(values[i]);
@@ -382,10 +394,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uin
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsInt32 ? ArrayWithInt32 : ArrayWithContiguous);
     unsigned vectorLength = emptyCapacity ? emptyCapacity : arrayLiteralVectorLength(count);
     bool hasWantedStorage = holdsInt32 ? hasInt32(structure->indexingType()) : hasContiguous(structure->indexingType());
-    if (hasWantedStorage && !structure->outOfLineCapacity() && vectorLength <= maxHoleArrayCapacity) {
-        if (JSArray* array = hasStorageOfItsOwn ? nullptr : tryCreateArrayWithStorage(vm, structure, count, vectorLength)) {
+    if (hasWantedStorage && !structure->outOfLineCapacity()) {
+        if (JSArray* array = vectorLength <= maxHoleArrayCapacity ? tryCreateArrayWithStorage(vm, structure, count, vectorLength) : nullptr) {
             for (uint32_t i = 0; i < count; ++i)
                 array->butterfly()->contiguous().atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
+            vm.mutatorFence();
             instance->findMissingShortArrayAllocator(vectorLength);
             OPERATION_RETURN(scope, array);
         }
@@ -416,16 +429,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayOfLengthOrElement, JSCell*, (Instance*
     OPERATION_RETURN(scope, constructArrayWithSizeQuirk(globalObject, nullptr, JSValue::decode(lengthOrElement)));
 }
 
-enum class FilledBy : bool { Runtime, CompiledCode };
-
-static JSArray* newArrayOfHoles(Instance* instance, JSGlobalObject* globalObject, VM& vm, unsigned length, unsigned capacity, IndexingType indexingType, FilledBy filledBy)
+static JSArray* newArrayOfHoles(Instance* instance, JSGlobalObject* globalObject, VM& vm, unsigned length, unsigned capacity, IndexingType indexingType)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(length <= capacity && (indexingType == ArrayWithDouble || indexingType == ArrayWithInt32 || indexingType == ArrayWithContiguous));
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
     if (structure->indexingType() != indexingType) [[unlikely]] {
-        // Compiled code that asks for an array with elements stores them into plain storage, and converts the array behind that.
-        if (!length || filledBy == FilledBy::Runtime) {
+        if (!length) {
             JSArray* array = JSArray::tryCreate(vm, structure, length);
             if (!array)
                 throwOutOfMemoryError(globalObject, scope);
@@ -459,117 +469,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfHoles);
     unsigned length = lengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
     unsigned capacity = lengthAndCapacity >> holeArrayCapacityShift;
-    OPERATION_RETURN(scope, newArrayOfHoles(instance, globalObject, vm, length, capacity, static_cast<IndexingType>(flags), FilledBy::CompiledCode));
+    OPERATION_RETURN(scope, newArrayOfHoles(instance, globalObject, vm, length, capacity, static_cast<IndexingType>(flags)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfElements, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t capacityAndIndexingType))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfElements);
-    JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTNewArrayOfElements);
-    uint32_t capacity = static_cast<uint32_t>(capacityAndIndexingType);
-    IndexingType indexingType = static_cast<IndexingType>(capacityAndIndexingType >> 32);
-    RELEASE_ASSERT(capacity <= MAX_STORAGE_VECTOR_LENGTH && (indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous));
-    JSArray* array = newArrayOfHoles(instance, globalObject, vm, 0, (capacity ? capacity : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY) | 1, indexingType, FilledBy::Runtime);
-    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    appendElements(globalObject, vm, array, source);
-    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    OPERATION_RETURN(scope, array);
-}
-
-// The members in the order of a walk from the first entry on.
-template<typename Functor>
-static void forEachMember(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
-{
-    JSCell* storage = set->storageOrSentinel(vm);
-    if (storage == vm.orderedHashTableSentinel())
-        return;
-    if (JSSet::Helper::isCompact(*storage)) {
-        CompactTable::forEachInColumn(vm, storage, 0, true, functor);
-        return;
-    }
-    auto* table = uncheckedDowncast<JSSet::Storage>(storage);
-    for (JSSet::Helper::Entry entry = 0; ; entry = JSSet::Helper::iterationEntry(*table) + 1) {
-        JSCell* next = JSSet::Helper::nextAndUpdateIterationEntry(vm, *table, entry);
-        if (next == vm.orderedHashTableSentinel())
-            return;
-        table = uncheckedDowncast<JSSet::Storage>(next);
-        functor(JSSet::Helper::getIterationEntryKey(*table));
-    }
-}
-
-// Of the kind asked for, or of the least kind that takes every member.
-static JSArray* newArrayOfMembers(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSSet* source, IndexingType indexingType)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // As the first step of a walk does: the next list is made by the stub.
-    if (CompactTable* table = source->hasCompactStorage() ? uncheckedDowncast<CompactTable>(source->storage()) : nullptr; table && table->isLive() && table->isInImage()) {
-        DeferTerminationForAWhile deferTermination(vm);
-        auto moving = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        CompactTable::tryMoveToHeap(globalObject, source);
-        moving.clearException();
-    }
-    unsigned length = 0;
-    static_assert(ArrayWithInt32 < ArrayWithDouble && ArrayWithDouble < ArrayWithContiguous);
-    forEachMember(vm, source, [&](JSValue member) {
-        // NaN would read as a hole among doubles.
-        bool isStoredAsDouble = member.isDouble() && member.asDouble() == member.asDouble();
-        indexingType = std::max<IndexingType>(indexingType, member.isInt32() ? ArrayWithInt32 : isStoredAsDouble ? ArrayWithDouble : ArrayWithContiguous);
-        ++length;
-    });
-    RELEASE_ASSERT(indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous);
-    if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    JSArray* array = newArrayOfHoles(instance, globalObject, vm, length, length | 1, indexingType, FilledBy::Runtime);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (array->indexingType() != indexingType) [[unlikely]] {
-        unsigned index = 0;
-        MarkedArgumentBuffer members;
-        forEachMember(vm, source, [&](JSValue member) { members.append(member); });
-        if (members.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return nullptr;
-        }
-        for (; index < length; ++index) {
-            array->putDirectIndex(globalObject, index, members.at(index));
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        return array;
-    }
-    // A new array is written without barriers while nothing is allocated.
-    DeferGCForAWhile deferGC(vm);
-    Butterfly* butterfly = array->butterfly();
-    unsigned index = 0;
-    if (indexingType == ArrayWithDouble) {
-        forEachMember(vm, source, [&](JSValue member) { butterfly->contiguousDouble().atUnsafe(index++) = member.asNumber(); });
-        return array;
-    }
-    forEachMember(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
-    vm.writeBarrier(array);
-    return array;
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfMembers, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t indexingType))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfMembers);
-    JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTNewArrayOfMembers);
-    RELEASE_ASSERT(indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous);
-    OPERATION_RETURN(scope, newArrayOfMembers(instance, globalObject, vm, source, static_cast<IndexingType>(indexingType)));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTAppendMembers, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendMembers);
-    JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendMembers);
-    JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTAppendMembers);
-    JSArray* members = newArrayOfMembers(instance, globalObject, vm, source, ArrayWithInt32);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    appendElements(globalObject, vm, target, members);
-    OPERATION_RETURN(scope);
-}
-
-// JSObject::ensureLengthSlow() for a full vector with nothing in front of it: the same new length, the same rounding, and a vector with an allocation of its own is reallocated, so a grown array takes the memory it takes in JSArray::push().
 static bool growFullVector(VM& vm, JSArray* array, unsigned length)
 {
     static_assert(2 * MIN_SPARSE_ARRAY_INDEX <= MAX_STORAGE_VECTOR_LENGTH);
@@ -601,10 +503,8 @@ static bool growFullVector(VM& vm, JSArray* array, unsigned length)
     return true;
 }
 
-// 0: the array or the value is not of the plain sort, and nothing a program can see was changed.
 unsigned pushToFullVector(VM& vm, JSArray* array, JSValue value)
 {
-    // The mode includes the copy-on-write bit, so shared storage is not taken.
     IndexingType mode = array->indexingMode();
     bool isTaken = mode == ArrayWithContiguous || (mode == ArrayWithInt32 ? value.isInt32() : mode == ArrayWithDouble && value.isNumber() && value.asNumber() == value.asNumber());
     if (!isTaken)
@@ -629,8 +529,7 @@ static EncodedJSValue pushToArray(Instance* instance, JSArray* array, JSValue va
     if (unsigned newLength = pushToFullVector(vm, array, value))
         return JSValue::encode(jsNumber(newLength));
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Array.prototype.push() itself refuses, and runs the code of others, in a frame of its own.
-    if (mayRefuseOrRunOtherCode(array)) [[unlikely]]
+    if (mayRejectOrInterceptWrites(array)) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePush, array, value)));
     array->push(globalObject, value);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -642,16 +541,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPush, EncodedJSValue, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPush);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPush);
     OPERATION_RETURN(scope, pushToArray(instance, array, JSValue::decode(value)));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance* instance, JSCell* cell, uint64_t numberBits))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPushNumber);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPushNumber);
-    double number = std::bit_cast<double>(numberBits);
-    if (number == number)
-        array->tryMakeWritableDouble(vm);
-    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(withoutPayload(number))));
 }
 
 static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* array, int64_t from, int64_t to)
@@ -668,7 +557,6 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
     if (count > maxLengthForElementwiseCopy)
         return JSArray::fastSlice(globalObject, array, from, count);
     unsigned vectorLength = static_cast<unsigned>(count) | 1;
-    // The stub that makes room for named properties and the one that makes none end up here when their allocator has no cell left.
     auto hasCellsFor = [&](unsigned propertyRoom) {
         Allocator allocator = vm.cellSpace().allocatorFor(sizeOfArrayWithStorage(vectorLength, propertyRoom), AllocatorForMode::AllocatorIfExists);
         return allocator && !std::bit_cast<FreeList*>(std::bit_cast<char*>(allocator.localAllocator()) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
@@ -678,6 +566,7 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
     if (!result)
         return nullptr;
     std::copy_n(array->butterfly()->indexingPayload<uint64_t>() + from, count, result->butterfly()->indexingPayload<uint64_t>());
+    vm.mutatorFence();
     ensureStillAliveHere(array);
     return result;
 }
@@ -711,18 +600,36 @@ static void startWindow(ArrayAllocationProfile& profile)
     std::ranges::fill(profile.largestLengths, 0);
 }
 
-// Every array of the site is born with the room, and only the ones that outgrow it pay for that.
-void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
+static IndexingType narrowestShapeThatHoldsContentsOf(JSArray* array)
+{
+    IndexingType shape = Int32Shape;
+    Butterfly* butterfly = array->butterfly();
+    for (unsigned position = 0; position < butterfly->publicLength(); ++position) {
+        JSValue value = butterfly->contiguous().at(array, position).get();
+        if (!value || value.isInt32())
+            continue;
+        if (!value.isDouble() || value.asDouble() != value.asDouble())
+            return ContiguousShape;
+        shape = DoubleShape;
+    }
+    return shape;
+}
+
+void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull, bool readsContentsAtFirst)
 {
     if (!lastArrayOrNull) {
-        // A collection came between the birth of the array and this review. Fewer of them fall into a shorter interval.
         if (profile.intervalDoublings)
             --profile.intervalDoublings;
         return;
     }
     IndexingType shape = lastArrayOrNull->indexingType() & IndexingShapeMask;
-    if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
+    if (readsContentsAtFirst && !profile.shape() && shape == ContiguousShape)
+        shape = narrowestShapeThatHoldsContentsOf(lastArrayOrNull);
+    if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) {
+        if (!profile.shape())
+            profile.set(profile.capacity(), Int32Shape);
         return;
+    }
 
     IndexingType learnedShape = std::max(profile.shape(), shape);
     unsigned length = std::min<unsigned>(lastArrayOrNull->butterfly()->publicLength(), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
@@ -748,11 +655,14 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
         return;
     }
 
-    if (wanted < inUse)
+    for (uint8_t kept : profile.largestLengths)
+        wanted = kept ? kept | 1 : wanted;
+    bool takesLessRoom = wanted < inUse && profile.largestLengths[0];
+    if (takesLessRoom)
         profile.intervalDoublings = 0;
     else if (profile.intervalDoublings < ArrayAllocationProfile::maxIntervalDoublings)
         ++profile.intervalDoublings;
-    profile.set(wanted < inUse ? wanted : profile.capacity(), learnedShape);
+    profile.set(takesLessRoom ? wanted : profile.capacity(), learnedShape);
     startWindow(profile);
 }
 
@@ -779,6 +689,35 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayAtReviewedSite, JSCell*, (Instance*
         OPERATION_RETURN(scope, nullptr);
     }
     // Not a root: every collection zeroes this word, so it neither keeps the array alive nor dangles.
+    lastArray = array;
+    OPERATION_RETURN(scope, array);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayWithLengthAtReviewedSite, JSCell*, (Instance* instance, void* profileAddress, uint32_t seedAndLengthAndCapacity))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayWithLengthAtReviewedSite);
+    uint8_t* statics = instance->statics();
+    uint8_t* address = static_cast<uint8_t*>(profileAddress);
+    uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;
+    uint32_t seedIndexingType = seedAndLengthAndCapacity >> seedShiftBesideLengthAndCapacity;
+    unsigned capacity = (seedAndLengthAndCapacity & ((1u << seedShiftBesideLengthAndCapacity) - 1)) >> holeArrayCapacityShift;
+    unsigned length = seedAndLengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
+    RELEASE_ASSERT(address >= statics && distanceToLastArray >= sizeof(ArrayAllocationProfile));
+    RELEASE_ASSERT(address + distanceToLastArray + ArrayAllocationProfile::sizeOfLastArrayWord <= statics + instance->tables().instanceSizes.sizeOfStatics);
+    RELEASE_ASSERT(seedIndexingType == ArrayWithInt32 || seedIndexingType == ArrayWithDouble);
+    RELEASE_ASSERT(capacity & 1 && capacity <= maxHoleArrayCapacity && length <= capacity);
+    auto& profile = *reinterpret_cast<ArrayAllocationProfile*>(address);
+    auto& lastArray = *reinterpret_cast<JSArray**>(address + distanceToLastArray);
+    ASSERT(profile.isDueForReview());
+
+    reviewArrayAllocationProfile(profile, lastArray);
+    profile.startInterval();
+    lastArray = nullptr;
+    if (globalObject->isHavingABadTime())
+        OPERATION_RETURN(scope, nullptr);
+
+    IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
+    JSArray* array = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(IsArray | shape), length, capacity);
     lastArray = array;
     OPERATION_RETURN(scope, array);
 }

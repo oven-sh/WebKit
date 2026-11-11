@@ -1,0 +1,47 @@
+# function maybe(f) { if (f) return f(1); return 0; }  keep = maybe;  maybe(first);  maybe(second);  maybe(undefined);
+# What is expected of `f` is one of two closures or nothing. A test for "one of the two" tells nothing that a call can use: behind it the call is still a call by value, and the closed arm holds the same call again:
+# such tests stood with calls built twice. Several closures are told apart one by one, in front of a loop, and nowhere else.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: testedType=f2|f3
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f1 
+# HELD-NEXT: parameter 0 {{*}}proven=undefined|f2|f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    PropSet v3, v0 key="keep"
+    v5 = Call v0, -, v1 calleeName="maybe"
+    v6 = Call v0, -, v2 calleeName="maybe"
+    v7 = Undefined
+    v8 = Call v0, -, v7 calleeName="maybe"
+    Return v7
+}
+function f1 name="maybe" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|function):
+    v1 = ToBoolean v0 @10
+    Branch v1 -> taken b1(), notTaken b2() @10
+  b1():
+    v2 = Integer integer=1 @20
+    v3 = Call v0, -, v2 calleeName="f" @20
+    Return v3 @20
+  b2():
+    v4 = Integer @30
+    Return v4 @30
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

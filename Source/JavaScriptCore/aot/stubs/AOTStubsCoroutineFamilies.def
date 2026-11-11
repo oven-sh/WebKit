@@ -3,26 +3,23 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// AOTStubsCoroutinePromises.cpp
-v(NewPromise, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewPromise)
+v(NewPromise, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewPromise)
 v(PromiseThen, CalledByCode, (OnFulfilled, OnRejected), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PromiseThen)
+v(IsNotThenable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, AsOperation, IsNotThenable)
 v(ReturnAsyncResult, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReturnAsyncResult)
 
-// AOTStubsCoroutineSuspension.cpp
-v(AwaitBySavingFrame, CalledByCode, (Value, ResultOfCallWithoutPromise, ValueAfterTurn, ValueInModuleBody), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
+v(AwaitBySavingFrame, CalledByCode, (Value, ResultOfCallWithoutPromise, ValueInModuleBody), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
 v(AwaitWithSavedFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
 v(SuspendGenerator, CalledByCode, (Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuspendGenerator)
 
-// AOTStubsCoroutineResumption.cpp
 v(StepGenerator, CalledByCode, (IsUnmodifiedGenerator, IsGenerator, IsUnmodified, None), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepGenerator)
 v(EnterSavedFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(EnterHandlerOfJob, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(EnterGeneratorFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterGeneratorFrame)
 v(RestoreSavedFrameToStack, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RestoreSavedFrameToStack)
 
-// AOTStubsCoroutineSteps.cpp
-v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator, AwaitedInAsyncFunction, AwaitedInAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
+v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
 v(RunAsyncGeneratorStep, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(StepAsyncIteratorInEngine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
-v(NewHeapFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)
-v(NewGenerator, CalledByCode, (Sync, Async), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)
+v(NewHeapFrame, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)
+v(NewAsyncGenerator, CalledByCode, (OfProgram, OfLibrary), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewAsyncGenerator)

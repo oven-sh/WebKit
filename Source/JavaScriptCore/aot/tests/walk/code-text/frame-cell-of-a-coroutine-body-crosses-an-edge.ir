@@ -1,0 +1,21 @@
+# in the body of a coroutine a cell of the frame stays in the block that made it, or is read where nothing has suspended: a parameter of a block says neither
+# RUN: verify-code
+# CHECK: {{*}}a cell of the frame of a coroutine body crosses an edge
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: Array @Cell = CreateRest firstArgument=0 storage=Frame
+#     Jump -> next b1(v2)
+#   b1(v3: Array @Cell):
+#     v4 @Void = EndCellLifetime v3
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0

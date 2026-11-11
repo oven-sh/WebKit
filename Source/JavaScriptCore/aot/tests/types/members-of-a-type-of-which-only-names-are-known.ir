@@ -1,0 +1,51 @@
+# A record type that requires no name, and of whose members nothing is written, is met by the layouts of objects that have all its names, however many they are:
+# what is known of a value are its uses, and none of them needs the name.
+# RUN: members
+
+module m0 path="main.js" displayPath="main.js"
+
+# The one name may be left out.
+layout L0 module=m0 position=1 fields=[{key="held" declared={type=anything}}]
+
+# An instance and a record have the name.
+layout L1 kind=Instance name="Maker" module=m0 fields=[{key="held" declared={type=anything}}]
+layout L2 name="Wider" module=m0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+
+# The name is lacking.
+layout L3 name="Other" module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+
+# Two names, and neither is required: both are asked for. What is expected of a member is not believed of it.
+layout L4 module=m0 position=2 fields=[{key="held" declared={type=anything}}, {key="other" declared={type=undefined|null|string flags=[IsExpected]}}]
+
+# No name at all.
+layout L5 module=m0 position=3
+
+# A checked file writes what the member holds: the type is believed, and stays as it is.
+layout L6 module=m0 position=4 fields=[{key="kept" declared={type=undefined|number}}]
+
+# Five layouts have the name, and the type stands for the five: how many the rest of the program holds decides nothing.
+layout L7 module=m0 position=5 fields=[{key="common" declared={type=anything}}]
+layout L8 name="First" module=m0 fields=[{key="common" declared={type=anything} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}]
+layout L9 name="Second" module=m0 fields=[{key="common" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="Third" module=m0 fields=[{key="common" declared={type=anything} flags=[IsRequired]}, {key="third" declared={type=anything} flags=[IsRequired]}]
+layout L11 name="Fourth" module=m0 fields=[{key="common" declared={type=anything} flags=[IsRequired]}, {key="fourth" declared={type=anything} flags=[IsRequired]}]
+
+# It has the name of the type that is believed.
+layout L12 kind=Instance name="Keeper" module=m0 fields=[{key="kept" declared={type=number} flags=[IsRequired]}]
+
+# CHECK: L0: members [L0, L1, L2, L4]
+# CHECK-NEXT: L1: members [L1]
+# CHECK-NEXT: L2: members [L2, L4]
+# CHECK-NEXT: L3: members [L2, L3, L4]
+# CHECK-NEXT: L4: members [L2, L4]
+# CHECK-NEXT: L5: members [L5]
+# CHECK-NEXT: L6: members [L6]
+# CHECK-NEXT: L7: members [L7, L8, L9, L10, L11]
+# CHECK-NEXT: L8: members [L8]
+# CHECK-NEXT: L9: members [L9]
+# CHECK-NEXT: L10: members [L10]
+# CHECK-NEXT: L11: members [L11]
+# CHECK-NEXT: L12: members [L12]
+# CHECK-NEXT: t0: members [L0, L1, L2, L4] only-layouts: yes
+function f0 name="types" role=Signature parameters=[{type=L0}] results=[{type=undefined}]
+entry module=m0

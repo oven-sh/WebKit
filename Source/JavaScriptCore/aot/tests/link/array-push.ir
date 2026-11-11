@@ -1,0 +1,41 @@
+# If what native code stores into a list were not seen to come out of it again, the object that `push` puts in would not be among what `list[0]` gives, the store through that would miss its field, and the field would stay proven a string while it holds a boolean
+# const list = [];  function add(l, o) { l.push(o); }  function mark(l) { l[0].x = true; }  add(list, { x: "a" });  mark(list);
+# The row of the built-in says that it stores its arguments into the elements of its receiver. Or the object escapes. Either way the boolean is seen.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "x"
+# CHECK-NOT: proven=string
+# CHECK: field L1.0 "end"
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="end" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = String string="a"
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v0, v3 calleeName="add"
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v0 calleeName="mark"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="add" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="mark" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = Boolean boolean=true
+    PropSet v2, v3 key="x"
+    v5 = Undefined
+    Return v5
+}

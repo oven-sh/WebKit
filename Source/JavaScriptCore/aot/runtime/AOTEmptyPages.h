@@ -20,7 +20,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// Read here, 64 bytes at a step, and not by the library's memcmp(): that of musl goes byte by byte, and every collection asks this of whole tables.
 inline bool holdsOnlyZeros(std::span<const uint8_t> bytes)
 {
     using Words = uint64_t __attribute__((vector_size(32)));
@@ -48,17 +47,14 @@ inline bool holdsOnlyZeros(std::span<const uint8_t> bytes)
     return true;
 }
 
-// Whatever the system does with the pages, and whenever it does it, they read as zeros: they hold zeros now.
 inline void decommitPagesOfZeros(void* pages, size_t size)
 {
     OSAllocator::decommit(pages, size);
 #if OS(WINDOWS)
-    // There a decommitted page cannot be touched.
     OSAllocator::commit(pages, size, true, false);
 #endif
 }
 
-// Where the entries of a table died it holds zeros, on pages that stay the process's own.
 inline size_t decommitEmptyPages(std::span<uint8_t> table, RememberedSlotSet& writtenRegions)
 {
     size_t sizeOfPage = pageSize();
@@ -70,7 +66,6 @@ inline size_t decommitEmptyPages(std::span<uint8_t> table, RememberedSlotSet& wr
         size_t begin;
         size_t end;
     };
-    // A page between two empty ones that was only read costs no memory, and a fault if it goes back.
     Vector<PageRange, 16> emptyPages;
     size_t numberOfWholePages = table.size() / sizeOfPage;
     size_t currentPage = notFound;

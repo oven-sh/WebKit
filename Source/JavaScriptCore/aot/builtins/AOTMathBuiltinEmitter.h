@@ -26,8 +26,6 @@ private:
 
     void round(const InlineCall&, Rounding);
     void extremum(const InlineCall&, Extremum);
-    void extremumOfArray(const InlineCall&, Extremum);
-    Number extremumOfElements(Extremum, CellPointer array, Pointer butterfly, Integer length, LBasicBlock otherwise);
     void testNumber(const InlineCall&, NumberTest);
     Condition testNumber(Number, NumberTest);
     Condition isFinite(Number);

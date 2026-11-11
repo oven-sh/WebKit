@@ -8,7 +8,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompile.h"
+#include "AOTCurrentWork.h"
 #include "AOTVector.h"
 #include <array>
 #include <stdarg.h>
@@ -40,6 +40,7 @@
 #include <unistd.h>
 #if OS(LINUX)
 #include <sys/prctl.h>
+#include <sys/uio.h>
 #endif
 
 extern char** environ;
@@ -49,7 +50,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// Shorter than the five minutes that Bun's runner gives a file, so that a test that never ends is named.
 #if ASAN_ENABLED || ASSERT_ENABLED
 static constexpr Seconds silenceLimit = 300_s;
 #else
@@ -125,7 +125,6 @@ static void disableCrashReports()
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 }
 
-// Windows ends the processes of a job when the last handle to it closes: when this process ends, however it ends.
 static HANDLE jobOfChildren()
 {
     static HANDLE job = [] {
@@ -236,7 +235,6 @@ static bool readOutput(int pipe, Vector<uint8_t>& output)
 
 static void disableCrashReports()
 {
-    // Where core_pattern names a program, Linux starts it whatever the limit is, except for a limit of 1. No file is written under a limit of less than a page.
     struct rlimit noCoreFile { 1, 1 };
     setrlimit(RLIMIT_CORE, &noCoreFile);
 }
@@ -246,12 +244,10 @@ struct StartedProcess {
     int output;
 };
 
-// A test that never ends must not outlive the process that would have ended it.
 #if OS(LINUX)
 
 static constexpr int exitCodeWithoutProgram = 127;
 
-// posix_spawn() cannot ask for the signal, which the kernel sends when the thread that started the child ends, however it ends.
 static int spawn(pid_t& process, char* const* arguments, int output)
 {
     pid_t parent = getpid();
@@ -259,7 +255,6 @@ static int spawn(pid_t& process, char* const* arguments, int output)
     if (process)
         return process < 0 ? errno : 0;
 
-    // This is the parent's memory until exec: system calls only.
     prctl(PR_SET_PDEATHSIG, SIGKILL);
     close(STDIN_FILENO);
     if (getppid() == parent && open("/dev/null", O_RDONLY) == STDIN_FILENO && dup2(output, STDOUT_FILENO) >= 0 && dup2(output, STDERR_FILENO) >= 0)
@@ -274,7 +269,6 @@ static void killHung(pid_t process)
 
 #else
 
-// There is no such signal here. A child leads a group, what it starts stays in the group, and a child that hangs ends with its group.
 static bool startsGroups()
 {
     return getpgrp() != getpid();
@@ -378,7 +372,6 @@ const String& programPath()
     return mutableProgramPath();
 }
 
-// Where WTF::FileSystem puts temporary files.
 String temporaryFolder()
 {
 #if OS(WINDOWS)
@@ -396,7 +389,6 @@ void enterTemporaryFolder()
 {
     static NeverDestroyed<String> folder;
     folder.get() = temporaryFolderOf(getCurrentProcessID());
-    // Of an earlier process with this number, whose parent was killed.
     FileSystem::deleteNonEmptyDirectory(folder);
     RELEASE_ASSERT(FileSystem::makeAllDirectories(folder));
 #if OS(WINDOWS)
@@ -432,6 +424,33 @@ static void printToStandardError(const char* format, ...)
     UNUSED_VARIABLE(written);
 }
 
+static void printMemoryBehind(uintptr_t address)
+{
+    std::array<uintptr_t, 8> words;
+    address &= ~(sizeof(uintptr_t) - 1);
+    struct iovec target { words.data(), sizeof(words) };
+    struct iovec source { reinterpret_cast<void*>(address), sizeof(words) };
+    if (process_vm_readv(getpid(), &target, 1, &source, 1, 0) != static_cast<ssize_t>(sizeof(words)))
+        return;
+    printToStandardError("0x%llx:", static_cast<unsigned long long>(address));
+    for (uintptr_t word : words)
+        printToStandardError(" %016llx", static_cast<unsigned long long>(word));
+    printToStandardError("\n");
+}
+
+static void printMappings()
+{
+    int file = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (file < 0)
+        return;
+    std::array<char, 4 * KB> text;
+    for (ssize_t count; (count = read(file, text.data(), text.size())) > 0;) {
+        ssize_t written = write(STDERR_FILENO, text.data(), count);
+        UNUSED_VARIABLE(written);
+    }
+    close(file);
+}
+
 static void reportTrap(int signal, siginfo_t*, void* context)
 {
     constexpr uintptr_t redZoneSize = 128;
@@ -455,7 +474,7 @@ static void reportTrap(int signal, siginfo_t*, void* context)
     printToStandardError("%s in thread \"%s\" at 0x%llx\n", signalName(signal).characters(), threadName.data(), static_cast<unsigned long long>(pc));
 
     std::array<char, 1024> work;
-    if (size_t size = describeWhereThisThreadStopped(work)) {
+    if (size_t size = describeCurrentThreadWork(work)) {
         ssize_t written = write(STDERR_FILENO, work.data(), size);
         UNUSED_VARIABLE(written);
     }
@@ -490,6 +509,23 @@ static void reportTrap(int signal, siginfo_t*, void* context)
         printToStandardError("0x%llx: %016llx %016llx %016llx %016llx\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(words[0]), static_cast<unsigned long long>(words[1]), static_cast<unsigned long long>(words[2]), static_cast<unsigned long long>(words[3]));
     }
 
+    printToStandardError("memory behind the registers and the words of the stack:\n");
+#if CPU(X86_64)
+    for (size_t index = 0; index < registerNames.size(); ++index)
+        printMemoryBehind(machineContext.gregs[index]);
+#else
+    for (uintptr_t value : machineContext.regs)
+        printMemoryBehind(value);
+#endif
+    for (uintptr_t address = (sp - redZoneSize) & ~(sizeof(uintptr_t) - 1); address < sp + dumpedStackSize && isOnStack(address); address += sizeof(uintptr_t)) {
+        uintptr_t word = *reinterpret_cast<const uintptr_t*>(address);
+        if (!stack.contains(reinterpret_cast<void*>(word)))
+            printMemoryBehind(word);
+    }
+
+    printToStandardError("mappings:\n");
+    printMappings();
+
     struct sigaction defaultAction { };
     defaultAction.sa_handler = SIG_DFL;
     sigaction(signal, &defaultAction, nullptr);
@@ -514,6 +550,13 @@ void installTrapReporter()
 #endif
 
 String ChildProcessResult::description() const
+{
+    if (!hasCrashedOrHung())
+        return descriptionOfOutcome();
+    return makeString(descriptionOfOutcome(), " (started as: "_s, commandLine, ')');
+}
+
+String ChildProcessResult::descriptionOfOutcome() const
 {
     switch (outcome) {
     case ChildProcessOutcome::Exited:
@@ -546,6 +589,10 @@ ChildProcessResult ChildProcessLauncher::run(std::span<const String> arguments) 
     for (const String& argument : m_sharedArguments)
         commandLine.append(argument);
     ChildProcessResult result = runProcess(commandLine);
+    StringBuilder words;
+    for (StringView word : commandLine)
+        words.append(words.isEmpty() ? ""_s : " "_s, word);
+    result.commandLine = words.toString();
     if (printsLineAfterEachChildProcess)
         dataLogLn(lineAfterChildProcess);
     return result;

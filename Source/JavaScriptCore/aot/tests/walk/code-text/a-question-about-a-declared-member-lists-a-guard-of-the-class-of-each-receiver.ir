@@ -1,0 +1,113 @@
+# a stamped question about a declared member says yes for every receiver on the word of the guards that it lists: one that lists no guard of the class of a receiver would go on saying yes when that class lays the member anew
+# RUN: verify-code
+# CHECK: {{*}}a question about a declared member lists no guard of the class of one of its receivers
+# -- code
+# code f3:Body {
+#   v0: "-" @JSValue = String string="-"
+#   v1: "read" @JSValue = String string="read"
+#   b0(v2: anything @JSValue) entry=0:
+#     v3: boolean @Boolean = FindsDeclaredMember v2 key="read" conditions=[{layout=L0 key="read"}] receivers=[L0, L1] traits=[mayTouchMemory]
+#     Branch v3 -> taken b1(), notTaken b2()
+#   b1():
+#     Return v1
+#   b2():
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="pair.js" displayPath="pair.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f2 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Gauge" module=m0 position=101 base=L0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+variable g0 name="Gauge" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = PropGet v1 key="prototype" @46
+    v5 = NewClosure function=f4 @69
+    PropSet v4, v5 key="read" @52
+    v7 = Builtin builtin=Object @147
+    v8 = Builtin builtin=ObjectSetPrototypeOf @147
+    v9 = GetModuleVariable variable=g0 @169
+    v10 = PropGet v9 key="prototype" @169
+    v11 = PropGet v1 key="prototype" @186
+    v12 = Call v8, v7, v10, v11 calleeName="Object.setPrototypeOf" @154
+    v13 = Builtin builtin=GlobalThis @332
+    v14 = PropGet v13 key="spoil" [isFreeName] @332
+    v15 = GetModuleVariable variable=g0 @338
+    v16 = Call v14, -, v15 calleeName="spoil" @332
+    v17 = Builtin builtin=GlobalThis @346
+    v18 = PropGet v17 key="print" [isFreeName] @346
+    v19 = Integer integer=12 @367
+    v20 = Construct v1, -, v19 calleeName="Meter" @361
+    v21 = Call v3, -, v20 calleeName="pair" @352
+    v22 = Call v18, -, v21 calleeName="print" @346
+    v23 = Builtin builtin=GlobalThis @374
+    v24 = PropGet v23 key="print" [isFreeName] @374
+    v25 = GetModuleVariable variable=g0 @389
+    v26 = Integer integer=13 @395
+    v27 = Construct v25, -, v26 calleeName="Gauge" @389
+    v28 = Call v3, -, v27 calleeName="pair" @380
+    v29 = Call v24, -, v28 calleeName="print" @374
+    v30 = Undefined @374
+    Return v30 @374
+}
+function f1 name="Gauge" module=m0 position=101 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="level" @125
+    v3 = Undefined @125
+    Return v3 @125
+}
+function f2 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f3 name="pair" module=m2 position=204 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = Undefined @233
+    v2 = Undefined @233
+    v3 = String string="read" @262
+    v4 = FindsDeclaredMember v0 key="read" @233
+    v5 = ToBoolean v4 @233
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @233
+  b1(v6):
+    v7 = GetModuleVariable variable=g0 @300
+    v8 = Integer integer=1 @306
+    v9 = Construct v7, -, v8 calleeName="Gauge" @300
+    v10 = PropGet v9 key="read" @317
+    v11 = Call v10, v9 calleeKey="read" calleeName="made.read" @322
+    ReturnCall v11 @322
+  b2(v12):
+    v13 = String string="-" @278
+    Return v13 @278
+}
+function f4 module=m2 position=69 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="read" @90
+    Return v0 @90
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

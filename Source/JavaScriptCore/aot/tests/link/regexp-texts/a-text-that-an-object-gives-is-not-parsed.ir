@@ -1,0 +1,36 @@
+# JSON.parse converts what it is handed to a text. A text that an object gives by its toString is counted by nobody in front of the call, so an object is not parsed: the answer is what nobody knows, and the rehearsal goes on.
+# const giver = { toString() { return "[12]"; } }; new RegExp("a" + JSON.parse(giver)[0]); new RegExp("b" + JSON.parse("[34]")[0]);
+# RUN: regexp-texts mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK-NOT: text /a12/
+# CHECK: text /b34/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=JSONParse
+    v2 = NewObject layout=L0
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="toString"
+    v5 = Call v1, -, v2
+    v6 = Integer
+    v7 = ElemGet v5, v6
+    v8 = String string="a"
+    v9 = Add v8, v7
+    v10 = Construct v0, -, v9
+    v11 = String string="[34]"
+    v12 = Call v1, -, v11
+    v13 = ElemGet v12, v6
+    v14 = String string="b"
+    v15 = Add v14, v13
+    v16 = Construct v0, -, v15
+    Return v6
+}
+function f1 name="toString" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="[12]"
+    Return v0
+}

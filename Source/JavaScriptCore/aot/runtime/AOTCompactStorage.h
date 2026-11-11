@@ -37,6 +37,7 @@ JS_EXPORT_PRIVATE void clear(JSGlobalObject*, JSObject* owner, JSCell* storage);
 JS_EXPORT_PRIVATE uint32_t aliveEntryCount(JSCell* storage);
 
 JS_EXPORT_PRIVATE Position transitAndNext(VM&, JSCell* storage, uint32_t entry);
+JS_EXPORT_PRIVATE Position transitAndNext(VM&, JSObject* owner, JSCell* storage, uint32_t entry);
 JS_EXPORT_PRIVATE void setIterationEntry(JSCell* storage, uint32_t entry);
 JS_EXPORT_PRIVATE uint32_t iterationEntry(JSCell* storage);
 JS_EXPORT_PRIVATE JSValue keyAt(JSCell* storage, uint32_t entry);

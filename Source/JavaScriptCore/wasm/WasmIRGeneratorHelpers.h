@@ -36,6 +36,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "LinkBuffer.h"
 #include "ProbeContext.h"
+#include "WasmBinding.h"
 #include "WasmCallee.h"
 #include "WasmCompilationContext.h"
 #include "WasmOperations.h"
@@ -144,7 +145,7 @@ static inline void emitThrowRefImpl(CCallHelpers& jit)
     jit.copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(scratch);
 
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
-    jit.callOperation<OperationPtrTag>(operationWasmRethrow);
+    callOperation(jit, operationWasmRethrow);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
 }
 
@@ -161,7 +162,7 @@ static inline void emitThrowImpl(CCallHelpers& jit, unsigned exceptionIndex)
     jit.move(MacroAssembler::TrustedImm32(exceptionIndex), GPRInfo::argumentGPR1);
     jit.move(MacroAssembler::stackPointerRegister, GPRInfo::argumentGPR2);
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
-    jit.callOperation<OperationPtrTag>(operationWasmThrow);
+    callOperation(jit, operationWasmThrow);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
 }
 
@@ -254,8 +255,12 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
 #if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.removePtrTag(scratch1);
 #endif
-    auto hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1,
-        CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress));
+    CCallHelpers::Jump hasExistingThunk;
+    if (isForImage(jit)) {
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, scratch2);
+        hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1, scratch2);
+    } else
+        hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1, CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress));
 
     JIT_COMMENT(jit, "Restore frame body for callerStackSize: ", callerStackSize, " frameSize: ", frameSize, " topSourceOffsetFromFP: ", topSourceOffsetFromFP, " restoreFrameBase: ", restoreFrameBase);
     // Lower sp so we don't write below it if we take the loop.
@@ -318,7 +323,10 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     jit.storePairPtr(scratch1, scratch2, CCallHelpers::Address(MacroAssembler::framePointerRegister, restoreFrameBase));
 #endif
     // Store current instance and callee to the frame.
-    jit.move(CCallHelpers::TrustedImm64(g_restoreFrameCalleeBoxed), scratch1);
+    if (isForImage(jit))
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameCallee, scratch1);
+    else
+        jit.move(CCallHelpers::TrustedImm64(g_restoreFrameCalleeBoxed), scratch1);
     jit.storePairPtr(currentInstanceReg, scratch1, CCallHelpers::Address(MacroAssembler::framePointerRegister, restoreFrameBase + static_cast<int32_t>(CallFrameSlot::codeBlock) * static_cast<int32_t>(sizeof(Register))));
 
     // Account for the lowering of callFrameRegister we're going to do below.
@@ -332,7 +340,10 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     jit.tagPtr(GPRInfo::callFrameRegister, ARM64Registers::lr);
     jit.storePair64(scratch1, ARM64Registers::lr, CCallHelpers::PreIndexAddress(GPRInfo::callFrameRegister, -static_cast<ptrdiff_t>(sizeof(CallerFrameAndPC))));
 #else
-    jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), scratch2);
+    if (isForImage(jit))
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, scratch2);
+    else
+        jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), scratch2);
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize), GPRInfo::callFrameRegister);
     jit.storePairPtr(scratch1, scratch2, GPRInfo::callFrameRegister);
 #endif

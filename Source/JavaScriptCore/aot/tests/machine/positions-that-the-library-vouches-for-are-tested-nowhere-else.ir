@@ -1,0 +1,6 @@
+# The library's own reads and stores of elements test nothing: its code says that the position lies below the length. So no length is read, and nothing stops.
+# RUN: emit f1 mechanisms=all
+# CHECK-NOT: Butterfly_publicLength
+# RUN(NEVER): emit f1 mechanisms=all
+# NEVER-NOT: effects = Terminal|ControlDependent
+# PROGRAM-OF: positions-that-the-library-vouches-for-are-tested-in-a-hardened-build.ir

@@ -70,7 +70,7 @@ constexpr std::array<E, numberOfEnumerators<E>> makeAllMembers()
 {
     std::array<E, numberOfEnumerators<E>> members { };
     for (unsigned i = 0; i < numberOfEnumerators<E>; ++i)
-        members[i] = static_cast<E>(isFlagWord<E> ? 1u << i : i);
+        members[i] = static_cast<E>(isFlagWord<E> ? 1ull << i : i);
     return members;
 }
 
@@ -97,7 +97,7 @@ struct EnumeratorNames {
 template<typename E, size_t count, size_t numberOfCharacters>
 static ASCIILiteral nameAt(const EnumeratorNames<count, numberOfCharacters>& names, E value)
 {
-    auto number = static_cast<uint32_t>(value);
+    auto number = static_cast<uint64_t>(value);
     if constexpr (isFlagWord<E>) {
         RELEASE_ASSERT(hasOneBitSet(number));
         number = WTF::ctz(number);
@@ -108,7 +108,7 @@ static ASCIILiteral nameAt(const EnumeratorNames<count, numberOfCharacters>& nam
 
 function enumLines(type: SchemaEnum): string[] {
   const underlying = underlyingTypeOf(type);
-  const one = underlying === "uint32_t" ? "1u" : "1";
+  const one = underlying === "uint64_t" ? "1ull" : underlying === "uint32_t" ? "1u" : "1";
   const itemOf = (member: Member) => (type.isFlags ? `${member.name} = ${one} << ${member.number}` : member.name);
   return braced(`enum class ${type.name} : ${underlying}`, type.members.map(itemOf));
 }
@@ -145,7 +145,6 @@ function columnValue(kind: ColumnKind, value: ColumnValue): string {
   }
 }
 
-/** The functor is called with the type of the member's row as its template argument, and with void for none. */
 function typeColumnLines(type: SchemaEnum, column: EnumColumn, position: number): string[] {
   const cases = type.members.map(member => ({
     label: member.name,
@@ -160,7 +159,6 @@ function typeColumnLines(type: SchemaEnum, column: EnumColumn, position: number)
 
 const bitsInWord = 64;
 
-/** A bit an enumerator. */
 function boolColumnLines(type: SchemaEnum, column: EnumColumn, position: number): string[] {
   let bits = 0n;
   type.members.forEach((member, number) => {
@@ -236,7 +234,6 @@ function declaredEnums(schema: Schema, namespace: "Wire" | "Typed"): SchemaEnum[
     .sort((left, right) => positionOf(left) - positionOf(right));
 }
 
-// A build without the compiler still answers useImage() with an ImageVerdict.
 function wireEnumsHeader(schema: Schema): string[] {
   const abi = declaredEnums(schema, "Wire");
   const includes = [
@@ -466,7 +463,6 @@ function nameFunction(type: SchemaEnum): string[] {
   }
   if (numberOfCharacters > 0xffff)
     throw new Error(`the names of ${type.name} take more characters than 16 bits number`);
-  // The zero behind the last name is the one that ends the literal.
   const literals = names.map((name, index) => `"${name}${index + 1 < names.length ? "\\0" : ""}"`);
   return [
     `ASCIILiteral nameOf(${type.name} value)`,

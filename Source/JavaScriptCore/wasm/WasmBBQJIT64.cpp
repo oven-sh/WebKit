@@ -32,6 +32,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
 
+#include "AOTRelocation.h"
 #include "B3Common.h"
 #include "B3Operations.h"
 #include "B3ValueRep.h"
@@ -49,6 +50,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "RegisterSet.h"
 #include "SIMDShuffle.h"
 #include "WasmBBQDisassembler.h"
+#include "WasmBinding.h"
+#include "WasmCallee.h"
 #include "WasmCallingConvention.h"
 #include "WasmCompilationMode.h"
 #include "WasmFaultSignalHandler.h"
@@ -64,6 +67,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "WasmTable.h"
 #include "WasmThunks.h"
 #include "WasmTypeDefinition.h"
+#include "WasmTypeDefinitionInlines.h"
 #include "WebAssemblyFunctionBase.h"
 #include "WebAssemblyGCStructure.h"
 #include <bit>
@@ -199,7 +203,7 @@ Value BBQJIT::instanceValue()
                     jit.setupArguments<decltype(operationGetWasmTableElement)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(tableIndex), TrustedImm64(constIndex));
                 else
                     jit.setupArguments<decltype(operationGetWasmTableElement)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(tableIndex), indexGPR);
-                jit.callOperation<OperationPtrTag>(operationGetWasmTableElement);
+                callOperation(jit, operationGetWasmTableElement);
                 jit.move(GPRInfo::returnValueGPR, valueGPR);
             } });
         } else {
@@ -770,7 +774,7 @@ void BBQJIT::emitAtomicStoreOp(ExtAtomicOpType storeOp, Type, Location pointer, 
 
     consume(value);
 
-    if (!(isARM64_LSE() || isX86_64())) {
+    if (!(supportsLSE() || isX86_64())) {
         emitAtomicOpGeneric(storeOp, address, scratch1GPR, scratch2GPR, [&](GPRReg, GPRReg newGPR) {
             m_jit.move(valueLocation.asGPR(), newGPR);
         });
@@ -881,7 +885,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     case ExtAtomicOpType::I64AtomicRmw16AddU:
     case ExtAtomicOpType::I64AtomicRmw32AddU:
     case ExtAtomicOpType::I64AtomicRmwAdd:
-        if (isX86() || isARM64_LSE()) {
+        if (isX86() || supportsLSE()) {
             switch (accessWidth(op)) {
             case Width8:
 #if CPU(ARM64)
@@ -930,7 +934,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     case ExtAtomicOpType::I64AtomicRmw16SubU:
     case ExtAtomicOpType::I64AtomicRmw32SubU:
     case ExtAtomicOpType::I64AtomicRmwSub:
-        if (isX86() || isARM64_LSE()) {
+        if (isX86() || supportsLSE()) {
             m_jit.move(valueLocation.asGPR(), scratchGPR);
             if (valueType.isI64())
                 m_jit.neg64(scratchGPR);
@@ -986,7 +990,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     case ExtAtomicOpType::I64AtomicRmw32AndU:
     case ExtAtomicOpType::I64AtomicRmwAnd:
 #if CPU(ARM64)
-        if (isARM64_LSE()) {
+        if (supportsLSE()) {
             m_jit.move(valueLocation.asGPR(), scratchGPR);
             if (valueType.isI64())
                 m_jit.not64(scratchGPR);
@@ -1023,7 +1027,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     case ExtAtomicOpType::I64AtomicRmw32OrU:
     case ExtAtomicOpType::I64AtomicRmwOr:
 #if CPU(ARM64)
-        if (isARM64_LSE()) {
+        if (supportsLSE()) {
             switch (accessWidth(op)) {
             case Width8:
                 m_jit.atomicXchgOr8(valueLocation.asGPR(), address, resultLocation.asGPR());
@@ -1054,7 +1058,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     case ExtAtomicOpType::I64AtomicRmw32XorU:
     case ExtAtomicOpType::I64AtomicRmwXor:
 #if CPU(ARM64)
-        if (isARM64_LSE()) {
+        if (supportsLSE()) {
             switch (accessWidth(op)) {
             case Width8:
                 m_jit.atomicXchgXor8(valueLocation.asGPR(), address, resultLocation.asGPR());
@@ -1084,7 +1088,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     case ExtAtomicOpType::I64AtomicRmw16XchgU:
     case ExtAtomicOpType::I64AtomicRmw32XchgU:
     case ExtAtomicOpType::I64AtomicRmwXchg:
-        if (isX86() || isARM64_LSE()) {
+        if (isX86() || supportsLSE()) {
             switch (accessWidth(op)) {
             case Width8:
 #if CPU(ARM64)
@@ -1277,7 +1281,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     };
 
     auto emitStrongCAS = [&](GPRReg expectedGPR, GPRReg valueGPR, GPRReg resultGPR) {
-        if (isX86_64() || isARM64_LSE()) {
+        if (isX86_64() || supportsLSE()) {
             moveNarrowedExpected(expectedGPR, resultGPR);
             switch (accessWidth) {
             case Width8:
@@ -1475,17 +1479,22 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
     size_t elementSize = rtt.elementType().type.elementSize();
     if (size.isConst()) {
         std::optional<unsigned> sizeInBytes = JSWebAssemblyArray::allocationSizeInBytes(rtt.elementType(), size.asI32());
+        if (sizeInBytes)
+            *sizeInBytes += paddingOverShapeWord(elementSize);
 
         if (sizeInBytes && sizeInBytes.value() <= MarkedSpace::largeCutoff) {
             size_t sizeClassIndex = MarkedSpace::sizeClassToIndex(sizeInBytes.value());
             m_jit.loadPtr(allocatorBufferBase.withOffset(sizeClassIndex * sizeof(Allocator)), scratchGPR2);
             JIT_COMMENT(m_jit, "Do array allocation constant sized");
-            m_jit.emitAllocateWithNonNullAllocator(resultGPR, JITAllocator::variableNonNullWithConstantCellSize(MarkedSpace::s_sizeClassForSizeStep[sizeClassIndex]), scratchGPR2, scratchGPR, slowPath, AssemblyHelpers::SlowAllocationResult::UndefinedBehavior);
+            m_jit.emitAllocateWithNonNullAllocator(resultGPR, allocatorOfSizeClass(sizeClassIndex), scratchGPR2, scratchGPR, slowPath, AssemblyHelpers::SlowAllocationResult::UndefinedBehavior);
             m_jit.load32(structureIDAddress, scratchGPR);
             m_jit.move(TrustedImm32(JSWebAssemblyArray::typeInfoBlob().blob()), scratchGPR2);
             static_assert(JSCell::structureIDOffset() + sizeof(int32_t) == JSCell::indexingTypeAndMiscOffset());
             m_jit.storePair32(scratchGPR, scratchGPR2, MacroAssembler::Address(resultGPR, JSCell::structureIDOffset()));
-            m_jit.store32(TrustedImm32(size.asI32()), MacroAssembler::Address(resultGPR, JSWebAssemblyArray::offsetOfSize()));
+            if (m_codeForImage)
+                m_jit.store64(TrustedImm64(static_cast<uint32_t>(size.asI32())), MacroAssembler::Address(resultGPR, JSWebAssemblyArray::offsetOfSize()));
+            else
+                m_jit.store32(TrustedImm32(size.asI32()), MacroAssembler::Address(resultGPR, JSWebAssemblyArray::offsetOfSize()));
         } else {
             // FIXME: emitCCall can't handle being passed a destination... which is why we just jump to the slow path here.
             slowPath.append(m_jit.jump());
@@ -1499,14 +1508,18 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
         ASSERT(hasOneBitSet(elementSize));
         m_jit.zeroExtend32ToWord(sizeLocation.asGPR(), scratchGPR);
         m_jit.lshift64(scratchGPR, TrustedImm32(getLSBSet(elementSize)), scratchGPR);
-        m_jit.add64(TrustedImm64(JSWebAssemblyArray::allocationMetadataSize(elementSize)), scratchGPR);
+        m_jit.add64(TrustedImm64(JSWebAssemblyArray::allocationMetadataSize(elementSize) + paddingOverShapeWord(elementSize)), scratchGPR);
 
         m_jit.emitAllocateVariableSized(resultGPR, JITAllocator::variableNonNull(), allocatorBufferBase, scratchGPR, scratchGPR, scratchGPR2, slowPath, AssemblyHelpers::SlowAllocationResult::UndefinedBehavior);
         m_jit.load32(structureIDAddress, scratchGPR);
         m_jit.move(TrustedImm32(JSWebAssemblyArray::typeInfoBlob().blob()), scratchGPR2);
         static_assert(JSCell::structureIDOffset() + sizeof(int32_t) == JSCell::indexingTypeAndMiscOffset());
         m_jit.storePair32(scratchGPR, scratchGPR2, MacroAssembler::Address(resultGPR, JSCell::structureIDOffset()));
-        m_jit.store32(sizeLocation.asGPR(), MacroAssembler::Address(resultGPR, JSWebAssemblyArray::offsetOfSize()));
+        if (m_codeForImage) {
+            m_jit.zeroExtend32ToWord(sizeLocation.asGPR(), scratchGPR);
+            m_jit.store64(scratchGPR, MacroAssembler::Address(resultGPR, JSWebAssemblyArray::offsetOfSize()));
+        } else
+            m_jit.store32(sizeLocation.asGPR(), MacroAssembler::Address(resultGPR, JSWebAssemblyArray::offsetOfSize()));
     }
 
     // FIXME: Ideally we'd have a way for our caller to set the label they want us to return to since e.g. addArrayNewDefault doesn't need to initialize
@@ -1519,7 +1532,7 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
             jit.setupArguments<decltype(operationWasmArrayNewEmpty)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(typeIndex.rawIndex()), TrustedImm32(size.asI32()));
         else
             jit.setupArguments<decltype(operationWasmArrayNewEmpty)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(typeIndex.rawIndex()), sizeLocation.asGPR());
-        jit.callOperation<OperationPtrTag>(operationWasmArrayNewEmpty);
+        callOperation(jit, operationWasmArrayNewEmpty);
         jit.move(GPRInfo::returnValueGPR, resultGPR);
         bbq.emitThrowOnNullReference(ExceptionType::BadArrayNew, Location::fromGPR(resultGPR));
     } });
@@ -1555,7 +1568,7 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
 
 #if ASSERT_ENABLED
         if (Wasm::isRefType(elementType.unpacked())) {
-            m_jit.probeDebug([=] (Probe::Context& context) {
+            probeDebug([=] (Probe::Context& context) {
                 auto* arrayPtr = context.gpr<JSWebAssemblyArray*>(resultGPR);
                 if (!arrayPtr->isPreciseAllocation())
                     ASSERT(arrayPtr->sizeInBytes() + JSWebAssemblyArray::allocationMetadataSize(elementType.elementSize())
@@ -2053,7 +2066,7 @@ void BBQJIT::emitArraySetUnchecked(TypeSignatureIndex typeIndex, Value arrayref,
 
 bool BBQJIT::emitStructSet(GPRReg structGPR, const RTT& structType, uint32_t fieldIndex, Value value)
 {
-    unsigned fieldOffset = JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex);
+    unsigned fieldOffset = offsetOfField(structType, fieldIndex);
     RELEASE_ASSERT((std::numeric_limits<int32_t>::max() & fieldOffset) == fieldOffset);
 
     StorageType storageType = structType.field(fieldIndex).type;
@@ -2080,17 +2093,19 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
     MacroAssembler::Address structureIDAddress(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfGCObjectStructureID(m_info, typeIndex.rawIndex()));
     Location sizeLocation;
 
-    size_t sizeInBytes = JSWebAssemblyStruct::allocationSize(rtt.instancePayloadSize());
+    size_t sizeInBytes = allocationSizeOfStruct(rtt);
 
     if (sizeInBytes <= MarkedSpace::largeCutoff) {
         size_t sizeClassIndex = MarkedSpace::sizeClassToIndex(sizeInBytes);
         m_jit.loadPtr(allocatorBufferBase.withOffset(sizeClassIndex * sizeof(Allocator)), scratchGPR2);
         JIT_COMMENT(m_jit, "Do struct allocation");
-        m_jit.emitAllocateWithNonNullAllocator(resultGPR, JITAllocator::variableNonNullWithConstantCellSize(MarkedSpace::s_sizeClassForSizeStep[sizeClassIndex]), scratchGPR2, scratchGPR, slowPath, AssemblyHelpers::SlowAllocationResult::UndefinedBehavior);
+        m_jit.emitAllocateWithNonNullAllocator(resultGPR, allocatorOfSizeClass(sizeClassIndex), scratchGPR2, scratchGPR, slowPath, AssemblyHelpers::SlowAllocationResult::UndefinedBehavior);
         m_jit.load32(structureIDAddress, scratchGPR);
         m_jit.move(TrustedImm32(JSWebAssemblyStruct::typeInfoBlob().blob()), scratchGPR2);
         static_assert(JSCell::structureIDOffset() + sizeof(int32_t) == JSCell::indexingTypeAndMiscOffset());
         m_jit.storePair32(scratchGPR, scratchGPR2, MacroAssembler::Address(resultGPR, JSCell::structureIDOffset()));
+        if (m_codeForImage)
+            m_jit.store64(TrustedImm64(0), MacroAssembler::Address(resultGPR, JSWebAssemblyStruct::offsetOfData()));
     } else {
         // FIXME: emitCCall can't handle being passed a destination... which is why we just jump to the slow path here.
         slowPath.append(m_jit.jump());
@@ -2101,7 +2116,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
     m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(done), copyBindings(), [typeIndex, resultGPR](BBQJIT& bbq, CCallHelpers& jit) {
         jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
         jit.setupArguments<decltype(operationWasmStructNewEmpty)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(typeIndex.rawIndex()));
-        jit.callOperation<OperationPtrTag>(operationWasmStructNewEmpty);
+        callOperation(jit, operationWasmStructNewEmpty);
         jit.move(GPRInfo::returnValueGPR, resultGPR);
         bbq.emitThrowOnNullReference(ExceptionType::BadStructNew, Location::fromGPR(resultGPR));
     }});
@@ -2138,7 +2153,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
 
 #if ASSERT_ENABLED
     auto debugStructType = &structType;
-    m_jit.probeDebug([=] (Probe::Context& context) {
+    probeDebug([=] (Probe::Context& context) {
         auto* structPtr = context.gpr<JSWebAssemblyStruct*>(resultGPR);
         for (unsigned i = 0; i < debugStructType->fieldCount(); ++i) {
             auto type = debugStructType->field(i).type.unpacked();
@@ -2178,7 +2193,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
 
 #if ASSERT_ENABLED
     auto debugStructType = &structType;
-    m_jit.probeDebug([=] (Probe::Context& context) {
+    probeDebug([=] (Probe::Context& context) {
         auto* structPtr = context.gpr<JSWebAssemblyStruct*>(resultGPR);
         for (unsigned i = 0; i < debugStructType->fieldCount(); ++i) {
             auto type = debugStructType->field(i).type.unpacked();
@@ -2206,7 +2221,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
         return { };
     }
 
-    unsigned fieldOffset = JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex);
+    unsigned fieldOffset = offsetOfField(structType, fieldIndex);
     RELEASE_ASSERT((std::numeric_limits<int32_t>::max() & fieldOffset) == fieldOffset);
 
     Location structLocation = loadIfNecessary(structValue);
@@ -2269,7 +2284,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
     if (isRefType(structType.field(fieldIndex).type.unpacked())) {
         auto resultGPR = resultLocation.asGPR();
         auto debugStructType = &structType;
-        m_jit.probeDebug([=] (Probe::Context& context) {
+        probeDebug([=] (Probe::Context& context) {
             auto type = debugStructType->field(fieldIndex).type.unpacked();
             validateWasmValue(context.gpr<uint64_t>(resultGPR), type);
         });
@@ -2293,7 +2308,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
         return { };
     }
 
-    unsigned fieldOffset = JSWebAssemblyStruct::offsetOfData() + structRTT.offsetOfFieldInPayload(fieldIndex);
+    unsigned fieldOffset = offsetOfField(structRTT, fieldIndex);
     RELEASE_ASSERT((std::numeric_limits<int32_t>::max() & fieldOffset) == fieldOffset);
 
     Location structLocation = loadIfNecessary(structValue);
@@ -2337,14 +2352,17 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
 
     JumpList doneCases;
     if (typedValue.type().isNullable()) {
-        if (auto offset = castAccessOffset(); Options::useWasmFaultSignalHandler() && offset && offset.value() <= maxAcceptableOffsetForNullReference()) {
+        if (auto offset = castAccessOffset(); offset && faultHandlerCatchesNullAt(offset.value())) {
             // The cast below dereferences the reference at this offset, so a null lands in the
             // guard region and the fault handler turns it into a trap. Without the handler
             // installed there is nothing to catch it, so the check must be emitted.
         } else {
             if (allowNull)
                 doneCases.append(m_jit.branchIfNull(valueGPR));
-            else
+            else if (m_codeForImage && castKind == CastKind::Cast && isTypeIndexHeapType(toHeapType)) {
+                // The trap that the fault handler raises, and the interpreter: the flavors of a function differ in nothing that a program sees.
+                recordJumpToThrowException(ExceptionType::NullAccess, m_jit.branchIfNull(valueGPR));
+            } else
                 failureCases.append(m_jit.branchIfNull(valueGPR));
         }
     }
@@ -2389,7 +2407,7 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
                 failureCases.append(m_jit.branchIfNotCell(valueGPR, DoNotHaveTagRegisters));
             if (!typedValue.type().definitelyIsWasmGCObjectOrNull())
                 failureCases.append(m_jit.branchIfNotType(valueGPR, JSType::WebAssemblyGCObjectType));
-            m_jit.emitLoadStructure(valueGPR, wasmScratchGPR);
+            emitLoadStructure(valueGPR, wasmScratchGPR);
             m_jit.loadPtr(Address(wasmScratchGPR, WebAssemblyGCStructure::offsetOfRTT()), wasmScratchGPR);
             failureCases.append(m_jit.branch8(CCallHelpers::NotEqual, Address(wasmScratchGPR, RTT::offsetOfKind()), TrustedImm32(static_cast<int32_t>(static_cast<TypeKind>(toHeapType) == Wasm::TypeKind::Arrayref ? RTTKind::Array : RTTKind::Struct))));
             break;
@@ -2415,7 +2433,7 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
                     return;
                 }
 
-                m_jit.emitLoadStructure(valueGPR, wasmScratchGPR);
+                emitLoadStructure(valueGPR, wasmScratchGPR);
                 if (targetRTT->displaySizeExcludingThis() < WebAssemblyGCStructure::inlinedDisplaySize) {
                     m_jit.load32(Address(wasmScratchGPR, WebAssemblyGCStructure::offsetOfInlinedDisplay() + targetRTT->displaySizeExcludingThis() * sizeof(WriteBarrierStructureID)), wasmScratchGPR);
                     failureCases.append(m_jit.branch32(CCallHelpers::NotEqual, wasmScratchGPR, Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfGCObjectStructureID(m_info, toHeapType))));
@@ -2427,12 +2445,12 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
 
             if (targetRTT->isFinalType()) {
                 // If signature is final type and pointer equality failed, this value must not be a subtype.
-                failureCases.append(m_jit.branchPtr(CCallHelpers::NotEqual, wasmScratchGPR, TrustedImmPtr(targetRTT.ptr())));
+                failureCases.append(branchRTT(CCallHelpers::NotEqual, wasmScratchGPR, targetRTT.get()));
             } else {
-                doneCases.append(m_jit.branchPtr(CCallHelpers::Equal, wasmScratchGPR, TrustedImmPtr(targetRTT.ptr())));
+                doneCases.append(branchRTT(CCallHelpers::Equal, wasmScratchGPR, targetRTT.get()));
                 if (targetRTT->displaySizeExcludingThis() >= RTT::inlinedDisplaySize)
                     failureCases.append(m_jit.branch32(CCallHelpers::BelowOrEqual, Address(wasmScratchGPR, RTT::offsetOfDisplaySizeExcludingThis()), TrustedImm32(targetRTT->displaySizeExcludingThis())));
-                failureCases.append(m_jit.branchPtr(CCallHelpers::NotEqual, Address(wasmScratchGPR, (RTT::offsetOfData() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>))), TrustedImmPtr(targetRTT.ptr())));
+                failureCases.append(branchRTT(CCallHelpers::NotEqual, Address(wasmScratchGPR, (RTT::offsetOfData() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>))), targetRTT.get()));
             }
         }());
     }
@@ -2744,10 +2762,8 @@ void BBQJIT::emitThrowOnNullReference(ExceptionType type, Location ref)
 
 void BBQJIT::emitThrowOnNullReferenceBeforeAccess(Location ref, ptrdiff_t offset)
 {
-    if (Options::useWasmFaultSignalHandler()) {
-        if (offset <= maxAcceptableOffsetForNullReference())
-            return;
-    }
+    if (faultHandlerCatchesNullAt(offset))
+        return;
     emitThrowOnNullReference(ExceptionType::NullAccess, ref);
 }
 
@@ -3595,14 +3611,13 @@ void BBQJIT::restoreWebAssemblyGlobalState()
 
 void BBQJIT::restoreWebAssemblyGlobalStateAfterWasmCall()
 {
-    if (m_info.memoryCount() && (m_mode == MemoryMode::Signaling || m_info.memory(0).isShared())) {
+    if (m_info.memoryCount() && (modeOfMemory0() == MemoryMode::Signaling || m_info.memory(0).isShared())) {
         // If memory is signaling or shared, then memoryBase and memorySize will not change. This means that only thing we should check here is GPRInfo::wasmContextInstancePointer is the same or not.
         // Let's consider the case, this was calling a JS function. So it can grow / modify memory whatever. But memoryBase and memorySize are kept the same in this case.
         m_jit.loadPtr(Address(GPRInfo::callFrameRegister, CallFrameSlot::codeBlock * sizeof(Register)), wasmScratchGPR);
         Jump isSameInstanceAfter = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
         m_jit.move(wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
-        m_jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-        m_jit.cageConditionally(Gigacage::Primitive, wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister, wasmScratchGPR);
+        loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
         isSameInstanceAfter.link(&m_jit);
     } else
         restoreWebAssemblyGlobalState();
@@ -4196,7 +4211,10 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
             return { };
         }
 
-        m_jit.loadVector(TrustedImmPtr(vectorBitmaskTower(info.lane)), wasmScratchFPR);
+        if (m_codeForImage)
+            materializeVectorConstant(*vectorBitmaskTower(info.lane), Location::fromFPR(wasmScratchFPR));
+        else
+            m_jit.loadVector(TrustedImmPtr(vectorBitmaskTower(info.lane)), wasmScratchFPR);
 
         {
             ScratchScope<0, 1> scratches(*this, valueLocation, resultLocation);
@@ -5216,8 +5234,13 @@ void BBQJIT::emitMove(StorageType type, Value src, Address dst)
             } else
                 calleeLocation = loadIfNecessary(callee);
             consume(callee);
-            if (typedCallee.type().isNullable())
-                emitThrowOnNullReferenceBeforeAccess(calleeLocation, WebAssemblyFunctionBase::offsetOfTargetInstance());
+            if (typedCallee.type().isNullable()) {
+                // The interpreter names the instruction in its message, and a program that is compiled ahead of time says what it says on its first call under the interpreter.
+                if (m_codeForImage)
+                    emitThrowOnNullReference(ExceptionType::NullReference, calleeLocation);
+                else
+                    emitThrowOnNullReferenceBeforeAccess(calleeLocation, WebAssemblyFunctionBase::offsetOfTargetInstance());
+            }
 
             GPRReg calleePtr = calleeLocation.asGPR();
             m_jit.addPtr(TrustedImm32(WebAssemblyFunctionBase::offsetOfImportableFunction()), calleePtr, importableFunction);
@@ -5229,6 +5252,218 @@ void BBQJIT::emitMove(StorageType type, Value src, Address dst)
     else
         emitIndirectTailCall("ReturnCallRef", callee, importableFunction, signature, args);
     return { };
+}
+
+MemoryMode BBQJIT::modeOfMemory0()
+{
+    if (m_codeForImage)
+        m_codeForImage->dependsOnFlavor = true;
+    return m_mode;
+}
+
+MemoryMode BBQJIT::memoryModeForAccess(unsigned memoryIndex)
+{
+    bool followsMemory0 = m_info.memoryModeForAccess(memoryIndex, MemoryMode::Signaling) == MemoryMode::Signaling;
+    return followsMemory0 ? modeOfMemory0() : MemoryMode::BoundsChecking;
+}
+
+bool BBQJIT::faultHandlerCatchesNullAt(ptrdiff_t offsetOfAccess)
+{
+    if (!m_codeForImage)
+        return Options::useWasmFaultSignalHandler() && offsetOfAccess <= maxAcceptableOffsetForNullReference();
+
+    // As maxAcceptableOffsetForNullReference(), for whichever process runs the code.
+    constexpr ptrdiff_t maxOffset = lowestAccessibleAddressOfEveryTarget - static_cast<ptrdiff_t>(JSValue::ValueNull) - static_cast<ptrdiff_t>(sizeof(v128_t) * 2);
+    if (offsetOfAccess > maxOffset)
+        return false;
+    m_codeForImage->dependsOnFlavor = true;
+    return m_codeForImage->flavor == ImageCodeFlavor::Trapping;
+}
+
+bool BBQJIT::supportsLSE() const
+{
+#if CPU(ARM64)
+    return m_codeForImage ? m_jit.supportsLSE() : isARM64_LSE();
+#else
+    return false;
+#endif
+}
+
+RegisterSet BBQJIT::registersSavedByEveryFunction() const
+{
+    // GPRInfo::jitDataRegister holds the profile, and code for an image keeps none: there the register is one more for a local.
+    return m_codeForImage ? RegisterSet() : RegisterSet::bbqCalleeSaveRegisters();
+}
+
+JITAllocator BBQJIT::allocatorOfSizeClass(size_t sizeClassIndex) const
+{
+    // The sizes of cells follow Options::sizeClassProgression(), and a process that runs an image has another one than the process that builds it.
+    if (m_codeForImage)
+        return JITAllocator::variableNonNull();
+    return JITAllocator::variableNonNullWithConstantCellSize(MarkedSpace::s_sizeClassForSizeStep[sizeClassIndex]);
+}
+
+const StructLayoutInImage* BBQJIT::layoutInImage(const RTT& structType)
+{
+    std::optional<uint32_t> type = m_codeForImage->typeIndices.getOptional(&structType);
+    if (type)
+        return &m_codeForImage->structLayouts[*type];
+    if (m_codeForImage->failure == ImageCodeFailure::None)
+        m_codeForImage->failure = ImageCodeFailure::NamesTypeOfOtherModule;
+    return nullptr;
+}
+
+unsigned BBQJIT::offsetOfField(const RTT& structType, StructFieldCount fieldIndex)
+{
+    if (!m_codeForImage)
+        return JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex);
+    auto* layout = layoutInImage(structType);
+    return JSWebAssemblyStruct::offsetOfData() + (layout ? layout->offsetsOfFieldsInPayload[fieldIndex] : 0);
+}
+
+size_t BBQJIT::allocationSizeOfStruct(const RTT& structType)
+{
+    if (!m_codeForImage)
+        return JSWebAssemblyStruct::allocationSize(structType.instancePayloadSize());
+    auto* layout = layoutInImage(structType);
+    return JSWebAssemblyStruct::allocationSize(layout ? layout->payloadSize : 0);
+}
+
+ptrdiff_t BBQJIT::paddingOverShapeWord(size_t elementSize) const
+{
+    static_assert(JSWebAssemblyArray::offsetOfSize() + static_cast<ptrdiff_t>(sizeof(uint64_t)) == JSWebAssemblyArray::offsetPastShapeWord);
+    static_assert(structPayloadOffsetPastShapeWord == sizeof(uint64_t));
+    return m_codeForImage ? JSWebAssemblyArray::paddingOverShapeWordInCompiledProcess(elementSize) : 0;
+}
+
+void BBQJIT::emitMoveBoxedCallee(GPRReg dest)
+{
+    if (m_codeForImage) {
+        loadImagePointer(m_jit, GPRInfo::wasmContextInstancePointer, m_codeForImage->pointers.callee(m_functionIndex), dest);
+        return;
+    }
+    m_jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(&m_callee)), dest);
+}
+
+void BBQJIT::emitLoadStructure(GPRReg cell, GPRReg dest)
+{
+    if (!m_codeForImage) {
+        m_jit.emitLoadStructure(cell, dest);
+        return;
+    }
+    GPRReg base = m_jit.scratchRegister();
+    ASSERT(noOverlap(base, cell, dest));
+    m_jit.load32(Address(cell, JSCell::structureIDOffset()), dest);
+    loadImagePointer(m_jit, GPRInfo::wasmContextInstancePointer, ImagePointerTable::structureIDBase, base);
+    m_jit.or64(base, dest);
+}
+
+void BBQJIT::loadRTTInImage(const RTT& rtt, GPRReg dest)
+{
+    std::optional<uint32_t> type = m_codeForImage->typeIndices.getOptional(&rtt);
+    if (!type) {
+        if (m_codeForImage->failure == ImageCodeFailure::None)
+            m_codeForImage->failure = ImageCodeFailure::NamesTypeOfOtherModule;
+        m_jit.move(TrustedImm32(0), dest);
+        return;
+    }
+    loadImagePointer(m_jit, GPRInfo::wasmContextInstancePointer, m_codeForImage->pointers.rtt(TypeSignatureIndex(*type)), dest);
+}
+
+BBQJIT::Jump BBQJIT::branchRTT(RelationalCondition condition, GPRReg left, const RTT& right)
+{
+    if (!m_codeForImage)
+        return m_jit.branchPtr(condition, left, TrustedImmPtr(&right));
+    GPRReg scratch = m_jit.scratchRegister();
+    ASSERT(left != scratch);
+    loadRTTInImage(right, scratch);
+    return m_jit.branchPtr(condition, left, scratch);
+}
+
+BBQJIT::Jump BBQJIT::branchRTT(RelationalCondition condition, Address left, const RTT& right)
+{
+    if (!m_codeForImage)
+        return m_jit.branchPtr(condition, left, TrustedImmPtr(&right));
+    GPRReg scratch = m_jit.scratchRegister();
+    ASSERT(left.base != scratch);
+    loadRTTInImage(right, scratch);
+    return m_jit.branchPtr(condition, left, scratch);
+}
+
+void BBQJIT::emitCallOfOperation(void* taggedOperation)
+{
+    if (m_codeForImage) {
+        callOperation(m_jit, CodePtr<OperationPtrTag>::fromTaggedPtr(taggedOperation));
+        return;
+    }
+    m_jit.move(TrustedImmPtr(std::bit_cast<uintptr_t>(taggedOperation)), wasmScratchGPR);
+    m_jit.call(wasmScratchGPR, OperationPtrTag);
+}
+
+void BBQJIT::emitNearCallInImage(uint32_t symbol)
+{
+#if ENABLE(AOT)
+    m_codeForImage->recorder.call({ AOT::SymbolSpace::WebAssembly, symbol });
+#else
+    UNUSED_PARAM(symbol);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+void BBQJIT::emitNearJumpInImage(uint32_t symbol)
+{
+#if ENABLE(AOT)
+    m_codeForImage->recorder.jump({ AOT::SymbolSpace::WebAssembly, symbol });
+#else
+    UNUSED_PARAM(symbol);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+void BBQJIT::emitJumpToImageStub(ImageStub stub)
+{
+    emitNearJumpInImage(imageSymbolOf(stub));
+}
+
+// The other instance may be of a module without code in the image, which has no pointer table: whatever the table is asked, it is asked in front of the switch.
+void BBQJIT::emitSwitchToInstanceOf(GPRReg importableFunction)
+{
+    ASSERT(noOverlap(importableFunction, wasmScratchGPR, GPRInfo::wasmContextInstancePointer));
+    emitPrepareToCageMemoryBase(m_jit, GPRInfo::wasmContextInstancePointer, wasmScratchGPR);
+    m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), GPRInfo::wasmContextInstancePointer);
+    m_jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
+    emitCageMemoryBase(m_jit, wasmScratchGPR);
+}
+
+// wasmScratchGPR holds the index of an entry. The table follows the jump, and an entry is the distance from the start of the table to its target.
+MacroAssembler::Label BBQJIT::emitJumpThroughTableInImage(unsigned numberOfEntries)
+{
+    GPRReg table = m_jit.scratchRegister();
+    MacroAssembler::Label site = m_jit.movePCRelativeAddress(table, PCRelativeReach::Near);
+    m_jit.load32SignedExtendTo64(BaseIndex(table, wasmScratchGPR, MacroAssembler::TimesFour), wasmScratchGPR);
+    m_jit.addPtr(table, wasmScratchGPR);
+    m_jit.farJump(wasmScratchGPR, JSSwitchPtrTag);
+
+    MacroAssembler::Label start = m_jit.label();
+    for (unsigned entry = 0; entry < numberOfEntries; ++entry)
+        m_jit.m_assembler.buffer().putInt(0);
+    m_jit.addLinkTask([site, start](LinkBuffer& linkBuffer) {
+        bool isInReach = linkBuffer.link(site, RelocationKind::AddressNear, start);
+        RELEASE_ASSERT(isInReach);
+    });
+    return start;
+}
+
+void BBQJIT::linkTableInImage(MacroAssembler::Label table, Vector<Box<CCallHelpers::Label>>&& targets)
+{
+    m_jit.addLinkTask([table, targets = WTF::move(targets)](LinkBuffer& linkBuffer) {
+        auto* entries = static_cast<uint8_t*>(linkBuffer.locationOf<JSSwitchPtrTag>(table).dataLocation());
+        int64_t start = linkBuffer.offsetOf(table);
+        for (unsigned index = 0; index < targets.size(); ++index) {
+            int32_t distance = safeCast<int32_t>(static_cast<int64_t>(linkBuffer.offsetOf(*targets[index])) - start);
+            memcpy(entries + index * sizeof(distance), &distance, sizeof(distance));
+        }
+    });
 }
 
 } } } // namespace JSC::Wasm::BBQJITImpl

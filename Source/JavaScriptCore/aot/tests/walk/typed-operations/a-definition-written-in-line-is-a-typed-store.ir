@@ -1,0 +1,84 @@
+# declare function print(value: any): void;
+# declare const which: number;
+# type Rec = { a: number; b?: string | undefined };
+# function make(value: string | undefined): Rec { const o: Rec = { a: 1 }; Object.defineProperty(o, "b", { value: value, writable: true, enumerable: true, configurable: true }); return o; }
+# function read(o: Rec): string { return typeof o.b; }
+# print(read(make(which > 0 ? "text" : undefined)));
+# print("went on");
+# A DEFINITION WRITTEN IN LINE IS A TYPED STORE. Where the type as built of the value of Object.defineProperty() fits the slot, the emitter writes it straight into the slot (SlotAccessEmitter::tryCreateFieldByDefinition()).
+# Every road into a parameter asks (isEnforced(ProofSource::EntryParameter)), so the parameter shows its type, and the floor, which asks in front of a definition as in front of PutSlot, PutSlotOrAdd and NewObject, has nothing to ask here.
+# RUN(DEFINED): walk f1 mechanisms=all-Inlining
+# DEFINED-LABEL: code f1:Body
+# DEFINED: b0([[value]]: undefined|"text" @JSValue
+# DEFINED-NOT: CheckProof
+# DEFINED: = DefineOwnProperty {{*}}, {{*}}, [[value]] descriptorFlags=
+# RUN(TEXT): run-in-shell mechanisms=-Inlining globalThis.which = 1;
+# TEXT: string
+# TEXT: went on
+# RUN(NOTHING): run-in-shell mechanisms=-Inlining globalThis.which = 0;
+# NOTHING: undefined
+# NOTHING: went on
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L1 module=m0 position=76 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]} flags=[IsNeverWritten]}] ownFieldCount=2
+data d0 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @362
+    v5 = PropGet v4 key="print" [isFreeName] @362
+    v6 = Builtin builtin=GlobalThis @378
+    v7 = PropGet v6 key="which" [isFreeName] @378
+    v8 = Integer @386
+    v9 = Greater v7, v8 @386
+    Branch v9 -> taken b1(), notTaken b2() @386
+  b1():
+    v10 = String string="text" @390
+    Jump -> next b3(v10) @390
+  b2():
+    v11 = Undefined @399
+    Jump -> next b3(v11) @399
+  b3(v12):
+    v13 = Call v1, -, v12 calleeName="make" @373
+    v14 = Call v3, -, v13 calleeName="read" @368
+    v15 = Call v5, -, v14 calleeName="print" @362
+    v16 = Builtin builtin=GlobalThis @413
+    v17 = PropGet v16 key="print" [isFreeName] @413
+    v18 = String string="went on" @419
+    v19 = Call v17, -, v18 calleeName="print" @413
+    v20 = Undefined @413
+    Return v20 @413
+}
+function f1 name="make" module=m0 position=121 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Data data=d0 @184
+    v2 = Convert v1 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} @184
+    v3 = Builtin builtin=Object @194
+    v4 = Builtin builtin=ObjectDefineProperty @194
+    v5 = String string="b" @219
+    v6 = Boolean boolean=true @250
+    v7 = Convert v6 declared={type=undefined|boolean} @250
+    v8 = Boolean boolean=true @268
+    v9 = Convert v8 declared={type=undefined|boolean} @268
+    v10 = Boolean boolean=true @288
+    v11 = Convert v10 declared={type=undefined|boolean} @288
+    v12 = NewObject -, v0, v7, v9, v11 layout=L0 fields=[4, 5, 1, 0] @224
+    v13 = FinishObject v12 @224
+    v14 = Call v4, v3, v2, v5, v13 calleeName="Object.defineProperty" @201
+    v15 = Convert v14 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @194
+    Return v2 @304
+}
+function f2 name="read" module=m0 position=309 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="b" @355
+    v2 = TypeOf v1 @348
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @348
+    Return v3 @348
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

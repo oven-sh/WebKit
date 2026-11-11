@@ -1,0 +1,55 @@
+# The rows of the table say of a Set what they say of a list: an instance that is as it was made finds the engine's method under @@iterator, which makes an iterator that nobody gets hold of, whose `next` is the engine's for good and which has no `return`.
+# So a loop over one steps the table as %SetIteratorPrototype%.next does: the entry and the table that it counts in come round in parameters of the head. The step that finds nothing leaves the loop, so no step asks whether an earlier one has found the end.
+# What is added, deleted or cleared in the loop is seen as the iterator sees it: the step follows a table that was replaced. No iterator, no result object, no call.
+# function each(set: Set<number>) { for (const member of set) keep(member); }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: [[isSet]]: boolean {{*}} = TypeTest [[given]] testedType=Set
+# CHECK: [[proven]]: Set{{*}} = Narrowed [[given]], [[isSet]]
+# CHECK: = IsPristine [[proven]] builtinClass=Set aspects=[Names]
+# CHECK: = CollectionTable
+# CHECK: ([[set]]: undefined|Set{{*}}, [[iterator]]: {{*}}, [[next]]: {{*}}, {{*}}):
+# CHECK: ([[entry]]: int[0, 34359738368] {{*}}, [[table]]: anything {{*}}isLoopHead=true
+# CHECK: = TypeTest [[set]] testedType=Set
+# CHECK: = SetNext {{*}}, [[table]], [[entry]]
+# CHECK: = CollectionTable
+# RUN(ARM): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# ARM: = Call [[next]], [[iterator]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# NEVER-NOT: NewHeapWords
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations
+# WITHHELD-NOT: SetNext
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Set<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}

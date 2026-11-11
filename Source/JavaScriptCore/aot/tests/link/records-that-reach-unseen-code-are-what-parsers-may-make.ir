@@ -1,0 +1,35 @@
+# a maker that nobody has seen may make objects of a record only where the proven reading has given the layout up: some object of it reaches unseen code, so every field holds anything and no read goes without a look
+# sink({ value: 1, issues: 1 }, { a: 1 }.a, { run: () => 1 });
+# the record that stays with compiled code is held closed, and a store that does not fit would end the process: it is not listed. No text makes a function, so a record that is written to hold one is not listed either
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 {{*}}stays-with-compiled-code
+# CHECK: parsers-may-make L0
+# CHECK-NOT: parsers-may-make L1
+# CHECK-NOT: parsers-may-make L2
+
+layout L0 module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="issues" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = PropGet v6 key="a"
+    v8 = NewClosure function=f1
+    v9 = NewObject -, v8 layout=L2 fields=[0]
+    v10 = FinishObject v9
+    v11 = Call v1, -, v4, v7, v10
+    Return v11
+}
+function f1 name="run" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

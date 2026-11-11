@@ -1,0 +1,46 @@
+# function Sym(a) { this.a = a; this.b = a; this.c = a; }
+# Sym.prototype = Sym.prototype; show(Sym); show(new Sym(size));
+# RUN(PASSES): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") print(JSON.stringify(x)); };
+# PASSES: {"a":3,"b":3,"c":3}
+# PASSES-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") print(JSON.stringify(x)); else Object.defineProperty(x.prototype, "b", { set(v) { this.z = v; } }); };
+# SETTER: {"a":3,"z":3,"c":3}
+# SETTER-NEXT: exited with 0
+# RUN(BELOW): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") print(JSON.stringify(x), x.marked); else x.prototype = { marked: 1 }; };
+# BELOW: {"a":3,"b":3,"c":3} 1
+# BELOW-NEXT: exited with 0
+# RUN(FREEZES): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x === "object") print(JSON.stringify(x)); else Object.defineProperty(x.prototype, "b", { set(v) { Object.freeze(this); } }); };
+# FREEZES: Exception: TypeError
+# FREEZES: exited with 3
+# RUN(THROWS): run-in-shell globalThis.size = 3; globalThis.show = (x) => { if (typeof x !== "object") Object.defineProperty(x.prototype, "b", { set(v) { throw "stop"; } }); };
+# THROWS: Exception: stop
+# THROWS-NEXT: exited with 3
+
+layout L0 kind=Instance name="Sym" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="Sym" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="size" [isFreeName]
+    v2 = PropGet v0 key="show" [isFreeName]
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="prototype"
+    PropSet v3, v4 key="prototype"
+    v6 = Call v2, -, v3 calleeName="show"
+    v7 = Construct v3, -, v1 calleeName="Sym"
+    v8 = Call v2, -, v7 calleeName="show"
+    Return v8
+}
+function f1 name="Sym" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="a"
+    v4 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v4, v1 key="b"
+    v6 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v6, v1 key="c"
+    v8 = Undefined
+    Return v8
+}

@@ -11,12 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class EffectSummaries;
-class Program;
-struct Function;
-struct Terminator;
-struct Value;
-
 class ThrowEffect {
 public:
     constexpr ThrowEffect(bool mayThrow = true)
@@ -33,7 +27,6 @@ public:
         return result;
     }
 
-    // Entering a function overflows the stack.
     static constexpr ThrowEffect onlyStackOverflow()
     {
         ThrowEffect result = onlyForLackOfMemory();
@@ -44,6 +37,7 @@ public:
     constexpr operator bool() const { return m_mayThrow; }
     constexpr bool otherThanStackOverflow() const { return m_mayThrowOtherThanStackOverflow; }
     constexpr bool byRule() const { return m_mayThrowByRule; }
+    constexpr bool isDeclaredOnlyForLackOfMemory() const { return m_mayThrowOtherThanStackOverflow && !m_mayThrowByRule; }
 
     constexpr ThrowEffect& operator|=(ThrowEffect other)
     {
@@ -53,16 +47,20 @@ public:
         return *this;
     }
 
-    constexpr ThrowEffect intersectedWith(ThrowEffect other) const
+    constexpr ThrowEffect& operator&=(ThrowEffect other)
     {
-        ThrowEffect result(m_mayThrow && other.m_mayThrow);
-        result.m_mayThrowOtherThanStackOverflow = m_mayThrowOtherThanStackOverflow && other.m_mayThrowOtherThanStackOverflow;
-        result.m_mayThrowByRule = m_mayThrowByRule && other.m_mayThrowByRule;
-        return result;
+        m_mayThrow &= other.m_mayThrow;
+        m_mayThrowOtherThanStackOverflow &= other.m_mayThrowOtherThanStackOverflow;
+        m_mayThrowByRule &= other.m_mayThrowByRule;
+        return *this;
     }
 
-    constexpr bool isSubsetOf(ThrowEffect other) const { return !m_mayThrow || other.m_mayThrow; }
-    constexpr bool saysNoMoreThan(ThrowEffect other) const { return isSubsetOf(other) && (!m_mayThrowOtherThanStackOverflow || other.m_mayThrowOtherThanStackOverflow) && (!m_mayThrowByRule || other.m_mayThrowByRule); }
+    constexpr bool isSubsetOf(ThrowEffect other) const
+    {
+        return (!m_mayThrow || other.m_mayThrow)
+            && (!m_mayThrowOtherThanStackOverflow || other.m_mayThrowOtherThanStackOverflow)
+            && (!m_mayThrowByRule || other.m_mayThrowByRule);
+    }
 
     friend constexpr bool operator==(ThrowEffect, ThrowEffect) = default;
 
@@ -74,12 +72,13 @@ private:
 
 struct Effects {
     LocationMasks reads { LocationMasks::top() };
-    LocationMasks writes { LocationMasks::top() };
+    NO_UNIQUE_ADDRESS LocationMasks writes { LocationMasks::top() };
     ThrowEffect mayThrow { true };
     bool mayCollect : 1 { true };
     bool mayCallUnknownCode : 1 { true };
     bool maySuspend : 1 { true };
     bool mayBeTerminated : 1 { true };
+    bool writesObjectsMadeHereAlone : 1 { false };
 
     static constexpr Effects none()
     {
@@ -91,8 +90,14 @@ struct Effects {
         return { .reads = LocationMasks::top(), .writes = LocationMasks::top(), .mayThrow = true, .mayCollect = true, .mayCallUnknownCode = true, .maySuspend = false, .mayBeTerminated = true };
     }
 
-    constexpr bool isPure() const { return *this == none(); }
-    constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
+    static constexpr Effects ofReadByNameThatRunsNoCode()
+    {
+        return { .reads = LocationMasks::top(), .writes = LocationMasks::top().restrictedTo(unobservableWriteHeaps), .mayThrow = ThrowEffect::onlyForLackOfMemory(), .mayCollect = true, .mayCallUnknownCode = false, .maySuspend = false, .mayBeTerminated = false };
+    }
+
+    constexpr bool isPure() const { return reads.isEmpty() && writes.isEmpty() && mayThrow == ThrowEffect(false) && !mayCollect && !mayCallUnknownCode && !maySuspend && !mayBeTerminated; }
+    constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(unobservableWriteHeaps) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
+    constexpr bool mayBeRunAgainUnseen() const { return writes.containsOnly(unobservableWriteHeaps) && !mayRunOtherCode(); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow; }
     constexpr bool mayThrowByRule() const { return mayThrow.byRule(); }
     constexpr bool mayThrowOtherThanStackOverflow() const { return mayThrow.otherThanStackOverflow(); }
@@ -100,46 +105,45 @@ struct Effects {
     constexpr bool mayRunOtherCode() const { return maySuspend || mayCallUnknownCode; }
     constexpr bool mayExitSideways() const { return mayThrow || mayBeTerminated || mayRunOtherCode(); }
 
-    constexpr bool interferesWith(const Effects& other) const
+    ALWAYS_INLINE constexpr void merge(const Effects& other)
     {
-        return orderedWrites().overlaps(other.writes)
-            || orderedWrites().overlaps(other.reads)
-            || orderedReads().overlaps(other.writes)
-            || (mayExitSideways() && other.mayExitSideways())
-            || (mayExitSideways() && !other.orderedWrites().isEmpty())
-            || (other.mayExitSideways() && !orderedWrites().isEmpty())
-            || (mayRunOtherCode() && !other.orderedReads().isEmpty())
-            || (other.mayRunOtherCode() && !orderedReads().isEmpty());
-    }
-
-    constexpr bool merge(const Effects& other)
-    {
-        bool changed = reads.merge(other.reads);
-        changed |= writes.merge(other.writes);
-        changed |= !other.mayThrow.saysNoMoreThan(mayThrow)
-            || (other.mayCollect && !mayCollect)
-            || (other.mayCallUnknownCode && !mayCallUnknownCode)
-            || (other.maySuspend && !maySuspend)
-            || (other.mayBeTerminated && !mayBeTerminated);
+        if (other.writes.containsAny(perObjectHeaps))
+            writesObjectsMadeHereAlone = other.writesObjectsMadeHereAlone && (writesObjectsMadeHereAlone || !writes.containsAny(perObjectHeaps));
+        reads.merge(other.reads);
+        writes.merge(other.writes);
         mayThrow |= other.mayThrow;
         mayCollect |= other.mayCollect;
         mayCallUnknownCode |= other.mayCallUnknownCode;
         maySuspend |= other.maySuspend;
         mayBeTerminated |= other.mayBeTerminated;
-        return changed;
+    }
+
+    constexpr void intersect(const Effects& other)
+    {
+        reads.intersect(other.reads);
+        writes.intersect(other.writes);
+        mayThrow &= other.mayThrow;
+        mayCollect &= other.mayCollect;
+        mayCallUnknownCode &= other.mayCallUnknownCode;
+        maySuspend &= other.maySuspend;
+        mayBeTerminated &= other.mayBeTerminated;
+        writesObjectsMadeHereAlone &= other.writesObjectsMadeHereAlone;
     }
 
     constexpr Effects intersectedWith(const Effects& other) const
     {
-        return {
+        Effects result {
             .reads = reads.intersectedWith(other.reads),
             .writes = writes.intersectedWith(other.writes),
-            .mayThrow = mayThrow.intersectedWith(other.mayThrow),
+            .mayThrow = mayThrow,
             .mayCollect = mayCollect && other.mayCollect,
             .mayCallUnknownCode = mayCallUnknownCode && other.mayCallUnknownCode,
             .maySuspend = maySuspend && other.maySuspend,
             .mayBeTerminated = mayBeTerminated && other.mayBeTerminated,
+            .writesObjectsMadeHereAlone = writesObjectsMadeHereAlone && other.writesObjectsMadeHereAlone
         };
+        result.mayThrow &= other.mayThrow;
+        return result;
     }
 
     constexpr bool isSubsetOf(const Effects& other) const
@@ -150,87 +154,50 @@ struct Effects {
             && (!mayCollect || other.mayCollect)
             && (!mayCallUnknownCode || other.mayCallUnknownCode)
             && (!maySuspend || other.maySuspend)
-            && (!mayBeTerminated || other.mayBeTerminated);
+            && (!mayBeTerminated || other.mayBeTerminated)
+            && (!other.writesObjectsMadeHereAlone || writesObjectsMadeHereAlone || !writes.containsAny(perObjectHeaps));
     }
-
-    constexpr Effects withoutSuspension() const
-    {
-        Effects result = *this;
-        result.maySuspend = false;
-        return result;
-    }
-
-    void dump(PrintStream&) const;
 
     friend constexpr bool operator==(const Effects&, const Effects&) = default;
-
-private:
-    constexpr LocationMasks orderedReads() const { return reads.restrictedTo(orderedHeaps); }
-    constexpr LocationMasks orderedWrites() const { return writes.restrictedTo(orderedHeaps); }
 };
 
-struct EffectsOnEdges {
-    Effects normal;
-    Effects handler;
-
-    static constexpr EffectsOnEdges none() { return { Effects::none(), Effects::none() }; }
-    static constexpr EffectsOnEdges onBothEdges(const Effects& effects) { return { effects, effects.mayThrow ? effects : Effects::none() }; }
-    static constexpr EffectsOnEdges unknownCode() { return onBothEdges(Effects::unknownCode()); }
-
-    constexpr bool mayThrow() const { return normal.mayThrow; }
-
-    constexpr Effects onAnyEdge() const
-    {
-        Effects result = normal;
-        result.merge(handler);
-        return result;
-    }
-
-    constexpr bool merge(const EffectsOnEdges& other)
-    {
-        bool changed = normal.merge(other.normal);
-        changed |= handler.merge(other.handler);
-        return changed;
-    }
-
-    constexpr EffectsOnEdges intersectedWith(const EffectsOnEdges& other) const
-    {
-        return { normal.intersectedWith(other.normal), handler.intersectedWith(other.handler) };
-    }
-
-    constexpr bool isSubsetOf(const EffectsOnEdges& other) const { return normal.isSubsetOf(other.normal) && handler.isSubsetOf(other.handler); }
-
-    void dump(PrintStream&) const;
-
-    friend constexpr bool operator==(const EffectsOnEdges&, const EffectsOnEdges&) = default;
-};
+#if CPU(X86_64) && OS(LINUX)
+static_assert(sizeof(Effects) == 128);
+#endif
 
 class EffectTraits {
 public:
+    static constexpr unsigned numberOfBits = 9;
+
     constexpr EffectTraits() = default;
 
-    constexpr EffectTraits(const Effects& effects)
+    ALWAYS_INLINE constexpr EffectTraits(const Effects& effects)
         : m_bits((effects.mayThrow ? throws : 0)
             | (effects.mayThrowByRule() ? throwsByRule : 0)
             | (effects.mayCollect ? collects : 0)
             | (effects.mayCallUnknownCode ? callsUnknownCode : 0)
             | (effects.maySuspend ? suspends : 0)
             | (effects.mayBeTerminated ? isTerminated : 0)
-            | (effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? 0 : writesWhatIsSeen)
-            | (effects.reads.isEmpty() && effects.writes.isEmpty() ? 0 : touchesMemory))
+            | (effects.writes.containsOnly(unobservableWriteHeaps) ? 0 : writesObservableState)
+            | (effects.reads.isEmpty() && effects.writes.isEmpty() ? 0 : touchesMemory)
+            | (effects.writes.containsOnly(perObjectHeaps | unobservableWriteHeaps) ? 0 : writesOutsideObjects))
     {
     }
 
-    static constexpr EffectTraits all()
+    static constexpr EffectTraits fromBits(uint16_t bits)
     {
-        EffectTraits result;
-        result.m_bits = 0xff;
-        return result;
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(!(bits >> numberOfBits));
+        EffectTraits traits;
+        traits.m_bits = bits;
+        return traits;
     }
+
+    constexpr uint16_t bits() const { return m_bits; }
 
     constexpr bool isPure() const { return !m_bits; }
-    constexpr bool isRemovableWhenUnused() const { return !(m_bits & (writesWhatIsSeen | throwsByRule | isTerminated | suspends | callsUnknownCode)); }
+    constexpr bool isRemovableWhenUnused() const { return !(m_bits & (writesObservableState | throwsByRule | isTerminated | suspends | callsUnknownCode)); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow(); }
+    constexpr EffectTraits withoutThrowByRule() const { return fromBits(m_bits & ~throwsByRule); }
     constexpr bool mayThrow() const { return m_bits & throws; }
     constexpr bool mayThrowByRule() const { return m_bits & throwsByRule; }
     constexpr bool mayCollect() const { return m_bits & collects; }
@@ -240,10 +207,9 @@ public:
     constexpr bool mayRunOtherCode() const { return m_bits & (suspends | callsUnknownCode); }
     constexpr bool alwaysCompletes() const { return !(m_bits & (isTerminated | suspends | callsUnknownCode)); }
     constexpr bool mayExitSideways() const { return m_bits & (throws | isTerminated | suspends | callsUnknownCode); }
-    constexpr bool mayWriteWhatIsSeen() const { return m_bits & writesWhatIsSeen; }
+    constexpr bool mayWriteObservableState() const { return m_bits & writesObservableState; }
     constexpr bool mayTouchMemory() const { return m_bits & touchesMemory; }
-
-    constexpr bool containsAll(EffectTraits other) const { return !(other.m_bits & ~m_bits); }
+    constexpr bool mayWriteOutsideObjects() const { return m_bits & writesOutsideObjects; }
 
     constexpr EffectTraits& operator|=(EffectTraits other)
     {
@@ -254,46 +220,19 @@ public:
     friend constexpr bool operator==(EffectTraits, EffectTraits) = default;
 
 private:
-    static constexpr uint8_t throws = 1 << 0;
-    static constexpr uint8_t throwsByRule = 1 << 1;
-    static constexpr uint8_t collects = 1 << 2;
-    static constexpr uint8_t callsUnknownCode = 1 << 3;
-    static constexpr uint8_t suspends = 1 << 4;
-    static constexpr uint8_t isTerminated = 1 << 5;
-    static constexpr uint8_t writesWhatIsSeen = 1 << 6;
-    static constexpr uint8_t touchesMemory = 1 << 7;
+    static constexpr uint16_t throws = 1 << 0;
+    static constexpr uint16_t throwsByRule = 1 << 1;
+    static constexpr uint16_t collects = 1 << 2;
+    static constexpr uint16_t callsUnknownCode = 1 << 3;
+    static constexpr uint16_t suspends = 1 << 4;
+    static constexpr uint16_t isTerminated = 1 << 5;
+    static constexpr uint16_t writesObservableState = 1 << 6;
+    static constexpr uint16_t touchesMemory = 1 << 7;
+    static constexpr uint16_t writesOutsideObjects = 1 << 8;
+    static_assert(writesOutsideObjects >> (numberOfBits - 1) == 1);
 
-    uint8_t m_bits { 0 };
+    uint16_t m_bits { 0 };
 };
-
-struct EffectTraitsOnEdges {
-    EffectTraits normal;
-    EffectTraits anyEdge;
-
-    constexpr EffectTraitsOnEdges() = default;
-
-    constexpr EffectTraitsOnEdges(const EffectsOnEdges& effects)
-        : normal(effects.normal)
-        , anyEdge(effects.normal)
-    {
-        anyEdge |= EffectTraits(effects.handler);
-    }
-};
-
-struct EffectTraitBounds {
-    EffectTraits atLeast;
-    EffectTraits atMost { EffectTraits::all() };
-};
-
-struct EffectContext {
-    const Program& program;
-    const EffectSummaries& summaries;
-};
-
-EffectsOnEdges effectsOf(const EffectContext&, const Function&, const Value&);
-EffectsOnEdges effectsOf(const EffectContext&, const Function&, const Terminator&);
-EffectsOnEdges effectsBeyondOperands(const EffectContext&, const Function&, const Value&, const EffectsOnEdges& effectsOfValue);
-LocationOverlap overlapOfWrites(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, const MemoryLocation&);
 
 } } } // namespace JSC::AOT::Typed
 

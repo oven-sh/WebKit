@@ -18,8 +18,6 @@
 
 namespace JSC { namespace AOT {
 
-class StubCatalog;
-
 struct OperationCallShape {
     OperationCall::Returns returns;
     OperationCall::FirstArgument firstArgument;
@@ -81,7 +79,6 @@ constexpr std::optional<uint8_t> findOperationCallShape(std::span<const Operatio
     return std::nullopt;
 }
 
-// Only for an operation that can throw: any other leaves the register that the stub tests for an exception undefined.
 constexpr StubKey callOperation(OperationCall::Returns returns, OperationCall::FirstArgument firstArgument, bool pollsBeforeReturning)
 {
     std::optional<uint8_t> form = findOperationCallShape(operationCallShapes, { returns, firstArgument, OperationCall::Saves::Nothing, true, pollsBeforeReturning });
@@ -89,7 +86,6 @@ constexpr StubKey callOperation(OperationCall::Returns returns, OperationCall::F
     return StubKey(StubFamily::CallOperation).withForm(*form);
 }
 
-// For whichever operation: one that gets the instance may allocate.
 constexpr StubKey callOperation(OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
 {
     return callOperation(returns, firstArgument, firstArgument == OperationCall::FirstArgument::Instance);
@@ -100,7 +96,6 @@ constexpr StubKey tailCallOperation(OperationCall::FirstArgument firstArgument)
     return StubKey(StubFamily::TailCallOperation).withForm(static_cast<uint8_t>(firstArgument));
 }
 
-// For an operation that cannot throw. A stub that tail calls the operation has no place to poll for the error of a failed allocation.
 constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns returns)
 {
     constexpr auto instance = OperationCall::FirstArgument::Instance;
@@ -112,13 +107,11 @@ constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns retu
 constexpr StubKey callOperationFor(Entry entry, OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
 {
     if (effectsOf(entry).mayThrow) {
-        // No operation that returns a pair allocates nothing.
         return callOperation(returns, firstArgument, mayFailToAllocate(entry, firstArgument) || (returns == OperationCall::Returns::Pair && firstArgument == OperationCall::FirstArgument::Instance));
     }
     return mayFailToAllocate(entry, firstArgument) ? callOperationThatMayFailToAllocate(returns) : tailCallOperation(firstArgument);
 }
 
-// The stub may save and test more than the call asks for. A void call without a test does not get returnValueGPR back.
 constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const OperationCall& call)
 {
     if (call.secondArgumentIn || call.thirdArgumentIn || call.fourthArgumentIn || call.fifthArgumentIn || call.valueDestination || call.spilledArguments)
@@ -154,6 +147,7 @@ constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const Opera
     return StubKey(StubFamily::CallOperationPreservingRegisters).withForm(*form);
 }
 
+
 constexpr StubKey callOperationPreservingRegisters(const OperationCall& call)
 {
     std::optional<StubKey> key = tryCallOperationPreservingRegisters(call);
@@ -161,8 +155,6 @@ constexpr StubKey callOperationPreservingRegisters(const OperationCall& call)
     return *key;
 }
 
-// What compiled code moves in front of the call is moved before the stub saves the registers of the caller. So the arguments behind the instance arrive in registers that no parameter of a function arrives in,
-// and go to their places once the registers are saved: a parameter that lives across a rare call keeps its register.
 constexpr std::span<const GPRReg> registersThatPreservingCallsTakeArgumentsIn()
 {
 #if CPU(X86_64)
@@ -173,7 +165,6 @@ constexpr std::span<const GPRReg> registersThatPreservingCallsTakeArgumentsIn()
     return registers;
 }
 
-// Where compiled code leaves the argument that the operation gets in operationArgumentGPR(index). A prelude reads the registers of the operation, and the head of its stub moves them over.
 inline GPRReg argumentGPROfPreservingCall(const OperationCall& call, Entry entry, unsigned index)
 {
     std::span<const GPRReg> registers = registersThatPreservingCallsTakeArgumentsIn();
@@ -186,9 +177,6 @@ constexpr GPRReg resultGPROfPreservingCall()
 {
     return registersThatPreservingCallsTakeArgumentsIn()[0];
 }
-
-// Over every variant a site may pick once it knows which registers are live. OperationCall::saves is ignored.
-RegisterSet registersClobberedByPreservingCall(const StubCatalog&, OperationCall);
 
 static_assert(!static_cast<uint32_t>(ThrowSiteSource::WordsAfterCall) && static_cast<uint32_t>(ThrowSiteSource::WordInRegister) == 1);
 

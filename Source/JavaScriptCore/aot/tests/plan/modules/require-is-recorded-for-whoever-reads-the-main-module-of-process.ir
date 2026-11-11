@@ -1,0 +1,31 @@
+# main.cjs: require("./helper.cjs"); print(process.mainModule.children.length)        helper.cjs: module.exports = 1
+# As require-is-recorded-for-whoever-reads-the-main-of-require.ir: `process.mainModule` holds the same object.
+# RUN: walk f0
+# CHECK: RecordRequire module=m1
+# CHECK: RecordRequire module=m1
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare, isCallOfRequire]
+    RecordRequire module=m1 referrer=m0
+    v5 = Builtin builtin=Process
+    v6 = PropGet v5 key="mainModule"
+    v7 = PropGet v6 key="children"
+    v8 = PropGet v7 key="length"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="print" [isFreeName]
+    v11 = Call v10, -, v8
+    Return
+}
+function f1 name="helper" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+}

@@ -15,12 +15,10 @@
 
 namespace JSC { namespace AOT {
 
-// Fills and drops the records that compiled code reads at GetGlobalBinding and SetGlobalBinding. A record is filed by the first access that misses it.
 class GlobalBindings final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(GlobalBindings);
     WTF_MAKE_TZONE_ALLOCATED(GlobalBindings);
 public:
-    // A word of the program table globalBindings: the identifier number of the name and what placement says about it.
     static constexpr uint32_t seesScriptBindingsFlag = 1u << 31;
     static constexpr uint32_t isStoredByNameFlag = 1u << 30;
     static constexpr uint32_t isForTypeOfFlag = 1u << 29;
@@ -36,21 +34,15 @@ public:
     }
     Identifier nameOf(uint32_t number) const;
     bool seesScriptBindings(uint32_t number) const { return m_names[number] & seesScriptBindingsFlag; }
-    // A free name that nothing is bound to throws. `typeof` of it and a read of the global object answer undefined.
-    // Compiled code that reads through such a record looks at its location alone, so a constant would never be found.
     bool filesLocationAlone(uint32_t number) const { return m_names[number] & isStoredThroughBindingFlag; }
     bool answersUndefinedWhereAbsent(uint32_t number) const { return !seesScriptBindings(number) || m_names[number] & isForTypeOfFlag; }
 
-    // Without a holder to watch, the value is fixed for ever. With one, false where no watch can be set: then nothing is filed.
     bool fileConstant(VM&, uint32_t number, JSObject* holderToWatch, JSValue);
-    // The record answers undefined until the global object or one of the objects above it reports a change under the name.
     void fileAbsence(VM&, uint32_t number, std::span<JSObject* const> objectsAboveGlobalObject);
     void fileLocation(uint32_t number, Structure*, int64_t location);
-    // An inline store replaces the value without a report, so no record of the name holds a watched constant again.
     void didFileStore(uint32_t number);
 
     void dropConstants();
-    // The epoch of the lexical bindings starts over, so a number that is filed will come again.
     void dropLocations();
 
     size_t removeDeadEntries(VM&, CollectionScope);

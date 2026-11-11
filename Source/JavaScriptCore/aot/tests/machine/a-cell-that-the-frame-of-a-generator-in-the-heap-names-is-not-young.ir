@@ -1,0 +1,46 @@
+# function* steps(tag) { const payload = { tag }; const box = { held: null }; box.held = payload; yield tag; return box.held.tag; }   globalThis.made = steps;
+# `box` lives across the yield, so it is stored into the frame in the heap right behind the operation that makes it: from there on a collector that marks beside the program can find it and visit it.
+# The sweep does not see that store: it calls `box` young at `box.held = payload`. In a body that keeps its values in such a frame the store has its barrier all the same.
+# RUN(CODE): walk f1:CoroutineBody mechanisms=all
+# CODE: = PutSlot {{*}} OwnerIsYoung
+# RUN: emit f1:CoroutineBody mechanisms=all
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK: Store({{*}}offset = 88, InternalFields)
+# CHECK: Store({{*}}offset = 16, bucket
+# CHECK-NEXT: Load({{*}}collectorState
+# CHECK-NEXT: Load8Z({{*}}collectorState
+
+layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="made"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="steps" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+  b0(v0: anything, v1: function, v2: anything):
+    InitialYield v2, v0
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Null
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PropSet v8, v5 key="held"
+    v10 = Yield v2, v2, v0
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Switch v12 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v11
+  b2():
+    Return v11
+  b3():
+    v13 = PropGet v8 key="held"
+    v14 = PropGet v13 key="tag"
+    Return v14
+}

@@ -1,0 +1,45 @@
+# What a read under a key that nobody knows finds above the fields of a record (undefined where the key is absent, what stands on Object.prototype) is found by the program's own read, so it is held of the read, whoever was the first to ask for all fields of that record
+# function fill(t, s) { Object.assign(t, s); }  function pick(r, k) { return r[k]; }  function holder() {}  const options = { width: 1, title: "x" };  fill(holder, options);  pick(options, "width");  pick(options, "title");
+# The copy lands on a function, so it reads its source under every key too, and to a copy what lies above the fields is the caution of its rule, as if unseen code alone had brought it. Here the copy has the lower number. If the two shared one node, tied as its first asker sees it, undefined and null would be held of the read in one order of the worklist and not in another
+# RUN: link held accesses mechanisms=all
+# CHECK: read f2 v2 proven=undefined|null|i32|string
+# RUN(RESULTS): link held functions mechanisms=all
+# RESULTS: function f0 {{*}}result=undefined|null|i32|string returns
+# RESULTS: function f2 {{*}}result=undefined|null|i32|string returns
+
+layout L0 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="title" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="x"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = Call v4, -, v6, v3 calleeName="fill"
+    v8 = String string="width"
+    v9 = String string="title"
+    v10 = Call v5, -, v3, v8 calleeName="pick"
+    v11 = Call v5, -, v3, v9 calleeName="pick"
+    Return v11
+}
+function f1 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
+    v3 = Call v2, -, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f2 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="holder" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

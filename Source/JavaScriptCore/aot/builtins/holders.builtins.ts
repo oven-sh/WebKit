@@ -1,7 +1,6 @@
 import * as b from "bun-builtins-table";
 
 const internalFields = "InternalFields";
-const collectionHeaps = ["CollectionStorage", "CollectionEntries"];
 const hostSettings = "ExternalState";
 
 const undeclared = b.otherwiseBy(b.generic);
@@ -22,7 +21,6 @@ const requiresNew = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-// Native code makes a primitive of a Date, of a wrapper, of an array or of a URL without running code of the program. What it makes depends on what that object holds.
 const readByConversions = [
   hostSettings,
   internalFields,
@@ -36,7 +34,6 @@ const readByConversions = [
   "PrototypeLinks",
 ];
 
-// It looks at its receiver and at nothing else. A receiver of another class makes it throw.
 const answeredFromReceiver = (returns: b.TableType) =>
   ({
     this: b.any,
@@ -54,6 +51,16 @@ const hostIteratorResult = b.ordinaryObjectOf("IteratorResult").fresh;
 const advances = [b.readsContents(), b.writesContents()];
 const advancesAndExposesContents = [...advances, b.retained];
 
+const stepOfWrappedIterator = {
+  this: b.any,
+  args: { value: b.any.optional },
+  returns: b.instance("Promise").holding({ value: hostIteratorResult, reason: b.any }).fresh,
+  capability: "js",
+  throws: true,
+  uses: { this: [b.everything], value: [b.everything] },
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
 const iteratorColumns = {
   hasConstructor: false,
   slots: { iterated: b.state(internalFields) },
@@ -61,6 +68,7 @@ const iteratorColumns = {
 
 const lockedIteratorColumns = {
   ...iteratorColumns,
+  slots: { ...iteratorColumns.slots, element: b.stepValueSlot(internalFields) },
   extends: "Iterator",
   lockedMembers: ["prototype"],
 } satisfies b.ClassOptions;
@@ -84,6 +92,20 @@ const libraryStep = (file: string, name: string, returns: b.TableType) =>
     implementation: b.compiled(file, name),
   }) satisfies b.FunctionField;
 
+const returnsStepValue = b.createdIn(
+  b.union(b.slot("this", "element"), b.undefined),
+  b.resultFieldHoldingOnlyWhatIsStored("value"),
+);
+
+const libraryStepOfOwnIterator = (file: string) =>
+  ({
+    returns: iteratorResult,
+    capability: "js",
+    throws: true,
+    uses: { this: [...advances, returnsStepValue] },
+    implementation: b.compiled(file, "next"),
+  }) satisfies b.FunctionField;
+
 const fromText = {
   args: { parts: b.any.rest },
   returns: b.any,
@@ -100,7 +122,6 @@ const functionKind = (name: string, pristineTest: "Mark" | "ClosureAsCreated" = 
     pristineTest,
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
-    // As for Function: the compiler follows no function made from text.
     namesDefinedOnNewInstances: [],
     usesFeature: "Interpreter",
     nativeSymbols: [`call${name}Constructor`, `construct${name}Constructor`],
@@ -191,8 +212,6 @@ const intlServiceCreation = (name: string, optionNames: readonly string[]) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// A method of a service of Intl keeps no operand and calls none. It makes primitives of them, and answers a string or new objects and arrays that hold strings, numbers and booleans.
-// What native code makes of a Date, of a wrapper or of an array depends on what that holds.
 const convertedToPrimitive = [b.runs("ToPrimitive"), b.readsContents()];
 const newStringArray = b.instance("Array").holding({ element: b.string }).fresh;
 const newPlainData = b.plainData.fresh;
@@ -233,10 +252,6 @@ const intlService = (
     proto: { resolvedOptions: answeredFromReceiver(newPlainData), ...proto },
   });
 
-// TEMPORAL. An object of Temporal holds numbers and the names of a calendar and of a time zone: no reference to anything (no class in runtime/Temporal*.h has a WriteBarrier).
-// So no function keeps an operand, and none calls one. A receiver of another class makes a function throw.
-// An operand is a primitive, an object of Temporal, whose numbers are copied, or a bag: its members are read under these names, an inherited one and a getter too, and converted to primitives.
-// A member may be a bag again (relativeTo, plainTime).
 type TemporalClass = "Duration" | "Instant" | "PlainDate" | "PlainDateTime" | "PlainMonthDay" | "PlainTime" | "PlainYearMonth" | "ZonedDateTime";
 
 const temporalUnits = ["year", "month", "week", "day", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond"];
@@ -270,7 +285,6 @@ const temporalGetter = (getter: b.TableType) => ({ ...internalSlotGetter, getter
 
 const temporalOfReceiver = answeredFromReceiver;
 
-// `required` is the length of the function. One more operand is read where there is one: the options.
 const temporalOfOperands = (required: 0 | 1 | 2, returns: b.TableType) =>
   ({
     this: b.any,
@@ -290,7 +304,6 @@ const temporalOfOperands = (required: 0 | 1 | 2, returns: b.TableType) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// The text of a value of Temporal in its usual form.
 const temporalText = temporalOfReceiver(b.string);
 
 const numberOrUndefined = b.union(b.f64, b.undefined);
@@ -319,7 +332,6 @@ const timeGetters = Object.fromEntries(
 );
 const epochGetters = { epochMilliseconds: temporalGetter(b.f64), epochNanoseconds: temporalGetter(b.bigint) };
 
-// The members that most classes have. Each answers a new object of the class, a duration or a primitive.
 const temporalArithmetic = (name: TemporalClass) => ({
   add: temporalOfOperands(1, newTemporal(name)),
   subtract: temporalOfOperands(1, newTemporal(name)),
@@ -346,7 +358,6 @@ const temporalClass = (
     prototypeTable: b.staticTable(`runtime/Temporal${name}Prototype.cpp`, prototypeTable),
     constructorOnlyReadsPrototypeOfNewTarget: true,
     call: requiresNew,
-    // Each operand is converted to a number, a BigInt or a string.
     construct: {
       args: { parts: b.any.rest },
       returns: newTemporal(name),
@@ -363,10 +374,8 @@ const temporalClass = (
       ...statics,
     },
     proto: {
-      // It throws whatever it is called on: such a value is not to be compared with `<`.
       valueOf: temporalOfReceiver(b.never),
       toJSON: temporalText,
-      // With options it reads them, which may run their code.
       toString: [{ ...temporalText, args: { options: b.undefined.optional } }, temporalOfOperands(0, b.string)],
       ...proto,
     },
@@ -374,24 +383,20 @@ const temporalClass = (
 
 const webAssemblyTable = (file: string, table: string) => b.staticTable(`wasm/js/${file}.cpp`, table);
 
-// The getters throw for a receiver that is no instance of their class.
 const webAssemblyGetter = (getter: b.TableType, uses: readonly b.UseSpec[] = b.inspected) =>
   ({ ...internalSlotGetter, getter, uses: { this: uses } }) satisfies b.GetterField;
 
-// A global holds a number, a BigInt or a reference: what the constructor or the setter was handed, or what the code of an instance has stored.
 const globalValueCell = "WebAssembly.Global.value";
 const exportsCell = "WebAssembly.Instance.exports";
 const memoryBufferCell = "WebAssembly.Memory.buffer";
 const tableElementCell = "WebAssembly.Table.element";
 const exceptionPayloadCell = "WebAssembly.Exception.payload";
 const keptInGlobal = b.storedIn(b.nativeCell(globalValueCell));
-// The code of an instance reads and calls what a table holds.
 const keptInTable = [b.retained, b.storedIn(b.nativeCell(tableElementCell))];
 const typedArrayStorage = "TypedArrayStorage";
 const addressOrCount = b.union(b.f64, b.bigint);
 const answersValueOfGlobal = [b.returnedFrom(globalValueCell)];
 const memoryBuffer = b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
-// The memory keeps one wrapper until it grows, or until a wrapper of the other kind is asked for. The getter and the two methods answer that one.
 const answersKeptBuffer = [
   b.createdIn(memoryBuffer.fresh, b.nativeCell(memoryBufferCell)),
   b.returnedFrom(memoryBufferCell),
@@ -401,15 +406,15 @@ const answersKeptBufferOfKind = {
   returns: memoryBuffer,
   capability: "heap",
   throws: true,
+  writes: [typedArrayStorage],
   uses: { this: answersKeptBuffer },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
-// The code of a module does with what it imports and is handed whatever native code may do, and nothing is known of what it exports.
-const instantiates = (implementation: b.ImplementationSpec) =>
+const instantiates = (implementation: b.ImplementationSpec, returns: b.TableType = b.any) =>
   ({
     args: { operands: b.any.rest },
-    returns: b.any,
+    returns,
     capability: "js",
     throws: true,
     uses: {
@@ -431,7 +436,6 @@ const webAssemblyClass = (name: string, options: b.ClassOptions = {}) =>
     ...options,
   });
 
-// A function of the interface reads the bytes of a buffer, or the members of a descriptor under their names, and converts those to primitives. It calls nothing else.
 const webAssemblyFunction = (
   args: Readonly<Record<string, b.TableType>>,
   uses: Readonly<Record<string, readonly b.UseSpec[]>>,
@@ -461,7 +465,6 @@ const compileOptions = [b.runsTransitively("Iterate", "ToPrimitive", b.named("bu
 const moduleOperands = { bytes: b.any, options: b.any.optional };
 const usesOfModuleOperands = { bytes: bytesOfModule, options: compileOptions };
 
-// As an error of the language: the message is converted to a string and `cause` is whatever the options hold.
 const webAssemblyError = (name: string) => {
   const creation = {
     args: { message: b.string.loose.optional, options: b.any.optional },
@@ -472,7 +475,8 @@ const webAssemblyError = (name: string) => {
     uses: { options: [b.readByKey(b.keysNamed("cause"), b.nativeMemory), b.contentsStoredIn(b.nativeMemory)] },
     implementation: b.hostCall,
   } satisfies b.FunctionField;
-  return webAssemblyClass(name, { extends: "Error", constructorOnlyReadsPrototypeOfNewTarget: true, call: creation, construct: creation });
+  const proto = { name: b.property(b.string), message: b.property(b.string) };
+  return webAssemblyClass(name, { extends: "Error", constructorOnlyReadsPrototypeOfNewTarget: true, call: creation, construct: creation, proto });
 };
 
 export default b.declarations(
@@ -482,6 +486,7 @@ export default b.declarations(
     lockedMembers: ["constructor"],
     mutability: "AlwaysLocked",
     slots: { target: b.state(internalFields), handler: b.state(internalFields) },
+    instancesAnswerEveryName: b.whenOperandHasProperty("handler", "get"),
     call: requiresNew,
     construct: {
       args: { target: b.object, handler: b.object },
@@ -495,6 +500,7 @@ export default b.declarations(
       revocable: {
         args: { target: b.object, handler: b.object },
         returns: b.object.fresh,
+        resultProperties: { proxy: b.instance("Proxy"), revoke: b.callable },
         capability: "js",
         runsOnlyOperandCode: true,
         uses: { target: [b.everything], handler: [b.everything] },
@@ -505,24 +511,26 @@ export default b.declarations(
 
   b.class("%ArrayIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: libraryStep("ArrayIteratorPrototype", "next", iteratorResult) },
+    jsType: "JSArrayIteratorType",
+    proto: { next: libraryStepOfOwnIterator("ArrayIteratorPrototype") },
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: libraryStep("MapIteratorPrototype", "next", iteratorResult) },
+    jsType: "JSMapIteratorType",
+    proto: { next: libraryStepOfOwnIterator("MapIteratorPrototype") },
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: libraryStep("SetIteratorPrototype", "next", iteratorResult) },
+    jsType: "JSSetIteratorType",
+    proto: { next: libraryStepOfOwnIterator("SetIteratorPrototype") },
   }),
   b.class("%StringIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep(advances) },
+    proto: { next: hostStep([...advances, returnsStepValue]) },
   }),
   b.class("%RegExpStringIterator%", {
     ...lockedIteratorColumns,
     proto: {
-      // The regular expression that it steps has been in native memory since matchAll, where its exec is read and called like anything that native code holds.
       next: {
         returns: hostIteratorResult,
         capability: "js",
@@ -571,13 +579,13 @@ export default b.declarations(
   }),
   b.class("%AsyncFromSyncIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: undeclared, return: undeclared, throw: undeclared },
+    jsType: "JSAsyncFromSyncIteratorType",
+    proto: { next: stepOfWrappedIterator, return: stepOfWrappedIterator, throw: stepOfWrappedIterator },
   }),
   b.class("%IntlSegments%", {
     hasConstructor: false,
     prototypeTable: b.staticTable("runtime/IntlSegmentsPrototype.cpp", "segmentsPrototypeTable"),
     proto: {
-      // IntlSegmentsPrototype.cpp intlSegmentsPrototypeFuncIterator, IntlSegments::createSegmentIterator: the iterator gets a copy of the break iterator, the buffer and the string, not the receiver.
       "@@iterator": {
         returns: b.instance("IntlSegmentIterator").fresh,
         capability: "heap",
@@ -592,7 +600,7 @@ export default b.declarations(
     ...iteratorColumns,
     extends: "Iterator",
     prototypeTable: b.staticTable("runtime/IntlSegmentIteratorPrototype.cpp", "segmentIteratorPrototypeTable"),
-    proto: { next: hostStep(advances) },
+    proto: { next: hostStep([...advances, b.createdIn(b.union(newPlainData, b.undefined), b.resultFieldHoldingOnlyWhatIsStored("value"))]) },
   }),
 
   functionKind("AsyncFunction", "ClosureAsCreated"),
@@ -605,13 +613,11 @@ export default b.declarations(
     ["IntlCollation"],
     collatorOptions,
     {
-      // The collator makes the function at the first read and keeps it. The function holds the collator.
       compare: {
         getter: b.callable,
         capability: "heap",
         throws: true,
         uses: { this: [b.retained] },
-        // A custom accessor of a static table, as `format` of the other formatters.
         implementation: b.generic,
         call: {
           args: { x: b.any.optional, y: b.any.optional },
@@ -634,7 +640,6 @@ export default b.declarations(
     ["localeMatcher", "style", "type", "fallback", "languageDisplay"],
     { of: intlMethod({ code: convertedToPrimitive }, b.union(b.string, b.undefined)) },
   ),
-  // The duration is a string, a Temporal.Duration or an object whose members under the names of the units are converted to numbers.
   intlService(
     "DurationFormat",
     "durationFormat",
@@ -642,7 +647,6 @@ export default b.declarations(
     durationFormatOptions,
     formatAndParts({ duration: [...optionBag(durationUnits), b.readsContents()] }),
   ),
-  // What the list hands out has to be strings.
   intlService(
     "ListFormat",
     "listFormat",
@@ -667,7 +671,6 @@ export default b.declarations(
     ["localeMatcher", "numberingSystem", "style", "numeric"],
     formatAndParts({ value: convertedToPrimitive, unit: convertedToPrimitive }),
   ),
-  // The segments hold the string that the operand is converted to.
   intlService("Segmenter", "segmenter", ["IntlSegmenter"], ["localeMatcher", "granularity"], {
     segment: intlMethod({ input: convertedToPrimitive }, b.instance("IntlSegments").fresh),
   }),
@@ -683,7 +686,7 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { tag: [b.readAsLocale, b.runs("ToPrimitive")], options: optionBag(localeOptions) },
+      uses: { tag: [b.readAsLocale, b.runs("ToPrimitive")], options: [b.mayReplaceLocale, ...optionBag(localeOptions)] },
       implementation: b.hostCall,
     },
     proto: {
@@ -866,9 +869,17 @@ export default b.declarations(
         b.instance("Promise").holding({ value: b.instance("WebAssembly.Module").fresh, reason: b.any }).fresh,
       ),
       compileStreaming: undeclared,
-      instantiate: instantiates(b.hostCall),
+      instantiate: instantiates(
+        b.hostCall,
+        b.instance("Promise").holding({
+          value: b.union(
+            b.instance("WebAssembly.Instance").fresh,
+            b.ordinaryObjectOf("WebAssemblyInstantiatedSource").fresh,
+          ),
+          reason: b.any,
+        }).fresh,
+      ),
       instantiateStreaming: instantiates(b.generic),
-      // The operand has to be a function that an instance exports. The new function holds it.
       promising: webAssemblyFunction({ exported: b.any }, { exported: [b.retained] }, b.callable),
       validate: webAssemblyFunction(moduleOperands, usesOfModuleOperands, b.bool),
     },
@@ -883,9 +894,19 @@ export default b.declarations(
     nativeSymbols: ["webAssemblyInstantiateStreamingFunc"],
   }),
   b.extend("WebAssembly.promising", { nativeSymbols: ["webAssemblyPromisingFunc"] }),
+  [
+    "WebAssembly.JSTag",
+    "WebAssembly.compileStreaming",
+    "WebAssembly.instantiateStreaming",
+    "WebAssembly.promising",
+    "WebAssembly.Global.prototype.value",
+    "WebAssembly.Instance.prototype.exports",
+    "WebAssembly.Memory.prototype.toFixedLengthBuffer",
+    "WebAssembly.Memory.prototype.toResizableBuffer",
+    "console.takeHeapSnapshot",
+  ].flatMap(path => b.extend(path, { canBeListed: true })),
   webAssemblyClass("Exception", {
     prototypeTable: webAssemblyTable("WebAssemblyExceptionPrototype", "prototypeTableWebAssemblyException"),
-    // A number or a BigInt is made of a value of the payload, a reference is kept as it is.
     construct: webAssemblyConstruction(
       "Exception",
       { tag: b.any, payload: b.any, options: b.any.optional },
@@ -918,7 +939,6 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      // It reads the two members of the descriptor and converts `value` to a string. A number or a BigInt is made of the value, a reference is kept as it is.
       uses: {
         descriptor: [b.runsTransitively(b.named("mutable", "value"), "ToPrimitive")],
         value: [b.retained, keptInGlobal, b.runs("ToPrimitive")],
@@ -960,7 +980,6 @@ export default b.declarations(
       { descriptor: optionBag(["address", "initial", "minimum", "maximum", "shared"]) },
     ),
     proto: {
-      // The buffer that the memory has handed out is detached.
       grow: {
         ...webAssemblyFunction({ delta: b.any }, { delta: convertedToPrimitive }, addressOrCount),
         writes: [typedArrayStorage],
@@ -973,7 +992,6 @@ export default b.declarations(
   webAssemblyClass("Module", {
     constructorTable: webAssemblyTable("WebAssemblyModuleConstructor", "constructorTableWebAssemblyModule"),
     construct: webAssemblyConstruction("Module", moduleOperands, usesOfModuleOperands),
-    // Each answers new arrays and objects that describe the module.
     static: {
       exports: webAssemblyFunction({ module: b.any }, { module: b.inspected }, newPlainData),
       imports: webAssemblyFunction({ module: b.any }, { module: b.inspected }, newPlainData),
@@ -984,11 +1002,10 @@ export default b.declarations(
       ),
     },
   }),
-  // The code of an instance that imports the new object calls the function.
   webAssemblyClass("Suspending", {
     nativeSymbols: ["callWebAssemblySuspending", "constructWebAssemblySuspending"],
     construct: {
-      args: { called: b.any },
+      args: { called: b.any.optional },
       returns: b.object.fresh,
       capability: "heap",
       throws: true,
@@ -1004,7 +1021,6 @@ export default b.declarations(
       { descriptor: optionBag(["address", "element", "initial", "minimum", "maximum"]), value: keptInTable },
     ),
     proto: {
-      // A table whose addresses have 64 bits answers a BigInt.
       length: webAssemblyGetter(addressOrCount),
       get: webAssemblyFunction(
         { index: b.any },
@@ -1026,7 +1042,7 @@ export default b.declarations(
   webAssemblyClass("Tag", {
     construct: webAssemblyConstruction(
       "Tag",
-      { type: b.any },
+      { type: b.any.optional },
       { type: [b.runsTransitively("Iterate", "ToPrimitive", b.named("parameters")), b.readsContents()] },
     ),
   }),
@@ -1035,7 +1051,6 @@ export default b.declarations(
   webAssemblyError("RuntimeError"),
   webAssemblyError("SuspendError"),
 
-  // The host declares the object: what the other members do is up to its ConsoleClient.
   b.fn("console.takeHeapSnapshot", b.otherwise),
   b.extend("console.takeHeapSnapshot", {
     nativeSymbols: ["consoleProtoFuncTakeHeapSnapshot"],

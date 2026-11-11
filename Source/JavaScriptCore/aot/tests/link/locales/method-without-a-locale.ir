@@ -1,0 +1,21 @@
+# a call that passes no locale goes by that of the host, which no build knows. The place is the call. There is one record for each kind: the first in the text
+# (1234.5).toLocaleString(); "a".localeCompare("b");
+# RUN: locales
+# CHECK: locale host-default NumberPrototypeToLocaleString at f0 v2
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: locale unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double number=1234.5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = Call v1, v0 calleeKey="toLocaleString" @22
+    v3 = String string="a"
+    v4 = String string="b"
+    v5 = PropGet v3 key="localeCompare"
+    v6 = Call v5, v3, v4 calleeKey="localeCompare" @57
+    Return v6
+}

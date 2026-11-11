@@ -70,8 +70,8 @@ BinarySwitch::BinarySwitch(GPRReg value, std::span<const int64_t> cases, Type ty
     build(0, false, m_cases.size());
 }
 
-BinarySwitch::BinarySwitch(GPRReg value, std::span<const std::tuple<uint32_t, size_t>> runs)
-    : m_weakRandom(globalCounter++)
+BinarySwitch::BinarySwitch(GPRReg value, std::span<const std::tuple<uint32_t, size_t>> runs, unsigned seed)
+    : m_weakRandom(seed)
     , m_type(UInt32CheckRuns)
     , m_value(value)
 {

@@ -1,0 +1,91 @@
+# A CommonJS file on the second level of a graph throws while jobs of the program wait. The load of the root hears of it as many jobs later as where the loader goes through every module.
+# What was left of the way belongs to a load that has ended: a second graph that imports y.js loads y.js and z.js and runs them.
+# RUN: run-in-shell --aotCountsPath=/dev/null const atJob = now => { }; const begin = () => { first().then(() => print("imported"), error => { print("rejected with " + error + " behind job " + job); return second().then(() => { isDone = true; print("second imported behind job " + job); walked(); }); }); }; let job = 0; let isDone = false; globalThis.report = (label, value) => print(label + ": " + value + " behind job " + job); const walked = () => print("walked " + aotRuntimeCounters().match(/^(\d+)\tcounter:CompiledModulesWalkedByLoader$/m)[1]); globalThis.register = (first, second) => { globalThis.first = first; globalThis.second = second; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => { const next = () => { if (isDone) return; ++job; atJob(job); Promise.resolve().then(next); }; Promise.resolve().then(next); begin(); }); return result; };
+# CHECK: runs: bad.cjs behind job 10
+# CHECK-NEXT: rejected with boom behind job 23
+# CHECK-NEXT: runs: z.js behind job 29
+# CHECK-NEXT: runs: y.js behind job 29
+# CHECK-NEXT: runs: other.js behind job 29
+# CHECK-NEXT: second imported behind job 36
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/x.js" displayPath="x.js" body=f2 requests=[{target=m3 completes=true}, {target=m7 completes=true}]
+module m3 path="/y.js" displayPath="y.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/z.js" displayPath="z.js" body=f4
+module m5 path="/other.js" displayPath="other.js" body=f5 requests=[{target=m3 completes=true}]
+module m6 path="/bad.cjs" displayPath="bad.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g0
+module m7 path="#7" displayPath="bad.cjs" exportRule=CommonJs body=f7 requests=[{target=m6 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+variable g0 name="exports" module=m6 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m7 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f8
+    v1 = NewClosure function=f9
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="x" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="x.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="y" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="y.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="z" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="z.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="other" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="other.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f6 name="bad" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="bad.cjs"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="boom"
+    Throw v5
+}
+function f7 name="facadeOfBad" module=m6 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m6 referrer=m7 [isBare]
+    Return
+}
+function f8 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f9 name="importOther" results=[{type=anything}] {
+    v0 = ImportModule module=m5 referrer=m0
+    Return v0
+}

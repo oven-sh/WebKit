@@ -16,7 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct PlacedSlot;
 
-// A field that may exist without storage reads as undefined while it has none, so a store of undefined asks for no bytes.
 bool needsStorageFor(const PlacedSlot&, const Type& stored);
 
 class SlotEmitter final : public OperationEmitter {
@@ -26,56 +25,61 @@ public:
     Operand load(TypedPointer, SlotRepresentation);
     void store(TypedPointer, SlotRepresentation, Operand);
     void storeAbsent(TypedPointer, SlotRepresentation);
+    void copyBits(TypedPointer from, TypedPointer to, SlotRepresentation slot) { storeBits(to, slot, loadBits(from, slot)); }
     Condition holdsAbsent(TypedPointer, SlotRepresentation);
     Condition isAbsent(Operand loaded, SlotRepresentation);
     Operand absentAsUndefined(Operand loaded, SlotRepresentation);
 
     TypedPointer addressOf(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Operand loadSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
-    // What the slot holds has the type, so a slot for numbers or booleans and markers that holds no marker is read as its bits.
     Operand loadSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, const Type& loadedType);
-    // For a slot that has a marker for undefined.
     Operand loadSlotOrUndefined(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
-    // Both require an extension that holds the granule of the slot.
+    LValue findWordOfSlot(LValue loadedOrUndefined) const { return m_wordsOfSlots.get(loadedOrUndefined); }
+    Operand loadSlotThatHoldsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
+    Operand loadSlotOrLeaveIfEmpty(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, BlockEdge isEmpty);
+    static constexpr bool storeLooksAtType(SlotRepresentation slot) { return slot == SlotRepresentation::OptionalInt32; }
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord, const Type& storedType);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord = nullptr);
     Condition isFilled(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
-    // Whether the bytes of the slot say that it is filled. Where they do not, a field that may exist without storage may still exist.
     Condition holdsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
-    // Whether the slot holds a value of the type of its field, which lists neither undefined nor null: it is filled, and with no marker.
     Condition holdsDeclaredType(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     bool holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, PropertyKeyID) const;
-    void markCellIfMarkerIsStored(CellPointer, ValueID stored);
+    void markCellIfMarkerIsStored(CellPointer, ValueID stored, LayoutSetID possible = { });
 
     Pointer extensionOf(CellPointer, const PlacedSlot& extensionWord);
-    // Goes to hasNone where the object has no extra properties.
     CellPointer extraPropertiesOf(CellPointer, const PlacedSlot& extraPropertiesWord, LBasicBlock hasNone);
-    // For stores in a row with no call between them: every store to a field makes B3 load the hidden word again, and the caller knows that it has not changed.
     void storeInExtension(Pointer extension, const PlacedSlot&, const MemoryLocation&, Operand);
     void storeIfExtensionHolds(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot& extensionWord);
-    Condition hasNoExtension(CellPointer, const PlacedSlot& extensionWord);
-    // An extension that lacks one of the tested granules gets the reserved ones, which include them. A granule that nothing was stored into reads as absent.
     void ensureExtensionHolds(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits, OwnerBarrier, bool mayCollect = true);
-    // For an operation that declares no collection: neither the stub nor the operation behind it collects.
-    void ensureExtensionHoldsWithoutCollecting(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t granuleBits)
+    void store(TypedPointer, SlotRepresentation, Operand, const Type& storedType);
+    void ensureExtensionHoldsWithoutCollecting(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits)
     {
-        ensureExtensionHolds(context, cell, extensionWord, granuleBits, granuleBits, OwnerBarrier::Emitted, false);
+        ensureExtensionHolds(context, cell, extensionWord, testedBits, reservedBits, OwnerBarrier::Emitted, false);
     }
-    void ensureExtensionHolds(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t granuleBits, OwnerBarrier barrier) { ensureExtensionHolds(context, cell, extensionWord, granuleBits, granuleBits, barrier); }
 
 private:
     enum class AbsentReadsAs : uint8_t { Absent, Undefined };
 
-    Operand loadOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord);
+    Operand loadOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord, bool absentReadsAsUndefined = false);
+    Operand wordOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord);
+    bool readsExtensionByCall(const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord) const;
+    LValue readFieldInExtension(CellPointer, const PlacedSlot&, const MemoryLocation&);
+    Operand operandOfBits(LValue bits, SlotRepresentation);
     Operand loadWithoutMarkers(TypedPointer, SlotRepresentation);
     Condition isNoMarker(Operand loaded, SlotRepresentation);
-    TypedPointer addressInExtension(const B3::AbstractHeap&, Pointer extension, uint32_t offset);
+    TypedPointer addressInExtension(const Machine::AbstractHeap&, Pointer extension, uint32_t offset);
     Integer granuleBitsUpTo(Pointer extension, uint32_t granule);
     Condition holdsGranules(Pointer extension, uint64_t granuleBits);
 
     Operand extensionWordOf(CellPointer, const PlacedSlot& extensionWord);
     Pointer extensionAt(Operand word);
-    Pointer branchUnlessExtensionHolds(CellPointer, const PlacedSlot& extensionWord, uint64_t granuleBits, B3::FrequentedBlock lacksGranule);
+    struct TestedExtension {
+        Pointer extension;
+        ScopeFork fork;
+    };
+    TestedExtension branchUnlessExtensionHolds(CellPointer, const PlacedSlot& extensionWord, uint64_t granuleBits, BlockEdge lacksGranule, bool asksForExtensionFirst = false);
+    void reserveGranules(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t reservedBits, OwnerBarrier, bool mayCollect);
+    void keepOwnerOfExtensionAlive(CellPointer cell) { ensureStillAliveHere(cell); }
 
     OptionalInteger widenOptionalInt32(Word32, AbsentReadsAs);
     Word32 narrowOptionalInt32(OptionalInteger);
@@ -83,6 +87,8 @@ private:
     LValue loadBits(TypedPointer, SlotRepresentation);
     void storeBits(TypedPointer, SlotRepresentation, LValue);
     LValue constantWithBits(LType, uint64_t bits);
+
+    UncheckedKeyHashMap<LValue, LValue> m_wordsOfSlots;
 };
 
 } } } // namespace JSC::AOT::Typed

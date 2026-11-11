@@ -1,0 +1,37 @@
+# try { r = b(); if (r === undefined) { } } catch (e) { return e; } return b;   the handler's parameter is fed by the edge out of the block that ends in the branch
+# The branch decides nothing. Its block keeps its handler, for the call may throw, and what the handler's parameter needs comes over an edge out of that block which is none of the two ways:
+# it asks nothing of the branch.
+# RUN: sweep-code
+# CHECK: b1() handler=b5(v0)
+# CHECK: v2: anything @JSValue = Call v1
+# CHECK-NOT: TypeTest
+# CHECK-NOT: Branch
+# CHECK: Jump -> next b4()
+# CHECK: Return v4
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     Jump -> next b1()
+#   b1() handler=b5(v0):
+#     v2: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: boolean @Boolean = TypeTest v2 testedType=undefined
+#     Branch v3 -> taken b2(), notTaken b3()
+#   b2():
+#     Jump -> next b4()
+#   b3():
+#     Jump -> next b4()
+#   b4():
+#     Return v1
+#   b5(v4: anything @JSValue) role=CatchHandler:
+#     Return v4
+# }
+# -- end of code

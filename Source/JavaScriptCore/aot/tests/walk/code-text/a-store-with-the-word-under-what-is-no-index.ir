@@ -1,0 +1,20 @@
+# 4,294,967,295 is a name like any other, no index
+# RUN: verify-code
+# CHECK: a store is taken to lay an element into a list that is not made here, or under what is no known index
+# -- code
+# code f0:Body {
+#   constants:
+#     v1: 4294967295 @Int64 = Integer integer=4294967295
+#   b0(v0: anything @JSValue) entry=0:
+#     v2: Array @Cell = NewArray v0, v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     v3 @Void = PutArrayElement v2, v1, v0 level=Proven [keyIsIntegral, fillsPlaceOfListMadeHere] traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stores" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+entry module=m0

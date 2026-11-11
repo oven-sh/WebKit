@@ -1,0 +1,38 @@
+# function ofAnything(list) { return Array.prototype.join.call(list, "-"); }   function ofList(a, b) { return [a, b].join("-"); }
+# The run time has a loop of its own for `join`: it opens no rope among the elements, and leaves long elements joined as a rope. The function of the engine makes each such element flat, and then a copy of them all.
+# A call of the built-in goes by that loop whatever is known of the receiver. As it was, the call of which more was known, a list as it was made, entered the function of the engine.
+# RUN: walk f2:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding+EscapeAnalysis
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallBuiltin {{*}}overload=ArrayPrototypeJoin/0
+# RUN(BYTES): bytes f1:Body f2:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding+EscapeAnalysis
+# BYTES-LABEL: unit f1:Body
+# BYTES: operationAOTArrayJoinOfAnyReceiver
+# BYTES-LABEL: unit f2:Body
+# BYTES: operationAOTArrayJoinOfAnyReceiver
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="ofAnything" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ArrayPrototypeJoin
+    v2 = String string="-"
+    v3 = Call v1, v0, v2
+    Return v3
+}
+function f2 name="ofList" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = String string="-"
+    v5 = Call v3, v2, v4
+    Return v5
+}

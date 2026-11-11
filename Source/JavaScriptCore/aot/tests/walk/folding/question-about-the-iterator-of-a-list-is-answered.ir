@@ -1,0 +1,64 @@
+# the library asks whether a second read of @@iterator off a list could be seen. No, of a list that the state has seen as it was made, while the members of the iteration are what the table lists; and what can be no list is none
+# function ofList() { return $readsIteratorOfListUnseen([]); }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = Boolean boolean=true
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: = ReadsIteratorOfListUnseen
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: = ReadsIteratorOfListUnseen
+# function ofPromise() { return $readsIteratorOfListUnseen($newPromise()); }
+# RUN(OTHER): walk f2 mechanisms=none+Folding
+# OTHER-NOT: = ReadsIteratorOfListUnseen
+# RUN(FALSE): walk f2 mechanisms=none+Folding
+# FALSE-NOT: boolean=true
+# of a list that somebody else has had in hand the run time is asked
+# function ofAnything(v) { return $readsIteratorOfListUnseen(v); }
+# RUN(ASKED): walk f3 mechanisms=all
+# ASKED-LABEL: code f3:Body
+# ASKED: = ReadsIteratorOfListUnseen
+# function ofSeen() { const list = []; sink(list); return $readsIteratorOfListUnseen(list); }
+# RUN(SEEN): walk f4 mechanisms=all
+# SEEN-LABEL: code f4:Body
+# SEEN: = ReadsIteratorOfListUnseen
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="ofList" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = ReadsIteratorOfListUnseen v0
+    Return v1
+}
+function f2 name="ofPromise" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewPromise
+    v1 = ReadsIteratorOfListUnseen v0
+    Return v1
+}
+function f3 name="ofAnything" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ReadsIteratorOfListUnseen v0
+    Return v1
+}
+function f4 name="ofSeen" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = ReadsIteratorOfListUnseen v0
+    Return v4
+}

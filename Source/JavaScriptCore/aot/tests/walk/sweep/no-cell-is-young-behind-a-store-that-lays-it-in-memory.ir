@@ -1,0 +1,26 @@
+# const made = make(); made.left = l; old.child = made; made.right = r;
+# Behind v5 memory names the cell: a collector that marks while the program runs may come to it through v0 at any time and blacken it between v5 and v6. In front of v5 nothing names it.
+# RUN: sweep-code
+# CHECK: v4 @Void = SetMappedArgument v3{{*}}OwnerIsYoung
+# CHECK: v5 @Void = SetMappedArgument v0
+# CHECK-NOT: OwnerIsYoung
+# CHECK: v6 @Void = SetMappedArgument v3
+# CHECK-NOT: OwnerIsYoung
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v0, v3 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v6 @Void = SetMappedArgument v3, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

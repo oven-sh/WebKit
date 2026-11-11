@@ -1,0 +1,40 @@
+# a store under a key that nobody can read may land on every member of the object that it names, and on no other object
+# so may a row that writes under a key of its call: Reflect.set(JSON, name, f)
+# Date.now(); Math.random(); JSON.parse("0"); JSON.stringify(0); Date[name] = f; Reflect.set(JSON, name, f);
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 2
+# RUN: locks
+# CHECK-NOT: DateNow
+# CHECK-NOT: JSONParse
+# CHECK-NOT: JSONStringify
+# CHECK: locked MathRandom constant
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1
+    v1 = PropGet v0 key="Date" [isFreeName] @2
+    v2 = PropGet v1 key="now" @3
+    v3 = Call v2, v1 @4
+    v4 = Builtin builtin=Math @5
+    v5 = PropGet v4 key="random" @6
+    v6 = Call v5, v4 @7
+    v7 = Builtin builtin=JSON @8
+    v8 = PropGet v7 key="parse" @9
+    v9 = String string="0" @10
+    v10 = Call v8, v7, v9 @11
+    v11 = PropGet v7 key="stringify" @12
+    v12 = Call v11, v7, v9 @13
+    v13 = PropGet v0 key="name" [isFreeName] @14
+    v14 = NewClosure function=f1 @15
+    ElemSet v1, v13, v14 @16
+    v16 = Builtin builtin=Reflect @17
+    v17 = Builtin builtin=ReflectSet @18
+    v18 = Call v17, v16, v7, v13, v14 @19
+    Return v6 @20
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1 @21
+    Return v0 @22
+}

@@ -80,7 +80,6 @@ function main(argv: readonly string[]): number {
   }
 }
 
-// Under an older node a generator would stop at the first type, or run and write nothing. It says what it needs instead.
 function requireRuntime(): void {
   if ("Bun" in globalThis) return;
   const [major, minor] = process.versions.node.split(".").map(Number);

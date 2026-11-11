@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTChildProcess.h"
 #include "AOTVector.h"
 #include "Collector.h"
@@ -20,18 +21,18 @@
 #include "JSLock.h"
 #include "MarkedSpace.h"
 #include "ObjectConstructor.h"
+#include "ReleaseHeapAccessScope.h"
 #include "RememberedSlot.h"
 #include "SimpleMarkingConstraint.h"
 #include "VM.h"
 #include "Weak.h"
 #include "WeakInlines.h"
 #include <optional>
-#include <wtf/Condition.h>
 #include <wtf/DataLog.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ParallelHelperPool.h>
-#include <wtf/threads/BinarySemaphore.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -68,12 +69,14 @@ private:
 
 } // anonymous namespace
 
-template<void (*body)()>
+enum class CollectorPause : uint8_t { Short, Unlimited };
+
+template<void (*body)(), CollectorPause pause>
 static void runInProcessWithCompiledCodeOptions()
 {
     ASCIILiteral name;
     for (const NativeTest& test : collectorTests()) {
-        if (test.run == &runInProcessWithCompiledCodeOptions<body>)
+        if (test.run == &runInProcessWithCompiledCodeOptions<body, pause>)
             name = test.name;
     }
     AOT_TEST_CHECK(!name.isNull());
@@ -85,6 +88,10 @@ static void runInProcessWithCompiledCodeOptions()
 
     ChildProcessLauncher launcher(String(programPath()), { });
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s };
+    if constexpr (pause == CollectorPause::Unlimited)
+        arguments.appendList({ "--minimumGCPauseMS=10000"_str, "--gcPauseScale=10000"_str });
+    else
+        arguments.appendList({ "--minimumGCPauseMS=0"_str, "--gcPauseScale=0"_str });
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
         dataLogLn(result.output);
@@ -203,7 +210,8 @@ static void checkSmallHeapStartsNoHelper()
     for (unsigned index = 0; index < 10; ++index)
         holder->putDirectIndex(realm, index, constructEmptyObject(realm));
     test.heap().collectSync(CollectionScope::Eden);
-    AOT_TEST_CHECK(!test.heap().didSkipMarkingInLastCollection() && !test.heap().collector().hasStartedHelpers());
+    AOT_TEST_CHECK(!test.heap().didSkipMarkingInLastCollection());
+    AOT_TEST_CHECK(!test.heap().collector().hasStartedHelpers());
     AOT_TEST_CHECK(heapHelperPool().numberOfThreads() == 1);
     ensureStillAliveHere(holder);
 }
@@ -225,32 +233,36 @@ static void checkWideHeapStartsHelpers()
     ensureStillAliveHere(array);
 }
 
-static void testWaitingForStartedThreadsDoesNotWaitForTheirWork()
+static void checkCollectorThreadMarksWithoutHelpers()
 {
-    // Never destroyed, like the collector's own pool: a thread that is leaving still refers to its pool.
-    ParallelHelperPool& pool = ParallelHelperPool::create("Test Helper"_s).leakRef();
-    pool.ensureThreads(2);
-    BinarySemaphore hasTakenWork;
-    Lock lock;
-    Condition mayFinishCondition;
-    bool mayFinish = false;
-    {
-        ParallelHelperClient client(&pool);
-        client.setFunction([&] {
-            hasTakenWork.signal();
-            Locker locker { lock };
-            while (!mayFinish)
-                mayFinishCondition.wait(lock);
-        });
-        hasTakenWork.wait();
-        pool.waitUntilThreadsAreUp();
-        {
-            Locker locker { lock };
-            mayFinish = true;
-            mayFinishCondition.notifyAll();
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    constexpr unsigned length = 100000;
+    JSArray* array = JSArray::tryCreate(vm, realm->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
+    AOT_TEST_CHECK(array);
+    for (unsigned index = 0; index < length; ++index)
+        array->putDirectIndex(realm, index, constructEmptyObject(realm));
+
+    unsigned numberOfConcurrentCollections = 0;
+    vm.heap.collector().willCollectWithoutHelpers();
+    for (unsigned count = 0; count < 20; ++count) {
+        vm.heap.collectNow(Async, CollectionScope::Full);
+        if (vm.heap.objectSpace().isMarking())
+            ++numberOfConcurrentCollections;
+        MonotonicTime deadline = MonotonicTime::now() + 10_s;
+        while (vm.heap.objectSpace().isMarking() && MonotonicTime::now() < deadline) {
+            {
+                ReleaseHeapAccessScope releaseAccess(vm.heap);
+            }
+            sleep(1_ms);
+            vm.heap.stopIfNecessary();
         }
-        client.finish();
+        AOT_TEST_CHECK(!vm.heap.objectSpace().isMarking());
     }
+    vm.heap.collector().didCollectWithoutHelpers();
+    AOT_TEST_CHECK(numberOfConcurrentCollections);
+    ensureStillAliveHere(array);
 }
 
 static void testHelpersStartEagerlyWithoutCompiledCode()
@@ -561,6 +573,23 @@ static void checkFullCollectionDropsTransitionChain()
     ensureStillAliveHere(object);
 }
 
+#if ASSERT_ENABLED
+NEVER_INLINE static void collectWithStackWord(VM& vm, uint64_t word)
+{
+    volatile uint64_t held = word;
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(held == word);
+}
+
+static void checkMisalignedHeaderIsSkipped()
+{
+    TestVM test;
+    VM& vm = test.vm();
+    uint64_t typeAndState = static_cast<uint64_t>(frameCellState) << 8 * JSCell::cellStateOffset() | static_cast<uint64_t>(CompiledObjectType) << 8 * JSCell::typeInfoTypeOffset();
+    collectWithStackWord(vm, typeAndState | (StructureID::encode(vm.structureStructure.get()).bits() + MarkedBlock::atomSize / 2));
+}
+#endif
+
 static void testTransitionChainStaysWithoutCompiledCode()
 {
     if (Options::useAOT())
@@ -575,7 +604,10 @@ static void testTransitionChainStaysWithoutCompiledCode()
 }
 
 template<void (*body)()>
-static constexpr void (*withCompiledCodeOptions)() = runInProcessWithCompiledCodeOptions<body>;
+static constexpr void (*withCompiledCodeOptions)() = runInProcessWithCompiledCodeOptions<body, CollectorPause::Unlimited>;
+
+template<void (*body)()>
+static constexpr void (*withConcurrentMarking)() = runInProcessWithCompiledCodeOptions<body, CollectorPause::Short>;
 
 std::span<const NativeTest> collectorTests()
 {
@@ -587,8 +619,8 @@ std::span<const NativeTest> collectorTests()
         { "collector/larger-cells/off-without-compiled-code"_s, testNothingIsBorrowedWithoutCompiledCode },
         { "collector/helpers/small-heap-starts-none"_s, withCompiledCodeOptions<checkSmallHeapStartsNoHelper> },
         { "collector/helpers/wide-heap-starts-them"_s, withCompiledCodeOptions<checkWideHeapStartsHelpers> },
+        { "collector/helpers/collector-thread-marks-without-them"_s, withConcurrentMarking<checkCollectorThreadMarksWithoutHelpers> },
         { "collector/helpers/eager-without-compiled-code"_s, testHelpersStartEagerlyWithoutCompiledCode },
-        { "collector/helpers/waiting-for-started-threads-does-not-wait-for-their-work"_s, testWaitingForStartedThreadsDoesNotWaitForTheirWork },
         { "collector/roots/full-collection-defers-regions"_s, withCompiledCodeOptions<checkFullCollectionDefersRegionsOfRoots> },
         { "collector/roots/store-after-deferral-is-seen"_s, withCompiledCodeOptions<checkStoreAfterDeferralIsSeen> },
         { "collector/roots/eden-collection-defers-nothing"_s, withCompiledCodeOptions<checkEdenCollectionDefersNothing> },
@@ -600,6 +632,9 @@ std::span<const NativeTest> collectorTests()
         { "collector/empty-eden/off-without-compiled-code"_s, testNoCollectionIsSkippedWithoutCompiledCode },
         { "collector/structures/full-collection-drops-transition-chain"_s, withCompiledCodeOptions<checkFullCollectionDropsTransitionChain> },
         { "collector/structures/chain-stays-without-compiled-code"_s, testTransitionChainStaysWithoutCompiledCode },
+#if ASSERT_ENABLED
+        { "collector/stack/misaligned-header-is-skipped"_s, withCompiledCodeOptions<checkMisalignedHeaderIsSkipped> },
+#endif
     };
     return tests;
 }

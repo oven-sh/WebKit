@@ -1,0 +1,9 @@
+# every dynamic star of the module bears a place, or none
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 1
+
+module m0 path="main" displayPath="main" requests=[{target=m1 isDynamicStarExport=true completes=true starPlace=1}, {target=m2 isDynamicStarExport=true completes=true}, {target=m3 isDynamicStarExport=true completes=true starPlace=0}]
+module m1 path="first" displayPath="first"
+module m2 path="second" displayPath="second"
+module m3 path="third" displayPath="third"
+entry module=m0

@@ -1,0 +1,11 @@
+# What `bun build --aot-harden=proof-checks` asks for: that nobody keeps the scope is a proof that no test at run time can repeat. The cell stays with the collector: nothing proposes it for the next call, and the plan does not hand the cells of the layout back.
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}layout=L0
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# NEVER-NOT: ReleaseEnvironment
+# NEVER-NOT: MarkEnvironmentEscaped
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# PLAN: layout L0 Environment
+# PLAN-NOT: handed-back
+# PROGRAM-OF: environment-that-only-direct-callees-are-handed-is-handed-back.ir

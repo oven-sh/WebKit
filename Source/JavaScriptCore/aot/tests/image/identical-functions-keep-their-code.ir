@@ -1,0 +1,36 @@
+# Functions that are written alike have identical bytes, and each keeps its code. Which function runs shows: the host asks the frame that called it for its function, its file and its place
+# function first(n: number) { return n + n }  function second(n: number) { return n + n }  function third(n: number) { return n - n }  register(first, second, third)
+# RUN: units-with-code f1:Body f2:Body
+# CHECK: unit f1:Body {{*}} bytes
+# CHECK-NEXT: unit f2:Body {{*}} bytes
+# RUN(SHELL): run-in-shell globalThis.register = (first, second, third) => { print(first(2), second(3), third(4), first("a"), second("b"), third("c"), first.name, second.name); };
+# SHELL: 4 6 0 aa bb NaN first second
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2 calleeName="register"
+    Return v5
+}
+function f1 name="first" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="second" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f3 name="third" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Sub v0, v0
+    Return v1
+}

@@ -278,7 +278,7 @@ static bool tryLoadPair(Code& code, BasicBlock* block, unsigned current, Inst& i
         return tmp == Tmp(CCallHelpers::stackPointerRegister) ? offset - bytesBelowFrameRecord : offset;
     };
     auto mayOverlap = [&](const Arg& arg, Width width) {
-        if (code.proc().policy().validation.overlooksWritesBetweenPairedLoads) [[unlikely]]
+        if (code.proc().policy().validation.ignoresWritesBetweenPairedLoads) [[unlikely]]
             return false;
         if (!arg.isAddr() && !arg.isSimpleAddr())
             return true;

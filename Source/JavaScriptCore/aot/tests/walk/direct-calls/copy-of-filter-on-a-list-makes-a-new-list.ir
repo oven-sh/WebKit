@@ -1,0 +1,59 @@
+# function user(k, n) { const list = [k]; let made; do { made = list.filter(x => x === k); } while (n); return made; }   sink(user);
+# The text of filter asks for the species of its receiver: ArraySpeciesCreate gives whatever object the species constructor makes. The call reaches the row of lists alone, which says that a new list is made:
+# in the copy the operation is built as `new Array(0)`, so what the call gives is a list that this code alone has, and the next method of a chain has a callee that is proven.
+# The library here is a stand-in.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame {{*}}callee=f3
+# CHECK: Array @Cell = NewArrayLike
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: ArraySpeciesCreate
+# The body of the text itself takes whatever comes.
+# RUN(ITSELF): walk f3 mechanisms=all
+# ITSELF: = ArraySpeciesCreate
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f3
+runtimefunction id=ArrayPrototypeFilterOfList function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="user" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v2 key="filter"
+    v5 = NewClosure v0 function=f4
+    v6 = Call v4, v2, v5 calleeKey="filter" calleeName="list.filter"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+function f2 name="filterOfList" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilterOfList thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f3 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ArraySpeciesCreate v2, v0
+    v4 = ElemGet v0, v2
+    v5 = Call v1, -, v4
+    Return v3
+}
+function f4 module=m0 kind=Arrow length=1 captures=[{type=anything variableName="k"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v1, v0
+    Return v2
+}

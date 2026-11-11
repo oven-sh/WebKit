@@ -1,0 +1,20 @@
+# `take(-0)`: -0 is a whole number that is no integer. A Set and the keys of a Map keep +0 for it, which is an integer, and the flow hands on what went in: so no type that Link hands to a table names the one without the other.
+# function take(x) { return x; }  take(-0);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=int|whole
+# CHECK-NEXT: parameter 0 {{*}}proven=int|whole
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Double number=-0
+    v2 = Call v0, -, v1 calleeName="take"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

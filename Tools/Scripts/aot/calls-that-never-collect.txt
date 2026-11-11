@@ -55,3 +55,4 @@ Vector<.*(appendSlowCase|expandCapacity)
 ^AOT::Instance::(instanceWithShape|instanceWithClosureNumber|findInstanceOfRunningImage|owning)$
 ^AOT::(imageWithClosureNumber|belongsToOtherImageSlow)$
 ^AOT::VMState::run$
+^AOT::ClosureTable::closureIfCreated$

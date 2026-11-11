@@ -53,7 +53,7 @@ static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncLog);
 static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncLog1p);
 static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncLog10);
 static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncLog2);
-static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncMax);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncMax);
 static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncPow);
 static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncRandom);
 static JSC_DECLARE_HOST_FUNCTION(mathProtoFuncRound);

@@ -1,0 +1,16 @@
+# Array.isArray(given.constructor): the row says that the operand is inspected and no more.
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD-NOT: lookup name-read "constructor"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v1 key="constructor"
+    v3 = Builtin builtin=Array
+    v4 = Builtin builtin=ArrayIsArray
+    v5 = Call v4, v3, v2 calleeName="Array.isArray"
+    Return v5
+}

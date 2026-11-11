@@ -244,6 +244,8 @@ public:
         m_characters[index].setAll();
     }
 
+    bool holdsEveryUnitAt(unsigned index) const { return m_characters[index].isAllSet(); }
+
     void addCharacters(unsigned index, const Vector<char32_t>& characters)
     {
         m_characters[index].addCharacters(m_charSize, characters);
@@ -3203,6 +3205,7 @@ class YarrGenerator final : public YarrJITInfo {
     struct StartPositionSearch {
         std::array<uint64_t, 2> asciiMembers { };
         bool matchesAllNonASCII { false };
+        std::optional<std::array<char16_t, 2>> exactUnits;
         std::optional<size_t> settledTermOp;
 #endif
     };
@@ -4548,9 +4551,11 @@ class YarrGenerator final : public YarrJITInfo {
                 if (charsCheckedLastIter == 8) {
                     numCharsToCheck = 8;
                     negativeOffset = 1;
+#if !defined(YARR_FOR_IMAGE)
                 } else if (charsCheckedLastIter == 4) {
                     numCharsToCheck = 4;
                     negativeOffset = 1;
+#endif
                 } else
                     numCharsToCheck = 4;
                 break;
@@ -6459,6 +6464,8 @@ class YarrGenerator final : public YarrJITInfo {
                 // These may advance |index| to a candidate position before entering the body.
                 auto emitStartPositionPrefilters = [&] {
 #if defined(YARR_FOR_IMAGE)
+                if (m_pattern.hasEndAnchoredFixedSize())
+                    return;
                 auto finishSearch = [&](MacroAssembler::JumpList& matched) {
                     // Fallthrough if out-of-length failure happens.
 
@@ -6524,7 +6531,9 @@ class YarrGenerator final : public YarrJITInfo {
                     }
 
                     ASSERT(matched.empty());
+#if !defined(YARR_FOR_IMAGE)
                     return;
+#endif
                 }
 #endif
 
@@ -6592,6 +6601,43 @@ class YarrGenerator final : public YarrJITInfo {
                             finishSearch(matched);
                             return;
                         }
+                        if (startPositionSearchIsCheaperThanStride(op, strideLength) && op.m_startPositionSearch->exactUnits) {
+                            m_jit.add32(MacroAssembler::TrustedImm32(unitsInVectorOfTwoUnitsSearch), m_regs.index, m_regs.regT1);
+                            auto restIsShort = m_jit.branch32(MacroAssembler::Above, m_regs.regT1, m_regs.length);
+                            generateStartPositionSearch(op, matched, SettlesFirstTerm::No, VectorIsLeft::Yes);
+                            auto isOutOfInput = m_jit.jump();
+                            restIsShort.link(&m_jit);
+                            if (m_requiredTexts.isEmpty() || alternative->onceThrough())
+                                op.m_reentry = m_jit.label();
+                            generateBoyerMooreScalarLoop(map, charactersFastPath, strideLength, endIndex, op.m_checkedOffset, matched);
+                            isOutOfInput.link(&m_jit);
+                            finishSearch(matched);
+                            return;
+                        }
+                        if (startPositionSearchIsCheaperThanStride(op, strideLength) && charactersFastPath.isValid() && !charactersFastPath.isEmpty()) {
+                            m_jit.add32(MacroAssembler::TrustedImm32(unitsProbedBeforeStartPositionSearch + leastRestWorthCallOfStartPositionSearch), m_regs.index, m_regs.regT1);
+                            auto restIsWorthCall = m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.regT1, m_regs.length);
+                            m_jit.add32(MacroAssembler::TrustedImm32(leastRestWorthCallOfStartPositionSearch), m_regs.length, m_regs.regT1);
+                            restIsWorthCall.link(&m_jit);
+                            m_jit.sub32(MacroAssembler::TrustedImm32(leastRestWorthCallOfStartPositionSearch), m_regs.regT1);
+                            generateBoyerMooreScalarLoop(map, charactersFastPath, strideLength, endIndex, op.m_checkedOffset, matched, m_regs.regT1);
+                            auto isOutOfInput = m_jit.branch32(MacroAssembler::Above, m_regs.index, m_regs.length);
+                            generateStartPositionSearch(op, matched, SettlesFirstTerm::No);
+                            isOutOfInput.link(&m_jit);
+                            finishSearch(matched);
+                            return;
+                        }
+                        if (auto search = planSearchForPairOfUnits(*op.m_bmInfo, costOfStride(*op.m_bmInfo, *range))) {
+                            m_jit.add32(MacroAssembler::TrustedImm32(unitsInVectorOfTwoUnitsSearch), m_regs.index, m_regs.regT1);
+                            auto restIsShort = m_jit.branch32(MacroAssembler::Above, m_regs.regT1, m_regs.length);
+                            generateSearchForPairOfUnits(op, *search, matched);
+                            auto isOutOfInput = m_jit.jump();
+                            restIsShort.link(&m_jit);
+                            generateBoyerMooreScalarLoop(map, charactersFastPath, strideLength, endIndex, op.m_checkedOffset, matched);
+                            isOutOfInput.link(&m_jit);
+                            finishSearch(matched);
+                            return;
+                        }
 #endif
 #endif
 
@@ -6629,6 +6675,16 @@ class YarrGenerator final : public YarrJITInfo {
                     } else
                         dataLogLnIf(Options::verboseRegExpCompilation(), "BM search candidates were not efficient enough. Not using BM search");
 #if defined(YARR_FOR_IMAGE)
+#if CPU(X86_64) || CPU(ARM64)
+                    if (auto search = range ? std::nullopt : planSearchForPairOfUnits(*op.m_bmInfo, costWithoutStride(op))) {
+                        MacroAssembler::JumpList matched;
+                        m_jit.add32(MacroAssembler::TrustedImm32(unitsInVectorOfTwoUnitsSearch), m_regs.index, m_regs.regT1);
+                        matched.append(m_jit.branch32(MacroAssembler::Above, m_regs.regT1, m_regs.length));
+                        generateSearchForPairOfUnits(op, *search, matched);
+                        finishSearch(matched);
+                        return;
+                    }
+#endif
                     if (range || !op.m_startPositionSearch)
 #endif
                     return;
@@ -10848,19 +10904,40 @@ class YarrGenerator final : public YarrJITInfo {
         StartPositionSearch search {
             .asciiMembers = { asciiMembers.storage()[0], asciiMembers.storage()[1] },
             .matchesAllNonASCII = !!nonASCIICount,
+            .exactUnits = std::nullopt,
             .settledTermOp = std::nullopt,
         };
         if (!canGenerateSharedRoutine(SharedRoutine { startPositionSearchRoutine(search) }))
             return std::nullopt;
 
-        bool isExact = !nonASCIICount || nonASCIICount == lastCharacter - firstNonASCII + 1;
+        bool someUnitMayBeHalfOfPair = m_decodeSurrogatePairs && std::ranges::any_of(nonASCIIRanges, [](auto range) {
+            return range.second >= 0xd800 && range.first <= 0xdfff;
+        });
+        if (asciiCount + nonASCIICount <= 2 && !someUnitMayBeHalfOfPair && canGenerateSharedRoutine(SharedRoutine { SharedRoutine::FindFirstOfTwoUnits { m_charSize } })) {
+            Vector<char16_t, 2> units;
+            asciiMembers.forEachSetBit([&](unsigned character) {
+                units.append(static_cast<char16_t>(character));
+            });
+            for (auto [begin, end] : nonASCIIRanges) {
+                for (char32_t character = begin; character <= end; ++character) {
+                    if (!units.contains(static_cast<char16_t>(character)))
+                        units.append(static_cast<char16_t>(character));
+                }
+            }
+            RELEASE_ASSERT(units.size() == asciiCount + nonASCIICount);
+            search.exactUnits = std::array<char16_t, 2> { units[0], units.last() };
+        }
+
+        bool isExact = search.exactUnits || !nonASCIICount || nonASCIICount == lastCharacter - firstNonASCII + 1;
         if (isExact && !m_decodeSurrogatePairs && firstRepeatedAlternative + 1 == alternatives.size())
             search.settledTermOp = findSettledTermOp(beginOpIndex, alternatives[firstRepeatedAlternative]->m_firstSet);
         return search;
     }
 
     // A candidate with enough input for the first alternative jumps to matched. Otherwise falls through with index > length.
-    void generateStartPositionSearch(YarrOp& beginOp, MacroAssembler::JumpList& matched)
+    enum class SettlesFirstTerm : bool { No, Yes };
+    enum class VectorIsLeft : bool { Unknown, Yes };
+    void generateStartPositionSearch(YarrOp& beginOp, MacroAssembler::JumpList& matched, SettlesFirstTerm settlesFirstTerm = SettlesFirstTerm::Yes, VectorIsLeft vectorIsLeft = VectorIsLeft::Unknown)
     {
         const StartPositionSearch& search = *beginOp.m_startPositionSearch;
         SharedRoutine::FindFirstOfClass routine = startPositionSearchRoutine(search);
@@ -10869,6 +10946,39 @@ class YarrGenerator final : public YarrJITInfo {
 
         JIT_COMMENT(m_jit, "start-position search");
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for the first character of a match");
+        dataLogLnIf(Options::verboseRegExpCompilation() && search.exactUnits, "Searches by exact units");
+        if (search.exactUnits) {
+            uint64_t repeats = m_charSize == CharSize::Char8 ? 0x01010101 : 0x00010001;
+            if (vectorIsLeft == VectorIsLeft::Unknown) {
+                m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
+                moveConstant((*search.exactUnits)[0] * repeats | (*search.exactUnits)[1] * repeats << 32, m_regs.regT1);
+                callRoutine(SharedRoutine::FindFirstOfTwoUnits { m_charSize });
+                m_jit.add32(MacroAssembler::Imm32(claimed), m_regs.index);
+                matched.append(m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, m_regs.length));
+
+                m_usesSIMD = true;
+                m_usesT2 = true;
+                if (search.settledTermOp && settlesFirstTerm == SettlesFirstTerm::Yes)
+                    m_ops[*search.settledTermOp].m_isDeadCode = true;
+                return;
+            }
+            moveConstant((*search.exactUnits)[0] * repeats | (*search.exactUnits)[1] * repeats << 32, m_regs.regT1);
+            MacroAssembler::Jump isInVector = emitTestOfVectorForTwoUnits(m_jit, m_charSize, (*search.exactUnits)[0] != (*search.exactUnits)[1], claimed);
+            m_jit.add32(MacroAssembler::TrustedImm32(static_cast<int32_t>(unitsInVectorOfTwoUnitsSearch) - static_cast<int32_t>(claimed)), m_regs.index);
+            callRoutine(SharedRoutine::FindFirstOfTwoUnits { m_charSize });
+            m_jit.add32(MacroAssembler::Imm32(claimed), m_regs.index);
+            MacroAssembler::Jump isSearched = m_jit.jump();
+            isInVector.link(&m_jit);
+            emitAdvanceToUnitFoundInVector(m_jit);
+            isSearched.link(&m_jit);
+            matched.append(m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, m_regs.length));
+
+            m_usesSIMD = true;
+            m_usesT2 = true;
+            if (search.settledTermOp && settlesFirstTerm == SettlesFirstTerm::Yes)
+                m_ops[*search.settledTermOp].m_isDeadCode = true;
+            return;
+        }
         if (search.matchesAllNonASCII) {
             readCharacterRaw(claimed, m_regs.regT0);
             matched.append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT0, MacroAssembler::TrustedImm32(BoyerMooreBitmap::mapSize)));
@@ -10888,8 +10998,137 @@ class YarrGenerator final : public YarrJITInfo {
 
         m_usesSIMD = true;
         m_usesT2 = true;
-        if (search.settledTermOp)
+        if (search.settledTermOp && settlesFirstTerm == SettlesFirstTerm::Yes)
             m_ops[*search.settledTermOp].m_isDeadCode = true;
+    }
+
+    static constexpr unsigned leastRarityOfStartPreferredToStride = 8;
+    static constexpr unsigned unitsProbedBeforeStartPositionSearch = 8;
+    static constexpr unsigned leastRestWorthCallOfStartPositionSearch = 16;
+
+    static bool startPositionSearchIsCheaperThanStride(const YarrOp& op, unsigned strideLength)
+    {
+        if (!op.m_startPositionSearch)
+            return false;
+        unsigned rarity = rarityOfUnits(op.m_startPositionSearch->asciiMembers, op.m_startPositionSearch->matchesAllNonASCII);
+        return rarity >= leastRarityOfStartPreferredToStride && 5 + (512u >> rarity) < 64 / strideLength;
+    }
+
+    struct SearchForPairOfUnits {
+        unsigned firstPlace;
+        std::array<char16_t, 2> units;
+        char16_t alternateUnit;
+        unsigned rarity;
+        SharedRoutine::FindFirstPairOfUnits routine;
+    };
+
+    std::optional<SearchForPairOfUnits> planSearchForPairOfUnits(const BoyerMooreInfo& info, unsigned costOtherwise) const
+    {
+        struct Place {
+            unsigned place;
+            char16_t unit;
+            char16_t alternateUnit;
+            PositionUnits units;
+            unsigned rarity;
+        };
+        if (m_decodeSurrogatePairs || m_direction != Forward || m_executionMode == ExecutionMode::InlineTest)
+            return std::nullopt;
+        Vector<Place, BoyerMooreInfo::maxLength> places;
+        for (unsigned place = 0; place < info.length(); ++place) {
+            if (info.holdsEveryUnitAt(place))
+                continue;
+            auto [map, exact] = info.createCandidateBitmap(place, place + 1);
+            if (!exact.isValid() || exact.isEmpty() || exact.at(0) > 0xffff)
+                continue;
+            Place found { place, static_cast<char16_t>(exact.at(0)), 0, PositionUnits::One, rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) };
+            if (exact.size() == 2) {
+                if (exact.at(1) > 0xffff)
+                    continue;
+                if (isASCIIAlpha(exact.at(0)) && (exact.at(0) ^ exact.at(1)) == 0x20) {
+                    found.unit = toASCIILower(found.unit);
+                    found.units = PositionUnits::IgnoreCase;
+                } else {
+                    found.alternateUnit = static_cast<char16_t>(exact.at(1));
+                    found.units = PositionUnits::Two;
+                }
+            }
+            places.append(found);
+        }
+        // The routine has one extra vector: for the second unit of one position, or for the ASCII case bit.
+        auto matchesTwoUnits = [](const Place& place) {
+            return place.units == PositionUnits::Two;
+        };
+        auto canPair = [&](const Place& a, const Place& b) {
+            if (!matchesTwoUnits(a) && !matchesTwoUnits(b))
+                return a.unit != b.unit;
+            const Place& two = matchesTwoUnits(a) ? a : b;
+            const Place& one = matchesTwoUnits(a) ? b : a;
+            return one.units == PositionUnits::One && one.unit != two.unit && one.unit != two.alternateUnit;
+        };
+        const Place* rarest = nullptr;
+        const Place* next = nullptr;
+        unsigned bestRank = 0;
+        for (const Place& place : places) {
+            for (const Place& other : places) {
+                if (&place == &other || place.rarity < other.rarity || !canPair(place, other))
+                    continue;
+                unsigned rank = 2 * (place.rarity + other.rarity) + (matchesTwoUnits(place) || matchesTwoUnits(other) ? 1 : 2);
+                if (rank > bestRank) {
+                    rarest = &place;
+                    next = &other;
+                    bestRank = rank;
+                }
+            }
+        }
+        if (!rarest)
+            return std::nullopt;
+        bool hasTwoUnitPosition = matchesTwoUnits(*rarest) || matchesTwoUnits(*next);
+        unsigned rarity = rarest->rarity + next->rarity;
+        unsigned costOfSearch = (m_charSize == CharSize::Char8 ? 6 : 8) + (hasTwoUnitPosition ? 2 : 0) + (320u >> std::min(rarity, 31u));
+        if (costOfSearch >= costOtherwise)
+            return std::nullopt;
+        const Place& first = rarest->place < next->place ? *rarest : *next;
+        const Place& second = rarest->place < next->place ? *next : *rarest;
+        char16_t alternateUnit = matchesTwoUnits(first) ? first.alternateUnit : second.alternateUnit;
+        SearchForPairOfUnits search { first.place, { first.unit, second.unit }, alternateUnit, rarity, { m_charSize, static_cast<uint8_t>(second.place - first.place), first.units, second.units } };
+        if (!canGenerateSharedRoutine(SharedRoutine { search.routine }))
+            return std::nullopt;
+        return search;
+    }
+
+    static unsigned costOfStride(const BoyerMooreInfo& info, std::tuple<unsigned, unsigned> range)
+    {
+        auto [begin, end] = range;
+        auto [map, charactersFastPath] = info.createCandidateBitmap(begin, end);
+        unsigned looksForOneStop = 1u << std::min(rarityOfUnits({ map.storage()[0], map.storage()[1] }, false), 16u);
+        return 8 * (9 * looksForOneStop + 10) / (1 + (looksForOneStop - 1) * (end - begin));
+    }
+
+    static unsigned costWithoutStride(const YarrOp& op)
+    {
+        if (!op.m_startPositionSearch)
+            return 72;
+        unsigned rarity = rarityOfUnits(op.m_startPositionSearch->asciiMembers, op.m_startPositionSearch->matchesAllNonASCII);
+        return op.m_startPositionSearch->exactUnits ? 4 + (240u >> rarity) : 10 + (560u >> rarity);
+    }
+
+    void generateSearchForPairOfUnits(YarrOp& beginOp, const SearchForPairOfUnits& search, MacroAssembler::JumpList& matched)
+    {
+        unsigned claimed = beginOp.m_checkedOffset.value() - search.firstPlace;
+        uint64_t repeats = m_charSize == CharSize::Char8 ? 0x01010101 : 0x00010001;
+
+        JIT_COMMENT(m_jit, "search for a pair of units");
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for the units at places ", search.firstPlace, " and ", search.firstPlace + search.routine.distance, " of a match in ", m_charSize == CharSize::Char8 ? "narrow" : "wide", " texts");
+        m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
+        moveConstant(search.units[0] * repeats | search.units[1] * repeats << 32, m_regs.regT1);
+        if (search.routine.first == PositionUnits::Two || search.routine.second == PositionUnits::Two)
+            moveConstant(search.alternateUnit * repeats, m_regs.regT0);
+        callRoutine(SharedRoutine::FindFirstPairOfUnits { search.routine });
+        m_jit.add32(MacroAssembler::Imm32(claimed), m_regs.index);
+        matched.append(m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, m_regs.length));
+
+        m_usesSIMD = true;
+        m_usesT2 = true;
     }
 
     // The search looks at one place in as many as the range is long.
@@ -10898,6 +11137,17 @@ class YarrGenerator final : public YarrJITInfo {
         auto [begin, end] = range;
         auto [map, charactersFastPath] = info.createCandidateBitmap(begin, end);
         return rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) + std::bit_width(end - begin) - 1;
+    }
+
+    bool hasRareUnitPair(const YarrOp& op, std::tuple<unsigned, unsigned> range) const
+    {
+        auto [begin, end] = range;
+        if (isARM64() && m_charSize == CharSize::Char8)
+            return false;
+        if (rarityOfStops(*op.m_bmInfo, range) < leastRarityOfStartWorthSearchingFor || (end - begin == 1 && op.m_startPositionSearch) || startPositionSearchIsCheaperThanStride(op, end - begin))
+            return false;
+        auto search = planSearchForPairOfUnits(*op.m_bmInfo, costOfStride(*op.m_bmInfo, range));
+        return search && search->rarity >= 2 * leastRarityWorthSearchingFor;
     }
 
     bool hasSelectiveStartSearch()
@@ -10909,7 +11159,7 @@ class YarrGenerator final : public YarrJITInfo {
                 return true;
             if (op.m_bmInfo) {
                 if (auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan()))
-                    return rarityOfStops(*op.m_bmInfo, *range) >= leastRarityWorthSearchingFor;
+                    return rarityOfStops(*op.m_bmInfo, *range) >= leastRarityWorthSearchingFor || hasRareUnitPair(op, *range);
             }
             return op.m_startPositionSearch && rarityOfUnits(op.m_startPositionSearch->asciiMembers, op.m_startPositionSearch->matchesAllNonASCII) >= leastRarityWorthSearchingFor;
         }
@@ -11296,7 +11546,7 @@ class YarrGenerator final : public YarrJITInfo {
     //   - endIndex: the end index of the BM range
     //   - checkedOffset: the offset being checked
     //   - matched: JumpList to append match jumps to
-    void generateBoyerMooreScalarLoop(const BoyerMooreBitmap::Map& map, const BoyerMooreFastCandidates& charactersFastPath, unsigned strideLength, unsigned endIndex, unsigned checkedOffset, MacroAssembler::JumpList& matched)
+    void generateBoyerMooreScalarLoop(const BoyerMooreBitmap::Map& map, const BoyerMooreFastCandidates& charactersFastPath, unsigned strideLength, unsigned endIndex, unsigned checkedOffset, MacroAssembler::JumpList& matched, std::optional<MacroAssembler::RegisterID> bound = std::nullopt)
     {
         if (charactersFastPath.isValid() && !charactersFastPath.isEmpty()) {
             static_assert(BoyerMooreFastCandidates::maxSize == 2);
@@ -11307,9 +11557,16 @@ class YarrGenerator final : public YarrJITInfo {
             matched.append(m_jit.branch32(MacroAssembler::Equal, m_regs.regT0, MacroAssembler::TrustedImm32(charactersFastPath.at(0))));
             if (charactersFastPath.size() > 1)
                 matched.append(m_jit.branch32(MacroAssembler::Equal, m_regs.regT0, MacroAssembler::TrustedImm32(charactersFastPath.at(1))));
+            if (bound) {
+                ASSERT(m_direction == Forward);
+                m_jit.add32(MacroAssembler::Imm32(strideLength), m_regs.index);
+                m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, *bound).linkTo(loopHead, &m_jit);
+                return;
+            }
             jumpIfAvailableInput(strideLength).linkTo(loopHead, &m_jit);
             return;
         }
+        ASSERT(!bound);
 
         dataLogLnIf(Options::verboseRegExpCompilation(), "Found bitmap lookahead count:(", map.count(), ")");
 #if defined(YARR_FOR_IMAGE)
@@ -12724,6 +12981,7 @@ public:
     bool hasUnusedFrame() const { return m_frameMode == FrameMode::Allocated && m_callFrameSizeInBytes && !m_didUseFrame; }
     bool didUseFrame() const { return m_didUseFrame; }
     unsigned classTableLimitHits() const { return m_classTableLimitHits; }
+    bool handsLongSearchesOver() const { return m_handsLongSearchesOver; }
 #endif
 
     const char* variant() final
@@ -13355,6 +13613,11 @@ CodeAddressing& GeneratedCode::addressing()
 bool GeneratedCode::hasElidedFrame() const
 {
     return m_attempt->generator->frameMode() == FrameMode::Omitted;
+}
+
+bool GeneratedCode::handsLongSearchesOver() const
+{
+    return m_attempt->generator->handsLongSearchesOver();
 }
 
 unsigned GeneratedCode::classTableLimitHits() const

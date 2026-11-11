@@ -16,15 +16,17 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsArrays.h"
-#include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTStubsPropertyProbes.h"
+#include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
+#include "Allocator.h"
 #include "ArrayConventions.h"
 #include "ArrayStorage.h"
 #include "Butterfly.h"
 #include "CompleteSubspace.h"
+#include "DirectArguments.h"
 #include "IndexingType.h"
 #include "JSArrayBufferView.h"
 #include "JSCell.h"
@@ -35,23 +37,43 @@
 #include "MarkedBlock.h"
 #include "MarkedSpace.h"
 #include "NumericStrings.h"
+#include "PureNaN.h"
 #include "SmallStrings.h"
 #include "SparseArrayValueMap.h"
 #include "Structure.h"
+#include <bit>
 #include <initializer_list>
 #include <optional>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT {
 
+StubSignature signatureOfMoveElementsDown(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A2) });
+}
+
+void generateMoveElementsDown(StubAssembler& jit)
+{
+    const GPRReg butterfly = jit.operand(0);
+    const GPRReg count = jit.operand(1);
+    const GPRReg second = jit.reuseScratch(StubRegister::A1);
+    RELEASE_ASSERT(butterfly == leafArgumentGPR(0) && second == leafArgumentGPR(1) && count == leafArgumentGPR(2));
+    jit.move(butterfly, second);
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), second);
+    jit.lshift64(TrustedImm32(CCallHelpers::TimesEight), count);
+    jit.callLeaf(Entry::operationAOTMoveBytes);
+    jit.returnToCaller();
+}
+
 StubSignature signatureOfMoveFewBytes(StubKey)
 {
     return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
-// The ranges may overlap, so every byte is read before any is written. The first and last word of a range cover all of it.
 void generateMoveFewBytes(StubAssembler& jit)
 {
+    static_assert(maxBytesMovedByStub == 2 * sizeof(uint64_t));
     const GPRReg target = jit.operand(0);
     const GPRReg source = jit.operand(1);
     const GPRReg count = jit.operand(2);
@@ -102,11 +124,13 @@ struct ElementRegisters {
 StubSignature signatureOfGetByVal(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }); }
 StubSignature signatureOfGetByValAtIndex(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValKeepingRegisters(StubKey key) { return signatureOfGetByVal(key); }
+StubSignature signatureOfGetByValAtConstantIndex(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValExpecting(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValAtIndexExpecting(StubKey key) { return signatureOfGetByVal(key); }
 
 StubSignature signatureOfPutByVal(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfPutByValAtIndex(StubKey key) { return signatureOfPutByVal(key); }
+StubSignature signatureOfPutByValAtConstantIndex(StubKey key) { return signatureOfPutByVal(key); }
 StubSignature signatureOfPutByValExpecting(StubKey key) { return signatureOfPutByVal(key); }
 StubSignature signatureOfPutByValAtIndexExpecting(StubKey key) { return signatureOfPutByVal(key); }
 
@@ -122,11 +146,11 @@ static ElementRegisters allocateElementRegisters(StubAssembler& jit)
     return registers;
 }
 
-static void checkTypedArrayAccess(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow, JumpList* isOutside = nullptr)
+static void checkTypedArrayAccess(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow, JumpList* isOutside = nullptr, JumpList* isNoTypedArray = nullptr)
 {
     jit.load8(Address(registers.base, JSCell::typeInfoTypeOffset()), registers.type);
     jit.sub32(registers.type, TrustedImm32(FirstTypedArrayType), registers.storage);
-    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, registers.storage, TrustedImm32(NumberOfTypedArrayTypesExcludingDataView)));
+    (isNoTypedArray ? *isNoTypedArray : slow).append(jit.branch32(CCallHelpers::AboveOrEqual, registers.storage, TrustedImm32(NumberOfTypedArrayTypesExcludingDataView)));
     slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(registers.base, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
     // A length may exceed 31 bits, so a negative key must not look like an index.
     jit.signExtend32ToPtr(registers.key, registers.index);
@@ -159,12 +183,11 @@ static void returnValueUnlessHole(StubAssembler& jit, const ElementRegisters& re
     jit.returnToCaller();
 }
 
-// The elements of a compiled object are those of its extra properties.
-static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const ElementRegisters& registers, JumpList& hasNone)
+static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const ElementRegisters& registers, JumpList& hasNone, JumpList* noneWereMade = nullptr)
 {
     const auto [base, key, extraProperties, index, hiddenWordOffset, number] = registers;
 
-    hasNone.append(jit.branchTest32(CCallHelpers::Zero, Address(base, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
+    (noneWereMade ? *noneWereMade : hasNone).append(jit.branchTest32(CCallHelpers::Zero, Address(base, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     loadStructure(jit, base, extraProperties);
     jit.load32(Address(extraProperties, CompiledStructure::offsetOfExtraPropertiesSlot()), hiddenWordOffset);
     hasNone.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
@@ -203,9 +226,8 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.loadPtr(BaseIndex(length, storage, CCallHelpers::TimesEight), jit.result());
     jit.returnToCaller();
 
-    // A table that a literal with numbers for keys has made.
     isNotString.link(&jit);
-    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, base);
+    JumpList isNotCompiledObject = branchIfNotCompiledObject(jit, base);
     loadExtraPropertiesOfCompiledObject(jit, registers, notHandled);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
@@ -224,7 +246,6 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.loadDouble(element, number);
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
 
-    // Mostly a typed array, whose arm below takes a key that is an int32. Any other key goes through the tests of the entry for any key.
     isNotCompiledObject.link(&jit);
     jit.signExtend32ToPtr(index, storage);
     notHandled.append(jit.branch64(CCallHelpers::NotEqual, index, storage));
@@ -293,11 +314,12 @@ static void loadStringCharacterAndReturn(StubAssembler& jit, const ElementRegist
     const auto [base, key, storage, index, flags, number] = registers;
 
     jit.loadPtr(Address(base, JSString::offsetOfValue()), storage);
-    slow.append(jit.branchIfRopeStringImpl(storage));
+    Jump isRope = jit.branchIfRopeStringImpl(storage);
     jit.zeroExtend32ToWord(key, index);
     jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, StringImpl::lengthMemoryOffset())).linkTo(isAbsent, &jit);
     jit.load32(Address(storage, StringImpl::flagsOffset()), flags);
     jit.loadPtr(Address(storage, StringImpl::dataOffset()), storage);
+    Label charactersReady = jit.label();
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(StringImpl::flagIs8Bit()));
     jit.load8(BaseIndex(storage, index, CCallHelpers::TimesOne), storage);
     Label characterReady = jit.label();
@@ -309,9 +331,20 @@ static void loadStringCharacterAndReturn(StubAssembler& jit, const ElementRegist
     jit.load16(BaseIndex(storage, index, CCallHelpers::TimesTwo), storage);
     jit.branch32(CCallHelpers::BelowOrEqual, storage, TrustedImm32(maxSingleCharacterString)).linkTo(characterReady, &jit);
     slow.append(jit.jump());
+
+    isRope.link(&jit);
+    const GPRReg impl = storage;
+    const GPRReg characters = index;
+    const GPRReg length = flags;
+    loadSubstringCharacters(jit, base, impl, characters, length, slow);
+    jit.branch32(CCallHelpers::AboveOrEqual, key, length).linkTo(isAbsent, &jit);
+    jit.load32(Address(impl, StringImpl::flagsOffset()), flags);
+    jit.move(characters, storage);
+    jit.zeroExtend32ToWord(key, index);
+    jit.jump().linkTo(charactersReady, &jit);
 }
 
-static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow, Label isAbsent)
+static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow, Label isAbsent, JumpList& isNoView)
 {
     const auto [base, key, storage, index, type, number] = registers;
     const BaseIndex in8Bits(storage, index, CCallHelpers::TimesOne);
@@ -320,7 +353,7 @@ static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegi
     const BaseIndex in64Bits(storage, index, CCallHelpers::TimesEight);
     JumpList isOutsideTypedArray;
 
-    checkTypedArrayAccess(jit, registers, slow, &isOutsideTypedArray);
+    checkTypedArrayAccess(jit, registers, slow, &isOutsideTypedArray, &isNoView);
     isOutsideTypedArray.linkTo(isAbsent, &jit);
     auto returnInt32Of = [&](JSType viewType, const auto& load) {
         Jump other = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(viewType));
@@ -335,8 +368,12 @@ static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegi
         other.link(&jit);
     };
     returnInt32Of(Uint8ArrayType, [&] { jit.load8(in8Bits, storage); });
-    returnInt32Of(Int32ArrayType, [&] { jit.load32(in32Bits, storage); });
     returnDoubleOf(Float64ArrayType, [&] { jit.loadDouble(in64Bits, number); });
+    returnDoubleOf(Float32ArrayType, [&] {
+        jit.loadFloat(in32Bits, number);
+        jit.convertFloatToDouble(number, number);
+    });
+    returnInt32Of(Int32ArrayType, [&] { jit.load32(in32Bits, storage); });
     returnInt32Of(Uint8ClampedArrayType, [&] { jit.load8(in8Bits, storage); });
     returnInt32Of(Uint16ArrayType, [&] { jit.load16(in16Bits, storage); });
     returnInt32Of(Int16ArrayType, [&] { jit.load16SignedExtendTo32(in16Bits, storage); });
@@ -347,20 +384,52 @@ static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegi
         returnBoxedDouble(jit, registers, PureDouble::convertInt64(jit, storage, number), numberScratch);
         isInt32.link(&jit);
     });
-    returnDoubleOf(Float32ArrayType, [&] {
-        jit.loadFloat(in32Bits, number);
-        jit.convertFloatToDouble(number, number);
-    });
     slow.append(jit.jump());
 }
 
-static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow)
+static void answerWhereNoObjectOfChainHasElements(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow, Label isAbsent, JumpList& compiledObjectHasNone)
+{
+    const auto [base, key, structure, object, type, number] = registers;
+
+    slow.append(jit.branchIfNotObject(base));
+    slow.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
+    jit.move(base, object);
+    Label climbs = jit.label();
+    slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(object, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+    Jump overridesLookup = jit.branchTest8(CCallHelpers::NonZero, Address(object, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetOwnPropertySlot));
+    Label asksStorage = jit.label();
+    slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask | MayHaveIndexedAccessors)));
+    Label hasNoElements = jit.label();
+    loadStructure(jit, object, structure);
+    jit.load64(Address(structure, Structure::prototypeOffset()), object);
+    slow.append(jit.branchTest64(CCallHelpers::Zero, object));
+    jit.branchIfCell(object).linkTo(climbs, &jit);
+    jit.branch64(CCallHelpers::Equal, object, TrustedImm64(JSValue::ValueNull)).linkTo(isAbsent, &jit);
+    slow.append(jit.jump());
+
+    compiledObjectHasNone.link(&jit);
+    slow.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
+    jit.move(base, object);
+    jit.jump().linkTo(hasNoElements, &jit);
+
+    overridesLookup.link(&jit);
+    Jump isNoCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
+    jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)).linkTo(hasNoElements, &jit);
+    slow.append(jit.jump());
+
+    isNoCompiledObject.link(&jit);
+    loadStructure(jit, object, structure);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.infoOfClassPrototypes)), type);
+    slow.append(jit.branchPtr(CCallHelpers::NotEqual, Address(structure, Structure::classInfoOffset()), type));
+    jit.jump().linkTo(asksStorage, &jit);
+}
+
+static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow, JumpList& isAbsent)
 {
     const auto [base, key, storage, index, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
-    JumpList isAbsent;
 
-    loadExtraPropertiesOfCompiledObject(jit, registers, slow);
+    loadExtraPropertiesOfCompiledObject(jit, registers, slow, &isAbsent);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
     jit.loadPtr(Address(storage, JSObject::butterflyOffset()), storage);
@@ -375,15 +444,6 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     isAbsent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     jit.loadDouble(element, number);
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, isAbsent), numberScratch);
-
-    // Right above the object is the Object.prototype of its realm, which has no elements and takes none. A negative key is a name.
-    isAbsent.link(&jit);
-    slow.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
-    loadStructure(jit, base, storage);
-    jit.load64(Address(storage, Structure::prototypeOffset()), storage);
-    slow.append(jit.branch64(CCallHelpers::NotEqual, storage, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
-    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
-    jit.returnToCaller();
 }
 
 void loadTextOfIndexForTrap(StubAssembler& jit, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText)
@@ -405,6 +465,30 @@ void loadKeptTextOfIndex(StubAssembler& jit, GPRReg key, GPRReg storage, GPRReg 
     hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
 }
 
+static void loadStorageOfPlainArray(StubAssembler& jit, const ElementRegisters& registers, JumpList& notHandled)
+{
+    const auto [base, index, storage, length, type, number] = registers;
+
+    notHandled.append(jit.branchIfNotCell(base));
+    notHandled.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(ArrayWithContiguous)));
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    notHandled.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+}
+
+static Jump emitGetByValAtConstantIndexEntry(StubAssembler& jit, const ElementRegisters& registers)
+{
+    const auto [base, index, storage, length, type, number] = registers;
+    JumpList notHandled;
+
+    jit.bindEntry(getByValAtConstantIndex());
+    loadStorageOfPlainArray(jit, registers, notHandled);
+    returnValueUnlessHole(jit, registers, BaseIndex(storage, index, CCallHelpers::TimesEight), notHandled);
+
+    notHandled.link(&jit);
+    boxInt32(jit, index, index);
+    return jit.jump();
+}
+
 static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCaller)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
@@ -416,23 +500,29 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     JumpList absent;
 
     JumpList isNeitherStringNorCompiledObject;
+    Jump isConstantIndex;
     if (registersOfCaller == RegistersOfCaller::AreLost)
         emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
+    else
+        isConstantIndex = emitGetByValAtConstantIndexEntry(jit, registers);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();
+    if (isConstantIndex.isSet())
+        isConstantIndex.linkTo(indexReady, &jit);
     slow.append(jit.branchIfNotCell(base));
-    jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
-    jit.and32(TrustedImm32(IndexingShapeMask), shape);
     static_assert(JSObject::butterflyOffset() + sizeof(void*) <= MarkedBlock::atomSize);
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
     jit.zeroExtend32ToWord(key, index);
-    Jump isNotContiguous = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ContiguousShape));
+    Jump isNoPlainList = jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(ArrayWithContiguous));
     Label hasContiguousShape = jit.label();
     absent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     returnValueUnlessHole(jit, registers, element, absent);
 
-    isNotContiguous.link(&jit);
+    isNoPlainList.link(&jit);
+    jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
+    jit.and32(TrustedImm32(IndexingShapeMask), shape);
+    jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape)).linkTo(hasContiguousShape, &jit);
     Jump noButterfly = jit.branchTest32(CCallHelpers::Zero, shape);
     jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape)).linkTo(hasContiguousShape, &jit);
     absent.append(jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(UndecidedShape)));
@@ -452,12 +542,27 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     loadStringCharacterAndReturn(jit, registers, slow, isAbsent);
 
     notString.link(&jit);
-    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, base);
-    loadCompiledObjectElementAndReturn(jit, registers, numberScratch, slow);
+    JumpList isNotCompiledObject = branchIfNotCompiledObject(jit, base);
+    JumpList compiledObjectHasNone;
+    loadCompiledObjectElementAndReturn(jit, registers, numberScratch, slow, compiledObjectHasNone);
 
     isNotCompiledObject.link(&jit);
     isNeitherStringNorCompiledObject.link(&jit);
-    loadTypedArrayElementAndReturn(jit, registers, numberScratch, slow, isAbsent);
+    JumpList isNoView;
+    loadTypedArrayElementAndReturn(jit, registers, numberScratch, slow, isAbsent, isNoView);
+
+    isNoView.link(&jit);
+    Jump isNotMapped = jit.branch32(CCallHelpers::NotEqual, registers.type, TrustedImm32(DirectArgumentsType));
+    Jump isOverridden = jit.branchTestPtr(CCallHelpers::NonZero, Address(base, DirectArguments::offsetOfMappedArguments()));
+    jit.zeroExtend32ToWord(key, index);
+    Jump isPastEnd = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(base, DirectArguments::offsetOfLength()));
+    jit.load64(BaseIndex(base, index, CCallHelpers::TimesEight, DirectArguments::storageOffset()), jit.result());
+    jit.returnToCaller();
+
+    isNotMapped.link(&jit);
+    isOverridden.link(&jit);
+    isPastEnd.link(&jit);
+    answerWhereNoObjectOfChainHasElements(jit, registers, slow, isAbsent, compiledObjectHasNone);
 
     notInt32.link(&jit);
     Jump notNumber = jit.branchTest64(CCallHelpers::Zero, key, numberTag);
@@ -473,12 +578,11 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     jit.jumpToStub(getByValCachedCells(registersOfCaller));
 
     slow.link(&jit);
-    if (jit.options().callsTrapsOfProxies.predicted()) {
-        const StubSignature throughProxySignature = signatureOf(throughProxy(TrapOfProxy::Get));
+    {
         const GPRReg text = registers.type;
         const GPRReg noHeader = index;
-        static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, slotPayloadRegister, slotHeaderRegister, StubRegister::T11) && slotHeaderRegister == StubRegister::T12 && slotPayloadRegister == StubRegister::T13);
-        RELEASE_ASSERT(throughProxySignature.operands[0] == Reg(base) && throughProxySignature.operands[1] == Reg(text) && throughProxySignature.operands[2] == Reg(noHeader));
+        static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, slotPayloadRegister, slotHeaderRegister, StubRegister::T11));
+        checkStubOperands(throughProxy(TrapOfProxy::Get), { base, text, noHeader });
         JumpList operationReads;
         loadTextOfIndexForTrap(jit, base, key, storage, index, text, operationReads);
         jit.move(TrustedImm32(0), noHeader);
@@ -513,6 +617,21 @@ static ECMAMode ecmaModeOf(ElementStoreMode mode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static Jump emitPutByValAtConstantIndexEntry(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, ECMAMode mode)
+{
+    const auto [base, index, storage, length, type, number] = registers;
+    JumpList notHandled;
+
+    jit.bindEntry(putByValAtConstantIndex(mode));
+    loadStorageOfPlainArray(jit, registers, notHandled);
+    jit.store64(value, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    returnAfterStoring(jit, base, value);
+
+    notHandled.link(&jit);
+    boxInt32(jit, index, index);
+    return jit.jump();
+}
+
 static void emitPutByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, ECMAMode mode)
 {
     const auto [base, index, storage, length, type, number] = registers;
@@ -532,11 +651,12 @@ static void emitPutByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.boxInt52(index, index, storage, number);
 }
 
-static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, GPRReg doubleBits, JumpList& slow)
+static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, GPRReg doubleBits, JumpList& slow, JumpList& isNoTypedArray)
 {
     const auto [base, key, storage, index, type, number] = registers;
 
-    checkTypedArrayAccess(jit, registers, slow);
+    JumpList isOutside;
+    checkTypedArrayAccess(jit, registers, slow, &isOutside, &isNoTypedArray);
     Jump valueIsNotInt32 = jit.branch64(CCallHelpers::Below, value, numberTag);
     auto forJSType = [&](JSType viewType, const auto& store) {
         Jump other = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(viewType));
@@ -561,17 +681,91 @@ static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementReg
     jit.convertInt32ToDouble(value, number);
     forJSType(Float64ArrayType, storeDouble);
     forJSType(Float32ArrayType, storeFloat);
-    slow.append(jit.jump());
+    slow.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(Uint8ClampedArrayType)));
+    jit.zeroExtend32ToWord(value, doubleBits);
+    Jump int32FitsByte = jit.branch32(CCallHelpers::BelowOrEqual, doubleBits, TrustedImm32(UINT8_MAX));
+    jit.rshift32(TrustedImm32(31), doubleBits);
+    jit.not32(doubleBits);
+    int32FitsByte.link(&jit);
+    jit.store8(doubleBits, BaseIndex(storage, index, CCallHelpers::TimesOne));
+    jit.returnToCaller();
 
     valueIsNotInt32.link(&jit);
-    slow.append(jit.branchTest64(CCallHelpers::Zero, value, numberTag));
+    Jump valueIsNoNumber = jit.branchTest64(CCallHelpers::Zero, value, numberTag);
     unboxDouble(jit, value, doubleBits, number);
     forJSType(Float64ArrayType, storeDouble);
     forJSType(Float32ArrayType, storeFloat);
-    slow.append(jit.jump());
+    static_assert(Int8ArrayType + 1 == Uint8ArrayType && Uint8ArrayType + 1 == Uint8ClampedArrayType && Uint8ClampedArrayType + 1 == Int16ArrayType && Int16ArrayType + 1 == Uint16ArrayType && Uint16ArrayType + 1 == Int32ArrayType && Int32ArrayType + 1 == Uint32ArrayType);
+    Jump isClamped = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(Uint8ClampedArrayType));
+    slow.append(jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint32ArrayType)));
+#if CPU(ARM64)
+    if (jit.supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+        jit.convertDoubleToInt32UsingJavaScriptSemantics(number, doubleBits);
+    else
+#endif
+        slow.append(jit.branchTruncateDoubleToInt32ViaInt64(number, doubleBits));
+    Jump hasWords = jit.branch32(CCallHelpers::AboveOrEqual, type, TrustedImm32(Int32ArrayType));
+    Jump hasHalfWords = jit.branch32(CCallHelpers::AboveOrEqual, type, TrustedImm32(Int16ArrayType));
+    jit.store8(doubleBits, BaseIndex(storage, index, CCallHelpers::TimesOne));
+    jit.returnToCaller();
+    hasHalfWords.link(&jit);
+    jit.store16(doubleBits, BaseIndex(storage, index, CCallHelpers::TimesTwo));
+    jit.returnToCaller();
+    hasWords.link(&jit);
+    jit.store32(doubleBits, BaseIndex(storage, index, CCallHelpers::TimesFour));
+    jit.returnToCaller();
+
+    isClamped.link(&jit);
+    jit.roundTowardNearestIntDouble(number, number);
+    jit.truncateDoubleToInt64(number, doubleBits);
+    Jump fitsByte = jit.branch64(CCallHelpers::BelowOrEqual, doubleBits, TrustedImm32(UINT8_MAX));
+    slow.append(jit.branchSub64(CCallHelpers::Overflow, TrustedImm32(1), doubleBits));
+    jit.rshift64(TrustedImm32(63), doubleBits);
+    jit.not32(doubleBits);
+    fitsByte.link(&jit);
+    jit.store8(doubleBits, BaseIndex(storage, index, CCallHelpers::TimesOne));
+    jit.returnToCaller();
+
+    valueIsNoNumber.link(&jit);
+    static_assert(Int8ArrayType + 1 == Uint8ArrayType && Uint8ArrayType + 1 == Uint8ClampedArrayType && Uint8ClampedArrayType + 1 == Int16ArrayType && Uint32ArrayType < Float32ArrayType && Float32ArrayType + 1 == Float64ArrayType);
+    const GPRReg converted = doubleBits;
+    slow.append(jit.branchIfCell(value));
+    jit.compare64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueTrue), converted);
+    Jump holdsNoIntegers = jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint32ArrayType));
+    Jump holdsNoBytes = jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint8ClampedArrayType));
+    jit.store8(converted, BaseIndex(storage, index, CCallHelpers::TimesOne));
+    jit.returnToCaller();
+
+    holdsNoBytes.link(&jit);
+    Jump holds32Bits = jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint16ArrayType));
+    jit.store16(converted, BaseIndex(storage, index, CCallHelpers::TimesTwo));
+    jit.returnToCaller();
+
+    holds32Bits.link(&jit);
+    jit.store32(converted, BaseIndex(storage, index, CCallHelpers::TimesFour));
+    jit.returnToCaller();
+
+    holdsNoIntegers.link(&jit);
+    slow.append(jit.branch32(CCallHelpers::Below, type, TrustedImm32(Float32ArrayType)));
+    slow.append(jit.branch32(CCallHelpers::Above, type, TrustedImm32(Float64ArrayType)));
+    jit.convertInt32ToDouble(converted, number);
+    Jump isDefined = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueUndefined));
+    jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), converted);
+    jit.move64ToDouble(converted, number);
+    isDefined.link(&jit);
+    forJSType(Float64ArrayType, storeDouble);
+    storeFloat();
+    jit.returnToCaller();
+
+    isOutside.link(&jit);
+    Jump isNumber = jit.branchTest64(CCallHelpers::NonZero, value, numberTag);
+    slow.append(jit.branchIfCell(value));
+    isNumber.link(&jit);
+    slow.append(jit.branch32(CCallHelpers::Equal, type, TrustedImm32(BigInt64ArrayType)));
+    slow.append(jit.branch32(CCallHelpers::Equal, type, TrustedImm32(BigUint64ArrayType)));
+    jit.returnToCaller();
 }
 
-// A store at the public length appends. Where the index is not below the vector length, the vector is then full and grows first.
 template<typename Functor>
 static void storeOrAppendAndReturn(StubAssembler& jit, const ElementRegisters& registers, GPRReg allocator, GPRReg scratch, JumpList& slow, const Functor& storeAndReturn)
 {
@@ -613,8 +807,6 @@ static void storeDoubleElementAndReturn(StubAssembler& jit, const ElementRegiste
 
 StubSignature signatureOfStoreElementOfCompiledObject(StubKey key) { return signatureOfPutByVal(key); }
 
-// For a compiled object and a key that is an int32. An element that exists is replaced. One is added where nobody has to be asked or told: right above the object is the Object.prototype of its realm,
-// which has no elements and takes none, the object is above no other object, and nothing was done to it but giving it more properties. There a store is a definition.
 void generateStoreElementOfCompiledObject(StubAssembler& jit)
 {
     static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T11, StubRegister::T12, StubRegister::T13, StubRegister::A3, StubRegister::A4));
@@ -635,6 +827,7 @@ void generateStoreElementOfCompiledObject(StubAssembler& jit)
     const GPRReg shape = butterfly;
     const BaseIndex element(butterfly, index, CCallHelpers::TimesEight);
     const Address orderWord(base, offsetOfOrderWord);
+    const Address publicLength(butterfly, Butterfly::offsetOfPublicLength());
     JumpList slow;
 
     Jump hasNoExtraProperties = jit.branchTest32(CCallHelpers::Zero, orderWord, TrustedImm32(orderWordHasExtraProperties));
@@ -651,146 +844,123 @@ void generateStoreElementOfCompiledObject(StubAssembler& jit)
     isContiguous.link(&jit);
     jit.loadPtr(Address(extraProperties, JSObject::butterflyOffset()), butterfly);
     jit.zeroExtend32ToWord(key, index);
-    Jump isBeyondLength = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(butterfly, Butterfly::offsetOfPublicLength()));
+    Jump isBeyondLength = jit.branch32(CCallHelpers::AboveOrEqual, index, publicLength);
     Jump isHole = jit.branchTest64(CCallHelpers::Zero, element);
     Label storeValue = jit.label();
     jit.store64(value, element);
     jit.move(extraProperties, base);
     returnAfterStoring(jit, base, value);
 
-    // A build that validates looks at every property that an object gets.
-    if (jit.options().validates) {
-        slow.append(hasNoExtraProperties);
-        slow.append(isBeyondLength);
-        slow.append(isHole);
-    } else {
-        isHole.link(&jit);
-        isBeyondLength.link(&jit);
-        slow.append(jit.branchIfNotType(extraProperties, FinalObjectType));
-        slow.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
-        slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(structure, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOtherPrototype))));
-        jit.load64(Address(structure, Structure::prototypeOffset()), structure);
-        slow.append(jit.branch64(CCallHelpers::NotEqual, structure, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
-        slow.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(~(orderAndCountMask | orderWordHasExtraProperties))));
-        jit.branch32(CCallHelpers::Below, index, Address(butterfly, Butterfly::offsetOfPublicLength())).linkTo(storeValue, &jit);
-        Jump isBeyondVector = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(butterfly, Butterfly::offsetOfVectorLength()));
-        Label lengthen = jit.label();
-        jit.add32(TrustedImm32(1), index, structure);
-        jit.store32(structure, Address(butterfly, Butterfly::offsetOfPublicLength()));
-        jit.jump().linkTo(storeValue, &jit);
+    isHole.link(&jit);
+    isBeyondLength.link(&jit);
+    slow.append(jit.branchIfNotType(extraProperties, FinalObjectType));
+    slow.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+    slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(structure, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOtherPrototype))));
+    jit.load64(Address(structure, Structure::prototypeOffset()), structure);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, structure, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
+    slow.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(~(orderAndCountMask | orderWordHasExtraProperties))));
+    jit.branch32(CCallHelpers::Below, index, publicLength).linkTo(storeValue, &jit);
+    Jump isBeyondVector = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(butterfly, Butterfly::offsetOfVectorLength()));
+    Label lengthen = jit.label();
+    jit.add32(TrustedImm32(1), index, structure);
+    jit.store32(structure, publicLength);
+    jit.jump().linkTo(storeValue, &jit);
 
-        // The vector gets room for the element. Until the new vector is there the length that is needed says what the key was.
-        isBeyondVector.link(&jit);
-        const GPRReg neededLength = index;
-        JumpList cannotGrow;
-        // A negative key is a name, and looks like an index beyond every length.
-        slow.append(jit.branch32(CCallHelpers::AboveOrEqual, index, TrustedImm32(maxLengthForElementwiseCopy)));
-        jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), transition);
-        jit.add32(TrustedImm32(1), neededLength);
-        growVectorFor(jit, { .array = extraProperties, .butterfly = butterfly, .length = transition, .storage = structure, .allocator = scratch, .scratch = key, .isOfExtraProperties = true }, neededLength, cannotGrow);
-        jit.sub32(TrustedImm32(1), index);
-        jit.loadPtr(Address(extraProperties, JSObject::butterflyOffset()), butterfly);
-        jit.jump().linkTo(lengthen, &jit);
+    isBeyondVector.link(&jit);
+    const GPRReg neededLength = index;
+    JumpList cannotGrow;
+    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, index, TrustedImm32(maxLengthForElementwiseCopy)));
+    jit.load32(publicLength, transition);
+    jit.add32(TrustedImm32(1), neededLength);
+    growVectorFor(jit, { .array = extraProperties, .butterfly = butterfly, .length = transition, .storage = structure, .allocator = scratch, .scratch = key, .isOfExtraProperties = true }, neededLength, cannotGrow);
+    jit.sub32(TrustedImm32(1), index);
+    jit.loadPtr(Address(extraProperties, JSObject::butterflyOffset()), butterfly);
+    jit.jump().linkTo(lengthen, &jit);
 
-        cannotGrow.link(&jit);
-        jit.sub32(TrustedImm32(1), index);
-        boxInt32(jit, index, key);
-        slow.append(jit.jump());
+    cannotGrow.link(&jit);
+    jit.sub32(TrustedImm32(1), index);
+    boxInt32(jit, index, key);
+    slow.append(jit.jump());
 
-        // The first element. What the Structure of the object has to say for it, the run time has seen when it remembered the Structure that follows.
-        hasNoExtraProperties.link(&jit);
-        const GPRReg structureID = structure;
-        const GPRReg allocator = structure;
-        const GPRReg vectorLength = scratch;
-        auto loadTransition = [&] {
-            jit.load32(Address(base, JSCell::structureIDOffset()), structureID);
-            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.extraPropertiesWithElementsStructure)), scratch);
-            jit.xor32(scratch, structureID, transition);
-            jit.urshift32(TrustedImm32(prototypeTransitionHashShift), transition);
-            jit.and32(TrustedImm32(numberOfPrototypeTransitions - 1), transition);
-            jit.lshift32(TrustedImm32(4), transition);
-            jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.prototypeTransitions)), transition);
-        };
-        slow.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(~orderAndCountMask)));
-        jit.zeroExtend32ToWord(key, index);
-        slow.append(jit.branch32(CCallHelpers::Above, index, TrustedImm32(maxIndexOfFirstElementMadeByStub)));
-        loadTransition();
-        slow.append(jit.branch64(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)), scratch));
-        slow.append(jit.branch32(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, before)), structureID));
-        // Only the object leads to what is made here, so an object that the collector will not visit again is left to C++.
-        slow.append(branchIfBarrierIsNeeded(jit, base, scratch));
+    hasNoExtraProperties.link(&jit);
+    const GPRReg structureID = structure;
+    const GPRReg allocator = structure;
+    const GPRReg vectorLength = scratch;
+    const GPRReg sizeStep = extraProperties;
+    slow.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(~orderAndCountMask)));
+    jit.zeroExtend32ToWord(key, index);
+    slow.append(jit.branch32(CCallHelpers::Above, index, TrustedImm32(maxIndexOfFirstElementStoredContiguously)));
+    jit.load32(Address(base, JSCell::structureIDOffset()), structureID);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.extraPropertiesWithElementsStructure)), scratch);
+    jit.xor32(scratch, structureID, transition);
+    jit.urshift32(TrustedImm32(prototypeTransitionHashShift), transition);
+    jit.and32(TrustedImm32(numberOfPrototypeTransitions - 1), transition);
+    jit.lshift32(TrustedImm32(4), transition);
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.prototypeTransitions)), transition);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)), scratch));
+    slow.append(jit.branch32(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, before)), structureID));
+    slow.append(branchIfBarrierIsNeeded(jit, base, scratch));
+    slow.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(frameCellState)));
 
-        // As long as JSObject::ensureLength() makes a vector for index + 1 elements.
-        const GPRReg sizeStep = extraProperties;
-        jit.add32(TrustedImm32(1), index, sizeStep);
-        jit.urshift32(sizeStep, TrustedImm32(1), scratch);
-        jit.add32(scratch, sizeStep);
-        Jump isLongEnough = jit.branch32(CCallHelpers::AboveOrEqual, sizeStep, TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN));
-        jit.move(TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN), sizeStep);
-        isLongEnough.link(&jit);
-        jit.add32(TrustedImm32(2), sizeStep);
-        jit.urshift32(TrustedImm32(1), sizeStep);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
-        jit.loadPtr(BaseIndex(allocator, sizeStep, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
-        slow.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
-        allocateCell(jit, butterfly, allocator, scratch, slow);
-        jit.load32(Address(allocator, LocalAllocator::offsetOfCellSize()), vectorLength);
-        jit.sub32(TrustedImm32(sizeof(IndexingHeader)), vectorLength);
-        jit.urshift32(TrustedImm32(3), vectorLength);
-        jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), butterfly);
-        jit.store32(vectorLength, Address(butterfly, Butterfly::offsetOfVectorLength()));
-        jit.add32(TrustedImm32(1), index, structure);
-        jit.store32(structure, Address(butterfly, Butterfly::offsetOfPublicLength()));
-        Label clearPrevious = jit.label();
-        jit.sub32(TrustedImm32(1), vectorLength);
-        jit.store64(TrustedImm32(0), BaseIndex(butterfly, vectorLength, CCallHelpers::TimesEight));
-        jit.branchTest32(CCallHelpers::NonZero, vectorLength).linkTo(clearPrevious, &jit);
-        jit.store64(value, element);
+    jit.add32(TrustedImm32(1), index, sizeStep);
+    jit.urshift32(sizeStep, TrustedImm32(1), scratch);
+    jit.add32(scratch, sizeStep);
+    Jump isLongEnough = jit.branch32(CCallHelpers::AboveOrEqual, sizeStep, TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN));
+    jit.move(TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN), sizeStep);
+    isLongEnough.link(&jit);
+    jit.add32(TrustedImm32(2), sizeStep);
+    jit.urshift32(TrustedImm32(1), sizeStep);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, sizeStep, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, butterfly, allocator, scratch, slow);
+    jit.load32(Address(allocator, LocalAllocator::offsetOfCellSize()), vectorLength);
+    jit.sub32(TrustedImm32(sizeof(IndexingHeader)), vectorLength);
+    jit.urshift32(TrustedImm32(3), vectorLength);
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), butterfly);
+    jit.store32(vectorLength, Address(butterfly, Butterfly::offsetOfVectorLength()));
+    jit.add32(TrustedImm32(1), index, structure);
+    jit.store32(structure, publicLength);
+    Label clearPrevious = jit.label();
+    jit.sub32(TrustedImm32(1), vectorLength);
+    jit.store64(TrustedImm32(0), BaseIndex(butterfly, vectorLength, CCallHelpers::TimesEight));
+    jit.branchTest32(CCallHelpers::NonZero, vectorLength).linkTo(clearPrevious, &jit);
+    jit.store64(value, element);
 
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
-        jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + static_cast<int32_t>(sizeOfExtraProperties / MarkedSpace::sizeStep * sizeof(Allocator))), allocator);
-        slow.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
-        allocateCell(jit, extraProperties, allocator, scratch, slow);
-        jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements)), scratch);
-        jit.store64(scratch, Address(extraProperties, JSCell::structureIDOffset()));
-        jit.storePtr(butterfly, Address(extraProperties, JSObject::butterflyOffset()));
-        for (unsigned word = 0; word < extraPropertiesInlineCapacity; ++word)
-            jit.store64(TrustedImm32(0), Address(extraProperties, JSObject::offsetOfInlineStorage() + static_cast<int32_t>(word * sizeof(EncodedJSValue))));
-        fenceAfterAllocation(jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+    jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + static_cast<int32_t>(sizeOfExtraProperties / MarkedSpace::sizeStep * sizeof(Allocator))), allocator);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, extraProperties, allocator, scratch, slow);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements)), scratch);
+    jit.store64(scratch, Address(extraProperties, JSCell::structureIDOffset()));
+    jit.storePtr(butterfly, Address(extraProperties, JSObject::butterflyOffset()));
+    for (unsigned word = 0; word < extraPropertiesInlineCapacity; ++word)
+        jit.store64(TrustedImm32(0), Address(extraProperties, JSObject::offsetOfInlineStorage() + static_cast<int32_t>(word * sizeof(EncodedJSValue))));
+    fenceAfterAllocation(jit);
 
-        jit.load32(Address(transition, OBJECT_OFFSETOF(PrototypeTransition, after)), structureID);
-        jit.move(structureID, scratch);
-        decodeStructureID(jit, scratch);
-        jit.load32(Address(scratch, CompiledStructure::offsetOfExtraPropertiesSlot()), scratch);
-        jit.and32(TrustedImm32(SlotData::maxOffset), scratch);
-        if (jit.options().useWideReferences)
-            jit.store64(extraProperties, BaseIndex(base, scratch, CCallHelpers::TimesOne));
-        else {
-            encodeCell32(jit, extraProperties, index);
-            jit.store32(index, BaseIndex(base, scratch, CCallHelpers::TimesOne));
-        }
-        jit.or32(TrustedImm32(orderWordHasExtraProperties), orderWord);
-        jit.store32(structureID, Address(base, JSCell::structureIDOffset()));
-        jit.returnToCaller();
+    jit.load32(Address(transition, OBJECT_OFFSETOF(PrototypeTransition, after)), structureID);
+    jit.move(structureID, scratch);
+    decodeStructureID(jit, scratch);
+    jit.load32(Address(scratch, CompiledStructure::offsetOfExtraPropertiesSlot()), scratch);
+    jit.and32(TrustedImm32(SlotData::maxOffset), scratch);
+    if (jit.options().useWideReferences)
+        jit.store64(extraProperties, BaseIndex(base, scratch, CCallHelpers::TimesOne));
+    else {
+        encodeCell32(jit, extraProperties, index);
+        jit.store32(index, BaseIndex(base, scratch, CCallHelpers::TimesOne));
     }
+    jit.or32(TrustedImm32(orderWordHasExtraProperties), orderWord);
+    jit.store32(structureID, Address(base, JSCell::structureIDOffset()));
+    jit.returnToCaller();
 
     slow.link(&jit);
     if (mode == PutMode::Define) {
-        jit.callOperationAndReturn(Entry::operationAOTDefineField, {
-            .returns = OperationCall::Returns::Void,
-            .secondArgumentIn = base,
-            .thirdArgumentIn = key,
-            .fourthArgumentIn = value,
-        });
+        jit.callOperationAndReturn(Entry::operationAOTDefineField, { .returns = OperationCall::Returns::Void, .secondArgumentIn = base, .thirdArgumentIn = key, .fourthArgumentIn = value });
         return;
     }
     jit.move(value, structure);
     jit.move(TrustedImm32(mode == PutMode::Strict ? 1 : 0), scratch);
-    jit.callOperationAndReturn(Entry::operationAOTPutByVal, {
-        .returns = OperationCall::Returns::Void,
-        .secondArgumentIn = base,
-        .thirdArgumentIn = key,
-    });
+    jit.callOperationAndReturn(Entry::operationAOTPutByVal, { .returns = OperationCall::Returns::Void, .secondArgumentIn = base, .thirdArgumentIn = key });
 }
 
 void generatePutByVal(StubAssembler& jit)
@@ -806,9 +976,11 @@ void generatePutByVal(StubAssembler& jit)
     const GPRReg shape = registers.storage;
     JumpList slow;
 
+    Jump isConstantIndex = emitPutByValAtConstantIndexEntry(jit, registers, value, mode);
     emitPutByValAtIndexEntry(jit, registers, value, mode);
     jit.bindEntry(jit.key());
     slow.append(jit.branch64(CCallHelpers::Below, key, numberTag));
+    isConstantIndex.link(&jit);
     slow.append(jit.branchIfNotCell(base));
     jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), shape);
@@ -819,9 +991,14 @@ void generatePutByVal(StubAssembler& jit)
     isNotInt32Shape.link(&jit);
     Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     slow.append(jit.branchTest32(CCallHelpers::NonZero, shape));
-    checkStubOperands(storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy), { base, key, value });
-    jit.linkToStub(branchIfCompiledObjectOfThisImage(jit, base), storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy));
-    storeTypedArrayElementAndReturn(jit, registers, value, doubleBits, slow);
+    JumpList isNoTypedArray;
+    storeTypedArrayElementAndReturn(jit, registers, value, doubleBits, slow, isNoTypedArray);
+
+    isNoTypedArray.link(&jit);
+    const StubKey storeInCompiledObject = storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy);
+    checkStubOperands(storeInCompiledObject, { base, key, value });
+    jit.linkToStub(jit.branch32(CCallHelpers::Equal, registers.type, TrustedImm32(CompiledObjectType)), storeInCompiledObject);
+    slow.append(jit.jump());
 
     isDoubleShape.link(&jit);
     storeDoubleElementAndReturn(jit, registers, value, valueArgument, doubleBits, slow);
@@ -834,14 +1011,12 @@ void generatePutByVal(StubAssembler& jit)
     });
 
     slow.link(&jit);
-    if (jit.options().callsTrapsOfProxies.predicted()) {
-        const StubSignature throughProxySignature = signatureOf(throughProxy(TrapOfProxy::Set));
+    {
         const GPRReg text = registers.type;
         const GPRReg storedValue = jit.reuseScratch(valueStoredThroughProxyRegister);
         const GPRReg isStrict = jit.reuseScratch(StubRegister::T14);
-        RELEASE_ASSERT(throughProxySignature.operands[0] == Reg(base) && throughProxySignature.operands[1] == Reg(text) && throughProxySignature.operands[2] == Reg(storedValue) && throughProxySignature.operands[3] == Reg(isStrict));
         static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, slotPayloadRegister, valueStoredThroughProxyRegister, StubRegister::T14, StubRegister::T11, StubRegister::T12));
-        RELEASE_ASSERT(noOverlap(base, key, value, text, storedValue, isStrict, registers.storage, registers.index));
+        checkStubOperands(throughProxy(TrapOfProxy::Set), { base, text, storedValue, isStrict });
         JumpList operationStores;
         loadTextOfIndexForTrap(jit, base, key, registers.storage, registers.index, text, operationStores);
         jit.move(value, storedValue);
@@ -865,16 +1040,17 @@ static JSType typeOfExpectedView(ExpectedElements expected)
         return Int32ArrayType;
     case ExpectedElements::Uint8Array:
         return Uint8ArrayType;
+    case ExpectedElements::Float64Array:
+        return Float64ArrayType;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Leaves the operands as they came, so that a miss goes on to the stub that takes everything. The index is a whole register: a negative one lies above every length.
-// With a value, the element is replaced: only one that is there, and only by an int32.
-static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, ExpectedElements expected, GPRReg index, std::optional<GPRReg> value, JumpList& miss)
+static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, ExpectedElements expected, GPRReg index, std::optional<GPRReg> value, FPRReg numberScratch, JumpList& miss)
 {
     const GPRReg base = registers.base;
     const GPRReg storage = registers.storage;
+    const FPRReg number = registers.number;
 
     miss.append(jit.branchIfNotCell(base));
     miss.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::typeInfoTypeOffset()), TrustedImm32(typeOfExpectedView(expected))));
@@ -889,8 +1065,24 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
         case ExpectedElements::Uint8Array:
             jit.load8(BaseIndex(storage, index, CCallHelpers::TimesOne), storage);
             break;
+        case ExpectedElements::Float64Array:
+            jit.loadDouble(BaseIndex(storage, index, CCallHelpers::TimesEight), number);
+            returnBoxedDouble(jit, registers, PureDouble::purify(jit, number, number), numberScratch);
+            return;
         }
         returnBoxedInt32(jit, registers);
+        return;
+    }
+    if (expected == ExpectedElements::Float64Array) {
+        Jump isInt32 = jit.branch64(CCallHelpers::AboveOrEqual, *value, numberTag);
+        miss.append(jit.branchTest64(CCallHelpers::Zero, *value, numberTag));
+        unboxDouble(jit, *value, registers.type, number);
+        jit.storeDouble(number, BaseIndex(storage, index, CCallHelpers::TimesEight));
+        jit.returnToCaller();
+        isInt32.link(&jit);
+        jit.convertInt32ToDouble(*value, number);
+        jit.storeDouble(number, BaseIndex(storage, index, CCallHelpers::TimesEight));
+        jit.returnToCaller();
         return;
     }
     miss.append(jit.branch64(CCallHelpers::Below, *value, numberTag));
@@ -901,6 +1093,8 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
     case ExpectedElements::Uint8Array:
         jit.store8(*value, BaseIndex(storage, index, CCallHelpers::TimesOne));
         break;
+    case ExpectedElements::Float64Array:
+        RELEASE_ASSERT_NOT_REACHED();
     }
     jit.returnToCaller();
 }
@@ -908,19 +1102,27 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
 static void emitEntriesExpecting(StubAssembler& jit, ExpectedElements expected, std::optional<GPRReg> value, StubKey atIndex, StubKey takesEverythingAtIndex, StubKey takesEverything)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
-    RELEASE_ASSERT(signatureOf(takesEverything).operands == jit.signature().operands && signatureOf(takesEverythingAtIndex).operands == jit.signature().operands);
+    const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
+    auto goOnToStub = [&](JumpList& miss, StubKey stub) {
+        if (value)
+            checkStubOperands(stub, { registers.base, registers.key, *value });
+        else
+            checkStubOperands(stub, { registers.base, registers.key });
+        miss.link(&jit);
+        jit.jumpToStub(stub);
+    };
 
     JumpList missAtIndex;
     jit.bindEntry(atIndex);
-    accessExpectedElementAndReturn(jit, registers, expected, registers.key, value, missAtIndex);
-    jit.linkToStub(missAtIndex, takesEverythingAtIndex);
+    accessExpectedElementAndReturn(jit, registers, expected, registers.key, value, numberScratch, missAtIndex);
+    goOnToStub(missAtIndex, takesEverythingAtIndex);
 
     JumpList miss;
     jit.bindEntry(jit.key());
     miss.append(jit.branch64(CCallHelpers::Below, registers.key, numberTag));
     jit.signExtend32ToPtr(registers.key, registers.index);
-    accessExpectedElementAndReturn(jit, registers, expected, registers.index, value, miss);
-    jit.linkToStub(miss, takesEverything);
+    accessExpectedElementAndReturn(jit, registers, expected, registers.index, value, numberScratch, miss);
+    goOnToStub(miss, takesEverything);
 }
 
 void generateGetByValExpecting(StubAssembler& jit)

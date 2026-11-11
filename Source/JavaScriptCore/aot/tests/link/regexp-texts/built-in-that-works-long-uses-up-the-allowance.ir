@@ -1,0 +1,65 @@
+# A built-in costs by what it is handed. One that is handed a RegExp may go back over its subject again and again: while (true) /(a+)+$/.test("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
+# So does a sort: const list = new Array(1000000); while (true) list.sort();      A start of its own goes on: export function other() { return new RegExp("c" + String("+d")); }
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /c+d/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="other" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="sorts" module=m0 declared={type=f2} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="(a+)"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="String" [isFreeName]
+    v4 = String string="+$"
+    v5 = Call v3, -, v4
+    v6 = Add v1, v5
+    v7 = NewRegExp pattern="(a+)+$"
+    v8 = String string="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v10 = PropGet v7 key="test"
+    v11 = Call v10, v7, v8 calleeKey="test"
+    v12 = Boolean boolean=true
+    Branch v12 -> taken b1(), notTaken b2()
+  b2():
+    v13 = Add v6, v11
+    v14 = Construct v0, -, v13
+    Return v14
+}
+function f1 name="other" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="String" [isFreeName]
+    v3 = String string="+d"
+    v4 = Call v2, -, v3
+    v5 = String string="c"
+    v6 = Add v5, v4
+    v7 = Construct v0, -, v6
+    Return v7
+}
+function f2 name="sorts" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Array
+    v2 = Integer integer=1000000
+    v3 = Construct v1, -, v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = PropGet v3 key="sort"
+    v6 = Call v5, v3 calleeKey="sort"
+    v7 = Boolean boolean=true
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    v8 = PropGet v6 key="length"
+    v9 = String string="e"
+    v10 = Add v9, v8
+    v11 = Construct v0, -, v10
+    Return v11
+}

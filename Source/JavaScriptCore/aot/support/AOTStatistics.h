@@ -8,16 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
-#include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <atomic>
 #include <memory>
-#include <wtf/Forward.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Seconds.h>
+#include <wtf/Threading.h>
 
 namespace JSC { namespace AOT {
 
@@ -32,20 +31,33 @@ public:
     Statistics& operator=(Statistics&&) = default;
 
     void count(StatisticID, uint64_t amount = 1);
-    void countHit(LimitID limit) { count(hitsOf(limit)); }
-    void countChanges(PassID pass, uint64_t amount) { count(Wire::changesOf(pass), amount); }
     void addTime(Stage stage, Seconds time) { count(Wire::timeOf(stage), time.nanosecondsAs<uint64_t>()); }
     JS_EXPORT_PRIVATE Vector<uint64_t> values() const;
 
-    struct PassTime {
-        Seconds wall;
-        Seconds cpu;
-        uint64_t runs { 0 };
-    };
+    class CountersOfThread {
+    public:
+        ALWAYS_INLINE void count(StatisticID id, uint64_t amount = 1) const
+        {
+            if (!amount || id == StatisticID::None)
+                return;
+            unsigned index = static_cast<unsigned>(id);
+            RELEASE_ASSERT(index < numberOfStatistics);
+            m_statistics.m_counters[m_firstCounter + index].fetch_add(amount, std::memory_order_relaxed);
+        }
 
-    void addPassTime(PassID, const PassTime&);
-    void dumpPassTimes(PrintStream&) const;
-    const Vector<PassTime>& passTimes() const { return m_passTimes; }
+    private:
+        friend class Statistics;
+
+        CountersOfThread(Statistics& statistics, unsigned firstCounter)
+            : m_statistics(statistics)
+            , m_firstCounter(firstCounter)
+        {
+        }
+
+        Statistics& m_statistics;
+        unsigned m_firstCounter;
+    };
+    CountersOfThread countersOfCurrentThread() { return { *this, Thread::currentSingleton().uid() % numberOfStripes * countersPerStripe }; }
 
 private:
     static constexpr unsigned numberOfStripes = 16;
@@ -53,7 +65,6 @@ private:
     static constexpr unsigned countersPerStripe = roundUpToMultipleOf(countersPerCacheLine, numberOfStatistics) + countersPerCacheLine;
 
     std::unique_ptr<std::atomic<uint64_t>[]> m_counters;
-    Vector<PassTime> m_passTimes;
 };
 
 } } // namespace JSC::AOT

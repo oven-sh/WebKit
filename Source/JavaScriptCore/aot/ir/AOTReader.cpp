@@ -8,23 +8,25 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFlowSiteData.h"
-#include "AOTImagesBelow.h"
-#include "AOTNarrowFieldTypes.h"
+#include "AOTEffectsNet.h"
+#include "AOTPhaseTimes.h"
+#include "AOTSectionWriter.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
-#include "AOTTypeClosure.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
-#include "AOTVerifierInternal.h"
-#include <algorithm>
-#include <compare>
 #include <wtf/StdLibExtras.h>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Reader::Reader(Program& program, IRForm form, BuildContext& build)
+static constexpr ASCIILiteral stepsOfRead = "ReadAndVerify: read"_s;
+static constexpr ASCIILiteral stepsOfReadSideBySide = "ReadAndVerify: read, side by side"_s;
+
+Reader::Reader(Program& program, BuildContext& build)
     : m_program(program)
-    , m_form(form)
     , m_build(build)
     , m_builtins(program.builtins())
     , m_buffer(program.buffer())
@@ -33,120 +35,123 @@ Reader::Reader(Program& program, IRForm form, BuildContext& build)
 
 bool Reader::run()
 {
-    return readHeader()
-        && readNamesAndFamilies()
-        && readReplaceableBuiltins()
-        && readTypes()
-        && readListsLayoutsAndFunctions()
-        && finishProgram();
-}
+    m_program.admitsReplacedBuiltins = m_build.options().admitsReplacedBuiltins();
+    m_program.shouldAssumeNullishHostResults = AOT::hasFlag(m_build.options().testing, Wire::TestingSwitch::AssumeNullishHostResults);
+    UnderstatedEffects understatedEffects = UnderstatedEffects::decode(m_build.options().understatedEffects);
+    if (understatedEffects.part == PartOfEffects::RangeOfResult)
+        m_program.builtinInjectedAsMinimumInteger = understatedEffects.row;
+    if (understatedEffects.part == PartOfEffects::KindOfResult && understatedEffects.kind == KindOfEffectsRow::Operation)
+        m_program.opcodeInjectedAsOtherKind = understatedEffects.row + 1;
+    else if (understatedEffects.part == PartOfEffects::KindOfResult)
+        m_program.builtinInjectedAsNull = understatedEffects.row;
+    if (understatedEffects.part == PartOfEffects::ContentsOfResult)
+        m_program.builtinInjectedAsHoldingNull = understatedEffects.row;
+    if (understatedEffects.part == PartOfEffects::FreshnessOfResult)
+        m_program.builtinInjectedAsFresh = understatedEffects.row;
+    m_program.admitsInspector = m_build.options().admitsUnseenCode();
+    m_program.excludedCode = m_build.options().excludedCode;
 
-// Before anything asks the table about a lock, and while one thread reads.
-bool Reader::readReplaceableBuiltins()
-{
-    auto& members = m_program.replaceableBuiltins;
-    if (!readList(m_sections.replaceableBuiltins, members) || !readList(m_sections.openedNames, m_program.openedNames))
+    const ParallelLoops& loops = m_build.parallelLoops();
+    StepTimes steps(m_build, stepsOfRead);
+    if (!readHeader())
         return false;
-    for (size_t index = 1; index < members.size(); ++index) {
-        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
-        checker.requireAscending(members[index - 1].member, members[index].member);
-        if (auto failure = checker.takeFailure())
-            return report(*failure);
-    }
-    if (const ImagesBelow* below = m_build.imagesBelow()) {
-        below->forEachUnlockedBuiltinMember([&](BuiltinID member) {
-            members.append(ReplaceableBuiltin { member });
-        });
-        AOT::sort(members, { }, &ReplaceableBuiltin::member);
-        members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
-    }
-    m_program.takesAnyNameFromTests = m_build.options().holdsLibraryAlone();
-    m_program.unlockReplaceableBuiltins();
-    return true;
-}
+    steps.didFinish("header and bytes"_s);
 
-bool Reader::readNamesAndFamilies()
-{
-    const auto& options = m_build.options();
-    if (options.verifiesProgram || options.isVerifyOnly())
-        return readStrings() && readPropertyKeys() && computeFamilies();
-
-    bool hasStrings = false;
-    bool hasPropertyKeys = false;
-    bool hasFamilies = false;
-    runTasksInParallel(m_build.parallelLoops(), {
+    m_types.emplace(m_program, m_sections, m_build, m_externalBodies);
+    readList(m_sections.replaceableBuiltins, m_program.replaceableBuiltins);
+    readList(m_sections.openedNames, m_program.openedNames);
+    bool unlockingReadsStrings = !m_program.openedNames.isEmpty();
+    if (!unlockingReadsStrings)
+        m_program.unlockReplaceableBuiltins();
+    auto makeObjectsAndFamiliesOfFunctions = [&] {
+        StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+        m_types->makeObjects();
+        stepsOfLane.didFinish("objects of functions"_s);
+        m_types->computeFunctionFamilies();
+        stepsOfLane.didFinish("families of functions"_s);
+    };
+    bool hasDeclaredMembers = false;
+    runLanes(loops, {
         [&] {
-            hasFamilies = computeFamilies();
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            hasDeclaredMembers = m_types->computeDeclaredMembers();
+            stepsOfLane.didFinish("families of layouts"_s);
         },
         [&] {
-            hasStrings = readStrings();
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            readStrings();
+            stepsOfLane.didFinish("strings"_s);
+            if (!unlockingReadsStrings)
+                return;
+            m_program.unlockReplaceableBuiltins();
+            makeObjectsAndFamiliesOfFunctions();
         },
         [&] {
-            hasPropertyKeys = readPropertyKeys();
+            if (!unlockingReadsStrings)
+                makeObjectsAndFamiliesOfFunctions();
+        },
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            readPropertyKeys();
+            stepsOfLane.didFinish("property keys"_s);
+            makeRoomForTables();
+            stepsOfLane.didFinish("room for the tables"_s);
         },
     });
-    return hasStrings && hasPropertyKeys && hasFamilies;
-}
-
-// The value flow analysis identifies a string by its key. Every string held by an operation or constant data has one, whether or not a property has that name.
-static void internKeysOfStringConstants(Program& program, const ParallelLoops& loops)
-{
-    Vector<StringID> ofOperations = collectInParallel<StringID>(loops, program.functions.size(), [&](unsigned index, Vector<StringID>& found) {
-        for (const Value& value : program.functions[index].values.span()) {
-            if (value.opcode == Opcode::String)
-                found.append(value.string());
-        }
-    });
-    Vector<StringID> ofData = collectInParallel<StringID>(loops, program.data.size(), [&](unsigned index, Vector<StringID>& found) {
-        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t, const DataNode& node) {
-            if (const auto* text = node.tryAs<DataNode::String>())
-                found.append(text->value);
-        });
-    });
-    for (const Vector<StringID>& texts : { ofOperations, ofData }) {
-        for (StringID text : texts)
-            program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
-    }
-}
-
-bool Reader::readListsLayoutsAndFunctions()
-{
-    if (!readListInParallel(m_sections.typeSites, m_program.typeSites))
+    if (!hasDeclaredMembers || !m_types->reportErrorInFunctionFamilies())
         return false;
-    if (m_form == IRForm::AsRead)
-        m_layoutUses.emplace(m_program, numberOfRecords<LayoutID>(), m_build.parallelLoops().width());
-    if (m_preparesFunctionsForTyping) {
-        m_longExpectations.emplace(m_program, m_build.parallelLoops());
-        m_constructorsOfTaggedFamilies.ensureSize(m_sections.functions.size());
-        for (const TaggedFamily& family : m_program.taggedFamilies) {
-            uint32_t constructor = m_sections.layouts[family.maker.index()].constructor;
-            if (constructor < m_sections.functions.size())
-                m_constructorsOfTaggedFamilies.quickSet(constructor);
-        }
-        m_program.setReaderPreparedFunctionsForTyping();
-    }
+    if (!checkListSize(m_sections.layouts.size() + m_types->numberOfDerivedLayouts(), sizeof(Layout), m_build))
+        return false;
+    steps.didFinish("families of layouts beside strings, objects, families of functions and property keys"_s);
+    m_types->readTypes();
+    steps.didFinish("types"_s);
+    m_program.unitsOfBodies.initialize(m_externalBodies, m_program.types.typesOfWireIndexes(), numbersOfRecords(), loops);
+    steps.didFinish("units of bodies"_s);
 
-    const auto& options = m_build.options();
-    if (options.verifiesProgram || options.isVerifyOnly()) {
-        if (!readProgramLists() || !readLayouts() || !reportFirst(readFunctions().span()))
-            return false;
-        internKeysOfStringConstants(m_program, m_build.parallelLoops());
-        return true;
-    }
-
-    bool hasListsAndLayouts = false;
-    Vector<Failure> failuresInFunctions;
-    runTasksInParallel(m_build.parallelLoops(), {
+    runLanes(loops, {
         [&] {
-            hasListsAndLayouts = readProgramLists() && readLayouts();
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            readList(m_sections.typeSites, m_program.typeSites);
+            readProgramLists();
+            readLayouts();
+            stepsOfLane.didFinish("lists and layouts"_s);
+            m_types->finishLayouts();
+            stepsOfLane.didFinish("finish layouts"_s);
         },
         [&] {
-            failuresInFunctions = readFunctions();
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            readFunctions();
+            stepsOfLane.didFinish("functions"_s);
+            m_types->findModulesNamedByBodies();
+            stepsOfLane.didFinish("modules that bodies name"_s);
         },
     });
-    if (!hasListsAndLayouts || !reportFirst(failuresInFunctions.span()))
-        return false;
-    internKeysOfStringConstants(m_program, m_build.parallelLoops());
+    steps.didFinish("lists and layouts beside functions"_s);
+
+    m_program.types.reserveMembersOfLayoutSets(static_cast<uint32_t>(m_program.layouts.size()));
+    runLanes(loops, {
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            m_types->finishObjects();
+            setConstructedClasses();
+            stepsOfLane.didFinish("finish objects"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            m_program.indexViews(m_build.parallelLoops());
+            stepsOfLane.didFinish("index of views"_s);
+            setParameterSiteFunctions();
+            stepsOfLane.didFinish("functions of parameter sites"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            m_program.indexClasses();
+            stepsOfLane.didFinish("index of classes"_s);
+            m_program.indexNames(m_build.parallelLoops());
+            stepsOfLane.didFinish("index of names"_s);
+        },
+    });
+    steps.didFinish("finish objects beside the indexes"_s);
     return true;
 }
 
@@ -156,41 +161,16 @@ bool Reader::report(const InternalError& error)
     return false;
 }
 
-bool Reader::reportFirst(std::span<const Failure> failures)
-{
-    for (auto& failure : failures) {
-        if (failure)
-            return report(*failure);
-    }
-    return true;
-}
-
 template<typename WireRecord, typename Record, size_t inlineCapacity>
-bool Reader::readList(std::span<const WireRecord> records, Vector<Record, inlineCapacity>& result)
-{
-    result.reserveInitialCapacity(records.size());
-    for (size_t index = 0; index < records.size(); ++index) {
-        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
-        Record record;
-        read(checker, records[index], record);
-        if (auto failure = checker.takeFailure())
-            return report(*failure);
-        result.append(WTF::move(record));
-    }
-    return true;
-}
-
-template<typename WireRecord, typename Record, size_t inlineCapacity>
-bool Reader::readListInParallel(std::span<const WireRecord> records, Vector<Record, inlineCapacity>& result)
+void Reader::readList(std::span<const WireRecord> records, Vector<Record, inlineCapacity>& result)
 {
     constexpr size_t recordsPerChunk = 64;
-    growFromEmpty(m_build.parallelLoops(), result, records.size());
-    auto failures = readInChunks(m_build.parallelLoops(), records.size(), recordsPerChunk, [&](uint32_t index) {
-        RecordChecker checker(*this, inRecord(index));
+    const ParallelLoops& loops = m_build.parallelLoops();
+    growFromEmpty(loops, result, records.size());
+    readInChunks(loops, records.size(), recordsPerChunk, [&](uint32_t index) {
+        RecordChecker checker(*this);
         read(checker, records[index], result[index]);
-        return checker.takeFailure();
     });
-    return reportFirst(failures.span());
 }
 
 bool Reader::readHeader()
@@ -200,7 +180,7 @@ bool Reader::readHeader()
     m_header = &reinterpretCastSpanStartTo<Wire::Header>(m_buffer);
     if (m_header->magic != Wire::Magic)
         return report({ .kind = InternalErrorKind::NotAProgram });
-    if (static_cast<uint64_t>(m_header->schemaHash) != Wire::schemaHash)
+    if (m_schemaHashCheck == SchemaHashCheck::Required && static_cast<uint64_t>(m_header->schemaHash) != Wire::schemaHash)
         return report({ .kind = InternalErrorKind::SchemaMismatch });
     if (m_header->sizeInBytes != m_buffer.size())
         return report({ .kind = InternalErrorKind::ProgramTooShort });
@@ -209,117 +189,142 @@ bool Reader::readHeader()
     if (!sections)
         return report({ .kind = InternalErrorKind::SectionOutOfBounds, .count = sections.error() });
     m_sections = *sections;
+    if (!tablesHaveRoomFor(m_sections))
+        return false;
     if (!m_program.ownsBuffer())
         m_sections.bytes = m_program.copyBorrowedBytes(m_sections.bytes, m_build.parallelLoops());
     return true;
 }
 
-bool Reader::readStrings()
+void Reader::readStrings()
 {
     constexpr size_t stringsPerChunk = 1024;
     auto records = m_sections.strings;
     Vector<StringAsRead> strings(records.size());
-    auto failures = readInChunks(m_build.parallelLoops(), records.size(), stringsPerChunk, [&](uint32_t index) {
+    readInChunks(m_build.parallelLoops(), records.size(), stringsPerChunk, [&](uint32_t index) {
         const Wire::String& wire = records[index];
-        RecordChecker checker(*this, inRecord(index));
+        RecordChecker checker(*this);
         strings[index] = {
             checker.bytes({ wire.offset, wire.length }),
             checker.enumerator<NameClass>(wire.nameClass),
             checker.optionalExternalID<BuiltinName>(wire.builtinName),
         };
-        return checker.takeFailure();
     });
-    if (!reportFirst(failures.span()))
-        return false;
-
-    auto whatIsSaid = m_preparesFunctionsForTyping ? StringTable::WhatIsSaidOfStrings::IsBelieved : StringTable::WhatIsSaidOfStrings::IsChecked;
-    auto result = m_program.strings.initialize(m_builtins, m_build.parallelLoops(), WTF::move(strings), whatIsSaid);
-    switch (result.error) {
-    case StringTable::Error::None:
-        return true;
-    case StringTable::Error::DuplicateString:
-        return report({ .kind = InternalErrorKind::DuplicateString, .count = result.string.index() });
-    case StringTable::Error::StringNotCanonical:
-        return report({ .kind = InternalErrorKind::StringNotCanonical, .count = result.string.index() });
-    case StringTable::Error::NameClassMismatch:
-        return report({ .kind = InternalErrorKind::NameClassMismatch, .count = result.string.index() });
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    m_program.strings.initialize(m_builtins, m_build.parallelLoops(), WTF::move(strings));
 }
 
-bool Reader::readPropertyKeys()
+void Reader::readPropertyKeys()
 {
     auto records = m_sections.propertyKeys;
-    for (size_t index = 0; index < records.size(); ++index) {
-        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
+    ArenasOfWorkers arenas(m_program.types, m_build.parallelLoops());
+    Vector<PropertyKeyID> ids(records.size());
+    arenas.internInOrder(ids.mutableSpan(), [&](uint32_t index) {
+        RecordChecker checker(*this);
         PropertyKey key;
         read(checker, records[index], key);
-        if (auto failure = checker.takeFailure())
-            return report(*failure);
-        if (m_program.types.intern(key).index() != index)
-            return report({ .kind = InternalErrorKind::DuplicatePropertyKey, .count = static_cast<uint32_t>(index) });
-    }
-    return true;
+        return key;
+    });
+    for (size_t index = 0; index < ids.size(); ++index)
+        RELEASE_ASSERT(ids[index].index() == index);
 }
 
-bool Reader::readProgramLists()
+NumbersOfProgramRecords Reader::numbersOfRecords() const
 {
-    bool isValid = readList(m_sections.expectedResults, m_program.expectedResults)
-        && readListInParallel(m_sections.variables, m_program.variables)
-        && readListInParallel(m_sections.modules, m_program.modules)
-        && readList(m_sections.moduleFailures, m_program.moduleFailures)
-        && readList(m_sections.ambiguousExports, m_program.ambiguousExports)
-        && readList(m_sections.sourceStamps, m_program.sourceStamps)
-        && readList(m_sections.evalScopes, m_program.evalScopes)
-        && readListInParallel(m_sections.data, m_program.data)
-        && readList(m_sections.entries, m_program.entries)
-        && readList(m_sections.runtimeFunctions, m_program.runtimeFunctions)
-        && readList(m_sections.webAssemblyModules, m_program.webAssemblyModules);
-    if (!isValid)
-        return false;
-
-    auto& runtimeFunctions = m_program.runtimeFunctions;
-    for (size_t index = 1; index < runtimeFunctions.size(); ++index) {
-        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
-        checker.requireAscending(runtimeFunctions[index - 1].id, runtimeFunctions[index].id);
-        if (auto failure = checker.takeFailure())
-            return report(*failure);
-    }
-    return true;
+    static_assert(numberOfRemappedIDKinds == 12);
+    NumbersOfProgramRecords numbers;
+    numbers[RemappedIDKind::String] = m_sections.strings.size();
+    numbers[RemappedIDKind::PropertyKey] = m_sections.propertyKeys.size();
+    numbers[RemappedIDKind::Type] = m_sections.types.size();
+    numbers[RemappedIDKind::TypeSite] = m_sections.typeSites.size();
+    numbers[RemappedIDKind::ExpectedResult] = m_sections.expectedResults.size();
+    numbers[RemappedIDKind::Layout] = m_sections.layouts.size();
+    numbers[RemappedIDKind::Variable] = m_sections.variables.size();
+    numbers[RemappedIDKind::Module] = m_sections.modules.size();
+    numbers[RemappedIDKind::ModuleFailure] = m_sections.moduleFailures.size();
+    numbers[RemappedIDKind::EvalScope] = m_sections.evalScopes.size();
+    numbers[RemappedIDKind::Function] = m_sections.functions.size();
+    numbers[RemappedIDKind::Data] = m_sections.data.size();
+    return numbers;
 }
 
-bool Reader::finishProgram()
+void Reader::forEachListReadIntoTableOfItsName(const Wire::Sections& sections, const auto& functor)
 {
-    if (!setConstructedClasses())
-        return false;
-    if (m_layoutUses) {
-        markUnallocatedLayouts(m_program, m_build.parallelLoops(), *m_layoutUses);
-        m_layoutUses.reset();
-        expectFieldsFilledWithOtherData(m_program, m_build);
-    }
-    m_program.indexClasses();
-    m_program.indexNames(m_build.parallelLoops());
-    setParameterSiteFunctions();
-    m_program.setForm(m_form);
-    return true;
+    functor(sections.expectedResults, m_program.expectedResults);
+    functor(sections.variables, m_program.variables);
+    functor(sections.modules, m_program.modules);
+    functor(sections.moduleFailures, m_program.moduleFailures);
+    functor(sections.ambiguousExports, m_program.ambiguousExports);
+    functor(sections.sourceStamps, m_program.sourceStamps);
+    functor(sections.declaredRecords, m_program.declaredRecords);
+    functor(sections.evalScopes, m_program.evalScopes);
+    functor(sections.data, m_program.data);
+    functor(sections.entries, m_program.entries);
+    functor(sections.runtimeFunctions, m_program.runtimeFunctions);
+    functor(sections.webAssemblyModules, m_program.webAssemblyModules);
+    functor(sections.builtinsUsedAtStart, m_program.builtinsUsedAtStart);
 }
 
-bool Reader::setConstructedClasses()
+void Reader::makeRoomForTables()
+{
+    const ParallelLoops& loops = m_build.parallelLoops();
+    makeRoomFor(loops, m_program.functions, m_sections.functions.size());
+    makeRoomFor(loops, m_program.typeSites, m_sections.typeSites.size());
+    forEachListReadIntoTableOfItsName(m_sections, [&](auto records, auto& table) {
+        makeRoomFor(loops, table, records.size());
+    });
+}
+
+void Reader::readProgramLists()
+{
+    forEachListReadIntoTableOfItsName(m_sections, [&](auto records, auto& table) {
+        readList(records, table);
+    });
+}
+
+bool Reader::tablesHaveRoomFor(const Wire::Sections& sections)
+{
+    bool haveRoom = checkListSize(sections.strings.size(), sizeof(StringAsRead), m_build);
+    auto ask = [&]<typename Record, size_t inlineCapacity>(auto records, const Vector<Record, inlineCapacity>&) {
+        haveRoom = haveRoom && checkListSize(records.size(), sizeof(Record), m_build);
+    };
+    ask(sections.functions, m_program.functions);
+    ask(sections.typeSites, m_program.typeSites);
+    ask(sections.replaceableBuiltins, m_program.replaceableBuiltins);
+    ask(sections.openedNames, m_program.openedNames);
+    forEachListReadIntoTableOfItsName(sections, ask);
+    return haveRoom;
+}
+
+void Reader::readLayouts()
+{
+    constexpr size_t layoutsPerChunk = 64;
+    const ParallelLoops& loops = m_build.parallelLoops();
+    auto records = m_sections.layouts;
+    makeRoomFor(loops, m_program.layouts, records.size() + m_types->numberOfDerivedLayouts());
+    growFromEmpty(loops, m_program.layouts, records.size());
+    readInChunks(loops, records.size(), layoutsPerChunk, [&](uint32_t index) {
+        RecordChecker checker(*this);
+        read(checker, records[index], static_cast<LayoutRecord&>(m_program.layouts[index]));
+        std::span<const Wire::Field> fields = checker.slice<Wire::Field>(records[index].fields);
+        for (size_t field = 0; field < fields.size(); ++field) {
+            DeclaredType& declared = m_program.layouts[index].fields[field].declared;
+            if (declared.isEstablished())
+                continue;
+            if (TypeID expected = m_types->typeExpectedBesideViews(fields[field].declared.type))
+                declared.expect(ExpectedType(expected));
+        }
+    });
+}
+
+void Reader::setConstructedClasses()
 {
     for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
         FunctionID constructor = m_program.layouts[index].constructor;
-        if (!constructor)
+        if (!constructor || constructor.index() >= m_program.functions.size())
             continue;
         Function& function = m_program.at(constructor);
-        if (function.constructedClass)
-            return report({ .kind = InternalErrorKind::InvalidClass, .layout = LayoutID(index) });
         function.constructedClass = LayoutID(index);
-        // The body as it was written: no pass has changed it yet, and blanks and comments are not in it.
-        AOT_THRESHOLD(uint32_t, mostValuesOfShortConstructor, 77);
-        if (function.values.size() > mostValuesOfShortConstructor)
-            function.capabilities.add(FunctionCapabilities::IsLongConstructor);
     }
-    return true;
 }
 
 void Reader::setParameterSiteFunctions()
@@ -328,9 +333,9 @@ void Reader::setParameterSiteFunctions()
         TypeSiteID site;
         FunctionID function;
     };
-    Vector<SiteOfFunction> sites = collectInParallel<SiteOfFunction>(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index, Vector<SiteOfFunction>& sites) {
+    Vector<SiteOfFunction> sites = collectInParallel<SiteOfFunction>(m_build.parallelLoops(), static_cast<unsigned>(m_program.functions.size()), [&](unsigned index, Vector<SiteOfFunction>& sites) {
         for (const DeclaredType& parameter : m_program.functions[index].parameters) {
-            if (parameter.site)
+            if (parameter.site && parameter.site.index() < m_program.typeSites.size())
                 sites.append({ parameter.site, FunctionID(index) });
         }
     });
@@ -338,65 +343,48 @@ void Reader::setParameterSiteFunctions()
         m_program.typeSites[site.site.index()].function = site.function;
 }
 
-void RecordChecker::requireAscendingStrings(StringID previous, StringID next)
-{
-    if (hasFailed())
-        return;
-    const StringTable& strings = m_reader.program().strings;
-    requireAscending(compareProgramStrings(strings[previous], strings[next]));
-}
-
-void RecordChecker::didRead(DeclaredType& declared)
-{
-    require(!declared.isExpected() || !declared.has(PositionFlags::IsInt32Promise), InternalErrorKind::InvalidDeclaredType);
-}
-
-void RecordChecker::didRead(PropertyKey& key)
-{
-    require(isValidPropertyKey(key), InternalErrorKind::InvalidPropertyKey);
-}
-
-void RecordChecker::didRead(FunctionRecord& record)
-{
-    require(!record.results.isEmpty(), InternalErrorKind::ListOutOfBounds);
-    require(record.captures.size() <= m_reader.build().limit(LimitID::MaxCaptures), InternalErrorKind::ListOutOfBounds);
-}
-
 void RecordChecker::didRead(LayoutRecord& record)
 {
-    record.ownFieldCount = static_cast<uint32_t>(record.fields.size());
+    auto firstInherited = std::ranges::find_if(record.fields, [](const Field& field) {
+        return field.flags.contains(FieldFlags::IsInherited);
+    });
+    record.ownFieldCount = static_cast<uint32_t>(firstInherited - record.fields.begin());
 }
 
-enum class ReadFor : bool { Itself, Pipeline };
-
-static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, ReadFor purpose)
+static std::unique_ptr<Program> readProgramFromBytes(std::span<const uint8_t> bytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, SchemaHashCheck schemaHashCheck)
 {
-    auto program = makeUnique<Program>(BuiltinTable::singleton());
+    std::unique_ptr<Program> program;
+    {
+        StepTimes steps(build, stepsOfRead);
+        program = makeUnique<Program>(BuiltinTable::singleton());
+        steps.didFinish("table of built-ins"_s);
+    }
     program->borrowBuffer(bytes);
-    Reader reader(*program, IRForm::AsRead, build);
+    Reader reader(*program, build);
     reader.setExternalFunctionBodies(externalBodies);
-    const auto& options = build.options();
-    bool isLookedAtAsRead = build.validates() || options.verifiesProgram || options.isVerifyOnly() || options.logging.dumpedPass;
-    if (purpose == ReadFor::Pipeline && !isLookedAtAsRead)
-        reader.setPreparesFunctionsForTyping();
+    reader.setSchemaHashCheck(schemaHashCheck);
     if (!reader.run())
         return nullptr;
+    StepTimes steps(build, stepsOfRead);
     program->copyBorrowedWordsOfPositions(build.parallelLoops());
-    program->collectConstructionStarts();
-    program->borrowBuffer({ });
+    steps.didFinish("words of positions"_s);
     return program;
 }
 
 std::unique_ptr<Program> readProgramWithExternalBodies(std::span<const uint8_t> bytes, const ExternalFunctionBodies* externalBodies, BuildContext& build)
 {
-    return readProgram(bytes, externalBodies, build, ReadFor::Pipeline);
+    return readProgramFromBytes(bytes, externalBodies, build, SchemaHashCheck::Required);
 }
 
-std::unique_ptr<Program> Program::read(std::span<const uint8_t> bytes, BuildContext& build)
+std::unique_ptr<Program> Program::read(std::span<const uint8_t> bytes, BuildContext& build, SchemaHashCheck schemaHashCheck)
 {
-    return readProgram(bytes, nullptr, build, ReadFor::Itself);
+    return readProgramFromBytes(bytes, nullptr, build, schemaHashCheck);
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

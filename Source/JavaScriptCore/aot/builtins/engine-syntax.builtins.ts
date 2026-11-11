@@ -30,8 +30,6 @@ const symbolKeys = (...symbols: readonly string[]) =>
 
 const textEvaluators = ["Function", "%AsyncFunction%", "%GeneratorFunction%", "%AsyncGeneratorFunction%", "eval"];
 
-// No object holds these. The interpreter calls them for text that never names them: a spread without a fast path, and `using`.
-// There is text once an evaluator is called. `Function.prototype` and `x instanceof Function` evaluate none.
 const functionsCalledForEvaluatedText = [
   b.functionIn("IteratorHelpers", "performIteration"),
   b.functionIn("DisposableStackPrototype", "getDisposeMethod"),
@@ -63,12 +61,15 @@ export default b.declarations(
   b.excluded("ShadowRealmPrototype", "crossRealmThrow", "evaluate", "importValue", "wrapRemoteValue"),
   b.handwritten(
     "ArrayIteratorPrototype",
+    "ArrayPrototype",
     "AsyncDisposableStackPrototype",
     "DisposableStackPrototype",
     "FunctionPrototype",
     "GeneratorPrototype",
     "IteratorOperations",
+    "JSIteratorConstructor",
     "JSIteratorHelperPrototype",
+    "JSIteratorPrototype",
     "MapIteratorPrototype",
     "MapPrototype",
     "ObjectConstructor",
@@ -82,6 +83,12 @@ export default b.declarations(
 
   b.intrinsic("undefined", "Value", { intrinsic: "Undefined" }),
   b.intrinsic("arrayProtoValues", "Value", { intrinsic: "Builtin", path: "Array.prototype.values" }),
+  b.intrinsic("arrayIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%ArrayIterator%.prototype.next" }),
+  b.intrinsic("mapIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%MapIterator%.prototype.next" }),
+  b.intrinsic("setIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%SetIterator%.prototype.next" }),
+  b.intrinsic("generatorProtoNext", "Value", { intrinsic: "Builtin", path: "%Generator%.prototype.next" }),
+  b.intrinsic("stringProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "String.prototype.@@iterator" }),
+  b.intrinsic("iteratorProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "Iterator.prototype.@@iterator" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",
@@ -112,7 +119,6 @@ export default b.declarations(
     "putDisposableStackInternalField",
   ),
   operation("ArraySpeciesCreate", "newArrayWithSpecies"),
-  operation("ConstructList", "constructList"),
   operation("CreatePromise", "createPromise"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
@@ -162,15 +168,13 @@ export default b.declarations(
 
   builtinObjects(
     "AsyncDisposableStack",
+    "Boolean",
     "DisposableStack",
     "Iterator",
     "Map",
     "Object",
     "ReferenceError",
-    "Set",
     "SuppressedError",
-    "WeakMap",
-    "WeakSet",
   ),
 
   linkTimeConstants(
@@ -203,18 +207,27 @@ export default b.declarations(
     "addDisposableResource",
     "closeAllIterators",
     "createDisposableResource",
+    "everyFrom",
+    "filterFrom",
+    "filterTruthy",
+    "findFrom",
+    "findIndexFrom",
     "flatIntoArray",
     "flatIntoArrayWithCallback",
+    "forEachFrom",
     "getAsyncDisposeMethod",
     "getDisposeMethod",
     "getIteratorFlattenable",
     "getIteratorSync",
     "getOptionsObject",
     "iteratorCloseAllNormal",
+    "iteratorStepValue",
     "iteratorZip",
+    "mapFrom",
+    "reduceFrom",
     "removeFirstFromList",
+    "someFrom",
   ]),
-  // The engine emits these two in line, and so does the front end: the call then belongs to the built-in that makes it.
   b.intrinsic("iteratorGenericClose", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericClose" }),
   b.intrinsic("iteratorGenericNext", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericNext" }),
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [
@@ -222,8 +235,10 @@ export default b.declarations(
     "defaultAsyncFromAsyncIterator",
   ]),
 
+  operation("CollectionIteratorClosedMark", "collectionIteratorClosedMark"),
   operation("CollectionTable", "collectionTable"),
   operation("CreateIteratorResult", "makeIteratorResult"),
+  operation("IsCollectionIteratorClosedMark", "isCollectionIteratorClosedMark"),
   operation("IsGeneratorSuspendedAtStart", "isGeneratorSuspendedAtStart"),
   operation("MapNext", "mapNext"),
   operation("ResultAt", "resultAt"),
@@ -238,6 +253,11 @@ export default b.declarations(
     arrayStorageInt32: [1, "Int32"],
     arrayStorageDouble: [2, "Double"],
     arrayStorageContiguous: [3, "Contiguous"],
+  }),
+  b.intrinsic("mostArgumentsReservedOnStack", "Value", {
+    intrinsic: "Int",
+    value: 65535,
+    cppExpression: "defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture())",
   }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {

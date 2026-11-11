@@ -22,6 +22,7 @@
 #include "JSCJSValue.h"
 #include "LocalAllocator.h"
 #include "RememberedSlot.h"
+#include <array>
 #include <memory>
 #include <optional>
 #include <span>
@@ -48,16 +49,15 @@ public:
     const AllocationData& allocation(uint32_t number) const { return m_tables.allocations()[number]; }
     const RuntimeType& typeAt(uint32_t byteOffset) const { return m_tables.typeAt(byteOffset); }
     const RuntimeType& typeOf(const FieldData& field) const { return typeAt(field.type); }
-    const RuntimeType* typeWithIndex(uint32_t typeIndex) const;
 
     const FieldData* field(VM&, const LayoutData&, UniquedStringImpl*);
+    const FieldData* staticField(const LayoutData& classLayout, uint32_t identifierNumber) { return findByName(classLayout.staticFields(), classLayout.index * 3 + 2, identifierNumber); }
+    const MethodData* staticMethod(const LayoutData& classLayout, uint32_t identifierNumber) { return findByName(classLayout.staticMethods(), classLayout.index * 3 + 3, identifierNumber); }
     UniquedStringImpl* nameOf(VM&, const FieldData&);
 
     bool valueHasType(const RuntimeType&, JSValue) const;
     bool objectHasType(const RuntimeType&, JSCell*) const;
     bool cellPassesTest(const RuntimeCellTest&, JSCell*) const;
-    bool shapeHasType(const RuntimeType&, uint32_t shape) const;
-    // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
     bool slotAdmits(const FieldData& field, JSValue value) const
     {
@@ -66,44 +66,13 @@ public:
         return fieldAccepts(field, value) || (field.slotHoldsUndefinedAndNull && value.isUndefinedOrNull());
     }
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
+    static bool slotTakesHalf(const FieldData&, const JSCell* getterOrSetter);
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
     Object* compiledObject(JSValue) const;
+    bool isOfThisRealm(const JSCell*) const;
 
     bool hasSymbolKey(const FieldData&) const;
     bool hasStringKey(const FieldData&) const;
-    bool mayBeAbsent(const FieldData&) const;
-    bool everyObjectHadRemovedField(const LayoutData&) const;
-    // What an object of the layout holds behind its header when Object::create() has made it and nothing is stored yet: the same bytes every time. Kept for whoever makes such objects again and again.
-    struct BodyAtBirth {
-        std::span<const uint8_t> span() const { return cell.span().subspan(sizeof(JSCell), size); }
-
-        // The cell in whole chunks of sixteen bytes, with zeros for its header and behind its last byte.
-        Vector<uint8_t> cell;
-        size_t size { 0 };
-        bool isBornUnfinished { false };
-    };
-    const BodyAtBirth* bodyAtBirthIfKnown(const LayoutData& layout) const
-    {
-        auto found = m_bodiesAtBirth.find(layout.index + 1);
-        return found == m_bodiesAtBirth.end() ? nullptr : &found->value;
-    }
-    void rememberBodyAtBirth(const LayoutData& layout, std::span<const uint8_t> bytes, bool isBornUnfinished)
-    {
-        Vector<uint8_t> cell;
-        cell.fill(0, WTF::roundUpToMultipleOf<16>(sizeof(JSCell) + bytes.size()));
-        memcpySpan(cell.mutableSpan().subspan(sizeof(JSCell)), bytes);
-        m_bodiesAtBirth.add(layout.index + 1, BodyAtBirth { WTF::move(cell), bytes.size(), isBornUnfinished });
-    }
-    void didReadAbsentField(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
-    {
-        if (!m_tables.removedFields().empty()) [[unlikely]]
-            failIfFieldWasRemoved(vm, layout, name);
-    }
-    void willAddProperty(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
-    {
-        if (!m_tables.addedNames().empty()) [[unlikely]]
-            failIfNameIsNotListed(vm, layout, name);
-    }
 
 private:
     struct CachedField {
@@ -115,19 +84,28 @@ private:
 
     const FieldData* findField(VM&, const LayoutData&, UniquedStringImpl*);
     const FieldData* findFieldWithoutColumn(const LayoutData&, uint32_t identifierNumber);
-    void failIfFieldWasRemoved(VM&, const LayoutData&, UniquedStringImpl*) const;
-    void failIfNameIsNotListed(VM&, const LayoutData&, UniquedStringImpl*) const;
+    static constexpr size_t minRecordsToIndex = 12;
+    static bool hasLiteralName(const FieldData&) { return true; }
+    static bool hasLiteralName(const MethodData& method) { return !(method.flags & methodHasComputedName); }
+    template<typename Record> static Vector<uint32_t> indexByName(std::span<const Record>);
+    template<typename Record> const Record* findInIndex(std::span<const Record>, uint32_t indexKey, uint32_t identifierNumber);
+    template<typename Record> const Record* findByName(std::span<const Record> records, uint32_t indexKey, uint32_t identifierNumber)
+    {
+        if (records.size() >= minRecordsToIndex) [[unlikely]]
+            return findInIndex(records, indexKey, identifierNumber);
+        for (const Record& record : records) {
+            if (hasLiteralName(record) && record.name == identifierNumber)
+                return &record;
+        }
+        return nullptr;
+    }
 
     State& m_state;
     const ProgramTables& m_tables;
     CachedField* m_cachedFields { nullptr };
-    // By the index of a layout plus one: where each name of a wide layout lies among its fields, made at the first lookup of a name without a column.
-    UncheckedKeyHashMap<uint32_t, Vector<uint16_t>> m_fieldsByName;
-    // By the index of a layout plus one.
-    UncheckedKeyHashMap<uint32_t, BodyAtBirth> m_bodiesAtBirth;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t>> m_recordsByName;
 };
 
-// The table and the records of the allocation sites name Structures and keep none of them alive through a full collection: the objects do that.
 class StructureTable {
     WTF_MAKE_NONCOPYABLE(StructureTable);
 public:
@@ -143,33 +121,42 @@ public:
     CompiledStructure* withExtraProperties(VM&, const CompiledStructure&, Structure* extraPropertiesStructureOrNull);
     CompiledStructure* existingWithExtraProperties(const CompiledStructure&, Structure& extraPropertiesStructure);
     CompiledStructure* holdingExtraProperties(VM&, const CompiledStructure&, JSObject* extraProperties);
-    CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries);
+    enum class HeldKeyOrder : bool { IsFoundByOthers, IsFoundByNobody };
+    CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries, HeldKeyOrder = HeldKeyOrder::IsFoundByOthers);
     CompiledStructure* withKeyOrderOfOneObject(VM&, const CompiledStructure&, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder);
     CompiledStructure* withNumberedKeyOrder(VM&, const CompiledStructure&);
 
+    struct StepOfKeyOrder {
+        StructureID before;
+        uint32_t orderAndCountBefore;
+        uint32_t fieldAndKind;
+        StructureID after;
+        uint32_t orderAndCountAfter;
+    };
+    enum class KindOfStep : uint8_t { Creates, Removes, CreatesAtSlot };
+    const StepOfKeyOrder* findStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep) const;
+    void rememberStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep, StructureID after, uint32_t orderAndCountAfter);
+    JSCellButterfly* findKeysOfOrderWithoutNumber(StructureID, uint32_t count, KeyListKind) const;
+    void rememberKeysOfOrderWithoutNumber(StructureID, uint32_t count, KeyListKind, JSCellButterfly*);
+
     JSCell* allocate(VM&, uint32_t allocation);
-    // An object has its header, its order word and its shape word, as behind the stub, and zeros behind them.
     JSCell* allocateAsCompiledCodeDoes(VM&, uint32_t allocation);
     AllocationSiteRecord& fillAllocationSite(VM&, uint32_t allocation);
-    // A site that had no class object to take a prototype from predicts the first one that its operation named.
     void predictStructure(VM&, uint32_t allocation, CompiledStructure*);
     std::optional<StructureID> structureIDOf(uint32_t allocation) const;
+    size_t numberOfStructuresMade() const { return m_numberOfStructuresMade; }
     void forgetStructuresOf(const LayoutData& classLayout);
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
 
-    void dumpStructuresMade(PrintStream&) const;
-
 private:
     using Variant = CompiledStructure::ObjectParameters;
     struct VariantMaps;
-    struct MadeStructures;
 
     static constexpr unsigned structuresRegionShift = 6;
     static constexpr unsigned recordsRegionShift = 8;
 
-    // What compiled code takes for a LocalAllocator: it has no room and no next interval.
     struct AllocatorWithoutRoom {
         uint8_t bytesBeforeFreeList[LocalAllocator::offsetOfFreeList()];
         FreeList freeList { 0 };
@@ -188,13 +175,17 @@ private:
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
-    // For a Structure that differs in something else than the key order.
     static Variant variantWithKeyOrderOf(const CompiledStructure&);
-    // No table lists such a Structure.
     static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
+    static bool isListed(const Variant& variant) { return !belongsToOneObject(variant) && variant.isFoundByKeyOrder; }
 
     template<typename Appender> void visitUsualStructures(Appender&, size_t begin, size_t end);
     template<typename Appender> void visitRecords(Appender&, size_t begin, size_t end);
+    static bool livesWhilePrototypeLives(const LayoutData& layout) { return layout.isClass() && layout.evaluation() == EvaluationState::PredictedOnce; }
+    bool livesWhilePrototypeLives(const AllocationSiteRecord&) const;
+    bool noteWhetherLivesWhilePrototypeLives(const LayoutData&);
+    void didNameStructureThatLivesWhilePrototypeLives(AllocationSiteRecord&);
+    void forgetStructuresThatDied(VM&, CollectionScope);
 
     AllocationSiteRecord* recordOfSameAllocation(uint32_t allocation) const;
     AllocationSiteRecord& ensureRecord(uint32_t allocation);
@@ -205,18 +196,32 @@ private:
     const ProgramTables& m_tables;
     EnvironmentShapes m_environmentShapes;
     uint32_t* m_structures { nullptr };
-    // Each shape once, whether or not its entry in m_structures is still set.
     Vector<uint32_t> m_shapesWithStructure;
     BitVector m_shapeHasStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
+    size_t m_numberOfStructuresMade { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
-    // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.
     std::array<CompiledStructure*, 2> m_templateStructures { };
     std::unique_ptr<VariantMaps> m_variants;
-    // In a run with --aotCountsPath.
-    std::unique_ptr<MadeStructures> m_made;
+    using StepsOfKeyOrders = std::array<StepOfKeyOrder, 4096>;
+    static size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 20 & ~static_cast<size_t>(1); }
+    std::unique_ptr<StepsOfKeyOrders> m_stepsOfKeyOrders;
+    struct KeysOfOrderWithoutNumber {
+        StructureID structure;
+        uint32_t countAndKind;
+        JSCellButterfly* list;
+    };
+    using KeysOfOrdersWithoutNumber = std::array<KeysOfOrderWithoutNumber, 1024>;
+    static size_t placeOfKeys(StructureID structure, uint32_t countAndKind) { return ((structure.bits() >> 4 ^ countAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 22; }
+    std::unique_ptr<KeysOfOrdersWithoutNumber> m_keysOfOrdersWithoutNumber;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
+    BitVector m_shapesThatLiveWhilePrototypesLive;
+    Vector<uint32_t> m_listOfShapesThatLiveWhilePrototypesLive;
+    Vector<uint32_t> m_shapesGivenStructuresSinceCollection;
+    BitVector m_recordsThatLiveWhilePrototypesLive;
+    Vector<AllocationSiteRecord*> m_listOfRecordsThatLiveWhilePrototypesLive;
+    Vector<AllocationSiteRecord*> m_recordsGivenStructuresSinceCollection;
 };
 
 struct ObjectModel {
@@ -236,9 +241,6 @@ struct ObjectModel {
 
 inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
-    // Whoever has a state at hand passes it to save the way to it. It may be the caller's, and the object of another image.
-    if (state.sharesRealm) [[unlikely]]
-        return this->state().objects->layouts.field(*state.instance.vm, layout(), name.uid());
     return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
 }
 

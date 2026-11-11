@@ -8,19 +8,21 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTChainDependents.h"
 #include "AOTCompiledCall.h"
+#include "AOTGrowingText.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPrimitives.h"
-#include "AOTProgramStrings.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTTextsOfFewDigits.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "MathCommon.h"
@@ -40,7 +42,35 @@ namespace JSC { namespace AOT {
         OPERATION_RETURN(scope, result); \
     }
 
-#define AOT_DEFINE_NUMERIC_BINARY_OPERATION(name, function, bigIntFunction) \
+static ALWAYS_INLINE double numberOfValueThatIsNoCell(JSValue value)
+{
+    ASSERT(!value.isCell());
+    if (value.isInt32())
+        return value.asInt32();
+    if (value.isDouble())
+        return value.asDouble();
+    if (value.isUndefined())
+        return PNaN;
+    return value.isTrue() ? 1 : 0;
+}
+
+#define AOT_DEFINE_NUMERIC_BINARY_OPERATION(name, function, bigIntFunction, ofNumbers) \
+    JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
+    { \
+        AOT_OPERATION_BEGIN(instance, Entry::name); \
+        JSValue left = JSValue::decode(encodedLeft); \
+        JSValue right = JSValue::decode(encodedRight); \
+        if (left.isHeapBigInt() && right.isHeapBigInt()) \
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bigIntFunction(globalObject, left.asHeapBigInt(), right.asHeapBigInt()))); \
+        if (!left.isCell() && !right.isCell()) { \
+            double x = numberOfValueThatIsNoCell(left); \
+            double y = numberOfValueThatIsNoCell(right); \
+            OPERATION_RETURN(scope, JSValue::encode(jsNumber(ofNumbers))); \
+        } \
+        OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
+    }
+
+#define AOT_DEFINE_BITWISE_OPERATION(name, function, bigIntFunction) \
     JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
         AOT_OPERATION_BEGIN(instance, Entry::name); \
@@ -51,7 +81,7 @@ namespace JSC { namespace AOT {
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
     }
 
-#define AOT_DEFINE_COMPARISON_OPERATION(name, ofHeapBigInts, result) \
+#define AOT_DEFINE_COMPARISON_OPERATION(name, ofHeapBigInts, relation, result) \
     JSC_DEFINE_JIT_OPERATION(name, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
         AOT_OPERATION_BEGIN(instance, Entry::name); \
@@ -59,6 +89,8 @@ namespace JSC { namespace AOT {
         JSValue right = JSValue::decode(encodedRight); \
         if (left.isHeapBigInt() && right.isHeapBigInt()) \
             OPERATION_RETURN(scope, JSBigInt::compare(left.asHeapBigInt(), right.asHeapBigInt()) ofHeapBigInts); \
+        if (!left.isCell() && !right.isCell()) \
+            OPERATION_RETURN(scope, numberOfValueThatIsNoCell(left) relation numberOfValueThatIsNoCell(right)); \
         OPERATION_RETURN(scope, result); \
     }
 
@@ -77,35 +109,48 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instan
     JSValue right = JSValue::decode(encodedRight);
     if (left.isHeapBigInt() && right.isHeapBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::add(globalObject, left.asHeapBigInt(), right.asHeapBigInt())));
+    if (left.isString() && right.isString())
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), asString(right))));
     if (left.isString() && right.isInt32())
-        OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, asString(left), int32ToString(vm, right.asInt32(), 10))));
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), int32ToString(vm, right.asInt32(), 10))));
     if (left.isInt32() && right.isString())
         OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, int32ToString(vm, left.asInt32(), 10), asString(right))));
+    if (!left.isCell() && !right.isCell())
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(numberOfValueThatIsNoCell(left) + numberOfValueThatIsNoCell(right))));
     OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
 }
 
-AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueSub, jsSub, sub)
-AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMul, jsMul, multiply)
-AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueDiv, jsDiv, divide)
-AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMod, jsRemainder, remainder)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueSub, jsSub, sub, x - y)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMul, jsMul, multiply, x * y)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueDiv, jsDiv, divide, x / y)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMod, jsRemainder, remainder, Math::fmodDouble(x, y))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValuePow, EncodedJSValue, JSValue::encode(jsPow(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitAnd, EncodedJSValue, JSValue::encode(jsBitwiseAnd(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitOr, EncodedJSValue, JSValue::encode(jsBitwiseOr(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitXor, EncodedJSValue, JSValue::encode(jsBitwiseXor(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueLShift, EncodedJSValue, JSValue::encode(jsLShift(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueRShift, EncodedJSValue, JSValue::encode(jsRShift(globalObject, left, right)))
-AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLess, == JSBigInt::ComparisonResult::LessThan, jsLess<true>(globalObject, left, right))
-AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLessEq, != JSBigInt::ComparisonResult::GreaterThan, jsLessEq<true>(globalObject, left, right))
-AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreater, == JSBigInt::ComparisonResult::GreaterThan, jsLess<false>(globalObject, right, left))
-AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreaterEq, != JSBigInt::ComparisonResult::LessThan, jsLessEq<false>(globalObject, right, left))
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitAnd, jsBitwiseAnd, bitwiseAnd)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitOr, jsBitwiseOr, bitwiseOr)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitXor, jsBitwiseXor, bitwiseXor)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueLShift, jsLShift, leftShift)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueRShift, jsRShift, signedRightShift)
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLess, == JSBigInt::ComparisonResult::LessThan, <, jsLess<true>(globalObject, left, right))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLessEq, != JSBigInt::ComparisonResult::GreaterThan, <=, jsLessEq<true>(globalObject, left, right))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreater, == JSBigInt::ComparisonResult::GreaterThan, >, jsLess<false>(globalObject, right, left))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreaterEq, != JSBigInt::ComparisonResult::LessThan, >=, jsLessEq<false>(globalObject, right, left))
 AOT_DEFINE_BINARY_OPERATION(operationAOTCompareEq, size_t, JSValue::equal(globalObject, left, right))
 AOT_DEFINE_BINARY_OPERATION(operationAOTCompareStrictEq, size_t, JSValue::strictEqual(globalObject, left, right))
-AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::encode(jsBitwiseNot(globalObject, operand)))
-AOT_DEFINE_UNARY_OPERATION(operationAOTToNumber, double, operand.toNumber(globalObject))
-AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encode(operand.toNumeric(globalObject)))
 
-// What JSObject::toString() calls for an instance of a class with a toString() of its own. The caches of reads by name say what its two reads find, so no chain is walked.
-// Null where they do not say so: nothing has run then, and the generic path starts from the beginning.
+#define AOT_DEFINE_UNARY_OPERATION_ON_NUMBER(name, type, resultOfFewDigits, result) \
+    JSC_DEFINE_JIT_OPERATION(name, type, (Instance* instance, EncodedJSValue encodedOperand)) \
+    { \
+        AOT_OPERATION_BEGIN(instance, Entry::name); \
+        JSValue operand = JSValue::decode(encodedOperand); \
+        if (std::optional<double> number = valueOfTextOfFewDigits(operand)) \
+            OPERATION_RETURN(scope, resultOfFewDigits); \
+        OPERATION_RETURN(scope, result); \
+    }
+
+AOT_DEFINE_UNARY_OPERATION_ON_NUMBER(operationAOTValueBitNot, EncodedJSValue, JSValue::encode(jsNumber(~toInt32(*number))), JSValue::encode(jsBitwiseNot(globalObject, operand)))
+AOT_DEFINE_UNARY_OPERATION_ON_NUMBER(operationAOTToNumber, double, *number, operand.toNumber(globalObject))
+AOT_DEFINE_UNARY_OPERATION_ON_NUMBER(operationAOTToNumeric, EncodedJSValue, JSValue::encode(jsNumber(*number)), JSValue::encode(operand.toNumeric(globalObject)))
+
 static JSObject* compiledToStringOrNull(Instance* instance, Object& object, CallData& callData)
 {
     VM& vm = *instance->vm;
@@ -128,12 +173,10 @@ static JSObject* compiledToStringOrNull(Instance* instance, Object& object, Call
     JSValue function = valueAtOffset(asObject(method->holder), method->offsetInStorage());
     if (!function.isCell())
         return nullptr;
-    // A class has the type of a closure too, and calling it throws: the generic path says so.
     callData = compiledCallDataOf(function.asCell());
     return callData.type == CallData::Type::Compiled ? asObject(function) : nullptr;
 }
 
-// JSObject::ordinaryToPrimitive() from where toString() has answered with an object.
 static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
@@ -151,7 +194,6 @@ static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* obje
     return { };
 }
 
-// Apart from the operation, which most often converts a number: that path saves few registers.
 static NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Object& object)
 {
     VM& vm = *instance->vm;
@@ -176,11 +218,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTToString);
     JSValue operand = JSValue::decode(encodedOperand);
-    // As JSValue::toStringSlowCase(), which asks six questions about a cell before it looks at it.
     if (operand.isCell()) {
         JSCell* cell = operand.asCell();
         if (cell->type() == CompiledObjectType)
             OPERATION_RETURN(scope, toStringOfCompiledObject(instance, *uncheckedDowncast<Object>(cell)));
+        if (isJSArray(cell)) {
+            JSString* joined = tryConvertListToString(globalObject, asArray(cell));
+            OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+            if (joined)
+                OPERATION_RETURN(scope, joined);
+        }
         JSString* string = cell->toStringInline(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
         OPERATION_RETURN(scope, string);
@@ -192,7 +239,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
     OPERATION_RETURN(scope, operand.toString(globalObject));
 }
 
-// The stub finds the text of a small index there the next time.
 AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.isInt32() && static_cast<uint32_t>(operand.asInt32()) < NumericStrings::cacheSize ? JSValue(instance->vm->numericStrings.addJSString(*instance->vm, operand.asInt32())) : operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION
 #undef AOT_DEFINE_NUMERIC_BINARY_OPERATION
@@ -202,16 +248,9 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(op
 JSC_DEFINE_JIT_OPERATION(operationAOTValueURShift, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueURShift);
-    // jsURShift gives the 32 bits as an int32: bytecode has op_unsigned behind it.
     JSValue bits = jsURShift(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(static_cast<uint32_t>(bits.asInt32()))));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTCompareEqToString, size_t, (Instance* instance, EncodedJSValue encodedLeft, uint64_t text))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCompareEqToString);
-    OPERATION_RETURN(scope, JSValue::equal(globalObject, JSValue::decode(encodedLeft), instance->state->strings->string(vm, StringID(static_cast<uint32_t>(text)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTValueNegate, EncodedJSValue, (Instance* instance, EncodedJSValue operand))
@@ -239,7 +278,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsCallable, size_t, (Instance*, JS
     return cell->isCallable();
 }
 
-// Exact for a whole quotient below maxExactQuotient.
 #if CPU(ARM64) || defined(__FMA__)
 static constexpr double maxExactQuotient = 0x1p53;
 static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)
@@ -291,6 +329,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToInt32, size_t, (double value))
     return static_cast<uint32_t>(toInt32(value));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRoundToIntegerBound, int64_t, (double number, uint32_t roundsUpAndTakesGreatestForNaN))
+{
+    if (number != number)
+        return roundsUpAndTakesGreatestForNaN & 2 ? Typed::maxTrackedInteger : -Typed::maxTrackedInteger;
+    if (number <= -0x1p62)
+        return -Typed::maxTrackedInteger;
+    if (number >= 0x1p62)
+        return Typed::maxTrackedInteger;
+    return static_cast<int64_t>(roundsUpAndTakesGreatestForNaN & 1 ? std::ceil(number) : std::floor(number));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryConvertToInteger, int64_t, (EncodedJSValue encodedValue))
 {
     JSValue value = JSValue::decode(encodedValue);
@@ -305,22 +354,27 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryConvertToInteger, int64_t, (Enc
     return static_cast<double>(integer) == number ? integer : std::numeric_limits<int64_t>::min();
 }
 
-#define AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(name, function) \
+#define AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(name, function, ofNumbers) \
     JSC_DEFINE_JIT_OPERATION(name, double, (Instance* instance, EncodedJSValue value, uint32_t typeAndNumberSide, double number)) \
     { \
         AOT_OPERATION_BEGIN(instance, Entry::name); \
         auto bits = NumberAndValueBits::decode(typeAndNumberSide); \
-        JSValue boxed = jsNumber(withoutPayload(number)); \
         JSValue other = JSValue::decode(value); \
+        if (!other.isCell()) { \
+            double x = bits.numberIsOnRight ? numberOfValueThatIsNoCell(other) : withoutPayload(number); \
+            double y = bits.numberIsOnRight ? withoutPayload(number) : numberOfValueThatIsNoCell(other); \
+            OPERATION_RETURN(scope, ofNumbers); \
+        } \
+        JSValue boxed = jsNumber(withoutPayload(number)); \
         JSValue result = bits.numberIsOnRight ? function(globalObject, other, boxed) : function(globalObject, boxed, other); \
         OPERATION_RETURN_IF_EXCEPTION(scope, 0); \
         RELEASE_ASSERT(result.isNumber()); \
         OPERATION_RETURN(scope, result.asNumber()); \
     }
-AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTAddNumberAndValueAsNumber, jsAdd)
-AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTSubNumberAndValueAsNumber, jsSub)
-AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTMulNumberAndValueAsNumber, jsMul)
-AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTDivNumberAndValueAsNumber, jsDiv)
+AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTAddNumberAndValueAsNumber, jsAdd, x + y)
+AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTSubNumberAndValueAsNumber, jsSub, x - y)
+AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTMulNumberAndValueAsNumber, jsMul, x * y)
+AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE(operationAOTDivNumberAndValueAsNumber, jsDiv, x / y)
 #undef AOT_DEFINE_BINARY_ON_NUMBER_AND_VALUE
 
 } } // namespace JSC::AOT

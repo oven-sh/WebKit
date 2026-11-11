@@ -8,23 +8,21 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyFactsForTables.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCompileOptionWords.h"
-#include "AOTDerivedFunctions.h"
 #include "AOTIRParser.h"
-#include "AOTIdentifierNumbering.h"
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
+#include "AOTNumbering.h"
 #include "AOTProgramFile.h"
-#include "AOTProgramTableEncoder.h"
-#include "AOTRegExpRequests.h"
-#include "AOTTextEncoder.h"
+#include "AOTSort.h"
+#include "AOTTableParts.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "CPUFeatureSet.h"
 #include "ExecutableAllocator.h"
 #include <algorithm>
-#include <limits>
 #include <utility>
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
@@ -36,21 +34,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT::ImageTests {
 
-using Kind = CodeUnit::Kind;
-
 Wire::CompileOptions wireOptions(const TestOptions& testOptions)
 {
     Wire::CompileOptions options = makeDefaultCompileOptions();
     memcpySpan(std::span { options.executableIdentity }, std::span { testIdentity });
-    options.loweredLimit = testOptions.loweredLimit;
-    options.loweredLimitValue = testOptions.loweredLimitValue;
     options.threadCount = testOptions.threadCount;
-    options.layoutSeed = testOptions.layoutSeed;
     options.checks = testOptions.checks;
-    options.reports = testOptions.reports;
-    options.heatOverride = testOptions.heat;
     options.output = testOptions.output;
     options.admittedCode = testOptions.admittedCode;
+    options.excludedCode = testOptions.excludedCode;
     return options;
 }
 
@@ -102,7 +94,6 @@ AlignedBytes::AlignedBytes(std::span<const uint8_t> bytes)
 {
     if (bytes.empty())
         return;
-    // aligned_alloc(), which serves this under AddressSanitizer, takes multiples of the alignment.
     m_bytes = { static_cast<uint8_t*>(fastAlignedMalloc(imagePageSize, roundUpToMultipleOf(imagePageSize, bytes.size()))), bytes.size() };
     memcpySpan(m_bytes, bytes);
 }
@@ -137,64 +128,61 @@ TestBuild::TestBuild(unsigned numberOfFunctions, const TestOptions& options)
 }
 
 TestBuild::TestBuild(const String& text, const TestOptions& options)
-    : m_context(makeUnique<BuildContext>(wireOptions(options)))
+    : m_context(makeUnique<BuildContext>(wireOptions(options), options.hostPool))
 {
     AOT_TEST_CHECK(m_context->threadCount() == options.threadCount);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(text, Typed::IRForm::AsRead, *m_context);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(text, *m_context);
     AOT_TEST_CHECK(program);
-    m_pipeline = Typed::runPipelineUntil(PassID::PlaceSiteCaches, WTF::move(program), *m_context);
-    AOT_TEST_CHECK(m_pipeline);
+    m_staged.emplace(WTF::move(program), *m_context);
+    m_prepared = m_staged->prepared();
+    AOT_TEST_CHECK(m_prepared);
 }
 
 TestBuild::~TestBuild()
 {
     finishDiagnostics();
-    m_context->destroyLater(WTF::move(m_pipeline));
 }
 
-FunctionID TestBuild::genericEntrypointOf(uint32_t function) const
+CodeUnit TestBuild::genericEntrypointOf(uint32_t function) const
 {
-    FunctionID entrypoint = m_pipeline->derivedFunctions->find(Typed::derivedFunctionKey(Typed::FunctionRole::GenericEntrypoint, FunctionID(function), 0));
-    AOT_TEST_CHECK(entrypoint);
+    CodeUnit entrypoint = plan().conventions().closureEntryOf(FunctionID(function));
+    AOT_TEST_CHECK(plan().conventions().exists(entrypoint));
     return entrypoint;
-}
-
-const CodeGenerationPlan& TestBuild::plan()
-{
-    if (!m_plan)
-        m_plan.emplace(prepareCodeGeneration(*m_pipeline, context()));
-    return *m_plan;
 }
 
 Vector<uint8_t> TestBuild::encodeTables()
 {
-    Typed::EncodedProgramTables tables = Typed::encodeProgramTables({ *m_pipeline, plan().instanceSizes, plan().stringConstants, plan().bodyFactsForTables }, context());
-    m_namedStrings = WTF::move(tables.namedStrings);
-    m_stringsOnlyShown = WTF::move(tables.stringsOnlyShown);
-    return WTF::move(tables.bytes);
+    LinkedFunctions functions;
+    BodyFactsForTables bodyFacts = collectBodyFactsForTables(program(), plan(), functions, context());
+    hidePathsOfModules(program(), facts(), plan(), context());
+    internPiecesOfModulePaths(program());
+
+    NumberingInputs numberingInputs { program(), facts(), plan(), functions };
+    GatheredMentions mentions = gatherMentions(numberingInputs, context());
+    TableInputs tableInputs { program(), facts(), plan(), functions, bodyFacts, context().options(), &context() };
+    NamesOfTables names = nameWhatTablesName(tableInputs, mentions, context());
+    ImageNumbers numbers;
+    numberMentions(numberingInputs, mentions, names, numbers, context());
+    if (context().diagnostics().hasErrors())
+        return { };
+
+    std::array<uint64_t, numberOfTableParts> bytesOfParts { };
+    return encodeProgramTables(tableInputs, numbers, bytesOfParts, context());
 }
 
 TestImage TestBuild::build(Vector<CompiledCode>&& code)
 {
-    return build(WTF::move(code), { }, { });
-}
-
-TestImage TestBuild::build(Vector<CompiledCode>&& code, CompiledRegExps&& regExps, WebAssemblyImageInputs&& webAssembly, FFIStubs&& ffiStubs)
-{
-    Vector<uint8_t> tables = encodeTables();
+    LinkedFunctions functions = createLinkedFunctions(WTF::move(code), context());
+    BodyFactsForTables bodyFacts = collectBodyFactsForTables(program(), plan(), functions, context());
     TestImage result {
         buildImage(ImageInputs {
-            .pipeline = *m_pipeline,
+            .program = program(),
+            .facts = facts(),
+            .plan = plan(),
             .stubCatalog = stubCatalog(),
-            .instanceSizes = plan().instanceSizes,
-            .functions = createLinkedFunctions(WTF::move(code), context()),
+            .functions = WTF::move(functions),
+            .bodyFacts = WTF::move(bodyFacts),
             .entriesUsedByFunctions = { },
-            .programTables = WTF::move(tables),
-            .text = encodeText({ program(), plan().uses.strings, context().identifierNumbering(), plan().stringConstants, m_namedStrings, &m_stringsOnlyShown }, context()),
-            .regExpRequests = *m_pipeline->regExpRequests,
-            .regExps = WTF::move(regExps),
-            .webAssembly = WTF::move(webAssembly),
-            .ffiStubs = WTF::move(ffiStubs),
         }, context()),
         { },
         nullptr,
@@ -220,7 +208,7 @@ void TestBuild::finishDiagnostics()
     if (m_isFinished)
         return;
     m_isFinished = true;
-    m_context->diagnostics().finish(m_pipeline->program.get());
+    m_context->diagnostics().finish(&program());
 }
 
 static unsigned countFinished(const Diagnostics& diagnostics, InternalErrorKind kind)
@@ -259,18 +247,32 @@ unsigned count(BuildContext& context, UserDiagnosticKind kind, LimitID limit)
     return countFinished(context.diagnostics(), kind, limit);
 }
 
-LinkedFunctions createLinkedFunctions(Vector<CompiledCode>&& code, BuildContext& context)
+LinkedFunctions createLinkedFunctions(Vector<CompiledCode>&& code, BuildContext&)
 {
-    LinkedFunctions functions;
-    functions.grow(code.size(), context);
-    for (size_t i = 0; i < code.size(); ++i)
-        functions[i] = WTF::move(code[i]);
-    return functions;
+    AOT::sort(code, { }, &CompiledCode::placeInCode);
+    for (size_t index = 1; index < code.size(); ++index)
+        AOT_TEST_CHECK(code[index - 1].placeInCode < code[index].placeInCode);
+    return LinkedFunctions(WTF::move(code));
+}
+
+static uint32_t unitIndexOfSketch(CodeUnit unit)
+{
+    AOT_TEST_CHECK(unit.function);
+    return unit.function.index() * Typed::numberOfCodeRolesOfOneFunction + static_cast<uint32_t>(unit.role);
 }
 
 CodeSketch::CodeSketch(uint32_t function)
+    : CodeSketch(bodyUnitOf(function))
 {
-    m_code.function = FunctionID(function);
+}
+
+CodeSketch::CodeSketch(CodeUnit unit)
+{
+    m_code.unit = unit;
+    m_code.unitIndex = unitIndexOfSketch(unit);
+    m_code.placeInCode = placeInCodeOf(unit, m_code.unitIndex);
+    if (unit.role == Typed::CodeRole::Body)
+        m_code.function = unit.function;
     m_code.body.entries.append(CodeEntry { 0, primaryEntry });
     m_code.sites.positions.append(SitePosition { 1, 1, ModuleID(0u), 0, 0 });
 }
@@ -287,18 +289,16 @@ static Vector<uint8_t> filledBytes(uint8_t value, size_t count)
     return Vector<uint8_t>(FillWith { }, count, value);
 }
 
-uint32_t CodeSketch::append(Kind kind, std::span<const uint8_t> bytes)
+uint32_t CodeSketch::append(std::span<const uint8_t> bytes)
 {
-    AOT_TEST_CHECK(bytes.size() <= std::numeric_limits<uint16_t>::max());
     uint32_t offset = size();
     m_code.body.bytes.append(bytes);
-    m_code.body.units.append(CodeUnit { offset, static_cast<uint16_t>(bytes.size()), kind });
     return offset;
 }
 
 uint32_t CodeSketch::appendCall(CodeSymbol symbol, OptionalIndex site)
 {
-    uint32_t offset = append(Kind::Call, testTemplates().nearCall.span());
+    uint32_t offset = append(testTemplates().nearCall.span());
     m_code.body.relocations.append(Relocation { offset, RelocationKind::Call, symbol.space, symbol.entry, symbol.index });
     m_code.body.returnSites.append(ReturnSite { offset + static_cast<uint32_t>(sizeOfNearCall), site });
     return offset;
@@ -306,7 +306,7 @@ uint32_t CodeSketch::appendCall(CodeSymbol symbol, OptionalIndex site)
 
 uint32_t CodeSketch::appendJump(CodeSymbol symbol)
 {
-    uint32_t offset = append(Kind::Pinned, testTemplates().nearJump.span());
+    uint32_t offset = append(testTemplates().nearJump.span());
     m_code.body.relocations.append(Relocation { offset, RelocationKind::Jump, symbol.space, symbol.entry, symbol.index });
     return offset;
 }
@@ -315,16 +315,13 @@ uint32_t CodeSketch::plain(uint32_t word, unsigned count)
 {
     uint32_t offset = size();
     for (unsigned i = 0; i < count; ++i)
-        append(Kind::Plain, asByteSpan(word));
+        append(asByteSpan(word));
     return offset;
 }
 
 uint32_t CodeSketch::pinned(uint32_t word, unsigned count)
 {
-    Vector<uint8_t> bytes;
-    for (unsigned i = 0; i < count; ++i)
-        bytes.append(asByteSpan(word));
-    return append(Kind::Pinned, bytes.span());
+    return plain(word, count);
 }
 
 uint32_t CodeSketch::pinnedBytes(unsigned count)
@@ -332,9 +329,9 @@ uint32_t CodeSketch::pinnedBytes(unsigned count)
 #if CPU(ARM64)
     Vector<uint8_t> bytes = filledBytes(0, WTF::roundUpToMultipleOf<sizeof(uint32_t)>(count));
     fillWithNops(bytes.mutableSpan());
-    return append(Kind::Pinned, bytes.span());
+    return append(bytes.span());
 #else
-    return append(Kind::Pinned, filledBytes(0x90, count).span());
+    return append(filledBytes(0x90, count).span());
 #endif
 }
 
@@ -350,17 +347,23 @@ uint32_t CodeSketch::jumpToStub(StubKey key)
 
 uint32_t CodeSketch::callThunk(const ArgumentMoves& moves, OptionalIndex site)
 {
-    uint32_t index = static_cast<uint32_t>(m_code.body.argumentMoves.size());
-    m_code.body.argumentMoves.append(moves);
+    uint32_t index = static_cast<uint32_t>(m_argumentMoves.size());
+    m_argumentMoves.append(moves);
     return appendCall({ SymbolSpace::ArgumentThunk, index }, site);
 }
 
-uint32_t CodeSketch::callFunction(uint32_t callee, OptionalIndex site, uint16_t entry)
+uint32_t CodeSketch::callThunkAgain(uint32_t index, OptionalIndex site)
+{
+    AOT_TEST_CHECK(index < m_argumentMoves.size());
+    return appendCall({ SymbolSpace::ArgumentThunk, index }, site);
+}
+
+uint32_t CodeSketch::callFunction(CodeUnit callee, OptionalIndex site, uint16_t entry)
 {
     return appendCall({ SymbolSpace::Function, calleeIndex(callee), entry }, site);
 }
 
-uint32_t CodeSketch::jumpToFunction(uint32_t callee, uint16_t entry)
+uint32_t CodeSketch::jumpToFunction(CodeUnit callee, uint16_t entry)
 {
     return appendJump({ SymbolSpace::Function, calleeIndex(callee), entry });
 }
@@ -370,25 +373,21 @@ uint32_t CodeSketch::end()
     Vector<uint8_t> bytes;
     while (bytes.size() < sizeof(uint32_t))
         bytes.appendVector(testTemplates().breakpoint);
-    return append(Kind::End, bytes.span());
+    uint32_t offset = append(bytes.span());
+    m_sizeAfterLastEnd = size();
+    return offset;
 }
 
 uint32_t CodeSketch::jumpTo(uint32_t target)
 {
-    uint32_t offset = append(Kind::Pinned, testTemplates().nearJump.span());
-    m_code.body.localSites.append(LinkedSite { offset, target, RelocationKind::Jump });
+    uint32_t offset = append(testTemplates().nearJump.span());
+    std::span<uint8_t> jump = m_code.body.bytes.mutableSpan().subspan(offset, MacroAssembler::relocationSize(RelocationKind::Jump));
+    AOT_TEST_CHECK(MacroAssembler::setRelocationDistance(RelocationKind::Jump, jump, static_cast<int64_t>(target) - static_cast<int64_t>(offset)));
     return offset;
 }
 
-uint32_t CodeSketch::padding(unsigned bytes)
-{
-    m_code.body.paddingStart = size();
-    m_hasPadding = true;
-    return append(Kind::Pinned, filledBytes(0, bytes).span());
-}
-
 template<typename T>
-static uint32_t findOrAppend(Vector<T>& list, T element)
+static uint32_t findOrAppend(auto& list, T element)
 {
     size_t index = list.find(element);
     if (index != notFound)
@@ -397,9 +396,9 @@ static uint32_t findOrAppend(Vector<T>& list, T element)
     return static_cast<uint32_t>(list.size() - 1);
 }
 
-uint32_t CodeSketch::calleeIndex(uint32_t callee)
+uint32_t CodeSketch::calleeIndex(CodeUnit callee)
 {
-    return findOrAppend(m_code.body.callees, FunctionID(callee));
+    return findOrAppend(m_code.body.callees, callee);
 }
 
 uint32_t CodeSketch::stubKeyIndex(StubKey key)
@@ -417,13 +416,11 @@ OptionalIndex CodeSketch::addSite(unsigned inlineFrame, uint32_t line, uint32_t 
 void CodeSketch::finishFrame()
 {
     if (m_hasFrame && m_code.frame.frameRanges.isEmpty())
-        m_code.frame.frameRanges.append(CodeRange { 0, m_code.body.paddingStart });
+        m_code.frame.frameRanges.append(CodeRange { 0, size() });
 }
 
 static bool endsWithoutReturning(const CompiledCode& code)
 {
-    if (code.body.units.last().kind == Kind::End)
-        return true;
     if (code.body.relocations.isEmpty())
         return false;
     const Relocation& last = code.body.relocations.last();
@@ -439,20 +436,14 @@ static bool endsWithoutReturning(const CompiledCode& code)
 CompiledCode CodeSketch::take()
 {
     AOT_TEST_CHECK(!m_code.body.bytes.isEmpty());
-    if (!m_hasPadding) {
-        m_code.body.paddingStart = size();
-        AOT_TEST_CHECK(endsWithoutReturning(m_code));
-    }
-    finishFrame();
-    AOT_TEST_CHECK(verifyCodeUnits(m_code) == CodeUnitsError::None);
-    return WTF::move(m_code);
+    AOT_TEST_CHECK(m_sizeAfterLastEnd == size() || endsWithoutReturning(m_code));
+    return takeUnchecked();
 }
 
 CompiledCode CodeSketch::takeUnchecked()
 {
-    if (!m_hasPadding)
-        m_code.body.paddingStart = size();
     finishFrame();
+    m_code.body.argumentMoves = ArgumentMovesOfUnit(m_argumentMoves.span());
     return WTF::move(m_code);
 }
 

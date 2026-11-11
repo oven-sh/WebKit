@@ -1,0 +1,473 @@
+# AN HEIR ON WHOSE PROTOTYPE AN ACCESSOR LIES, OR MAY LIE, UNDER THE NAME OF A FIELD OF THE CLASS THAT IS ASKED IS NOT AMONG THE CLASSES OF `$isPlainHeirOf`: its objects get a no by their shape, and THE OTHER CLASSES KEEP THEIR YES.
+# `Lazy`: halves that the compiler does not see (a call hands them back): its guard "stores pass" under that name would be born ended where the heir is armed: a no for ever, which the shape says for nothing.
+# `Written`: halves of the library that the compiler sees. The name left the list of that heir ("a member, not a field") and the heir stayed taken: an object that HAS NO SUCH FIELD YET got a yes, and whoever spares the read behind the yes leaves it unmade.
+# What a program does at run time to a class that IS taken ends the yes for its objects and for those of the classes below it, and for no others: the last two groups.
+# function Stream() { this.state = 1; }
+# Stream.prototype.end = function () { return 1; };
+# function Plain() { Stream.call(this); this.more = 3; }
+# Object.setPrototypeOf(Plain.prototype, Stream.prototype);
+# Object.setPrototypeOf(Plain, Stream);
+# function Lazy() { this.options = 2; }
+# Object.setPrototypeOf(Lazy.prototype, Stream.prototype);
+# Object.setPrototypeOf(Lazy, Stream);
+# function libraryMakeGetter() { return function () { Stream.call(this); return this.state; }; }            in a file of the library
+# function libraryMakeSetter() { return function (value) { Object.defineProperty(this, "state", { value, enumerable: true, configurable: true, writable: true }); }; }            in a file of the library
+# Object.defineProperties(Lazy.prototype, { state: { get: libraryMakeGetter(), set: libraryMakeSetter(), configurable: true, enumerable: true } });
+# function Written() { this.options = 4; }
+# Object.setPrototypeOf(Written.prototype, Stream.prototype);
+# Object.setPrototypeOf(Written, Stream);
+# Object.defineProperty(Written.prototype, "state", { get() { Stream.call(this); return this.state; }, set(value) { Object.defineProperty(this, "state", { value, enumerable: true, configurable: true, writable: true }); }, configurable: true, enumerable: true });
+# function ask(stream) { return $isPlainHeirOf(stream, Stream) ? "yes" : "no"; }            in a file of the library
+# const Streams = keep(Stream), Plains = keep(Plain), Lazies = keep(Lazy), Writtens = keep(Written), asks = keep(ask);
+# first(Lazies, Writtens);
+# print(asks(new Streams()), "|", asks(new Plains()));
+# const lazy = new Lazies(), written = new Writtens();
+# print(asks(new Streams()), "|", asks(new Plains()), "|", asks(lazy), Object.keys(lazy).join(), "|", asks(written), Object.keys(written).join());
+# print(lazy.state, written.state, "|", asks(lazy), Object.keys(lazy).join(), "|", asks(written), Object.keys(written).join());
+# later(Plains.prototype, Streams.prototype);
+# print(asks(new Streams()), "|", asks(new Plains()), "|", asks(lazy), "|", asks(written));
+# OPTIONS: mechanisms=all
+# RUN(QUIET): run-in-shell keep = x => x; first = function () { }; later = function () { };
+# QUIET: yes | yes
+# QUIET-NEXT: yes | yes | no options | no options
+# QUIET-NEXT: 1 1 | no options,state | no options,state
+# QUIET-NEXT: yes | yes | no | no
+# QUIET-NEXT: exited with 0
+# RUN(THELAZYONESFIRST): run-in-shell keep = x => x; first = function (Lazies, Writtens) { new Lazies().state; new Writtens().state; }; later = function () { };
+# THELAZYONESFIRST: yes | yes
+# THELAZYONESFIRST-NEXT: yes | yes | no options | no options
+# THELAZYONESFIRST-NEXT: 1 1 | no options,state | no options,state
+# THELAZYONESFIRST-NEXT: yes | yes | no | no
+# RUN(ANHEIRTHATISTAKENISSPOILEDLATER): run-in-shell keep = x => x; first = function () { }; later = function (plain) { Object.defineProperty(plain, "state", { get() { return "got"; }, set(value) { }, configurable: true }); };
+# ANHEIRTHATISTAKENISSPOILEDLATER: yes | yes
+# ANHEIRTHATISTAKENISSPOILEDLATER-NEXT: yes | yes | no options | no options
+# ANHEIRTHATISTAKENISSPOILEDLATER-NEXT: 1 1 | no options,state | no options,state
+# ANHEIRTHATISTAKENISSPOILEDLATER-NEXT: yes | no | no | no
+# RUN(THECLASSITSELFISSPOILEDLATER): run-in-shell keep = x => x; first = function () { }; later = function (plain, stream) { Object.defineProperty(stream, "state", { get() { return "got"; }, set(value) { }, configurable: true }); };
+# THECLASSITSELFISSPOILEDLATER: yes | yes
+# THECLASSITSELFISSPOILEDLATER-NEXT: yes | yes | no options | no options
+# THECLASSITSELFISSPOILEDLATER-NEXT: 1 1 | no options,state | no options,state
+# THECLASSITSELFISSPOILEDLATER-NEXT: no | no | no | no
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Stream" module=m0 constructor=f1 fields=[{key="state" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+layout L1 kind=Instance name="Plain" module=m0 position=88 base=L0 constructor=f2 fields=[{key="state" declared={type=anything}}, {key="more" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=88 ownFieldCount=2
+layout L2 kind=Instance name="Lazy" module=m0 position=239 base=L0 constructor=f3 fields=[{key="options" declared={type=anything} flags=[IsRequired]}, {key="state" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] flags=[IsConstructorFunction] place=239 ownFieldCount=1
+layout L3 kind=Instance name="Written" module=m0 position=777 base=L0 constructor=f6 fields=[{key="options" declared={type=anything} flags=[IsRequired]}, {key="state" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] flags=[IsConstructorFunction] place=777 ownFieldCount=1
+layout L4 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L5 module=m0 flags=[IsNeverAllocated] place=0
+data d0 root=Array{contents=anything} module=m2
+data d1 root=Array{contents=anything} module=m2
+variable g0 name="Stream" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = GetModuleVariable variable=g0 @38
+    v13 = PropGet v12 key="prototype" @38
+    v14 = NewClosure function=f8 @61
+    PropSet v13, v14 key="end" @45
+    v16 = Builtin builtin=Object @143
+    v17 = Builtin builtin=ObjectSetPrototypeOf @143
+    v18 = PropGet v1 key="prototype" @165
+    v19 = GetModuleVariable variable=g0 @182
+    v20 = PropGet v19 key="prototype" @182
+    v21 = Call v17, v16, v18, v20 calleeName="Object.setPrototypeOf" @150
+    v22 = Builtin builtin=Object @201
+    v23 = Builtin builtin=ObjectSetPrototypeOf @201
+    v24 = GetModuleVariable variable=g0 @230
+    v25 = Call v23, v22, v1, v24 calleeName="Object.setPrototypeOf" @208
+    v26 = Builtin builtin=Object @277
+    v27 = Builtin builtin=ObjectSetPrototypeOf @277
+    v28 = PropGet v3 key="prototype" @299
+    v29 = GetModuleVariable variable=g0 @315
+    v30 = PropGet v29 key="prototype" @315
+    v31 = Call v27, v26, v28, v30 calleeName="Object.setPrototypeOf" @284
+    v32 = Builtin builtin=Object @334
+    v33 = Builtin builtin=ObjectSetPrototypeOf @334
+    v34 = GetModuleVariable variable=g0 @362
+    v35 = Call v33, v32, v3, v34 calleeName="Object.setPrototypeOf" @341
+    v36 = Builtin builtin=Object @631
+    v37 = Builtin builtin=ObjectDefineProperties @631
+    v38 = PropGet v3 key="prototype" @655
+    v39 = NewDictionary @671
+    v40 = Call v5 calleeName="libraryMakeGetter" @687
+    v41 = Convert v40 declared={type=undefined|null|function flags=[IsExpected]} @687
+    v42 = NewObject layout=L4 @682
+    PropDefine v42, v41 key="get" @682
+    v44 = Call v7 calleeName="libraryMakeSetter" @713
+    v45 = Convert v44 declared={type=undefined|null|function flags=[IsExpected]} @713
+    PropDefine v42, v45 key="set" @708
+    v47 = Boolean boolean=true @748
+    v48 = Convert v47 declared={type=undefined|boolean flags=[IsExpected]} @748
+    PropDefine v42, v48 key="configurable" @734
+    v50 = Boolean boolean=true @766
+    v51 = Convert v50 declared={type=undefined|boolean flags=[IsExpected]} @766
+    PropDefine v42, v51 key="enumerable" @754
+    v53 = FinishObject v42 @680
+    PropDefine v39, v53 key="state" @673
+    v55 = Call v37, v36, v38, v39 calleeName="Object.defineProperties" @638
+    v56 = Builtin builtin=Object @818
+    v57 = Builtin builtin=ObjectSetPrototypeOf @818
+    v58 = PropGet v9 key="prototype" @840
+    v59 = GetModuleVariable variable=g0 @859
+    v60 = PropGet v59 key="prototype" @859
+    v61 = Call v57, v56, v58, v60 calleeName="Object.setPrototypeOf" @825
+    v62 = Builtin builtin=Object @878
+    v63 = Builtin builtin=ObjectSetPrototypeOf @878
+    v64 = GetModuleVariable variable=g0 @909
+    v65 = Call v63, v62, v9, v64 calleeName="Object.setPrototypeOf" @885
+    v66 = Builtin builtin=Object @918
+    v67 = Builtin builtin=ObjectDefineProperty @918
+    v68 = PropGet v9 key="prototype" @940
+    v69 = String string="state" @959
+    v70 = NewClosure function=f9 @970
+    v71 = Convert v70 declared={type=undefined|null|function flags=[IsExpected]} @973
+    v72 = NewObject layout=L4 @970
+    PropDefine v72, v71 key="get" @970
+    v74 = NewClosure function=f10 @1019
+    v75 = Convert v74 declared={type=undefined|null|function flags=[IsExpected]} @1022
+    PropDefine v72, v75 key="set" @1019
+    v77 = Boolean boolean=true @1152
+    v78 = Convert v77 declared={type=undefined|boolean flags=[IsExpected]} @1152
+    PropDefine v72, v78 key="configurable" @1138
+    v80 = Boolean boolean=true @1170
+    v81 = Convert v80 declared={type=undefined|boolean flags=[IsExpected]} @1170
+    PropDefine v72, v81 key="enumerable" @1158
+    v83 = FinishObject v72 @968
+    v84 = Call v67, v66, v68, v69, v83 calleeName="Object.defineProperty" @925
+    v85 = Builtin builtin=GlobalThis @1274
+    v86 = PropGet v85 key="keep" [isFreeName] @1274
+    v87 = GetModuleVariable variable=g0 @1279
+    v88 = Call v86, -, v87 calleeName="keep" @1274
+    v89 = Builtin builtin=GlobalThis @1297
+    v90 = PropGet v89 key="keep" [isFreeName] @1297
+    v91 = Call v90, -, v1 calleeName="keep" @1297
+    v92 = Builtin builtin=GlobalThis @1319
+    v93 = PropGet v92 key="keep" [isFreeName] @1319
+    v94 = Call v93, -, v3 calleeName="keep" @1319
+    v95 = Builtin builtin=GlobalThis @1342
+    v96 = PropGet v95 key="keep" [isFreeName] @1342
+    v97 = Call v96, -, v9 calleeName="keep" @1342
+    v98 = Builtin builtin=GlobalThis @1364
+    v99 = PropGet v98 key="keep" [isFreeName] @1364
+    v100 = Call v99, -, v11 calleeName="keep" @1364
+    v101 = Builtin builtin=GlobalThis @1375
+    v102 = PropGet v101 key="first" [isFreeName] @1375
+    v103 = Call v102, -, v94, v97 calleeName="first" @1375
+    v104 = Builtin builtin=GlobalThis @1400
+    v105 = PropGet v104 key="print" [isFreeName] @1400
+    v106 = Construct v88 calleeName="Streams" @1415
+    v107 = Call v100, -, v106 calleeName="asks" @1406
+    v108 = String string="|" @1427
+    v109 = Construct v91 calleeName="Plains" @1441
+    v110 = Call v100, -, v109 calleeName="asks" @1432
+    v111 = Call v105, -, v107, v108, v110 calleeName="print" @1400
+    v112 = Construct v94 calleeName="Lazies" @1470
+    v113 = Construct v97 calleeName="Writtens" @1494
+    v114 = Builtin builtin=GlobalThis @1506
+    v115 = PropGet v114 key="print" [isFreeName] @1506
+    v116 = Construct v88 calleeName="Streams" @1521
+    v117 = Call v100, -, v116 calleeName="asks" @1512
+    v118 = String string="|" @1533
+    v119 = Construct v91 calleeName="Plains" @1547
+    v120 = Call v100, -, v119 calleeName="asks" @1538
+    v121 = String string="|" @1558
+    v122 = Call v100, -, v112 calleeName="asks" @1563
+    v123 = Builtin builtin=Object @1575
+    v124 = Builtin builtin=ObjectKeys @1575
+    v125 = Call v124, v123, v112 calleeName="Object.keys" @1582
+    v126 = PropGet v125 key="join" @1591
+    v127 = Call v126, v125 calleeKey="join" calleeName="join" @1593
+    v128 = String string="|" @1601
+    v129 = Call v100, -, v113 calleeName="asks" @1606
+    v130 = Builtin builtin=Object @1621
+    v131 = Builtin builtin=ObjectKeys @1621
+    v132 = Call v131, v130, v113 calleeName="Object.keys" @1628
+    v133 = PropGet v132 key="join" @1640
+    v134 = Call v133, v132 calleeKey="join" calleeName="join" @1642
+    v135 = Call v115, -, v117, v118, v120, v121, v122, v127, v128, v129, v134 calleeName="print" @1506
+    v136 = Builtin builtin=GlobalThis @1651
+    v137 = PropGet v136 key="print" [isFreeName] @1651
+    v138 = PropGet v112 key="state" @1657
+    v139 = PropGet v113 key="state" @1669
+    v140 = String string="|" @1684
+    v141 = Call v100, -, v112 calleeName="asks" @1689
+    v142 = Builtin builtin=Object @1701
+    v143 = Builtin builtin=ObjectKeys @1701
+    v144 = Call v143, v142, v112 calleeName="Object.keys" @1708
+    v145 = PropGet v144 key="join" @1717
+    v146 = Call v145, v144 calleeKey="join" calleeName="join" @1719
+    v147 = String string="|" @1727
+    v148 = Call v100, -, v113 calleeName="asks" @1732
+    v149 = Builtin builtin=Object @1747
+    v150 = Builtin builtin=ObjectKeys @1747
+    v151 = Call v150, v149, v113 calleeName="Object.keys" @1754
+    v152 = PropGet v151 key="join" @1766
+    v153 = Call v152, v151 calleeKey="join" calleeName="join" @1768
+    v154 = Call v137, -, v138, v139, v140, v141, v146, v147, v148, v153 calleeName="print" @1651
+    v155 = Builtin builtin=GlobalThis @1777
+    v156 = PropGet v155 key="later" [isFreeName] @1777
+    v157 = PropGet v91 key="prototype" @1783
+    v158 = PropGet v88 key="prototype" @1801
+    v159 = Call v156, -, v157, v158 calleeName="later" @1777
+    v160 = Builtin builtin=GlobalThis @1821
+    v161 = PropGet v160 key="print" [isFreeName] @1821
+    v162 = Construct v88 calleeName="Streams" @1836
+    v163 = Call v100, -, v162 calleeName="asks" @1827
+    v164 = String string="|" @1848
+    v165 = Construct v91 calleeName="Plains" @1862
+    v166 = Call v100, -, v165 calleeName="asks" @1853
+    v167 = String string="|" @1873
+    v168 = Call v100, -, v112 calleeName="asks" @1878
+    v169 = String string="|" @1890
+    v170 = Call v100, -, v113 calleeName="asks" @1895
+    v171 = Call v161, -, v163, v164, v166, v167, v168, v169, v170 calleeName="print" @1821
+    v172 = Undefined @1821
+    Return v172 @1821
+}
+function f1 name="Stream" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @33
+    PropSet v0, v1 key="state" @20
+    v3 = Undefined @20
+    Return v3 @20
+}
+function f2 name="Plain" module=m0 position=88 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = GetModuleVariable variable=g0 @107
+    v2 = PropGet v1 key="call" @107
+    v3 = Call v2, v1, v0 calleeKey="call" calleeName="Stream.call" @114
+    v4 = Integer integer=3 @138
+    PropSet v0, v4 key="more" @126
+    v6 = Undefined @126
+    Return v6 @126
+}
+function f3 name="Lazy" module=m0 position=239 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=2 @272
+    PropSet v0, v1 key="options" @257
+    v3 = Undefined @257
+    Return v3 @257
+}
+function f4 name="libraryMakeGetter" module=m3 position=371 role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NewClosure function=f11 @409
+    Return v0 @409
+}
+function f5 name="libraryMakeSetter" module=m3 position=466 role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NewClosure function=f12 @504
+    Return v0 @504
+}
+function f6 name="Written" module=m0 position=777 flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: L3):
+    v1 = Integer integer=4 @813
+    PropSet v0, v1 key="options" @798
+    v3 = Undefined @798
+    Return v3 @798
+}
+function f7 name="ask" module=m3 position=1179 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @1209
+    v2 = Undefined @1209
+    v3 = GetModuleVariable variable=g0 @1232
+    v4 = IsPlainHeirOf v0, v3 @1209
+    v5 = ToBoolean v4 @1209
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @1209
+  b1(v6):
+    v7 = String string="yes" @1242
+    Jump -> next b3(v7) @1242
+  b2(v8):
+    v9 = String string="no" @1250
+    Jump -> next b3(v9) @1250
+  b3(v10):
+    Return v10 @1250
+}
+function f8 module=m3 position=61 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @82
+    Return v0 @82
+}
+function f9 name="get" module=m3 position=970 kind=Method role=Library flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @978
+    v2 = PropGet v1 key="call" @978
+    v3 = Call v2, v1, v0 calleeKey="call" calleeName="Stream.call" @985
+    v4 = PropGet v0 key="state" @1004
+    Return v4 @1004
+}
+function f10 name="set" module=m3 position=1019 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object @1032
+    v3 = Builtin builtin=ObjectDefineProperty @1032
+    v4 = String string="state" @1060
+    v5 = Boolean boolean=true @1090
+    v6 = Convert v5 declared={type=undefined|boolean flags=[IsExpected]} @1090
+    v7 = NewObject -, v1 layout=L4 fields=[4] @1078
+    PropDefine v7, v6 key="enumerable" @1078
+    v9 = Boolean boolean=true @1110
+    v10 = Convert v9 declared={type=undefined|boolean flags=[IsExpected]} @1110
+    PropDefine v7, v10 key="configurable" @1096
+    v12 = Boolean boolean=true @1126
+    v13 = Convert v12 declared={type=undefined|boolean flags=[IsExpected]} @1126
+    PropDefine v7, v13 key="writable" @1116
+    v15 = FinishObject v7 @1069
+    v16 = Call v3, v2, v0, v4, v15 calleeName="Object.defineProperty" @1039
+    v17 = Undefined @1032
+    Return v17 @1032
+}
+function f11 module=m0 position=409 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @423
+    v2 = PropGet v1 key="call" @423
+    v3 = Call v2, v1, v0 calleeKey="call" calleeName="Stream.call" @430
+    v4 = PropGet v0 key="state" @449
+    Return v4 @449
+}
+function f12 module=m0 position=504 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object @523
+    v3 = Builtin builtin=ObjectDefineProperty @523
+    v4 = String string="state" @551
+    v5 = Boolean boolean=true @581
+    v6 = Convert v5 declared={type=undefined|boolean flags=[IsExpected]} @581
+    v7 = NewObject -, v1 layout=L4 fields=[4] @569
+    PropDefine v7, v6 key="enumerable" @569
+    v9 = Boolean boolean=true @601
+    v10 = Convert v9 declared={type=undefined|boolean flags=[IsExpected]} @601
+    PropDefine v7, v10 key="configurable" @587
+    v12 = Boolean boolean=true @617
+    v13 = Convert v12 declared={type=undefined|boolean flags=[IsExpected]} @617
+    PropDefine v7, v13 key="writable" @607
+    v15 = FinishObject v7 @560
+    v16 = Call v3, v2, v0, v4, v15 calleeName="Object.defineProperty" @530
+    v17 = Undefined @523
+    Return v17 @523
+}
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f16 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @194
+    Branch v10 -> taken b2(), notTaken b1() @194
+  b1():
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @229
+    Branch v12 -> taken b2(), notTaken b6() @229
+  b2():
+    v13 = Data data=d0 @288
+    v14 = Integer integer=1 @313
+    v15 = Convert v14 declared={type=number} @313
+    Jump -> next b3(v15) @309
+  b3(v16: number):
+    LoopHint @309
+    v18 = Less v16, v1 @320
+    Branch v18 -> taken b4(), notTaken b5() @320
+  b4():
+    v19 = Integer integer=1 @392
+    v20 = Sub v16, v19 @392
+    v21 = ElemGet v8, v16 @395
+    v22 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v22, v20, v21 @355
+    v24 = Increment v16 @338
+    v25 = Convert v24 declared={type=number} @338
+    Jump -> next b3(v25) @338
+  b5():
+    v26 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v27 = Call v26, v0, v2, v13 [isDoneInPlace] @433
+    ReturnCall v27 @433
+  b6():
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b7(), case b7(), case b8(), case b9(), case b10(), case b11(), otherwise b12() @548
+  b7():
+    v28 = Call v0, v2 @578
+    ReturnCall v28 @578
+  b8():
+    v29 = Call v0, v2, v3 @631
+    ReturnCall v29 @631
+  b9():
+    v30 = Call v0, v2, v3, v4 @698
+    ReturnCall v30 @698
+  b10():
+    v31 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v31 @779
+  b11():
+    v32 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v32 @874
+  b12():
+    v33 = Data data=d1 @990
+    v34 = Integer integer=1 @1011
+    v35 = Convert v34 declared={type=number} @1011
+    Jump -> next b13(v35) @1007
+  b13(v36: number):
+    LoopHint @1007
+    v38 = Less v36, v1 @1018
+    Branch v38 -> taken b14(), notTaken b15() @1018
+  b14():
+    v39 = Integer integer=1 @1085
+    v40 = Sub v36, v39 @1085
+    v41 = ElemGet v8, v36 @1088
+    v42 = Convert v33 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v42, v40, v41 @1049
+    v44 = Increment v36 @1036
+    v45 = Convert v44 declared={type=number} @1036
+    Jump -> next b13(v45) @1036
+  b15():
+    v46 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v47 = Call v46, v0, v2, v33 [isDoneInPlace] @1115
+    ReturnCall v47 @1115
+}
+function f17 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1248
+    Branch v4 -> taken b2(), notTaken b1() @1248
+  b1():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1283
+    Branch v6 -> taken b2(), notTaken b3() @1283
+  b2():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b3():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f17
+runtimefunction id=FunctionPrototypeCall function=f16
+runtimefunction id=ArrayIteratorPrototypeNext function=f15 visibility=Private

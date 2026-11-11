@@ -1,0 +1,118 @@
+# `Object.prototype.hasOwnProperty.call(o, "name")`, `has.call(o, k)`, `Math.max.apply(null, [a, b])`: the row of `call` and of `apply` does nothing but forward the call to an operand, so that operand is
+# called where the call stands. Where it is one built-in, the forwarded call goes by the rows of that built-in, as a call that is written out does: the operation, the code in line, or the function itself
+# entered without a look at the value that is called.
+# If the rows were not asked, a plain Call of the value would stand there, which fetches the function object and enters the host's function through the stub for calls of any value.
+# function hasName(o) { return Object.prototype.hasOwnProperty.call(o, "name"); }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: : boolean @Boolean = PropHasOwn v0 key="name" calledBuiltin=ObjectPrototypeHasOwnProperty
+# RUN(NEVER): walk f1 f2 f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = Call v
+# function isListed(o, k) { return Object.prototype.propertyIsEnumerable.call(o, String(k)); }
+# RUN(TEXT): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# TEXT-LABEL: code f2:Body
+# TEXT: : boolean @Boolean = CallInline {{*}}inlineBuiltin=ObjectPropertyIsEnumerable overload=ObjectPrototypePropertyIsEnumerable
+# A key that may be an object can tell in which order the function converts: the function itself is entered, as for `o.hasOwnProperty(k)`. function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+# RUN(ORDER): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ORDER-LABEL: code f3:Body
+# ORDER-NOT: CallInline
+# ORDER: = CallBuiltin {{*}}overload=ObjectPrototypeHasOwnProperty{{*}}builtinCallForm=AnyReceiver
+# function larger(a, b) { return Math.max.apply(null, [a | 0, b | 0]); }
+# RUN(LIST): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding+EscapeAnalysis
+# LIST-LABEL: code f4:Body
+# LIST-NOT: = CallList v
+# LIST: = CallInline {{*}}inlineBuiltin=MathMax overload=MathMax
+# `f.call()` hands over undefined where a call that passes no `this` is handed the holder: it stays a call of the value. function named() { return Object.prototype.toString.call(); }
+# RUN(NOTHING): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NOTHING-LABEL: code f5:Body
+# NOTHING-NOT: CallBuiltin
+# NOTHING: = Call v
+# The row of a method is written for receivers that a call by a member can have, never undefined or null, and only `call` brings such a receiver. The function refuses them, so the call stays where nobody takes
+# what it gives: function refused(o) { Object.prototype.hasOwnProperty.call(o, "a"); Object.prototype.isPrototypeOf.call(o, o); }
+# If it were swept away, `refused(null)` would return where a TypeError is due.
+# RUN(UNUSED): walk f6 mechanisms=all
+# UNUSED-LABEL: code f6:Body
+# UNUSED: = PropHasOwn v0 key="a" calledBuiltin=ObjectPrototypeHasOwnProperty
+# UNUSED: = CallBuiltin {{*}}overload=ObjectPrototypeIsPrototypeOf
+# With calls of built-ins withheld the call stays as it is written.
+# RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CLOSED-LABEL: code f1:Body
+# CLOSED-NOT: CallInline
+# CLOSED: = Call v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="hasName" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v2 = PropGet v1 key="call"
+    v3 = Convert v2 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v4 = String string="name"
+    v5 = Call v3, v1, v0, v4 calleeKey="call" calleeName="Object.prototype.hasOwnProperty.call"
+    Return v5
+}
+function f2 name="isListed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectPrototypePropertyIsEnumerable
+    v3 = PropGet v2 key="call"
+    v4 = Convert v3 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v5 = ToString v1
+    v6 = Call v4, v2, v0, v5 calleeKey="call" calleeName="Object.prototype.propertyIsEnumerable.call"
+    Return v6
+}
+function f3 name="has" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v3 = PropGet v2 key="call"
+    v4 = Convert v3 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v5 = Call v4, v2, v0, v1 calleeKey="call" calleeName="Object.prototype.hasOwnProperty.call"
+    Return v5
+}
+function f4 name="larger" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=MathMax
+    v3 = PropGet v2 key="apply"
+    v4 = Convert v3 declared={type=builtin(FunctionPrototypeApply) flags=[IsExpected]}
+    v5 = Null
+    v6 = Integer integer=0
+    v7 = BitOr v0, v6
+    v8 = BitOr v1, v6
+    v9 = NewArray v7, v8 contents=anything
+    v10 = Call v4, v2, v5, v9 calleeKey="apply" calleeName="Math.max.apply"
+    Return v10
+}
+function f5 name="named" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototypeToString
+    v1 = PropGet v0 key="call"
+    v2 = Convert v1 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v3 = Call v2, v0 calleeKey="call" calleeName="Object.prototype.toString.call"
+    Return v3
+}
+function f6 name="refused" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectPrototypeHasOwnProperty
+    v2 = PropGet v1 key="call"
+    v3 = Convert v2 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v4 = String string="a"
+    v5 = Call v3, v1, v0, v4 calleeKey="call" calleeName="Object.prototype.hasOwnProperty.call"
+    v6 = Builtin builtin=ObjectPrototypeIsPrototypeOf
+    v7 = PropGet v6 key="call"
+    v8 = Convert v7 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v9 = Call v8, v6, v0, v0 calleeKey="call" calleeName="Object.prototype.isPrototypeOf.call"
+    v10 = Undefined
+    Return v10
+}

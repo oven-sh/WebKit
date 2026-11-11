@@ -357,7 +357,7 @@ static void testSinkValuesReadsStackSlotWhereWaysMeet()
         BasicBlock* belowLeft = proc.addBlock();
         BasicBlock* right = proc.addBlock();
         BasicBlock* join = proc.addBlock();
-        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root);
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root).eager();
         Air::StackSlot* slot = proc.addStackSlot(2 * sizeof(int64_t));
         Air::StackSlot* otherSlot = proc.addStackSlot(2 * sizeof(int64_t));
         auto address = [&](BasicBlock* block, Air::StackSlot* stackSlot) -> Value* {
@@ -1322,6 +1322,30 @@ static double estimateBranchTargetFrequency(FrequencyClass edgeClass)
     return target->frequency();
 }
 
+static void testEstimateFrequenciesOfWayOutOfCycleSeldomGoneRound()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.estimatesFrequencies = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* choice = proc.addBlock();
+    BasicBlock* fastLoop = proc.addBlock();
+    BasicBlock* rareCode = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root).eager();
+    graph.jump(root, choice);
+    graph.branch(choice, arguments[0], FrequentedBlock(fastLoop), rarely(rareCode));
+    graph.branch(fastLoop, arguments[1], fastLoop, exit);
+    graph.branch(rareCode, arguments[1], choice, exit);
+    graph.ret(exit, arguments[0]);
+    proc.resetReachability();
+
+    estimateFrequencies(proc);
+    CHECK(fastLoop->frequency() > 9);
+    CHECK(exit->frequency() > 0.9);
+}
+
 static void testEstimateFrequenciesOfUnlikelyEdge()
 {
     double normalShare = estimateBranchTargetFrequency(FrequencyClass::Normal);
@@ -1506,6 +1530,7 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testEstimateFrequenciesFollowsBooleanPhi());
     RUN(testEstimateFrequenciesIgnoresStoredFrequency());
     RUN(testEstimateFrequenciesIsIdempotent());
+    RUN(testEstimateFrequenciesOfWayOutOfCycleSeldomGoneRound());
     RUN(testEstimateFrequenciesOfUnlikelyEdge());
     RUN(testUpdateFrequenciesRunsOnlyAfterChanges());
     RUN(testUpdateEdgeClassesLeavesBlockFrequenciesForLater());

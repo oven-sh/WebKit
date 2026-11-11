@@ -1,0 +1,224 @@
+# function whole(count) { count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10); return sum; }
+# What parseInt() and parseFloat() make of an integer is the integer: it is not written out as a text and read back.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = ToString
+# CHECK-NOT: inlineBuiltin=ParseInt
+# CHECK-NOT: = CallBuiltin
+# CHECK: Return
+# function fraction(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(x / i); return sum; }: from 0.000001 to 2^53 - 1, from -1 down to -(2^53 - 1) and at zero parseInt() cuts the fraction off; elsewhere the text says otherwise
+# (1e21 is "1e+21", -0.5 is "-0.5") and is made and read in a rare arm. The arms stand in loops alone.
+# RUN(FRACTION): walk f2:Body mechanisms=all
+# FRACTION-LABEL: code f2:Body
+# FRACTION-NOT: = ToString
+# FRACTION: = ToIntegerOrInfinity
+# FRACTION: frequency=Rare
+# FRACTION: = ToString
+# FRACTION: inlineBuiltin=ParseInt
+# function float(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseFloat(x + i); return sum; }: parseFloat() gives the number back, -0 as 0
+# RUN(FLOAT): walk f3:Body mechanisms=all
+# FLOAT-LABEL: code f3:Body
+# FLOAT-NOT: = ToString
+# FLOAT-NOT: overload=ParseFloat
+# FLOAT: testedType=builtin(ParseFloat)
+# FLOAT-NOT: = ToString
+# FLOAT-NOT: overload=ParseFloat
+# FLOAT: = Add
+# FLOAT-NOT: = ToString
+# FLOAT-NOT: overload=ParseFloat
+# FLOAT: calleeName="parseFloat"
+# function sixteen(x) { x = x | 0; return [parseInt(x, 16)]; }: under another radix the digits mean something else
+# RUN(SIXTEEN): walk f5:Body mechanisms=all
+# SIXTEEN-LABEL: code f5:Body
+# SIXTEEN: = ToString
+# SIXTEEN: inlineBuiltin=ParseInt
+# function once(x) { x = +x; return [parseInt(x)]; }: outside every loop the call stays as small as it was
+# RUN(ONCE): walk f4:Body mechanisms=all
+# ONCE-LABEL: code f4:Body
+# ONCE-NOT: = ToIntegerOrInfinity
+# ONCE: inlineBuiltin=ParseInt
+# layout L908 kind=Closure
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 167, 307, 446, 497, 558, 761] quotedSources=[{position=95 start=208 end=223}, {position=113 start=226 end=239}, {position=129 start=242 end=257}, {position=136 start=242 end=264}, {position=276 start=271 end=286}, {position=413 start=293 end=310}, {position=481 start=311 end=322}, {position=538 start=324 end=339}, {position=558 end=15}, {position=569 end=201}, {position=574 start=16 end=42}, {position=580 start=22 end=39}, {position=591 start=22 end=41}, {position=602 start=44 end=94}, {position=611 start=53 end=70}, {position=622 start=53 end=72}, {position=632 start=74 end=91}, {position=643 start=74 end=93}, {position=654 start=96 end=143}, {position=660 start=102 end=119}, {position=671 start=102 end=121}, {position=681 start=123 end=140}, {position=692 start=123 end=142}, {position=703 start=145 end=173}, {position=711 start=153 end=170}, {position=722 start=153 end=172}, {position=733 start=175 end=200}, {position=738 start=180 end=197}, {position=749 start=180 end=199}] quotedSourceText="globalThis.sink(whole(globalThis.source()), fraction(globalThis.source(), globalThis.source()), float(globalThis.source(), globalThis.source()), sixteen(globalThis.source()), once(globalThis.source()))sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10)sum += parseInt(x / i)sum += parseFloat(x + i)[parseInt(x)][parseInt(x, 16)]"} functionSource="function whole(count) { count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(i * 7) + parseFloat(i) + Number.parseInt(i, 10); return sum; }\x0afunction fraction(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseInt(x / i); return sum; }\x0afunction float(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseFloat(x + i); return sum; }\x0afunction once(x) { x = +x; return [parseInt(x)]; }\x0afunction sixteen(x) { x = x | 0; return [parseInt(x, 16)]; }\x0aglobalThis.sink(whole(globalThis.source()), fraction(globalThis.source(), globalThis.source()), float(globalThis.source(), globalThis.source()), sixteen(globalThis.source()), once(globalThis.source()));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = Builtin builtin=GlobalThis @558
+    v11 = PropGet v10 key="globalThis" [isFreeName] @558
+    v12 = Convert v11 declared={type=builtin(GlobalThis) flags=[IsExpected]} @558
+    v13 = PropGet v12 key="sink" @558
+    v14 = Builtin builtin=GlobalThis @580
+    v15 = PropGet v14 key="globalThis" [isFreeName] @580
+    v16 = Convert v15 declared={type=builtin(GlobalThis) flags=[IsExpected]} @580
+    v17 = PropGet v16 key="source" @580
+    v18 = Call v17, v16 calleeKey="source" calleeName="globalThis.source" @591
+    v19 = Call v1, -, v18 calleeName="whole" @574
+    v20 = Builtin builtin=GlobalThis @611
+    v21 = PropGet v20 key="globalThis" [isFreeName] @611
+    v22 = Convert v21 declared={type=builtin(GlobalThis) flags=[IsExpected]} @611
+    v23 = PropGet v22 key="source" @611
+    v24 = Call v23, v22 calleeKey="source" calleeName="globalThis.source" @622
+    v25 = Builtin builtin=GlobalThis @632
+    v26 = PropGet v25 key="globalThis" [isFreeName] @632
+    v27 = Convert v26 declared={type=builtin(GlobalThis) flags=[IsExpected]} @632
+    v28 = PropGet v27 key="source" @632
+    v29 = Call v28, v27 calleeKey="source" calleeName="globalThis.source" @643
+    v30 = Call v3, -, v24, v29 calleeName="fraction" @602
+    v31 = Builtin builtin=GlobalThis @660
+    v32 = PropGet v31 key="globalThis" [isFreeName] @660
+    v33 = Convert v32 declared={type=builtin(GlobalThis) flags=[IsExpected]} @660
+    v34 = PropGet v33 key="source" @660
+    v35 = Call v34, v33 calleeKey="source" calleeName="globalThis.source" @671
+    v36 = Builtin builtin=GlobalThis @681
+    v37 = PropGet v36 key="globalThis" [isFreeName] @681
+    v38 = Convert v37 declared={type=builtin(GlobalThis) flags=[IsExpected]} @681
+    v39 = PropGet v38 key="source" @681
+    v40 = Call v39, v38 calleeKey="source" calleeName="globalThis.source" @692
+    v41 = Call v5, -, v35, v40 calleeName="float" @654
+    v42 = Builtin builtin=GlobalThis @711
+    v43 = PropGet v42 key="globalThis" [isFreeName] @711
+    v44 = Convert v43 declared={type=builtin(GlobalThis) flags=[IsExpected]} @711
+    v45 = PropGet v44 key="source" @711
+    v46 = Call v45, v44 calleeKey="source" calleeName="globalThis.source" @722
+    v47 = Call v9, -, v46 calleeName="sixteen" @703
+    v48 = Builtin builtin=GlobalThis @738
+    v49 = PropGet v48 key="globalThis" [isFreeName] @738
+    v50 = Convert v49 declared={type=builtin(GlobalThis) flags=[IsExpected]} @738
+    v51 = PropGet v50 key="source" @738
+    v52 = Call v51, v50 calleeKey="source" calleeName="globalThis.source" @749
+    v53 = Call v7, -, v52 calleeName="once" @733
+    v54 = Call v13, v12, v19, v30, v41, v47, v53 calleeKey="sink" calleeName="globalThis.sink" @569
+    v55 = Undefined @558
+    Return v55 @558
+}
+function f1 name="whole" module=m0 sourceRange={end=166} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @40
+    v2 = BitOr v0, v1 @40
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @24
+    v4 = Integer @53
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @53
+    v6 = Integer @69
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @69
+    Jump -> next b1(v5, v7) @65
+  b1(v8, v9):
+    LoopHint @65
+    v11 = Less v9, v3 @76
+    Branch v11 -> taken b2(), notTaken b3() @76
+  b2():
+    v12 = Builtin builtin=GlobalThis @95
+    v13 = PropGet v12 key="parseInt" [isFreeName] @95
+    v14 = Convert v13 declared={type=builtin(ParseInt) flags=[IsExpected]} @95
+    v15 = Integer integer=7 @108
+    v16 = Mul v9, v15 @108
+    v17 = Call v14, -, v16 calleeName="parseInt" @95
+    v18 = Builtin builtin=GlobalThis @113
+    v19 = PropGet v18 key="parseFloat" [isFreeName] @113
+    v20 = Convert v19 declared={type=builtin(ParseFloat) flags=[IsExpected]} @113
+    v21 = Call v20, -, v9 calleeName="parseFloat" @113
+    v22 = Add v17, v21 @113
+    v23 = Builtin builtin=Number @129
+    v24 = PropGet v23 key="parseInt" @129
+    v25 = Convert v24 declared={type=builtin(ParseInt) flags=[IsExpected]} @129
+    v26 = Integer integer=10 @148
+    v27 = Call v25, v23, v9, v26 calleeKey="parseInt" calleeName="Number.parseInt" @136
+    v28 = Add v22, v27 @129
+    v29 = Add v8, v28 @129
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @88
+    v31 = Increment v9 @83
+    v32 = Convert v31 declared={type=number flags=[IsExpected]} @83
+    Jump -> next b1(v30, v32) @83
+  b3():
+    Return v8 @160
+}
+function f2 name="fraction" module=m0 position=167 sourceRange={start=167 end=306} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = ToNumber v0 @202
+    v3 = Integer @221
+    v4 = BitOr v1, v3 @221
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @205
+    v6 = Integer @234
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @234
+    v8 = Integer @250
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @250
+    Jump -> next b1(v7, v9) @246
+  b1(v10, v11):
+    LoopHint @246
+    v13 = Less v11, v5 @257
+    Branch v13 -> taken b2(), notTaken b3() @257
+  b2():
+    v14 = Builtin builtin=GlobalThis @276
+    v15 = PropGet v14 key="parseInt" [isFreeName] @276
+    v16 = Convert v15 declared={type=builtin(ParseInt) flags=[IsExpected]} @276
+    v17 = Div v2, v11 @289
+    v18 = Call v16, -, v17 calleeName="parseInt" @276
+    v19 = Add v10, v18 @276
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @269
+    v21 = Increment v11 @264
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @264
+    Jump -> next b1(v20, v22) @264
+  b3():
+    Return v10 @300
+}
+function f3 name="float" module=m0 position=307 sourceRange={start=307 end=445} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = ToNumber v0 @339
+    v3 = Integer @358
+    v4 = BitOr v1, v3 @358
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @342
+    v6 = Integer @371
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @371
+    v8 = Integer @387
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @387
+    Jump -> next b1(v7, v9) @383
+  b1(v10, v11):
+    LoopHint @383
+    v13 = Less v11, v5 @394
+    Branch v13 -> taken b2(), notTaken b3() @394
+  b2():
+    v14 = Builtin builtin=GlobalThis @413
+    v15 = PropGet v14 key="parseFloat" [isFreeName] @413
+    v16 = Convert v15 declared={type=builtin(ParseFloat) flags=[IsExpected]} @413
+    v17 = Add v2, v11 @428
+    v18 = Call v16, -, v17 calleeName="parseFloat" @413
+    v19 = Add v10, v18 @413
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @406
+    v21 = Increment v11 @401
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @401
+    Jump -> next b1(v20, v22) @401
+  b3():
+    Return v10 @439
+}
+function f4 name="once" module=m0 position=446 sourceRange={start=446 end=496} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string):
+    v1 = ToNumber v0 @470
+    v2 = Convert v1 declared={type=undefined|null|number|string flags=[IsExpected]} @465
+    v3 = Builtin builtin=GlobalThis @481
+    v4 = PropGet v3 key="parseInt" [isFreeName] @481
+    v5 = Convert v4 declared={type=builtin(ParseInt) flags=[IsExpected]} @481
+    v6 = Call v5, -, v2 calleeName="parseInt" @481
+    v7 = NewArray v6 contents=anything @480
+    Return v7 @480
+}
+function f5 name="sixteen" module=m0 position=497 sourceRange={start=497 end=557} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string):
+    v1 = Integer @527
+    v2 = BitOr v0, v1 @527
+    v3 = Convert v2 declared={type=undefined|null|number|string flags=[IsExpected]} @519
+    v4 = Builtin builtin=GlobalThis @538
+    v5 = PropGet v4 key="parseInt" [isFreeName] @538
+    v6 = Convert v5 declared={type=builtin(ParseInt) flags=[IsExpected]} @538
+    v7 = Integer integer=16 @550
+    v8 = Call v6, -, v3, v7 calleeName="parseInt" @538
+    v9 = NewArray v8 contents=anything @537
+    Return v9 @537
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app", "stop"]}, {exportName="then"}]

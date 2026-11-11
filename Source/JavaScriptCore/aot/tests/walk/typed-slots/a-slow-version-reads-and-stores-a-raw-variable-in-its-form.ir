@@ -1,0 +1,123 @@
+# `count` holds numbers alone and lies raw. `area` has a guard, a fast version and a slow one. The slow version is walked without Link's tables: of `origin` it knows nothing, so `origin.y` is anything there.
+# Its read of `count` has the form of the variable all the same, typed by Link's word for it: a read typed `anything` could not lie in a raw form.
+# Its store is held in front: a test for what the variable is held to, the number taken out of its box on the way that passes, and a stop by name on the other.
+# RUN: walk f1:SlowBody mechanisms=all
+# CHECK-LABEL: code f1:SlowBody
+# CHECK: : number|absent @OptionalDouble = GetModuleVariable variable=g3
+# CHECK: [[origin]]: anything{{*}} @JSValue = CheckInitialized {{*}}name="origin"
+# CHECK-NEXT: [[member]]: anything{{*}} @JSValue = PropGet [[origin]] key="y"
+# CHECK-NEXT: [[fits]]: boolean @Boolean = TypeTest [[member]] testedType=number
+# CHECK-NEXT: Branch [[fits]] -> taken [[stores]](), notTaken [[stops]]()
+# CHECK: [[stores]]():
+# CHECK-NEXT: [[number]]: number @JSValue = Narrowed [[member]], [[fits]] [isOnTakenEdge]
+# CHECK-NEXT: [[raw]]: number @OptionalDouble = Unbox [[number]]
+# CHECK-NEXT: PutModuleVariable [[raw]] variable=g3
+# CHECK: [[stops]]() frequency=Rare:
+# CHECK-NEXT: CheckProof [[member]] checkedType=never {{*}}source=Variable
+# The fast version reads the tables: the member is a number by its field, and nothing is asked in front of the store.
+# RUN(FAST): walk f1 mechanisms=all
+# FAST-LABEL: code f1:Body
+# FAST-NOT: source=Variable
+# class Point { x = 1; y = 2.5; }
+# const origin = new Point();
+# let count = 0;
+# function area(point: Point, scale: number): number { const across = point.x * scale; const down = point.y * scale; count = origin.y; return across * down + point.x + count; }
+# function unknownCaller(value: any): number { return area(value, value); }
+# function provenCaller(): number { return area(new Point(), 2); }
+# globalThis.keep = [area, unknownCaller, provenCaller];
+
+layout L0 kind=Instance name="Point" module=m0 constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="area" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Point" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="origin" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g3 name="count" module=m0 declared={type=number|absent}
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="guard.ts" displayPath="guard.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]}
+    v4 = NewClosure function=f4
+    v5 = NewClass v4 layout=L0
+    PutModuleVariable v5 variable=g4
+    v7 = FinishClass v5 layout=L0
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]}
+    v9 = Convert v7 declared={type=f4 flags=[IsFromCompiler]}
+    PutModuleVariable v9 variable=g1
+    v11 = Construct v9 calleeName="Point"
+    v12 = Convert v11 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    PutModuleVariable v12 variable=g2
+    v14 = Integer
+    v15 = Convert v14 declared={type=number}
+    PutModuleVariable v15 variable=g3
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="globalThis" [isFreeName]
+    v19 = Convert v18 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v20 = GetModuleVariable variable=g0
+    v21 = NewArray v20, v1, v3 contents=anything
+    PropSet v19, v21 key="keep"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="area" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = PropGet v0 key="x"
+    v3 = Mul v2, v1
+    v4 = PropGet v0 key="y"
+    v5 = Mul v4, v1
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="count"
+    v8 = GetModuleVariable variable=g2
+    v9 = CheckInitialized v8 name="origin"
+    v10 = PropGet v9 key="y"
+    v11 = Convert v10 declared={type=number}
+    PutModuleVariable v11 variable=g3
+    v13 = Mul v3, v5
+    v14 = PropGet v0 key="x"
+    v15 = Add v13, v14
+    v16 = GetModuleVariable variable=g3
+    v17 = CheckInitialized v16 name="count"
+    v18 = Add v15, v17
+    v19 = Convert v18 declared={type=number}
+    Return v19
+}
+function f2 name="unknownCaller" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0, v0 calleeName="area"
+    ReturnCall v2 casts=[{declared={type=number}}]
+}
+function f3 name="provenCaller" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Point"
+    v3 = Construct v2 calleeName="Point"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v5 = Integer integer=2
+    v6 = Call v0, -, v4, v5 calleeName="area"
+    ReturnCall v6 casts=[{declared={type=number}}]
+}
+function f4 name="Point" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f5
+    Return v3
+}
+function f5 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    PropDefine v1, v3 key="x"
+    v5 = Double number=2.5
+    v6 = Convert v5 declared={type=number}
+    PropDefine v1, v6 key="y"
+    v8 = Undefined
+    Return v8
+}

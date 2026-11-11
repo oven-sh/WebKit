@@ -9,7 +9,6 @@
 
 #include "AOTCompactStorage.h"
 #include "AOTSlotRepresentation.h"
-#include "AOTThreshold.h"
 #include "HeapCellInlines.h"
 #include "JSString.h"
 #include "MarkedBlockCage.h"
@@ -44,7 +43,6 @@ public:
 
     enum class Width : uint8_t {
         None = 0,
-        InImage = 1,
         Narrow = 4,
         Wide = 8,
     };
@@ -64,23 +62,21 @@ public:
 
     static constexpr uint32_t initialCapacity = 4;
     static constexpr uint32_t maxCapacityWithTags = 8;
-    AOT_CLASS_THRESHOLD(uint32_t, maxCapacityEmptiedByClear, 32);
+    static constexpr uint32_t minUsedToShrink = 32;
+    static constexpr bool isMostlyDeleted(uint32_t alive, uint32_t used) { return used >= minUsedToShrink && alive * 4 < used; }
+    static constexpr uint32_t maxCapacityEmptiedByClear = 32;
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr uint32_t maxCapacityWithLongSlots = 3 << 22;
-    static constexpr uint32_t maxCapacity = (1 << 28) - 2;
+    static constexpr uint32_t maxCapacity = 3 << 26;
     static constexpr uint8_t keysAreWide = 0x80;
     static constexpr uint8_t keysAreInImage = 0x40;
-    // Somebody may stand behind an entry of the table: an iterator or a loop that has taken one. Until then whoever holds the table has yet to take its first entry.
+    static constexpr uint32_t capacityIsInImage = 1u << 31;
     static constexpr uint8_t wasWalked = 0x20;
     static constexpr uint8_t keysShiftMask = 0x1f;
-    static constexpr uint8_t indexIsInImage = 0x80;
-    // A table with more slots than the hash has values. So a stub knows from one read of the byte that the mask of the slots makes the home slot, and that a slot is short or long.
-    static constexpr uint8_t indexIsHuge = 0x40;
+    static constexpr uint8_t indexIsHuge = 0x80;
     static constexpr uint8_t numberOfIndexBits = 0x3f;
-    static constexpr uint32_t capacityIsInImage = 1u << 31;
     static constexpr uint8_t keysShiftWithTags = 2;
     static_assert(2u << keysShiftWithTags == maxCapacityWithTags);
-    // A full table with narrow keys, no deleted entry and fewer entries than this grows by a plan.
     static constexpr uint32_t maxCountWithGrowthPlan = 64;
     static constexpr unsigned growthPlansPerValueWidth = maxCountWithGrowthPlan / 2;
     static constexpr unsigned sizeStepShiftOfGrowthPlan = 56;
@@ -88,11 +84,6 @@ public:
     static constexpr unsigned hashMask = (1u << hashBits) - 1;
     static constexpr unsigned tagShiftOfTags = 16;
 
-    // The index of a table with more than eight entries: a tag byte for each slot, and behind all the tags the number of the entry in each slot. A key that the table lacks is mostly known from its tag, without asking how wide the numbers are.
-    // A tag is six bits of the hash under a set bit, and 0 in a free slot. A key goes into its home slot if that is free, else into the first free slot of the eight that the home slot lies among,
-    // else of the following eight, and so on. No slot is ever freed. So a free slot among eight that were searched says that the key is absent: one word compare looks at all eight tags.
-    // The lowest bit of a tag belongs to the slot, not to the key in it: it is set once a key that has this slot for its home went elsewhere. While it is clear, a key that is not in its home slot is absent,
-    // which is how most lookups of absent keys end, however full the index is.
     static constexpr unsigned slotsPerGroup = 8;
     static constexpr unsigned tagShiftOfSlots = hashBits - 6;
     static constexpr uint8_t takenSlot = 0x80;
@@ -110,7 +101,6 @@ public:
             const uint8_t* entry = index + (static_cast<size_t>(1) << indexBits) + static_cast<size_t>(slot) * entryBytes;
             if constexpr (kind == SlotKind::Short)
                 return *entry;
-            // The fourth byte belongs to the next slot, or to the first key.
             uint32_t word = WTF::unalignedLoad<uint32_t>(entry);
             return kind == SlotKind::Long ? word & 0xffffff : word;
         }
@@ -153,22 +143,18 @@ public:
     static Structure* structureOf(VM&);
     static CompactTable* tryCreate(JSGlobalObject*, Width key, Width value, uint32_t minCapacity);
     static CompactTable* tryCreateForFirstEntry(JSGlobalObject*, bool hasValues, JSValue key, JSValue value);
-    // In front of an addition in a loop that the collection entered with `sizeAtEntry` entries, that has come by `finished` additions and has `remaining` ones left, this one among them.
-    AOT_CLASS_THRESHOLD(uint32_t, largestStepInLoop, 8);
+    static constexpr uint32_t largestStepInLoop = 8;
     static void reserveForAdditions(JSGlobalObject*, JSObject* owner, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry);
     static void ensureInitialTableAllocators(VM&);
-    // [static_cast<unsigned>(value width) / 4 * growthPlansPerValueWidth + count / 2]: the word at offsetOfCapacity() of the larger table, and above sizeStepShiftOfGrowthPlan the size step of its allocator.
-    static const uint64_t* growthPlans();
-    static CompactTable* createInImage(VM&, State&, const TableInImage&);
-    static JSSet* createSetInImage(JSGlobalObject*, const TableInImage&);
-    static JSMap* createMapInImage(JSGlobalObject*, const TableInImage&);
+    JS_EXPORT_PRIVATE static const uint64_t* growthPlans();
     static JSSet* tryCreateSetOfStrings(JSGlobalObject*, std::span<const WriteBarrier<Unknown>> values);
-    // Null, and nothing done, unless the array has int32 or double storage without a hole.
     static JSSet* tryCreateSetOfNumbers(JSGlobalObject*, JSArray*);
-    // The list is a contiguous array. Null, and nothing done, unless each element is an ordinary array of a resolved string and a value.
     static JSMap* tryCreateMapOfStringKeys(JSGlobalObject*, JSArray* pairs);
     static CompactTable* tableOf(JSObject* owner);
     static bool tryClearInPlace(JSObject* owner);
+    static CompactTable* createInImage(VM&, State&, const TableInImage&);
+    static JSSet* createSetInImage(JSGlobalObject*, State&, const TableInImage&);
+    static JSMap* createMapInImage(JSGlobalObject*, State&, const TableInImage&);
     static CompactTable* tryMoveToHeap(JSGlobalObject*, JSObject* owner);
 
     Status status() const { return m_status; }
@@ -183,13 +169,12 @@ public:
         RELEASE_ASSERT(isLive());
         return m_keysShiftAndFlags & keysAreInImage;
     }
-    bool isHeapTable() const { return isLive() && !(m_keysShiftAndFlags & keysAreInImage); }
-    bool isFullHeapTable() const { return isHeapTable() && m_used == m_capacity; }
     const TableInImage& tableInImage() const
     {
         RELEASE_ASSERT(isInImage());
         return **at<const TableInImage*>(offsetOfIndex());
     }
+    bool isFull() const { return isLive() && m_used == m_capacity; }
 
     uint32_t size() const
     {
@@ -209,19 +194,19 @@ public:
     }
     uint32_t capacity() const
     {
-        RELEASE_ASSERT(isHeapTable());
+        RELEASE_ASSERT(isLive());
         return m_capacity;
     }
     Width keyWidth() const
     {
-        RELEASE_ASSERT(isHeapTable());
+        RELEASE_ASSERT(isLive());
         return m_keysShiftAndFlags & keysAreWide ? Width::Wide : Width::Narrow;
     }
 
     JSValue keyAt(uint32_t entry) const;
-    ALWAYS_INLINE JSValue heapKeyAt(uint32_t entry) const
+    ALWAYS_INLINE JSValue uncheckedKeyAt(uint32_t entry) const
     {
-        ASSERT(isHeapTable());
+        ASSERT(isLive() && !isInImage());
         if (m_keysShiftAndFlags & keysAreWide)
             return JSValue::decode(at<EncodedJSValue>(offsetOfKeys())[entry]);
         return decodeNarrow(at<uint32_t>(offsetOfKeys())[entry]);
@@ -229,11 +214,11 @@ public:
     ALWAYS_INLINE JSValue valueAt(uint32_t entry) const
     {
         RELEASE_ASSERT(isLive());
+        if (m_keysShiftAndFlags & keysAreInImage) [[unlikely]]
+            return valueInImage(entry);
         switch (m_valueWidth) {
         case Width::None:
             return { };
-        case Width::InImage:
-            return valueInImage(entry);
         case Width::Wide:
             return JSValue::decode(at<EncodedJSValue>(offsetOfValues())[entry]);
         case Width::Narrow:
@@ -305,10 +290,12 @@ public:
         return cell->isString() ? uncheckedDowncast<JSString>(cell)->tryGetValueImpl() : nullptr;
     }
 
+    bool answersByCharacters() const { return hasNarrowKeys(); }
+
     ALWAYS_INLINE Lookup tryFindQuickly(JSString* key) const
     {
         const StringImpl* impl = key->tryGetValueImpl();
-        if (!impl || !impl->hasHash() || !hasNarrowHeapKeys())
+        if (!impl || !impl->hasHash() || !hasNarrowKeys())
             return { };
         unsigned hash = impl->existingHash();
         uintptr_t base = cageBaseOf(this);
@@ -337,7 +324,7 @@ public:
     template<typename CharacterType>
     ALWAYS_INLINE Lookup tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash) const
     {
-        if (!hasNarrowHeapKeys())
+        if (!hasNarrowKeys())
             return { };
         uintptr_t base = cageBaseOf(this);
         const uint32_t* keys = at<uint32_t>(offsetOfKeys());
@@ -348,6 +335,8 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
+    template<typename CharacterType> int64_t placeOfValueUnder(std::span<const CharacterType>) const;
+
     static constexpr uint32_t probeStartFor(unsigned indexBits, unsigned hash)
     {
         unsigned spreadShift = indexBits > hashBits ? indexBits - hashBits : 0;
@@ -356,7 +345,6 @@ public:
 
     static constexpr uint64_t onesOfTags = 0x0101010101010101ull;
     static ALWAYS_INLINE uint64_t freeSlotsAmong(uint64_t tags) { return ~tags & onesOfTags << 7; }
-    // A set bit at the top of each of eight tags that differs from the tag in nothing but keyLeftHomeSlot. The tag above such a one may be marked too.
     static constexpr uint64_t belowDifferenceOfOtherTags = (keyLeftHomeSlot + 1) * onesOfTags;
     static ALWAYS_INLINE uint64_t slotsWithTagAmong(uint64_t tags, uint8_t tag)
     {
@@ -364,8 +352,12 @@ public:
         return (difference - belowDifferenceOfOtherTags) & ~difference & onesOfTags << 7;
     }
 
+    static ALWAYS_INLINE bool canFreeSlot(const uint8_t* tags, uint32_t slot)
+    {
+        return !(tags[slot] & keyLeftHomeSlot) && freeSlotsAmong(WTF::unalignedLoad<uint64_t>(tags + (slot & ~(slotsPerGroup - 1))));
+    }
+
     static constexpr uint32_t noSlot = std::numeric_limits<uint32_t>::max();
-    // The next slot behind `previous`, from the eight of the home slot on, whose tag may be this one. The home slot has been looked at. Keys are mostly in their home slot, so this is out of line.
     static uint32_t nextSlotWithTag(const uint8_t* tags, unsigned indexBits, uint8_t tag, uint32_t homeSlot, uint32_t previous);
     static uint32_t findFreeSlotBehindHome(const uint8_t* tags, unsigned indexBits, uint32_t homeSlot);
 
@@ -416,7 +408,6 @@ public:
     template<typename Matches>
     static ALWAYS_INLINE std::optional<uint32_t> probeIndex(SlotKind kind, const uint8_t* index, unsigned indexBits, uint32_t used, unsigned hash, NOESCAPE const Matches& matches)
     {
-        // One body for the kinds of slots: this is the way of the run time's own lookups, where the size of the code counts for more.
         if (kind == SlotKind::Tag)
             return probeIndex<SlotKind::Tag>(index, indexBits, used, hash, matches);
         const uint8_t* tags = index;
@@ -458,8 +449,7 @@ public:
     static void insertIntoIndex(SlotKind, uint8_t* index, unsigned indexBits, uint32_t entry, unsigned hash);
 
     static unsigned indexBitsFor(uint32_t capacity);
-    // What a table holds in the byte of its index bits.
-    static constexpr uint8_t markedIndexBits(unsigned indexBits) { return static_cast<uint8_t>(indexBits > hashBits ? indexBits | indexIsInImage | indexIsHuge : indexBits); }
+    static constexpr uint8_t markedIndexBits(unsigned indexBits) { return static_cast<uint8_t>(indexBits > hashBits ? indexBits | indexIsHuge : indexBits); }
     static constexpr uint8_t keysShiftFor(unsigned indexBits, uint32_t capacity)
     {
         if (!indexBits)
@@ -469,9 +459,11 @@ public:
 
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
+    JS_EXPORT_PRIVATE static uint32_t& deletedPrefixOf(JSObject* owner);
+    JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);
-    // The keys, or the values, that a walk by next() from the entry on finds. Of the other column nothing is made.
+    static CompactStorage::Position nextBehindDeletedEntry(VM&, JSCell* storage, uint32_t entry);
     template<typename Functor>
     static void forEachInColumn(VM& vm, JSCell* storage, uint32_t entry, bool wantsKeys, NOESCAPE const Functor& functor)
     {
@@ -484,7 +476,6 @@ public:
         uint32_t used = table->m_used;
         if (entry < used)
             table->m_keysShiftAndFlags |= wasWalked;
-        // No entry of a table in the image is deleted: the table moves to the heap first.
         if (table->isInImage()) {
             for (; entry < used; ++entry)
                 functor(wantsKeys ? table->keyAt(entry) : table->valueAt(entry));
@@ -501,6 +492,50 @@ public:
             if (JSValue key = keyAt(entry))
                 functor(wantsKeys ? key : valueAt(entry));
         }
+    }
+
+    JS_EXPORT_PRIVATE static uint32_t firstEntryBehindDeletedOnes(const void* keys, bool keysAreWide, uint32_t entry, uint32_t used);
+    enum class DeletedEntries : bool { AreReadOneByOne, ArePassedByInSteps };
+    static constexpr uint32_t entriesBetweenScans = 8;
+    static constexpr uint32_t deletedEntriesReadByStub = 64;
+    template<DeletedEntries deletedEntries = DeletedEntries::ArePassedByInSteps, typename Functor>
+    static void forEachEntryFrom(VM& vm, JSCell* storage, uint32_t entry, NOESCAPE const Functor& functor)
+    {
+        auto* table = uncheckedDowncast<CompactTable>(storage);
+        if (!table->isLive() || table->isInImage()) [[unlikely]] {
+            for (CompactStorage::Position position = next(vm, storage, entry); position.storage; position = next(vm, position.storage, position.entry + 1)) {
+                if (!functor(position.entry, position.key, position.value))
+                    return;
+            }
+            return;
+        }
+        uint32_t used = table->m_used;
+        bool hasValues = table->hasValues();
+        auto columnAt = [table](size_t offset, bool isWide) {
+            return [table, isWide, narrow = table->at<uint32_t>(offset), wide = table->at<EncodedJSValue>(offset)](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+                return isWide ? JSValue::decode(wide[entry]) : table->decodeNarrow(narrow[entry]);
+            };
+        };
+        auto keyAt = columnAt(table->offsetOfKeys(), table->m_keysShiftAndFlags & keysAreWide);
+        auto valueAt = columnAt(table->offsetOfValues(), table->m_valueWidth == Width::Wide);
+        for (; entry < used; ++entry) {
+            if (JSValue key = keyAt(entry)) {
+                if (!functor(entry, key, hasValues ? valueAt(entry) : JSValue()))
+                    return;
+            } else if constexpr (deletedEntries == DeletedEntries::ArePassedByInSteps) {
+                if (!(entry % entriesBetweenScans))
+                    entry = firstEntryBehindDeletedOnes(table->at<uint8_t>(table->offsetOfKeys()), table->m_keysShiftAndFlags & keysAreWide, entry + 1, used) - 1;
+            }
+        }
+    }
+
+    template<typename Functor>
+    static void forEachEntry(VM& vm, JSCell* storage, NOESCAPE const Functor& functor)
+    {
+        forEachEntryFrom<DeletedEntries::AreReadOneByOne>(vm, storage, 0, [&](uint32_t, JSValue key, JSValue value) ALWAYS_INLINE_LAMBDA {
+            functor(key, value);
+            return true;
+        });
     }
 
     template<typename Visitor> ALWAYS_INLINE static void visitFields(CompactTable*, Visitor&);
@@ -525,12 +560,6 @@ private:
     {
     }
 
-    State& stateOfTableInImage() const
-    {
-        ASSERT(isInImage());
-        return **at<State*>(offsetOfIndex() + sizeof(void*));
-    }
-
     static uint32_t capacityFor(uint32_t minCapacity, Width key, Width value);
     static uint32_t capacityAfterGrowth(uint32_t alive, uint32_t used);
     static size_t offsetOfKeys(uint32_t capacity);
@@ -546,7 +575,12 @@ private:
     size_t offsetOfValues() const { return offsetOfKeys() + static_cast<size_t>(m_capacity) * static_cast<size_t>(m_keysShiftAndFlags & keysAreWide ? Width::Wide : Width::Narrow); }
     SlotKind slotKind() const { return slotKindFor(m_capacity); }
     uint32_t deleted() const { return m_used - m_alive; }
-    bool hasNarrowHeapKeys() const { return isHeapTable() && !(m_keysShiftAndFlags & keysAreWide); }
+    bool hasNarrowKeys() const { return isLive() && !(m_keysShiftAndFlags & (keysAreWide | keysAreInImage)); }
+    State& stateOfTableInImage() const
+    {
+        ASSERT(isInImage());
+        return **at<State*>(offsetOfIndex() + sizeof(void*));
+    }
     ALWAYS_INLINE JSValue decodeNarrow(uint32_t word) const
     {
         return word < minCell32 ? JSValue::decode(word) : JSValue(MarkedBlockCage::decode(cageBaseOf(this), word));
@@ -559,7 +593,7 @@ private:
     template<typename Matches>
     ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
-        ASSERT(isHeapTable());
+        ASSERT(isLive() && !isInImage());
         return probeIndex(slotKind(), at<uint8_t>(offsetOfIndex()), indexBits(), m_used, hash, matches);
     }
     template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
@@ -568,6 +602,7 @@ private:
     std::optional<uint32_t> findInImage(JSGlobalObject*, JSString*) const;
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
+    void removeFromIndex(uint32_t entry, unsigned hash);
     void fillIndex(uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
     template<SlotKind> uint32_t fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
@@ -576,11 +611,12 @@ private:
     void append(VM&, JSValue key, unsigned hash, JSValue value);
     void resolveSubstringKey(JSRopeString*) const;
     bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
-    void crashUnlessSameEntriesAs(VM&, JSObject* expectedOwner) const;
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
     CompactTable* copyWithAbsentKey(VM&, JSValue key, unsigned hash, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);
+    void giveBackPagesBehind(size_t offset);
+    static void shrink(JSGlobalObject*, JSObject* owner);
     void skipObsoleteSuccessors();
     void removeAllEntries();
 
@@ -610,6 +646,7 @@ private:
 };
 
 static_assert(sizeof(CompactTable) == 24);
+static_assert(static_cast<int8_t>(CompactTable::markedIndexBits(CompactTable::hashBits + 1)) < 0 && CompactTable::markedIndexBits(CompactTable::hashBits) == CompactTable::hashBits && !(CompactTable::indexIsHuge & CompactTable::numberOfIndexBits));
 static_assert(StringImpl::s_flagCount == 8 && CompactTable::tagShiftOfTags + 8 == CompactTable::hashBits);
 static_assert(JSValue::ValueTrue < minCell32 && JSValue::ValueFalse < minCell32 && undefinedCell32 < minCell32);
 
@@ -631,7 +668,7 @@ ALWAYS_INLINE void CompactTable::visitEntries(Visitor& visitor, uint32_t first, 
         return;
     }
     for (uint32_t entry = first; entry < last; ++entry) {
-        visitor.appendUnbarriered(heapKeyAt(entry));
+        visitor.appendUnbarriered(uncheckedKeyAt(entry));
         visitor.appendUnbarriered(valueAt(entry));
     }
 }
@@ -641,7 +678,6 @@ ALWAYS_INLINE void CompactTable::visitFields(CompactTable* table, Visitor& visit
 {
     Locker locker { table->cellLock() };
     if (!table->isLive()) {
-        // A word left on the stack may name a table that was replaced long ago. It keeps the table that the owner has now, and none between the two.
         table->skipObsoleteSuccessors();
         if (JSCell* next = table->successor())
             visitor.appendUnbarriered(next);

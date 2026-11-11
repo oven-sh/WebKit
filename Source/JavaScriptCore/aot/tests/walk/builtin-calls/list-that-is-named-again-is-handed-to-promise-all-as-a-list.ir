@@ -1,0 +1,35 @@
+# the list is handed to Promise.all and returned beside the promise: somebody sees it, so it is made and the built-in is called with it
+# function both(x) { const list = [a(x), x]; return [list, Promise.all(list)]; }
+# RUN: walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewArray
+# RUN(NEVER): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# NEVER-NOT: = PromiseAllOfElements
+# NEVER-NOT: role=CoroutineBody
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="a" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    v2 = Builtin builtin=PromiseAll
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v0 calleeName="a"
+    v5 = NewArray v4, v0 contents=anything
+    v6 = Call v2, v1, v5 calleeKey="all" calleeName="Promise.all"
+    v7 = NewArray v5, v6 contents=anything
+    Return v7
+}

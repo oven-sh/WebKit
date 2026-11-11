@@ -1,0 +1,72 @@
+# A copy mentions what the callee names. `a` and `b` have met in `pass`, and `look` reads off what came of it, so they are lost to Link, and nothing leads from `run` to either. The body of the module has a copy of `pass`, so it knows what comes back, and leaves that for `run`.
+# `a` names `inner`, which its one caller alone enters: a copy of `a` in `run` would bring the body of `inner` from where nothing leads to it, and the queue would end the build. So `a` is called. It is in the queue from the start.
+# function inner() { return 1; }  function a() { return inner(); }  function b() { return 2; }  function pass(f) { return f; }  function run(f) { return f(); }  function runToo(f) { return f(); }  function look(f) { return f.tag; }
+# const x = pass(a), y = pass(b);  look(x);  run(x);  runToo(y);
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(NAMES): walk f4 mechanisms=all
+# NAMES-NOT: function=f5
+# `b` names nobody, so its code brings nothing, in whoever's code a copy of it stands.
+# RUN(COPIED): walk f6 mechanisms=all
+# COPIED-LABEL: code f6:Body
+# COPIED-NOT: CallDirect
+# COPIED: Return
+# The whole build comes through.
+# RUN(WHOLE): units-with-code f1:Body f4:Body f5:Body mechanisms=all
+# WHOLE: unit f1:Body {{*}} bytes
+# WHOLE: unit f4:Body {{*}} bytes
+# WHOLE: unit f5:Body {{*}} bytes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0 calleeName="pass"
+    v4 = Call v2, -, v1 calleeName="pass"
+    v5 = NewClosure function=f7
+    v6 = Call v5, -, v3 calleeName="look" [isNeverInlined]
+    v7 = NewClosure function=f4
+    v8 = Call v7, -, v3 calleeName="run" [isNeverInlined]
+    v9 = NewClosure function=f6
+    v10 = Call v9, -, v4 calleeName="runToo" [isNeverInlined]
+    Return v10
+}
+function f1 name="a" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    v1 = Call v0, - calleeName="inner" [isNeverInlined]
+    Return v1
+}
+function f2 name="b" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, - calleeName="f"
+    Return v1
+}
+function f5 name="inner" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="runToo" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, - calleeName="f"
+    Return v1
+}
+function f7 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="tag"
+    Return v1
+}

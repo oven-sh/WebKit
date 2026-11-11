@@ -10,11 +10,12 @@
 
 #include "AOTAccessEmitter.h"
 #include "AOTCallEmitter.h"
+#include "AOTCallPlan.h"
 #include "AOTConstantEmitter.h"
+#include "AOTGuardEmitter.h"
+#include "AOTIRProgram.h"
 #include "AOTInstance.h"
 #include "AOTLayout.h"
-#include "AOTPlacement.h"
-#include "AOTRuntimeValidation.h"
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -26,40 +27,27 @@ void ClassEmitter::generateResolveHeritage(const ValueContext& value)
 
 void ClassEmitter::generateNewClass(const ValueContext& value)
 {
-    std::optional<Request> request = value->request();
-    if (!request) {
-        fail(value, InternalErrorKind::PlacedPayloadMissing);
+    LayoutID classLayout = value->layout();
+    if (!m_plan.hasClassRecord(classLayout)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
     }
+    uint32_t wordsOfRequest[] { classLayout.index() };
+    Word32 request = numberOf(m_mentions.request(RequestKind::NewClass, wordsOfRequest));
     Boxed constructor = boxCell(in<CellPointer>(value->constructorOperand()));
     Boxed heritage = inOptional<Boxed>(value->heritageOperand()).value_or(boxedConstant(JSValue()));
     Boxed prototypeParent = inOptional<Boxed>(value->prototypeParentOperand()).value_or(boxedConstant(JSValue()));
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClass, { word32(request->value()), constructor, heritage, prototypeParent }));
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClass, { request, constructor, heritage, prototypeParent }));
 }
 
-// The run time enters the prototype object of a class that is evaluated once in ClassWords::classPrototypes: at the definition of a class, at the first construction by a constructor function.
-std::optional<uint32_t> ClassEmitter::rankOfClassWithOnePrototypeObject(const ValueContext& value) const
+std::optional<Word32> ClassEmitter::rankOfClassWithOnePrototypeObject(const ValueContext& value)
 {
     LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
-    if (!isEvaluatedOnce(m_program, m_program.at(classLayout)))
+    AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), { } };
+    if (!m_plan.hasClassRecord(classLayout) || !classHasOneClassObject(context, classLayout))
         return std::nullopt;
-    return m_placement.rankOfClass(classLayout);
-}
-
-void ClassEmitter::failUnlessOperationReads(const ValueContext& value, CellPointer classObject, CellPointer prototypeInTable)
-{
-    LBasicBlock differs = newBlock();
-    LBasicBlock continuation = newBlock();
-    CellPointer prototype = callWithoutSite<CellPointer>(RuntimeOperation::GetClassPrototype, { classObject });
-    branch(equal(prototype, prototypeInTable), { normalEdge(continuation), rareEdge(differs) });
-
-    m_out.appendTo(differs);
-    Operand arguments[] { boxCell(prototypeInTable), word32(static_cast<int32_t>(ValidationFailureKind::FastPathResultDiffers)), word32(m_id.index()), word32(value.id().index()) };
-    callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true });
-    m_out.unreachable();
-
-    m_out.appendTo(continuation);
+    return numberOf(m_mentions.add(NumberSpace::ClassRank, classLayout));
 }
 
 void ClassEmitter::generateGetClassPrototype(const ValueContext& value)
@@ -68,18 +56,17 @@ void ClassEmitter::generateGetClassPrototype(const ValueContext& value)
     auto readByOperation = [&](bool isOnRarePath) {
         return callWithoutSite<CellPointer>(RuntimeOperation::GetClassPrototype, { classObject }, { .isOnRarePath = isOnRarePath });
     };
-    std::optional<uint32_t> rank = rankOfClassWithOnePrototypeObject(value);
+    std::optional<Word32> rank = value->readsClassObjectItself() ? std::nullopt : rankOfClassWithOnePrototypeObject(value);
     if (!rank) {
         define(value, readByOperation(false));
         return;
     }
+    m_out.noteForm(Form::Open, StateOfKnowledge::PrototypeInTable);
 
-    // The word is empty until the prototype object exists. A filled word keeps its cell, which the run time keeps alive.
+    static_assert(sizeof(JSCell*) == 1u << logScale(ScalePtr));
     Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
-    CellPointer prototype(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), static_cast<ptrdiff_t>(*rank) * sizeof(JSCell*))));
+    CellPointer prototype(m_out.load64(m_out.baseIndex(m_heaps.AOTInstance_fieldsFilledOnce, prototypes.value(), zeroExtended(*rank).value(), ScalePtr)));
     define(value, either<CellPointer>(Condition(m_out.notZero64(prototype.value())), [&] {
-        if (generator().validates())
-            failUnlessOperationReads(value, classObject, prototype);
         return prototype;
     }, [&] {
         return readByOperation(true);
@@ -92,7 +79,7 @@ void ClassEmitter::generateDefineMethod(const ValueContext& value)
     CellPointer function = in<CellPointer>(value->functionOperand());
     PropertyKeyID key = value->key();
     Boxed property = key ? boxCell(emitter<ConstantEmitter>().keyConstant(value, key)) : in<Boxed>(value->computedKeyOperand());
-    Word32 sideAndKind = word32(DefinedMethodBits::encode(value->side(), value->methodKind()));
+    Word32 sideAndKind = word32(DefinedMethodBits::encode(value->side(), value->methodKind(), !key, value->index()));
     callVoidOperation(value, RuntimeOperation::DefineMethod, { classObject, property, function, sideAndKind });
 }
 
@@ -103,19 +90,36 @@ void ClassEmitter::generateFinishClass(const ValueContext& value)
 
 void ClassEmitter::generateBeginMemberGuards(const ValueContext& value)
 {
-    Operand arguments[] { word32(value->layout().index()) };
+    LayoutID constructorFunction = value->layout();
+    if (!m_plan.hasClassRecord(constructorFunction)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    LBasicBlock wereNeverBegun = newBlock();
+    LBasicBlock continuation = newBlock();
+    branch(emitter<GuardEmitter>().guardsWereBegun(constructorFunction), { normalEdge(continuation), rareEdge(wereNeverBegun) });
+
+    m_out.appendTo(wereNeverBegun);
+    Operand arguments[] { word32(constructorFunction.index()), word32(value->endsTopLevelOfModule()) };
     callWithoutSite(RuntimeOperation::BeginMemberGuards, arguments, Representation::Void, { .isOnRarePath = true });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
 }
 
 void ClassEmitter::generateNewClassToken(const ValueContext& value)
 {
+    if (!m_plan.hasClassRecord(value->layout())) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
+    }
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClassToken, { word32(value->layout().index()) }));
 }
 
-// The prototype property of a function of the program is a data property, so reading it runs no code and the operation may read it once more.
-static bool isAlwaysProgramFunction(const Type& type)
+static bool newTargetIsAlwaysProgramFunction(const Type& newTarget)
 {
-    return type.isObject() && type.hasOnlyKnownCallees() && !type.layouts && type.builtins.isEmpty();
+    return newTarget.isObject() && newTarget.hasOnlyClosures();
 }
 
 void ClassEmitter::generateGetConstructPrototype(const ValueContext& value)
@@ -124,12 +128,40 @@ void ClassEmitter::generateGetConstructPrototype(const ValueContext& value)
     auto readByOperation = [&](bool isOnRarePath) {
         return callOperation<CellPointer>(value, RuntimeOperation::GetConstructPrototype, { newTarget }, { .isOnRarePath = isOnRarePath });
     };
-    if (!isAlwaysProgramFunction(typeOf(value->newTargetOperand()))) {
+    if (!newTargetIsAlwaysProgramFunction(typeOf(value->newTargetOperand()))) {
         define(value, readByOperation(false));
         return;
     }
 
-    Boxed prototype = emitter<AccessEmitter>().getById(value, newTarget, m_program.keyOf(BuiltinNames::prototype), SiteCacheID());
+    LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
+    FunctionID constructor = singleFunctionOf(types(), typeOf(value->newTargetOperand()));
+    AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), { } };
+    bool guardAnswers = constructor &&m_program.at(constructor).constructedClass == classLayout && isConstructorPrototypeGuarded(context, classLayout);
+    if (std::optional<Word32> rank = guardAnswers ? rankOfClassWithOnePrototypeObject(value) : std::nullopt) {
+        m_out.noteForm(Form::Open, StateOfKnowledge::PrototypeInTable);
+        LBasicBlock guardHolds = newBlock();
+        LBasicBlock wordIsFilled = newBlock();
+        LBasicBlock readsProperty = newBlock();
+        Join<CellPointer> join(m_out);
+        branch(emitter<GuardEmitter>().holds(classLayout, ClassSide::Static, m_program.keyOf(BuiltinNames::prototype)), { normalEdge(guardHolds), rareEdge(readsProperty) });
+
+        m_out.appendTo(guardHolds);
+        static_assert(sizeof(JSCell*) == 1u << logScale(ScalePtr));
+        Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+        CellPointer prototypeInTable(m_out.load64(m_out.baseIndex(m_heaps.AOTInstance_fieldsFilledOnce, prototypes.value(), zeroExtended(*rank).value(), ScalePtr)));
+        branch(Condition(m_out.notZero64(prototypeInTable.value())), { normalEdge(wordIsFilled), rareEdge(readsProperty) });
+
+        m_out.appendTo(wordIsFilled);
+        join.add(prototypeInTable);
+
+        m_out.appendTo(readsProperty);
+        join.add(readByOperation(true));
+        define(value, join.finish());
+        return;
+    }
+
+    m_out.noteForm(Form::Closed, StateOfKnowledge::PrototypeReadByName);
+    Boxed prototype = emitter<AccessEmitter>().getById(value, newTarget, m_program.keyOf(BuiltinNames::prototype));
     LBasicBlock isCellBlock = newBlock();
     LBasicBlock isObjectBlock = newBlock();
     LBasicBlock isNoObjectBlock = newBlock();

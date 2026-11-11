@@ -8,12 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncResumption.h"
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTGenerator.h"
 #include "AOTInstance.h"
+#include "AOTRuntimeCheckFailure.h"
+#include "AOTState.h"
 #include "BuiltinExecutables.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
@@ -31,12 +34,12 @@ void willInitializeRealm(JSGlobalObject* realm)
         reserveInstance(realm);
 }
 
-String messageOfNameRefusedOnBuiltinFunction(PropertyName name)
+String lockedBuiltinPropertyErrorMessage(PropertyName name)
 {
     return assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid());
 }
 
-String messageOfPrototypeRefusedOnBuiltinFunction()
+String lockedBuiltinPrototypeErrorMessage()
 {
     return prototypeChangeOfLockedBuiltinMessage("a built-in function"_s);
 }
@@ -46,15 +49,14 @@ namespace {
 class RefusalsOfHostFunctions final : public ImmutablePropertyNames::OutsideNames {
 public:
     bool contains(UniquedStringImpl*) const final { return false; }
-    String storeErrorMessage(UniquedStringImpl* uid) const final { return messageOfNameRefusedOnBuiltinFunction(uid); }
-    String setPrototypeErrorMessage() const final { return messageOfPrototypeRefusedOnBuiltinFunction(); }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return lockedBuiltinPropertyErrorMessage(uid); }
+    String setPrototypeErrorMessage() const final { return lockedBuiltinPrototypeErrorMessage(); }
     bool throwsInSloppyMode() const final { return true; }
 };
 
 } // anonymous namespace
 
-// Compiled code takes `f.call`, `f.apply`, `f.bind` and `x instanceof f` on a function of the engine for the members of Function.prototype (BuiltinTable::isFunctionOfEngine).
-Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
+Structure* structureForHostFunctions(JSGlobalObject* realm, Structure* structure)
 {
     if (!locksBuiltins(realm))
         return structure;
@@ -66,14 +68,38 @@ Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
     return Structure::makeListedPropertiesImmutableTransition(vm, structure, closed.get());
 }
 
-bool refusesNameOnNativeConstructor(JSGlobalObject* realm, PropertyName name)
+bool rejectsNativeConstructorProperty(JSGlobalObject* realm, PropertyName name)
 {
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
 }
 
-void stopBecauseRealmHasABadTime()
+static bool isBinaryDataClass(JSGlobalObject* realm, JSObject* constructor)
 {
-    dataLogLn("AOT: the realm of a compiled program is having a bad time: an indexed accessor or a read-only index has come to lie above its arrays, which its locked built-ins refuse. Compiled code would go on making arrays that pass it by.");
+    if (realm->arrayBufferConstructor(ArrayBufferSharingMode::Default) == constructor)
+        return true;
+#define RETURN_IF_CONSTRUCTOR(name) \
+    if (realm->typedArrayConstructorConcurrently(Type##name) == constructor) \
+        return true;
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(RETURN_IF_CONSTRUCTOR)
+#undef RETURN_IF_CONSTRUCTOR
+    return false;
+}
+
+bool acceptsHasInstanceOfHost(InternalFunction* constructor, PropertyName name, JSValue method)
+{
+    JSGlobalObject* realm = constructor->globalObject();
+    Instance* instance = realm->aotInstance();
+    if (name != realm->vm().propertyNames->hasInstanceSymbol || !method || !instance || !instance->state || !instance->state->acceptsForeignBinaryData)
+        return false;
+    auto* function = dynamicDowncast<JSFunction>(method);
+    return function && function->isBuiltinFunction() && isBinaryDataClass(realm, constructor);
+}
+
+void crashOnHavingABadTime()
+{
+    RuntimeCheckFailure failure("array prototype check failed"_s);
+    failure.detail("an indexed accessor or a read-only indexed property was added to the prototype chain of arrays, which the locked built-ins should have refused");
+    failure.report();
     CRASH();
 }
 
@@ -164,23 +190,19 @@ void installDeferredWatchpoints(JSGlobalObject* realm)
 
 void didCreateRealm(JSGlobalObject* realm)
 {
-    refuseEvaluationUnlessAdmitted(realm);
+    rejectEvaluationUnlessAllowed(realm);
     Instance* instance = Instance::of(realm);
-    // The engine's text of next(), return() and throw() takes the engine's own generators alone. A host brings the three compiled.
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
     if (!instance)
         return;
 
-    Instance::forEachOf(realm, [&](Instance& each) {
-        makeBuiltinsImmutable(each);
-        Instance::create(realm);
-        // A host installs its globals after this and then calls hostDidCreateRealm().
-        if (!BuiltinBindings::hasHost())
-            didInstallBuiltins(each);
-    });
-    if (!BuiltinBindings::hasHost())
-        installDeferredWatchpoints(realm);
+    makeBuiltinsImmutable(*instance);
+    Instance::create(realm);
+    if (BuiltinBindings::hasHost())
+        return;
+    didInstallBuiltins(*instance);
+    installDeferredWatchpoints(realm);
 }
 
 void didChangeMicrotaskQueueing(VM& vm)
@@ -189,8 +211,10 @@ void didChangeMicrotaskQueueing(VM& vm)
         instance->realm.microtaskQueue = &instance->globalObject->microtaskQueue();
         instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries() || vm.m_synchronousModuleQueue;
         if (instance->awaitMustSuspend)
-            instance->coroutines.frameThatMayContinue = nullptr;
+            takeAwayRightToContinue(*instance);
     }
+    if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWithEagerLoads) [[unlikely]]
+        transferEagerLoadsToLoader(vm);
 }
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
@@ -199,6 +223,25 @@ CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
     Locker locker { polled.lock };
     for (Instance* instance : polled.instances)
         setPollsEnabled(*instance, enabled);
+}
+
+constinit std::atomic<bool> wasNoHelperThreadsScopeEntered { false };
+static thread_local unsigned t_noHelperThreadsScopes;
+
+NoHelperThreadsScope::NoHelperThreadsScope()
+{
+    wasNoHelperThreadsScopeEntered.store(true, std::memory_order_relaxed);
+    ++t_noHelperThreadsScopes;
+}
+
+NoHelperThreadsScope::~NoHelperThreadsScope()
+{
+    --t_noHelperThreadsScopes;
+}
+
+bool isThreadInNoHelperThreadsScope()
+{
+    return t_noHelperThreadsScopes;
 }
 
 } // namespace JSC::AOT::RuntimeHooks

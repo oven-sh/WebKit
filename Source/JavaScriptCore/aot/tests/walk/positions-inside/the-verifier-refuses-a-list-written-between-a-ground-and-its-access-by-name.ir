@@ -1,0 +1,37 @@
+# The verifier walks back from an access to each ground that was read off its list and refuses where the storage or the length of the same list is written on the way.
+# One written Code: the key is held below the length of the first list, and both reads rest on that. The first read stands behind a store of the OTHER list's length and passes: the verifier goes on to the second,
+# which stands behind a store of its own list's length, and stops there.
+# RUN: verify-grounds access=v9 view=v0 position=v2 length=v5 below=v7 passed=v7 access=v11 view=v0 position=v2 length=v5 below=v7 passed=v7
+# CHECK: v11 (GetArrayElement): the storage or the length of a list is written between a ground of an access and the access: v10 (SetArrayLength)
+# -- code
+# code f1:Body {
+#   constants:
+#     v3: 2 @Int32 = Integer integer=2
+#     v4: undefined @JSValue = Undefined
+#   b0(v0: Array @Cell, v1: Array @Cell, v2: int[0, 2147483647] @Int32) entry=0:
+#     v5: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v6: int[0, 2147483647] @Int64 = WidenInteger v2
+#     v7: boolean @Boolean = Less v6, v5 form=Integers
+#     Branch v7 -> taken b1(), notTaken b2()
+#   b1():
+#     v8 @Void = SetArrayLength v1, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v9: anything @JSValue = GetArrayElement v0, v2 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     v10 @Void = SetArrayLength v0, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v11: anything @JSValue = GetArrayElement v0, v2 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     Return v11
+#   b2():
+#     Return v4
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

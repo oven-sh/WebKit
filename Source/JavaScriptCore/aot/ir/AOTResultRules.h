@@ -7,120 +7,115 @@
 
 #if ENABLE(AOT)
 
-#include "AOTID.h"
-#include "AOTIRFunction.h"
+#include "AOTDeclaredType.h"
 #include "AOTLayout.h"
-#include "AOTSharedMemo.h"
-#include "AOTThreshold.h"
+#include "AOTOpcode.h"
+#include "AOTSchemaResultRules.h"
 #include "AOTType.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
+#include "TypedArrayType.h"
 #include <optional>
 #include <span>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class BodyIndex;
 class Program;
 
 enum class TypeLevel : uint8_t { Proven, Expected };
 
-enum class FieldTypeRule : uint8_t { NamedRead, SlotRead, DeferringSlotRead, SlotStore };
-
-class FieldReadTypes {
+class PositionTypes {
 public:
-    AOT_CLASS_THRESHOLD(size_t, fewestReceivers, 8);
+    virtual ~PositionTypes() = default;
 
-    struct Entry {
-        LayoutSetID receivers;
-        PropertyKeyID key;
-        TypeLevel level { TypeLevel::Proven };
-        FieldTypeRule rule { FieldTypeRule::NamedRead };
-        TypeID type;
-    };
+    virtual TypeID variable(TypeLevel, VariableID) const = 0;
+    virtual TypeID environmentField(TypeLevel, LayoutID, uint32_t field) const = 0;
+    virtual bool environmentLiesAmongVariables(LayoutID) const { return false; }
+    virtual TypeID slot(TypeLevel, LayoutID, uint32_t field) const = 0;
+    virtual TypeID readOfSlot(TypeLevel, LayoutID, uint32_t) const { return { }; }
+    virtual TypeID halfOfAccessorOfField(TypeLevel, LayoutID, uint32_t, bool) const { return { }; }
+    virtual std::optional<uint32_t> appendedField(LayoutID, PropertyKeyID) const { return std::nullopt; }
+    virtual TypeID foundAboveObjectsOf(TypeLevel, LayoutID, PropertyKeyID) const { return { }; }
+    virtual TypeID readByNameOffObjectsOf(TypeLevel, LayoutID, PropertyKeyID) const { return { }; }
+    virtual LayoutID classAbove(LayoutID) const { return { }; }
+    virtual TypeID property(TypeLevel, ObjectID, PropertyKeyID) const = 0;
+    virtual TypeID result(TypeLevel, FunctionID, uint32_t resultIndex) const = 0;
+    virtual TypeID resultOfBodyThatNeverSuspends(TypeLevel, FunctionID) const { return { }; }
+    virtual TypeID entryParameter(TypeLevel, FunctionID, uint32_t entryParameterIndex) const = 0;
+    virtual bool entryParameterIsLeftOutOfCalls(FunctionID, uint32_t) const { return false; }
+    virtual TypeID capture(TypeLevel, FunctionID, uint32_t) const { return { }; }
+    virtual TypeID captureOfObject(TypeLevel, ObjectID, uint32_t) const { return { }; }
+    virtual TypeID resultOfCallBeingTyped(TypeLevel, uint32_t resultIndex) const = 0;
+    virtual TypeID resultOfReadBeingTyped(TypeLevel) const { return { }; }
+    virtual TypeID contentsBeingTyped(TypeLevel) const { return { }; }
+    virtual TypeID resultOfSelector(TypeLevel, uint32_t) const { return { }; }
+    virtual TypeID resultOfTableRow(TypeLevel, uint32_t, LayoutID, bool&) const { return { }; }
 
-    const Entry* find(LayoutSetID receivers, PropertyKeyID, TypeLevel, FieldTypeRule) const LIFETIME_BOUND;
-    void add(const Entry&);
+    enum class QuestionOfEachObject : uint8_t { Property, Contents };
+    virtual TypeID askedOfEachObject(QuestionOfEachObject, TypeLevel, ObjectSetID, uint32_t, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const { return askEachObject(); }
+    enum class QuestionOfEachLayout : uint8_t { ContentsOfSlot, FieldReadByName, FoundAboveObjects, ReadByNameOffObjects, ResultOfTableRow };
+    virtual TypeID askedOfEachLayout(QuestionOfEachLayout, TypeLevel, LayoutSetID, PropertyKeyID, NOESCAPE const ScopedLambda<TypeID()>& askEachLayout) const { return askEachLayout(); }
+    virtual bool collectQueriedLayouts(PropertyKeyID, LayoutSetID, bool includesInheritedWrites, Vector<LayoutID, 16>&) const { return false; }
 
-private:
-    Vector<Entry> m_entries;
-    HashedIndex m_index;
-};
-
-class PendingTyping;
-
-struct TypingMemo {
-    PendingTyping* pendingTyping { nullptr };
-    FieldReadTypes fieldReads;
-    TypeMemo results;
-    TypeMemo idsInArena;
-    TypeMemo joins;
-    TypeMemo narrowerTypes;
-};
-
-class SharedFieldTypes {
-    WTF_MAKE_NONCOPYABLE(SharedFieldTypes);
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedFieldTypes);
-public:
-    using ListID = SharedLayoutLists::ListID;
-
-    struct Entry {
-        ListID receivers { 0 };
-        PropertyKeyID key;
-        TypeLevel level { TypeLevel::Proven };
-        FieldTypeRule rule { FieldTypeRule::NamedRead };
-        std::optional<Type> type;
-    };
-
-    SharedFieldTypes() = default;
-
-    SharedLayoutLists& lists() { return m_lists; }
-    const Entry* find(ListID receivers, PropertyKeyID, TypeLevel, FieldTypeRule) const LIFETIME_BOUND;
-    const Entry& add(Entry&&) LIFETIME_BOUND;
-
-private:
-    SharedLayoutLists m_lists;
-    SharedMemo<Entry> m_entries;
-};
-
-class KnownPositionTypes {
-public:
-    virtual ~KnownPositionTypes() = default;
-    virtual std::optional<Type> find(const DeclaredType&) const = 0;
+    static const PositionTypes& knowingNothing();
 };
 
 struct TypingContext {
     const Program& program;
-    const Function& function;
     TypeArena& types;
+    const PositionTypes& positions;
     TypeLevel level { TypeLevel::Proven };
-    TypingMemo* memo { nullptr };
-    const KnownPositionTypes* knownPositions { nullptr };
-    bool seesValuesExpectedNever { false };
+    bool believesWhatFrontEndHasEstablished { true };
 
-    TypeID typeIDOf(const Value& value) const
-    {
-        if (level == TypeLevel::Proven)
-            return value.type;
-        return seesValuesExpectedNever ? value.expectedOrTypeForTyping().predicted() : value.expectedOrType().predicted();
-    }
-    TypeID typeIDOf(ValueID id) const { return typeIDOf(function.at(id)); }
-    const Type& typeOf(ValueID id) const { return types.at(typeIDOf(id)); }
-    TypeID typeIDOf(const DeclaredType&) const;
-    const Type& typeOf(const DeclaredType& declared) const { return types.at(typeIDOf(declared)); }
-    TypingContext atLevel(TypeLevel newLevel) const { return { program, function, types, newLevel, memo, knownPositions, seesValuesExpectedNever }; }
+    ALWAYS_INLINE Type at(TypeID id) const { return types.at(id); }
+    ALWAYS_INLINE TypeID typeIDOf(const DeclaredType& declared) const { return level == TypeLevel::Expected ? declared.expected().predicted() : typeIDOfSlowCase(declared); }
+    TypeID typeIDOfSlowCase(const DeclaredType&) const;
+    TypingContext atLevel(TypeLevel newLevel) const { return { program, types, positions, newLevel, believesWhatFrontEndHasEstablished }; }
     TypingContext expecting() const { return atLevel(TypeLevel::Expected); }
 };
 
-Type computeResultType(const TypingContext&, const Value&);
-TypeID computeResultTypeID(const TypingContext&, const Value&);
-Type computeResultType(const TypingContext&, const Value& producer, uint32_t resultIndex);
-Type computeOperatorResultType(const TypingContext&, Opcode, std::span<const Type> operandTypes);
-std::optional<Type> tryWidestNaturalTypeOf(const Value&);
+struct OperandTypes {
+    std::span<const TypeID> types;
 
-const OpcodeSet& opcodesTypedFromNarrowedRecords();
+    uint32_t size() const { return static_cast<uint32_t>(types.size()); }
+    TypeID operator[](uint32_t operandIndex) const { return operandIndex < types.size() ? types[operandIndex] : TypeID(); }
+};
 
-TypeID resultTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
-ExpectedType expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
+constexpr std::optional<Opcode> genericOperationOf(Opcode access)
+{
+    switch (access) {
+    case Opcode::GetSlot:
+    case Opcode::GetSlotOrUndefined:
+    case Opcode::GetDeferredClosureSlot:
+    case Opcode::GetDeferredClosureSlotOrUndefined:
+        return Opcode::PropGet;
+    case Opcode::PutSlot:
+    case Opcode::PutSlotOrAdd:
+        return Opcode::PropSet;
+    case Opcode::GetArrayElement:
+    case Opcode::GetTypedArrayElement:
+        return Opcode::ElemGet;
+    case Opcode::PutArrayElement:
+    case Opcode::PutTypedArrayElement:
+        return Opcode::ElemSet;
+    case Opcode::HasArrayElement:
+        return Opcode::ElemHas;
+    default:
+        return std::nullopt;
+    }
+}
+
+template<HoldsOpcode Operation>
+bool testsItsOwnGuess(const Operation& operation)
+{
+    return genericOperationOf(opcodeOf(operation)) && operation.level() == KnowledgeLevel::Expected;
+}
+
+template<typename Operation> TypeID resultTypeOf(const TypingContext&, const Operation&, OperandTypes, ObjectID created = { }, uint32_t resultIndex = 0);
+template<typename Terminator> TypeID edgeResultTypeOf(const TypingContext&, const Terminator&, OperandTypes, uint32_t targetIndex, uint32_t resultIndex);
+template<typename Operation> std::optional<uint32_t> numberOfResultsOf(const Program&, const Operation&);
+template<typename Operation> std::optional<uint32_t> numberOfCountedResultsOf(const Program&, const Operation&);
 
 inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
     OpcodeSet opcodes;
@@ -132,42 +127,117 @@ inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
     return opcodes;
 }();
 
-std::optional<uint32_t> numberOfResultsOf(const Program&, const Function&, const Value&);
+inline constexpr OpcodeSet opcodesWithCountedResults = []() consteval {
+    OpcodeSet opcodes { Opcode::CallDirect, Opcode::CallTable };
+    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+        if (resultRuleOf(static_cast<Opcode>(index)) == ResultRule::Results)
+            opcodes.add(static_cast<Opcode>(index));
+    }
+    return opcodes;
+}();
 
-FunctionID onlyCalleeOf(const Program&, const Type& callee);
 
-struct ConvertResolution {
-    CastResolution cast { CastResolution::Nothing };
-    TypeID castType;
-};
+template<typename Operation>
+ALWAYS_INLINE std::optional<uint32_t> numberOfResultsOf(const Program& program, const Operation& operation)
+{
+    if (!opcodesWithCountedResults.contains(opcodeOf(operation)))
+        return std::nullopt;
+    return numberOfCountedResultsOf(program, operation);
+}
+
+TypeID naturalTypeFrom(TypeArena&, const NaturalType&);
+TypeID widestPrimitiveResultOf(Opcode);
+TypeID widestPrimitiveResultOf(TypeArena&, Opcode producer, uint32_t resultIndex);
+inline constexpr OpcodeSet recordsTypedByWhatIsProvenOfContents { Opcode::ResultAt, Opcode::CallInline, Opcode::CallBuiltin, Opcode::GetValueAtPlaceInMap };
+inline constexpr OpcodeSet readsTypedByWhatIsProvenOfInput { Opcode::ElemGet, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex };
+
+constexpr UnknownSeed seedOfUnknownResultByRowOf(Opcode opcode)
+{
+    switch (raisesOf(opcode)) {
+    case ProgramEvent::EvaluatesText:
+    case ProgramEvent::LoadsModule:
+        return UnknownSeed::UnseenCode;
+    case ProgramEvent::None:
+        break;
+    }
+
+    switch (effectRuleOf(opcode)) {
+    case EffectRule::Call:
+        return UnknownSeed::ResultOfUnknownCallee;
+    case EffectRule::Access:
+        return UnknownSeed::ContentsOfEscapedObject;
+    case EffectRule::Builtin:
+    case EffectRule::Inline:
+        return UnknownSeed::UndescribedNativeResult;
+    case EffectRule::Declared:
+    case EffectRule::Operator:
+        break;
+    }
+
+    switch (accessOf(opcode)) {
+    case Access::Read:
+        return UnknownSeed::ContentsOfEscapedObject;
+    case Access::None:
+    case Access::Store:
+    case Access::Define:
+    case Access::Has:
+        break;
+    }
+
+    switch (accessClassOf(opcode)) {
+    case AccessClass::DirectCall:
+    case AccessClass::IndirectCall:
+        return UnknownSeed::ResultOfUnknownCallee;
+    case AccessClass::Slot:
+    case AccessClass::ByName:
+        return UnknownSeed::ContentsOfEscapedObject;
+    case AccessClass::None:
+        break;
+    }
+
+    OperationFamily family = familyOf(opcode);
+    if (family == OperationFamily::Exception)
+        return UnknownSeed::CaughtException;
+    if (family == OperationFamily::Arguments)
+        return UnknownSeed::ParameterOfEscapedFunction;
+    if (family == OperationFamily::Binding || family == OperationFamily::Access)
+        return UnknownSeed::ContentsOfEscapedObject;
+
+    OperandUses uses = usesOfNamedOperandsOf(opcode);
+    if (uses.contains(OperandUse::Calls))
+        return UnknownSeed::ResultOfUnknownCallee;
+    if (uses.contains(OperandUse::ReadsContents) || interpretedOf(opcode) == Interpretation::Read)
+        return UnknownSeed::ContentsOfEscapedObject;
+    return UnknownSeed::UndescribedNativeResult;
+}
+ALWAYS_INLINE UnknownSeed seedOfUnknownResultOf(Opcode opcode) { return ColumnTable<Opcode, UnknownSeed, seedOfUnknownResultByRowOf>::at(opcode); }
+TypeID resultTypeOfOperator(const TypingContext&, Opcode, std::span<const TypeID> operandTypes);
+TypeID typeAfterStepOfOne(TypeArena&, Opcode, std::span<const TypeID> operandTypes);
+Range quotientsRoundedEitherWay(Range dividends, Range divisors);
+template<typename Operation> TypeID typeOfConstant(const TypingContext&, const Operation&, ObjectID created = { });
+TypeID typeOfKeyConstant(const TypingContext&, PropertyKeyID);
+TypeID typeOfBuiltinObject(const TypingContext&, BuiltinID);
+BuiltinID findNativeFunction(const BuiltinTable&, BuiltinID binding);
+TypeID typeOfData(const TypingContext&, const DataNode&, ObjectID created = { });
+TypeID typeOfAllocatedLayout(const TypingContext&, LayoutID, ObjectID created = { });
+TypeID typeOfDeclaredLayout(const TypingContext&, LayoutID);
+TypeID typeOfContentsRead(const TypingContext&, TypeID container, ContentsSlot);
+TypeID typeOfElementRead(const TypingContext&, TypeID container, TypeID key);
+TypeID typeOfAwaited(const TypingContext&, TypeID awaited);
+TypeID elementTypeOf(TypedArrayType);
+LayoutSetID layoutsSelectedByNewTarget(const TypingContext&, LayoutID written, TypeID newTarget);
+
+FunctionID onlyCalleeOf(const TypingContext&, TypeID callee);
 
 TypeID targetOfConvert(const TypingContext&, const DeclaredType&);
-ConvertResolution resolveConvert(const TypingContext&, const Type& proven, const DeclaredType&);
-Type typeOfConvert(const TypingContext&, const Type& source, const Type& proven, const DeclaredType&);
-
-Type typeOfConstant(const TypingContext&, const Value&);
-Type typeOfData(const TypingContext&, const DataNode&);
-Type typeOfAllocatedLayout(const TypingContext&, LayoutID);
-bool mayAllocateOtherLayout(const Program&, const Value& allocation);
-Type typeOfDeclaredLayout(const TypingContext&, LayoutID);
-Type typeOfSlotRead(const TypingContext&, const Value& read, std::span<const LayoutID> receivers);
-Type typeOfContentsRead(const TypingContext&, const Type& container, ContentsSlot);
-Type typeOfElementRead(const TypingContext&, const Type& container, const Type& key);
-Type typeOfAwaited(const TypingContext&, const Type& awaited);
-Type elementTypeOf(TypedArrayType);
-
-enum class FieldTypeState : uint8_t { Unknown, Proven };
-
-FieldTypeState fieldTypeStateOf(const Program&, FieldReference);
+TypeID tryTypeWrittenAbove(const TypingContext&, LayoutID, PropertyKeyID);
+bool changesCodeWhereProven(const TypeArena&, TypeID tested);
+bool describesBagOfOptions(const TypeArena&, TypeID written);
 
 const OpcodeSet& opcodesWithRequiredOperandTypes();
-TypeID requiredTypeOfOperand(const TypingContext&, const Value& user, uint32_t operandIndex);
-TypeID requiredTypeOfOperand(const TypingContext&, const Terminator& user, uint32_t operandIndex);
-
-// What flow says of a position leaves out what the checks in front of its stores turn away. What it says of the contents of a literal is cut by no check.
-enum class RequiredTypeHolder : uint8_t { StoredSlot, InitializedSlot, PositionThatFlowFollows, ContentsOfLiteral };
-RequiredTypeHolder holderOfRequiredTypes(const Program&, const Value& user);
-TypeID declaredEntryTypeOf(const TypingContext&, const Function& callee, unsigned entryParameterIndex);
+template<typename Operation> TypeID requiredTypeOfOperand(const TypingContext&, const Operation& user, uint32_t operandIndex);
+template<typename Operation> TypeID requiredTypeOfDeclaredOperand(const TypingContext&, const Operation& user, uint32_t operandIndex);
+TypeID declaredEntryTypeOf(const TypingContext&, FunctionID callee, unsigned entryParameterIndex);
 
 } } } // namespace JSC::AOT::Typed
 

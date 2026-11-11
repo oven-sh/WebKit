@@ -320,7 +320,7 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
         generator.emitGetFromScope(finalDest, scope.get(), var, ThrowIfNotFound);
     else {
 #if ENABLE(AOT)
-        // Nobody reads a temporary behind a check that has thrown.
+        // Nothing reads a temporary after its check has thrown.
         RefPtr<RegisterID> uncheckedResult = Options::runsCompiledImage() && finalDest->isTemporary() ? finalDest : generator.newTemporary();
 #else
         RefPtr<RegisterID> uncheckedResult = generator.newTemporary();

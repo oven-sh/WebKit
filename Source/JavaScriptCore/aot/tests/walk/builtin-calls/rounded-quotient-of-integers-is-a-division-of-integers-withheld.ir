@@ -1,0 +1,8 @@
+# the same calls with unboxed numbers withheld: the quotient is a number, the function rounds it, and what comes round the loop is a number
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Div
+# CHECK: = CallInline
+# RUN(NEVER): walk f1 f2 f5 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# NEVER-NOT: DivideIntegers
+# PROGRAM-OF: rounded-quotient-of-integers-is-a-division-of-integers.ir

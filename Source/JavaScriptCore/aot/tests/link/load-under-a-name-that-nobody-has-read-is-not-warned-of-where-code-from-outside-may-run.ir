@@ -1,0 +1,21 @@
+# The warning is about code outside the image being refused. Where the executable loads it, there is nothing to warn of
+# sink(name => require(name));
+# RUN: link functions mechanisms=all
+# REQUIRES: code-outside-image
+# CHECK: function f1
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="byName" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = RequireDynamic v0 referrer=m0
+    Return v1
+}

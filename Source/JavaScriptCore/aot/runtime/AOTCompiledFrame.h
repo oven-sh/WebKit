@@ -32,7 +32,6 @@ namespace AOT {
 struct Instance;
 struct VMState;
 
-// A frame of compiled code is named by the place of its frame record, the word below its return address, whether it has a record or not. stackPointer and framePointer are what the two registers hold in the frame at the return site.
 ALWAYS_INLINE CallFrame* frameAtReturnSite(const ImageFrame& frame, const void* stackPointer, CallFrame* framePointer)
 {
     if (frame.hasFrameRecord())
@@ -42,7 +41,6 @@ ALWAYS_INLINE CallFrame* frameAtReturnSite(const ImageFrame& frame, const void* 
     return std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes());
 }
 
-// A run of compiled code ends at the frame of one of these.
 constexpr bool isAdapterFrame(StubFrameKind kind)
 {
     return kind == StubFrameKind::Adapter || kind == StubFrameKind::ConstructAdapter || kind == StubFrameKind::ConstructAdapterMakesThis || kind == StubFrameKind::SavedFrameAdapter || kind == StubFrameKind::HandlerOfJob;
@@ -58,8 +56,7 @@ constexpr ImageFrame frameAtStubReturnSite(StubFrameKind kind)
     return kind == StubFrameKind::AtStubEntry ? ImageFrame::empty() : ImageFrame { };
 }
 
-// What the stack pointer is once the frame has returned.
-ALWAYS_INLINE void* stackPointerOfCaller(const CallFrame* frame, unsigned bytesAboveReturnAddress = 0)
+ALWAYS_INLINE void* callerStackPointer(const CallFrame* frame, unsigned bytesAboveReturnAddress = 0)
 {
     return std::bit_cast<void*>(std::bit_cast<uintptr_t>(frame) + sizeof(CallerFrameAndPC) + bytesAboveReturnAddress);
 }
@@ -75,7 +72,6 @@ ALWAYS_INLINE unsigned bytesAboveReturnAddressOf(const CallSiteCache::Entry& sit
 }
 
 #if defined(BUN_HARDENED)
-// Ends the process at a word that neither follows a call in compiled code nor lies in the code of the engine.
 JS_EXPORT_PRIVATE void checkReturnAddressInRun(const Image&, const void* returnAddress, const CallFrame* callee);
 JS_EXPORT_PRIVATE const CallSiteCache::Entry* resolveReturnAddressInRun(CallSiteCache&, const Image&, const void* returnAddress, const CallFrame* callee);
 JS_EXPORT_PRIVATE ASCIILiteral faultOfReturnAddressInRun(const Image&, const void* returnAddress);
@@ -102,7 +98,6 @@ struct SuspendedThreadStack {
 template<typename Stack>
 class MachineFrameIterator {
 public:
-    // framePointer is null for a frame that has a record.
     MachineFrameIterator(const Image& image, CallFrame* callFrame, const void* pc, Stack stack = { }, CallFrame* framePointer = nullptr)
         : m_image(&image)
         , m_stack(stack)
@@ -121,7 +116,7 @@ public:
         const void* pc = removeCodePtrTag(record->returnPC);
         CodeLocation code = m_image->locate(pc);
         ImageFrame imageFrame = imageFrameAt(code);
-        CallFrame* callFrame = frameAtReturnSite(imageFrame, stackPointerOfCaller(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);
+        CallFrame* callFrame = frameAtReturnSite(imageFrame, callerStackPointer(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);
         if (callFrame <= m_frame.callFrame || !m_stack.contains(callFrame)) {
             m_frame = { };
             return *this;
@@ -156,8 +151,7 @@ struct SampledRegisters {
 struct SampledTop {
     CallFrame* callFrame;
     const void* pc;
-    const void* callerPCOfFramelessTop;
-    // Of a frame without a record. Null for any other.
+    const void* framelessTopCallerPC;
     CallFrame* framePointer { nullptr };
 };
 
@@ -171,11 +165,8 @@ struct LogicalFrame {
     unsigned inlineFrame { 0 };
     bool isInlinedConstructCall { false };
     bool isTailDeleted { false };
-    // The site and the inline frame are those of the caller.
     bool isOfCalledBuiltin { false };
     bool callerIsTailDeleted { false };
-    // It is listed because its function was constructed, once the walk has gone past it.
-    bool isListedBehindTailCall { false };
 };
 
 struct LogicalFrameSite {
@@ -187,11 +178,8 @@ struct LogicalFrameSite {
     bool calleeWasEntered { false };
 };
 
-// Function.prototype.call and apply end in a tail call, so their frame is gone once the callee runs.
 bool leavesByTailCall(BuiltinID);
 
-// After a tail call the frame above a construct belongs to another function than the one that was constructed.
-// Which function the site has constructed, where something says so: the frame of the stub between the site and its callee, or the site.
 FunctionID findFunctionConstructedAt(const Image&, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame);
 ALWAYS_INLINE FunctionID functionConstructedAt(const Image& image, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame)
 {
@@ -200,20 +188,12 @@ ALWAYS_INLINE FunctionID functionConstructedAt(const Image& image, const CallSit
         return { };
     return findFunctionConstructedAt(image, site, plainFunctionConstructFrame);
 }
-// The code was entered for the function, by whichever of its forms.
 bool isCodeOf(const Image&, CompiledFunctionID, FunctionID);
 
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
 OutermostVisibleFunction findOutermostVisibleFunction(const Image&, InlineFrameReader&, const CallSiteCache::Entry&, bool calleeWasEntered);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
-// What is recorded for the call that was inlined as this frame, or as a hidden frame of the same function below it.
-std::optional<CalleeOfSite> calleeOfCopiedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);
-// The caller created the function object and has not passed it to anything.
-inline bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame) { return calleeOfCopiedFrame(image, reader, code, frame) == CalleeOfSite::ownFunctionObject(); }
-// All frames below it in its machine frame are hidden ones of the function.
-bool hasOnlyEntrypointsBelow(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame, FunctionID sourceFunction);
-// The frame is that of the stub that stepped the body of an async generator. Behind an await of the body its callers wait for the step, though they are still on the stack.
 bool callersWaitForStep(CallFrame* frameOfStepStub);
 
 struct CompiledFrame {
@@ -221,7 +201,10 @@ struct CompiledFrame {
     JS_EXPORT_PRIVATE String sourceURL() const;
     JS_EXPORT_PRIVATE LineColumn lineColumn() const;
     JS_EXPORT_PRIVATE SourceOrigin sourceOrigin() const;
+    bool isOfBuiltin() const;
+    bool runsCodeOfFile() const;
     JS_EXPORT_PRIVATE bool isActivationOf(JSCell* function) const;
+    std::optional<ModuleID> evaluatingModule() const;
 
     Instance* instance { nullptr };
     CallFrame* callFrame { nullptr };
@@ -235,63 +218,25 @@ struct CompiledFrame {
     BuiltinID calledBuiltin { };
 };
 
-// While a walk stands in a run of frames, their image is the one that runs: whoever describes a frame asks the tables of that image.
-class ImageOfRun {
-public:
-    ImageOfRun() = default;
-    ImageOfRun(const ImageOfRun&) { }
-    ImageOfRun(ImageOfRun&& other)
-        : m_state(std::exchange(other.m_state, nullptr))
-        , m_previous(other.m_previous)
-    {
-    }
-    ImageOfRun& operator=(const ImageOfRun&) { return *this; }
-    ImageOfRun& operator=(ImageOfRun&& other)
-    {
-        if (m_state) [[unlikely]]
-            restore();
-        m_state = std::exchange(other.m_state, nullptr);
-        m_previous = other.m_previous;
-        return *this;
-    }
-    ~ImageOfRun()
-    {
-        if (m_state) [[unlikely]]
-            restore();
-    }
-    void run(VMState&, const Image&);
-
-private:
-    JS_EXPORT_PRIVATE void restore();
-
-    VMState* m_state { nullptr };
-    const Image* m_previous { nullptr };
-};
-
 class CompiledFrameIterator {
 public:
     using Exit = CompiledFrameExit;
 
     struct RunEnd {
         JS_EXPORT_PRIVATE bool constructs(FunctionID outermost) const;
-        // The compiled function that was constructed, if one was.
         FunctionID constructedFunction() const;
 
         CallFrame* adapterFrame { nullptr };
         bool isConstruct { false };
         bool resumesSavedFrame { false };
         bool hasCalledHandlerOfJob { false };
-        // The adapter has not entered the function yet: it makes `this`. The run has no frame.
         bool makesThis { false };
     };
 
     enum class OperationState : bool { MayNotHaveCalled, HasCalled };
-    // framePointer and stackPointer are what the registers hold in the frame that returnAddress runs in. Without stackPointer only a frame that has a record is found.
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreate(VM&, CallFrame* framePointer, const void* returnAddress, EntryFrame*, OperationState = OperationState::MayNotHaveCalled, void* stackPointer = nullptr);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtTop(VM&);
-    // The address in the code of a function that the operation on top returns to in the end, by itself or through stubs that are no more than a way there. It alone says what frame() of tryCreateAtTop() answers.
-    // Null where something else lies between.
-    static const void* findReturnAddressInFunctionAtTop(VM&);
+    static const void* topFrameReturnAddress(VM&);
     JS_EXPORT_PRIVATE static std::optional<CompiledFrameIterator> tryCreateAtCallerOf(VM&, CallFrame* callee, EntryFrame*);
 
     bool isAtEnd() const { return m_isAtEnd; }
@@ -302,7 +247,6 @@ public:
             readFrame();
         return m_frame;
     }
-    // A walk over machine frames that asks for these and for callSite() never pays for frame().
     Instance* instance() const
     {
         ASSERT(!m_isAtEnd);
@@ -331,29 +275,19 @@ public:
 
     JS_EXPORT_PRIVATE void advance();
     JS_EXPORT_PRIVATE void advanceToCallerMachineFrame();
-    // For a walk that has gone over the rest of the run by itself.
     void leaveRunAt(const Exit& exit, const RunEnd& runEnd)
     {
         m_isAtEnd = true;
         m_exit = exit;
         m_runEnd = runEnd;
     }
-    // The frame is the last one shown of its run: the functions below wait for the step of an async generator that it belongs to.
     JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
-    // The frame above, which advance() came from, is the same activation: the frame tail-called the body of its own function.
-    JS_EXPORT_PRIVATE bool tailCalledOwnBody() const;
-    // A walk that lists a stack trace stops once more between two machine frames, or behind the last, where a function was constructed and has left by a tail call. frame() is still the frame above.
-    // It stops in the same way on top of a run whose stub makes `this` for a function that it has yet to enter. Where that stub is the adapter the run has no other frame, and of frame() only the instance and the two addresses say anything.
-    JS_EXPORT_PRIVATE void listConstructedFunctionsThatLeft();
-    const std::optional<TraceFrame>& constructedFunctionThatLeft() const { return m_constructedFunctionThatLeft; }
+    JS_EXPORT_PRIVATE void collectElidedConstructorFrame();
+    const std::optional<TraceFrame>& elidedConstructorFrame() const { return m_elidedConstructorFrame; }
     bool hasNoMachineFrame() const { return m_hasNoMachineFrame; }
-    // The function object that runs in the frame, where its function records it. Null: it lies in a frame.
-    JS_EXPORT_PRIVATE std::optional<JSObject*> recordedCallee();
-    void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
-    // TraceFrame::isAtFailedTailCall of frame().
     bool isAtFailedTailCall() const { return !m_calleeWasEntered && m_callSite.site.isTailCall() && !m_callSite.site.calledBuiltin && frame().inlineFrame == m_callSite.site.inlineFrame; }
     bool isAmongFramesThatWait() const { return m_cursor.isAmongFramesThatWait; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
@@ -361,24 +295,18 @@ public:
     void* stackPointer() const { return m_cursor.stackPointer; }
     CallFrame* generatorStubFrameLeft() const { return m_cursor.generatorStubFrame; }
     CallFrame* asyncGeneratorStubFrameLeft() const { return m_cursor.asyncGeneratorStubFrame; }
-    // The frame that returns to that stub frame: the body's, or that of the stub that throws because the stack has no room for the body's.
     CallFrame* asyncGeneratorBodyFrameLeft() const { return m_cursor.asyncGeneratorBodyFrame; }
     CallFrame* engineCalleeStubFrameLeft() const { return m_cursor.engineCalleeStubFrame; }
     CallFrame* plainFunctionConstructFrameLeft() const { return m_cursor.plainFunctionConstructFrame; }
-    // The stub of that frame has not entered the function yet.
     bool constructFrameLeftMakesThis() const { return m_cursor.constructFrameMakesThis; }
 
 private:
     struct Cursor {
-        // What the frame pointer register holds in the frame that rawPC runs in.
         CallFrame* framePointer;
         void* rawPC;
         EntryFrame* entryFrame;
-        // The frame that returns to rawPC, where the walk has seen it.
         CallFrame* calleeFrame { nullptr };
-        // What the stack pointer is in the frame that rawPC runs in, where the walk has seen the frame that returns to rawPC.
         void* stackPointer { nullptr };
-        // The frame that rawPC runs in, once enterFrame() has looked at the return site.
         CallFrame* callFrame { nullptr };
         bool hasFrameRecord { true };
         unsigned bytesAboveReturnAddress { 0 };
@@ -393,7 +321,6 @@ private:
     };
 
 public:
-    // Public for std::optional: tryCreate() makes the iterator in the place it returns it in.
     CompiledFrameIterator(VM&, const Cursor&, bool calleeWasEntered);
 
 private:
@@ -411,8 +338,7 @@ private:
     const CallSiteCache::Entry* findFunctionFrame(Cursor&, Exit&, RunEnd&);
     const CallSiteCache::Entry* findCallerFunctionFrame(Cursor&, Exit&, RunEnd&);
     void enterMachineFrame(const CallSiteCache::Entry*);
-    std::optional<TraceFrame> findConstructedFunctionThatLeft();
-    void listFunctionWhoseThisTheAdapterMakes();
+    void collectAdapterConstructorFrame();
     JS_EXPORT_PRIVATE void readFrame() const;
 
     VM* m_vm;
@@ -426,20 +352,15 @@ private:
     mutable bool m_hasReadFrame { false };
     bool m_calleeWasEntered;
     bool m_isAtEnd { false };
-    bool m_listsConstructedFunctionsThatLeft { false };
-    // It left before the first frame of the run was entered, so the walk has yet to show that frame.
-    bool m_constructedFunctionLeftOnTop { false };
     bool m_hasNoMachineFrame { false };
-    std::optional<TraceFrame> m_constructedFunctionThatLeft;
-    FunctionID m_calleeFunction;
-    // Of the nearest machine frame, from this one up, that is not Entry::isOfEntrypointAtTailCall().
-    CompiledFunctionID m_codeAbove;
+    std::optional<TraceFrame> m_elidedConstructorFrame;
     Exit m_exit;
     RunEnd m_runEnd;
     InlineFrameReader m_inlineFrames;
-    ImageOfRun m_imageOfRun;
 };
 static_assert(sizeof(CompiledFrameIterator) <= 1024);
+
+JS_EXPORT_PRIVATE bool findCallerOrigin(CompiledFrameIterator&, SourceOrigin&);
 
 } // namespace AOT
 } // namespace JSC

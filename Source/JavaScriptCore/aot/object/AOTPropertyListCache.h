@@ -13,7 +13,7 @@
 #include "RememberedSlot.h"
 #include "StructureID.h"
 #include <array>
-#include <memory>
+#include <wtf/BitSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/Latin1Character.h>
 
@@ -32,11 +32,13 @@ class Object;
 struct State;
 
 struct CachedPropertyList {
+    bool isFor(StructureID ofExtraProperties, uint32_t shape, uint32_t order) const { return extraPropertiesStructureID == ofExtraProperties && shapeWord == shape && orderAndCount == order; }
+
     StructureID extraPropertiesStructureID;
     uint32_t shapeWord { 0 };
     uint32_t orderAndCount { 0 };
-    JSCellButterfly* keys { nullptr };
     Vector<PropertyListEntry> properties;
+    JSCellButterfly* keys { nullptr };
     JSPropertyNameEnumerator* enumerator { nullptr };
     StructureChain* prototypeChain { nullptr };
     Vector<Latin1Character> jsonKeys;
@@ -45,14 +47,12 @@ struct CachedPropertyList {
     bool holdsOnlyPlainData { false };
 };
 
-// Every own key of the objects with one Structure and one order word, enumerable or not: the strings, and behind them the symbols where they are listed.
 struct KeptOwnKeys {
     bool isFor(StructureID id, uint32_t word, bool symbolsToo) const { return structureID == id && orderWord == word && listsSymbols == symbolsToo; }
 
     StructureID structureID;
     uint32_t orderWord { 0 };
     bool listsSymbols { false };
-    // Null until the keys are asked for a second time.
     JSCellButterfly* keys { nullptr };
 };
 
@@ -64,8 +64,15 @@ public:
     static constexpr unsigned numberOfEntries = 256;
     static constexpr unsigned numberOfOwnKeyLists = 64;
 
-    CachedPropertyList& entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount);
-    // The place of that list, or the place that it would take.
+    CachedPropertyList* find(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
+    {
+        if (!m_entries)
+            return nullptr;
+        CachedPropertyList& list = (*m_entries)[placeOf(extraPropertiesStructureID, shapeWord, orderAndCount)];
+        return list.isFor(extraPropertiesStructureID, shapeWord, orderAndCount) ? &list : nullptr;
+    }
+    CachedPropertyList& add(CachedPropertyList&&);
+    bool isSecondWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount);
     KeptOwnKeys& ownKeysFor(StructureID, uint32_t orderWord, bool listsSymbols);
     void clear();
 
@@ -73,7 +80,12 @@ private:
     using Entries = std::array<CachedPropertyList, numberOfEntries>;
     using OwnKeyLists = std::array<KeptOwnKeys, numberOfOwnKeyLists>;
 
-    State& m_state;
+    static unsigned placeOf(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount) { return ((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries; }
+
+    static constexpr unsigned numberOfWalksRemembered = 8 * numberOfEntries;
+
+    WTF::BitSet<numberOfWalksRemembered> m_walksWithoutList;
+    unsigned m_numberOfWalksWithoutList { 0 };
     MadeInArena<Entries> m_entries;
     MadeInArena<OwnKeyLists> m_ownKeyLists;
     unsigned m_numberOfOwnKeyListsReplaced { 0 };
@@ -81,10 +93,9 @@ private:
 };
 
 CachedPropertyList* cachedPropertyList(VM&, const Object&);
-CachedPropertyList* findCachedPropertyList(VM&, const Object&, JSObject* extraProperties);
-// For an object with extra properties whose Structure names theirs. The list that is kept, or null.
+CachedPropertyList* findCachedPropertyList(const Object&, JSObject* extraProperties);
+void writeJSONKeys(VM&, CachedPropertyList&);
 JSCellButterfly* findKeptOwnKeys(const Object&, bool listsSymbols);
-// The list was made for the object just now. It is kept if the same was asked for before.
 void didListOwnKeys(VM&, const Object&, bool listsSymbols, JSArray* list);
 
 } } // namespace JSC::AOT

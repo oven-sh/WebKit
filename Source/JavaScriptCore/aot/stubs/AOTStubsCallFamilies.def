@@ -3,19 +3,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// AOTStubsCallAdapters.cpp
 v(EnterClosure, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterClosure)
 v(EnterSlimClosure, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterClosure)
 v(EnterModuleBody, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterClosure)
 v(EnterClosureForConstruct, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterClosureForConstruct)
+v(StartModuleThatRunTimeNames, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StartModuleThatRunTimeNames)
+v(StartModule, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StartModule)
 
-// AOTStubsCalls.cpp
 v(CallValue, CalledByCode, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueWithoutThis, CalledByCode, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueCell, CalledByCode, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueCellWithoutThis, CalledByCode, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
-v(CallValueNotClosure, InternalEntry, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
-v(CallValueEngineCallee, InternalEntry, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
+v(CallValueFunctionOfEngine, InternalEntry, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueLending, CalledByCode, (First, Second, FirstAndSecond, FirstInTailPosition, SecondInTailPosition, FirstAndSecondInTailPosition), FormAxis | CountAxis, 1, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValueLending)
 v(CallValueWithCount, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValueWithCount)
 v(CallCellWithCount, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValueWithCount)
@@ -23,26 +22,25 @@ v(CallNotClosureWithCount, InternalEntry, (Ordinary, InTailPosition), FormAxis, 
 v(CallBoundFunction, InternalEntry, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallNotClosureWithCount)
 v(ConstructValue, CalledByCode, (NewExpression, SuperCall), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConstructValue)
 v(ResolveCallValue, CalledByCode, (), CountAxis, 0, N + 1, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ResolveCallValue)
-v(CallResolvedValue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallResolvedValue)
-v(ReturnMisfit, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, ReturnMisfit)
-
-// AOTStubsCallEngine.cpp
 v(CallEngineCallee, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallEngineCallee)
 v(CallEngineFunction, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallEngineCallee)
 
-// AOTStubsCallLists.cpp
 v(CallWithArray, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallWithArray)
-v(CallWithList, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallWithList)
 v(TailCallWithList, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, TailCallWithList)
-v(SuperConstructWithList, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuperConstructWithList)
 v(SuperConstructWithArray, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuperConstructWithArray)
 v(CallFromArgumentListFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFromArgumentListFrame)
+v(CallFromArgumentListFrameWithWords, CalledByCode, (NothingAboveFrameRecord, ArgumentRegistersAboveFrameRecord), FormAxis | CountAxis, 1, StubKey::maxCount, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFromArgumentListFrameWithWords)
 v(ReturnFromArgumentListFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFromArgumentListFrame)
 
-// AOTStubsCallHost.cpp
 v(CallHostFunction, CalledByCode, (), CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallHostFunction)
 v(CallHostFunctionWithoutBoxedCall, CalledByCode, (), CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallHostFunction)
+v(CallHostFunctionThatMayBeUnfetched, InternalEntry, (), CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallHostFunction)
+v(CallHostFunctionWithCount, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallHostFunctionWithCount)
+v(CallHostGetter, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallHostGetter)
 v(FindBoxedCall, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FindBoxedCall)
 v(CallInternalFunction, CalledByCode, (Call, Construct), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallInternalFunction)
-v(CallProxy, InternalEntry, (), CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallProxy)
-v(CallDirectFunction, CalledByCode, (WithFrame, Leaf, WithHostFrame, LeafReturningFields, LeafReturningNumber), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersLikeCall, AsOperation, CallDirectFunction)
+v(CallDirectFunction, CalledByCode, (WithFrame, Leaf, WithHostFrame, LeafReturningNumber), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallDirectFunction)
+
+v(ChangedClosureHasNumber, CalledByCode, (Slim, Full), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, NoEffects, ChangedClosureHasNumber)
+v(NumberOfChangedClosure, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, NoEffects, NumberOfChangedClosure)
+v(CheckProofOfClosure, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, CheckProofOfClosure)

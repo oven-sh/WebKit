@@ -1,0 +1,26 @@
+# the builder of a text that grows is a record in the frame, and the frame lies elsewhere when the body goes on: a text that is begun in front of an await is not read behind it
+# RUN: verify-code
+# CHECK: InvalidSuspension: f0 CoroutineBody b2 v4 (StackStringBuilderCursor): a text in a builder of the frame outlives a suspension: v2 (StackStringBuilderBegin)
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: opaque(StringBuilder) @Cell = StackStringBuilderBegin traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b1()
+#   b1():
+#     v3: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b2()
+#   b2():
+#     v4: opaque(BuilderCursor) @RawWord = StackStringBuilderCursor v2 traits=[mayTouchMemory]
+#     v5: string @Cell = StackStringBuilderFinish v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abcdefgh"
+    v2 = Await v0
+    Return v2
+}
+entry module=m0

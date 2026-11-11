@@ -1,0 +1,208 @@
+# what one function names is found however many other files it names in front: the seventeenth is the last that the list is gone through for, the eighteenth the first asked of a table
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 3
+
+variable g0 name="of1" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="of2" module=m2 declared={type=anything} initialization=Undefined
+variable g2 name="of3" module=m3 declared={type=anything} initialization=Undefined
+variable g3 name="of4" module=m4 declared={type=anything} initialization=Undefined
+variable g4 name="of5" module=m5 declared={type=anything} initialization=Undefined
+variable g5 name="of6" module=m6 declared={type=anything} initialization=Undefined
+variable g6 name="of7" module=m7 declared={type=anything} initialization=Undefined
+variable g7 name="of8" module=m8 declared={type=anything} initialization=Undefined
+variable g8 name="of9" module=m9 declared={type=anything} initialization=Undefined
+variable g9 name="of10" module=m10 declared={type=anything} initialization=Undefined
+variable g10 name="of11" module=m11 declared={type=anything} initialization=Undefined
+variable g11 name="of12" module=m12 declared={type=anything} initialization=Undefined
+variable g12 name="of13" module=m13 declared={type=anything} initialization=Undefined
+variable g13 name="of14" module=m14 declared={type=anything} initialization=Undefined
+variable g14 name="of15" module=m15 declared={type=anything} initialization=Undefined
+variable g15 name="of16" module=m16 declared={type=anything} initialization=Undefined
+variable g16 name="of17" module=m17 declared={type=anything} initialization=Undefined
+variable g17 name="of18" module=m18 declared={type=anything} initialization=Undefined
+variable g18 name="of19" module=m19 declared={type=anything} initialization=Undefined
+variable g19 name="of20" module=m20 declared={type=anything} initialization=Undefined
+variable g20 name="of21" module=m21 declared={type=anything} initialization=Undefined
+module m0 path="main" displayPath="main"
+module m1 path="file1" displayPath="file1"
+module m2 path="file2" displayPath="file2"
+module m3 path="file3" displayPath="file3"
+module m4 path="file4" displayPath="file4"
+module m5 path="file5" displayPath="file5"
+module m6 path="file6" displayPath="file6"
+module m7 path="file7" displayPath="file7"
+module m8 path="file8" displayPath="file8"
+module m9 path="file9" displayPath="file9"
+module m10 path="file10" displayPath="file10"
+module m11 path="file11" displayPath="file11"
+module m12 path="file12" displayPath="file12"
+module m13 path="file13" displayPath="file13"
+module m14 path="file14" displayPath="file14"
+module m15 path="file15" displayPath="file15"
+module m16 path="file16" displayPath="file16"
+module m17 path="file17" displayPath="file17"
+module m18 path="file18" displayPath="file18"
+module m19 path="file19" displayPath="file19"
+module m20 path="file20" displayPath="file20"
+module m21 path="file21" displayPath="file21" requests=[{target=m20 completes=true}]
+module m22 path="goodEighteenReached" displayPath="goodEighteenReached" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}, {target=m10 completes=true}, {target=m11 completes=true}, {target=m12 completes=true}, {target=m13 completes=true}, {target=m14 completes=true}, {target=m15 completes=true}, {target=m16 completes=true}, {target=m17 completes=true}, {target=m18 completes=true}]
+module m23 path="badSeventeenthNotReached" displayPath="badSeventeenthNotReached" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}, {target=m10 completes=true}, {target=m11 completes=true}, {target=m12 completes=true}, {target=m13 completes=true}, {target=m14 completes=true}, {target=m15 completes=true}, {target=m16 completes=true}]
+module m24 path="badEighteenthNotReached" displayPath="badEighteenthNotReached" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}, {target=m10 completes=true}, {target=m11 completes=true}, {target=m12 completes=true}, {target=m13 completes=true}, {target=m14 completes=true}, {target=m15 completes=true}, {target=m16 completes=true}, {target=m17 completes=true}]
+module m25 path="badBehindRepeatsNotReached" displayPath="badBehindRepeatsNotReached" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}, {target=m10 completes=true}, {target=m11 completes=true}, {target=m12 completes=true}, {target=m13 completes=true}, {target=m14 completes=true}, {target=m15 completes=true}, {target=m16 completes=true}, {target=m17 completes=true}, {target=m18 completes=true}, {target=m19 completes=true}]
+module m26 path="goodBehindWhatCodeLoads" displayPath="goodBehindWhatCodeLoads" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}, {target=m10 completes=true}, {target=m11 completes=true}, {target=m12 completes=true}, {target=m13 completes=true}, {target=m14 completes=true}, {target=m15 completes=true}, {target=m16 completes=true}, {target=m17 completes=true}]
+module m27 path="goodReadInFrontOfItsLoad" displayPath="goodReadInFrontOfItsLoad" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}, {target=m10 completes=true}, {target=m11 completes=true}, {target=m12 completes=true}, {target=m13 completes=true}, {target=m14 completes=true}, {target=m15 completes=true}, {target=m16 completes=true}, {target=m17 completes=true}]
+function f0 name="goodEighteenReached" module=m22 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = GetModuleVariable variable=g13
+    v14 = GetModuleVariable variable=g14
+    v15 = GetModuleVariable variable=g15
+    v16 = GetModuleVariable variable=g16
+    v17 = GetModuleVariable variable=g17
+    Return v17
+}
+function f1 name="badSeventeenthNotReached" module=m23 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = GetModuleVariable variable=g13
+    v14 = GetModuleVariable variable=g14
+    v15 = GetModuleVariable variable=g15
+    v16 = GetModuleVariable variable=g17
+    Return v16
+}
+function f2 name="badEighteenthNotReached" module=m24 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = GetModuleVariable variable=g13
+    v14 = GetModuleVariable variable=g14
+    v15 = GetModuleVariable variable=g15
+    v16 = GetModuleVariable variable=g16
+    v17 = GetModuleVariable variable=g17
+    Return v17
+}
+function f3 name="badBehindRepeatsNotReached" module=m25 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = GetModuleVariable variable=g13
+    v14 = GetModuleVariable variable=g14
+    v15 = GetModuleVariable variable=g15
+    v16 = GetModuleVariable variable=g16
+    v17 = GetModuleVariable variable=g17
+    v18 = GetModuleVariable variable=g18
+    v19 = GetModuleVariable variable=g0
+    v20 = GetModuleVariable variable=g1
+    v21 = GetModuleVariable variable=g2
+    v22 = GetModuleVariable variable=g3
+    v23 = GetModuleVariable variable=g4
+    v24 = GetModuleVariable variable=g5
+    v25 = GetModuleVariable variable=g6
+    v26 = GetModuleVariable variable=g7
+    v27 = GetModuleVariable variable=g8
+    v28 = GetModuleVariable variable=g9
+    v29 = GetModuleVariable variable=g10
+    v30 = GetModuleVariable variable=g11
+    v31 = GetModuleVariable variable=g12
+    v32 = GetModuleVariable variable=g13
+    v33 = GetModuleVariable variable=g14
+    v34 = GetModuleVariable variable=g15
+    v35 = GetModuleVariable variable=g16
+    v36 = GetModuleVariable variable=g17
+    v37 = GetModuleVariable variable=g18
+    v38 = GetModuleVariable variable=g20
+    Return v38
+}
+function f4 name="goodBehindWhatCodeLoads" module=m26 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = GetModuleVariable variable=g13
+    v14 = GetModuleVariable variable=g14
+    v15 = GetModuleVariable variable=g15
+    v16 = GetModuleVariable variable=g16
+    v17 = ImportModule module=m21 referrer=m26
+    v18 = GetModuleVariable variable=g19
+    Return v18
+}
+function f5 name="goodReadInFrontOfItsLoad" module=m27 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = GetModuleVariable variable=g5
+    v6 = GetModuleVariable variable=g6
+    v7 = GetModuleVariable variable=g7
+    v8 = GetModuleVariable variable=g8
+    v9 = GetModuleVariable variable=g9
+    v10 = GetModuleVariable variable=g10
+    v11 = GetModuleVariable variable=g11
+    v12 = GetModuleVariable variable=g12
+    v13 = GetModuleVariable variable=g13
+    v14 = GetModuleVariable variable=g14
+    v15 = GetModuleVariable variable=g15
+    v16 = GetModuleVariable variable=g16
+    v17 = GetModuleVariable variable=g20
+    v18 = ImportModule module=m21 referrer=m27
+    Return v18
+}
+entry module=m0

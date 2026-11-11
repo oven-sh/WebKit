@@ -15,58 +15,56 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct PlannedLayout;
+struct MentionedAllocation {
+    PlacedAllocation placed;
+    uint32_t mention { 0 };
+};
 
-// Who writes zero into every byte of a fresh cell behind its header, or behind its words.
-enum class ZeroedBy : uint8_t { Nobody, Stub, CodeInLine };
+enum class ZeroedBy : uint8_t { Nobody, Stub, CodeInLine, StubFromTemplate };
 
 class CellAllocationEmitter final : public OperationEmitter {
 public:
     explicit CellAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     CellPointer allocateHeapCell(Pointer allocatorOrNull, LBasicBlock slowPath);
-    // cellSize is the size of the allocator's cells, which is the size asked for only up to MarkedSpace::preciseCutoff.
     CellPointer allocateHeapCell(Pointer allocator, std::optional<size_t> cellSize, LBasicBlock slowPath);
-    Pointer allocatorForSize(Pointer subspace, Integer size, LBasicBlock isTooLarge, LBasicBlock hasNoAllocator);
-    // Null until the subspace has an allocator for the size step.
-    Pointer allocatorForSize(Pointer subspace, size_t);
     void storeHeader(CellPointer, Integer header);
 
     CellPointer allocateObject(InlineAllocation, LBasicBlock slowPath);
-    // The header is stored, and nothing behind it.
     CellPointer allocateCellWithHeader(InlineAllocation, LBasicBlock slowPath);
-    Pointer allocationSiteRecord(AllocationID);
-    // By the stub, in code of every shape: in line it is 130 bytes a site, eleven by the stub, and no faster where the code around it has to be fetched.
-    CellPointer allocate(const OperationContext&, AllocationID, ZeroedBy = ZeroedBy::Nobody);
-    CellPointer allocateZeroedByNumber(const OperationContext&, Word32 numberOfAllocation);
-    // The object that the prototype selects. Only where the condition holds is it the cell of the allocation, zeroed behind its words, and the caller's to fill.
-    std::pair<CellPointer, Condition> allocateInstance(const OperationContext&, AllocationID, CellPointer prototype);
-    // Sixteen bytes of zero take one store. Somebody writes them where that takes no more instructions than the stores of zero that the caller then leaves out.
-    ZeroedBy whoZeroesBody(const OperationContext&, AllocationID, unsigned storesOfZero) const;
-    CellPointer allocateObjectCopy(const OperationContext&, AllocationID, CellPointer source, unsigned fieldBytes);
-    CellPointer allocateInFrame(const OperationContext&, size_t size, const PlannedLayout* = nullptr);
-    // In a build that validates or checks proofs at run time, emitted before anything that leaves or saves the frame: the cells that the function kept in the frame end their lifetime here.
-    void leaveFrameOfCheckedCells();
+    MentionedAllocation allocationOf(const OperationContext&, LayoutID, std::span<const FieldIndex> initialFields);
+    MentionedAllocation environmentAllocationOf(LayoutID);
+    MentionedAllocation closureAllocationOf(unsigned numberOfCaptures);
+    Pointer allocationSiteRecord(const MentionedAllocation&);
+    CellPointer allocate(const OperationContext&, const MentionedAllocation&, ZeroedBy = ZeroedBy::Nobody);
+    std::pair<CellPointer, Condition> allocateInstance(const OperationContext&, const MentionedAllocation&, CellPointer prototype);
+    ZeroedBy whoZeroesBody(const OperationContext&, const MentionedAllocation&, unsigned storesOfZero, unsigned storesOfOtherPatterns) const;
+    CellPointer allocateFromTemplate(const OperationContext&, const MentionedAllocation&, std::span<const uint8_t> bodyOfEmptyCell);
+    CellPointer allocateObjectCopy(const OperationContext&, const MentionedAllocation&, CellPointer source, unsigned fieldBytes);
+    void copyFieldWords(CellPointer source, CellPointer cell, unsigned fieldBytes);
+    void copyWords(CellPointer source, unsigned offsetInSource, CellPointer cell, unsigned offsetInCell, unsigned bytes);
+    static constexpr size_t maxBytesZeroedInLine = 256;
+    static constexpr unsigned bytesStoredInTurnOfLoop = 8 * sizeof(uint64_t);
+    void storeWordInLoop(CellPointer, const Layout&, unsigned begin, unsigned end, int64_t word);
+    CellPointer allocateInFrame(const OperationContext&, size_t size);
 
-    // The elements below the length are the caller's to store before anything can collect.
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
-    // An array of 1 to maxArrayLengthInStubKey elements in plain storage. The caller stores every element at once, and then calls finishArrayOfLength().
     CellPointer allocateArrayOfLength(const OperationContext&, IndexingType, unsigned length);
     void finishArrayOfLength(const OperationContext&, CellPointer array, unsigned length);
-    // In a frame the cell, the indexing header and the elements lie one after the other. On the heap where the realm has no pristine arrays, or the buffer holds more than the frame has room for.
-    CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements, AllocationStorage = AllocationStorage::Heap);
+    CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements);
     CellPointer newArrayFromBuffer(const OperationContext&, Word32 count, Pointer buffer);
-    CellPointer newArrayInFrameFromBuffer(const OperationContext&, Word32 count, Pointer buffer, unsigned capacity);
 
 private:
-    std::pair<CellPointer, Pointer> allocateArrayInFrame(const OperationContext&, Word32 length, unsigned capacity, LBasicBlock isOnHeap);
-    bool keepsCellsInFrame();
-    Pointer wordOfFrame();
-    void copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied);
-    void zeroBody(CellPointer, AllocationID);
+    Integer rowOf(const MentionedAllocation& allocation) { return zeroExtended(numberOf(allocation.mention)); }
+    void zeroBody(CellPointer, const MentionedAllocation&);
+    LValue slotOfFrameCell(const OperationContext&, size_t size);
 
-    std::optional<bool> m_keepsCellsInFrame;
-    B3::Air::StackSlot* m_wordOfFrame { nullptr };
+    struct SlotOfClosuresLent {
+        Machine::StackSlot* slot { nullptr };
+        uint32_t blockIndex { 0 };
+        ValueID call;
+    };
+    Vector<SlotOfClosuresLent, 4> m_slotsOfClosuresLent;
 };
 
 } } } // namespace JSC::AOT::Typed

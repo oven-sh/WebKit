@@ -311,6 +311,10 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         JSValue prototype;
         if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
+#if ENABLE(AOT)
+        else if (vm.hasCompiledCode() && AOT::PropertyWalk::isOrdinaryPrototypeChain(this, object))
+            prototype = object->getPrototypeDirect();
+#endif
         else {
             prototype = object->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
@@ -331,7 +335,7 @@ inline bool JSObject::getOwnPropertySlotInline(JSGlobalObject* globalObject, Pro
 inline bool JSObject::ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
 #if ENABLE(AOT)
-    if (!structure()->propertyAccessesAreCacheableForAbsence()) [[unlikely]]
+    if (!structure()->propertyAccessesAreCacheableForAbsence() && getVM(globalObject).hasCompiledCode()) [[unlikely]]
         return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
 #endif
     return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
@@ -344,7 +348,7 @@ inline bool JSObject::hasDirectProperty(JSGlobalObject* globalObject, PropertyNa
     if (isValidOffset(structure->get(vm, propertyName)))
         return true;
 #if ENABLE(AOT)
-    if (!structure->propertyAccessesAreCacheableForAbsence()) [[unlikely]] {
+    if (!structure->propertyAccessesAreCacheableForAbsence() && vm.hasCompiledCode()) [[unlikely]] {
         PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
         return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
     }
@@ -612,8 +616,16 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
         if constexpr (mode == PutModePut) {
-            if (!isStructureExtensible()) [[unlikely]]
-                return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+            if (!isStructureExtensible()) [[unlikely]] {
+                ASCIILiteral error = putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+#if ENABLE(AOT)
+                if (error.isNull() && mayBePrototype() && vm.hasCompiledCode()) {
+                    slot.disableCaching();
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+                }
+#endif
+                return error;
+            }
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -651,7 +663,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-                slot.setExistingProperty(this, offset);
+#if ENABLE(AOT)
+                if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+                else
+#endif
+                    slot.setExistingProperty(this, offset);
             }
             return { };
         }
@@ -709,7 +726,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-            slot.setExistingProperty(this, offset);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+            else
+#endif
+                slot.setExistingProperty(this, offset);
         }
 
         return { };
@@ -1070,7 +1092,7 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     putDirect(vm, propertyName, value, putSlot);
 }
 
-inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot)
+inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot, unsigned attributes)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1097,7 +1119,7 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
     EXCEPTION_ASSERT(!scope.exception());
 
     scope.release();
-    putDirect(vm, propertyName, value, putSlot);
+    putDirect(vm, propertyName, value, attributes, putSlot);
 }
 
 ALWAYS_INLINE void JSObject::getNonReifiedStaticPropertyNames(VM& vm, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
@@ -1188,7 +1210,7 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
             throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
             return;
         }
-        AOT::PropertyWalk::putDirect(vm, this, uid, brand, static_cast<unsigned>(PropertyAttribute::None));
+        AOT::PropertyWalk::putDirect(vm, this, uid, jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
         return;
     }
     if (type() == SlimClosureType) [[unlikely]] {

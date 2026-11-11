@@ -1,0 +1,39 @@
+# A closure that a literal is born with lies under the name of its field by the text of the allocation, whatever else may arrive at the field.
+# const steps = { next: () => 1 };  sink(steps);  const late = { };  late.turn = () => 2;  sink(late);
+# Both objects meet unseen code, which may store anything under their names: Link proves nothing of the fields and finds no closure alone at them. Code that reads "next" and tests for the function
+# written there must still be allowed to mention it, and whether it may hangs on this text alone, not on who else gets to see the object.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}in-queue-from-start
+# CHECK: function f2 {{*}}in-queue-from-start
+
+layout L0 module=m0 fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="next"
+    v3 = FinishObject v1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = NewObject layout=L1
+    v8 = FinishObject v7
+    v9 = NewClosure function=f2
+    PropSet v8, v9 key="turn"
+    v11 = Call v5, -, v8
+    v12 = Undefined
+    Return v12
+}
+function f1 name="next" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="turn" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

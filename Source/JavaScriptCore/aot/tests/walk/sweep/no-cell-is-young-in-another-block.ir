@@ -1,0 +1,28 @@
+# const made = make(); if (c) made.left = l; made.right = r;
+# The way backward looks no further than the block: at a head several ways may meet.
+# RUN: sweep-code
+# CHECK: v4 @Void = SetMappedArgument v3
+# CHECK-NOT: OwnerIsYoung
+# CHECK: v5 @Void = SetMappedArgument v3
+# CHECK-NOT: OwnerIsYoung
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b2()
+#   b2():
+#     v5 @Void = SetMappedArgument v3, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return v3
+# }
+# -- end of code

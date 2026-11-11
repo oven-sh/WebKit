@@ -593,6 +593,30 @@ inline SIMDValue* Value::asSIMDValue()
     return as<SIMDValue>();
 }
 
+// A signaling NaN among the operands comes out quiet.
+inline bool givesQuietNaN(const Value* value)
+{
+    switch (value->foldIdentity()->opcode()) {
+    case Add:
+    case Sub:
+    case Mul:
+    case Div:
+    case Ceil:
+    case Floor:
+    case FTrunc:
+    case Sqrt:
+    case FMax:
+    case FMin:
+    case IToD:
+    case IToF:
+    case FloatToDouble:
+    case DoubleToFloat:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)

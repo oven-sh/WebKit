@@ -1385,8 +1385,13 @@ public:
 
     void or32(TrustedImm32 imm, Address address)
     {
-        load32(address, getCachedDataTempRegisterIDAndInvalidate());
-        or32(imm, dataTempRegister, dataTempRegister);
+        if (!imm.m_value || imm.m_value == -1 || LogicalImmediate::create32(imm.m_value).isValid()) {
+            load32(address, getCachedDataTempRegisterIDAndInvalidate());
+            or32(imm, dataTempRegister, dataTempRegister);
+        } else {
+            load32(address, getCachedMemoryTempRegisterIDAndInvalidate());
+            or32(imm, memoryTempRegister, getCachedDataTempRegisterIDAndInvalidate());
+        }
         store32(dataTempRegister, address);
     }
 
@@ -1999,7 +2004,7 @@ public:
             return;
         }
         loadFloat(Address(src, offset.m_value), dest1);
-        loadFloat(Address(src, offset.m_value + 8), dest2);
+        loadFloat(Address(src, offset.m_value + 4), dest2);
     }
 
     void loadPairFloat(Address src, FPRegisterID dest1, FPRegisterID dest2)
@@ -2649,7 +2654,7 @@ public:
             return;
         }
         storeFloat(src1, Address(dest, offset.m_value));
-        storeFloat(src2, Address(dest, offset.m_value + 8));
+        storeFloat(src2, Address(dest, offset.m_value + 4));
     }
 
     void storePairFloat(FPRegisterID src1, FPRegisterID src2, Address dest)
@@ -5110,7 +5115,7 @@ public:
             if ((cond == Zero) || (cond == NonZero))
                 return Jump(makeCompareAndBranch<64>(static_cast<ZeroCondition>(cond), reg));
             m_assembler.tst<64>(reg, reg);
-        } else if (hasOneBitSet(mask.m_value) && ((cond == Zero) || (cond == NonZero)))
+        } else if (mask.m_value > 0 && hasOneBitSet(mask.m_value) && ((cond == Zero) || (cond == NonZero)))
             return Jump(makeTestBitAndBranch(reg, getLSBSet(mask.m_value), static_cast<ZeroCondition>(cond)));
         else {
             LogicalImmediate logicalImm = LogicalImmediate::create64(mask.m_value);
@@ -6211,15 +6216,83 @@ public:
         return start;
     }
 
-    Label moveInstanceAddress(RegisterID instance, RegisterID dest)
+    // Numbers and words of the instance, known once the code is linked:
+
+    Label moveNumber32WithPatch(RegisterID dest)
     {
-        RELEASE_ASSERT(dest != instance && dest != ARM64Registers::sp && dest != ARM64Registers::zr);
+        RELEASE_ASSERT(dest != ARM64Registers::sp && dest != ARM64Registers::zr);
         Label start = label();
         m_assembler.movz<64>(dest, 0);
         m_assembler.movk<64>(dest, 0, 16);
-        m_assembler.add<64>(dest, instance, dest);
         return start;
     }
+
+    Label moveInstanceAddress(RegisterID instance, RegisterID dest)
+    {
+        Label start = moveInstancePageAddress(instance, dest);
+        m_assembler.add<64>(dest, dest, UInt12(0));
+        return start;
+    }
+
+    Label loadInstanceWord8(RegisterID instance, RegisterID dest)
+    {
+        Label start = moveInstancePageAddress(instance, dest);
+        m_assembler.ldrb(dest, dest, 0u);
+        return start;
+    }
+
+    Label loadInstanceWord32(RegisterID instance, RegisterID dest)
+    {
+        Label start = moveInstancePageAddress(instance, dest);
+        m_assembler.ldr<32>(dest, dest, 0u);
+        return start;
+    }
+
+    Label loadInstanceWord64(RegisterID instance, RegisterID dest)
+    {
+        Label start = moveInstancePageAddress(instance, dest);
+        m_assembler.ldr<64>(dest, dest, 0u);
+        return start;
+    }
+
+    Label loadInstanceDouble(RegisterID instance, FPRegisterID dest)
+    {
+        Label start = moveInstancePageAddress(instance, getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldr<64>(dest, memoryTempRegister, 0u);
+        return start;
+    }
+
+    Label storeInstanceWord8(RegisterID source, RegisterID instance)
+    {
+        Label start = moveInstancePageAddressForStoreOf(source, instance);
+        m_assembler.strb(source, memoryTempRegister, 0u);
+        return start;
+    }
+
+    Label storeInstanceWord32(RegisterID source, RegisterID instance)
+    {
+        Label start = moveInstancePageAddressForStoreOf(source, instance);
+        m_assembler.str<32>(source, memoryTempRegister, 0u);
+        return start;
+    }
+
+    Label storeInstanceWord64(RegisterID source, RegisterID instance)
+    {
+        Label start = moveInstancePageAddressForStoreOf(source, instance);
+        m_assembler.str<64>(source, memoryTempRegister, 0u);
+        return start;
+    }
+
+    Label storeInstanceDouble(FPRegisterID source, RegisterID instance)
+    {
+        Label start = moveInstancePageAddress(instance, getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.str<64>(source, memoryTempRegister, 0u);
+        return start;
+    }
+
+    static constexpr int64_t number32Reach = 4 * GB;
+    // What the immediates hold, and so what applyRelocation() reaches. readInstanceWordDistance() and makeInstanceWordDistanceInDetour() reach every distance of 32 bits.
+    static constexpr int64_t instanceWordReach = 16 * MB;
 
     static constexpr unsigned relocationSize(RelocationKind kind)
     {
@@ -6231,12 +6304,15 @@ public:
         case RelocationKind::AddressNear:
         case RelocationKind::Load64:
         case RelocationKind::Distance32:
+        case RelocationKind::NumberWord:
             return INSTRUCTION_SIZE;
         case RelocationKind::ConditionalJumpThenNop:
         case RelocationKind::TestBitJumpThenNop:
         case RelocationKind::InvertedJumpThenJump:
         case RelocationKind::AddressFar:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
             return 2 * INSTRUCTION_SIZE;
         case RelocationKind::ShortJump:
         case RelocationKind::ShortConditionalJump:
@@ -6261,12 +6337,17 @@ public:
         case RelocationKind::AddressNear:
             return nearAddressReach;
         case RelocationKind::AddressFar:
-        case RelocationKind::InstanceOffset:
             return farAddressReach;
         case RelocationKind::Load64:
             return loadLiteralReach;
         case RelocationKind::Distance32:
             return distance32Reach;
+        case RelocationKind::InstanceOffset:
+        case RelocationKind::InstanceAccess:
+            return instanceWordReach;
+        case RelocationKind::Number32:
+        case RelocationKind::NumberWord:
+            return number32Reach;
         case RelocationKind::ShortJump:
         case RelocationKind::ShortConditionalJump:
             return 0;
@@ -6303,23 +6384,77 @@ public:
         case RelocationKind::ShortJump:
         case RelocationKind::ShortConditionalJump:
         case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    [[nodiscard]] static bool setRelocationNumber(RelocationKind kind, std::span<uint8_t> instructions, uint32_t number)
+    {
+        RELEASE_ASSERT(instructions.size() == relocationSize(kind));
+        switch (kind) {
+        case RelocationKind::Number32:
+            return Assembler::setMoveWideImmediates(instructions, number);
+        case RelocationKind::NumberWord:
+            WTF::unalignedStore<uint32_t>(instructions.data(), number);
+            return true;
+        case RelocationKind::InstanceOffset:
+        case RelocationKind::InstanceAccess:
+            return setInstanceWordDistance(kind, instructions, static_cast<int32_t>(number));
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ShortJump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::ShortConditionalJump:
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+        case RelocationKind::Distance32:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
 
     // code must be loaded at a multiple of 4 KB: AddressFar is page relative here, but not in setRelocationDistance.
+    // For InstanceOffset, Number32, InstanceAccess and NumberWord the target is no place in the code: it is the 32 bits of the number, zero-extended.
     [[nodiscard]] static bool applyRelocation(RelocationKind kind, std::span<uint8_t> code, size_t site, size_t target)
     {
         size_t size = relocationSize(kind);
         RELEASE_ASSERT(size && size <= code.size() && site <= code.size() - size);
         std::span<uint8_t> instructions = code.subspan(site, size);
-        if (kind == RelocationKind::InstanceOffset)
-            return isRepresentableAs<uint32_t>(target) && Assembler::setMoveWideImmediates(instructions, static_cast<uint32_t>(target));
-        RELEASE_ASSERT(target <= code.size());
-        if (kind == RelocationKind::AddressFar)
+        switch (kind) {
+        case RelocationKind::InstanceOffset:
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
+            return isRepresentableAs<uint32_t>(target) && setRelocationNumber(kind, instructions, static_cast<uint32_t>(target));
+        case RelocationKind::AddressFar:
+            RELEASE_ASSERT(target <= code.size());
             return Assembler::setAdrpThenAddTarget(instructions, site, target);
-        return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::Load64:
+        case RelocationKind::Distance32:
+            RELEASE_ASSERT(target <= code.size());
+            return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
+        case RelocationKind::ShortJump:
+        case RelocationKind::ShortConditionalJump:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
@@ -6328,7 +6463,10 @@ public:
         case RelocationKind::Distance32:
             return;
         case RelocationKind::InstanceOffset:
-            RELEASE_ASSERT(Assembler::setMoveWideImmediates(instructions, 0));
+        case RelocationKind::Number32:
+        case RelocationKind::InstanceAccess:
+        case RelocationKind::NumberWord:
+            RELEASE_ASSERT(setRelocationNumber(kind, instructions, 0));
             return;
         case RelocationKind::InvertedJumpThenJump:
             RELEASE_ASSERT(setRelocationDistance(kind, instructions, INSTRUCTION_SIZE));
@@ -6351,10 +6489,157 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    // A word that lies further from the instance register than the immediates of InstanceOffset and InstanceAccess hold gets the same two instructions in another form:
+    // the first leaves the distance, 32 bits, in the register to which it would have added the pages, and the second adds that register, sign-extended, to the instance register.
+    static bool holdsInstanceWordDistanceInImmediates(int32_t distance) { return isUInt12(std::abs(distance >> 12)); }
+
+    static constexpr int64_t instanceWordDistanceReadReach = loadLiteralReach;
+    static constexpr unsigned instanceWordDetourSize = 3 * INSTRUCTION_SIZE;
+
+    // The first instruction reads the distance from the four bytes at `literal`, which the caller fills. False, with nothing written, where the load does not reach them.
+    [[nodiscard]] static bool readInstanceWordDistance(RelocationKind kind, std::span<uint8_t> code, size_t site, size_t literal)
+    {
+        constexpr uint32_t loadLiteral32 = 0x18000000;
+        constexpr uint32_t immediateMask = 0x7ffff;
+        std::span<uint8_t> twoWords = instructionsOfInstanceWord(kind, code, site);
+        RELEASE_ASSERT(sizeof(int32_t) <= code.size() && literal <= code.size() - sizeof(int32_t));
+        int64_t distanceToLiteral = static_cast<int64_t>(literal) - static_cast<int64_t>(site);
+        if ((distanceToLiteral & 3) || distanceToLiteral < -instanceWordDistanceReadReach || distanceToLiteral >= instanceWordDistanceReadReach)
+            return false;
+
+        uint32_t distanceRegister = addInstanceWordDistanceInRegister(kind, twoWords);
+        WTF::unalignedStore<uint32_t>(twoWords.data(), loadLiteral32 | ((static_cast<uint32_t>(distanceToLiteral >> 2) & immediateMask) << 5) | distanceRegister);
+        return true;
+    }
+
+    // The first instruction jumps to `detour`, instanceWordDetourSize bytes that are written here: they make the distance from immediates and jump back to the second instruction.
+    // False, with nothing written, where a jump does not reach that far.
+    [[nodiscard]] static bool makeInstanceWordDistanceInDetour(RelocationKind kind, std::span<uint8_t> code, size_t site, size_t detour, int32_t distance)
+    {
+        constexpr uint32_t jumpWithoutDistance = 0x14000000;
+        constexpr uint32_t jumpImmediateMask = 0x3ffffff;
+        constexpr uint32_t moveLowerHalf32 = 0x52800000;
+        constexpr uint32_t moveUpperHalf32KeepingLower = 0x72a00000;
+        std::span<uint8_t> twoWords = instructionsOfInstanceWord(kind, code, site);
+        RELEASE_ASSERT(instanceWordDetourSize <= code.size() && detour <= code.size() - instanceWordDetourSize);
+        int64_t distanceToDetour = static_cast<int64_t>(detour) - static_cast<int64_t>(site);
+        if ((distanceToDetour & 3) || std::abs(distanceToDetour) + static_cast<int64_t>(instanceWordDetourSize) >= static_cast<int64_t>(nearJumpRange))
+            return false;
+
+        auto jumpBy = [&](int64_t bytes) {
+            return jumpWithoutDistance | (static_cast<uint32_t>(bytes >> 2) & jumpImmediateMask);
+        };
+        uint32_t distanceRegister = addInstanceWordDistanceInRegister(kind, twoWords);
+        uint32_t bits = static_cast<uint32_t>(distance);
+        std::span<uint8_t> threeWords = code.subspan(detour, instanceWordDetourSize);
+        WTF::unalignedStore<uint32_t>(twoWords.data(), jumpBy(distanceToDetour));
+        WTF::unalignedStore<uint32_t>(threeWords.data(), moveLowerHalf32 | ((bits & 0xffff) << 5) | distanceRegister);
+        WTF::unalignedStore<uint32_t>(threeWords.subspan(INSTRUCTION_SIZE).data(), moveUpperHalf32KeepingLower | ((bits >> 16) << 5) | distanceRegister);
+        WTF::unalignedStore<uint32_t>(threeWords.subspan(2 * INSTRUCTION_SIZE).data(), jumpBy(-distanceToDetour - static_cast<int64_t>(INSTRUCTION_SIZE)));
+        return true;
+    }
+
+private:
+    static std::span<uint8_t> instructionsOfInstanceWord(RelocationKind kind, std::span<uint8_t> code, size_t site)
+    {
+        RELEASE_ASSERT(kind == RelocationKind::InstanceOffset || kind == RelocationKind::InstanceAccess);
+        size_t size = relocationSize(kind);
+        RELEASE_ASSERT(size <= code.size() && site <= code.size() - size);
+        return code.subspan(site, size);
+    }
+
+    // Writes the second instruction anew and returns the register that has to hold the distance in front of it. The first instruction is as the assembler left it.
+    static uint32_t addInstanceWordDistanceInRegister(RelocationKind kind, std::span<uint8_t> twoWords)
+    {
+        constexpr uint32_t registerMask = 0x1f;
+        constexpr uint32_t signExtendsWord = 6u << 13;
+        constexpr uint32_t sizeAndKindOfAccessAndRegister = 0xc4c0001f;
+        constexpr uint32_t accessWithRegisterOffset = 0x38200800;
+        constexpr uint32_t addExtendedRegister64 = 0x8b200000;
+        RELEASE_ASSERT(twoWords.size() == 2 * INSTRUCTION_SIZE);
+        uint32_t upper = WTF::unalignedLoad<uint32_t>(twoWords.data());
+        uint32_t lower = WTF::unalignedLoad<uint32_t>(twoWords.subspan(INSTRUCTION_SIZE).data());
+        RELEASE_ASSERT((upper & 0xbfc00000) == 0x91400000);
+        uint32_t distanceRegister = upper & registerMask;
+        uint32_t instance = (upper >> 5) & registerMask;
+        RELEASE_ASSERT(((lower >> 5) & registerMask) == distanceRegister && instance != distanceRegister && instance != registerMask && distanceRegister != registerMask);
+
+        uint32_t instancePlusDistance = (distanceRegister << 16) | signExtendsWord | (instance << 5);
+        if (kind == RelocationKind::InstanceAccess) {
+            shiftOfAccessWidth(lower);
+            lower = (lower & sizeAndKindOfAccessAndRegister) | accessWithRegisterOffset | instancePlusDistance;
+        } else {
+            RELEASE_ASSERT(kind == RelocationKind::InstanceOffset);
+            RELEASE_ASSERT((lower & 0xffc00000) == 0x91000000 && (lower & registerMask) == distanceRegister);
+            lower = addExtendedRegister64 | instancePlusDistance | distanceRegister;
+        }
+        WTF::unalignedStore<uint32_t>(twoWords.subspan(INSTRUCTION_SIZE).data(), lower);
+        return distanceRegister;
+    }
+
+    Label moveInstancePageAddress(RegisterID instance, RegisterID dest)
+    {
+        RELEASE_ASSERT(instance != ARM64Registers::zr && dest != instance && dest != ARM64Registers::sp && dest != ARM64Registers::zr);
+        Label start = label();
+        m_assembler.add<64>(dest, instance, UInt12(0), 12);
+        return start;
+    }
+
+    Label moveInstancePageAddressForStoreOf(RegisterID source, RegisterID instance)
+    {
+        RELEASE_ASSERT(source != memoryTempRegister && source != ARM64Registers::sp);
+        return moveInstancePageAddress(instance, getCachedMemoryTempRegisterIDAndInvalidate());
+    }
+
+    static unsigned shiftOfAccessWidth(uint32_t loadOrStore)
+    {
+        constexpr uint32_t accessOf128Bits = (1u << 26) | (1u << 23);
+        RELEASE_ASSERT((loadOrStore & 0x3b000000) == 0x39000000);
+        RELEASE_ASSERT((loadOrStore & accessOf128Bits) != accessOf128Bits);
+        return loadOrStore >> 30;
+    }
+
+    // The first instruction adds or subtracts at most 4095 pages of 4 KB. The second holds the rest, which is never negative, in units of the width of the access.
+    [[nodiscard]] static bool setInstanceWordDistance(RelocationKind kind, std::span<uint8_t> twoWords, int32_t distance)
+    {
+        constexpr uint32_t immediateMask = 0xfffu << 10;
+        constexpr uint32_t subtracts = 1u << 30;
+        constexpr uint32_t registerMask = 0x1f;
+        RELEASE_ASSERT(twoWords.size() == 2 * INSTRUCTION_SIZE);
+        uint32_t upper = WTF::unalignedLoad<uint32_t>(twoWords.data());
+        uint32_t lower = WTF::unalignedLoad<uint32_t>(twoWords.subspan(INSTRUCTION_SIZE).data());
+        RELEASE_ASSERT((upper & 0xbfc00000) == 0x91400000);
+        RELEASE_ASSERT(((lower >> 5) & registerMask) == (upper & registerMask));
+
+        unsigned widthShift = 0;
+        if (kind == RelocationKind::InstanceAccess)
+            widthShift = shiftOfAccessWidth(lower);
+        else {
+            RELEASE_ASSERT(kind == RelocationKind::InstanceOffset);
+            RELEASE_ASSERT((lower & 0xffc00000) == 0x91000000 && (lower & registerMask) == (upper & registerMask));
+        }
+
+        int32_t pages = distance >> 12;
+        uint32_t rest = static_cast<uint32_t>(distance) & 0xfff;
+        if (!isUInt12(std::abs(pages)) || (rest & ((1u << widthShift) - 1)))
+            return false;
+
+        upper = (upper & ~(subtracts | immediateMask)) | (pages < 0 ? subtracts : 0) | (static_cast<uint32_t>(std::abs(pages)) << 10);
+        lower = (lower & ~immediateMask) | ((rest >> widthShift) << 10);
+        WTF::unalignedStore<uint32_t>(twoWords.data(), upper);
+        WTF::unalignedStore<uint32_t>(twoWords.subspan(INSTRUCTION_SIZE).data(), lower);
+        return true;
+    }
+
+public:
     // Miscellaneous operations:
 
     void breakpoint(uint16_t imm = WTF_FATAL_CRASH_CODE)
     {
+        if (policy().trapsWithIllegalInstruction) {
+            m_assembler.illegalInstruction();
+            return;
+        }
         m_assembler.brk(imm);
     }
 
@@ -7153,14 +7438,10 @@ public:
             // SDOT Vd.4S, Vn.16B, Vm.16B: for each i32 lane, accumulate sum of 4 signed 8-bit products.
             // SDOT accumulates into Vd, so we need addend in dest before the instruction.
             // Handle cases where dest overlaps with a or b to avoid clobbering inputs.
-            if (dest == a) {
-                moveVector(a, scratch1);
+            if (dest == a || dest == b) {
+                moveVector(dest, scratch1);
                 moveVector(addend, dest);
-                m_assembler.sdotv(dest, scratch1, b);
-            } else if (dest == b) {
-                moveVector(b, scratch1);
-                moveVector(addend, dest);
-                m_assembler.sdotv(dest, a, scratch1);
+                m_assembler.sdotv(dest, dest == a ? scratch1 : a, dest == b ? scratch1 : b);
             } else {
                 moveVector(addend, dest);
                 m_assembler.sdotv(dest, a, b);
@@ -8450,7 +8731,7 @@ protected:
     template<int datasize>
     void storeCond(RegisterID src, RegisterID dest, RegisterID result)
     {
-        m_assembler.stxr<datasize>(src, dest, result);
+        m_assembler.stxr<datasize>(result, src, dest);
     }
     
     template<int datasize>
@@ -8494,9 +8775,9 @@ protected:
         Jump done = jump();
         
         failure.link(this);
-        move(tmp, expectedAndResult);
         storeCondRel<datasize>(tmp, simpleAddress, result);
         branchTest32(NonZero, result).linkTo(reloop, this);
+        move(tmp, expectedAndResult);
         move(TrustedImm32(cond == Failure), result);
         
         done.link(this);

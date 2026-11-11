@@ -5,38 +5,35 @@
 
 #include "config.h"
 #include "AOTCallEmitter.h"
-#include "AOTBuiltinMembers.h"
 
 #if ENABLE(AOT)
 
-#include "AOTCellAllocationEmitter.h"
-#include "AOTChooseCallingConventions.h"
+#include "AOTBuiltinMembers.h"
+#include "AOTCallingConventions.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTCodeSites.h"
 #include "AOTConstantEmitter.h"
 #include "AOTControlEmitter.h"
 #include "AOTConvention.h"
-#include "AOTElideStackChecks.h"
 #include "AOTHintEmitter.h"
-#include "AOTPromisedResults.h"
-#include "AOTRuntimeCallEmitter.h"
-#include "AOTStubsClosures.h"
+#include "AOTInliningAcrossFiles.h"
+#include "AOTMachineFrame.h"
+#include "AOTStackCheckEmitter.h"
+#include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsValues.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
+#include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
-#include "AirCode.h"
-#include "AirFrameEmission.h"
-#include "AirGenerationContext.h"
 #include "AllowMacroScratchRegisterUsage.h"
-#include "B3PatchpointValue.h"
-#include "B3StackmapGenerationParams.h"
-#include "B3UpsilonValue.h"
 #include "JSCJSValueInlines.h"
 #include "StackAlignment.h"
 #include <algorithm>
+#include <span>
+#include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -47,22 +44,22 @@ static bool returnsNothing(const ArgumentLocations& locations)
     });
 }
 
-static bool hasCompatibleResults(const ArgumentLocations& callee, const ArgumentLocations& caller)
+static bool hasCompatibleResults(std::span<const ArgumentLocation> callee, std::span<const ArgumentLocation> caller)
 {
-    return std::ranges::equal(callee.results, caller.results, [](const ArgumentLocation& returned, const ArgumentLocation& expected) {
+    return std::ranges::equal(callee, caller, [](const ArgumentLocation& returned, const ArgumentLocation& expected) {
         return returned.kind == expected.kind && returned.reg == expected.reg && returned.stackIndex == expected.stackIndex
             && haveSameRegisterRepresentation(returned.representation, expected.representation);
     });
 }
 
-static unsigned spilledBytesOf(const CodeGenerationInputs& inputs, FunctionID id)
+static unsigned spilledBytesOf(const CallingConventions& conventions, CodeUnit unit)
 {
-    return inputs.conventions.of(inputs.program, id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0;
+    return conventions.spillsArgumentRegisters(unit) ? sizeOfSpilledArgumentRegisters : 0;
 }
 
-static void emitStoreToStackWord(CCallHelpers& jit, const B3::Air::Code& code, const B3::ValueRep& source, GPRReg scratch, uint32_t stackIndex)
+static void emitStoreToStackWord(CCallHelpers& jit, const Machine::Frame& frame, const Machine::ValueRep& source, GPRReg scratch, uint32_t stackIndex)
 {
-    CCallHelpers::Address word = code.addressInFrame(offsetOfStackWordFromFrame(stackIndex));
+    CCallHelpers::Address word = frame.addressInFrame(offsetOfStackWordFromFrame(stackIndex));
     if (source.isGPR()) {
         jit.store64(source.gpr(), word);
         return;
@@ -72,29 +69,28 @@ static void emitStoreToStackWord(CCallHelpers& jit, const B3::Air::Code& code, c
         return;
     }
     if (source.isStack())
-        jit.load64(code.addressInFrame(source.offsetFromFP()), scratch);
+        jit.load64(frame.addressInFrame(source.offsetFromFP()), scratch);
     else
         source.emitRestore(jit, scratch);
     jit.store64(scratch, word);
 }
 
-// CallTarget is private to CallEmitter, so its type is deduced.
 template<typename Target>
 static void emitJumpTo(CCallHelpers& jit, CodeRecords& records, const Target& target)
 {
     using TargetKind = decltype(Target::kind);
     switch (target.kind) {
     case TargetKind::Function:
-        records.stubCalls.jumpToFunction(jit, target.calledFunction, target.entry);
-        return;
-    case TargetKind::Address:
-        jit.farJump(valueEntryGPR, JSEntryPtrTag);
+        records.stubCalls.jumpToFunction(jit, target.calledUnit, target.entry);
         return;
     case TargetKind::Stub:
         if (target.immediate)
             records.stubCalls.tailCall(jit, target.calledStub, *target.immediate);
         else
             records.stubCalls.tailCall(jit, target.calledStub);
+        return;
+    case TargetKind::Address:
+        jit.farJump(valueEntryGPR, JSEntryPtrTag);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -106,46 +102,67 @@ static void emitMoveAddressOf(CCallHelpers& jit, CodeRecords& records, const Tar
     using TargetKind = decltype(Target::kind);
     switch (target.kind) {
     case TargetKind::Function:
-        records.stubCalls.moveAddressOfFunction(target.calledFunction, target.entry, valueEntryGPR);
-        return;
-    case TargetKind::Address:
+        records.stubCalls.moveAddressOfFunction(target.calledUnit, target.entry, valueEntryGPR);
         return;
     case TargetKind::Stub:
         records.stubCalls.moveAddressOfStub(jit, target.calledStub, target.immediate, valueEntryGPR);
+        return;
+    case TargetKind::Address:
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A function whose check its callers cover is entered behind a check. Every other target checks the stack for itself where it sets up a frame.
 template<typename Target>
-static bool pollsWithoutFrame(const CodeGenerationInputs& inputs, FunctionID id, const Target& target)
+static bool pollsWithoutFrame(const CallingConventions& conventions, CodeUnit unit, const Target& target)
 {
     using TargetKind = decltype(Target::kind);
-    if (!hasFaultingLoopPolls || spilledBytesOf(inputs, id))
+    if (!hasFaultingLoopPolls || spilledBytesOf(conventions, unit))
         return false;
-    return target.kind != TargetKind::Function || inputs.stackChecks.of(target.calledFunction) != StackCheck::CoveredByCallers;
+    if (target.kind == TargetKind::Address)
+        return false;
+    return target.kind != TargetKind::Function || conventions.stackCheckOf(target.calledUnit) != StackCheck::CoveredByCallers;
 }
 
 bool CallEmitter::hasStackWordsOfCaller(uint32_t numberOfWords) const
 {
-    return !numberOfWords || (hasStackArgumentAreaOf(m_function.role) && numberOfWords <= inputs().conventions.stackWordsReservedByCallersOf(m_program, m_id));
+    return !numberOfWords || (conventions().entryConventionOf(m_unit) == EntryConvention::Direct && numberOfWords <= conventions().stackWordsReservedByCallersOf(m_program, m_unit));
 }
 
-// The check is the poll of a cycle of tail calls.
 void CallEmitter::didEmitTailCall()
 {
-    if (inputs().stackChecks.of(m_id) == StackCheck::Required)
+    if (m_code.holdsCallThatPlanHasNotCounted() || conventions().testsStackInFrontOfTailCalls(m_unit))
         m_records.frame.needsStackCheckForTailCalls = true;
 }
 
-void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed)
+ALWAYS_INLINE_INTO_OTHER_FILES const ArgumentLocations& CallEmitter::ownLocations()
+{
+    if (!m_ownLocations)
+        m_ownLocations = conventions().locationsOf(m_program, m_unit);
+    return *m_ownLocations;
+}
+
+void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, const ArgumentLocations* locationsOfCalledUnit)
 {
     RELEASE_ASSERT(placed.onStack.size() <= placed.stackWordsToReserve);
-    if (target.kind == TargetKind::Function) {
-        const CallingConventions& conventions = inputs().conventions;
-        ArgumentLocations own = conventions.locationsOf(m_program, m_id);
-        if (!returnsNothing(own) && !hasCompatibleResults(conventions.locationsOf(m_program, target.calledFunction), own)) {
+    const ArgumentLocations& own = ownLocations();
+    if (!returnsNothing(own)) {
+        bool returnsWhereCallerReturns = false;
+        switch (target.kind) {
+        case TargetKind::Function:
+        case TargetKind::Address:
+            if (locationsOfCalledUnit)
+                returnsWhereCallerReturns = hasCompatibleResults(locationsOfCalledUnit->results.span(), own.results.span());
+            else
+                returnsWhereCallerReturns = hasCompatibleResults(conventions().locationsOf(m_program, target.calledUnit).results.span(), own.results.span());
+            break;
+        case TargetKind::Stub: {
+            const ArgumentLocation boxedResult { ArgumentLocation::Kind::GPR, GPRInfo::returnValueGPR, 0, Representation::JSValue };
+            returnsWhereCallerReturns = hasCompatibleResults(singleElementSpan(boxedResult), own.results.span());
+            break;
+        }
+        }
+        if (!returnsWhereCallerReturns) {
             fail(context, InternalErrorKind::InvalidReturnCall);
             m_out.unreachable();
             return;
@@ -153,46 +170,47 @@ void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget
     }
 
     bool fitsInIncomingArea = hasStackWordsOfCaller(placed.stackWordsToReserve);
-    // An argument list frame needs every slot below the frame record, and that layout is requested before code generation.
-    if (!fitsInIncomingArea && !m_records.frame.readsCallerFrame) {
+    if (!fitsInIncomingArea && (!m_records.frame.readsCallerFrame || own.numberOfStackResults)) {
         fail(context, InternalErrorKind::InvalidReturnCall);
         m_out.unreachable();
         return;
     }
 
     didEmitTailCall();
-    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
     if (fitsInIncomingArea) {
-        if (m_records.frame.needsStackCheckForTailCalls && pollsWithoutFrame(inputs(), m_id, target))
+        if (m_records.frame.needsStackCheckForTailCalls && pollsWithoutFrame(conventions(), m_unit, target))
             emitter<HintEmitter>().pollWhereNoFrameIsSetUp(context);
         jumpAfterFrameTeardown(target, placed);
     } else
         callFromArgumentListFrame(target, placed);
 }
 
-B3::PatchpointValue* CallEmitter::leaveAfterFrameTeardown(std::span<const B3::ConstrainedValue> inRegisters, std::span<const StackWord> stackWords, const Invocable<void(CCallHelpers&)> auto& leave)
+Machine::PatchOperation* CallEmitter::leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord> stackWords, const Invocable<void(CCallHelpers&)> auto& leave)
 {
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
-    for (const B3::ConstrainedValue& value : inRegisters)
+    static_assert(std::is_trivially_copyable_v<std::remove_cvref_t<decltype(leave)>>);
+
+    Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
+    for (const Machine::ConstrainedValue& value : inRegisters)
         patchpoint->append(value);
-    Vector<uint32_t, 4> stackIndices;
-    for (const StackWord& word : stackWords) {
-        patchpoint->append(B3::ConstrainedValue(word.value, B3::ValueRep::ColdAny));
-        stackIndices.append(word.index);
+    std::span<uint32_t> stackIndices = m_proc.arena().createSpan<uint32_t>(stackWords.size());
+    for (size_t i = 0; i < stackWords.size(); ++i) {
+        patchpoint->append(stackWords[i].value, Machine::ValueRep::ColdAny);
+        stackIndices[i] = stackWords[i].index;
     }
-    if (!stackIndices.isEmpty())
-        patchpoint->numGPScratchRegisters = 1;
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->effects.terminal = true;
-    patchpoint->setRunsWithoutFrame(stackIndices.isEmpty());
-    patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices, leave](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    patchpoint->setRunsWithoutFrame(stackIndices.empty());
+    patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices = std::span<const uint32_t>(stackIndices), leave](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        // The frame may be gone already: the registers that it saved are the caller's again.
-        emitClearOfReleasedRegisters(jit, params, registersClobberedByCompiledCalls());
+        GPRReg scratch = jit.scratchRegister();
         for (unsigned i = 0; i < stackIndices.size(); ++i)
-            emitStoreToStackWord(jit, params.code(), params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
-        if (params.context().frameIsSetUp)
-            B3::Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
+            emitStoreToStackWord(jit, params.frame(), params[numberInRegisters + i], scratch, stackIndices[i]);
+        if (params.frameIsSetUp())
+            Machine::emitFrameTeardown(jit, params.frame());
+        else if (params.value()->followsFrameSetup()) {
+            RELEASE_ASSERT(params.value()->testsStackAheadOfFramedPart());
+            emitStackTestAheadOfFramedPart(jit, params);
+        }
         leave(jit);
     });
     return patchpoint;
@@ -200,36 +218,24 @@ B3::PatchpointValue* CallEmitter::leaveAfterFrameTeardown(std::span<const B3::Co
 
 void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedArguments& placed)
 {
-    Vector<B3::ConstrainedValue, 8> inRegisters = placed.inRegisters;
-    if (target.kind == TargetKind::Address)
-        inRegisters.append(B3::ConstrainedValue(target.calledAddress, B3::ValueRep::reg(valueEntryGPR)));
     Vector<StackWord, 4> stackWords;
     for (uint32_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
         if (LValue argument = placed.onStack[stackIndex])
             stackWords.append({ stackIndex, argument });
     }
-    unsigned spilledBytes = spilledBytesOf(inputs(), m_id);
+    unsigned spilledBytes = spilledBytesOf(conventions(), m_unit);
     RELEASE_ASSERT(stackWords.isEmpty() || !spilledBytes);
+    Vector<Machine::ConstrainedValue, 8> inRegisters(placed.inRegisters);
+    if (target.kind == TargetKind::Address)
+        inRegisters.append(Machine::ConstrainedValue(target.calledAddress, Machine::ValueRep::reg(valueEntryGPR)));
 
-    CallTarget destination = target;
-    destination.calledAddress = nullptr;
-    B3::PatchpointValue* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), [records = &m_records, destination, spilledBytes](CCallHelpers& jit) {
+    Machine::PatchOperation* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), [records = &m_records, destination = target, spilledBytes](CCallHelpers& jit) {
         if (spilledBytes)
             emitDropSpilledArgumentRegisters(jit);
         emitJumpTo(jit, *records, destination);
     });
-    // The frame of the callee lies where this one was.
-    markArgumentsLetGoByCallee(patchpoint, placed);
-    // The stack check is part of the frame setup.
-    patchpoint->setFollowsFrameSetup(m_records.frame.needsStackCheckForTailCalls && !pollsWithoutFrame(inputs(), m_id, target));
-}
-
-void CallEmitter::returnMisfit(Boxed value)
-{
-    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
-    PlacedArguments placed;
-    placed.inRegisters.append(B3::ConstrainedValue(value.value(), B3::ValueRep::reg(GPRInfo::returnValueGPR)));
-    jumpAfterFrameTeardown(CallTarget::stub(AOT::returnMisfit(), std::nullopt), placed);
+    patchpoint->setFollowsFrameSetup(m_records.frame.needsStackCheckForTailCalls && !pollsWithoutFrame(conventions(), m_unit, target));
+    patchpoint->setTestsStackAheadOfFramedPart(patchpoint->followsFrameSetup() && isX86_64() && !spilledBytes && stackWords.isEmpty());
 }
 
 void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const PlacedArguments& placed)
@@ -237,14 +243,14 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
     RELEASE_ASSERT(m_records.frame.readsCallerFrame);
     m_records.frame.dropsArgumentListFrames = true;
 
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
-    for (const B3::ConstrainedValue& argument : placed.inRegisters)
+    Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
+    for (const Machine::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
     if (target.kind == TargetKind::Address)
-        patchpoint->append(B3::ConstrainedValue(target.calledAddress, B3::ValueRep::reg(valueEntryGPR)));
+        patchpoint->append(Machine::ConstrainedValue(target.calledAddress, Machine::ValueRep::reg(valueEntryGPR)));
     for (size_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
         if (LValue argument = placed.onStack[stackIndex])
-            patchpoint->append(B3::ConstrainedValue(argument, B3::ValueRep::stackArgument(safeCast<B3::ValueRep::OffsetType>(stackIndex * sizeOfStackWord))));
+            patchpoint->append(argument, Machine::ValueRep::stackArgument(safeCast<Machine::ValueRep::OffsetType>(stackIndex * sizeOfStackWord)));
     }
     m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(placed.stackWordsToReserve * sizeOfStackWord));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
@@ -252,14 +258,16 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
     patchpoint->effects.terminal = true;
     patchpoint->setNeedsFrameRecord(true);
 
-    CallTarget destination = target;
-    destination.calledAddress = nullptr;
-    patchpoint->setGenerator([records = &m_records, destination, numberOfWords = placed.stackWordsToReserve, spilledBytes = spilledBytesOf(inputs(), m_id)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, destination = target, numberOfWords = placed.stackWordsToReserve, spilledBytes = spilledBytesOf(conventions(), m_unit)](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        RELEASE_ASSERT(params.context().frameIsSetUp);
-        B3::Air::emitCalleeSaveRestore(jit, params.code());
-        emitMoveStackWordsToArgumentListFrame(jit, numberOfWords, spilledBytes);
+        RELEASE_ASSERT(params.frameIsSetUp());
+        Machine::emitCalleeSaveRestore(jit, params.frame());
         emitMoveAddressOf(jit, *records, destination);
+        if (numberOfWords && numberOfWords <= StubKey::maxCount) {
+            records->stubCalls.tailCall(jit, AOT::callFromArgumentListFrameWithWords(numberOfWords, spilledBytes));
+            return;
+        }
+        emitMoveStackWordsToArgumentListFrame(jit, numberOfWords, spilledBytes);
         records->stubCalls.tailCall(jit, AOT::callFromArgumentListFrame());
     });
 }
@@ -269,7 +277,6 @@ void CallEmitter::tailCallByConvention(const OperationContext& context, const Co
     emitTailCall(context, CallTarget::stub(call.stub.withForm(static_cast<uint8_t>(CallPosition::Tail)), std::nullopt), placeConventionArguments(call));
 }
 
-// A stack trace tells a frame at a failed tail call from one at an ordinary call: TraceFrame::isAtFailedTailCall.
 static Origin originAtTailCall(const OperationContext& context)
 {
     Origin origin = context.origin();
@@ -277,46 +284,69 @@ static Origin originAtTailCall(const OperationContext& context)
     return origin;
 }
 
-// The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then.
-void CallEmitter::requireCallable(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall)
+void CallEmitter::requireCallable(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall, std::optional<Boxed> listOfCall)
 {
     ClosureTestEmitter& closures = emitter<ClosureTestEmitter>();
     LBasicBlock mayNotBeCallable = newBlock();
     LBasicBlock continuation = newBlock();
     branchUnless(isCell(callee), mayNotBeCallable);
-    Condition isKnownToBeCallable = context.shape() == CodeShape::Fast ? closures.hasFunctionCellType(unboxCell(callee)) : closures.isSlimClosureAsCreated(unboxCell(callee));
+    Condition isKnownToBeCallable = closures.isSlimClosureAsCreated(unboxCell(callee));
     m_out.branch(isKnownToBeCallable.value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
 
     m_out.appendTo(mayNotBeCallable);
+    if (listOfCall) {
+        LBasicBlock cannotBeCalled = newBlock();
+        branchUnless(isCell(callee), cannotBeCalled);
+        m_out.branch(emitter<TypeTestEmitter>().isCallable(unboxCell(callee)).value(), normalEdge(continuation), rareEdge(cannotBeCalled));
+
+        m_out.appendTo(cannotBeCalled);
+        callOperation<CellPointer>(context, RuntimeOperation::NewArgumentList, { *listOfCall }, { .origin = isAtTailCall ? originAtTailCall(context) : context.origin(), .isOnRarePath = true });
+    }
     callStub(context, throwUnlessCallable(), { callee.value() }, { .origin = isAtTailCall ? originAtTailCall(context) : context.origin(), .throwSite = siteThatNamesCallee, .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
 }
 
-bool CallEmitter::mayForwardCallToReceiver(const ValueContext& value)
+bool CallEmitter::mayForwardCallToReceiver(const Operation& call)
 {
-    if (!value->calleeKey() || !value->calleeName() || !value->thisValueOperand())
+    if (!call.calleeKey() || !call.calleeName() || !call.thisValueOperand())
         return false;
-    BuiltinID member = findOwnMember(m_program, Builtins::FunctionPrototype, value->calleeKey());
+    BuiltinID member = findOwnMember(m_program, Builtins::FunctionPrototype, call.calleeKey());
     if (member != Builtins::FunctionPrototypeCall && member != Builtins::FunctionPrototypeApply)
         return false;
-    if (!typeOf(value->calleeOperand()).overlaps(Type::forBuiltin(member), m_program))
+    if (!types().overlap(typeIDOf(call.calleeOperand()), types().forBuiltin(member)))
         return false;
-    return !typeOf(value->thisValueOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program);
+    if (!types().isSubset(typeIDOf(call.thisValueOperand()), TypeTable::function))
+        return true;
+    ValueID list = listThatApplyWouldRead(call);
+    return list && (typeOf(list).primitives & ~Primitive::UndefinedOrNull);
 }
 
-void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed callee, Boxed thisValue)
+ValueID CallEmitter::listThatApplyWouldRead(const Operation& call)
 {
-    if (!mayForwardCallToReceiver(value)) {
-        if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-            requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
+    if (call.opcode != Opcode::Call || call.argumentsOperands().size() < 2)
+        return { };
+    return findOwnMember(m_program, Builtins::FunctionPrototype, call.calleeKey()) == Builtins::FunctionPrototypeApply ? call.argumentsOperands()[1] : ValueID();
+}
+
+void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed callee, Boxed thisValue, std::optional<Boxed> listOfCall)
+{
+    if (mayForwardCallToReceiver(value.value())) {
+        requireForwardedCallCanBeMade(value, callee, thisValue, true);
         return;
     }
+    if (!types().isSubset(typeIDOf(value->calleeOperand()), TypeTable::function))
+        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value), listOfCall);
+}
 
-    CallOptions options { .origin = originAtTailCall(value), .throwSite = siteThatNamesCallee(value), .isOnRarePath = true };
-    if (typeOf(value->calleeOperand()).singleBuiltin()) {
-        callStub(value, throwUnlessForwardedCalleeIsCallable(), { callee.value(), thisValue.value() }, options);
+void CallEmitter::requireForwardedCallCanBeMade(const ValueContext& value, Boxed callee, Boxed thisValue, bool isAtTailCall)
+{
+    ValueID listOperand = listThatApplyWouldRead(value.value());
+    Boxed list = listOperand ? in<Boxed>(listOperand) : boxedConstant(jsUndefined());
+    CallOptions options { .origin = isAtTailCall ? originAtTailCall(value) : value.origin(), .throwSite = siteThatNamesCallee(value), .isOnRarePath = true };
+    if (singleBuiltinOf(types(), typeOf(value->calleeOperand()))) {
+        callStub(value, throwUnlessForwardedCallCanBeMade(), { callee.value(), thisValue.value(), list.value() }, options);
         return;
     }
 
@@ -326,106 +356,62 @@ void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed
     m_out.branch(emitter<ClosureTestEmitter>().isSlimClosureAsCreated(unboxCell(callee)).value(), normalEdge(continuation), rareEdge(slowPath));
 
     m_out.appendTo(slowPath);
-    callStub(value, throwUnlessForwardedCalleeIsCallable(), { callee.value(), thisValue.value() }, options);
+    callStub(value, throwUnlessForwardedCallCanBeMade(), { callee.value(), thisValue.value(), list.value() }, options);
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
 }
 
-// The frame holds closures that the call lends. It stays until a callee returns that cannot come round to this call again by tail calls alone. Goes on where the callee is any other.
-void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& value, const ValueCall& call)
-{
-    ArgumentLocations own = inputs().conventions.locationsOf(m_program, m_id);
-    if (own.results.size() != 1 || own.results[0].representation != Representation::JSValue)
-        return;
-
-    LBasicBlock keepsFrame = newBlock();
-    LBasicBlock givesUpFrame = newBlock();
-    LValue operands[] = { call.callee.value() };
-    emitter<RuntimeCallEmitter>().callStubWithoutSiteAndBranch(valueEndsItsTailCalls(), operands, { normalEdge(keepsFrame), normalEdge(givesUpFrame) });
-
-    m_out.appendTo(keepsFrame);
-    Operand result = callValue(value, call, { .isTailCall = true });
-    returnValues(*value.returnCall(), singleElementSpan(result));
-
-    m_out.appendTo(givesUpFrame);
-}
-
 void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call)
 {
-    requireCallableBeforeTailCall(value, call.callee, call.thisValue);
-
-    unsigned count = static_cast<unsigned>(call.arguments.size());
+    RELEASE_ASSERT(!call.lentArguments);
     Vector<LValue, 8> values;
     for (Boxed argument : call.arguments)
         values.append(argument.value());
-    if (call.lentArguments) {
-        callAndReturnIfCalleeEndsItsTailCalls(value, call);
-        for (unsigned index = 0; index < count; ++index) {
-            if (call.lentArguments >> index & 1)
-                values[index] = boxCell(callOperation<CellPointer>(value, RuntimeOperation::MoveClosureToHeap, { unboxCell(call.arguments[index]) }, { .isOnRarePath = true })).value();
-        }
+    if (call.methodMayBeUnread) {
+        RELEASE_ASSERT(call.methodOfBuiltinClass && !mayForwardCallToReceiver(value.value()));
+        LBasicBlock wasRead = newBlock();
+        LBasicBlock leaves = newBlock();
+        branch(isNotEmpty(call.callee), { rareEdge(wasRead), normalEdge(leaves) });
+        m_out.appendTo(wasRead);
+        requireCallableBeforeTailCall(value, call.callee, call.thisValue);
+        m_out.jump(leaves);
+        m_out.appendTo(leaves);
+        ConventionCall unread { .stub = callMethodThatMayBeUnreadInTailPosition(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())), .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
+        emitTailCall(value, CallTarget::stub(unread.stub, std::nullopt), placeConventionArguments(unread));
+        return;
     }
+    requireCallableBeforeTailCall(value, call.callee, call.thisValue);
+    bool calleeIsCell = call.calleeIsCell || !mayForwardCallToReceiver(value.value());
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
-    chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
+    chooseStubThatCallsValue(conventionCall, countOperand, calleeIsCell);
     tailCallByConvention(value, conventionCall);
 }
 
 void ControlEmitter::generateReturn(const TerminatorContext& terminator)
 {
     ValueID value = terminator->valueOperand();
-    uint32_t numberOfResults = static_cast<uint32_t>(m_function.results.size());
+    unsigned numberOfResults = conventions().numberOfResults(m_unit);
     Vector<Operand, 4> operands;
-    if (numberOfResults == 1) {
-        if (value && leavesAnotherWayUnlessPromised(terminator, value))
-            return;
-        if (value)
-            operands.append(get(value));
-        else
-            operands.append(emitter<ConstantEmitter>().constantOf(jsUndefined(), inputs().conventions.resultRepresentation(m_program, m_id)));
-    } else {
-        for (uint32_t index = 0; index < numberOfResults; ++index)
+    if (!value) {
+        RELEASE_ASSERT(numberOfResults == 1);
+        operands.append(emitter<ConstantEmitter>().constantOf(jsUndefined(), conventions().resultRepresentation(m_unit)));
+    } else if (opcodeOf(value) == Opcode::Results) {
+        std::span<const ValueID> listed = operationAt(value).valuesOperands();
+        RELEASE_ASSERT(listed.size() == numberOfResults);
+        for (unsigned index = 0; index < numberOfResults; ++index) {
+            Representation form = conventions().resultRepresentation(m_unit, index);
+            operands.append(form == Representation::Void ? Operand { } : generator().getIn(listed[index], form));
+        }
+    } else if (numberOfResults == 1)
+        operands.append(generator().getIn(value, conventions().resultRepresentation(m_unit)));
+    else {
+        for (unsigned index = 0; index < numberOfResults; ++index)
             operands.append(generator().resultAt(value, index));
     }
     emitter<CallEmitter>().returnValues(terminator, operands.span());
-}
-
-// True where the return has been generated. The returns that seldom run share one test.
-bool ControlEmitter::leavesAnotherWayUnlessPromised(const TerminatorContext& terminator, ValueID value)
-{
-    TypeID promised = inputs().promisedResults.of(m_id);
-    if (!promised || typeOf(value).isSubsetOf(m_program.at(promised), m_program))
-        return false;
-
-    auto testAndReturn = [&](Boxed result, TypeID from) {
-        TypeTestEmitter& tests = emitter<TypeTestEmitter>();
-        LBasicBlock isPromised = newBlock();
-        LBasicBlock isMisfit = newBlock();
-        tests.emitBranch(result, tests.planFor(from, Representation::JSValue, promised), { normalEdge(isPromised), rareEdge(isMisfit) }, terminator.shape());
-        m_out.appendTo(isMisfit);
-        emitter<CallEmitter>().returnMisfit(result);
-        m_out.appendTo(isPromised);
-        Operand operand = result;
-        emitter<CallEmitter>().returnValues(terminator, { &operand, 1 });
-    };
-    if (m_function.at(terminator.block()).frequency.predicted() == BlockFrequency::Normal) {
-        testAndReturn(in<Boxed>(value), m_function.at(value).type);
-        return true;
-    }
-
-    if (!m_testedReturn) {
-        LBasicBlock here = m_out.m_block;
-        m_testedReturn = newBlock();
-        m_out.appendTo(m_testedReturn);
-        m_resultOfTestedReturn = m_out.phi(B3::Int64);
-        testAndReturn(Boxed(m_resultOfTestedReturn), TypeTable::anything);
-        m_out.appendTo(here);
-    }
-    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), in<Boxed>(value).value(), m_resultOfTestedReturn);
-    m_out.jump(m_testedReturn);
-    return true;
 }
 
 void ControlEmitter::generateReturnCall(const TerminatorContext& terminator)
@@ -435,14 +421,16 @@ void ControlEmitter::generateReturnCall(const TerminatorContext& terminator)
 
 void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand> operands)
 {
-    const CallingConventions& conventions = inputs().conventions;
-    ArgumentLocations locations = conventions.locationsOf(m_program, m_id);
-    std::span<const ArgumentLocation> results = locations.results.span();
-    bool spillsArgumentRegisters = conventions.of(m_program, m_id).spillsArgumentRegisters;
+    returnValues(operands);
+}
+
+void CallEmitter::returnValues(std::span<const Operand> operands)
+{
+    std::span<const ArgumentLocation> results = ownLocations().results.span();
+    bool spillsArgumentRegisters = conventions().spillsArgumentRegisters(m_unit);
     RELEASE_ASSERT(operands.size() == results.size());
     for (size_t i = 0; i < results.size(); ++i)
-        RELEASE_ASSERT(isPassedAs(operands[i].representation, results[i].representation));
-    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
+        RELEASE_ASSERT(!operands[i].value || isPassedAs(operands[i].representation, results[i].representation));
 
     if (!spillsArgumentRegisters && results.size() <= 1) {
         if (results.empty() || results[0].kind == ArgumentLocation::Kind::None) {
@@ -454,29 +442,32 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
         return;
     }
 
-    Vector<B3::ConstrainedValue, 8> inRegisters;
+    Vector<Machine::ConstrainedValue, 8> inRegisters;
     Vector<StackWord, 4> stackWords;
     for (size_t i = 0; i < results.size(); ++i) {
         LValue value = operands[i].value;
+        if (!value)
+            continue;
         switch (results[i].kind) {
         case ArgumentLocation::Kind::None:
             break;
         case ArgumentLocation::Kind::GPR:
         case ArgumentLocation::Kind::FPR:
-            inRegisters.append(B3::ConstrainedValue(value, B3::ValueRep::reg(results[i].reg)));
+            inRegisters.append(Machine::ConstrainedValue(value, Machine::ValueRep::reg(results[i].reg)));
             break;
         case ArgumentLocation::Kind::Stack:
-            stackWords.append({ results[i].stackIndex, value->type() == B3::Int32 ? m_out.zeroExt(value, B3::Int64) : value });
+            stackWords.append({ results[i].stackIndex, value->type() == Machine::Int32 ? m_out.zeroExt(value, Machine::Int64) : value });
             break;
         }
     }
     RELEASE_ASSERT(stackWords.isEmpty() || !spillsArgumentRegisters);
-    leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), [spillsArgumentRegisters](CCallHelpers& jit) {
+    Machine::PatchOperation* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), [spillsArgumentRegisters](CCallHelpers& jit) {
         if (spillsArgumentRegisters)
             emitReturnDroppingSpilledArgumentRegisters(jit);
         else
             jit.ret();
     });
+    patchpoint->setLeavesByReturning(true);
 }
 
 } } } // namespace JSC::AOT::Typed

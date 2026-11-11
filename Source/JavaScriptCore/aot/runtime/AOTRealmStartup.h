@@ -29,38 +29,37 @@ struct Instance;
 bool runsCompiledProgram(JSGlobalObject*);
 bool locksBuiltins(JSGlobalObject*);
 JS_EXPORT_PRIVATE void lockBuiltinsWithoutImage();
-JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
-using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
-JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
+JS_EXPORT_PRIVATE void unlockNameWithoutImage(uint32_t holder, std::span<const uint8_t> name);
+JS_EXPORT_PRIVATE void lockTableBuiltins(JSGlobalObject*);
+using RejectedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
+JS_EXPORT_PRIVATE void setRejectedChangeListener(RejectedChangeListener);
+void notifyRejectedChangeListener(JSGlobalObject*, const String& refusal);
 void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RejectedWrite);
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
-// The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.
-JS_EXPORT_PRIVATE String refusedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
-// In a test run a refusal is an error for everybody: a test that takes it for a replacement that was made goes on to measure nothing.
+JS_EXPORT_PRIVATE String rejectedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
+JS_EXPORT_PRIVATE bool rejectsOwnPropertyOnLibraryFunction(JSObject*, UniquedStringImpl* key);
+JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
+JS_EXPORT_PRIVATE bool isMemberFoldedAsConstant(JSObject*, UniquedStringImpl* key);
 bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
-JS_EXPORT_PRIVATE ASCIILiteral evaluationRefusedMessage();
-void refuseEvaluationUnlessAdmitted(JSGlobalObject*);
+bool isReportedAsReadOnly(JSObject* lockedObject, UniquedStringImpl* key);
+JS_EXPORT_PRIVATE ASCIILiteral rejectedEvaluationMessage();
+void rejectEvaluationUnlessAllowed(JSGlobalObject*);
 Instance* reserveInstance(JSGlobalObject*);
 void makeBuiltinsImmutable(Instance&);
 void markOriginalStructuresPristine(VM&, JSGlobalObject*);
 void didInstallBuiltins(Instance&);
 JS_EXPORT_PRIVATE void hostDidCreateRealm(JSGlobalObject*);
-// Start-up locks the built-in objects that are there.
 void didCreateClass(JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructorOrNull);
 void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
-// The holder is about to create the member. Compiled code may hold the object already: then the holder adds that one. Null otherwise.
-JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key);
-// Whether the holder has not created the member yet and didCreateStaticProperty() will be told when it does.
+JSObject* takePreallocatedStaticProperty(JSObject* holder, UniquedStringImpl* key);
 bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
-// For a Structure of instances that a host does not keep in a LazyClassStructure.
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
-// For the constructor of a class whose Structure was reported so. An instance leads to it, and nobody need have read the name of the class by then.
+using BufferStructureProvider = Structure* (*)(JSGlobalObject*);
+JS_EXPORT_PRIVATE void setBufferStructureProvider(BufferStructureProvider);
 JS_EXPORT_PRIVATE void hostDidCreateConstructor(JSGlobalObject*, JSObject* constructor);
-// No name of the realm leads to the object of node:module, and the table locks the hooks of the loader on it.
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
-// For an object that the global object names only from the first read of the name on. It is locked from its creation: there are other ways to it.
-JS_EXPORT_PRIVATE void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl* key, JSObject*);
-// process.versions.node: members of an ordinary object that the host fills. The table ends above them, and the build folds their reads. `holder` is how a program writes the object.
+JS_EXPORT_PRIVATE void acceptForeignBinaryData(JSGlobalObject*);
+JS_EXPORT_PRIVATE void hostDidCreateGlobalMember(JSGlobalObject*, UniquedStringImpl* key, JSObject*);
 JS_EXPORT_PRIVATE void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral holder, std::span<const ASCIILiteral> names);
 
 } } // namespace JSC::AOT

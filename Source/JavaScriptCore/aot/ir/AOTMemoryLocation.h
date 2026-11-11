@@ -11,15 +11,13 @@
 #include "AOTID.h"
 #include <array>
 #include <compare>
+#include <optional>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class Program;
-struct Function;
-struct LocationFlow;
-struct Value;
 
 template<typename IDType>
     requires requires(IDType id) { id.index(); }
@@ -47,8 +45,6 @@ public:
     static constexpr MemoryLocation moduleVariable(VariableID variable) { return at(AbstractHeap::ModuleVariables, variable.index()); }
     static constexpr MemoryLocation environmentField(LayoutID layout, uint32_t field) { return at(AbstractHeap::EnvironmentFields, layout.index(), field); }
     static constexpr MemoryLocation objectField(PropertyKeyID key, LayoutSetID receivers = { }) { return at(AbstractHeap::ObjectFields, key.index(), receivers ? receivers.index() + 1 : 0); }
-    static constexpr MemoryLocation namedProperty(PropertyKeyID key) { return at(AbstractHeap::NamedProperties, key.index()); }
-    static constexpr MemoryLocation shapeWords(LayoutSetID layouts) { return at(AbstractHeap::ShapeWords, layouts.index()); }
     static constexpr MemoryLocation memberGuards(LayoutID layout) { return at(AbstractHeap::MemberGuards, layout.index()); }
     static constexpr MemoryLocation elements(ElementBase base) { return at(AbstractHeap::Elements, static_cast<uint32_t>(base)); }
 
@@ -102,10 +98,7 @@ private:
 
 static_assert(sizeof(MemoryLocation) == 12);
 
-enum class LocationOverlap : uint8_t { May, None, Exact };
-
 uint64_t maskOf(const Program&, const MemoryLocation&);
-LocationOverlap overlapOf(const Program&, const MemoryLocation&, const MemoryLocation&);
 
 struct MemoryLocationDump {
     const Program& program;
@@ -127,16 +120,27 @@ public:
 
     static constexpr LocationMasks top();
 
-    constexpr bool isEmpty() const { return m_heaps.isEmpty(); }
-    constexpr bool isTop() const { return *this == top(); }
-    constexpr AbstractHeapSet heaps() const { return m_heaps; }
-    constexpr bool contains(AbstractHeap heap) const { return m_heaps.contains(heap); }
-    constexpr bool containsAny(AbstractHeapSet heaps) const { return m_heaps.containsAny(heaps); }
-    constexpr bool containsOnly(AbstractHeapSet heaps) const { return m_heaps.containsOnly(heaps); }
+    constexpr bool isEmpty() const { return !m_heaps; }
+
+    constexpr bool isTop() const
+    {
+        if (m_heaps != bitsOf(allHeaps))
+            return false;
+        for (uint64_t mask : m_masks) {
+            if (mask != entireHeap)
+                return false;
+        }
+        return true;
+    }
+
+    constexpr AbstractHeapSet heaps() const { return AbstractHeapSet::fromRaw(m_heaps); }
+    constexpr bool contains(AbstractHeap heap) const { return m_heaps & bitsOf(heap); }
+    constexpr bool containsAny(AbstractHeapSet heaps) const { return m_heaps & bitsOf(heaps); }
+    constexpr bool containsOnly(AbstractHeapSet heaps) const { return !(m_heaps & ~bitsOf(heaps)); }
 
     constexpr uint64_t maskOf(AbstractHeap heap) const
     {
-        if (!m_heaps.contains(heap))
+        if (!contains(heap))
             return 0;
         return indexedHeaps.contains(heap) ? m_masks[maskIndexOf(heap)] : entireHeap;
     }
@@ -147,29 +151,31 @@ public:
     {
         if (!mask)
             return;
-        m_heaps.add(heap);
+        m_heaps |= bitsOf(heap);
         if (indexedHeaps.contains(heap))
             m_masks[maskIndexOf(heap)] |= mask;
     }
 
     constexpr void add(AbstractHeapSet heaps)
     {
-        m_heaps.add(heaps);
+        m_heaps |= bitsOf(heaps);
+        if (!heaps.containsAny(indexedHeaps))
+            return;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             if (heaps.contains(indexedHeapsInOrder[index]))
                 m_masks[index] = entireHeap;
         }
     }
 
-    void add(const Program& program, const MemoryLocation& location) { add(location.heap(), Typed::maskOf(program, location)); }
+    ALWAYS_INLINE void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
 
     void add(const MemoryLocation&);
 
     constexpr bool merge(const LocationMasks& other)
     {
-        bool changed = !m_heaps.containsAll(other.m_heaps);
-        m_heaps.add(other.m_heaps);
-        if (!other.m_heaps.containsAny(indexedHeaps))
+        bool changed = other.m_heaps & ~m_heaps;
+        m_heaps |= other.m_heaps;
+        if (!other.containsAny(indexedHeaps))
             return changed;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             uint64_t merged = m_masks[index] | other.m_masks[index];
@@ -181,7 +187,9 @@ public:
 
     constexpr void remove(AbstractHeapSet heaps)
     {
-        m_heaps.remove(heaps);
+        m_heaps &= ~bitsOf(heaps);
+        if (!heaps.containsAny(indexedHeaps))
+            return;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             if (heaps.contains(indexedHeapsInOrder[index]))
                 m_masks[index] = 0;
@@ -197,42 +205,56 @@ public:
 
     constexpr LocationMasks restrictedTo(AbstractHeapSet heaps) const { return without(allHeaps - heaps); }
 
+    constexpr void intersect(const LocationMasks& other)
+    {
+        bool hadIndexedHeaps = containsAny(indexedHeaps);
+        m_heaps &= other.m_heaps & ~bitsOf(indexedHeaps);
+        if (!hadIndexedHeaps)
+            return;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
+            m_masks[index] &= other.m_masks[index];
+            if (m_masks[index])
+                m_heaps |= bitsOf(indexedHeapsInOrder[index]);
+        }
+    }
+
     constexpr LocationMasks intersectedWith(const LocationMasks& other) const
     {
         LocationMasks result;
-        result.m_heaps = (m_heaps & other.m_heaps) - indexedHeaps;
+        uint32_t commonHeaps = m_heaps & other.m_heaps;
+        result.m_heaps = commonHeaps & ~bitsOf(indexedHeaps);
+        if (!(commonHeaps & bitsOf(indexedHeaps)))
+            return result;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             uint64_t common = m_masks[index] & other.m_masks[index];
             result.m_masks[index] = common;
             if (common)
-                result.m_heaps.add(indexedHeapsInOrder[index]);
+                result.m_heaps |= bitsOf(indexedHeapsInOrder[index]);
         }
         return result;
     }
 
-    constexpr bool overlaps(AbstractHeap heap, uint64_t mask) const { return maskOf(heap) & mask; }
+    constexpr bool overlaps(const LocationMasks& other) const { return overlapsWithin(allHeaps, other); }
 
-    constexpr bool overlaps(const LocationMasks& other) const
+    constexpr bool overlapsWithin(AbstractHeapSet heaps, const LocationMasks& other) const
     {
-        AbstractHeapSet common = m_heaps & other.m_heaps;
-        if (common.isEmpty())
+        uint32_t common = m_heaps & other.m_heaps & bitsOf(heaps);
+        if (!common)
             return false;
-        if (!(common - indexedHeaps).isEmpty())
+        if (common & ~bitsOf(indexedHeaps))
             return true;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
-            if (m_masks[index] & other.m_masks[index])
+            if (common & bitsOf(indexedHeapsInOrder[index]) && m_masks[index] & other.m_masks[index])
                 return true;
         }
         return false;
     }
 
-    bool overlaps(const Program& program, const MemoryLocation& location) const { return overlaps(location.heap(), Typed::maskOf(program, location)); }
-
     constexpr bool isSubsetOf(const LocationMasks& other) const
     {
-        if (!other.m_heaps.containsAll(m_heaps))
+        if (m_heaps & ~other.m_heaps)
             return false;
-        if (!m_heaps.containsAny(indexedHeaps))
+        if (!containsAny(indexedHeaps))
             return true;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             if (m_masks[index] & ~other.m_masks[index])
@@ -241,36 +263,41 @@ public:
         return true;
     }
 
+    constexpr bool masksAgreeWithHeaps() const
+    {
+        uint32_t heapsWithMasks = 0;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
+            if (m_masks[index])
+                heapsWithMasks |= bitsOf(indexedHeapsInOrder[index]);
+        }
+        return heapsWithMasks == (m_heaps & bitsOf(indexedHeaps));
+    }
+
     void forEach(NOESCAPE const Invocable<void(AbstractHeap, uint64_t mask)> auto& functor) const
     {
-        for (AbstractHeap heap : m_heaps)
+        for (AbstractHeap heap : heaps())
             functor(heap, maskOf(heap));
     }
 
-    constexpr uint64_t mixedWords() const
+    friend constexpr bool operator==(const LocationMasks& first, const LocationMasks& second)
     {
-        constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
-        constexpr uint64_t multiplierForEmptyMasks = [] {
-            uint64_t product = 1;
-            for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
-                product *= multiplier;
-            return product;
-        }();
-        uint64_t mixed = static_cast<uint64_t>(m_heaps.toRaw());
-        if (!m_heaps.containsAny(indexedHeaps))
-            return mixed * multiplierForEmptyMasks;
-        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
-            mixed = (mixed ^ m_masks[index]) * multiplier;
-        return mixed;
+        return first.m_heaps == second.m_heaps && (!first.containsAny(indexedHeaps) || first.hasMasksOf(second));
     }
 
-    void dump(PrintStream&) const;
-
-    friend constexpr bool operator==(const LocationMasks&, const LocationMasks&) = default;
-
 private:
-    AbstractHeapSet m_heaps;
+    static_assert(numberOfHeaps <= 32);
+    static constexpr uint32_t bitsOf(AbstractHeapSet heaps) { return static_cast<uint32_t>(heaps.toRaw()); }
+
+    constexpr bool hasMasksOf(const LocationMasks& other) const
+    {
+        uint64_t difference = 0;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
+            difference |= m_masks[index] ^ other.m_masks[index];
+        return !difference;
+    }
+
     std::array<uint64_t, numberOfIndexedHeaps> m_masks { };
+    uint32_t m_heaps { 0 };
 };
 
 constexpr LocationMasks LocationMasks::top()
@@ -279,34 +306,73 @@ constexpr LocationMasks LocationMasks::top()
     return everyHeap;
 }
 
-struct MemoryAccess {
-    enum class Kind : uint8_t { NotExact, Read, Write };
+constexpr uint64_t locationMaskOfBit(std::optional<uint8_t> bit, uint32_t offset = 0)
+{
+    if (!bit)
+        return LocationMasks::entireHeap;
+    return uint64_t { 1 } << ((*bit + offset) & 63);
+}
 
-    Kind kind { Kind::NotExact };
-    MemoryLocation location { AbstractHeap::RuntimeState };
-    ValueID base;
-    ValueID stored;
-    uint32_t storedOperandIndex { 0 };
+constexpr uint64_t markOfElementsThatMayHoldCells = uint64_t { 1 } << 63;
 
-    explicit operator bool() const { return kind != Kind::NotExact; }
-};
+constexpr uint64_t locationMaskOfElementBase(ElementBase base)
+{
+    switch (base) {
+    case ElementBase::Unknown:
+        return LocationMasks::entireHeap;
+    case ElementBase::Array:
+        return (uint64_t { 1 } << static_cast<unsigned>(base)) | markOfElementsThatMayHoldCells;
+    case ElementBase::Arguments:
+    case ElementBase::Object:
+        return uint64_t { 1 } << static_cast<unsigned>(base);
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
 
-MemoryAccess memoryAccessOf(const Function&, const Value&);
+inline constexpr LocationMasks placesUnderLengthsOfLists { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths } };
 
-enum class LocationStability : uint8_t { Unknown, ChangedByOwnStores, UnchangedDuringActivation };
+template<typename ProgramWithLocationBits>
+ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, const MemoryLocation& location)
+{
+    if (location.isEntireHeap())
+        return LocationMasks::entireHeap;
 
-LocationStability stabilityOf(const Program&, const Value& access, const MemoryAccess&);
-// The location has been stored to wherever a function that reads it is entered, and not sooner. In the function's own body that is everywhere. A copy of the body in another function names a fact that says where it begins.
-bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&);
-// The function around a copy may run and never enter the copy, with the location never stored to.
-bool holdsDeclaredTypeOnlyBehindEntryOfCopy(const LocationFlow&);
-bool holdsDeclaredTypeOnlyBehindEntry(const Program&, const Function&, const Value& read);
-// What flow says of the variable of a module or of an enclosing function that the operation reads. Null for any other operation, and for a field that holds no value of the program.
-const LocationFlow* flowOfVariableReadBy(const Program&, const Value&);
-// A read of a module variable names the fact. A read of an environment field has no room for one: it says that the word may be anything, and the cast behind it names the fact.
-bool namesFactOrGivesWordThatMayBeAnything(const Value& read);
-// The frame, or one around it, is the copy of a callee that was predicted.
-bool liesInCopyOfPredictedCallee(const Function&, uint32_t inlineFrame);
+    switch (location.heap()) {
+    case AbstractHeap::ModuleVariables:
+        return locationMaskOfBit(program.locationBitOf(location.variable()));
+    case AbstractHeap::EnvironmentFields:
+        return locationMaskOfBit(program.locationBitOf(location.environmentLayout()), location.environmentFieldIndex());
+    case AbstractHeap::MemberGuards:
+        return locationMaskOfBit(program.locationBitOf(location.guardedLayout()));
+    case AbstractHeap::ObjectFields:
+    case AbstractHeap::NamedProperties:
+        return locationMaskOfBit(program.types.locationBitOf(location.key()));
+    case AbstractHeap::Elements:
+        return locationMaskOfElementBase(location.elementBase());
+    case AbstractHeap::ShapeWords:
+        return LocationMasks::entireHeap;
+    case AbstractHeap::OrderWords:
+    case AbstractHeap::PrototypeLinks:
+    case AbstractHeap::ArrayStorage:
+    case AbstractHeap::TypedArrayStorage:
+    case AbstractHeap::TypedArrayElements:
+    case AbstractHeap::CollectionStorage:
+    case AbstractHeap::CollectionEntries:
+    case AbstractHeap::InternalFields:
+    case AbstractHeap::RegExpState:
+    case AbstractHeap::PromiseState:
+    case AbstractHeap::StringStorage:
+    case AbstractHeap::StringBuilderContents:
+    case AbstractHeap::ParserState:
+    case AbstractHeap::ExternalState:
+    case AbstractHeap::AllocatorState:
+    case AbstractHeap::RuntimeState:
+    case AbstractHeap::CalleesInFrames:
+    case AbstractHeap::ArrayLengths:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 } } } // namespace JSC::AOT::Typed
 

@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRuntimeReporter.h"
 #include "CCallHelpers.h"
 #include "CalleeBits.h"
 #include "JITCompilation.h"
@@ -48,15 +49,37 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace Wasm {
 
-IPIntPlan::IPIntPlan(VM& vm, Vector<uint8_t>&& source, CompilerMode compilerMode, CompletionTask&& task)
+IPIntPlan::IPIntPlan(VM& vm, Vector<uint8_t>&& source, CompilerMode compilerMode, CompletionTask&& task, UsesCodeInImage usesCodeInImage)
     : Base(vm, WTF::move(source), compilerMode, WTF::move(task))
 {
-    if (!parseAndValidateModule(m_source.span()))
+    parseSource(vm, m_source.span(), usesCodeInImage);
+}
+
+IPIntPlan::IPIntPlan(VM& vm, std::span<const uint8_t> source, CompilerMode compilerMode, CompletionTask&& task)
+    : Base(vm, Vector<uint8_t> { }, compilerMode, WTF::move(task))
+{
+    parseSource(vm, source);
+}
+
+void IPIntPlan::parseSource(VM& vm, std::span<const uint8_t> source, UsesCodeInImage usesCodeInImage)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    bool looksInImages = usesCodeInImage == UsesCodeInImage::Yes && !Options::useBBQJIT() && !Options::useOMGJIT();
+    if (looksInImages)
+        m_moduleInformation->moduleWithSkippedFunctions = CodeInImage::findBeforeParsing(source, m_moduleInformation.get());
+#endif
+    if (!parseAndValidateModule(source))
         return;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    if (!Options::useBBQJIT() && !Options::useOMGJIT()) {
+    if (looksInImages) {
+        bool hasSkippedBodies = m_moduleInformation->moduleWithSkippedFunctions;
         m_moduleInImage = CodeInImage::find(m_moduleInformation.get());
+        RELEASE_ASSERT(!hasSkippedBodies || m_moduleInImage);
         m_moduleInformation->moduleWithSkippedFunctions = m_moduleInImage;
+#if ENABLE(AOT)
+        if (hasSkippedBodies && vm.hasCompiledCode())
+            AOT::countEvent(vm, AOT::RuntimeCounterID::WasmModulesFoundBeforeParsing);
+#endif
     }
 #endif
     prepare();
@@ -99,18 +122,17 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
     auto functionIndexSpace = m_moduleInformation->toSpaceIndex(functionIndex);
     ASSERT_UNUSED(functionIndexSpace, &m_moduleInformation->rtt(functionIndexSpace) == &m_moduleInformation->rtt(typeSignatureIndex));
 
+    std::optional<FunctionIPIntMetadataGenerator> imageFunctionMetadata;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (m_moduleInImage) {
-        const FunctionInImage& functionInImage = CodeInImage::functionsOf(*m_moduleInImage)[functionIndex.rawIndex()];
-        if (functionInImage.hasCode) {
-            if (functionInImage.usesVectors)
-                m_moduleInformation->markUsesSIMD(functionIndex);
-            m_moduleInformation->doneSeeingFunction(functionIndex);
-            m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.span());
-        }
+        if (CodeInImage::functionsOf(*m_moduleInImage, ImageCodeFlavor::Checking)[functionIndex.rawIndex()].usesVectors)
+            m_moduleInformation->markUsesSIMD(functionIndex);
+        m_moduleInformation->doneSeeingFunction(functionIndex);
+        static constexpr std::array<uint8_t, 1> noBytecode { };
+        imageFunctionMetadata.emplace(functionIndex, function.data.isEmpty() ? std::span<const uint8_t> { noBytecode } : function.data.span());
     }
 #endif
-    if (!m_wasmInternalFunctions[functionIndex]) {
+    if (!imageFunctionMetadata && !m_wasmInternalFunctions[functionIndex]) {
         beginCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
         auto parseAndCompileResult = parseAndCompileMetadata(function.data, signature, m_moduleInformation.get(), functionIndex);
         endCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
@@ -125,7 +147,7 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
     }
 
     {
-        auto callee = IPIntCallee::create(*m_wasmInternalFunctions[functionIndex], functionIndexSpace, signature, { });
+        auto callee = IPIntCallee::create(imageFunctionMetadata ? *imageFunctionMetadata : *m_wasmInternalFunctions[functionIndex], functionIndexSpace, signature, { });
         ASSERT(!callee->entrypoint());
         bool usesSIMD = m_moduleInformation->usesSIMD(functionIndex);
         // Immediately tier up to BBQ for SIMD, if necesary.

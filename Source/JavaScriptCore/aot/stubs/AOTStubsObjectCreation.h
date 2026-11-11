@@ -16,7 +16,6 @@ namespace JSC { namespace AOT {
 
 class StubAssembler;
 
-// base[offset + 8 * i] = argument register firstValueArgument + i for i < count, 0 for count <= i < end. Clobbers nothing.
 void emitStoreValuesAndClear(StubAssembler&, unsigned firstValueArgument, unsigned count, unsigned end, GPRReg base, size_t offset);
 
 } } // namespace JSC::AOT

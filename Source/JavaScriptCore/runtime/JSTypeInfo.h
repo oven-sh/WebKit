@@ -64,9 +64,14 @@ static constexpr unsigned OverridesPut = 1 << 18;
 static constexpr unsigned WriteHooksHonorImmutableProperties = 1 << 19;
 static constexpr unsigned GetOwnPropertySlotMayBeWrongAboutDontEnum = 1 << 20;
 static constexpr unsigned OverridesIsExtensible = 1 << 21;
-static constexpr unsigned HasPristineNames = 1 << 22; // Structure::setPristineBits() alone sets it. IsPristine is what the cells copy: the same, and for an array only beside pristine elements.
+static constexpr unsigned HasPristineNames = 1 << 22; // Structure::setPristineBits() alone sets it. IsPristine is what the cells copy: the same, and where pristineFlagOfCellCoversElements() only beside pristine elements.
 
 static constexpr unsigned numberOfInlineBits = 8;
+
+constexpr bool pristineFlagOfCellCoversElements(JSType type)
+{
+    return type == ArrayType || type == DerivedArrayType || type == JSMapType || type == JSSetType || type == JSWeakMapType || type == JSWeakSetType;
+}
 
 class TypeInfo {
 public:

@@ -1,0 +1,29 @@
+# A store of `length` makes room for as many places as it names. That room is booked and paid for like the places of a written list. It cost one operation and booked nothing.
+# for (let n = 0; n < 2000; n++) { const list = []; list.length = 99999; new RegExp("b" + n); }   The texts are printed in the order of their characters: /b1999/ would stand in front of /b99/.
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /b1999/
+# CHECK: text /b99/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Integer integer=99999
+    v2 = Undefined
+    v3 = String string="b"
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: anything):
+    LoopHint
+    v7 = NewArray
+    PropSet v7, v1 key="length"
+    v9 = Add v3, v5
+    v10 = Construct v0, -, v9
+    v11 = Increment v5
+    v12 = Integer integer=2000
+    v13 = Less v11, v12
+    Branch v13 -> taken b1(v11), notTaken b2()
+  b2():
+    Return v4
+}

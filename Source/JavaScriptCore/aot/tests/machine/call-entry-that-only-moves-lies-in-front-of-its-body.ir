@@ -1,0 +1,9 @@
+# A generic call entry that only moves words is no unit. Its moves lie in front of the primary entry of the body, and the word of a closure names them: the body itself where nothing has to move.
+# `this` moves, and captures are loaded. Where the function has a parameter guard, the guard is what the entry goes on to.
+# RUN: units-with-code f1:GenericCallEntry f3:GenericCallEntry f7:GenericCallEntry mechanisms=none
+# CHECK: unit f1:GenericCallEntry fused into f1:Body, 0 bytes
+# CHECK-NEXT: unit f3:GenericCallEntry fused into f3:Body, {{*}} bytes
+# CHECK-NEXT: unit f7:GenericCallEntry fused into f7:Body, {{*}} bytes
+# RUN(GUARD): units-with-code f4:GenericCallEntry mechanisms=all
+# GUARD: unit f4:GenericCallEntry fused into f4:ParameterGuard, 0 bytes
+# PROGRAM-OF: ../answers/closures-called-by-value-with-few-and-many-arguments.ir

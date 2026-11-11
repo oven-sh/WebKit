@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
-#include "AOTVerifier.h"
 #include <memory>
 #include <wtf/Forward.h>
 
@@ -18,7 +17,7 @@ class BuildContext;
 
 namespace Typed {
 
-std::unique_ptr<Program> parseProgram(StringView text, IRForm, BuildContext&, const VerifierInputs& = { });
+std::unique_ptr<Program> parseProgram(StringView text, BuildContext&);
 
 } // namespace Typed
 

@@ -1,0 +1,7 @@
+# the same function with calls of built-ins withheld: the RegExp is constructed by value
+# RUN: walk f1 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Construct
+# RUN(NEVER): walk f1 mechanisms=all-BuiltinCalls
+# NEVER-NOT: = NewRegExp
+# PROGRAM-OF: regexp-made-of-what-is-no-text-is-the-literal.ir

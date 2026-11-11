@@ -1,0 +1,84 @@
+# function make(x: any) { return new Array(x); }   function call(x: any) { return Array(x); }   function ofANumber(n: number) { return new Array(n); }   function ofALength(s: string) { return new Array(s.length); }
+# function ofAWrittenText() { return new Array("x"); }   function ofTwo(x: any, y: any) { return new Array(x, y); }
+# `new Array(x)`: a whole number is the length, another number is refused, whatever else is the one element. Where x is proven a whole number the list is made in line (NewArrayLike). Where it only may be one, the call went to the host:
+# a host frame, and a list whose storage is undecided, so that the first store into it left the compiled code too: 561 instructions a list more than in line.
+# It is one call of a run-time operation now, without a host frame and shorter at the site than the call it replaces (24 bytes for 56). A whole number gives that many holes in storage that stores in line take. It runs no other code.
+# RUN: walk f1 mechanisms=all
+# CHECK: = NewArrayOfGiven v0
+# RUN(HOST): walk f1 mechanisms=all
+# HOST-NOT: = CallBuiltin
+# RUN(QUIET): walk f1 mechanisms=all
+# QUIET-NOT: mayCallUnknownCode
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: = NewArrayOfGiven v0
+# RUN(NUMBER): walk f3 mechanisms=all
+# NUMBER: = NewArrayOfGiven v0
+# What is proven a whole number is made in line as before; what cannot be a whole number, and two operands, go as before.
+# RUN(LENGTH): walk f4 mechanisms=all
+# LENGTH: = NewArrayLike
+# RUN(TEXT): walk f5 mechanisms=all
+# TEXT-NOT: NewArrayOfGiven
+# RUN(TWO): walk f6 mechanisms=all
+# TWO-NOT: NewArrayOfGiven
+# RUN(ANSWER): run-in-shell globalThis.sink = (make, call, ofANumber, ofALength, ofAWrittenText, ofTwo) => { const say = f => { try { const a = f(); return a.length + ":" + (0 in a) + ":" + String(a[0]); } catch (e) { return e.constructor.name; } }; for (const f of [make, call]) print([3, 0, -0, "3", true, null, undefined, 3n, 3.0, 2 ** 31, 100000].map(x => say(() => f(x))).join(" ")); print([-1, 1.5, NaN, 2 ** 32, Infinity, -Infinity].map(x => say(() => make(x))).join(" ")); print(say(() => make([7])), say(() => make({ valueOf() { throw new Error("asked"); } })).slice(0, 6), say(() => ofANumber(2)), say(() => ofANumber(2.5)), say(() => ofALength("abc")), say(() => ofAWrittenText()), say(() => ofTwo(1, 2))); const filled = make(3); filled[0] = { a: 1 }; filled[1] = 0.5; filled[2] = "s"; print(JSON.stringify(filled), make(2).concat([1]).length, Array.isArray(make(1)), Object.getPrototypeOf(make(1)) === Array.prototype, make(4).fill(7).join()); };
+# ANSWER: 3:false:undefined 0:false:undefined 0:false:undefined 1:true:3 1:true:true 1:true:null 1:true:undefined 1:true:3 3:false:undefined 2147483648:false:undefined 100000:false:undefined
+# ANSWER-NEXT: 3:false:undefined 0:false:undefined 0:false:undefined 1:true:3 1:true:true 1:true:null 1:true:undefined 1:true:3 3:false:undefined 2147483648:false:undefined 100000:false:undefined
+# ANSWER-NEXT: RangeError RangeError RangeError RangeError RangeError RangeError
+# ANSWER-NEXT: 1:true:7 1:true 2:false:undefined RangeError 3:false:undefined 1:true:x 2:true:1
+# ANSWER-NEXT: [{"a":1},0.5,"s"] 3 true true 7,7,7,7
+# ANSWER-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Construct v1, -, v0 calleeName="Array"
+    Return v2
+}
+function f2 name="call" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Call v1, -, v0 calleeName="Array"
+    ReturnCall v2
+}
+function f3 name="ofANumber" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=Array
+    v2 = Construct v1, -, v0 calleeName="Array"
+    Return v2
+}
+function f4 name="ofALength" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=Array
+    v2 = PropGet v0 key="length"
+    v3 = Construct v1, -, v2 calleeName="Array"
+    Return v3
+}
+function f5 name="ofAWrittenText" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = String string="x"
+    v2 = Construct v0, -, v1 calleeName="Array"
+    Return v2
+}
+function f6 name="ofTwo" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Array
+    v3 = Construct v2, -, v0, v1 calleeName="Array"
+    Return v3
+}

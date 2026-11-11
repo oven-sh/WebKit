@@ -321,7 +321,6 @@ export function buildDispatches(builder: ModelBuilder, types: TypeInterner): voi
       const overloads = builtin.overloads.filter(overload => overload.mode === mode);
       if (overloads.length === 0) continue;
       const describedAs = builder.bindingsOfFunctions.get(builtin) ?? builtin;
-      // A dispatch goes with the signatures of its file, in whose place there may be some that are written by hand.
       const written = declared
         .get(describedAs)
         ?.find(

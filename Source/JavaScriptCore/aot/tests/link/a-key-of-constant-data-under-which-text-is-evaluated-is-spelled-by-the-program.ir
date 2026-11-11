@@ -1,0 +1,29 @@
+# The keys of a record of constants become texts where somebody lists them. A function is read under a key nobody knows, and what is found is called.
+# sink({ constructor: 1 }); sink(function () {}[given]("return 7"));
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "constructor"
+
+layout L0 name="Listed" module=m0 fields=[{key="constructor" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = PropGet v0 key="given" [isFreeName]
+    v3 = Data data=d0
+    v4 = Call v1, -, v3
+    v5 = NewClosure function=f1
+    v6 = ElemGet v5, v2
+    v7 = String string="return 7"
+    v8 = Call v6, v5, v7
+    v9 = Call v1, -, v8
+    v10 = Undefined
+    Return v10
+}
+function f1 name="held" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+data d0 root=Object{layout=L0 members=[{key="constructor" value=Number{value=1}}]} module=m0

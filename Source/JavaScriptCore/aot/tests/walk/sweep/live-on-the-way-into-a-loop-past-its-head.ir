@@ -1,0 +1,33 @@
+# The loop of b1 and b2 has two ways in: b0 enters it at b1, and b3 at b2.
+# v2 is read in b1 alone. From b3 the way to that read leads over b2 and back to b1, so the await in b3 holds v2: what is live at the head of the loop is live on every edge into the loop.
+# RUN: sweep-code
+# CHECK: # live at v7 [v0, v2]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0
+
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: boolean @Boolean = TypeTest v2 testedType=undefined
+#     Branch v3 -> taken b1(), notTaken b3()
+#   b1() isInLoop=true isLoopHead=true:
+#     v4: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b2()
+#   b2() isInLoop=true:
+#     v5: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: boolean @Boolean = TypeTest v5 testedType=undefined
+#     Branch v6 -> taken b1(), notTaken b4()
+#   b3():
+#     v7: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b2()
+#   b4():
+#     Return v0
+# }
+# -- end of code

@@ -1,0 +1,86 @@
+# function weigh(m, xs) { let s = 0; for (let i = 0; i < xs.length; i++) s += m[0] * xs[i] + m[1]; return s; }
+# function stores(m, o, xs) { let s = 0; for (let i = 0; i < xs.length; i++) { s += m[0] * xs[i] + m[1]; o[0] = s; } return s; }
+# m[0] and m[1] are the same in every turn of weigh(): no turn stores an element of any list or runs other code. They are asked for and read once, in front of the typed copy of the loop. In stores() `o` may be `m`: nothing is read in front.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsElementPresent {{*}} arrayStorage=Double [keyIsIntegral, admitsInt32Storage]
+# CHECK: = GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isPresent, admitsInt32Storage]
+# RUN(COUNT): compile NumericElementReadsHoisted mechanisms=all
+# COUNT-NOT: statistic NumericElementReadsHoisted 0
+# RUN(ANSWER): run-in-shell globalThis.sink = (weigh, stores) => { const say = run => { try { print(run()); } catch (error) { print(error.constructor.name); } }; const written = () => { const l = [0.5, 1.5, 2.5]; l[2] = 3.5; return l; }; say(() => weigh(written(), [1, 2, 3])); say(() => weigh([2, 3], [1, 2, 3])); say(() => weigh(null, [])); say(() => weigh(undefined, [])); say(() => weigh(null, [1])); say(() => weigh([], [1])); say(() => weigh([, 1.5], [1, 2])); say(() => weigh([0.5], [1, 2])); say(() => { const view = new Float64Array(2); view[0] = 0.5; view[1] = 1.5; return weigh(view, [1, 2, 3]); }); say(() => { const m = written(); return stores(m, m, [1, 2, 3]); }); say(() => stores(written(), written(), [1, 2, 3])); say(() => { let reads = 0; const m = [0.5, 1.5]; Object.defineProperty(m, 0, { get() { return ++reads; } }); return weigh(m, [1, 2, 3]) + " " + reads; }); };
+# ANSWER: 7.5
+# ANSWER-NEXT: 21
+# ANSWER-NEXT: 0
+# ANSWER-NEXT: 0
+# ANSWER-NEXT: TypeError
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: 7.5
+# ANSWER-NEXT: 31.5
+# ANSWER-NEXT: 7.5
+# ANSWER-NEXT: 18.5 3
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="weigh" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = PropGet v1 key="length"
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Integer
+    v10 = ElemGet v0, v9
+    v11 = ElemGet v1, v5
+    v12 = Mul v10, v11
+    v13 = Integer integer=1
+    v14 = ElemGet v0, v13
+    v15 = Add v12, v14
+    v16 = Add v4, v15
+    v17 = Increment v5
+    Jump -> next b1(v16, v17)
+  b3():
+    Return v4
+}
+function f2 name="stores" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>, v2: undefined|null|Array<number>):
+    v3 = Integer
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v2 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Integer
+    v11 = ElemGet v0, v10
+    v12 = ElemGet v2, v6
+    v13 = Mul v11, v12
+    v14 = Integer integer=1
+    v15 = ElemGet v0, v14
+    v16 = Add v13, v15
+    v17 = Add v5, v16
+    v18 = Integer
+    ElemSet v1, v18, v17
+    v20 = Increment v6
+    Jump -> next b1(v17, v20)
+  b3():
+    Return v5
+}

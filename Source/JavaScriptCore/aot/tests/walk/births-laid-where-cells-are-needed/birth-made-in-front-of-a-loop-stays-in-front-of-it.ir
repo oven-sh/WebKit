@@ -1,0 +1,33 @@
+# const p = [a]; for (;;) { if (c) keep(p); if (!more()) return a; }
+# The one need stands in an arm of a loop that the birth stands outside of. Laid there it would make a list a turn, and keep() would be handed another object each time. It climbs to the last block in front of the loop, which is its own.
+# RUN: sweep-code
+# CHECK: b0(
+# CHECK-NEXT: v3: Array @Cell = NewArray v0
+# CHECK-NEXT: Jump
+# CHECK-NOT: NewArray
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     Jump -> next b1()
+#   b1() isInLoop=true isLoopHead=true:
+#     Branch v2 -> taken b2(), notTaken b3()
+#   b2() isInLoop=true:
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b3()
+#   b3() isInLoop=true:
+#     v5: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: boolean @Boolean = TypeTest v5 testedType=undefined
+#     Branch v6 -> taken b1(), notTaken b4()
+#   b4():
+#     Return v0
+# }
+# -- end of code

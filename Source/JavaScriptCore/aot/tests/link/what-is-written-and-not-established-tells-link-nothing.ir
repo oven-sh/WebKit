@@ -1,0 +1,38 @@
+# WHAT IS WRITTEN AND NOT ESTABLISHED TELLS Link NOTHING. Link's one input from a declaration is what is ESTABLISHED (LinkFlow's bind(): Node::typeOfPosition = Program::provenTypeOf()). A written, guarded type is held at run time by a way out:
+# a guard at the entry, a slot that a misfit leaves. What Link proves is held by a stop. So a proof may not rest on a written type: `interface N { v: number }` is widened by right TypeScript with no cast, and the program would be stopped.
+# Tried twice, it also lost: every parameter that Link proves is a place that every road must ask. Here the object and the functions have escaped: the field written `number` and the parameter written L0 stay unknown,
+# and so does what is returned: the field read off the object in sight, the field read off the parameter, the parameter itself. Whoever gives Link a second input turns this test.
+# RUN: link functions fields mechanisms=all
+# CHECK: function f0 cycle=0 rank=0 returns=
+# CHECK: function f1 cycle=1 rank=1 returns=
+# CHECK-NEXT: parameter 0 expected=L0 declared
+# CHECK: function f2 cycle=2 rank=1 returns=
+# CHECK-NEXT: parameter 0 expected=L0 declared
+# CHECK: field L0.0 "v" of-birth
+
+layout L0 module=m0 fields=[{key="v" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v0, v3 key="kept"
+    v5 = NewClosure function=f1
+    PropSet v0, v5 key="read"
+    v7 = NewClosure function=f2
+    PropSet v0, v7 key="same"
+    v9 = PropGet v3 key="v"
+    Return v9
+}
+function f1 name="read" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="v"
+    Return v1
+}
+function f2 name="same" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=L0}] {
+  b0(v0: L0):
+    Return v0
+}

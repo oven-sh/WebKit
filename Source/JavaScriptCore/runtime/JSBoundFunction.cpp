@@ -26,7 +26,6 @@
 #include "config.h"
 #include "JSBoundFunction.h"
 
-#include "AOTAllocationCounts.h"
 #include "AOTCompiledCallee.h"
 #include "DeferTermination.h"
 #include "ExecutableBaseInlines.h"
@@ -253,10 +252,6 @@ JSBoundFunction::JSBoundFunction(VM& vm, NativeExecutable* executable, JSGlobalO
     , m_boundArgsLength(boundArgsLength)
     , m_isTainted(taintedness >= SourceTaintedOrigin::IndirectlyTainted)
 {
-#if ENABLE(AOT)
-    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
-        AOT::AllocationCounts::didMake(vm, "bound_function"_s, targetFunction->classInfo()->className.characters());
-#endif
     m_boundArgs[0].setWithoutWriteBarrier(arg0);
     m_boundArgs[1].setWithoutWriteBarrier(arg1);
     m_boundArgs[2].setWithoutWriteBarrier(arg2);

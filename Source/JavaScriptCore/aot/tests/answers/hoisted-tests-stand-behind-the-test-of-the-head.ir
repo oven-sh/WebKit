@@ -1,0 +1,65 @@
+# type Row = { n: number }
+# function total(rows: Row[], start: number) { let sum = 0; for (let i = start; i < rows.length; i++) sum = sum + rows[i].n; return sum; }
+# RUN(ANSWERS): run-in-shell globalThis.empty = []; globalThis.rows = [{ n: 1 }, { n: 2 }]; globalThis.numbers = [1.5, 2.5];
+# ANSWERS: 0 3 NaN 0 2 3
+# ANSWERS-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="empty"
+    v3 = PropGet v1 key="rows"
+    v4 = PropGet v1 key="numbers"
+    v5 = Integer
+    v6 = Integer integer=1
+    v7 = Integer integer=5
+    v8 = Integer integer=3
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewArray v10
+    v12 = PropGet v1 key="id" [isFreeName]
+    v13 = Call v12, -, v11 calleeName="id"
+    v14 = Call v0, -, v2, v5 calleeName="total"
+    v15 = Call v0, -, v3, v5 calleeName="total"
+    v16 = Call v0, -, v4, v5 calleeName="total"
+    v17 = Call v0, -, v4, v7 calleeName="total"
+    v18 = Call v0, -, v3, v6 calleeName="total"
+    v19 = Call v0, -, v13, v5 calleeName="total"
+    v20 = String string=" "
+    v21 = Add v14, v20
+    v22 = Add v21, v15
+    v23 = Add v22, v20
+    v24 = Add v23, v16
+    v25 = Add v24, v20
+    v26 = Add v25, v17
+    v27 = Add v26, v20
+    v28 = Add v27, v18
+    v29 = Add v28, v20
+    v30 = Add v29, v19
+    v31 = PropGet v1 key="print" [isFreeName]
+    v32 = Call v31, -, v30 calleeName="print"
+    Return v32
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v2, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v10 = PropGet v9 key="n"
+    v11 = Add v3, v10
+    v12 = Increment v4
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v3
+}

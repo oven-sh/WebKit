@@ -1,0 +1,38 @@
+# the same store under a handler of the function: what is thrown is caught, the body goes on to its Return, and the store has run by then
+# function set(o, v) { try { if (v < 0) { o.bad = v; throw v; } } catch { } o.v = v; }  set({ v: 0, bad: 0 }, 1);
+# RUN: summary f1
+# CHECK: summary f1 {{*}}has-handler
+# CHECK: access {{*}}Store Parameter 0 "bad"
+# RUN(NEVER): summary f1
+# NEVER-NOT: on-no-way-to-return
+# NEVER-NOT: writes-less-on-return
+
+layout L0 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}, {key="bad" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = Integer integer=1
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v2, v3
+    Return v5
+}
+function f1 name="set" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    PropSet v0, v1 key="bad"
+    Throw v1
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    Jump -> next b3()
+  b3():
+    PropSet v0, v1 key="v"
+    v7 = Undefined
+    Return v7
+}

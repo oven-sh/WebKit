@@ -301,7 +301,12 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
         return;
     }
     VM& vm = globalObject->vm();
+#if USE(BUN_JSC_ADDITIONS)
+    // Two loads of one key can be in flight (a mock laid over a mock whose factory is pending), and the other one may have failed first.
+    ASSERT(m_status == Status::Fetching || m_status == Status::EvaluationFailed);
+#else
     ASSERT(m_status == Status::Fetching);
+#endif
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
 }

@@ -1,0 +1,50 @@
+# unseen code has a Point, so every change may have happened to one. A passed test of the shape says which slots the cell has and nothing of what has become of them:
+# behind it each slot that the stretch reads is looked at once, in front of both arms, and whichever test fails leads to the one closed arm
+# function list(o: Point) { return [o.x, o.y, o.x]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# CHECK: = IsSlotFilled {{*}}key="x"
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# CHECK: [[closed]]() frequency=Rare:
+# CHECK: = IsSlotFilled {{*}}key="y"
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# RUN(LOOKS): walk f1 mechanisms=none+TypedOperations+Guesses
+# LOOKS-COUNT-2: = IsSlotFilled
+# LOOKS-NOT: = IsSlotFilled
+# RUN(TYPED): walk f1 mechanisms=none+TypedOperations+Guesses
+# TYPED-COUNT-3: = GetSlot {{*}}level=Proven
+# TYPED-NOT: = GetSlot
+# RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+Guesses
+# CLOSED-COUNT-3: = PropGet
+# CLOSED-NOT: = PropGet
+# RUN(FOLDED): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# FOLDED-COUNT-2: = GetSlot {{*}}level=Proven
+# FOLDED-NOT: = GetSlot
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    PropDefine v4, v3 key="y"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    Return v8
+}
+function f1 name="list" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="x"
+    v3 = PropGet v1 key="y"
+    v4 = PropGet v1 key="x"
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+}

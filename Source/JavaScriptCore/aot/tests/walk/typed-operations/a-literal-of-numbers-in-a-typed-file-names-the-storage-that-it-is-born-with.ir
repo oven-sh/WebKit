@@ -1,0 +1,97 @@
+# In a typed file a literal whose elements are all proven numbers, written to hold numbers, of which one may have a fraction, is born for doubles, as plain bears it: the read in line of a number off a list asks for that kind first..
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray {{*}}arrayStorage=Double
+# Int32s alone name nothing yet: the short literal out of registers is one call of a stub for boxed elements and for doubles; for int32 it would be an allocation, the stores and a slow way in line (a literal of three: 13 > 21 steps).
+# Since the stub for short literals of int32 is back, int32s alone name their kind where the function only hands the literal on; one that it goes on using names nothing: a fraction stored into it would convert it at once.
+# RUN(WHOLE): walk f2 mechanisms=all
+# WHOLE-LABEL: code f2:Body
+# WHOLE: = NewArray {{*}}arrayStorage=Int32
+# RUN(USED): walk f6 mechanisms=all
+# USED-LABEL: code f6:Body
+# USED: = NewArray
+# RUN(USEDSILENT): walk f6 mechanisms=all
+# USEDSILENT-NOT: = NewArray {{*}}arrayStorage=
+# An element that may be something else, or a list written to hold more, names nothing.
+# RUN(ANYTHING): walk f3 mechanisms=all
+# ANYTHING-LABEL: code f3:Body
+# ANYTHING: = NewArray
+# RUN(SILENT): walk f3 mechanisms=all
+# SILENT-NOT: arrayStorage=
+# RUN(WIDER): walk f4 mechanisms=all
+# WIDER-LABEL: code f4:Body
+# WIDER: = NewArray
+# RUN(WIDERSILENT): walk f4 mechanisms=all
+# WIDERSILENT-NOT: arrayStorage=
+# In a file without types the readers of a list ask for the kind of its storage in front of their loops: a literal that is only handed on names its kind there too.
+# RUN(UNTYPED): walk f5 mechanisms=all
+# UNTYPED-LABEL: code f5:Body
+# UNTYPED: = NewArray {{*}}arrayStorage=Double
+# RUN(NONE): walk f1 mechanisms=none
+# NONE-NOT: arrayStorage=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="fractions" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Double number=0.5
+    v4 = Add v2, v3
+    v5 = NewArray v4, v2, v3 contents=number
+    Return v5
+}
+function f2 name="whole" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Integer integer=7
+    v4 = NewArray v2, v3 contents=number
+    Return v4
+}
+function f3 name="unknown" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=0.5
+    v2 = NewArray v0, v1 contents=number
+    Return v2
+}
+function f4 name="wider" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Double number=0.5
+    v4 = NewArray v2, v3 contents=number|string
+    Return v4
+}
+function f5 name="untyped" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Double number=0.5
+    v4 = Add v2, v3
+    v5 = NewArray v4, v2, v3 contents=number
+    Return v5
+}
+function f6 name="used" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = Integer integer=7
+    v4 = NewArray v2, v3 contents=number
+    v5 = Double number=0.5
+    ElemSet v4, v1, v5
+    Return v4
+}

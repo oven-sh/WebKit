@@ -15,7 +15,6 @@
 #include "AOTCompiledStructure.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
-#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -26,11 +25,11 @@
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSlimClosure.h"
-#include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "ArrayConventions.h"
 #include "Butterfly.h"
@@ -48,6 +47,7 @@
 #include <bit>
 #include <optional>
 #include <span>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
@@ -77,15 +77,14 @@ void defineDataProperty(Instance* instance, JSObject* object, PropertyName name,
         object->putDirect(vm, name, value, slot);
     else
         object->createDataProperty(instance->globalObject, name, value, true);
+    holdClosureToLackingName(vm, object, name.uid());
 }
 
-// These are the arrays for which JSArray::defineOwnProperty() comes down to putDirectIndex(): a length that is read-only puts the array into sparse mode. The text of the index is never made.
 static bool canDefineElementsDirectly(JSObject* object)
 {
     return (isJSArray(object) || object->type() == FinalObjectType) && !object->structure()->hasImmutableIndexedProperties() && !object->inSparseIndexingMode() && !isCopyOnWrite(object->indexingMode());
 }
 
-// What the stub StoreElementOfCompiledObject makes, out of the same allocators: where one of them has run out, this fills it again.
 static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t index, JSValue value)
 {
     VM& vm = *instance->vm;
@@ -100,35 +99,40 @@ static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t i
     return JSFinalObject::createWithButterfly(vm, instance->realm.extraPropertiesWithElementsStructure, butterfly);
 }
 
-// The stub gives the next object with the Structure `before` its first element. It stores as it defines, so right above the object is the Object.prototype of its realm, which has no elements and takes none.
-static void rememberStructureWithFirstElement(Instance* instance, const CompiledStructure& before, const CompiledStructure& after, JSObject& extra)
+
+static void rememberStructureWithFirstElement(Instance* instance, const CompiledStructure& before, const CompiledStructure& after, const JSObject& extra)
 {
     Structure* withElements = instance->realm.extraPropertiesWithElementsStructure;
-    if (extra.structure() != withElements || instance->vm->aotState().validatesRuntime)
+    if (extra.structure() != withElements || !before.extraPropertiesSlot() || before.hasOtherPrototype() || before.hasKeyOrderOfOneObject())
         return;
-    if (!before.extraPropertiesSlot() || before.hasOtherPrototype() || before.storedPrototype() != JSValue(instance->realm.objectPrototype) || before.typeInfoBlob() != after.typeInfoBlob())
+    if (before.storedPrototype() != JSValue(instance->realm.objectPrototype) || before.typeInfoBlob() != after.typeInfoBlob())
         return;
     EncodedJSValue inPlaceOfPrototype = std::bit_cast<EncodedJSValue>(withElements);
     std::span { instance->objects.prototypeTransitions, numberOfPrototypeTransitions }[indexOfPrototypeTransition(before.id().bits(), inPlaceOfPrototype)] = { inPlaceOfPrototype, before.id().bits(), after.id().bits() };
 }
 
-bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+enum class ElementStore : bool { Defines, Sets };
+
+template<ElementStore store>
+static ALWAYS_INLINE bool tryStoreElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
 {
     Object* compiled = compiledObjectOrNull(object);
-    if (!compiled || compiled->isNotExtensible() || compiled->structure()->mayBePrototype() || compiled->layout().isClass())
-        return false;
-    State& state = *instance->state;
-    if (!state.tables.addedNames().empty())
+    if (!compiled || compiled->isNotExtensible() || compiled->structure()->mayBePrototype())
         return false;
     VM& vm = *instance->vm;
     JSObject* extra = compiled->extraProperties();
     if (extra && (!is<JSFinalObject>(extra) || extra->inSparseIndexingMode() || isCopyOnWrite(extra->indexingMode()) || extra->structure()->hasImmutableIndexedProperties()))
         return false;
-    if (checksClaimsAboutObjects(vm) && !(extra && extra->hasOwnProperty(instance->globalObject, index)))
-        validateMutation(vm, *compiled, ObjectMutation::AddProperty);
+    bool isThere = extra && extra->canGetIndexQuickly(index);
+    if (!isThere) {
+        if (store == ElementStore::Sets && compiled->needsSlowPutIndexing())
+            return false;
+        if (!(compiled->layout().isClass() ? compiled->mayAddExtraProperty(vm, Identifier::from(vm, index)) : admitsMutation(vm, *compiled, ObjectMutation::AddProperty)))
+            return true;
+    }
     if (!extra) {
         const CompiledStructure* before = WTF::opaque(&compiled->compiledStructure());
-        if (index <= maxIndexOfFirstElementMadeByStub)
+        if (index <= maxIndexOfFirstElementStoredContiguously)
             extra = createExtraPropertiesWithElement(instance, index, value);
         else {
             extra = constructEmptyObject(vm, instance->realm.emptyExtraPropertiesStructure);
@@ -139,9 +143,22 @@ bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint
         ensureStillAliveHere(before);
         return true;
     }
-    extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
-    compiled->didChangeExtraProperties(vm);
+    StructureID structureBefore = extra->structureID();
+    if (!isThere || !extra->trySetIndexQuickly(vm, index, value))
+        extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
+    if (extra->structureID() != structureBefore)
+        compiled->didChangeExtraProperties(vm);
     return true;
+}
+
+bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+{
+    return tryStoreElementOfCompiledObject<ElementStore::Defines>(instance, object, index, value);
+}
+
+bool trySetElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+{
+    return tryStoreElementOfCompiledObject<ElementStore::Sets>(instance, object, index, value);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, EncodedJSValue encodedObject, uint32_t name, EncodedJSValue value))
@@ -149,8 +166,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, Enco
     constexpr Entry entry = Entry::operationAOTDefineById;
     AOT_OPERATION_BEGIN(instance, entry);
     JSObject* object = objectArgument(encodedObject, entry);
-    if (Options::aotCountsPath()) [[unlikely]]
-        instance->state->propertyCaches->countMiss("definition without caches"_s, false, object, identifierAt(instance, name).impl());
     const Identifier& identifier = identifierAt(instance, name);
     if (std::optional<uint32_t> index = parseIndex(identifier); index && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(value)))
         OPERATION_RETURN(scope);
@@ -159,13 +174,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, Enco
     OPERATION_RETURN(scope);
 }
 
-// `{ id, [key]: value }`. As for a store by key: the second object that gets the same name behind the same names has the Structure of its extra properties named, and the stub adds the property to the third.
 static bool tryDefineExtraPropertyAndCache(Instance* instance, JSObject* object, PropertyName name, JSValue value, const PutPropertySlot& slot)
 {
     using Flag = Object::ExtraPropertyStoreFlag;
     VM& vm = *instance->vm;
     Object* compiled = compiledObjectOrNull(object);
-    if (!compiled || compiled->fieldNamed(compiled->state(), name) || !compiled->repeatsExtraPropertyStore(vm, name))
+    if (!compiled || compiled->fieldNamed(compiled->state(), name))
+        return false;
+    JSObject* extra = compiled->extraProperties();
+    Structure* structureOfExtra = extra ? extra->structure() : Instance::of(compiled->structure()->realm())->realm.emptyExtraPropertiesStructure;
+    if (!isValidOffset(structureOfExtra->get(vm, name)) && !repeatsPropertyAddition(structureOfExtra, name.uid()))
         return false;
     compiled->ensureStructureForExtraProperties(vm);
     Structure* structureBefore = WTF::opaque(compiled->structure());
@@ -203,13 +221,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
         if (tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(value)))
             OPERATION_RETURN(scope);
     }
-    Structure* structureBefore = WTF::opaque(object->structure());
-    bool files = isKeyUniqued && !parseIndex(name) && instance->state->propertyCaches->shouldFile(structureBefore->id(), name.impl(), SlotAccess::Define);
-    if (instance->state->propertyCaches->countsNames()) [[unlikely]]
-        instance->state->propertyCaches->countMiss("definition by key"_s, files, object, name.impl());
+    bool files = isKeyUniqued && !parseIndex(name) && instance->state->propertyCaches->shouldFile(object->structureID(), name.impl(), SlotAccess::Define);
     PutPropertySlot slot(object, true);
     if (files && tryDefineExtraPropertyAndCache(instance, object, name, JSValue::decode(value), slot))
         OPERATION_RETURN(scope);
+    Structure* structureBefore = WTF::opaque(object->structure());
     defineDataProperty(instance, object, name, JSValue::decode(value), slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (files)
@@ -220,7 +236,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
-// Every function is created with a name that is configurable, read-only and not enumerable. A descriptor that sets no other attribute only changes the value: `{ value }`, `{ value, configurable: true }`.
 static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* function, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
@@ -235,21 +250,17 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
         if ((rareData && rareData->hasReifiedName()) || !structure->isStructureExtensible() || structure->mayHaveImmutableProperties() || closure->getDirect(vm, name))
             return false;
         if (const LayoutData* classLayout = closure->classData()) {
-            // The fields of a class become properties in front of whatever is defined by name.
             ClassTable& classes = closure->state().objects->classes;
             if (!classLayout->staticFields().empty() || classes.hasStaticMethodNamed(*classLayout, name.uid()))
                 return false;
             closure->setNameProperty(vm, asString(value), attributesAtBirth);
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
         } else {
-            FunctionKindData kind = closure->kind();
-            if (kind.isBound() || kind.hasInitialNamePrefix() || kind.notesLooksForName() || closure->refusesOwnProperty(vm, name))
+            if (closure->kind().hasInitialNamePrefix() || closure->refusesOwnProperty(vm, name))
                 return false;
             auto defined = asString(value)->tryGetValue();
             if (defined->isNull())
                 return false;
-            didLookForNameProperty(vm, closure);
-            // A closure that is told the name it has stays as it is.
             if (defined.data == initialNameProperty(closure->function()))
                 return true;
             closure->setNameProperty(vm, asString(value), attributesAtBirth);
@@ -267,14 +278,9 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
         structure->didReplaceProperty(offset);
         function->putDirectOffset(vm, offset, value);
     }
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String reported = asString(value)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, true);
-    didDefineNameProperty(vm, function, reported);
     return true;
 }
 
-// ValidateAndApplyPropertyDescriptor for a property that is configurable: nothing is refused. What the descriptor leaves out stays as it is, or takes its default where a value becomes an accessor or an accessor a value.
 static NEVER_INLINE Object::LeavingProperty redefinedBy(JSGlobalObject* globalObject, Object::LeavingProperty current, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     bool wasAccessor = current.attributes & PropertyAttribute::Accessor;
@@ -293,6 +299,8 @@ static NEVER_INLINE Object::LeavingProperty redefinedBy(JSGlobalObject* globalOb
 static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
+    if (isPreparedBeforeLookups(vm, name.uid()))
+        return false;
     Object* compiled = compiledObjectOrNull(object);
     if (object->type() == SlimClosureType && !parseIndex(name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name))
         uncheckedDowncast<SlimClosure>(object)->reify(vm);
@@ -305,8 +313,20 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
         attributes |= PropertyAttribute::Accessor;
     else if (!bits.isWritable)
         attributes |= PropertyAttribute::ReadOnly;
+    JSValue stored;
+    if (compiled) {
+        PropertyCaches& caches = *Instance::of(structure->realm())->state->propertyCaches;
+        const AddedExtraProperty* added = caches.findAddedExtraProperty(structure->id(), name.uid());
+        if (added && added->attributes == attributes) {
+            if (isAccessor) [[unlikely]] {
+                stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
+                added = caches.findAddedExtraProperty(structure->id(), name.uid());
+            }
+            if (added && compiled->tryRepeat(vm, *added, isAccessor ? stored : bits.hasValue ? valueOrGetter : jsUndefined()))
+                return true;
+        }
+    }
     const FieldData* field = compiled ? compiled->fieldNamed(compiled->state(), name) : nullptr;
-    // The layout has a field for a getter that the build saw defined, with the attributes it saw.
     if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))
         return true;
     if (field && compiled->isInSlot(*field))
@@ -321,11 +341,15 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
             return true;
         }
     }
-    JSValue stored = bits.hasValue ? valueOrGetter : jsUndefined();
-    if (isAccessor)
+    if (!isAccessor)
+        stored = bits.hasValue ? valueOrGetter : jsUndefined();
+    else if (!stored)
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
     if (compiled)
-        return field ? compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes) : compiled->tryAddAbsentExtraProperty(vm, name, stored, attributes);
+        return field ? compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes) : compiled->tryAddAbsentExtraProperty(vm, name, stored, attributes, Object::MemoryOfAddedNames::WasAskedInVain);
+    auto holdClosureBehindDefinition = makeScopeExit([&] {
+        holdClosureToLackingName(vm, object, name.uid());
+    });
     if (object->tryPutDirectByExistingTransition(vm, name, stored, attributes))
         return true;
     if (isValidOffset(structure->get(vm, name)))
@@ -355,7 +379,6 @@ static ALWAYS_INLINE PropertyDescriptor descriptorFromBits(JSValue valueOrGetter
     return descriptor;
 }
 
-// While this holds, a descriptor object whose prototype is Object.prototype has the members that it lists itself and no others.
 static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
 {
     if (globalObject->propertyDescriptorFastPathWatchpointSet().state() == ClearWatchpoint)
@@ -363,7 +386,6 @@ static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
     return globalObject->propertyDescriptorFastPathWatchpointSet().isStillValid() && globalObject->objectPrototypeChainIsSane();
 }
 
-// These run nobody's code when a property is defined. One that refuses is as it was, but for a list that is cut short, which refuses again where it stopped.
 static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
     auto define = object->methodTable()->defineOwnProperty;
@@ -385,12 +407,8 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
     RELEASE_ASSERT(!(bits.hasValue || bits.hasWritable) || !(bits.hasGet || bits.hasSet));
     if (!descriptorObjectsInheritNoMembers(globalObject)) [[unlikely]]
         return false;
-    ImageOfCellScope imageOfCell(vm, object);
-    bool isDefined = tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isDefined)
+    if (tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits))
         return true;
-    // A closure of the program says by its type that it can be called.
     auto isFunctionOrUndefined = [](JSValue value) {
         return value.isUndefined() || (value.isCell() && isCompiledCalleeType(value.asCell()->type())) || value.isCallable();
     };
@@ -413,7 +431,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     JSValue setter = JSValue::decode(encodedSetter);
     auto bits = std::bit_cast<PropertyDescriptorBits>(descriptorBits);
     if (object.isObject()) [[likely]] {
-        // The string keeps its atom alive.
         Identifier converted;
         StringImpl* text = JSValue::decode(key).isString() ? asString(JSValue::decode(key))->tryGetValueImpl() : nullptr;
         if (!text || !text->isAtom()) {
@@ -427,7 +444,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
         if (isDefined) [[likely]]
             OPERATION_RETURN(scope);
     }
-    // Object.defineProperty() itself refuses, and runs the code of others, in a frame of its own.
     JSObject* literal = constructObjectFromPropertyDescriptor(globalObject, descriptorFromBits(valueOrGetter, setter, bits));
     callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
     OPERATION_RETURN(scope);
@@ -452,8 +468,10 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, Prope
             else
                 getter = current->isGetterNull() ? nullptr : current->getter();
         }
-        if ((isOtherHalf || !isValidOffset(offset)) && object->putDirectNonIndexAccessor(vm, property, GetterSetter::create(vm, globalObject, getter, setter), accessorAttributes))
+        if ((isOtherHalf || !isValidOffset(offset)) && object->putDirectNonIndexAccessor(vm, property, GetterSetter::create(vm, globalObject, getter, setter), accessorAttributes)) {
+            holdClosureToLackingName(vm, object, property.uid());
             return;
+        }
     }
     PropertyDescriptor descriptor;
     if (isGetter)
@@ -480,7 +498,6 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, JSVal
     defineAccessor(globalObject, object, property, function, accessorFlags & accessorIsEnumerable, accessorFlags & accessorIsGetter);
 }
 
-// Compiled code that finds no allocator comes here, and makes the next pair by itself.
 static void prepareAllocationOfAccessors(Instance* instance)
 {
     if (instance->allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::GetterSetter)].allocator) [[likely]]
@@ -546,6 +563,7 @@ static void defineMethod(JSGlobalObject* globalObject, JSObject* holder, Propert
         constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
         if (Structure* structure = holder->structure(); canSkipDefineOwnProperty(vm, holder, structure, key) && !isValidOffset(structure->get(vm, key))) {
             holder->putDirect(vm, key, function, attributes);
+            holdClosureToLackingName(vm, holder, key.uid());
             return;
         }
         holder->methodTable()->defineOwnProperty(holder, globalObject, key, PropertyDescriptor(function, attributes), true);
@@ -575,6 +593,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
     OPERATION_RETURN_IF_EXCEPTION(scope);
     JSObject* member = cellArgument<JSObject>(function, entry);
     MethodKind kind = static_cast<MethodKind>(bits.kind);
+    if (bits.isUnderComputedKey)
+        instance->state->objects->classes.holdDefinitionToNameInRecord(*classLayout, side, bits.index, key.impl(), member);
     {
         ClassTable::MemberDefinition definition(instance->state->objects->classes, *classLayout, side, key.impl());
         SetForScope prototypeBeingDefined(vm.aotState().classPrototypeBeingDefined, side == ClassSide::Prototype ? holder : nullptr);
@@ -582,7 +602,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
             defineMethod(globalObject, holder, key, member, kind);
     }
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    instance->state->objects->classes.didDefineMember(vm, *classLayout, side, holder, key.impl(), member);
+    instance->state->objects->classes.didDefineMember(vm, *classLayout, side, bits.index, holder, key.impl(), member);
     OPERATION_RETURN(scope);
 }
 
@@ -591,7 +611,6 @@ struct OwnPropertyOfPlainObject {
     unsigned attributes { 0 };
 };
 
-// A property without a value is absent. There is no answer for an index, and none where only code of the object's class could give it.
 static std::optional<OwnPropertyOfPlainObject> findOwnPropertyOfPlainObject(VM& vm, JSObject* object, UniquedStringImpl* name)
 {
     if (parseIndex(*name))
@@ -628,8 +647,6 @@ static std::optional<bool> isMarkedAsESModule(JSGlobalObject* globalObject, JSOb
     return slot.getValue(globalObject, marker).toBoolean(globalObject);
 }
 
-// Does all of what TypeScript's __createBinding does, or nothing: false where that would run code of the program, throw, or meet a property that exists.
-// Since TypeScript 4.6 the helper passes on the source's own descriptor for an accessor of an ES module and for a value that can never change.
 static bool tryDefineLiveBinding(JSGlobalObject* globalObject, JSObject* target, JSObject* source, UniquedStringImpl* sourceKey, UniquedStringImpl* targetKey, bool reusesDescriptors, const Invocable<JSObject*()> auto& getterOfBinding)
 {
     VM& vm = globalObject->vm();
@@ -689,15 +706,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryDefineLiveBinding, size_t, (Ins
     UniquedStringImpl* targetName = targetKey.isUndefined() ? sourceName : atomOfKey(targetKey);
     if (!target.isObject() || !source.isObject() || !sourceName || !targetName)
         OPERATION_RETURN(scope, 0);
+    JSObject* getterOfBinding = cellArgument<JSObject>(getter, entry);
     bool isDefined = tryDefineLiveBinding(globalObject, asObject(target), asObject(source), sourceName, targetName, true, [&] {
-        return cellArgument<JSObject>(getter, entry);
+        return getterOfBinding;
     });
     OPERATION_RETURN(scope, static_cast<size_t>(isDefined));
 }
-
-// The capture slot of the key in a closure of the getter. The other of its two slots holds the source.
-static constexpr uint32_t reExportKeySlotMask = 1;
-static constexpr uint32_t reExportReusesDescriptors = 2;
 
 static bool canEnumerateWithoutRunningCode(JSGlobalObject* globalObject, JSObject* source, JSObject* target)
 {
@@ -709,7 +723,6 @@ static bool canEnumerateWithoutRunningCode(JSGlobalObject* globalObject, JSObjec
     return true;
 }
 
-// The keys that `for (key in object)` visits while its body changes neither the object nor what the object inherits from. False once the functor says so, or where the keys include indices or cannot be listed.
 static bool forEachEnumeratedName(JSGlobalObject* globalObject, JSObject* object, const Invocable<bool(JSString*)> auto& functor)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
@@ -734,19 +747,19 @@ static bool forEachEnumeratedName(JSGlobalObject* globalObject, JSObject* object
     }
 }
 
-// Does what TypeScript's __exportStar does, one name after the other. Behind false the written loop finishes the work: it skips the names that the target has by then.
-static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* source, FunctionID getter, uint32_t rule)
+static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* source, uint32_t closureNumberOfGetter, uint32_t rule)
 {
     VM& vm = *instance->vm;
     JSGlobalObject* globalObject = instance->globalObject;
-    CaptureCounts counts = captureCountsOf(getter);
+    CaptureCounts counts = captureCountsOfClosureNumber(closureNumberOfGetter);
     if (counts.captures != 2 || counts.references != 2 || !canEnumerateWithoutRunningCode(globalObject, source, target))
         return false;
+    FunctionID getter = closureFunctionWithNumber(closureNumberOfGetter);
     Object* compiledTarget = compiledObjectOrNull(target);
     Object* compiledSource = compiledObjectOrNull(source);
     if (compiledTarget && compiledSource && &compiledTarget->instance() == instance && tryAddPendingStar(vm, *compiledTarget, *compiledSource, getter, rule))
         return true;
-    bool isKeyInFirstSlot = !(rule & reExportKeySlotMask);
+    bool isKeyInFirstSlot = !(rule & starRuleKeyCaptureSlot);
     UniquedStringImpl* defaultName = vm.propertyNames->defaultKeyword.impl();
     return forEachEnumeratedName(globalObject, source, [&](JSString* key) {
         UniquedStringImpl* name = atomOfKey(key);
@@ -759,8 +772,8 @@ static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* so
             return false;
         if (existing->valueOrAccessor)
             return true;
-        return tryDefineLiveBinding(globalObject, target, source, name, name, rule & reExportReusesDescriptors, [&] {
-            uint64_t capturedKey = rule & starRuleKeyIsLiteralStringWord ? instance->state->strings->literalStringWordFor(key) : JSValue::encode(key);
+        return tryDefineLiveBinding(globalObject, target, source, name, name, rule & starRuleReusesDescriptors, [&] {
+            uint64_t capturedKey = JSValue::encode(key);
             uint64_t capturedSource = JSValue::encode(source);
             std::array<uint64_t, 2> captures { isKeyInFirstSlot ? capturedKey : capturedSource, isKeyInFirstSlot ? capturedSource : capturedKey };
             return instance->state->objects->closures.createClosure(vm, getter, captures, counts.references);
@@ -768,22 +781,18 @@ static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* so
     });
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, uint32_t getter, uint32_t rule))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, uint32_t closureNumberOfGetter, uint32_t rule))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryReExportFields);
+    constexpr Entry entry = Entry::operationAOTTryReExportFields;
+    AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
+    if (!programTables().hasClosureNumber(closureNumberOfGetter)) [[unlikely]]
+        crashOnWrongOperand(entry);
     JSValue target = JSValue::decode(encodedTarget);
     JSValue source = JSValue::decode(encodedSource);
     if (!target.isObject() || !source.isObject())
         OPERATION_RETURN(scope, 0);
-    OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), FunctionID(getter), rule)));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure, void* stackPointerOfCaller))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTRecordCallee);
-    FunctionTables::of(vm).recordCallee(vm, stackPointerOfCaller, asObject(closure));
-    instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&FunctionTables::of(vm));
+    OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), closureNumberOfGetter, rule)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedName, uint32_t methodKind))
