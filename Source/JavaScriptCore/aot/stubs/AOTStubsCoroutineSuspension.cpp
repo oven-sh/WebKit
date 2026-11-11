@@ -749,6 +749,7 @@ static void emitAwaitSettledValueInJob(StubAssembler& jit, const AwaitRegisters&
     const GPRReg jobsThatWait = result;
     RELEASE_ASSERT(noOverlap(savedFrame, awaited, word, other, siteWord, result, count, second, instanceGPR));
 
+    otherwise.append(branchIfBarrierIsNeeded(jit, savedFrame, word));
     jit.move(awaited, value);
     Jump isNotCell = jit.branchIfNotCell(awaited);
     jit.load32(Address(awaited, JSCell::structureIDOffset()), word);
@@ -775,8 +776,6 @@ static void emitAwaitSettledValueInJob(StubAssembler& jit, const AwaitRegisters&
     jit.move(job.next, jobsThatWait);
     jit.sub64(Address(job.queue, MicrotaskQueue::offsetOfStart()), jobsThatWait);
 
-    const Address version(savedFrame, SavedFrame::offsetOfVersion());
-    jit.add32(TrustedImm32(1), version);
     emitCopyFrameWords(jit, { awaited, savedFrame, count, word, other, second }, { });
     emitSaveRegisterAndResumeAddress(jit, savedFrame, word);
     if (flagsKept) {
@@ -786,7 +785,6 @@ static void emitAwaitSettledValueInJob(StubAssembler& jit, const AwaitRegisters&
     } else
         jit.store8(TrustedImm32(0), Address(savedFrame, SavedFrame::offsetOfFlags()));
     emitSaveLiveSlotMapOffset(jit, siteWord, savedFrame, word);
-    jit.add32(TrustedImm32(1), version);
     emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
     Jump fewJobsWait = jit.branch64(CCallHelpers::BelowOrEqual, jobsThatWait, TrustedImm32(jobsWorthUnexpectedReturns));
     jit.emitFunctionEpilogue();
@@ -1018,7 +1016,6 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         isResumedByOthers.link(&jit);
         Label isRegistered = jit.label();
         emitBarrierPreservingOperands(jit, savedFrame, result, siteWord, word);
-        Label isQueued = jit.label();
         jit.loadPtr(Address(savedFrame, SavedFrame::offsetOfPromiseOrWaiter()), result);
         emitLeaveFunctionOfJob(jit, siteWord, other, word, returnToCallerOfFunction);
 
@@ -1028,7 +1025,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         emitReserveJob(jit, job, needsOperation);
         Label fillsJob = jit.label();
         emitFillJob(jit, { InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, awaited, savedFrame, JobAsyncContext::Current }, job);
-        jit.jump().linkTo(isQueued, &jit);
+        jit.jump().linkTo(isRegistered, &jit);
 
         RELEASE_ASSERT(noOverlap(result, awaited, savedFrame, siteWord, count, word, other, second));
         takesNoInlineReaction.link(&jit);

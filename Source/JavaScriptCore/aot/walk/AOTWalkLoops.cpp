@@ -436,7 +436,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
     macro(m_unspecifiedConstants) macro(m_valueBeingWalked) macro(m_skippedFreshCellCount) macro(m_iterationRestartCount) macro(m_undoneStoreCount) macro(m_versionedLoopCount) macro(m_versionedLoopNestCount) \
     macro(m_expandedObjectAssignCount) macro(m_duplicatedJoinCount) macro(m_threadedConditionCount) macro(m_fieldCalleeSpeculationCount) macro(m_genericInstanceCheckCount) macro(m_genericMemberLookupCount) macro(m_emptySlotCaseCount) macro(m_foldedSliceCount) \
     macro(m_numbersOfProofsChecked) macro(m_untestableProofCount) macro(m_impliedProofCount) macro(m_unsatisfiableProofCheckCount) macro(m_foldedProofCheckCount) \
-    macro(m_generatorsTakenByConsumers) macro(m_generatorMethodsTested) macro(m_generatorsWalkedInConsumers) macro(m_hasTakenGeneratorsSteppedByHand) macro(m_endOfManualIteration) macro(m_resumptionsToLeave) macro(m_numberOfFramesOverHandlersOfCode) macro(m_believedAheadOfEdges) macro(m_leadsIntoPlainWalkThatIsKept) \
+    macro(m_generatorsTakenByConsumers) macro(m_generatorsWalkedInConsumers) macro(m_hasTakenGeneratorsSteppedByHand) macro(m_endOfManualIteration) macro(m_resumptionsToLeave) macro(m_numberOfFramesOverHandlersOfCode) macro(m_believedAheadOfEdges) macro(m_leadsIntoPlainWalkThatIsKept) \
     macro(m_numberOfFramesAtRowOfShapeTests) macro(m_closedArmOfRowOfShapeTests) macro(m_stretchWithArmsAsWritten) macro(m_mergedFreshObjectCount) macro(m_numberOfRecordsBuiltToAskGuardsAgain) macro(m_carriesSlotsOfObjects)
 
 #define FOR_EACH_FIELD_OF_WALKER_THAT_LOGS_PUT_BACK(macro) \
@@ -465,7 +465,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
     macro(m_numberOfFramesBelowHandlerMade) macro(m_isBuildingInPlace) macro(m_rowOfCopyFoundUnderKey) macro(m_hasHoistedFields) macro(m_readArm) macro(m_loopCheckedForStores) macro(m_numberOfLoopsAroundEdgeBeingLed) macro(m_readWhoseGuessIsOpen) macro(m_guardedReadArray) macro(m_frameOfFusedChain) macro(m_fusesNoChain) macro(m_currentMethodChain) macro(m_weighsWhatIsWritten) macro(m_makesLetterOfStep)
 
 #define FOR_EACH_FIELD_OF_WALKER_THAT_ITS_WRITER_SETS_AND_CLEARS(macro) \
-    macro(m_dropsChecksOfProofs) macro(m_generatorReadTested) \
+    macro(m_dropsChecksOfProofs) \
     macro(m_hoistedDiamond) macro(m_threadedCondition) macro(m_threadedConditionValue) macro(m_threadedConditionFrame) \
     macro(m_numberOfFieldsOfScopesOfHeadBeingOpened) macro(m_pendingCarriedResultCount) macro(m_buildsTestsBesidePlainWalk) macro(m_expectationsRememberedForLook) macro(m_typesOfInputsInLook) \
     macro(m_looksTakeFormsBehindLooksAsBuilt) macro(m_walksCopyWhereItsGuardFailed) macro(m_armOfNextFusedChain) macro(m_nextCopyIsOfMethodThatProtocolCalls) macro(m_expectedOfArgumentsOfCopies) macro(m_purchaseAsksWhetherTurnsCanBeQuiet) macro(m_resultOfCallBeingTyped) macro(m_valueBeforePendingStore) macro(m_pendingUndoableStore) macro(m_isUndoingStores)

@@ -18,7 +18,6 @@ operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: 
 engine operation HasStructureOfClass (value: Any/inspects, layout: Layout) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = StructureOfClass ; runtime = RememberStructureOfClass ; form = Open
 engine operation IsMemberAsBuilt (builtin: Builtin) -> natural(boolean) ; reads(NamedProperties) ; form = Open
 engine operation HasNumberOfBoundArguments (function: Object/inspects, count: UInt32) -> natural(boolean) ; reads(RuntimeState) ; form = Open
-engine operation MakesPlainGenerators (function: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, RuntimeState) ; form = Open
 engine operation GetWordOfBoundFunction (function: Object/inspects, index: UInt32) -> unknown ; reads(RuntimeState) ; form = Open
 engine operation GetAssignedMember (conditions: List<MemberConditionRecord>) -> unknown ; reads(MemberGuards[conditions]) ; form = Open
 operation IsHolderWithoutAddedNames (builtin: Builtin) -> natural(boolean) ; reads(NamedProperties) ; AsRead..Placed ; flow = TableProves ; form = Open

@@ -73,7 +73,6 @@ aot/codegen/AOTCodeDescription.cpp
 aot/codegen/AOTCodeGenerator.cpp
 aot/codegen/AOTCodeGeneratorDispatch.cpp
 aot/codegen/AOTCodeGeneratorEmitters.cpp
-aot/codegen/AOTCodeGeneratorInterleaving.cpp
 aot/codegen/AOTCollectionIntrinsicEmitter.cpp
 aot/codegen/AOTConstantEmitter.cpp
 aot/codegen/AOTConstantEmitterClosures.cpp

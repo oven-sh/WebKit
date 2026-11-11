@@ -13,12 +13,10 @@
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpSummary.h"
 #include "AOTStringEmitter.h"
-#include "AOTResultsJoin.h"
 #include "AOTStubsRegExp.h"
 #include "AOTInstance.h"
 #include "AOTVMState.h"
 #include "AOTVector.h"
-#include "RegExp.h"
 #include "RegExpObject.h"
 #include "VM.h"
 
@@ -319,101 +317,6 @@ void ResolvedCallEmitter::generateRegExpMatchLiteralInParts(const ValueContext& 
         return;
     }
     define(value, matchByFirstCharacter<Condition>(value, string, boolean(false), call));
-}
-
-void ResolvedCallEmitter::generateMatchRegExpIntoFrame(const ValueContext& value)
-{
-    const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
-    CellPointer regExpObject = in<CellPointer>(value->regExpOperand());
-    CellPointer string = in<CellPointer>(value->stringOperand());
-    LValue slot = m_out.lockedStackSlot(sizeof(uint64_t) * (1 + maxPartsOfMatchInFrame));
-    slot->slot()->setIsDeadAtSuspensions(true);
-    LBasicBlock isInFrame = newBlock();
-    LBasicBlock isElsewhere = newBlock();
-    LBasicBlock isInOutput = newBlock();
-    LBasicBlock isAbsent = newBlock();
-    LBasicBlock fits = newBlock();
-    LBasicBlock isLarge = newBlock();
-    LBasicBlock loop = newBlock();
-    LBasicBlock next = newBlock();
-    LBasicBlock isCopied = newBlock();
-    Join<Pointer> join(m_out);
-
-    LValue found = callStub(value, regExpMatch(RegExpMatchResult::PartsInFrame), { regExpObject.value(), string.value(), slot }, { .calledBuiltin = functionOf(value->overload()) }).first;
-    m_out.branch(m_out.equal(found, matchIsInFrame), normalEdge(isInFrame), normalEdge(isElsewhere));
-    m_out.appendTo(isInFrame);
-    join.add(Pointer(slot));
-
-    m_out.appendTo(isElsewhere);
-    branch(unboxBoolean(Boxed(found)), { unlikelyEdge(isInOutput), normalEdge(isAbsent) });
-    m_out.appendTo(isAbsent);
-    join.add(pointerConstant(0));
-
-    m_out.appendTo(isInOutput);
-    LValue regExp = m_out.bitAnd(m_out.load64(m_out.address(state, regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), static_cast<int64_t>(RegExpObject::regExpMask));
-    LValue count = m_out.add(m_out.zeroExtPtr(m_out.load32(m_out.address(state, regExp, RegExp::offsetOfNumSubpatterns()))), 1);
-    m_out.branch(m_out.belowOrEqual(count, maxPartsOfMatchInFrame), normalEdge(fits), rareEdge(isLarge));
-
-    m_out.appendTo(fits);
-    Pointer output = matchOutput();
-    m_out.store64(count, m_out.address(state, slot));
-    ValueFromBlock first = m_out.anchor(m_out.int64Zero);
-    m_out.jump(loop);
-
-    m_out.appendTo(loop);
-    LValue index = m_out.phi(Machine::Int64, first);
-    LValue offset = m_out.shl(index, 3);
-    m_out.store64(m_out.load64(m_out.address(state, m_out.add(output.value(), offset))), m_out.address(state, m_out.add(slot, offset), sizeof(uint64_t)));
-    LValue following = m_out.add(index, 1);
-    m_out.branch(m_out.below(following, count), normalEdge(next), normalEdge(isCopied));
-    m_out.appendTo(next);
-    m_out.addIncomingToPhi(index, m_out.anchor(following));
-    m_out.jump(loop);
-
-    m_out.appendTo(isCopied);
-    join.add(Pointer(slot));
-
-    m_out.appendTo(isLarge);
-    join.add(callOperation<Pointer>(value, RuntimeOperation::CopyRegExpMatch, { Word32(m_out.castToInt32(count)) }));
-    define(value, join.finish());
-}
-
-void ResolvedCallEmitter::generateIsMatchInFrame(const ValueContext& value)
-{
-    define(value, Condition(m_out.notZero64(in<Pointer>(value->matchOperand()).value())));
-}
-
-void ResolvedCallEmitter::generateLengthOfMatchInFrame(const ValueContext& value)
-{
-    Pointer record = in<Pointer>(value->matchOperand());
-    define(value, Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::RegExpState), record.value()))));
-}
-
-void ResolvedCallEmitter::generateBoundsOfMatchInFrame(const ValueContext& value)
-{
-    const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
-    Pointer record = in<Pointer>(value->matchOperand());
-    Operand operand = get(value->indexOperand());
-    Integer index = operand.is<Word32>() ? signExtended(operand.as<Word32>()) : operand.as<Integer>();
-    LBasicBlock isInside = newBlock();
-    LBasicBlock isOutside = newBlock();
-    ResultsJoin<Word32, Word32> join(m_out);
-    LValue count = m_out.load64(m_out.address(state, record.value()));
-    m_out.branch(m_out.below(index.value(), count), normalEdge(isInside), unlikelyEdge(isOutside));
-    m_out.appendTo(isInside);
-    LValue place = m_out.add(record.value(), m_out.shl(index.value(), 3));
-    join.add(Word32(m_out.load32(m_out.address(state, place, sizeof(uint64_t)))), Word32(m_out.load32(m_out.address(state, place, sizeof(uint64_t) + sizeof(uint32_t)))));
-    m_out.appendTo(isOutside);
-    join.add(word32(-1), word32(-1));
-    auto bounds = join.finish();
-    defineResults(value, bounds);
-}
-
-void ResolvedCallEmitter::generateNewArrayOfRegExpMatch(const ValueContext& value)
-{
-    CellPointer string = in<CellPointer>(value->stringOperand());
-    CellPointer regExpObject = in<CellPointer>(value->regExpOperand());
-    define(value, unboxCell(callOperation<Boxed>(value, RuntimeOperation::RegExpMatchArray, { regExpObject, string })));
 }
 
 void ResolvedCallEmitter::generateNewRegExpMatchArray(const ValueContext& value)

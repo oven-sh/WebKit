@@ -6806,7 +6806,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     if (restartCallsAgain && walker.canRestartIteration())
         walker.count(StatisticID::SpeculationsCallingOnce);
     bool failureRestartsIteration = chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && !restartCallsAgain && walker.canRestartIteration();
-    bool asksInFrontBehindStores = !failureRestartsIteration && chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.isInSpecializedIteration();
+    bool asksInFrontBehindStores = (!failureRestartsIteration || !walker.isIterationEffectFree()) && chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.isInSpecializedIteration();
     bool asksKindOfValueAndNothingElse = !chosen.layouts && walker.testOfTypeLooksAtNoShape(chosen.tested) && !chosen.knownByStructure && !chosen.isPassedAlready && stretch.firstAccessesToSlots.isEmpty() && !stretch.looksWhetherValueIsAsMade && stretch.storesThatLookAtCell.isEmpty() && stretch.testsOfStoredValues.isEmpty() && !stretch.orderWordAskedFor && stretch.membersAskedByTheirBytes.isEmpty() && !stretch.someMemberRestsOnByteOfClass;
     Walker::IterationPurity hoistingPurity = !asksInFrontBehindStores ? Walker::IterationPurity::EffectFree : asksKindOfValueAndNothingElse ? Walker::IterationPurity::KnownEffectsOnlyWithInlinees : Walker::IterationPurity::KnownEffectsOnly;
     Reference valueTested = chosen.isPassedAlready ? Reference() : value;
@@ -9939,92 +9939,6 @@ static bool proveValueStoredAtCreationForGuesses(Walker& walker, const BodyValue
     return true;
 }
 
-static bool walkMethodGeneratorTwice(Walker& walker, const BodyValue& read)
-{
-    if (read.isFreeName() || walker.isInLoop() || walker.isNestedTooDeeply() || walker.isUnreachable() || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::DirectCalls))
-        return false;
-    ValueID receiver = read.objectOperand();
-    Reference object = walker.referenceOf(receiver);
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID call = index.onlyUsingValue(read.id());
-    if (!object || !object.isValue() || !call || index.opcodeOf(call) != Opcode::Call)
-        return false;
-    ValueID open = index.onlyUsingValue(call);
-    if (!open || index.opcodeOf(open) != Opcode::IteratorOpen)
-        return false;
-    TypeArena& types = walker.types();
-    TypeID proven = walker.typeOf(object);
-    bool isProven = types.at(proven).hasOnlyLayouts() && !types.at(proven).primitives;
-    TypeID expected = isProven ? proven : findExpectation(walker, receiver).type;
-    LayoutID layout = expected && types.at(expected).hasOnlyLayouts() && !types.at(expected).primitives ? singleLayoutOf(types, types.at(expected)) : LayoutID();
-    FunctionID method = layout ? methodDeclaredAboveObjects(walker, layout, read.key()) : FunctionID();
-    if (!method || !walker.mayWalkMethodGenerator(read, method))
-        return false;
-    SetForScope tested(walker.m_generatorReadTested, read.id());
-    TypedForm form = typedFormOf(walker, read, [&](ValueID input) {
-        return input == receiver ? expected : walker.typeOf(walker.referenceOf(input));
-    });
-    if (form != TypedForm::BuiltBehindLookAtCell)
-        return false;
-    std::optional<TestOfGuess> chosen = isProven ? std::nullopt : chooseTestOfGuess(walker, object, expected);
-    if (!isProven && !chosen)
-        return false;
-
-    Origin origin = walker.originOf(read);
-    origin.isTailCall = false;
-    BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
-    auto continueIfPassed = [&](Reference test) {
-        if (!test || walker.isUnreachable())
-            return;
-        BlockID passed = walker.addBlock();
-        walker.branch(test, passed, asWritten);
-        walker.continueIn(passed);
-    };
-    walker.recordSpeculation();
-    Reference named = object;
-    if (chosen) {
-        Reference test = buildTestOfGuess(walker, object, *chosen, origin, !!chosen->layouts);
-        if (!test)
-            return true;
-        continueIfPassed(test);
-        named = buildProofOfGuess(walker, object, test, *chosen, origin);
-        if (!named || walker.isUnreachable())
-            return true;
-        if (chosen->layouts)
-            walker.state().recordCellFacts(named, CellFact::BearsNoMark);
-        if (named != object && named.isValue())
-            walker.state().noteCheckedName(object, named);
-    }
-    if (Reference fails = walker.drawWhetherGuessFails(origin)) {
-        BlockID goesOn = walker.addBlock();
-        walker.branch(fails, asWritten, goesOn);
-        walker.continueIn(goesOn);
-    }
-    const ValueID reads[] { read.id() };
-    lookAtCellInFrontOfStores(walker, reads, named, scopedLambda<void(Reference)>([&](Reference test) {
-        continueIfPassed(test);
-    }));
-    if (walker.hasFailed())
-        return true;
-    BodyBlock block = index.block(index.blockOf(read.id()));
-    uint32_t place = read.id().index() - block.firstValue().index();
-    if (!walker.isUnreachable())
-        walker.walkStretch(block.id(), place, place + 1);
-    Reference closure = walker.hasFailed() || walker.isUnreachable() ? Reference() : walker.referenceBoundTo(read.id());
-    if (!closure || !closure.isValue() || singleFunctionOf(types, types.at(walker.typeOf(closure))) != method) {
-        if (!walker.hasFailed() && !walker.isUnreachable())
-            walker.fail("the method of a generator that is walked in its loop is not found behind its tests"_s);
-        return true;
-    }
-    Draft test(Opcode::MakesPlainGenerators, origin);
-    walker.chooseConservativeFields(test);
-    test.setFunctionOperand(closure);
-    continueIfPassed(walker.build(WTF::move(test)));
-    if (!walker.hasFailed())
-        walker.walkIterationAsWritten(asWritten, read);
-    return true;
-}
-
 static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValue& operation, bool shouldSpeculateSoleHolder)
 {
     Opcode opcode = operation.opcode();
@@ -10035,8 +9949,6 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
     bool isInLoop = walker.isInLoop();
     if (noGuessIsOpenedWhereWalkStandsForGuesses(walker, isInLoop))
         return GuessOpened::None;
-    if (opcode == Opcode::PropGet && walkMethodGeneratorTwice(walker, operation))
-        return GuessOpened::WithArms;
     if (opcode == Opcode::Call && (forwardCallBehindTestOfCallee(walker, operation) || callTargetOfBoundFunctionBehindTests(walker, operation) || openGuessAtCalleeOfReturnedCall(walker, operation)))
         return GuessOpened::WithArms;
     if (Reference holder = opcode == Opcode::PropGet && walker.program().admitsReplacedBuiltins ? walker.referenceOf(operation.objectOperand()) : Reference(); holder && findMemberAskedByItsByteOffType(walker, walker.typeOf(holder), operation.key()))

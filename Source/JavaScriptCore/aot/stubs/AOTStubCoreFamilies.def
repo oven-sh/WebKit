@@ -220,7 +220,7 @@ v(NextSetElement, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Neve
 AOT_STUB_FRONT_END(MapNext, MapNextFrontEnd)
 AOT_STUB_FRONT_END(SetNext, SetNextFrontEnd)
 
-v(RegExpMatch, CalledByCode, (Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts, PartsInFrame, Record), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RegExpMatch)
+v(RegExpMatch, CalledByCode, (Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts, Record), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RegExpMatch)
 v(FinishRegExpExec, CalledByCode, (WithObject, WithoutObject, OnSubstringWithObject, OnSubstringWithoutObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FinishRegExpExec)
 v(StringReplaceRegExpMayNotMatch, CalledByCode, (TextOrFunction, AnyValue), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringReplaceRegExpMayNotMatch)
 v(NewRegExpLiteral, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewRegExpLiteral)

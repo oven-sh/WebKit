@@ -68,11 +68,6 @@ operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisVal
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
 operation RegExpMatchLiteralInParts (string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags) -> natural(boolean) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
 operation BoundsOfRegExpMatch (count: UInt32) -> results(natural(int[-1, 2147483647]), natural(int[-1, 2147483647]), ..) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
-engine operation MatchRegExpIntoFrame (overload: BuiltinOverload, regExp: Object/inspects, string: String/inspects) -> natural(MatchRecord) ; unknownCode ; replaces = CallBuiltin ; form = Closed
-engine operation IsMatchInFrame (match: MatchRecord/inspects) -> natural(boolean) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
-engine operation LengthOfMatchInFrame (match: MatchRecord/inspects) -> natural(int[0, 2147483647]) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
-engine operation BoundsOfMatchInFrame (match: MatchRecord/inspects, index: Integer/inspects) -> results(natural(int[-1, 2147483647]), natural(int[-1, 2147483647])) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
-engine operation NewArrayOfRegExpMatch (contents: Type, string: String/inspects, regExp: Object/inspects) -> allocation(Array<contents>) ; CreatesString reads(RegExpState) ; interpreted = Allocation ; replaces = CallBuiltin ; form = Runtime
 operation NewRegExpMatchArray (contents: Type, string: String/inspects, pattern: String, regExpFlags: RegExpFlags) -> allocation(Array<contents>) ; CreatesString reads(RegExpState) ; interpreted = Allocation ; replaces = CallBuiltin ; form = Runtime
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin

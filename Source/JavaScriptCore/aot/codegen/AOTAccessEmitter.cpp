@@ -1499,36 +1499,27 @@ bool AccessEmitter::storeLastIndexInLine(const ValueContext& value, Boxed object
 {
     if (!m_generator.runsRepeatedly(value.block()) && !m_facts.linked().functionsCalledInLoops.get(m_unit.function.index()))
         return false;
-    const PropertyKey& name = types().at(value->key());
-    if (name.kind != PropertyKeyKind::Text || m_program.nameClass(name.text) != NameClass::LastIndex || !typeOf(value->valueOperand()).isNumber())
-        return false;
     Type receiver = typeOf(value->objectOperand());
     const ClassPart* onlyClass = receiver.isObject() ? singleBuiltinClassOf(types(), receiver) : nullptr;
-    const bool isRegExp = onlyClass && onlyClass->builtinClass == BuiltinClassID(BuiltinClasses::RegExp);
-    if (!isRegExp && (onlyClass || !receiver.hasObjects() || findStoreOfKnownField(receiver, value->key(), mode)))
+    if (!onlyClass || onlyClass->builtinClass != BuiltinClassID(BuiltinClasses::RegExp) || !typeOf(value->valueOperand()).isNumber())
+        return false;
+    BuiltinName name = m_builtins.nameOf(byteCast<uint8_t>("lastIndex"_s.span()));
+    if (!name || value->key() != m_program.keyOf(name))
         return false;
 
     Boxed stored = in<Boxed>(value->valueOperand());
     const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
-    LBasicBlock isOther = newBlock();
-    LBasicBlock done = newBlock();
-    auto continueIf = [&](Condition condition) {
-        LBasicBlock continuation = newBlock();
-        m_out.branch(condition.value(), normalEdge(continuation), rareEdge(isOther));
-        m_out.appendTo(continuation);
-    };
     LValue regExpObject = unboxCell(object).value();
-    if (!isRegExp) {
-        if (!receiver.isObject())
-            continueIf(isCell(object));
-        continueIf(equal(loadStructureID(unboxCell(object)), loadFilledOnce32(Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
-    }
+    LBasicBlock isWritable = newBlock();
+    LBasicBlock isReadOnly = newBlock();
+    LBasicBlock done = newBlock();
     LValue regExpAndFlags = m_out.load64(m_out.address(state, regExpObject, RegExpObject::offsetOfRegExpAndFlags()));
-    continueIf(Condition(m_out.testIsZero64(regExpAndFlags, RegExpObject::lastIndexIsNotWritableFlag)));
+    m_out.branch(m_out.testIsZero64(regExpAndFlags, RegExpObject::lastIndexIsNotWritableFlag), normalEdge(isWritable), rareEdge(isReadOnly));
+    m_out.appendTo(isWritable);
     m_out.store64(stored.value(), m_out.address(state, regExpObject, RegExpObject::offsetOfLastIndex()));
     m_out.jump(done);
-    m_out.appendTo(isOther);
-    putNamedProperty(value, object, mode);
+    m_out.appendTo(isReadOnly);
+    putById(value, object, value->key(), stored, mode);
     m_out.jump(done);
     m_out.appendTo(done);
     return true;

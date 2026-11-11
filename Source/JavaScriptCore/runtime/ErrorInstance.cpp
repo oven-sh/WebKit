@@ -150,6 +150,43 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
     m_stackStringIsFramesOnly = false;
 #endif
     vm.writeBarrier(this);
+    locker.unlockEarly();
+    reportStackTraceMemory(vm);
+}
+
+size_t ErrorInstance::stackTraceMemorySize() const
+{
+    size_t size = 0;
+    if (m_stackTrace)
+        size += m_stackTrace->sizeInBytes();
+    if (m_capturedStackTrace)
+        size += m_capturedStackTrace->sizeInBytes();
+    if (auto* string = m_stackString.impl())
+        size += string->sizeInBytes();
+    return size;
+}
+
+// For where the frames go away, or become a string at the end of a collection.
+void ErrorInstance::updateReportedStackTraceMemory()
+{
+    size_t sizeInKB = stackTraceMemorySize() / KB;
+    m_reportedStackTraceMemoryInKB.store(static_cast<uint16_t>(std::min<size_t>(sizeInKB, UINT16_MAX)), std::memory_order_relaxed);
+}
+
+// Can collect.
+NEVER_INLINE void ErrorInstance::reportStackTraceMemory(VM& vm)
+{
+    uint16_t before = m_reportedStackTraceMemoryInKB.load(std::memory_order_relaxed);
+    updateReportedStackTraceMemory();
+    uint16_t after = m_reportedStackTraceMemoryInKB.load(std::memory_order_relaxed);
+    if (after > before)
+        vm.heap.reportExtraMemoryAllocated(this, (after - before) * KB);
+}
+
+// The frames of an error with the default Error.stackTraceLimit take less than a KB, which is not reported.
+static ALWAYS_INLINE bool isLongStackTrace(const std::unique_ptr<Vector<StackFrame>>& stackTrace)
+{
+    return stackTrace && stackTrace->size() >= KB / sizeof(StackFrame);
 }
 
 template<typename Visitor>
@@ -158,6 +195,8 @@ void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    if (size_t reportedInKB = thisObject->m_reportedStackTraceMemoryInKB.load(std::memory_order_relaxed)) [[unlikely]]
+        visitor.reportExtraMemoryVisited(reportedInKB * KB);
     if (!thisObject->m_returnAddresses)
         return;
     Locker locker { thisObject->cellLock() };
@@ -239,13 +278,7 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
         std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
         vm.interpreter.getStackTrace(this, *stackTrace, framesToSkip, limit);
 
-        if (!m_stackTrace || !append) {
-            m_stackTrace = WTF::move(stackTrace);
-            vm.writeBarrier(this);
-            return;
-        }
-
-        if (m_stackTrace) {
+        if (m_stackTrace && append) {
             size_t remaining = limit - std::min(stackTrace->size(), limit);
             remaining = std::min(remaining, m_stackTrace->size());
             if (remaining > 0) {
@@ -257,6 +290,7 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
         m_stackTrace = WTF::move(stackTrace);
     }
     vm.writeBarrier(this);
+    reportStackTraceMemory(vm);
 }
 
 void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause, SourceAppender appender, RuntimeType type, bool useCurrentFrame, JSCell* subclassCaller)
@@ -305,6 +339,9 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
 
     if (!cause.isEmpty())
         putDirect(vm, vm.propertyNames->cause, cause, static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+    if (isLongStackTrace(m_stackTrace)) [[unlikely]]
+        reportStackTraceMemory(vm);
 }
 
 void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause, JSCell* owner, CallLinkInfo* callLinkInfo)
@@ -323,6 +360,9 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
 
     if (!cause.isEmpty())
         putDirect(vm, vm.propertyNames->cause, cause, static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+    if (isLongStackTrace(m_stackTrace)) [[unlikely]]
+        reportStackTraceMemory(vm);
 }
 
 void ErrorInstance::finishCreation(VM& vm, String&& message, LineColumn lineColumn, String&& sourceURL, String&& stackString, String&& cause)
@@ -343,6 +383,8 @@ void ErrorInstance::finishCreation(VM& vm, String&& message, LineColumn lineColu
         putDirect(vm, vm.propertyNames->message, jsString(vm, WTF::move(message)), static_cast<unsigned>(PropertyAttribute::DontEnum));
     if (!cause.isNull())
         putDirect(vm, vm.propertyNames->cause, jsString(vm, WTF::move(cause)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+    reportStackTraceMemory(vm);
 }
 
 void ErrorInstance::finishCreationForEmbedderError(VM& vm)
@@ -358,10 +400,14 @@ void ErrorInstance::finishCreationForEmbedderError(VM& vm)
     vm.writeBarrier(this);
 
     // Deliberately add no own "message" / "cause" properties; the embedder exposes those itself.
+
+    if (isLongStackTrace(m_stackTrace)) [[unlikely]]
+        reportStackTraceMemory(vm);
 }
 
 void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&& sourceURL, String&& stackString)
 {
+    VM& vm = this->vm();
     ASSERT(!m_errorInfoMaterialized);
     ASSERT(!m_capturedStackTrace);
 
@@ -377,6 +423,7 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
 #if USE(BUN_JSC_ADDITIONS)
     m_stackStringIsFramesOnly = false;
 #endif
+    reportStackTraceMemory(vm);
 }
 
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
@@ -490,6 +537,7 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
         Locker locker { cellLock() };
         m_stackString = WTF::move(stackString);
         m_capturedStackTrace->clear();
+        updateReportedStackTraceMemory();
     }
 
 #if ENABLE(AOT)
@@ -534,6 +582,7 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
             // Otherwise m_stackString is the captured stack trace's, if a collection had to format it.
             if (!m_stackPropertyProvidedByCapturedStackTrace)
                 m_stackString = WTF::move(stackString);
+            updateReportedStackTraceMemory();
         }
 
     }
@@ -586,6 +635,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             m_stackTrace->clear();
             m_stackTrace = nullptr;
             m_stackString = String();
+            updateReportedStackTraceMemory();
         }
 
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
@@ -623,6 +673,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             {
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
+                updateReportedStackTraceMemory();
             }
             // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
             JSValue stackValue;
@@ -675,6 +726,7 @@ bool ErrorInstance::trySaveCapturedStackTraceForLazyMaterialization(VM& vm, Vect
     if (needsPlaceholder)
         putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceMaterializingStackGetter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
     vm.writeBarrier(this);
+    reportStackTraceMemory(vm);
     return true;
 }
 
@@ -689,6 +741,7 @@ bool ErrorInstance::materializeCapturedStackPropertyIfSaved(VM& vm)
         Locker locker { cellLock() };
         capturedStackTrace = WTF::move(m_capturedStackTrace);
         stackString = WTF::move(m_stackString);
+        updateReportedStackTraceMemory();
     }
     if (stackString.isNull()) {
         // The frames are weak, so a collection while formatting could free what they point to.

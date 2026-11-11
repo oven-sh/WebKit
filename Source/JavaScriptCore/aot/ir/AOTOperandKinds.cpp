@@ -62,7 +62,6 @@ static uint16_t primitivesOfOperandKind(OperandKind kind)
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:
-    case OperandKind::MatchRecord:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
         return 0;
@@ -108,7 +107,6 @@ TypeID widestTypeOf(TypeArena& types, OperandKind kind)
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:
-    case OperandKind::MatchRecord:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
         return { };
@@ -178,7 +176,6 @@ static bool recordHasOperandKind(TypeArena& types, TypeID id, const Type& type, 
     case OperandKind::BuilderCursor:
     case OperandKind::ViewVector:
     case OperandKind::ArrayStoragePointer:
-    case OperandKind::MatchRecord:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
         return type.isOpaque(*opaqueKindOf(kind));

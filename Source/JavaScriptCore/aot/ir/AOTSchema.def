@@ -122,7 +122,7 @@ effects GrowsArray = reads(ArrayStorage, Elements[Array], AllocatorState) writes
 opaque IteratorState Enumerator Exception ClassToken
 opaque Cursor KeyOrder engine directCallsOnly
 opaque StringBuilder engine
-opaque FlatString CodeAddress PropertyAddress Reciprocal MatchRecord engine functionLocal
+opaque FlatString CodeAddress PropertyAddress Reciprocal engine functionLocal
 opaque BuilderCursor ViewVector ArrayStoragePointer engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText

@@ -41,11 +41,6 @@ public:
     void generateRegExpMatchLiteralInParts(const ValueContext&);
     void generateBoundsOfRegExpMatch(const ValueContext&);
     void generateNewRegExpMatchArray(const ValueContext&);
-    void generateMatchRegExpIntoFrame(const ValueContext&);
-    void generateIsMatchInFrame(const ValueContext&);
-    void generateLengthOfMatchInFrame(const ValueContext&);
-    void generateBoundsOfMatchInFrame(const ValueContext&);
-    void generateNewArrayOfRegExpMatch(const ValueContext&);
 
     const RegExpMatchPlan* matchPlanOf(BlockID, const RegExpMatch&);
     template<typename T> T matchInPlace(const OperationContext&, const RegExpMatchPlan&, const RegExpMatch&, RegExpMatchAnswer, T miss, const ScopedLambda<T()>& call);

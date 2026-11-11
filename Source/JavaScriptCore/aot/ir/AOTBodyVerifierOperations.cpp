@@ -329,7 +329,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::Expect: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
     case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::IsNotFrozen:
     case Opcode::HasLayoutPrototype: case Opcode::IsPristine: case Opcode::HasStructureOfClass: case Opcode::HasArrayStorage: case Opcode::IsElementPresent:
-    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::HasNumberOfBoundArguments: case Opcode::MakesPlainGenerators: case Opcode::GetAssignedMember: case Opcode::GetWordOfBoundFunction: case Opcode::IsHolderWithoutAddedNames: case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled:
+    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::HasNumberOfBoundArguments: case Opcode::GetAssignedMember: case Opcode::GetWordOfBoundFunction: case Opcode::IsHolderWithoutAddedNames: case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled:
     case Opcode::IsEnumeratorCurrent:
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetSlotSetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::PropHasOwn:
@@ -371,7 +371,6 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StackStringBuilderAppendStringRange: case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendCodeUnit: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
     case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
-    case Opcode::MatchRegExpIntoFrame: case Opcode::IsMatchInFrame: case Opcode::LengthOfMatchInFrame: case Opcode::BoundsOfMatchInFrame: case Opcode::NewArrayOfRegExpMatch:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
     case Opcode::Narrowed: case Opcode::EndCellLifetime: case Opcode::CheckProof: case Opcode::GuessFailsUnasked: case Opcode::AskObjectAgain: case Opcode::BeginEffectsCheck: case Opcode::CheckIterationRestart: case Opcode::CheckInlineeFallback: case Opcode::CheckReloadBypass:

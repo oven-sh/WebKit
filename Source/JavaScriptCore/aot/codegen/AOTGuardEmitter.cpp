@@ -427,15 +427,6 @@ void GuardEmitter::generateHasNumberOfBoundArguments(const ValueContext& value)
     defineTest(value, equal(loadField<Word32>(function, m_heaps.JSBoundFunction_boundArgsLength), word32(value->count())));
 }
 
-void GuardEmitter::generateMakesPlainGenerators(const ValueContext& value)
-{
-    CellPointer function = in<CellPointer>(value->functionOperand());
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        emitter<SavedFrameEmitter>().branchUnlessGeneratorsPlain(function, targets.notTaken.block());
-        m_out.jump(targets.taken);
-    });
-}
-
 void GuardEmitter::generateGetWordOfBoundFunction(const ValueContext& value)
 {
     CellPointer function = in<CellPointer>(value->functionOperand());

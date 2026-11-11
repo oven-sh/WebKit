@@ -206,8 +206,11 @@ public:
     }
 #endif
 
-    JS_EXPORT_PRIVATE void clear();
-    JS_EXPORT_PRIVATE static void taskWillNotRun(const QueuedTask&);
+    void clear()
+    {
+        m_queue.clear();
+        m_markedBefore = 0;
+    }
 
 #if USE(BUN_JSC_ADDITIONS)
     // Defined in MicrotaskQueueInlines.h (requires globalObject() from QueuedTask).
@@ -216,14 +219,13 @@ public:
 
     void beginMarking()
     {
-        m_mustMarkFromFront = true;
+        m_markedBefore = 0;
     }
 
     void swap(MarkedMicrotaskDeque& other)
     {
         m_queue.swap(other.m_queue);
         std::swap(m_markedBefore, other.m_markedBefore);
-        std::swap(m_mustMarkFromFront, other.m_mustMarkFromFront);
     }
 
     JS_EXPORT_PRIVATE bool hasMicrotasksForFullyActiveDocument() const;
@@ -241,7 +243,6 @@ public:
 private:
     Deque<QueuedTask> m_queue;
     size_t m_markedBefore { 0 };
-    bool m_mustMarkFromFront { false };
 };
 
 class MicrotaskQueue : public BasicRawSentinelNode<MicrotaskQueue>, public RefCounted<MicrotaskQueue> {

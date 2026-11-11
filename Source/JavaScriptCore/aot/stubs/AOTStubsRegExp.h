@@ -11,7 +11,7 @@
 
 namespace JSC { namespace AOT {
 
-enum class RegExpMatchResult : uint8_t { Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts, PartsInFrame, Record };
+enum class RegExpMatchResult : uint8_t { Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts, Record };
 enum class FinishRegExpExecForm : uint8_t { WithObject, WithoutObject, OnSubstringWithObject, OnSubstringWithoutObject };
 constexpr bool finishesWithObject(FinishRegExpExecForm form) { return form == FinishRegExpExecForm::WithObject || form == FinishRegExpExecForm::OnSubstringWithObject; }
 constexpr bool finishesOnSubstring(FinishRegExpExecForm form) { return form == FinishRegExpExecForm::OnSubstringWithObject || form == FinishRegExpExecForm::OnSubstringWithoutObject; }
@@ -19,9 +19,6 @@ enum class ReplacementOfMatches : uint8_t { TextOrFunction, AnyValue };
 
 constexpr uint32_t noSharedRegExpOffset = UINT32_MAX;
 constexpr uint32_t noRegExpRecord = UINT32_MAX;
-
-constexpr int64_t matchIsInFrame = 1;
-constexpr unsigned maxPartsOfMatchInFrame = 16;
 
 constexpr StubKey regExpMatch(RegExpMatchResult result) { return StubKey(StubFamily::RegExpMatch).withForm(static_cast<uint8_t>(result)); }
 constexpr bool takesStringInFrontOfRegExp(RegExpMatchResult result) { return result == RegExpMatchResult::ArrayForStringMatch || result == RegExpMatchResult::IndexForStringSearch; }

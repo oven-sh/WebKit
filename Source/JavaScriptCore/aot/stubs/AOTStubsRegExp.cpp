@@ -70,8 +70,6 @@ StubSignature signatureOfRegExpMatch(StubKey key)
         signature.addOperand(gprOf(StubRegister::A4));
         signature.addOperand(gprOf(StubRegister::T9));
     }
-    if (static_cast<RegExpMatchResult>(key.form()) == RegExpMatchResult::PartsInFrame)
-        signature.addOperand(gprOf(StubRegister::A3));
     return signature;
 }
 
@@ -99,7 +97,6 @@ static MatchAnswers answersOf(RegExpMatchResult result)
     case RegExpMatchResult::BoxedBoolean:
         return { Entry::operationAOTRegExpTestBoxed, JSValue::encode(jsBoolean(true)), JSValue::encode(jsBoolean(false)) };
     case RegExpMatchResult::Parts:
-    case RegExpMatchResult::PartsInFrame:
         return { Entry::operationAOTRegExpMatchInParts, JSValue::encode(jsBoolean(true)), JSValue::encode(jsBoolean(false)) };
     case RegExpMatchResult::ArrayForStringMatch:
         return { Entry::operationAOTStringMatchRegExp, std::nullopt, JSValue::encode(jsNull()) };
@@ -467,7 +464,6 @@ static void finishMatchAndReturn(StubAssembler& jit, RegExpMatchResult form, con
     case RegExpMatchResult::Boolean:
     case RegExpMatchResult::BoxedBoolean:
     case RegExpMatchResult::Parts:
-    case RegExpMatchResult::PartsInFrame:
         if (keepsLastIndex)
             recordMatchThatKeepsLastIndex(jit, operands.regExpObject, record);
         else
@@ -665,35 +661,6 @@ static void generateRecordOfMatch(StubAssembler& jit)
     returnResult(jit, TrustedImm64(JSValue::encode(jsBoolean(true))));
 }
 
-static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, GPRReg frame, const MatchAnswers& answers, Jump isTooShort, JumpList& slowCases)
-{
-    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
-    const std::array saved { operands.regExpObject, operands.string, frame };
-    slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfRareData())));
-    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(maxPartsOfMatchInFrame)));
-    callMatchingCodeInFrame(jit, saved, subjectLength, std::nullopt, scratch, [&](GPRReg output) {
-        ASSERT_UNUSED(output, output == frame);
-        jit.addPtr(TrustedImm32(sizeof(uint64_t)), frame);
-    }, [&] {
-        jit.call(scratch, Yarr8BitPtrTag);
-    });
-    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
-    isTooShort.link(&jit);
-    returnResult(jit, TrustedImm64(answers.miss));
-
-    didNotMiss.link(&jit);
-    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
-    loadRegExp(jit, operands.regExpObject, regExp);
-    jit.load32(Address(regExp, RegExp::offsetOfNumSubpatterns()), scratch);
-    jit.add32(TrustedImm32(1), scratch);
-    jit.store64(scratch, Address(frame));
-    if (jit.options().recordsLastMatch) {
-        jit.addPtr(TrustedImm32(sizeof(uint64_t)), frame, characters);
-        recordMatch(jit, { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch });
-    }
-    returnResult(jit, TrustedImm64(matchIsInFrame));
-}
-
 void generateRegExpMatch(StubAssembler& jit)
 {
     const auto form = static_cast<RegExpMatchResult>(jit.key().form());
@@ -708,8 +675,6 @@ void generateRegExpMatch(StubAssembler& jit)
     const MatchRegisters registers = allocateMatchRegisters(jit);
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
-    const bool fillsFrame = form == RegExpMatchResult::PartsInFrame;
-    const GPRReg frame = fillsFrame ? jit.clobberOperand(2) : InvalidGPRReg;
     JumpList slowCases;
 
     if (stringIsInFront)
@@ -728,26 +693,20 @@ void generateRegExpMatch(StubAssembler& jit)
     Jump hasNoCode = branchIfNotCompiled(jit, regExp);
     JumpList isWideUnderUnicode;
     loadMatchingCode(jit, registers, isWideUnderUnicode, slowCases);
-    Label isSearched;
-    if (fillsFrame) {
-        matchIntoFrame(jit, registers, operands, frame, answers, isTooShort, slowCases);
-        slowCases.append(isWideUnderUnicode);
-    } else {
-        callMatchingCode(jit, registers, operands.all(), std::nullopt);
-        isSearched = jit.label();
-        Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
-        isTooShort.link(&jit);
-        returnResult(jit, TrustedImm64(answers.miss));
+    callMatchingCode(jit, registers, operands.all(), std::nullopt);
+    Label isSearched = jit.label();
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
+    isTooShort.link(&jit);
+    returnResult(jit, TrustedImm64(answers.miss));
 
-        didNotMiss.link(&jit);
-        slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
-        if (answers.match)
-            finishMatchAndReturn(jit, form, registers, operands, answers, true);
-    }
+    didNotMiss.link(&jit);
+    slowCases.append(jit.branchTest64(CCallHelpers::Signed, scratch));
+    if (answers.match)
+        finishMatchAndReturn(jit, form, registers, operands, answers, true);
     Label hasFound = jit.label();
     finishMatchAndReturn(jit, form, registers, operands, answers, false);
-    if (!fillsFrame)
-        matchWideUnicodeText(jit, registers, operands, isWideUnderUnicode, isSearched, slowCases);
+
+    matchWideUnicodeText(jit, registers, operands, isWideUnderUnicode, isSearched, slowCases);
 
     isRope.link(&jit);
     JumpList isNotSubstring;
@@ -761,7 +720,6 @@ void generateRegExpMatch(StubAssembler& jit)
     case RegExpMatchResult::BoxedBoolean:
     case RegExpMatchResult::IndexForStringSearch:
     case RegExpMatchResult::Parts:
-    case RegExpMatchResult::PartsInFrame:
         jit.jump().linkTo(hasCharacters, &jit);
         break;
     case RegExpMatchResult::Record:
@@ -769,10 +727,7 @@ void generateRegExpMatch(StubAssembler& jit)
     }
 
     isNotSubstring.link(&jit);
-    if (fillsFrame)
-        flattenSubject(jit, string, { regExpObject, string, frame }, begin);
-    else
-        flattenSubject(jit, string, { regExpObject, string }, begin);
+    flattenSubject(jit, string, { regExpObject, string }, begin);
 
     if (form == RegExpMatchResult::IndexForStringSearch)
         slowCases.append(usesLastIndex);

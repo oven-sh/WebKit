@@ -516,17 +516,6 @@ static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept
     jit.add32(kept, inFrame);
 }
 
-static void emitBarrierBeforePoll(StubAssembler& jit, const RestoredFrame& frame)
-{
-    const GPRReg owner = jit.reuseScratch(firstStubOperandRegister);
-    jit.emitFunctionPrologue();
-    jit.preserving({ frame.saved, frame.mode, frame.value }, [&] {
-        jit.move(frame.saved, owner);
-        jit.callStub(writeBarrier().withCallerFrame(CallerFrame::KeepsNoFPRs));
-    });
-    jit.emitFunctionEpilogue();
-}
-
 #if CPU(X86_64)
 static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
 {
@@ -539,22 +528,11 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     RELEASE_ASSERT(noOverlap(saved, mode, value, count, scratch, second, destination, instanceGPR));
 
     const GPRReg skippedAtBottom = second;
-    auto locateFrame = [=](StubAssembler& jit) {
-        emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, scratch);
-        jit.lshift64(TrustedImm32(3), scratch);
-        jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), sp, destination);
-        jit.subPtr(scratch, destination);
-    };
-    locateFrame(jit);
-    Jump mayNotFit = jit.branchPtr(CCallHelpers::Below, destination, trapAwareSoftStackLimit());
-    Label fits = jit.label();
-    jit.addOutOfLinePart([=](StubAssembler& jit) {
-        mayNotFit.link(&jit);
-        emitBarrierBeforePoll(jit, frame);
-        locateFrame(jit);
-        jit.checkStackBeforeEntering(destination);
-        jit.jump().linkTo(fits, &jit);
-    });
+    emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, scratch);
+    jit.lshift64(TrustedImm32(3), scratch);
+    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), sp, destination);
+    jit.subPtr(scratch, destination);
+    jit.checkStackBeforeEntering(destination);
 
     jit.emitFunctionPrologue();
     jit.subPtr(scratch, sp);
@@ -606,22 +584,11 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     const GPRReg skippedAtBottom = second;
     RELEASE_ASSERT(noOverlap(saved, mode, value, count, source, destination, first, second, instanceGPR));
 
-    auto locateFrame = [=](StubAssembler& jit) {
-        emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, inFrame);
-        jit.move(sp, destination);
-        jit.subLeftShift64(destination, inFrame, TrustedImm32(3), destination);
-        jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(CallerFrameAndPC))), destination, source);
-    };
-    locateFrame(jit);
-    Jump mayNotFit = jit.branchPtr(CCallHelpers::Below, source, trapAwareSoftStackLimit());
-    Label fits = jit.label();
-    jit.addOutOfLinePart([=](StubAssembler& jit) {
-        mayNotFit.link(&jit);
-        emitBarrierBeforePoll(jit, frame);
-        locateFrame(jit);
-        jit.checkStackBeforeEntering(source);
-        jit.jump().linkTo(fits, &jit);
-    });
+    emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, inFrame);
+    jit.move(sp, destination);
+    jit.subLeftShift64(destination, inFrame, TrustedImm32(3), destination);
+    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(CallerFrameAndPC))), destination, source);
+    jit.checkStackBeforeEntering(source);
 
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(sizeof(CallerFrameAndPC)), destination);

@@ -525,6 +525,14 @@ bool Modules::releaseAbsentModuleImporters(const String& key, ReleasedImporters 
     return hasImporters;
 }
 
+void Modules::tellIfOriginalImports(ModuleID mocked, ModuleID importer)
+{
+    if (!host().didRunOriginal || m_originalsThatImportTheirImporters.get(mocked.index()) || !importClosureOfOriginal(mocked).get(importer.index()))
+        return;
+    m_originalsThatImportTheirImporters.set(mocked.index());
+    host().didRunOriginal(m_instance.globalObject, m_table.fullPath(fileOf(mocked)), OriginalRun::LoadsItsImporter);
+}
+
 void Modules::linkInstances(std::span<const ModuleID> modules)
 {
     if (modules.empty())
@@ -564,6 +572,8 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
                 continue;
             }
             ModuleNamespace* word = wordForLoad(target, isMockSeenByLoad(target, module));
+            if (m_mocks && isMocked(target) && !activeMock(target)) [[unlikely]]
+                tellIfOriginalImports(target, module);
             if (!word)
                 didLoadDataFile(target, LoadKind::Import);
             if (data(target).isOfLibrary())

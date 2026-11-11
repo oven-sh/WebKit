@@ -248,13 +248,6 @@ TypedPointer ElementAccessEmitter::elementAt(const ArrayStorageForm& form, const
     return m_out.baseIndex(*heap, elements.butterfly.value(), index.value(), constantIndexOf(index));
 }
 
-TypedPointer ElementAccessEmitter::doubleElement(LValue storage, LValue index)
-{
-    const Machine::IndexedAbstractHeap* heap = m_heaps.forIndexingType(arrayStorageFormOf(ArrayStorage::Double).indexingType);
-    RELEASE_ASSERT(heap);
-    return m_out.baseIndex(*heap, storage, index);
-}
-
 Operand ElementAccessEmitter::loadRawElement(const ArrayStorageForm& form, const ArrayElements& elements, Integer index)
 {
     TypedPointer element = elementAt(form, elements, index);

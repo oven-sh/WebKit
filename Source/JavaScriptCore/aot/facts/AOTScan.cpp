@@ -147,6 +147,7 @@ struct OperatorInScan {
     bool shiftsRightByConstant { false };
     int8_t step { 0 };
     uint8_t steppedOperand { 0 };
+    PropertyKeyID steppedField;
     uint32_t numberOfOperands { 0 };
     ListInScan operands[SummaryOperator::mostOperands];
     uint32_t record { noRecord };
@@ -1199,6 +1200,8 @@ private:
     void addContents(const BodyValue&, uint32_t operandIndex, std::optional<ContentsSlot>);
     void addResultAt(const BodyValue&);
     void addOperator(const BodyValue&);
+    PropertyKeyID fieldReadBy(BodyValue) const;
+    void noteFieldsReadAsIntegers(const BodyValue&);
     ListInScan takeResult();
 
     void addSink(SinkKindInScan, ListInScan, uint32_t target, TypeID passes = { });
@@ -1568,6 +1571,7 @@ private:
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_objectsConvertedByEqualities;
     Vector<uint32_t> m_firstCallOfConversion;
     Vector<OperatorInScan> m_operators;
+    Vector<PropertyKeyID, 8> m_fieldsReadAsIntegers;
     Vector<uint32_t> m_joinsOfPrimitives;
     struct JoinOfExclusion {
         uint32_t join { 0 };
@@ -2295,6 +2299,7 @@ void ScanOfBody::reset()
     m_equalities.shrink(0);
     m_objectsConvertedByEqualities.clear();
     m_operators.shrink(0);
+    m_fieldsReadAsIntegers.shrink(0);
     m_joinsOfPrimitives.shrink(0);
     m_joinsOfExclusions.shrink(0);
     m_joinsOfExclusionsOfPrimitives.shrink(0);
@@ -2898,6 +2903,35 @@ void ScanOfBody::addResultAt(const BodyValue& value)
     applyResultRule(rules, definition, read.index(), ResultSide::Proven);
 }
 
+PropertyKeyID ScanOfBody::fieldReadBy(BodyValue definition) const
+{
+    if (definition && definition.opcode() == Opcode::ToNumeric)
+        definition = definitionBehindCasts(definition.operand(0));
+    if (!definition)
+        return { };
+    if (definition.opcode() == Opcode::PrivateGet)
+        return fieldAt(m_program, FieldReference { definition.layout(), definition.field() }).key;
+    return definition.opcode() == Opcode::PropGet && !definition.isFreeName() ? definition.key() : PropertyKeyID();
+}
+
+void ScanOfBody::noteFieldsReadAsIntegers(const BodyValue& value)
+{
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    auto note = [&](ValueID operand) {
+        BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+        if (definition && sums.contains(definition.opcode()))
+            definition = definitionBehindCasts(definition.operand(0));
+        if (PropertyKeyID key = fieldReadBy(definition); key && !m_fieldsReadAsIntegers.contains(key))
+            m_fieldsReadAsIntegers.append(key);
+    };
+    if (value.opcode() == Opcode::ElemGet || value.opcode() == Opcode::ElemSet) {
+        note(value.propertyOperand());
+        return;
+    }
+    note(value.operand(0));
+    note(value.operand(1));
+}
+
 void ScanOfBody::addOperator(const BodyValue& value)
 {
     OperatorInScan found;
@@ -2916,14 +2950,12 @@ void ScanOfBody::addOperator(const BodyValue& value)
         BodyValue shift = definitionBehindCasts(value.operand(1));
         found.shiftsRightByConstant = shift && shift.opcode() == Opcode::Integer && shift.as<Opcode::Integer>().integer() & 31;
     }
-    static constexpr OpcodeSet readsOfFields { Opcode::PropGet, Opcode::PrivateGet };
     auto isLocal = [&](uint32_t index) {
         BodyValue definition = definitionBehindCasts(value.operand(index));
         if (!definition)
             return !m_function->isCoroutine();
-        if (definition.opcode() == Opcode::ToNumeric)
-            definition = definitionBehindCasts(definition.operand(0));
-        return definition && readsOfFields.contains(definition.opcode());
+        found.steppedField = fieldReadBy(definition);
+        return !!found.steppedField;
     };
     if ((found.opcode == Opcode::Increment || found.opcode == Opcode::Decrement) && isLocal(0))
         found.step = found.opcode == Opcode::Increment ? 1 : -1;
@@ -3797,6 +3829,9 @@ ALWAYS_INLINE void ScanOfBody::readOperation(const BodyValue& value, uint32_t bl
     }
     if (opcode == Opcode::String)
         noteTextSpelled(value.as<Opcode::String>().string());
+    static constexpr OpcodeSet usesOfIntegers = allRelations | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet };
+    if (usesOfIntegers.contains(opcode))
+        noteFieldsReadAsIntegers(value);
     if (opcode == Opcode::Convert && value.as<Opcode::Convert>().declared().has(PositionFlags::IsInt32Promise))
         m_summary.traits.add(SummaryTrait::HoldsInt32Promise);
     if (m_listsFirstStoresOfBody)
@@ -7168,7 +7203,7 @@ void ScanOfBody::markParametersThatSinksNeed()
         record.opcode = found.opcode;
         record.writtenDivisor = found.writtenDivisor;
         record.shiftsRightByConstant = found.shiftsRightByConstant;
-        record.step = found.step;
+        record.step = found.steppedField && !m_fieldsReadAsIntegers.contains(found.steppedField) ? 0 : found.step;
         record.steppedOperand = found.steppedOperand;
         record.result = found.joinOfResult ? found.joinOfResult : addNodeAskedForOnce({ SummaryNode::Kind::ResultOfOperator, found.record, 0 });
         m_summary.operators.append(record);

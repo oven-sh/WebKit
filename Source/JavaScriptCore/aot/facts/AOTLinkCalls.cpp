@@ -6449,6 +6449,10 @@ void CallInLinkCalls::addIteratedValues(const Values& iterables, Values& values)
         bool handsOutWhatNoNodeHolds = hasKeys || m_builtins.typedArrayTypeOf(iterable.builtinClass) != NotTypedArray;
         if (iterable.classes == LinkType::Classes::Site && handsOutWhatNoNodeHolds)
             add(values, m_flow.contentsOf(iterable, SlotOfContents::underUnknownNames()), beyond(source));
+        if (hasKeys && iterable.primitives & Primitive::AnyString)
+            add(values, primitivesForLinkCalls(Primitive::String));
+        if (hasKeys && (iterable.objects != LinkType::Objects::None || iterable.functions != LinkType::Functions::None || iterable.hasUnknownObjects || iterable.builtin))
+            add(values, LinkType::anything());
         Values& list = hasKeys ? withKeys : others;
         if (source)
             add(list, source->node, source->distance, source->passes);

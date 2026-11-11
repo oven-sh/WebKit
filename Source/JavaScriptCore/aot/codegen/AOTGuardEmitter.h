@@ -37,7 +37,6 @@ public:
     void generateAreMembersUnchanged(const ValueContext&);
     void generateIsMemberAsBuilt(const ValueContext&);
     void generateHasNumberOfBoundArguments(const ValueContext&);
-    void generateMakesPlainGenerators(const ValueContext&);
     void generateGetWordOfBoundFunction(const ValueContext&);
     void generateGetAssignedMember(const ValueContext&);
     void generateIsHolderWithoutAddedNames(const ValueContext&);

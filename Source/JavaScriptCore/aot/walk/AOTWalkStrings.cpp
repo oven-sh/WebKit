@@ -35,7 +35,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (opcode == Opcode::PropGet)
         return buildLengthOfPieceInSight(walker, value, inputs);
     if (opcode == Opcode::ElemGet) {
-        return buildElementOfMatchInFrame(walker, value, inputs) || buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
+        return buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
     }
     if (inputs.areOnlyTypes())
         return false;
@@ -55,7 +55,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (allRelations.contains(opcode))
         return buildRelationOnStrings(walker, value, inputs);
     if (opcode == Opcode::ToBoolean)
-        return buildTruthinessOfPieceInSight(walker, value, inputs) || buildTruthinessOfLengthOfString(walker, value, inputs);
+        return buildTruthinessOfLengthOfString(walker, value, inputs);
     if (conversionsToNumbersInWalkStrings.contains(opcode))
         return buildNumberOfPiece(walker, value, inputs);
     return false;

@@ -92,9 +92,7 @@ bool buildEqualityOnStrings(Walker&, const BodyValue&, const InputsOfTypedOperat
 bool buildRelationOnStrings(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildTruthinessOfLengthOfString(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildNumberOfPiece(Walker&, const BodyValue&, const InputsOfTypedOperation&);
-void noteOrderedPieceBounds(Walker&, Reference start, Reference end);
 bool buildLengthOfPieceInSight(Walker&, const BodyValue&, const InputsOfTypedOperation&);
-bool buildTruthinessOfPieceInSight(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildCharacterReadByMethod(Walker&, const CallByOneRow&);
 bool buildPieceByMethod(Walker&, const CallByOneRow&);
 bool buildNumberOfPieceByCall(Walker&, const CallByOneRow&);

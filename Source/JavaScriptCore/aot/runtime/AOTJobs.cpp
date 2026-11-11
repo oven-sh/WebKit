@@ -751,7 +751,6 @@ NEVER_INLINE void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm
 {
     bool isRejected = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected;
     bool isEnteredByJobLoop = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
-    vm.writeBarrier(context.asCell());
     if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
         return resumeAsyncFunctionInAsyncContext(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop, asyncContext);
     resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);

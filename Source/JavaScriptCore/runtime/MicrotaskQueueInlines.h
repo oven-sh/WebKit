@@ -84,8 +84,6 @@ inline void MarkedMicrotaskDeque::clearForGlobalObject(JSGlobalObject* targetGlo
         QueuedTask task = m_queue.takeFirst();
         if (task.globalObject() != targetGlobalObject)
             remaining.append(WTF::move(task));
-        else
-            taskWillNotRun(task);
     }
     m_queue.swap(remaining);
     m_markedBefore = 0;

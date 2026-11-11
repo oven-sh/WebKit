@@ -211,6 +211,7 @@ void Modules::forgetUnfinishedLoads()
     m_modulesWithPassthroughMock.clearAll();
     m_rootsOfImportsThatHaveGoneOn.clear();
     m_detachedLoads.clear();
+    m_originalsThatImportTheirImporters.clearAll();
     m_filesThatRanDuringMockThatOnlyWaited.clearAll();
     m_blockedRequiresWithError.clearAll();
     m_statementFetchesDelayedByTick.clearAll();
@@ -3055,6 +3056,8 @@ bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<Module
             continue;
         bool keepsStatus = keepsStatusOfRunBeforeLoadThatRuns(importer);
         if (status(importer) > ModuleStatus::Evaluating && !keepsStatus)
+            continue;
+        if (hasInstances(importer) && !m_linkedInstances.get(index) && status(importer) == ModuleStatus::Unlinked)
             continue;
         if (asking && importer == *asking)
             continue;

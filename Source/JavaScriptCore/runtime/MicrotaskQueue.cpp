@@ -158,55 +158,20 @@ bool MarkedMicrotaskDeque::hasMicrotasksForFullyActiveDocument() const
     return false;
 }
 
-#if ENABLE(AOT)
-static JSCell* suspendedFunctionResumedBy(const QueuedTask& task)
-{
-    JSValue context = task.arguments()[2];
-    return task.job() == InternalMicrotask::CompiledAsyncFunctionResume && context && context.isCell() ? context.asCell() : nullptr;
-}
-#endif
-
-// Compiled code queues a function that it has suspended without a write barrier.
-void MarkedMicrotaskDeque::taskWillNotRun([[maybe_unused]] const QueuedTask& task)
-{
-#if ENABLE(AOT)
-    if (JSCell* function = suspendedFunctionResumedBy(task))
-        function->vm().writeBarrier(function);
-#endif
-}
-
-void MarkedMicrotaskDeque::clear()
-{
-    for (const QueuedTask& task : m_queue)
-        taskWillNotRun(task);
-    m_queue.clear();
-    m_markedBefore = 0;
-}
-
 template<typename Visitor>
 void MarkedMicrotaskDeque::visitAggregateImpl(Visitor& visitor)
 {
     // Because content in the queue will not be changed, we need to scan it only once per an entry during one GC cycle.
     // We record the previous scan's index, and restart scanning again in CollectorPhase::FixPoint from that.
-    // When new GC phase begins, the next scan starts at the front (beginMarking). This optimization is introduced because
+    // When new GC phase begins, this cursor is reset to zero (beginMarking). This optimization is introduced because
     // some of application have massive size of MicrotaskQueue depth. For example, in parallel-promises-es2015-native.js
     // benchmark, it becomes 251670 at most.
     // This cursor is adjusted when an entry is dequeued. And we do not use any locking here, and that's fine: these
     // values are read by GC when CollectorPhase::FixPoint and CollectorPhase::Begin, and both suspend the mutator, thus,
     // there is no concurrency issue.
-    size_t place = std::exchange(m_mustMarkFromFront, false) ? 0 : m_markedBefore;
-    for (auto iterator = m_queue.begin() + place, end = m_queue.end(); iterator != end; ++iterator, ++place) {
+    for (auto iterator = m_queue.begin() + m_markedBefore, end = m_queue.end(); iterator != end; ++iterator) {
         auto& task = *iterator;
         visitor.appendUnbarriered(task.dispatcher());
-#if ENABLE(AOT)
-        // A function that has been suspended since the last scan, of this GC cycle or of the one before it, may be marked already.
-        if (JSCell* function = place >= m_markedBefore ? suspendedFunctionResumedBy(task) : nullptr; function && visitor.isMarked(function)) {
-            if constexpr (std::is_same_v<Visitor, SlotVisitor>)
-                visitor.mutatorMarkStack().append(function);
-            else
-                function->methodTable()->visitChildren(function, visitor);
-        }
-#endif
         visitor.appendUnbarriered(task.m_arguments, QueuedTask::maxArguments);
     }
     m_markedBefore = m_queue.size();
@@ -220,8 +185,6 @@ static NEVER_INLINE void dequeueWithoutRunning(MarkedMicrotaskDeque& queue, Mark
     auto task = queue.dequeue();
     if (result == QueuedTask::Result::Suspended)
         toKeep.enqueue(WTF::move(task));
-    else
-        MarkedMicrotaskDeque::taskWillNotRun(task);
 }
 
 static NEVER_INLINE void runThroughDispatcher(MarkedMicrotaskDeque& queue, MarkedMicrotaskDeque& toKeep, JSGlobalObject* globalObject, JSMicrotaskDispatcher* jsMicrotaskDispatcher)
@@ -239,7 +202,6 @@ static NEVER_INLINE void runThroughDispatcher(MarkedMicrotaskDeque& queue, Marke
     case QueuedTask::Result::Executed:
         break;
     case QueuedTask::Result::Discard:
-        MarkedMicrotaskDeque::taskWillNotRun(task);
         break;
     case QueuedTask::Result::Suspended:
         toKeep.enqueue(WTF::move(task));

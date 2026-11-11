@@ -270,6 +270,7 @@ public:
         m_modulesWithPassthroughMock.clearAll();
         m_rootsOfImportsThatHaveGoneOn.clear();
         m_detachedLoads.clear();
+        m_originalsThatImportTheirImporters.clearAll();
         m_filesThatRanDuringMockThatOnlyWaited.clearAll();
         m_blockedRequiresWithError.clearAll();
         m_rootsOfImportsThatFailedUnderMocks.clearAll();
@@ -583,6 +584,8 @@ public:
     void evictOnceLoaded(ModuleID mocked);
     void evictAbandonedModules();
     bool isEvictedModuleImported();
+    void tellIfOriginalImports(ModuleID mocked, ModuleID importer);
+    BitVector m_originalsThatImportTheirImporters;
     void didPatchPendingMock(ModuleID mocked);
     BitVector modulesRequestedByImports(bool wasMockReplaced);
     void evictLoadedModules(bool wasMockReplaced = false);

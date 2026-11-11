@@ -6968,7 +6968,7 @@ void Walker::leadEdge(EdgeID edge, BlockID from, const BodyTerminator& terminato
     InputBlock& entered = inputBlock(frame, to);
     BlockID head = entered.head;
     uint32_t numberOfProofs = static_cast<uint32_t>(target.proofs().size());
-    bool isOnlyEntry = !head && index.numberOfIncomingEdges(to) == 1 && !index.isLoopHead(to) && entered.firstOpenEdge == noOpenEdge;
+    bool isOnlyEntry = !head && index.numberOfIncomingEdges(to) == 1 && !index.isLoopHead(to);
     bool entersAlone = isOnlyEntry && ((frame.loopsBeingVersioned.isEmpty() && m_reversionableLoops.isEmpty()) || !exitsLoopBeingVersioned(frameIndex, to))
         && (frame.blocksBeingTailDuplicated.isEmpty() || !isTailDuplicatingBlock(frameIndex));
 

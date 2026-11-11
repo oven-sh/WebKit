@@ -497,7 +497,10 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
             MacroAssembler::Jump isNotInt32 = jit.branch64(MacroAssembler::NotEqual, scratchOfLeafStep, leafGPRs[0]);
             returnInt32();
             isNotInt32.link(&jit);
-            givesWay.append(jit.branchDouble(MacroAssembler::DoubleNotEqualOrUnordered, number, number));
+            MacroAssembler::Jump isNumber = jit.branchDouble(MacroAssembler::DoubleEqualAndOrdered, number, number);
+            jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), result);
+            jit.ret();
+            isNumber.link(&jit);
             returnDouble(number);
             break;
         }
@@ -2309,26 +2312,6 @@ GeneratorFunctionOrigin SavedFrameEmitter::originOfGeneratorFunction(FunctionID 
     return m_plan.functionKind(m_program, conventions().closureEntryOf(function)).isInRuntimeModule ? GeneratorFunctionOrigin::Library : GeneratorFunctionOrigin::Program;
 }
 
-Word32 SavedFrameEmitter::loadStructureIDOfGenerators(CellPointer closure, LBasicBlock otherwise)
-{
-    constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
-    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
-    branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), otherwise);
-    Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
-    branchUnless(isNotZero(structureID), otherwise);
-    return structureID;
-}
-
-void SavedFrameEmitter::branchUnlessGeneratorsPlain(CellPointer function, LBasicBlock otherwise)
-{
-    Pointer structure = decodeStructureID(loadStructureIDOfGenerators(function, otherwise));
-    Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
-    Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
-    branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_classInfo), classInfo), otherwise);
-    CellPointer prototype(m_out.load64(structure.value(), m_heaps.Structure_prototype));
-    branchUnless(equal(loadStructureID(prototype), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), otherwise);
-}
-
 CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin origin, LBasicBlock slowPath)
 {
     std::optional<Word32> structureID;
@@ -2339,7 +2322,12 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
         branchUnless(isNotZero(*structureID), slowPath);
         structure = decodeStructureID(*structureID);
     } else if (closure) {
-        structureID = loadStructureIDOfGenerators(*closure, slowPath);
+        constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+        Pointer taggedRareData = loadField<Pointer>(*closure, m_heaps.JSFunction_executableOrRareData);
+        branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
+        structureID = Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+        branchUnless(isNotZero(*structureID), slowPath);
+
         structure = decodeStructureID(*structureID);
         Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
         Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));

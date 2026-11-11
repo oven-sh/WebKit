@@ -135,7 +135,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
 
     case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::Data:
     case Opcode::DirectEval: case Opcode::ScopeHasBinding: case Opcode::NewDictionary: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::AppendHole:
-    case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::HasNumberOfBoundArguments: case Opcode::MakesPlainGenerators: case Opcode::GetAssignedMember: case Opcode::GetWordOfBoundFunction: case Opcode::IsHolderWithoutAddedNames: case Opcode::BeginMemberGuards:
+    case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::HasNumberOfBoundArguments: case Opcode::GetAssignedMember: case Opcode::GetWordOfBoundFunction: case Opcode::IsHolderWithoutAddedNames: case Opcode::BeginMemberGuards:
     case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled: case Opcode::HasNoFieldOutsideSlot:
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetGlobalPropertyAddress: case Opcode::IsPropertyFiled: case Opcode::GetGlobalProperty: case Opcode::PutGlobalBinding: case Opcode::GetKeyedPropertyAddress: case Opcode::GetKeyedProperty: case Opcode::PutKeyedProperty: case Opcode::GetKeyedValueOrAbsent:
     case Opcode::PropHas: case Opcode::ElemHas: case Opcode::PropHasOwn: case Opcode::PropDelete: case Opcode::ElemDelete: case Opcode::ElemGetByKeyParts:
@@ -189,7 +189,6 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
     case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent: case Opcode::GetValueUnderKeyOrAbsent: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
-    case Opcode::MatchRegExpIntoFrame: case Opcode::IsMatchInFrame: case Opcode::LengthOfMatchInFrame: case Opcode::BoundsOfMatchInFrame: case Opcode::NewArrayOfRegExpMatch:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
     case Opcode::GetArrayCapacity: case Opcode::ExtendArrayLength: case Opcode::RestoreArrayStore: case Opcode::SetArrayLength:
         return RepresentationRule::BySchema;

@@ -208,9 +208,6 @@ private:
 
     void holdPositionInsideList(const ValueContext& access);
     void holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements&);
-public:
-    TypedPointer doubleElement(LValue storage, LValue index);
-private:
     Integer indexOfPresenceTest(const ValueContext& test, LBasicBlock isNotAnIndex);
     struct TestedElement {
         Integer index;

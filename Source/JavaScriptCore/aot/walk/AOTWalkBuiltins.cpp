@@ -1365,7 +1365,6 @@ private:
 
     bool settle(Operand&, Origin);
     bool buildWithRegExpWrittenForCall(std::span<Reference> arguments);
-    bool buildMatchOfAnyRegExpIntoFrame(std::span<const Reference> arguments);
     std::optional<HeldRegExp> findRegExpMatchedByCall() const;
     template<typename CallDraft> void fillCodeInLine(CallDraft&, std::span<const Reference> arguments) const;
     TypeID provenContentsOfReceiver() const;
@@ -2748,7 +2747,7 @@ void CallInWalkBuiltins::build()
             return;
     }
 
-    if (!m_forwarded && (buildWithRegExpWrittenForCall(arguments.mutableSpan()) || buildMatchOfAnyRegExpIntoFrame(arguments.span())))
+    if (!m_forwarded && buildWithRegExpWrittenForCall(arguments.mutableSpan()))
         return;
 
     if (!m_forwarded && (m_form == BuiltinCallForm::Whole || (m_form == BuiltinCallForm::AnyReceiver && m_mode == BuiltinCallMode::Construct))) {
@@ -2845,15 +2844,6 @@ bool CallInWalkBuiltins::buildWithRegExpWrittenForCall(std::span<Reference> argu
         return true;
     std::span<const ValueID> written = m_call.argumentsOperands();
     return !arguments.empty() && !written.empty() && m_arguments[0].written && take(BuiltinOperand::argument(0), written[0], arguments[0], m_receiver ? m_receiver->value : Reference());
-}
-
-bool CallInWalkBuiltins::buildMatchOfAnyRegExpIntoFrame(std::span<const Reference> arguments)
-{
-    if (m_call.opcode() != Opcode::Call || m_form != BuiltinCallForm::Whole || m_inlineForm != InlineForm::Whole || !m_receiver || arguments.size() != 1)
-        return false;
-    Origin origin = m_origin;
-    origin.isTailCall = false;
-    return buildMatchIntoFrame(m_walker, m_call, m_overloadID, m_receiver->value, arguments[0], origin);
 }
 
 std::optional<HeldRegExp> CallInWalkBuiltins::findRegExpMatchedByCall() const

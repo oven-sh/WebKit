@@ -357,31 +357,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteralWithoutObject, EncodedJSV
     OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, static_cast<RegExpMatchForm>(form), regExp, subject, result, offsets)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchArray, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchArray);
-    RegExp* cell = cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpMatchArray)->regExp();
-    auto* subject = cellArgument<JSString>(string, Entry::operationAOTRegExpMatchArray);
-    std::span<int> offsets = matchOutput(vm, cell);
-    OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, RegExpMatchForm::Exec, cell, subject, MatchResult(offsets[0], offsets[1]), offsets)));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTCopyRegExpMatch, void*, (Instance* instance, uint32_t count))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyRegExpMatch);
-    size_t bytes = sizeof(uint64_t) * (1 + static_cast<size_t>(count));
-    RELEASE_ASSERT(bytes - sizeof(uint64_t) <= vm.aotState().sizeOfRegExpMatchOutput * sizeof(int));
-    auto* record = static_cast<uint64_t*>(vm.auxiliarySpace().allocate(vm, bytes, nullptr, AllocationFailureMode::ReturnNull));
-    if (!record) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, nullptr);
-    }
-    record[0] = count;
-    memcpy(record + 1, vm.aotState().regExpMatchOutput.get(), bytes - sizeof(uint64_t));
-    vm.mutatorFence();
-    OPERATION_RETURN(scope, record);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchInParts, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchInParts);

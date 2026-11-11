@@ -39,24 +39,16 @@ struct MentionsOfResultInParts {
     bool readsIndex { false };
     bool readsInput { false };
     bool isOnlyTakenApart { true };
-    bool isReadByIndex { false };
-    bool escapes { false };
     bool isReturned { false };
     Vector<uint32_t, 2> meetsOthersAt;
 };
 
 using NotesOfResultInParts = Vector<std::pair<Reference, Reference>, 8>;
 
-struct MatchInFrameForParts {
-    Reference match;
-    Reference string;
-};
-
 struct LooksAtResultsInParts final : Walker::KeptForBuild {
     template<typename Kept> using ByNumber = HashMap<uint32_t, Kept, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     ByNumber<ByNumber<MentionsOfResultInParts>> byFunction;
     ByNumber<NotesOfResultInParts> partsOfListsThatAreOnlyTakenApart;
-    ByNumber<MatchInFrameForParts> matchesInFrame;
 };
 
 struct MatchAskedForInParts {
@@ -137,10 +129,8 @@ static void lookAtResultsOfBody(Walker& walker, const BodyIndex& index, LooksAtR
         return found == mentions.end() ? nullptr : &found->value;
     };
     auto refuse = [&](ValueID mentioned) {
-        if (MentionsOfResultInParts* found = mentionsBehind(mentioned)) {
+        if (MentionsOfResultInParts* found = mentionsBehind(mentioned))
             found->isOnlyTakenApart = false;
-            found->escapes = true;
-        }
     };
     auto refuseOperandsOf = [&](const BodyValue& user) {
         user.forEachOperand([&](ValueID operand, uint32_t) {
@@ -162,26 +152,20 @@ static void lookAtResultsOfBody(Walker& walker, const BodyIndex& index, LooksAtR
                 refuse(user.propertyOperand());
                 if (std::optional<uint32_t> place = placeWrittenInResultsInParts(index, user.propertyOperand()))
                     read->placesRead |= uint64_t(1) << *place;
-                else {
+                else
                     read->isOnlyTakenApart = false;
-                    read->isReadByIndex = true;
-                }
             } else if (MentionsOfResultInParts* named = opcode == Opcode::PropGet && !user.isFreeName() ? mentionsBehind(user.objectOperand()) : nullptr) {
                 named->readsLength |= user.key() == length;
                 named->readsIndex |= user.key() == indexOfMatch;
                 named->readsInput |= user.key() == input;
-                if (user.key() != length && user.key() != indexOfMatch && user.key() != input) {
+                if (user.key() != length && user.key() != indexOfMatch && user.key() != input)
                     named->isOnlyTakenApart = false;
-                    named->escapes = true;
-                }
             } else if (MentionsOfResultInParts* taken = opcode == Opcode::IteratorOpen ? mentionsBehind(user.as<Opcode::IteratorOpen>().iterableOperand()) : nullptr) {
                 auto open = user.as<Opcode::IteratorOpen>();
                 if (open.isDestructuring() && !open.hasRest() && open.elementCount() && *open.elementCount() <= mostPlacesFollowedInResultsInParts)
                     taken->placesRead |= (uint64_t(1) << *open.elementCount()) - 1;
-                else {
+                else
                     taken->isOnlyTakenApart = false;
-                    taken->escapes = true;
-                }
             } else
                 refuseOperandsOf(user);
             if (opcode == Opcode::Call && (std::ranges::contains(calleeKeys, user.calleeKey()) || isHandedRegExp(index, user))) {
@@ -600,110 +584,6 @@ Reference partOfListThatIsOnlyTakenApart(Walker& walker, Reference name, Referen
     return { };
 }
 
-static LooksAtResultsInParts& looksAtResultsInParts(Walker& walker)
-{
-    return static_cast<LooksAtResultsInParts&>(*notesOfStrings(walker).looksAtResultsInParts);
-}
-
-static std::optional<std::pair<Reference, Reference>> buildBoundsOfMatchInFrame(Walker& walker, const MatchInFrameForParts& found, Reference index, Origin origin)
-{
-    Draft bounds(Opcode::BoundsOfMatchInFrame, origin);
-    walker.chooseConservativeFields(bounds);
-    bounds.setMatchOperand(found.match);
-    bounds.setIndexOperand(index);
-    Reference results = walker.build(WTF::move(bounds));
-    if (!results || walker.isUnreachable())
-        return std::nullopt;
-    Reference start = buildResultOfRangeForStrings(walker, results, 0, origin);
-    Reference end = buildResultOfRangeForStrings(walker, results, 1, origin);
-    return start && end ? std::optional(std::pair(start, end)) : std::nullopt;
-}
-
-bool buildMatchIntoFrame(Walker& walker, const BodyValue& call, BuiltinOverloadID overload, Reference regExpObject, Reference string, Origin origin)
-{
-    if (!hasMechanismsOfResultsInParts(walker) || walker.isUnreachable() || walker.program().at(walker.unit().function).isCoroutine())
-        return false;
-    if (walker.program().builtins().at(overload).code.implementation.inlineBuiltin != InlineBuiltin::RegExpExec || !regExpObject || !string || !isProvenString(walker, walker.typeOf(string)))
-        return false;
-    auto& allMentions = mentionsOfResultsOfBody(walker, walker.currentFunction(), walker.currentBodyIndex());
-    auto foundMentions = allMentions.find(call.id().index());
-    if (foundMentions == allMentions.end())
-        return false;
-    const MentionsOfResultInParts mentions = foundMentions->value;
-    if (mentions.escapes || mentions.isReturned || !mentions.meetsOthersAt.isEmpty() || !mentions.isReadByIndex || mentions.numberOfParts() > 1)
-        return false;
-    TypeArena& types = walker.types();
-    Draft whole(Opcode::NewArrayOfRegExpMatch, origin);
-    walker.chooseConservativeFields(whole);
-    whole.setContents(types.withPrimitives(TypeTable::string, Primitive::Undefined));
-    whole.setStringOperand(string);
-    whole.setRegExpOperand(regExpObject);
-    TypeID typeOfWhole = walker.resultTypeOf(whole);
-    TypeID widest = walker.isInLoop() ? widestTypeOfOperation(walker, call) : TypeID();
-    if (!typeOfWhole || (widest && !types.isSubset(types.withPrimitives(typeOfWhole, Primitive::Null), widest)))
-        return false;
-    if (!endOfBlockAsksWhetherThereIsResult(walker, call) || !walker.canThreadBranchAfter(call))
-        return false;
-
-    Draft match(Opcode::MatchRegExpIntoFrame, origin);
-    walker.chooseConservativeFields(match);
-    match.setOverload(overload);
-    match.setRegExpOperand(regExpObject);
-    match.setStringOperand(string);
-    MatchInFrameForParts found { walker.build(WTF::move(match)), string };
-    if (!found.match || walker.isUnreachable())
-        return true;
-    Draft test(Opcode::IsMatchInFrame, origin);
-    walker.chooseConservativeFields(test);
-    test.setMatchOperand(found.match);
-    Reference isFound = walker.build(WTF::move(test));
-    if (!isFound || walker.isUnreachable())
-        return true;
-    walker.count(StatisticID::RegExpMatchAllocationsElided);
-    BlockID present = walker.addBlock();
-    BlockID absent = walker.addBlock();
-    walker.branch(isFound, present, absent);
-
-    walker.continueIn(absent);
-    walker.bind(call.id(), walker.constant(PrimitiveKnownToFolding::null()));
-    if (!walker.threadBranchAfter(call)) {
-        walker.fail("the way of a match that finds nothing does not walk the end of its block"_s);
-        return true;
-    }
-
-    walker.continueIn(present);
-    Draft length(Opcode::LengthOfMatchInFrame, origin);
-    walker.chooseConservativeFields(length);
-    length.setMatchOperand(found.match);
-    Reference numberOfParts = walker.build(WTF::move(length));
-    if (!numberOfParts || walker.isUnreachable())
-        return true;
-    Reference array = walker.build(WTF::move(whole));
-    NotesOfResultInParts notes;
-    if (mentions.placesRead || mentions.readsIndex) {
-        auto bounds = buildBoundsOfMatchInFrame(walker, found, integerForStrings(walker, 0), origin);
-        if (Reference piece = bounds && mentions.placesRead ? buildPieceOrUndefinedInResultsInParts(walker, string, bounds->first, bounds->second, origin) : Reference())
-            notes.append({ integerForStrings(walker, 0), piece });
-        if (Reference index = bounds && mentions.readsIndex ? buildOperatorForStrings(walker, Opcode::BitAnd, bounds->first, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin) : Reference())
-            notes.append({ keyOfNameInResultsInParts(walker, nameInTableForResultsInParts(walker, "index"_s)), index });
-    }
-    if (BuiltinName input = nameInTableForResultsInParts(walker, "input"_s))
-        notes.append({ keyOfNameInResultsInParts(walker, input), string });
-    notes.append({ keyOfNameInResultsInParts(walker, BuiltinNames::length), numberOfParts });
-    if (!array || !array.isValue() || walker.isUnreachable())
-        return true;
-    Reference cell = Reference::value(underlyingCellOf(walker.code(), array.id()));
-    for (auto& [key, value] : notes)
-        walker.state().noteElement(cell, key, value);
-    walker.state().noteElementsLieOutsideViews(cell);
-    walker.state().noteFresh(cell);
-    looksAtResultsInParts(walker).matchesInFrame.set(cell.id().index(), found);
-    walker.bind(call.id(), array);
-    if (!walker.threadBranchAfter(call))
-        walker.fail("the way of a match that finds something does not walk the end of its block"_s);
-    return true;
-}
-
 static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
 {
     if (!name || !name.isValue() || !walker.state().holdsFreshObjects())
@@ -712,60 +592,7 @@ static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference
     ValueID cell = underlyingCellOf(code, name.id());
     if (code.isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return { };
-    static constexpr OpcodeSet arraysBesideParts { Opcode::NewRegExpMatchArray, Opcode::NewStringSplitArray, Opcode::NewArrayOfRegExpMatch };
-    return arraysBesideParts.contains(code.at(cell).opcode) ? Reference::value(cell) : Reference();
-}
-
-bool buildElementOfMatchInFrame(Walker& walker, const BodyValue& read, const InputsOfTypedOperation& inputs)
-{
-    if (inputs.areOnlyTypes() || walker.isUnreachable())
-        return false;
-    Reference whole = wholeBesidePartsNamedBy(walker, walker.referenceOf(read.objectOperand()));
-    if (!whole || walker.code().at(whole.id()).opcode != Opcode::NewArrayOfRegExpMatch)
-        return false;
-    Reference index = walker.referenceOf(read.propertyOperand());
-    auto& matches = looksAtResultsInParts(walker).matchesInFrame;
-    auto match = matches.find(whole.id().index());
-    if (match == matches.end() || !walker.types().at(walker.typeOf(index)).isInteger())
-        return false;
-
-    const MatchInFrameForParts found = match->value;
-    Origin origin = walker.originOf(read);
-    origin.isTailCall = false;
-    bool testsElement = endOfBlockAsksWhetherThereIsResult(walker, read) && walker.canThreadBranchAfter(read);
-    auto bounds = buildBoundsOfMatchInFrame(walker, found, index, origin);
-    if (!bounds)
-        return true;
-    auto [start, end] = *bounds;
-    if (!testsElement) {
-        if (Reference piece = buildPieceOrUndefinedInResultsInParts(walker, found.string, start, end, origin))
-            walker.bind(read.id(), piece);
-        return true;
-    }
-
-    Reference isPresent = buildOperatorForStrings(walker, Opcode::LessEq, integerForStrings(walker, 0), start, origin);
-    if (!isPresent || walker.isUnreachable())
-        return true;
-    BlockID present = walker.addBlock();
-    BlockID absent = walker.addBlock();
-    walker.branch(isPresent, present, absent);
-
-    walker.continueIn(absent);
-    walker.bind(read.id(), walker.constant(PrimitiveKnownToFolding::undefined()));
-    if (!walker.threadBranchAfter(read)) {
-        walker.fail("the way of a group that took no part does not walk the end of its block"_s);
-        return true;
-    }
-
-    walker.continueIn(present);
-    noteOrderedPieceBounds(walker, start, end);
-    Reference piece = buildPieceOfString(walker, found.string, start, end, origin);
-    if (!piece || walker.isUnreachable())
-        return true;
-    walker.bind(read.id(), piece);
-    if (!walker.threadBranchAfter(read))
-        walker.fail("the way of a group that took part does not walk the end of its block"_s);
-    return true;
+    return code.at(cell).opcode == Opcode::NewRegExpMatchArray || code.at(cell).opcode == Opcode::NewStringSplitArray ? Reference::value(cell) : Reference();
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& walker, Reference name, PropertyKeyID key)

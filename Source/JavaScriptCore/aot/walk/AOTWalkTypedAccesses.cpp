@@ -2575,8 +2575,6 @@ static TypedForm buildReadThatFindsNothingBehindLooksForTypedAccess(Walker& walk
     return TypedForm::Built;
 }
 
-static bool closureTableHoldsMethodForTypedAccess(const Walker&, FunctionID method);
-
 static bool statementsLayNameOnPrototypeForTypedAccess(const Vector<LinkedNameOnPrototype>& namesOnPrototypes, LayoutID layout, PropertyKeyID key)
 {
     return std::ranges::binary_search(namesOnPrototypes, std::pair { layout, key }, { }, [](const LinkedNameOnPrototype& name) {
@@ -2684,13 +2682,6 @@ static FunctionID findMethodDeclaredAboveObjectsOf(const Walker& walker, LayoutI
         current = parent;
     }
     return none("no field, and no class of the row declares the name"_s);
-}
-
-FunctionID methodDeclaredAboveObjects(const Walker& walker, LayoutID layout, PropertyKeyID key)
-{
-    LayoutID classLayout;
-    FunctionID method = findMethodDeclaredAboveObjectsOf(walker, layout, key, classLayout);
-    return method && closureTableHoldsMethodForTypedAccess(walker, method) ? method : FunctionID();
 }
 
 static bool cellSaysWhetherObjectHidesMethodForTypedAccess(const Walker& walker, LayoutID classLayout, PropertyKeyID key)
@@ -3046,7 +3037,7 @@ static FunctionID findMethodReadBehindLooksForTypedAccess(const Walker& walker, 
             *whyNone = "no field, and the read is not there for a call alone"_s;
         return { };
     }
-    if (!walker.isInLoop() && walker.unit().role == CodeRole::CoroutineBody && walker.m_generatorReadTested != read.id()) {
+    if (!walker.isInLoop() && walker.unit().role == CodeRole::CoroutineBody) {
         if (whyNone)
             *whyNone = "no field: a method above, outside of loops"_s;
         return { };

@@ -109,7 +109,7 @@ static Reference buildPiecePosition(Walker& walker, Opcode opcode, Reference lef
     return buildOperatorForStrings(walker, Opcode::BitAnd, result, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin);
 }
 
-void noteOrderedPieceBounds(Walker& walker, Reference start, Reference end)
+static void noteOrderedPieceBounds(Walker& walker, Reference start, Reference end)
 {
     start = rootForStrings(walker, start);
     end = rootForStrings(walker, end);
@@ -348,24 +348,6 @@ bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const Inp
     Reference length = buildLengthOfPiece(walker, *piece, origin);
     if (length)
         bindForStrings(walker, value.id(), length, origin);
-    return true;
-}
-
-bool buildTruthinessOfPieceInSight(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
-{
-    if (inputs.areOnlyTypes() || walker.isUnreachable())
-        return false;
-    Reference text = walker.referenceOf(value.operand(0));
-    if (!text || !isProvenString(walker, walker.typeOf(text)))
-        return false;
-    std::optional<PieceOfString> piece = pieceInSight(walker, text);
-    if (!piece || !isRangeOfPieceInOrder(walker, *piece))
-        return false;
-    Origin origin = walker.originOf(value);
-    Reference length = buildLengthOfPiece(walker, *piece, origin);
-    Reference truth = length ? buildOperatorForStrings(walker, Opcode::ToBoolean, length, { }, origin) : Reference();
-    if (truth)
-        bindForStrings(walker, value.id(), truth, origin);
     return true;
 }
 

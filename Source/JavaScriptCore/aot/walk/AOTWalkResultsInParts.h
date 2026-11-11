@@ -15,8 +15,6 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr OpcodeSet callsThatGiveBoundsOfParts { Opcode::BoundsOfRegExpMatch, Opcode::BoundsOfStringSplit };
 inline constexpr uint32_t firstBoundOfParts = 0;
 
-bool buildMatchIntoFrame(Walker&, const BodyValue& call, BuiltinOverloadID, Reference regExpObject, Reference string, Origin);
-bool buildElementOfMatchInFrame(Walker&, const BodyValue& read, const InputsOfTypedOperation&);
 bool buildMatchInPartsByCodeOfRegExp(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 Reference buildPlacesReadOfMatch(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 bool buildSplitInParts(Walker&, const CallByOneRow&);

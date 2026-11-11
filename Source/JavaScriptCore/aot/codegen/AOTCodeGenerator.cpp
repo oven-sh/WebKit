@@ -154,11 +154,6 @@ GenerationResult CodeGenerator::run()
                     }
                 }
             }
-            if (std::optional<Interleaving> nest = loop ? findInterleaving(*loop) : std::nullopt) {
-                layOutInterleaved(*loop, *nest);
-                if (m_hasFailed)
-                    return GenerationResult::Failed;
-            }
             if (loop && loop->storesIntoSlots)
                 build().statistics().count(StatisticID::UnrolledLoopsWithSlotStores);
             if (loop) {
@@ -1311,8 +1306,6 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, 
         return;
     if (!m_valuesLeftOutOfTurnsLaidOut.isEmpty() && m_valuesLeftOutOfTurnsLaidOut.contains(id)) [[unlikely]]
         return;
-    if (m_interleaving) [[unlikely]]
-        beginInterleavedOperation(id, operation);
     if (operation.opcode == Opcode::HasArrayStorage && leavesKindToTurnsLaidOut(block, id, operation)) [[unlikely]]
         return;
     if (isDeferredClosure(operation))
@@ -1944,8 +1937,6 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         emitter<ThrowEmitter>().crashOnFalseProof(context, std::nullopt, ProofSource::OtherOperation);
         return;
     }
-    if (m_interleaving && block.terminator.kind == TerminatorKind::Branch) [[unlikely]]
-        beginInterleavedOperation(block.terminator.conditionOperand(), code().at(block.terminator.conditionOperand()));
     generateTerminator(id, block, testWaitsForBranch);
 }
 

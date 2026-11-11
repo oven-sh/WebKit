@@ -28,6 +28,7 @@
 
 #if ENABLE(FFI)
 
+#include "FFIConversions.h"
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"
 #include "SlotVisitorInlines.h"
@@ -40,10 +41,35 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FFIContext);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeInvocation);
 
+void ThreadsafeInvocation::decodeCStrings(const Signature& signature)
+{
+    static_assert(Signature::maxArguments <= std::numeric_limits<decltype(m_stringSlots)>::digits);
+    auto types = signature.arguments();
+    for (unsigned i = 0; i < types.size(); ++i) {
+        if (types[i] != Type::CString || !m_slots[i])
+            continue;
+        String string = stringFromCString(reinterpret_cast<const char*>(static_cast<uintptr_t>(m_slots[i])));
+        if (string.isNull()) [[unlikely]]
+            string = emptyString();
+        m_slots[i] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(string.releaseImpl().leakRef()));
+        m_stringSlots |= 1u << i;
+    }
+}
+
+ThreadsafeInvocation::~ThreadsafeInvocation()
+{
+    // One that did not run.
+    for (unsigned i = 0; m_stringSlots; ++i) {
+        if (hasString(i))
+            takeString(i);
+    }
+}
+
 FFIContext::ThreadsafeDispatchFunction FFIContext::s_threadsafeDispatch { nullptr };
 
-FFIContext::FFIContext(VM& vm)
+FFIContext::FFIContext(VM& vm, JSGlobalObject& owner)
     : m_vm(vm)
+    , m_owner(owner)
 {
     m_vm.heap.addObserver(this);
 }
@@ -116,44 +142,82 @@ const UTF8CString& FFIContext::cacheUTF8(StringImpl& impl, UTF8CString&& utf8)
     return victim->utf8;
 }
 
-void StringArena::enter()
+void FFIContext::didGarbageCollect(CollectionScope)
 {
-    ++m_depth;
+    m_arena.shrinkWhenIdle();
+    // The callbacks can be swept before the owner, with which this goes.
+    if (!m_liveCallbacks.isEmpty() && !m_vm.heap.isMarked(&m_owner))
+        m_liveCallbacks.clear();
+}
+
+// A call that a threadsafe callback has accepted is made, though nothing else may refer to its global object any more.
+void FFIContext::visitRoots(AbstractSlotVisitor& visitor)
+{
+    Locker locker { m_owner.cellLock() };
+    for (auto& callback : m_liveCallbacks) {
+        if (callback->hasPendingInvocations())
+            visitor.append(callback);
+    }
+}
+
+// Not in didGarbageCollect(): the collector's thread may not drop the last reference to a string.
+void FFIContext::clearCachesInEpilogue()
+{
+    m_utf8Cache.removeAllMatching([&](auto& entry) {
+        return entry.lastUse <= m_utf8CacheClockAtLastCollection;
+    });
+    m_utf8CacheClockAtLastCollection = m_utf8CacheClock;
+}
+
+void StringArena::releaseUnusedChunks()
+{
+    if (m_chunks.size() <= m_position.usedChunks)
+        return;
+    bool keepsSpareChunk = m_chunks[m_position.usedChunks].sizeInBytes() <= maximumRetainedChunkBytes;
+    m_chunks.shrink(m_position.usedChunks + keepsSpareChunk);
 }
 
 void StringArena::reset()
 {
     ASSERT(!m_depth);
-    m_offsetInLastChunk = 0;
-    if (m_chunks.isEmpty())
-        return;
-    if (m_chunks[0].sizeInBytes() > maximumRetainedChunkBytes) {
-        m_chunks.clear();
-        return;
-    }
-    m_chunks.shrink(1);
+    m_position = { };
+    releaseUnusedChunks();
+}
+
+void StringArena::goBackToLastMark()
+{
+    m_position = m_marks.takeLast().position;
+    m_depthOfLastMark = m_marks.isEmpty() ? 0 : m_marks.last().depth;
+    releaseUnusedChunks();
 }
 
 std::span<char> StringArena::allocate(size_t bytes)
 {
     ASSERT(m_depth);
 
-    if (!m_chunks.isEmpty()) {
-        auto lastChunk = m_chunks.last().mutableSpan();
-        if (lastChunk.size() - m_offsetInLastChunk >= bytes) {
-            auto result = lastChunk.subspan(m_offsetInLastChunk, bytes);
-            m_offsetInLastChunk += bytes;
+    if (m_depth > 1 && m_depth != m_depthOfLastMark) [[unlikely]] {
+        m_marks.append({ m_depth, m_position });
+        m_depthOfLastMark = m_depth;
+    }
+
+    if (m_position.usedChunks) {
+        auto lastUsedChunk = m_chunks[m_position.usedChunks - 1].mutableSpan();
+        if (lastUsedChunk.size() - m_position.offsetInLastUsedChunk >= bytes) {
+            auto result = lastUsedChunk.subspan(m_position.offsetInLastUsedChunk, bytes);
+            m_position.offsetInLastUsedChunk += bytes;
             return result;
         }
     }
 
-    size_t capacity = std::max(defaultChunkBytes, bytes);
-    auto chunk = MallocSpan<char>::tryMalloc(capacity);
-    if (!chunk)
-        return { };
-    m_chunks.append(WTF::move(chunk));
-    m_offsetInLastChunk = bytes;
-    return m_chunks.last().mutableSpan().first(bytes);
+    if (m_chunks.size() == m_position.usedChunks || m_chunks[m_position.usedChunks].sizeInBytes() < bytes) {
+        auto chunk = MallocSpan<char>::tryMalloc(std::max(defaultChunkBytes, bytes));
+        if (!chunk)
+            return { };
+        m_chunks.shrink(m_position.usedChunks);
+        m_chunks.append(WTF::move(chunk));
+    }
+    m_position.offsetInLastUsedChunk = bytes;
+    return m_chunks[m_position.usedChunks++].mutableSpan().first(bytes);
 }
 
 } } // namespace JSC::FFI

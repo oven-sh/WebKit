@@ -1482,10 +1482,6 @@ public:
         return m_steppedCounters.ensure(std::pair { &currentBodyIndex(), counter.index() }, ask).iterator->value;
     }
     bool turnWrittenOutHoldsKeyOf(ValueID access, LoopID loopOfKey) const { return m_valueBeingWalked == access && m_frames.last().fullyUnrolledHeader && m_frames.last().index->loopOf(m_frames.last().fullyUnrolledHeader) == loopOfKey; }
-    bool mayWalkMethodGenerator(const BodyValue& read, FunctionID method);
-    void walkIterationAsWritten(BlockID start, const BodyValue& read);
-    Vector<std::pair<uint32_t, ValueID>, 2> m_generatorMethodsTested;
-    ValueID m_generatorReadTested;
     bool walksStretchInsideAnother() const { return m_frames.last().numberOfStretchesBeingWalked > 1 || isTailDuplicatingBlock(m_frames.size() - 1); }
     bool someFrameWalksStretchInsideAnother() const
     {
@@ -3928,7 +3924,6 @@ private:
     }
     bool walkOperationOfGeneratorInLoop(const BodyValue&);
     bool takeGeneratorForConsumer(const BodyValue& call);
-    bool findReadsBehindRegion(std::span<const BlockID> region, ValueID firstValue, Vector<ValueID, 4>& readBehindRegion);
     bool loopHoldsGenerators(const BodyIndex&, LoopID);
     bool openGeneratorTaken(const BodyValue& open);
     bool closeGeneratorTaken(const BodyValue& close);
@@ -4885,7 +4880,6 @@ void noteSlotFoundEmpty(Walker&, const BodyValue& access, Reference object);
 bool definePlainFieldInSlot(Walker&, const BodyValue& call, ValueID objectAsWritten, Reference object, PropertyKeyID, Reference stored);
 enum class EmptySlotLook : uint8_t { InBranch, AheadOfOptionalReads };
 bool emptySlotIsUndefinedBehindLooks(Walker&, const BodyValue& read, Reference object, EmptySlotLook = EmptySlotLook::InBranch);
-FunctionID methodDeclaredAboveObjects(const Walker&, LayoutID, PropertyKeyID);
 void lookAtCellInFrontOfStores(Walker&, std::span<const ValueID> stores, Reference object, NOESCAPE const ScopedLambda<void(Reference test)>& continueIfCheckPasses, std::span<const ValueID> accessesThatLookAtSlots = { });
 std::optional<uint32_t> findLikelyOrderWordInFrontOfStores(Walker&, ValueID firstOfStretch, std::span<const ValueID> stores, Reference object, TypeID typeOfObject = { });
 void testOrderWordInFrontOfStores(Walker&, ValueID firstStore, Reference object, uint32_t orderWord, NOESCAPE const ScopedLambda<void(Reference test)>& continueIfCheckPasses);

@@ -36,7 +36,6 @@ public:
 
     void generateStepGenerator(const ValueContext&);
     void generateIsUnmodifiedGenerator(const ValueContext&);
-    void branchUnlessGeneratorsPlain(CellPointer function, LBasicBlock otherwise);
 
     void generateNewHeapWords(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
@@ -63,7 +62,6 @@ public:
 
 private:
     CoroutineKind kindOfFunction() const;
-    Word32 loadStructureIDOfGenerators(CellPointer closure, LBasicBlock otherwise);
     CellPointer allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin, LBasicBlock slowPath);
     GeneratorFunctionOrigin originOfGeneratorFunction(FunctionID) const;
     LValue cellOrZero(ValueID driver);
