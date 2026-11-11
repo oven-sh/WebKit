@@ -123,14 +123,22 @@ toTemporalPartialDurationRecord(JSGlobalObject* globalObject, JSObject* duration
     // Step 3 NOTE: properties read in alphabetical order (days, hours, microseconds, ...).
     //   `temporalUnitsInTableOrder` is, despite its name, the spec's alphabetical order.
     // Steps 4-22 (per unit): Get(durationLike, "<unit>"); if !undefined, ? ToIntegerIfIntegral.
+    TemporalPropertyReader<numberOfTemporalUnits> reader(globalObject, durationLike, &TemporalPropertyShapeCache::durationLike);
+
     bool any = false;
-    for (TemporalUnit unit : temporalUnitsInTableOrder) {
-        JSValue value = durationLike->get(globalObject, temporalUnitPluralPropertyName(vm, unit));
+    for (size_t i = 0; i < numberOfTemporalUnits; ++i) {
+        TemporalUnit unit = temporalUnitsInTableOrder[i];
+        JSValue value = reader.get(i);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (value.isUndefined())
             continue;
 
         any = true;
+        // ToIntegerIfIntegral: an int32 is already an integer and never -0.
+        if (value.isInt32()) [[likely]] {
+            result[static_cast<size_t>(unit)] = value.asInt32();
+            continue;
+        }
         // ToIntegerIfIntegral: `+ 0.0` does step 4 (-0 → +0); !isInteger covers steps 2-3
         // (NaN/±∞ are non-finite, isInteger returns false).
         double v = value.toNumber(globalObject) + 0.0;
@@ -267,14 +275,11 @@ struct RelativeToParts {
 };
 
 // https://tc39.es/proposal-temporal/#sec-temporal-gettemporalrelativetooption
-static RelativeToRecord getTemporalRelativeToOption(JSGlobalObject* globalObject, JSObject* options)
+// Step 2 onward, on the value step 1's Get returned.
+static RelativeToRecord getTemporalRelativeToOptionFromValue(JSGlobalObject* globalObject, JSValue relativeToValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Step 1: Let value be ? Get(options, "relativeTo").
-    JSValue relativeToValue = options->get(globalObject, Identifier::fromString(vm, "relativeTo"_s));
-    RETURN_IF_EXCEPTION(scope, { });
 
     // Step 2: If value is undefined, return the Record with both fields undefined.
     if (relativeToValue.isUndefined())
@@ -410,6 +415,18 @@ static RelativeToRecord getTemporalRelativeToOption(JSGlobalObject* globalObject
     return RelativeToRecord { zdt, std::nullopt };
 }
 
+// https://tc39.es/proposal-temporal/#sec-temporal-gettemporalrelativetooption
+static RelativeToRecord getTemporalRelativeToOption(JSGlobalObject* globalObject, JSObject* options)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Step 1: Let value be ? Get(options, "relativeTo").
+    JSValue relativeToValue = getFromOrdinaryObjects(globalObject, options, vm.propertyNames->relativeTo);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getTemporalRelativeToOptionFromValue(globalObject, relativeToValue));
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal.duration.compare
 JSValue TemporalDuration::compare(JSGlobalObject* globalObject, JSValue valueOne, JSValue valueTwo, JSValue optionsValue)
 {
@@ -466,19 +483,21 @@ JSValue TemporalDuration::compare(JSGlobalObject* globalObject, JSValue valueOne
         return jsNumber(ns1 > ns2 ? 1 : ns1 < ns2 ? -1 : 0);
     }
 
-    // Fast path: no ZDT addZonedDateTime needed — pure 24h-day time comparison.
+    // Fast path: no ZDT addZonedDateTime needed — pure 24h-day time comparison. Calendar units without a PlainDate
+    // relativeTo throw.
     bool hasCalendarUnits = one.years() || two.years() || one.months() || two.months() || one.weeks() || two.weeks();
-    if (!hasCalendarUnits) {
-        auto timeDuration1 = add24HourDaysToTimeDuration(globalObject, TemporalCore::toInternalDuration(one).time(), one.days());
-        RETURN_IF_EXCEPTION(scope, { });
-        auto timeDuration2 = add24HourDaysToTimeDuration(globalObject, TemporalCore::toInternalDuration(two).time(), two.days());
-        RETURN_IF_EXCEPTION(scope, { });
-        return jsNumber(timeDuration1 > timeDuration2 ? 1 : timeDuration1 < timeDuration2 ? -1 : 0);
-    }
-
-    if (!relativeTo.plainRelativeTo) [[unlikely]] {
-        throwRangeError(globalObject, scope, "Cannot compare a duration of years, months, or weeks without a relativeTo option"_s);
-        return { };
+    if (!hasCalendarUnits || !relativeTo.plainRelativeTo) {
+        auto timeDuration1 = TemporalCore::timeDurationForCompareWithoutRelativeTo(one);
+        if (!timeDuration1) [[unlikely]] {
+            throwTemporalError(globalObject, scope, timeDuration1.error());
+            return { };
+        }
+        auto timeDuration2 = TemporalCore::timeDurationForCompareWithoutRelativeTo(two);
+        if (!timeDuration2) [[unlikely]] {
+            throwTemporalError(globalObject, scope, timeDuration2.error());
+            return { };
+        }
+        return jsNumber(*timeDuration1 > *timeDuration2 ? 1 : *timeDuration1 < *timeDuration2 ? -1 : 0);
     }
 
     // PlainDate relativeTo: DateDurationDays(dateDuration, plainDate).
@@ -798,25 +817,34 @@ ISO8601::Duration TemporalDuration::round(JSGlobalObject* globalObject, JSValue 
     bool largestUnitPresent = true;
 
     // Step 8: NOTE: The following steps read options in alphabetical order.
+    TemporalPropertyReader<5> reader(globalObject, options, &TemporalPropertyShapeCache::durationRoundOptions);
+
     // Step 9: Let largestUnit be ? GetTemporalUnitValuedOption(roundTo, "largestUnit", ~unset~).
-    auto largestUnitMaybeAuto = temporalUnitValued(globalObject, options, vm.propertyNames->largestUnit);
+    JSValue largestUnitValue = reader.get(0);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto largestUnitMaybeAuto = temporalUnitValuedFromValue(globalObject, largestUnitValue, vm.propertyNames->largestUnit);
     RETURN_IF_EXCEPTION(scope, { });
     // Steps 10-12: Let relativeToRecord = ? GetTemporalRelativeToOption(roundTo).
-    RelativeToRecord relativeTo;
-    if (options) {
-        relativeTo = getTemporalRelativeToOption(globalObject, options);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    JSValue relativeToValue = reader.get(1);
+    RETURN_IF_EXCEPTION(scope, { });
+    RelativeToRecord relativeTo = getTemporalRelativeToOptionFromValue(globalObject, relativeToValue);
+    RETURN_IF_EXCEPTION(scope, { });
     // Step 13: Let roundingIncrement be ? GetRoundingIncrementOption(roundTo).
-    auto roundingIncrement = temporalRoundingIncrement(globalObject, options);
+    JSValue roundingIncrementValue = reader.get(2);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto roundingIncrement = temporalRoundingIncrementFromValue(globalObject, roundingIncrementValue);
     RETURN_IF_EXCEPTION(scope, { });
     // Step 14: Let roundingMode be ? GetRoundingModeOption(roundTo, ~half-expand~).
-    auto roundingMode = temporalRoundingMode(globalObject, options, RoundingMode::HalfExpand);
+    JSValue roundingModeValue = reader.get(3);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto roundingMode = temporalRoundingModeFromValue(globalObject, roundingModeValue, RoundingMode::HalfExpand);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (!smallest) {
         // Step 15: Let smallestUnit be ? GetTemporalUnitValuedOption(roundTo, "smallestUnit", ~unset~).
-        auto smallestUnitMaybeAuto = temporalUnitValued(globalObject, options, vm.propertyNames->smallestUnit);
+        JSValue smallestUnitValue = reader.get(4);
+        RETURN_IF_EXCEPTION(scope, { });
+        auto smallestUnitMaybeAuto = temporalUnitValuedFromValue(globalObject, smallestUnitValue, vm.propertyNames->smallestUnit);
         RETURN_IF_EXCEPTION(scope, { });
         // Step 16: Perform ? ValidateTemporalUnitValue(smallestUnit, ~datetime~).
         validateTemporalUnitValue(globalObject, smallestUnitMaybeAuto, UnitGroup::DateTime, AllowedUnit::None, "smallestUnit"_s);
@@ -997,7 +1025,7 @@ double TemporalDuration::total(JSGlobalObject* globalObject, JSValue optionsValu
         relativeTo = getTemporalRelativeToOption(globalObject, options);
         RETURN_IF_EXCEPTION(scope, 0);
         // Step 11: unit = ? GetTemporalUnitValuedOption(totalOf, "unit", unset).
-        unitString = intlStringOption(globalObject, options, vm.propertyNames->unit, { }, { }, { });
+        unitString = temporalStringOption(globalObject, options, vm.propertyNames->unit);
         RETURN_IF_EXCEPTION(scope, 0);
     }
 
@@ -1135,7 +1163,8 @@ static void appendInteger(JSGlobalObject* globalObject, StringBuilder& builder, 
 
     double absValue = std::abs(value);
     if (absValue <= maxSafeInteger()) [[likely]] {
-        builder.append(absValue);
+        // Formatting a safe integer as an integer gives the same digits as formatting it as a double, and is faster.
+        builder.append(static_cast<uint64_t>(absValue));
         return;
     }
 
@@ -1158,6 +1187,7 @@ String TemporalDuration::toString(JSGlobalObject* globalObject, const ISO8601::D
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     StringBuilder builder;
+    builder.reserveCapacity(48);
     auto sign = TemporalCore::durationSign(duration);
     if (sign < 0)
         builder.append('-');

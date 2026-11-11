@@ -1007,6 +1007,13 @@ void JSGlobalObject::destroy(JSCell* cell)
     static_cast<JSGlobalObject*>(cell)->JSGlobalObject::~JSGlobalObject();
 }
 
+TemporalPropertyShapeCache& JSGlobalObject::createTemporalPropertyShapeCache()
+{
+    createRareDataIfNeeded();
+    m_rareData->temporalPropertyShapeCache = makeUnique<TemporalPropertyShapeCache>(vm());
+    return *m_rareData->temporalPropertyShapeCache;
+}
+
 void JSGlobalObject::setGlobalThis(VM& vm, JSObject* globalThis)
 {
     m_globalThis.set(vm, this, globalThis);

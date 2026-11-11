@@ -573,6 +573,18 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
         return true;
     }
 
+    case TemporalCompare:
+    case TemporalEquals:
+    case TemporalGetNumber: {
+        const ClassInfo* classInfo = classInfoForTemporalOperation(node->temporalOperation());
+        bool isSafe = true;
+        graph.doToChildren(node, [&](Edge& edge) {
+            if (!state.forNode(edge).m_structure.isSubClassOf(classInfo))
+                isSafe = false;
+        });
+        return isSafe;
+    }
+
     case CallDOMGetter:
     case CallDOM: {
         Node* thisNode = node->child1().node();

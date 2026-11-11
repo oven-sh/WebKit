@@ -5875,6 +5875,21 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case TemporalCompare: {
+        setNonCellTypeForNode(node, SpecInt32Only);
+        break;
+    }
+
+    case TemporalEquals: {
+        setNonCellTypeForNode(node, SpecBoolean);
+        break;
+    }
+
+    case TemporalGetNumber: {
+        setNonCellTypeForNode(node, SpecInt32Only | SpecDoubleReal);
+        break;
+    }
+
     case DateSetTime: {
         setNonCellTypeForNode(node, SpecFullDouble);
         break;

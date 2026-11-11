@@ -264,6 +264,9 @@ bool doesGC(Graph& graph, Node* node)
     case DateGetInt32OrNaN:
     case DateGetMilliseconds:
     case DateGetTime:
+    case TemporalCompare:
+    case TemporalEquals:
+    case TemporalGetNumber:
     case DataViewGetFloat:
     case DataViewSet:
     case TypedArraySet:

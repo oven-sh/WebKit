@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/TemporalCoreTypes.h>
 #include <JavaScriptCore/TemporalEnums.h>
+#include <JavaScriptCore/Weak.h>
 
 namespace JSC {
 
@@ -99,6 +100,53 @@ static inline bool isAbsentUnit(Variant<TemporalAuto, std::optional<TemporalUnit
 }
 
 WTF::String ellipsizeAt(unsigned maxLength, StringView);
+JSValue getFromOrdinaryObjects(JSGlobalObject*, JSObject*, PropertyName);
+String temporalStringOption(JSGlobalObject*, JSObject*, PropertyName, std::initializer_list<ASCIILiteral> values = { }, ASCIILiteral notFound = { }, ASCIILiteral fallback = { });
+
+template<size_t N>
+struct TemporalPropertyShape {
+    std::array<PropertyName, N> keys;
+    Weak<Structure> structure;
+    Weak<Structure> objectPrototypeStructure;
+    std::array<PropertyOffset, N> offsets;
+};
+
+struct TemporalPropertyShapeCache {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(TemporalPropertyShapeCache);
+
+    explicit TemporalPropertyShapeCache(VM&);
+
+    TemporalPropertyShape<numberOfTemporalUnits> durationLike;
+    TemporalPropertyShape<4> differenceOptions;
+    TemporalPropertyShape<5> durationRoundOptions;
+};
+
+// Get(object, keys[i]) in order, for callers that run no user code between the Gets other than converting the values
+// read; a null object reads as undefined. Values are read up front when that is unobservable (plain object of this
+// realm, each key absent or an own data property, no object values).
+template<size_t N>
+class TemporalPropertyReader {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    TemporalPropertyReader(JSGlobalObject*, JSObject*, TemporalPropertyShape<N> TemporalPropertyShapeCache::*);
+
+    JSValue get(size_t index) const
+    {
+        if (m_hasValues)
+            return m_values[index];
+        return getSlow(index);
+    }
+
+private:
+    JSValue getSlow(size_t index) const;
+
+    JSGlobalObject* m_globalObject;
+    JSObject* m_object;
+    TemporalPropertyShape<N> TemporalPropertyShapeCache::* m_shape;
+    std::array<JSValue, N> m_values;
+    bool m_hasValues { false };
+};
+
 PropertyName LEGACY_NODELETE temporalUnitPluralPropertyName(VM&, TemporalUnit);
 PropertyName LEGACY_NODELETE temporalUnitSingularPropertyName(VM&, TemporalUnit);
 std::optional<TemporalUnit> temporalUnitType(StringView);
@@ -106,6 +154,8 @@ std::optional<TemporalUnit> temporalUnitType(StringView);
 enum class TemporalUnitDefault : uint8_t { Unset, Required };
 Variant<TemporalAuto, std::optional<TemporalUnit>>
 temporalUnitValued(JSGlobalObject*, JSObject*, PropertyName, TemporalUnitDefault = TemporalUnitDefault::Unset);
+Variant<TemporalAuto, std::optional<TemporalUnit>>
+temporalUnitValuedFromValue(JSGlobalObject*, JSValue, PropertyName, TemporalUnitDefault = TemporalUnitDefault::Unset);
 void validateTemporalUnitValue(JSGlobalObject*, Variant<TemporalAuto, std::optional<TemporalUnit>>, UnitGroup, AllowedUnit, StringView);
 void validateTemporalRoundingIncrement(JSGlobalObject*, double, std::optional<double>, Inclusivity);
 std::tuple<TemporalUnit, TemporalUnit, RoundingMode, double> extractDifferenceOptions(JSGlobalObject*, JSValue, UnitGroup, TemporalUnit, TemporalUnit, DifferenceOperation = DifferenceOperation::Until);
@@ -113,9 +163,11 @@ std::optional<unsigned> temporalFractionalSecondDigits(JSGlobalObject*, JSObject
 // https://tc39.es/proposal-temporal/#sec-temporal-tosecondsstringprecisionrecord
 PrecisionData toSecondsStringPrecisionRecord(std::optional<TemporalUnit> smallestUnit, std::optional<unsigned> fractionalDigitCount);
 RoundingMode temporalRoundingMode(JSGlobalObject*, JSObject*, RoundingMode);
+RoundingMode temporalRoundingModeFromValue(JSGlobalObject*, JSValue, RoundingMode);
 void formatSecondsStringFraction(StringBuilder&, unsigned fraction, std::tuple<Precision, unsigned>);
 void formatSecondsStringPart(StringBuilder&, unsigned second, unsigned fraction, PrecisionData);
 double temporalRoundingIncrement(JSGlobalObject*, JSObject* options);
+double temporalRoundingIncrementFromValue(JSGlobalObject*, JSValue);
 double roundNumberToIncrement(double, double increment, RoundingMode);
 bool isPartialTemporalObject(JSGlobalObject*, JSValue);
 
@@ -130,6 +182,7 @@ void throwTemporalError(JSGlobalObject*, ThrowScope&, const TemporalError&);
 
 std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject*, JSValue);
 
+std::optional<TimeZone> timeZoneFromName(StringView);
 std::optional<TimeZone> timeZoneFromIdentifierParseRecord(const ISO8601::TimeZoneIdentifierParseRecord&);
 
 enum class TemporalConstructTarget : bool { Intrinsic, NewTarget };
@@ -154,5 +207,19 @@ enum class TemporalType : uint8_t {
 };
 
 JS_EXPORT_PRIVATE TemporalType temporalType(JSValue);
+
+// ToTemporal*(item) with undefined options, for callers that only read the result's slots: an item of the class is
+// used as is.
+template<typename TemporalClass>
+TemporalClass* toTemporalObjectForReading(JSGlobalObject* globalObject, JSValue item)
+{
+    if (auto* object = dynamicDowncast<TemporalClass>(item))
+        return object;
+    return TemporalClass::from(globalObject, item, jsUndefined());
+}
+
+// Sorts values as Array.prototype.sort(function) would when function is a Temporal compare and every value has its
+// class; else std::nullopt.
+std::optional<std::span<EncodedJSValue>> sortWithTemporalCompareFunction(VM&, TaggedNativeFunction, std::span<EncodedJSValue> values, std::span<EncodedJSValue> workingSet);
 
 } // namespace JSC

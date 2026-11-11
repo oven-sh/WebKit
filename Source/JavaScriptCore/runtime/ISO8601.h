@@ -90,6 +90,15 @@ public:
     Int128 microseconds() const { return m_microseconds; }
     Int128 nanoseconds() const { return m_nanoseconds; }
 
+    static constexpr ptrdiff_t offsetOfYears() { return OBJECT_OFFSETOF(Duration, m_years); }
+    static constexpr ptrdiff_t offsetOfMonths() { return OBJECT_OFFSETOF(Duration, m_months); }
+    static constexpr ptrdiff_t offsetOfWeeks() { return OBJECT_OFFSETOF(Duration, m_weeks); }
+    static constexpr ptrdiff_t offsetOfDays() { return OBJECT_OFFSETOF(Duration, m_days); }
+    static constexpr ptrdiff_t offsetOfHours() { return OBJECT_OFFSETOF(Duration, m_hours); }
+    static constexpr ptrdiff_t offsetOfMinutes() { return OBJECT_OFFSETOF(Duration, m_minutes); }
+    static constexpr ptrdiff_t offsetOfSeconds() { return OBJECT_OFFSETOF(Duration, m_seconds); }
+    static constexpr ptrdiff_t offsetOfMilliseconds() { return OBJECT_OFFSETOF(Duration, m_milliseconds); }
+
     // Typed setters for internal arithmetic with already-validated integer values.
     // double overloads are deleted: use setField(TemporalUnit, double) for JS inputs,
     // which routes through doubleToInt64Saturating to avoid UB on ARM32.
@@ -167,6 +176,16 @@ private:
     int64_t m_milliseconds { 0 };
     Int128 m_microseconds { 0 };
     Int128 m_nanoseconds { 0 };
+
+    // The JIT loads the fields that have an offsetOf accessor as int64s.
+    static_assert(std::is_same_v<decltype(m_years), int64_t>);
+    static_assert(std::is_same_v<decltype(m_months), int64_t>);
+    static_assert(std::is_same_v<decltype(m_weeks), int64_t>);
+    static_assert(std::is_same_v<decltype(m_days), int64_t>);
+    static_assert(std::is_same_v<decltype(m_hours), int64_t>);
+    static_assert(std::is_same_v<decltype(m_minutes), int64_t>);
+    static_assert(std::is_same_v<decltype(m_seconds), int64_t>);
+    static_assert(std::is_same_v<decltype(m_milliseconds), int64_t>);
 };
 
 class InternalDuration;
@@ -201,11 +220,16 @@ public:
     }
     int64_t floorEpochMilliseconds() const
     {
-        auto div = m_epochNanoseconds / ExactTime::nsPerMillisecond;
-        auto rem = m_epochNanoseconds % ExactTime::nsPerMillisecond;
-        if (rem && m_epochNanoseconds < 0)
-            div -= 1;
-        return static_cast<int64_t>(div);
+        auto floorDivide = [](auto epochNanoseconds) {
+            auto divisor = static_cast<decltype(epochNanoseconds)>(ExactTime::nsPerMillisecond);
+            auto div = epochNanoseconds / divisor;
+            if (epochNanoseconds % divisor < 0)
+                --div;
+            return static_cast<int64_t>(div);
+        };
+        if (m_epochNanoseconds >= std::numeric_limits<int64_t>::min() && m_epochNanoseconds <= std::numeric_limits<int64_t>::max())
+            return floorDivide(static_cast<int64_t>(m_epochNanoseconds));
+        return floorDivide(m_epochNanoseconds);
     }
     constexpr Int128 epochNanoseconds() const
     {
@@ -239,7 +263,7 @@ public:
 
     std::optional<ExactTime> LEGACY_NODELETE add(Duration) const;
     InternalDuration difference(JSGlobalObject*, ExactTime, unsigned, TemporalUnit, RoundingMode) const;
-    ExactTime round(JSGlobalObject*, unsigned, TemporalUnit, RoundingMode) const;
+    ExactTime round(unsigned, TemporalUnit, RoundingMode) const;
 
     static ExactTime now();
 
@@ -554,6 +578,30 @@ uint8_t weekOfYear(PlainDate);
 int32_t yearOfWeek(PlainDate);
 uint8_t LEGACY_NODELETE daysInMonth(int32_t year, uint8_t month);
 uint8_t daysInMonth(uint8_t month);
+
+// Builds Temporal's ISO 8601 strings in one fixed buffer.
+class ISODateTimeStringBuilder {
+public:
+    void append(Latin1Character c)
+    {
+        ASSERT(m_length < m_buffer.size());
+        m_buffer[m_length++] = c;
+    }
+    void appendYearMonth(int32_t year, unsigned month);
+    void appendDate(int32_t year, unsigned month, unsigned day);
+    void appendTime(unsigned hour, unsigned minute, unsigned second, unsigned subSecondNanoseconds, std::tuple<Precision, unsigned>);
+    void appendTime(PlainTime, std::tuple<Precision, unsigned>);
+    void appendOffset(int64_t offsetNanoseconds);
+    void appendOffsetRoundedToMinutes(int64_t offsetNanoseconds);
+    std::span<const Latin1Character> span() const LIFETIME_BOUND { return std::span { m_buffer }.first(m_length); }
+
+private:
+    void appendDigits(unsigned value, unsigned digits);
+    // Longest use: "-271821-04-19T00:00:00.000000001" followed by an offset of up to 19 characters.
+    std::array<Latin1Character, 64> m_buffer;
+    size_t m_length { 0 };
+};
+
 String formatTimeZoneOffsetString(int64_t);
 String temporalTimeToString(PlainTime, std::tuple<Precision, unsigned>);
 String temporalDateToString(PlainDate);

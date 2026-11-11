@@ -28,6 +28,7 @@
 
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include "TemporalObject.h"
 #include "TemporalPlainTime.h"
 #include "TemporalPlainTimePrototype.h"
 
@@ -36,7 +37,6 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalPlainTimeConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimeConstructorFuncFrom);
-static JSC_DECLARE_HOST_FUNCTION(temporalPlainTimeConstructorFuncCompare);
 
 }
 
@@ -49,7 +49,7 @@ const ClassInfo TemporalPlainTimeConstructor::s_info = { "Function"_s, &Base::s_
 /* Source for TemporalPlainTimeConstructor.lut.h
 @begin temporalPlainTimeConstructorTable
   from             temporalPlainTimeConstructorFuncFrom             DontEnum|Function 1
-  compare          temporalPlainTimeConstructorFuncCompare          DontEnum|Function 2
+  compare          temporalPlainTimeConstructorFuncCompare          DontEnum|Function 2 TemporalIntrinsic
 @end
 */
 
@@ -143,11 +143,11 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainTimeConstructorFuncCompare, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: Set one to ? ToTemporalTime(one).
-    auto* one = TemporalPlainTime::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto* one = toTemporalObjectForReading<TemporalPlainTime>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 2: Set two to ? ToTemporalTime(two).
-    auto* two = TemporalPlainTime::from(globalObject, callFrame->argument(1), jsUndefined());
+    auto* two = toTemporalObjectForReading<TemporalPlainTime>(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: Return CompareTimeRecord(one.[[Time]], two.[[Time]]).

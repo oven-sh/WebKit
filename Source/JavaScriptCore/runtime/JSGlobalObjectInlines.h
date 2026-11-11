@@ -44,6 +44,7 @@
 #include "ParserModes.h"
 #include "StrongInlines.h"
 #include "StructureCreateInlines.h"
+#include "TemporalObject.h"
 #include <wtf/Hasher.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -55,6 +56,7 @@ struct JSGlobalObject::RareData {
 
     unsigned profileGroup { 0 };
     UncheckedKeyHashMap<OpaqueJSClass*, std::unique_ptr<OpaqueJSClassContextData>> opaqueJSClassData;
+    std::unique_ptr<TemporalPropertyShapeCache> temporalPropertyShapeCache;
 };
 
 struct JSGlobalObject::GlobalPropertyInfo {
@@ -496,6 +498,13 @@ inline unsigned JSGlobalObject::profileGroup() const
     if (!m_rareData)
         return 0;
     return m_rareData->profileGroup;
+}
+
+inline TemporalPropertyShapeCache& JSGlobalObject::temporalPropertyShapeCache()
+{
+    if (m_rareData && m_rareData->temporalPropertyShapeCache) [[likely]]
+        return *m_rareData->temporalPropertyShapeCache;
+    return createTemporalPropertyShapeCache();
 }
 
 inline void JSGlobalObject::registerWeakMap(OpaqueJSWeakObjectMap* map)

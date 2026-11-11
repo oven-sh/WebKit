@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ISOArithmetic.h"
 
-#include "DateConstructor.h"
 #include "Rounding.h"
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DateMath.h>
@@ -65,7 +64,7 @@ ISO8601::PlainDate addDaysToISODate(const ISO8601::PlainDate& date, int64_t days
 
     // PlainDate's month invariant (set by regulateISODate / balanceISOYearMonth at every
     // construction site reachable from public Temporal entry points) is [1, 12]. We rely
-    // on it for the daysInMonth bound below and for the makeDay(month-1) slow-path math.
+    // on it for the daysInMonth bound below and for the daysFromYearMonth(month-1) slow-path math.
     ASSERT(month >= 1 && month <= 12);
 
     int64_t newDay = static_cast<int64_t>(date.day()) + days;
@@ -76,18 +75,16 @@ ISO8601::PlainDate addDaysToISODate(const ISO8601::PlainDate& date, int64_t days
         return ISO8601::PlainDate { year, static_cast<unsigned>(month), static_cast<unsigned>(newDay) };
 
     // 1. Let epochDays be ISODateToEpochDays(year, month - 1, day).
-    // (WTF makeDay takes 0-based month, matching ISODateToEpochDays(year, month-1, day))
-    auto epochDays = makeDay(static_cast<double>(year), static_cast<double>(month - 1), static_cast<double>(newDay));
-    // 2. Let ms be EpochDaysToEpochMs(epochDays, 0).
-    double ms = makeDate(epochDays, 0);
-    double daysToUse = msToDays(ms);
+    // (WTF daysFromYearMonth takes a 0-based month and is exact integer arithmetic for every Temporal year.)
+    // Callers pass day counts derived from a valid duration (days + 7 × weeks is below 2^40), so the int64_t sum cannot overflow.
+    int64_t epochDays = static_cast<int64_t>(WTF::daysFromYearMonth(year, month - 1)) + newDay - 1;
     // yearMonthDayFromDays adds a ~1.47e8 day offset internally, so its domain is narrower than its
     // int32_t parameter. Real dates are within 1e8 days of the epoch, so this excludes nothing.
-    static constexpr double maxSafeEpochDays = 1e9;
-    if (std::abs(daysToUse) > maxSafeEpochDays) [[unlikely]]
+    static constexpr int64_t maxSafeEpochDays = 1'000'000'000;
+    if (epochDays > maxSafeEpochDays || epochDays < -maxSafeEpochDays) [[unlikely]]
         return ISO8601::PlainDate::sentinel();
-    // 3. Return CreateISODateRecord(EpochTimeToEpochYear(ms), EpochTimeToMonthInYear(ms) + 1, EpochTimeToDate(ms)).
-    auto [y, m, d] = WTF::yearMonthDayFromDays(static_cast<int32_t>(daysToUse));
+    // 2-3. Return CreateISODateRecord(year, month, day) of the date epochDays days after the epoch.
+    auto [y, m, d] = WTF::yearMonthDayFromDays(static_cast<int32_t>(epochDays));
     if (!ISO8601::isYearWithinLimits(y)) [[unlikely]]
         return ISO8601::PlainDate::sentinel();
     return ISO8601::PlainDate { y, static_cast<unsigned>(m + 1), static_cast<unsigned>(d) };
@@ -183,19 +180,6 @@ int32_t LEGACY_NODELETE isoTimeCompare(const ISO8601::PlainTime& t1, const ISO86
     return 0;
 }
 
-// ISODateSurpasses — temporal_rs: iso_date_surpasses (src/iso.rs)
-// https://tc39.es/proposal-temporal/#sec-temporal-isodatesurpasses
-static bool isoDateSurpasses(int32_t sign, int32_t y1, int32_t m1, int32_t d1, const ISO8601::PlainDate& isoDate2)
-{
-    if (y1 != isoDate2.year())
-        return sign * (y1 - isoDate2.year()) > 0;
-    if (m1 != static_cast<int32_t>(isoDate2.month()))
-        return sign * (m1 - static_cast<int32_t>(isoDate2.month())) > 0;
-    if (d1 != static_cast<int32_t>(isoDate2.day()))
-        return sign * (d1 - static_cast<int32_t>(isoDate2.day())) > 0;
-    return false;
-}
-
 // DiffISODate — temporal_rs: IsoDate::diff_iso_date
 // https://tc39.es/proposal-temporal/#sec-temporal-calendardateuntil step 3, the iso8601 branch.
 ISO8601::Duration diffISODate(const ISO8601::PlainDate& one, const ISO8601::PlainDate& two, TemporalUnit largestUnit)
@@ -208,67 +192,55 @@ ISO8601::Duration diffISODate(const ISO8601::PlainDate& one, const ISO8601::Plai
         return { };
 
     // 3.b. Let years be 0.
-    int years = 0;
+    int64_t years = 0;
     // 3.d. Let months be 0.
-    int months = 0;
+    int64_t months = 0;
 
     // 3.c. If largestUnit is ~year~, then
     // 3.e. If largestUnit is either ~year~ or ~month~, then
-    // NOTE: polyfill optimization runs year loop for both ~year~ and ~month~, then folds into months below.
+    // NOTE: instead of the ISODateSurpasses loops, the final month offset 12 × years + months is computed directly:
+    // the offset to two's year-month, less one step if one.day passes two.day there.
     if (largestUnit == TemporalUnit::Year || largestUnit == TemporalUnit::Month) {
-        // NOTE: candidateYears starts at two.year()-one.year() instead of sign (polyfill optimization, saves iterations).
-        // 3.c.i. Let candidateYears be sign.
-        auto candidateYears = two.year() - one.year();
-        if (candidateYears)
-            candidateYears -= sign;
-        // 3.c.ii. Repeat, while ISODateSurpasses(sign, one, two, candidateYears, 0, 0, 0) is false,
-        while (!isoDateSurpasses(sign, one.year() + candidateYears, static_cast<int32_t>(one.month()), static_cast<int32_t>(one.day()), two)) {
-            // 1. Set years to candidateYears.
-            years = candidateYears;
-            // 2. Set candidateYears to candidateYears + sign.
-            candidateYears += sign;
-        }
+        int64_t totalMonths = (static_cast<int64_t>(two.year()) - one.year()) * ISO8601::monthsPerYear
+            + (static_cast<int64_t>(two.month()) - static_cast<int64_t>(one.month()));
+        int32_t dayDifference = static_cast<int32_t>(one.day()) - static_cast<int32_t>(two.day());
+        if (sign * dayDifference > 0)
+            totalMonths -= sign;
 
-        // 3.e.i. Let candidateMonths be sign.
-        auto candidateMonths = sign;
-        // 3.e.ii. Repeat, while ISODateSurpasses(sign, one, two, years, candidateMonths, 0, 0) is false,
-        auto intermediate = balanceISOYearMonth(one.year() + years, static_cast<int64_t>(one.month()) + candidateMonths);
-        while (!isoDateSurpasses(sign, intermediate.year(), static_cast<int32_t>(intermediate.month()), static_cast<int32_t>(one.day()), two)) {
-            // 1. Set months to candidateMonths.
-            months = candidateMonths;
-            // 2. Set candidateMonths to candidateMonths + sign.
-            candidateMonths += sign;
-            // 3. Set intermediate to BalanceISOYearMonth(intermediate.[[Year]], intermediate.[[Month]] + sign).
-            intermediate = balanceISOYearMonth(intermediate.year(), static_cast<int64_t>(intermediate.month()) + sign);
-        }
-
-        // Fold years into months when largestUnit is ~month~ (polyfill optimization result).
-        if (largestUnit == TemporalUnit::Month) {
-            months += years * ISO8601::monthsPerYear;
-            years = 0;
-        }
+        // For ~year~, split into years and months (C++ division truncates toward zero, keeping totalMonths' sign).
+        if (largestUnit == TemporalUnit::Year) {
+            years = totalMonths / ISO8601::monthsPerYear;
+            months = totalMonths % ISO8601::monthsPerYear;
+        } else
+            months = totalMonths;
     }
 
     // NOTE: steps 3.f–3.j (weeks/days via ISODateSurpasses loops) are replaced by epoch-day
     // subtraction (polyfill optimization). Compute the base date after adding years+months first.
-    auto intermediate = balanceISOYearMonth(one.year() + years, static_cast<int64_t>(one.month()) + months);
-    auto constrained = regulateISODate(intermediate.year(), static_cast<int32_t>(intermediate.month()), static_cast<int64_t>(one.day()), TemporalOverflow::Constrain);
-    ASSERT(constrained); // Constrain mode cannot fail
+    int32_t startYear = one.year();
+    int32_t startMonth = static_cast<int32_t>(one.month());
+    int32_t startDay = static_cast<int32_t>(one.day());
+    if (years || months) {
+        auto intermediate = balanceISOYearMonth(one.year() + years, static_cast<int64_t>(one.month()) + months);
+        startYear = intermediate.year();
+        startMonth = static_cast<int32_t>(intermediate.month());
+        auto constrained = regulateISODate(startYear, startMonth, startDay, TemporalOverflow::Constrain);
+        ASSERT(constrained); // Constrain mode cannot fail
+        startDay = static_cast<int32_t>(constrained->day());
+    }
+    int64_t days = (static_cast<int64_t>(WTF::daysFromYearMonth(two.year(), static_cast<int32_t>(two.month()) - 1)) + static_cast<int32_t>(two.day()))
+        - (static_cast<int64_t>(WTF::daysFromYearMonth(startYear, startMonth - 1)) + startDay);
 
     // 3.f. Let weeks be 0.
-    double weeks = 0;
-    double days = makeDay(two.year(), two.month() - 1, two.day()) - makeDay(constrained->year(), constrained->month() - 1, constrained->day());
-
+    int64_t weeks = 0;
     // 3.g. If largestUnit is ~week~, then
     if (largestUnit == TemporalUnit::Week) {
-        weeks = std::trunc(std::abs(days) / ISO8601::daysPerWeek);
-        days = std::trunc((double)(((Int128)std::trunc(days)) % ISO8601::daysPerWeek));
-        if (weeks)
-            weeks *= sign; // Avoid -0
+        weeks = days / ISO8601::daysPerWeek;
+        days = days % ISO8601::daysPerWeek;
     }
 
     // 3.k. Return ! CreateDateDurationRecord(years, months, weeks, days).
-    return ISO8601::Duration { years, months, static_cast<int64_t>(weeks), static_cast<int64_t>(days), 0LL, 0LL, 0LL, 0LL, Int128(0), Int128(0) };
+    return ISO8601::Duration { years, months, weeks, days, 0LL, 0LL, 0LL, 0LL, Int128(0), Int128(0) };
 }
 
 // DiffISODateTime — ISO8601 path of DifferenceISODateTime (combines diffISODate + DifferenceTime).

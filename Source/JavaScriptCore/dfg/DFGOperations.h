@@ -415,6 +415,9 @@ JSC_DECLARE_JIT_OPERATION(operationMakeAtomString3, JSString*, (JSGlobalObject*,
 JSC_DECLARE_JIT_OPERATION(operationMakeAtomString2WithCache, JSString*, (JSGlobalObject*, JSString*, JSString*, ConcatKeyAtomStringCache*));
 JSC_DECLARE_JIT_OPERATION(operationMakeAtomString3WithCache, JSString*, (JSGlobalObject*, JSString*, JSString*, JSString*, ConcatKeyAtomStringCache*));
 JSC_DECLARE_JIT_OPERATION(operationSwitchString, char*, (JSGlobalObject*, size_t tableIndex, const UnlinkedStringJumpTable*, JSString*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTemporalCompare, UCPUStrictInt32, (JSCell*, JSCell*, uint32_t));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTemporalEquals, UCPUStrictInt32, (JSCell*, JSCell*, uint32_t));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTemporalGetEpochMilliseconds, int64_t, (JSCell*, uint32_t));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplLess, uintptr_t, (StringImpl*, StringImpl*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplLessEq, uintptr_t, (StringImpl*, StringImpl*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationCompareStringImplGreater, uintptr_t, (StringImpl*, StringImpl*));
