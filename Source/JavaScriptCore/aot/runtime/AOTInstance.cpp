@@ -353,7 +353,7 @@ static void fillInstanceClassInfos(Instance& instance)
 
 CONCURRENT_SAFE void setPollsEnabled(Instance& instance, bool enabled)
 {
-    WTF::atomicStore(&instance.pollIsDue, static_cast<uintptr_t>(enabled), std::memory_order_relaxed);
+    WTF::atomicStore<MemoryOrder::Relaxed>(&instance.pollIsDue, static_cast<uintptr_t>(enabled));
     if constexpr (hasFaultingLoopPolls)
         OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
 }

@@ -118,7 +118,7 @@ static void applyBasicAuthorizationHeader(WebCore::ResourceRequest& request, con
     request.setHTTPHeaderField(WebCore::HTTPHeaderName::Authorization, credential.serializationForBasicAuthorizationHeader());
 }
 
-static float LEGACY_NODELETE toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
+NODELETE static float toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
 {
     switch (priority) {
     case WebCore::ResourceLoadPriority::VeryLow:
@@ -338,9 +338,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
         ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
         break;
     case WebCore::StoredCredentialsPolicy::DoNotUse:
-        RetainPtr<NSURLSessionConfiguration> effectiveConfiguration = m_sessionWrapper->session.get().configuration;
-        effectiveConfiguration.get().URLCredentialStorage = nil;
-        [m_task _adoptEffectiveConfiguration:effectiveConfiguration.get()];
+        ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
         break;
     };
 

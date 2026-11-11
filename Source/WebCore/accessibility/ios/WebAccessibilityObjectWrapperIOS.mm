@@ -262,11 +262,22 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     return m_axObject.get();
 }
 
+- (NSArray *)accessibilityFormValidationFields
+{
+    return m_formValidationFields.get();
+}
+
+- (void)_setAccessibilityFormValidationFields:(NSArray *)fields
+{
+    m_formValidationFields = fields;
+}
+
 - (void)detach
 {
     // rdar://8798960 Make sure the object is gone early, so that anything _accessibilityUnregister
     // does can't call back into the render tree.
     [super detach];
+    m_formValidationFields = nil;
 
     if ([self respondsToSelector:@selector(_accessibilityUnregister)])
         [self _accessibilityUnregister];
@@ -395,7 +406,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     // Try a fuzzy hit test first to find an accessible element.
     RefPtr<AXCoreObject> axObject = nullptr;
     {
-        AXAttributeCacheScope enableCache(self.axBackingObject->axObjectCache());
+        AXAttributeCacheScope enableCache(protect(self.axBackingObject->axObjectCache()));
         axObject = protect(self.axBackingObject)->accessibilityHitTest(IntPoint(point));
     }
 
@@ -1046,7 +1057,7 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
             return false;
 
         // Text elements that are just pieces of links or headers should not be exposed.
-        if ([protect(AccessibilityUnignoredAncestor([self accessibilityContainer])) containsUnnaturallySegmentedChildren])
+        if ([protect(AccessibilityUnignoredAncestor(dynamic_objc_cast<WebAccessibilityObjectWrapper>([self accessibilityContainer]))) containsUnnaturallySegmentedChildren])
             return false;
         return true;
     }
@@ -1875,7 +1886,9 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
 {
     RefPtr<AccessibilityObject> object = self.axBackingObject;
     auto rect = FloatRect(snappedIntRect(object->elementRect()));
+#if !ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     rect.moveBy({ object->remoteFrameOffset() });
+#endif
     return [self convertRectToSpace:rect space:AccessibilityConversionSpace::Page];
 }
 
@@ -1921,7 +1934,11 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
 
     RefPtr<AccessibilityObject> object = self.axBackingObject;
     auto rect = FloatRect(snappedIntRect(object->elementRect()));
+#if !ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     rect.moveBy({ object->remoteFrameOffset() });
+#endif
+    // With ACCESSIBILITY_LOCAL_FRAME, the screen conversion uses this frame's own screen position,
+    // which already includes the frame's offset within the main frame.
     return [self convertRectToSpace:rect space:AccessibilityConversionSpace::Screen];
 }
 
@@ -1969,7 +1986,7 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
         return nil;
 
     RefPtr<AccessibilityObject> object = self.axBackingObject;
-    AXAttributeCacheScope enableCache(object->axObjectCache());
+    AXAttributeCacheScope enableCache(protect(object->axObjectCache()));
 
     // As long as there's a parent wrapper, that's the correct chain to climb. Use the cross-frame variant
     // so that ascending out of a local iframe reaches the hosting frame in the parent document. Without this,
@@ -2130,12 +2147,12 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    return createNSArray(protect(self.axBackingObject)->flowToObjects(), [] (auto&& child) -> id {
-        auto wrapper = child->wrapper();
+    return createNSArray(protect(self.axBackingObject)->flowToObjects(), [] (auto&& child) -> RetainPtr<id> {
+        RetainPtr wrapper = child->wrapper();
         AX_ASSERT(wrapper);
 
         if (child->isAttachment()) {
-            if (auto attachmentView = wrapper.attachmentView)
+            if (auto attachmentView = [wrapper attachmentView])
                 return attachmentView;
         }
 
@@ -2208,7 +2225,7 @@ static NSArray *accessibleElementsForObjects(const AXCoreObject::AccessibilityCh
     // AXCoreObject::linkedObject may return an object that is exposed in other platforms but not on iOS, i.e., grouping or structure elements like <div> or <p>.
     // Thus find the next accessible object that is exposed on iOS.
     RefPtr linkedObject = firstAccessibleObjectFromNode(protect(linkedObjects[0]->node()), [] (const auto& accessible) {
-        return accessible.wrapper().isAccessibilityElement;
+        return [protect(accessible.wrapper()) isAccessibilityElement];
     });
     return linkedObject ? linkedObject->wrapper() : nil;
 }
@@ -2287,7 +2304,7 @@ static RenderObject* rendererForView(WAKView* view)
 
 - (id)_accessibilityParentForSubview:(id)subview
 {
-    CheckedPtr renderer = rendererForView(subview);
+    CheckedPtr renderer = rendererForView(dynamic_objc_cast<WAKView>(subview));
     if (!renderer)
         return nil;
 

@@ -116,11 +116,18 @@ private:
 
                 case Spread:
                     if (m_graph.isWatchingHavingABadTimeWatchpoint(node)) {
-                        // We check ArrayUse here because ArrayUse indicates that the iterator
-                        // protocol for Arrays is non-observable by user code (e.g, it hasn't
-                        // been changed).
+                        // In order to eliminate the Spread we have to know the iteration protocol is
+                        // not observable. The ArrayUse kind does not prove that, only that the child
+                        // is an Array object.
+                        //
+                        // Watching the realm of the allocation is sufficient to prove the protocol is
+                        // intact. Elimination only happens on allocations that never escape and this
+                        // pass is particularly conservative with what it means to escape. If we ever
+                        // supported PutById/Offset we would have to be more careful.
                         if (node->child1().useKind() == ArrayUse) {
-                            if ((node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer) && m_candidates.contains(node->child1().node()))
+                            if ((node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer)
+                                && m_candidates.contains(node->child1().node())
+                                && m_graph.isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(node->child1().node()))
                                 m_candidates.add(node, AvailabilityMap { });
                         }
                     }
@@ -317,6 +324,29 @@ private:
             }
         };
 
+        // Each spread operand is decided on its own, so a call can mix eliminated and materialized
+        // spreads; the backends handle the mix. A candidacy revoked later in the pass just leaves that
+        // operand materialized, so no fixpoint is needed.
+        auto escapeSpreadOperands = [&](Node* node, unsigned base) {
+            for (unsigned i = 0; i < base; ++i)
+                escape(m_graph.varArgChild(node, i), node);
+
+            BitVector* bitVector = node->bitVector();
+            unsigned numElems = node->numChildren() - base;
+            for (unsigned i = 0; i < numElems; ++i) {
+                Edge child = m_graph.varArgChild(node, base + i);
+                bool dontEscape = false;
+                if (bitVector->get(i)) {
+                    Node* spread = child.node();
+                    dontEscape = spread->op() == Spread
+                        && (spread->child1()->op() == CreateRest || spread->child1()->op() == NewArrayBuffer)
+                        && m_candidates.contains(spread);
+                }
+                if (!dontEscape)
+                    escape(child, node);
+            }
+        };
+
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
             for (Node* node : *block) {
                 switch (node->op()) {
@@ -348,7 +378,7 @@ private:
 
                 case NewArrayWithSpread: {
                     BitVector* bitVector = node->bitVector();
-                    bool isWatchingHavingABadTimeWatchpoint = m_graph.isWatchingHavingABadTimeWatchpoint(node); 
+                    bool isWatchingHavingABadTimeWatchpoint = m_graph.isWatchingHavingABadTimeWatchpoint(node);
                     for (unsigned i = 0; i < node->numChildren(); i++) {
                         Edge child = m_graph.varArgChild(node, i);
                         bool dontEscape;
@@ -356,7 +386,8 @@ private:
                             dontEscape = child->op() == Spread
                                 && child->child1().useKind() == ArrayUse
                                 && (child->child1()->op() == CreateRest || child->child1()->op() == NewArrayBuffer)
-                                && isWatchingHavingABadTimeWatchpoint;
+                                && isWatchingHavingABadTimeWatchpoint
+                                && m_graph.isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(child->child1().node());
                         } else
                             dontEscape = false;
 
@@ -368,7 +399,17 @@ private:
                 }
 
                 case Spread: {
-                    bool isOK = node->child1().useKind() == ArrayUse && (node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer);
+                    // In order to eliminate the Spread we have to know the iteration protocol is
+                    // not observable. The ArrayUse kind does not prove that, only that the child
+                    // is an Array object.
+                    //
+                    // Watching the realm of the allocation is sufficient to prove the protocol is
+                    // intact. Elimination only happens on allocations that never escape and this
+                    // pass is particularly conservative with what it means to escape. If we ever
+                    // supported PutById/Offset we would have to be more careful.
+                    bool isOK = node->child1().useKind() == ArrayUse
+                        && (node->child1()->op() == CreateRest || node->child1()->op() == NewArrayBuffer)
+                        && m_graph.isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(node->child1().node());
                     if (!isOK)
                         escape(node->child1(), node);
                     break;
@@ -384,7 +425,12 @@ private:
                     if (node->loadVarargsData()->offset && (node->argumentsChild()->op() == NewArrayWithSpread || node->argumentsChild()->op() == Spread || node->argumentsChild()->op() == NewArrayBuffer))
                         escape(node->argumentsChild(), node);
                     break;
-                    
+
+                case VarargsLengthWithSpread:
+                case LoadVarargsWithSpread:
+                    escapeSpreadOperands(node, node->op() == LoadVarargsWithSpread ? 1 : 0);
+                    break;
+
                 case CallVarargs:
                 case ConstructVarargs:
                 case TailCallVarargs:
@@ -393,6 +439,10 @@ private:
                     escape(node->child2(), node);
                     if (node->callVarargsData()->firstVarArgOffset && (node->child3()->op() == NewArrayWithSpread || node->child3()->op() == Spread || node->child3()->op() == NewArrayBuffer))
                         escape(node->child3(), node);
+                    break;
+
+                case CallVarargsWithSpread:
+                    escapeSpreadOperands(node, 2);
                     break;
 
                 case Check:
@@ -793,6 +843,25 @@ private:
                     return true;
                 };
 
+                // The operands of a *WithSpread node from base on, as an eliminated array that the cases for
+                // the plain varargs nodes know how to lower. Null unless every spread operand was eliminated.
+                auto phantomArrayForSpreadOperands = [&](unsigned base) -> Node* {
+                    BitVector* bitVector = node->bitVector();
+                    unsigned numElems = node->numChildren() - base;
+                    for (unsigned e = 0; e < numElems; ++e) {
+                        if (bitVector->get(e) && !isEliminatedAllocation(m_graph.varArgChild(node, base + e).node()))
+                            return nullptr;
+                    }
+                    unsigned firstChild = m_graph.m_varArgChildren.size();
+                    for (unsigned e = 0; e < numElems; ++e)
+                        m_graph.m_varArgChildren.append(m_graph.varArgChild(node, base + e));
+                    Node* phantomArray = insertionSet.insertNode(
+                        nodeIndex, SpecNone, Node::VarArg, PhantomNewArrayWithSpread,
+                        node->origin.withExitOK(true), OpInfo(bitVector), OpInfo(), firstChild, numElems);
+                    m_candidates.add(phantomArray, AvailabilityMap { });
+                    return phantomArray;
+                };
+
                 switch (node->op()) {
                 case CreateDirectArguments:
                     if (!m_candidates.contains(node))
@@ -952,6 +1021,18 @@ private:
 
                     node->convertToIdentityOn(emitCodeToGetArgumentsArrayLength(insertionSet, candidate, nodeIndex, origin, /* addThis = */ true));
                     break;
+                }
+
+                case LoadVarargsWithSpread: {
+                    Node* phantomArray = phantomArrayForSpreadOperands(1);
+                    if (!phantomArray)
+                        break;
+
+                    DFG_ASSERT(m_graph, node, node->origin.exitOK);
+                    Edge countEdge = m_graph.varArgChild(node, 0);
+                    node->setOpAndDefaultFlags(LoadVarargs);
+                    node->children = AdjacencyList(AdjacencyList::Fixed, countEdge, Edge(phantomArray));
+                    [[fallthrough]];
                 }
 
                 case LoadVarargs: {
@@ -1185,7 +1266,29 @@ private:
                     node->setOpAndDefaultFlags(ForwardVarargs);
                     break;
                 }
-                    
+
+                case VarargsLengthWithSpread: {
+                    Node* phantomArray = phantomArrayForSpreadOperands(0);
+                    if (!phantomArray)
+                        break;
+
+                    DFG_ASSERT(m_graph, node, node->origin.exitOK);
+                    node->convertToIdentityOn(emitCodeToGetArgumentsArrayLength(insertionSet, phantomArray, nodeIndex, node->origin.withExitOK(true), /* addThis */ true));
+                    break;
+                }
+
+                case CallVarargsWithSpread: {
+                    Node* phantomArray = phantomArrayForSpreadOperands(2);
+                    if (!phantomArray)
+                        break;
+
+                    Edge callee = m_graph.varArgChild(node, 0);
+                    Edge thisArgument = m_graph.varArgChild(node, 1);
+                    node->setOpAndDefaultFlags(CallVarargs);
+                    node->children = AdjacencyList(AdjacencyList::Fixed, callee, thisArgument, Edge(phantomArray));
+                    [[fallthrough]];
+                }
+
                 case CallVarargs:
                 case ConstructVarargs:
                 case TailCallVarargs:
@@ -1347,7 +1450,7 @@ private:
 
                     break;
                 }
-                    
+
                 case CheckArrayOrEmpty:
                 case CheckArray:
                 case GetButterfly:

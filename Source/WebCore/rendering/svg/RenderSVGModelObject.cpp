@@ -102,24 +102,16 @@ void RenderSVGModelObject::updateFromStyle()
     RenderLayerModelObject::updateFromStyle();
     updateHasSVGTransformFlags();
     if (!hasLayer())
-        updateLocalTransform();
+        updateCachedNominalTransform();
     else
-        m_localTransform = std::nullopt;
+        m_cachedNominalTransform = std::nullopt;
 }
 
-AffineTransform RenderSVGModelObject::computeLocalTransform() const
+void RenderSVGModelObject::updateCachedNominalTransform()
 {
-    TransformationMatrix transform;
-    CheckedRef style = this->style();
-    applyTransform(transform, style, transformReferenceBoxRect(style), Style::TransformResolver::allTransformOperations);
-    return transform.toAffineTransform();
-}
-
-void RenderSVGModelObject::updateLocalTransform()
-{
-    auto localTransform = computeLocalTransform();
-    auto oldTransform = std::exchange(m_localTransform, localTransform);
-    invalidateNonScalingStrokeCachesInSubtreeForSVG(oldTransform, localTransform);
+    auto transform = computeNominalTransform();
+    auto oldTransform = std::exchange(m_cachedNominalTransform, transform);
+    invalidateNonScalingStrokeCachesInSubtreeForSVG(oldTransform, transform);
 }
 
 LayoutRect RenderSVGModelObject::overflowClipRect(const LayoutPoint&, OverlayScrollbarSizeRelevancy, PaintPhase) const
@@ -329,7 +321,7 @@ void RenderSVGModelObject::addFocusRingRects(Vector<LayoutRect>& rects, const La
 
 // FloatRect::intersects does not consider horizontal or vertical lines (because of isEmpty()).
 // So special-case handling of such lines.
-static bool LEGACY_NODELETE intersectsAllowingEmpty(const FloatRect& r, const FloatRect& other)
+NODELETE static bool intersectsAllowingEmpty(const FloatRect& r, const FloatRect& other)
 {
     if (r.isEmpty() && other.isEmpty())
         return false;
@@ -342,7 +334,7 @@ static bool LEGACY_NODELETE intersectsAllowingEmpty(const FloatRect& r, const Fl
 
 // One of the element types that can cause graphics to be drawn onto the target canvas. Specifically: circle, ellipse,
 // image, line, path, polygon, polyline, rect, text and use.
-static bool LEGACY_NODELETE isGraphicsElement(const RenderElement& renderer)
+NODELETE static bool isGraphicsElement(const RenderElement& renderer)
 {
     return renderer.isRenderSVGShape() || renderer.isRenderSVGText() || renderer.isRenderSVGImage() || renderer.element()->hasTagName(SVGNames::useTag);
 }
@@ -431,22 +423,6 @@ Path RenderSVGModelObject::computeClipPathGeometry() const
 void RenderSVGModelObject::paintSVGOutline(PaintInfo& paintInfo, const LayoutPoint& adjustedPaintOffset)
 {
     paintOutline(paintInfo, LayoutRect(adjustedPaintOffset, borderBoxRectEquivalent().size()));
-}
-
-void RenderSVGModelObject::updateLayerTransform()
-{
-    // Transform-origin depends on box size, so we need to update the layer transform after layout.
-    if (hasLayer()) {
-        m_localTransform = std::nullopt;
-        RenderLayerModelObject::updateLayerTransform();
-        return;
-    }
-    // Non-layered SVG renderers cache their transform in m_localTransform (via applyTransform()).
-    // Subclasses like RenderSVGViewportContainer compute supplemental transforms (viewBox, zoom, pan)
-    // in their updateLayerTransform() override before calling the base. We must refresh the cached
-    // local transform so that coordinate mapping (e.g. for scalingFactor computation) picks up
-    // the supplemental transform.
-    updateLocalTransform();
 }
 
 } // namespace WebCore

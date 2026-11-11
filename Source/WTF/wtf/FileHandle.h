@@ -37,9 +37,7 @@
 #include <sys/types.h>
 #endif
 
-namespace WTF {
-
-namespace FileSystemImpl {
+namespace WTF::FileSystemImpl {
 
 class MappedFileData;
 
@@ -71,14 +69,14 @@ enum class FileSeekOrigin {
 
 class FileHandle {
 public:
-    WTF_EXPORT_PRIVATE FileHandle();
+    NODELETE WTF_EXPORT_PRIVATE FileHandle();
 
     static FileHandle adopt(PlatformFileHandle handle, OptionSet<FileLockMode> lockMode = { })
     {
         return FileHandle { handle, lockMode };
     }
 
-    WTF_EXPORT_PRIVATE FileHandle(FileHandle&&);
+    NODELETE WTF_EXPORT_PRIVATE FileHandle(FileHandle&&);
     WTF_EXPORT_PRIVATE FileHandle& operator=(FileHandle&&);
 
     WTF_EXPORT_PRIVATE ~FileHandle();
@@ -116,8 +114,6 @@ private:
     Markable<PlatformFileHandle, PlatformHandleTraits> m_handle;
 };
 
-} // namespace FileSystemImpl
-
-} // namespace WTF
+} // namespace WTF::FileSystemImpl
 
 namespace FileSystem = WTF::FileSystemImpl;

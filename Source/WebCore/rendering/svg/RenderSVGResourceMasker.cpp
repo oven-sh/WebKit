@@ -190,24 +190,24 @@ void RenderSVGResourceMasker::removeReferencingCSSClient(const RenderElement& cl
 bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, const FloatRect& objectBoundingBox)
 {
     // Eventually adjust the mask image context according to the target objectBoundingBox.
-    AffineTransform maskContentTransformation;
+    AffineTransform maskContentTransform;
 
     if (protect(maskElement())->maskContentUnits() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        maskContentTransformation.translate(objectBoundingBox.location());
-        maskContentTransformation.scale(objectBoundingBox.size());
+        maskContentTransform.translate(objectBoundingBox.location());
+        maskContentTransform.scale(objectBoundingBox.size());
     }
 
     // Draw the content into the ImageBuffer.
-    protect(layer())->paintResourceLayerForSVG(context, maskContentTransformation);
+    protect(layer())->paintResourceLayerForSVG(context, maskContentTransform);
     return true;
 }
 
-bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions options)
+bool RenderSVGResourceMasker::drawContentIntoContext(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, const ImageDrawDescriptor& descriptor)
 {
     GraphicsContextStateSaver stateSaver(context);
-    context.setCompositeOperation(options.compositeOperator(), options.blendMode());
-    if (options.interpolationQuality() != InterpolationQuality::Default)
-        context.setImageInterpolationQuality(options.interpolationQuality());
+    context.setCompositeOperation(descriptor.compositeOperator, descriptor.blendMode);
+    if (descriptor.rendition.interpolationQuality != InterpolationQuality::Default)
+        context.setImageInterpolationQuality(descriptor.rendition.interpolationQuality);
     context.translate(destinationRect.location());
 
     if (destinationRect.size() != sourceRect.size())

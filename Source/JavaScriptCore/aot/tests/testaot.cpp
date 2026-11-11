@@ -463,7 +463,7 @@ int main(int argc, char** argv)
         if (!parsedCommandLine)
             return exitCodeForInvalidCommandLine;
         if (JSC::Options::aotImagePath()) {
-            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::alwaysUseSharedArrayBuffer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)

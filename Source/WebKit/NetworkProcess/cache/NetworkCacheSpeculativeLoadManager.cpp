@@ -160,8 +160,8 @@ public:
         return WTF::move(m_entry);
     }
 
-    const std::optional<ResourceRequest>& LEGACY_NODELETE revalidationRequest() const { return m_speculativeValidationRequest; }
-    bool LEGACY_NODELETE wasRevalidated() const { return !!m_speculativeValidationRequest; }
+    NODELETE const std::optional<ResourceRequest>& revalidationRequest() const { return m_speculativeValidationRequest; }
+    NODELETE bool wasRevalidated() const { return !!m_speculativeValidationRequest; }
 
 private:
     std::unique_ptr<Entry> m_entry;
@@ -213,7 +213,7 @@ public:
         saveToDiskIfReady();
     }
 
-    bool LEGACY_NODELETE didReceiveMainResourceResponse() const { return m_didReceiveMainResourceResponse; }
+    NODELETE bool didReceiveMainResourceResponse() const { return m_didReceiveMainResourceResponse; }
     void markMainResourceResponseAsReceived()
     {
         m_didReceiveMainResourceResponse = true;
@@ -479,7 +479,7 @@ bool SpeculativeLoadManager::satisfyPendingRequests(const Key& key, Entry* entry
     return true;
 }
 
-void SpeculativeLoadManager::preconnectForSubresource(const SubresourceInfo& subresourceInfo, Entry* entry, const GlobalFrameID& frameID, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain)
+void SpeculativeLoadManager::preconnectForSubresource(const SubresourceInfo& subresourceInfo, Entry* entry, const GlobalFrameID& frameID, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, bool allowPrivacyProxy, OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections)
 {
 #if ENABLE(SERVER_PRECONNECT)
     Ref cache = m_cache.get();
@@ -497,13 +497,17 @@ void SpeculativeLoadManager::preconnectForSubresource(const SubresourceInfo& sub
     parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
     parameters.request = constructRevalidationRequest(subresourceInfo.key(), subresourceInfo, entry);
     parameters.isNavigatingToAppBoundDomain = isNavigatingToAppBoundDomain;
+    parameters.allowPrivacyProxy = allowPrivacyProxy;
+    parameters.advancedPrivacyProtections = advancedPrivacyProtections;
     Ref preconnectTask = PreconnectTask::create(*networkSession, WTF::move(parameters));
     preconnectTask->start();
 #else
     UNUSED_PARAM(subresourceInfo);
     UNUSED_PARAM(entry);
     UNUSED_PARAM(frameID);
-#endif
+    UNUSED_PARAM(allowPrivacyProxy);
+    UNUSED_PARAM(advancedPrivacyProtections);
+#endif // ENABLE(SERVER_PRECONNECT)
 }
 
 void SpeculativeLoadManager::revalidateSubresource(const SubresourceInfo& subresourceInfo, std::unique_ptr<Entry> entry, const GlobalFrameID& frameID, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, bool allowPrivacyProxy, OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections)
@@ -521,7 +525,7 @@ void SpeculativeLoadManager::revalidateSubresource(const SubresourceInfo& subres
     // Delay first-party speculative loads until we've received the response for the main resource, in case the main resource
     // response sets cookies that are needed for subsequent loads.
     if (pendingLoad && !pendingLoad->didReceiveMainResourceResponse() && subresourceInfo.isFirstParty()) {
-        preconnectForSubresource(subresourceInfo, entry.get(), frameID, isNavigatingToAppBoundDomain);
+        preconnectForSubresource(subresourceInfo, entry.get(), frameID, isNavigatingToAppBoundDomain, allowPrivacyProxy, advancedPrivacyProtections);
         pendingLoad->addPostMainResourceResponseTask([weakThis = WeakPtr { *this }, subresourceInfo, entry = WTF::move(entry), frameID, isNavigatingToAppBoundDomain, allowPrivacyProxy, advancedPrivacyProtections]() mutable {
             CheckedPtr checkedThis = weakThis.get();
             if (!checkedThis || checkedThis->m_pendingPreloads.contains(subresourceInfo.key()))

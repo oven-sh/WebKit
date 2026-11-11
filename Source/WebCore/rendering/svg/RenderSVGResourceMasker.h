@@ -30,6 +30,8 @@ namespace WebCore {
 class GraphicsContext;
 class SVGMaskElement;
 
+struct ImageDrawDescriptor;
+
 class RenderSVGResourceMasker final : public RenderSVGResourceContainer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceMasker);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceMasker);
@@ -54,7 +56,7 @@ public:
     void removeReferencingCSSClient(const RenderElement&) final;
 
     bool drawContentIntoContext(GraphicsContext&, const FloatRect& objectBoundingBox);
-    bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions);
+    bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, const ImageDrawDescriptor&);
 
 private:
     void element() const = delete;

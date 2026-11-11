@@ -168,6 +168,27 @@ TEST_F(QuirksTest, EmbeddedQuirksResolveFromTheDocumentURL)
 
     EXPECT_FALSE(resolveQuirksForTopURL("https://www.youtube-nocookie.com/embed/abc"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsYouTubeCaptionQuirk));
 }
+
+static bool cnameCloakingCookieCapExempt(ASCIILiteral firstPartyURLString, ASCIILiteral cnameHostName)
+{
+    auto patterns = WebCore::Quirks::cnameCloakingCookieCapExemptTargetPatterns(URL { firstPartyURLString });
+    return WebCore::Quirks::anyPatternMatchesCNAMETarget(patterns, String { cnameHostName });
+}
+
+TEST_F(QuirksTest, CNAMECloakingCookieCapIsSkippedOnlyBetweenDomainsOfOneOwner)
+{
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "www3.l.google.com."_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://music.youtube.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "youtube.com"_s));
+
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "tracker.example"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "tracker.example"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.example.com/"_s, "www3.l.google.com"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "evilgoogle.com"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.google.de/"_s, "www3.l.google.com"_s));
+}
 #endif
 
 static String shippedQuirkTableJSON()
@@ -463,6 +484,20 @@ TEST_F(QuirksTest, BaiduChatInputScriptGetsAChromeTokenInTheUserAgent)
         EXPECT_TRUE(scriptsForScriptURL(resolveQuirksForTopURL(topURL), chatInputScriptURL).isEmpty()) << topURL.characters();
 }
 
+TEST_F(QuirksTest, DuolingoEnglishTestGetsAChromeTokenInTheUserAgent)
+{
+    for (auto url : { "https://englishtest.duolingo.com/practice"_s, "https://englishtest.duolingo.com/test/practice"_s, "https://englishtest.duolingo.cn/practice"_s }) {
+#if PLATFORM(COCOA)
+        EXPECT_EQ(customUserAgentFor(url), String { "TestBase/1.0 (KHTML, like Gecko, like Chrome/157.) Trailer/1.0"_s }) << url.characters();
+#else
+        EXPECT_FALSE(customUserAgentFor(url).has_value()) << url.characters();
+#endif
+    }
+
+    for (auto url : { "https://www.duolingo.com/"_s, "https://duolingo.com/"_s, "https://www.duolingo.cn/"_s, "https://englishtest.duolingo.com.attacker.com/"_s, "https://notenglishtest.duolingo.com/"_s })
+        EXPECT_FALSE(customUserAgentFor(url).has_value()) << url.characters();
+}
+
 TEST_F(QuirksTest, DocumentsWithoutAScriptQuirkGetNoParameters)
 {
     auto quirks = resolveQuirksForTopURL("https://www.example.com/"_s);
@@ -753,6 +788,40 @@ TEST_F(QuirksTest, SitesThatNeedSimulatedMouseEventsEverywhereCarryNoSelector)
     }
 }
 #endif // ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
+
+// On iOS, ENABLE(TOUCH_EVENTS) and ENABLE(IOS_TOUCH_EVENTS) are on only with the Apple internal SDK, so
+// fast/quirks/active-quirks-by-domain.html leaves these quirks out and they are checked here instead.
+TEST_F(QuirksTest, TouchEventQuirksFollowTheirBuildConditions)
+{
+    constexpr auto nativeTaps = WebCore::QuirkBehaviorID::ShouldAllowNativeTapsOnMediaElementsQuirk;
+    constexpr auto pointerOut = WebCore::QuirkBehaviorID::ShouldDispatchPointerOutAndLeaveAfterHandlingSyntheticClick;
+    constexpr auto touchMove = WebCore::QuirkBehaviorID::ShouldPreventTouchMoveDispatchQuirk;
+    constexpr auto touchEnd = WebCore::QuirkBehaviorID::ShouldPreventTouchEndDispatchQuirk;
+
+    auto linkedIn = resolveQuirksForTopURL("https://www.linkedin.com/"_s);
+    auto outlook = resolveQuirksForTopURL("https://outlook.live.com/"_s);
+    auto netflix = resolveQuirksForTopURL("https://www.netflix.com/"_s);
+    auto soylent = resolveQuirksForTopURL("https://soylent.com/"_s);
+    auto yahoo = resolveQuirksForTopURL("https://www.yahoo.com/"_s);
+
+#if PLATFORM(IOS_FAMILY) && ENABLE(IOS_TOUCH_EVENTS)
+    EXPECT_EQ(elementSelectorsFor(linkedIn, nativeTaps), Vector<String> { "video.vjs-tech, audio.vjs-tech"_str });
+#else
+    EXPECT_FALSE(linkedIn.isBehaviorEnabled(nativeTaps));
+#endif
+
+#if ENABLE(TOUCH_EVENTS)
+    EXPECT_TRUE(netflix.isBehaviorEnabled(pointerOut));
+    EXPECT_TRUE(soylent.isBehaviorEnabled(pointerOut));
+    EXPECT_EQ(elementSelectorsFor(outlook, touchMove), Vector<String> { ".ms-Suggestions, .ms-Suggestions *"_str });
+    EXPECT_EQ(elementSelectorsFor(yahoo, touchEnd), Vector<String> { ".DPvwYc.sm8sCf, .vjs-subs-cap-button.vjs-menu-button"_str });
+#else
+    EXPECT_FALSE(netflix.isBehaviorEnabled(pointerOut));
+    EXPECT_FALSE(soylent.isBehaviorEnabled(pointerOut));
+    EXPECT_FALSE(outlook.isBehaviorEnabled(touchMove));
+    EXPECT_FALSE(yahoo.isBehaviorEnabled(touchEnd));
+#endif
+}
 
 static bool matchesSelector(ASCIILiteral selector, const WebCore::Node* node)
 {
@@ -1202,10 +1271,14 @@ TEST_F(QuirksTest, NeedsPartitionedCookies)
     };
 
     EXPECT_TRUE(needsPartitionedCookies("https://biller.billpaysite.com/pay"_s, false));
+    EXPECT_TRUE(needsPartitionedCookies("https://www.gradescope.com/courses/1"_s, false));
 
     EXPECT_FALSE(needsPartitionedCookies("https://biller.billpaysite.com/pay"_s, true));
     EXPECT_FALSE(needsPartitionedCookies("https://notbillpaysite.com/"_s, false));
     EXPECT_FALSE(needsPartitionedCookies("https://billpaysite.com.example.com/"_s, false));
+    EXPECT_FALSE(needsPartitionedCookies("https://www.gradescope.com/courses/1"_s, true));
+    EXPECT_FALSE(needsPartitionedCookies("https://notgradescope.com/"_s, false));
+    EXPECT_FALSE(needsPartitionedCookies("https://gradescope.com.example.com/"_s, false));
     EXPECT_FALSE(needsPartitionedCookies("https://www.example.com/"_s, false));
 }
 
@@ -1389,6 +1462,13 @@ TEST_F(QuirksTest, ClaudeSidebarQuirkCarriesTheSidebarSelector)
     EXPECT_EQ(elementSelectorsFor(quirks, WebCore::QuirkBehaviorID::NeedsClaudeSidebarViewportUnitQuirk), Vector<String> { String { onClaudeSidebar } });
 }
 
+TEST_F(QuirksTest, OpenRiceAdPopupQuirkIsScopedToOpenRiceAndCarriesTheContainerSelector)
+{
+    auto quirks = resolveQuirksForTopURL("https://www.openrice.com/"_s);
+    EXPECT_EQ(elementSelectorsFor(quirks, WebCore::QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk), Vector<String> { ".popup-ad-subview-container"_s });
+    EXPECT_FALSE(resolveQuirksForTopURL("https://www.notopenrice.com/"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk));
+}
+
 TEST_F(QuirksTest, OnlyGoogleDocsOpensAboutURLsAsAboutBlank)
 {
     EXPECT_TRUE(resolveQuirksForTopURL("https://docs.google.com/"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::ShouldOpenAsAboutBlankQuirk));
@@ -1519,7 +1599,7 @@ TEST_F(QuirksTest, InstagramReelsGrowToFillTheirFlexContainerOnlyWhenTheyContain
 
 static bool hasActiveQuirk(WebCore::Document& document, ASCIILiteral quirkName)
 {
-    return document.quirks().activeQuirks().contains(String { quirkName });
+    return document.quirks().activeQuirkNames().contains(String { quirkName });
 }
 
 static TestPageHarness createPageWithQuirksEnabled()

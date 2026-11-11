@@ -397,7 +397,7 @@ Node::Node(ClangVTableWorkaroundTag, Document& document)
 {
 }
 
-static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& LEGACY_NODELETE nodeIdentifiersMap()
+NODELETE static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& nodeIdentifiersMap()
 {
     static MainThreadNeverDestroyed<HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>> map;
     return map;
@@ -423,6 +423,8 @@ Node::~Node()
     ASSERT(!parentNode());
     ASSERT(!m_previousSibling);
     ASSERT(!m_next);
+
+    m_shadowIncludingRoot = nullptr;
 
     {
         SUPPRESS_UNCHECKED_LOCAL auto& document = this->document(); // Store document before clearing out m_treeScope.
@@ -570,7 +572,7 @@ static HashSet<Ref<Node>> nodeSetPreTransformedFromNodeOrStringVector(const Fixe
     return nodeSet;
 }
 
-static RefPtr<Node> LEGACY_NODELETE firstPrecedingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
+NODELETE static RefPtr<Node> firstPrecedingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
 {
     for (auto* sibling = context.previousSibling(); sibling; sibling = sibling->previousSibling()) {
         if (!nodeSet.contains(*sibling))
@@ -579,7 +581,7 @@ static RefPtr<Node> LEGACY_NODELETE firstPrecedingSiblingNotInNodeSet(Node& cont
     return nullptr;
 }
 
-static RefPtr<Node> LEGACY_NODELETE firstFollowingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
+NODELETE static RefPtr<Node> firstFollowingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
 {
     for (auto* sibling = context.nextSibling(); sibling; sibling = sibling->nextSibling()) {
         if (!nodeSet.contains(*sibling))
@@ -621,8 +623,7 @@ ExceptionOr<NodeVector> Node::convertNodesOrStringsIntoNodeVector(FixedVector<No
         return NodeVector { };
 
     Ref document = this->document();
-    NodeVector nodeVector;
-    nodeVector.reserveInitialCapacity(nodeOrStringVector.size());
+    NodeVector nodeVector(ReserveCapacityTag { }, nodeOrStringVector.size());
     for (auto& variant : nodeOrStringVector) {
         if (std::holds_alternative<String>(variant)) {
             nodeVector.append(Text::create(document, WTF::move(std::get<String>(variant))));
@@ -847,7 +848,7 @@ void Node::inspect()
         page->inspectorController().inspect(this);
 }
 
-static Node::Editability LEGACY_NODELETE computeEditabilityFromComputedStyle(const Style::ComputedStyle& style, Node::UserSelectAllTreatment treatment, PageIsEditable pageIsEditable)
+NODELETE static Node::Editability computeEditabilityFromComputedStyle(const Style::ComputedStyle& style, Node::UserSelectAllTreatment treatment, PageIsEditable pageIsEditable)
 {
     // Ideally we'd call ASSERT(!needsStyleRecalc()) here, but
     // ContainerNode::setFocus() calls invalidateStyleForSubtree(), so the assertion
@@ -1019,8 +1020,16 @@ void Node::invalidateStyle(Style::Validity validity, Style::InvalidationMode mod
         updateAncestorsForStyleRecalc();
 }
 
+static unsigned s_computeNodeIndexCountForTesting;
+
+unsigned Node::computeNodeIndexCountForTesting()
+{
+    return s_computeNodeIndexCountForTesting;
+}
+
 unsigned Node::computeNodeIndex() const
 {
+    ++s_computeNodeIndexCountForTesting;
     unsigned count = 0;
     for (Node* sibling = previousSibling(); sibling; sibling = sibling->previousSibling())
         ++count;
@@ -1028,7 +1037,7 @@ unsigned Node::computeNodeIndex() const
 }
 
 template<unsigned type>
-bool LEGACY_NODELETE shouldInvalidateNodeListCachesForAttr(std::span<const unsigned, numNodeListInvalidationTypes> nodeListCounts, const QualifiedName& attrName)
+NODELETE bool shouldInvalidateNodeListCachesForAttr(std::span<const unsigned, numNodeListInvalidationTypes> nodeListCounts, const QualifiedName& attrName)
 {
     if constexpr (type >= numNodeListInvalidationTypes)
         return false;
@@ -1317,21 +1326,21 @@ bool Node::isClosedShadowHidden(const Node& otherNode) const
     return true;
 }
 
-static inline ShadowRoot* LEGACY_NODELETE parentShadowRoot(const Node& node)
+NODELETE static inline ShadowRoot* parentShadowRoot(const Node& node)
 {
     if (auto* parent = node.parentElement())
         return parent->shadowRoot();
     return nullptr;
 }
 
-HTMLSlotElement* LEGACY_NODELETE Node::assignedSlot() const
+NODELETE HTMLSlotElement* Node::assignedSlot() const
 {
     if (auto* shadowRoot = parentShadowRoot(*this))
         return shadowRoot->findAssignedSlot(*this);
     return nullptr;
 }
 
-HTMLSlotElement* LEGACY_NODELETE Node::assignedSlotForBindings() const
+NODELETE HTMLSlotElement* Node::assignedSlotForBindings() const
 {
     auto* shadowRoot = parentShadowRoot(*this);
     if (shadowRoot && shadowRoot->mode() == ShadowRootMode::Open)
@@ -1471,20 +1480,26 @@ static Node* traverseToShadowIncludingRoot(Node* current)
         current = parent;
     return current;
 }
+
+static Node* realRootFromShadowIncludingRoot(Node* shadowIncludingRoot)
+{
+    auto* root = shadowIncludingRoot;
+    if (auto* parent = root->parentNode(); parent && parent->isDocumentFragmentForInnerOuterHTML())
+        return parent;
+    return root;
+}
 #endif
 
 ALWAYS_INLINE void Node::updateShadowIncludingRoot()
 {
-    if (auto* parent = parentNode())
+    if (auto* parent = parentNode(); parent && !parent->isDocumentFragmentForInnerOuterHTML())
         m_shadowIncludingRoot = parent->m_shadowIncludingRoot;
     else if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(this)) [[unlikely]] {
         auto* host = shadowRoot->host();
-        auto* root = host ? host->m_shadowIncludingRoot : shadowRoot;
-        shadowRoot->setShadowIncludingRoot(root);
-        m_shadowIncludingRoot = root;
+        m_shadowIncludingRoot = host ? host->m_shadowIncludingRoot : shadowRoot;
     } else
         m_shadowIncludingRoot = this;
-    ASSERT(traverseToShadowIncludingRoot(this) == m_shadowIncludingRoot);
+    ASSERT(traverseToShadowIncludingRoot(this) == realRootFromShadowIncludingRoot(m_shadowIncludingRoot));
 }
 
 Node::NeedsPostConnectionSteps Node::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
@@ -2151,18 +2166,15 @@ static unsigned traverseSubtreeToUpdateTreeScope(Node& root, NOESCAPE const Move
 {
     unsigned count = 0;
     for (CheckedPtr node = &root; node; node = NodeTraversal::next(*node, &root)) {
-        moveNode(*node);
-        ++count;
+        count += moveNode(*node);
 
         RefPtr element = dynamicDowncast<Element>(*node);
         if (!element)
             continue;
 
         if (element->hasSyntheticAttrChildNodes()) {
-            for (auto& attr : element->attrNodeList()) {
-                moveNode(attr);
-                ++count;
-            }
+            for (auto& attr : element->attrNodeList())
+                count += moveNode(attr);
         }
 
         if (RefPtr shadow = element->shadowRoot())
@@ -2171,7 +2183,7 @@ static unsigned traverseSubtreeToUpdateTreeScope(Node& root, NOESCAPE const Move
     return count;
 }
 
-static ALWAYS_INLINE bool LEGACY_NODELETE isDocumentEligibleForFastAdoption(Document& oldDocument, Document& newDocument)
+NODELETE static ALWAYS_INLINE bool isDocumentEligibleForFastAdoption(Document& oldDocument, Document& newDocument)
 {
     return !oldDocument.hasNodeIterators()
         && !oldDocument.hasRanges()
@@ -2196,8 +2208,13 @@ inline unsigned Node::moveShadowTreeToNewDocumentFastCase(ShadowRoot& shadowRoot
 {
     ASSERT(isDocumentEligibleForFastAdoption(oldDocument, newDocument));
     adoptCustomElementRegistryIfNotExplicitlySet(shadowRoot, newDocument);
-    return traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) {
+    return traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) -> unsigned {
+        if (&node.treeScope() != static_cast<TreeScope*>(&shadowRoot)) {
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.document() == &newDocument);
+            return 0;
+        }
         node.moveNodeToNewDocumentFastCase(oldDocument, newDocument);
+        return 1;
     }, [&oldDocument, &newDocument](ShadowRoot& innerShadowRoot) {
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&innerShadowRoot.document() == &oldDocument);
         innerShadowRoot.moveShadowRootToNewDocument(oldDocument, newDocument);
@@ -2207,10 +2224,14 @@ inline unsigned Node::moveShadowTreeToNewDocumentFastCase(ShadowRoot& shadowRoot
 
 inline void Node::moveShadowTreeToNewDocumentSlowCase(ShadowRoot& shadowRoot, Document& oldDocument, Document& newDocument)
 {
-    ASSERT(!isDocumentEligibleForFastAdoption(oldDocument, newDocument));
     adoptCustomElementRegistryIfNotExplicitlySet(shadowRoot, newDocument);
-    traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) {
+    traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) -> unsigned {
+        if (&node.treeScope() != static_cast<TreeScope*>(&shadowRoot)) {
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.document() == &newDocument);
+            return 0;
+        }
         node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument);
+        return 1;
     }, [&oldDocument, &newDocument](ShadowRoot& innerShadowRoot) {
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&innerShadowRoot.document() == &oldDocument);
         innerShadowRoot.moveShadowRootToNewDocument(oldDocument, newDocument);
@@ -2230,11 +2251,12 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
         oldDocument->incrementReferencingNodeCount();
         bool isFastCase = isDocumentEligibleForFastAdoption(oldDocument, newDocument) && !newScopeIsUAShadowTree;
         if (isFastCase) {
-            unsigned nodeCount = traverseSubtreeToUpdateTreeScope(root, [&](Node& node) {
+            unsigned nodeCount = traverseSubtreeToUpdateTreeScope(root, [&](Node& node) -> unsigned {
                 ASSERT(!node.isTreeScope());
                 RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.treeScope() == &oldScope);
                 node.setTreeScope(newScope);
                 node.moveNodeToNewDocumentFastCase(oldDocument, newDocument);
+                return 1;
             }, [&](ShadowRoot& shadowRoot) {
                 ASSERT_WITH_SECURITY_IMPLICATION(&shadowRoot.document() == oldDocument.ptr());
                 shadowRoot.moveShadowRootToNewParentScope(newScope, newDocument);
@@ -2243,13 +2265,14 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
             newDocument->incrementReferencingNodeCount(nodeCount);
             oldDocument->decrementReferencingNodeCount(nodeCount);
         } else {
-            traverseSubtreeToUpdateTreeScope(root, [&](Node& node) {
+            traverseSubtreeToUpdateTreeScope(root, [&](Node& node) -> unsigned {
                 ASSERT(!node.isTreeScope());
                 RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.treeScope() == &oldScope);
                 if (newScopeIsUAShadowTree)
                     node.setEventTargetFlag(EventTargetFlag::HasBeenInUserAgentShadowTree);
                 node.setTreeScope(newScope);
                 node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument);
+                return 1;
             }, [&](ShadowRoot& shadowRoot) {
                 ASSERT_WITH_SECURITY_IMPLICATION(&shadowRoot.document() == oldDocument.ptr());
                 shadowRoot.moveShadowRootToNewParentScope(newScope, newDocument);
@@ -2260,16 +2283,17 @@ void Node::moveTreeToNewScope(Node& root, TreeScope& oldScope, TreeScope& newSco
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&oldScope.documentScope() == oldDocument.ptr() && &newScope.documentScope() == newDocument.ptr());
         oldDocument->decrementReferencingNodeCount();
     } else {
-        traverseSubtreeToUpdateTreeScope(root, [&](Node& node) {
+        traverseSubtreeToUpdateTreeScope(root, [&](Node& node) -> unsigned {
             ASSERT(!node.isTreeScope());
             RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&node.treeScope() == &oldScope);
             if (newScopeIsUAShadowTree)
                 node.setEventTargetFlag(EventTargetFlag::HasBeenInUserAgentShadowTree);
             node.setTreeScope(newScope);
             if (!node.hasRareData()) [[likely]]
-                return;
+                return 1;
             if (auto* nodeLists = node.rareData()->nodeLists())
                 nodeLists->adoptTreeScope();
+            return 1;
         }, [&newScope](ShadowRoot& shadowRoot) {
             shadowRoot.setParentTreeScope(newScope);
             return 0; // Unused.
@@ -3044,7 +3068,7 @@ template<> ContainerNode* parent<ComposedTreeIncludingPseudoElements>(const Node
     return node.parentElementInComposedTree();
 }
 
-template<TreeType treeType> size_t LEGACY_NODELETE depth(const Node& node)
+template<TreeType treeType> NODELETE size_t depth(const Node& node)
 {
     size_t depth = 0;
     SUPPRESS_UNCHECKED_LOCAL auto ancestor = &node;
@@ -3059,7 +3083,7 @@ struct AncestorAndChildren {
     const Node* distinctAncestorB;
 };
 
-template<TreeType treeType> AncestorAndChildren LEGACY_NODELETE commonInclusiveAncestorAndChildren(const Node& a, const Node& b)
+template<TreeType treeType> NODELETE AncestorAndChildren commonInclusiveAncestorAndChildren(const Node& a, const Node& b)
 {
     // This check isn't needed for correctness, but it is cheap and likely to be
     // common enough to be worth optimizing so we don't have to walk to the root.
@@ -3089,7 +3113,7 @@ template<TreeType treeType> AncestorAndChildren LEGACY_NODELETE commonInclusiveA
     return { x, distinctAncestorA, distinctAncestorB };
 }
 
-template<TreeType treeType> Node* LEGACY_NODELETE commonInclusiveAncestor(const Node& a, const Node& b)
+template<TreeType treeType> NODELETE Node* commonInclusiveAncestor(const Node& a, const Node& b)
 {
     return const_cast<Node*>(commonInclusiveAncestorAndChildren<treeType>(a, b).commonAncestor);
 }
@@ -3099,7 +3123,7 @@ template Node* commonInclusiveAncestor<ComposedTree>(const Node&, const Node&);
 template Node* commonInclusiveAncestor<ShadowIncludingTree>(const Node&, const Node&);
 template Node* commonInclusiveAncestor<ComposedTreeIncludingPseudoElements>(const Node&, const Node&);
 
-template<TreeType treeType> bool LEGACY_NODELETE isSiblingSubsequent(const Node& siblingA, const Node& siblingB)
+template<TreeType treeType> NODELETE bool isSiblingSubsequent(const Node& siblingA, const Node& siblingB)
 {
     ASSERT(&siblingA != &siblingB);
     ASSERT(parent<treeType>(siblingA));
@@ -3131,7 +3155,7 @@ template<TreeType treeType> bool LEGACY_NODELETE isSiblingSubsequent(const Node&
     return false;
 }
 
-template<TreeType treeType> std::partial_ordering LEGACY_NODELETE treeOrder(const Node& a, const Node& b)
+template<TreeType treeType> NODELETE std::partial_ordering treeOrder(const Node& a, const Node& b)
 {
     if (&a == &b)
         return std::partial_ordering::equivalent;

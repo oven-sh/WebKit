@@ -55,7 +55,7 @@ RemoteXRProjectionLayerProxy::~RemoteXRProjectionLayerProxy()
 #if PLATFORM(COCOA)
 void RemoteXRProjectionLayerProxy::startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples)
 {
-#if PLATFORM(VISION)
+#if ENABLE(WEBXR) && HAVE(COMPOSITOR_SERVICES)
     PlatformXR::RateMapDescription rateMapDescription {
         .screenSize = { static_cast<int>(screenWidth), static_cast<int>(screenHeight) },
         .horizontalSamplesLeft = WTF::move(horizontalSamplesLeft),
@@ -82,6 +82,12 @@ void RemoteXRProjectionLayerProxy::startFrame(size_t frameIndex, MachSendRight&&
 void RemoteXRProjectionLayerProxy::endFrame()
 {
     auto sendResult = send(Messages::RemoteXRProjectionLayer::EndFrame());
+    UNUSED_VARIABLE(sendResult);
+}
+
+void RemoteXRProjectionLayerProxy::destroy()
+{
+    auto sendResult = send(Messages::RemoteXRProjectionLayer::Destroy());
     UNUSED_VARIABLE(sendResult);
 }
 

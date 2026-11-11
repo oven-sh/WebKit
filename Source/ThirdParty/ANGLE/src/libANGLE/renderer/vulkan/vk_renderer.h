@@ -213,6 +213,11 @@ class Renderer : angle::NonCopyable
     {
         return mHostImageCopyProperties;
     }
+    const VkPhysicalDeviceExtendedDynamicState3PropertiesEXT &
+    getPhysicalDeviceExtendedDynamicState3Properties() const
+    {
+        return mExtendedDynamicState3Properties;
+    }
     const VkPhysicalDeviceShaderIntegerDotProductProperties &
     getPhysicalDeviceShaderIntegerDotProductProperties() const
     {
@@ -909,6 +914,8 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceSamplerYcbcrConversionFeatures mSamplerYcbcrConversionFeatures;
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT mExtendedDynamicStateFeatures;
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT mExtendedDynamicState2Features;
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT mExtendedDynamicState3Features;
+    VkPhysicalDeviceExtendedDynamicState3PropertiesEXT mExtendedDynamicState3Properties;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT mGraphicsPipelineLibraryFeatures;
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT mGraphicsPipelineLibraryProperties;
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT mVertexInputDynamicStateFeatures;
@@ -961,6 +968,7 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceTileMemoryHeapPropertiesQCOM mTileMemoryHeapProperties;
     VkPhysicalDeviceTextureCompressionASTC3DFeaturesEXT mTextureCompressionASTC3DFeatures;
     VkPhysicalDeviceShaderCorePropertiesAMD mShaderCorePropertiesAMD;
+    VkPhysicalDevicePipelineBinaryFeaturesKHR mPipelineBinaryFeatures;
 
     uint32_t mLegacyDitheringVersion = 0;
 
@@ -1122,6 +1130,8 @@ class Renderer : angle::NonCopyable
 
     // Use thread pool to compress cache data.
     std::shared_ptr<angle::WaitableEvent> mCompressEvent;
+    // The platform blob cache's total size limit, which bounds the pipeline cache that is stored.
+    size_t mBlobCacheSizeLimit = 0;
 
     VulkanLayerVector mEnabledInstanceLayerNames;
     vk::ExtensionNameList mEnabledInstanceExtensions;

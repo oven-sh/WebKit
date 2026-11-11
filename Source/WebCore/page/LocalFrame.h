@@ -152,7 +152,7 @@ public:
 
     WEBCORE_EXPORT ~LocalFrame();
 
-    WEBCORE_EXPORT LocalDOMWindow* LEGACY_NODELETE window() const;
+    NODELETE WEBCORE_EXPORT LocalDOMWindow* window() const;
 
     void addDestructionObserver(FrameDestructionObserver&);
     void removeDestructionObserver(FrameDestructionObserver&);
@@ -161,8 +161,8 @@ public:
 
     inline Document* document() const; // Defined in LocalFrameInlines.h
     inline LocalFrameView* view() const; // Defined in DocumentView.h
-    WEBCORE_EXPORT RefPtr<const LocalFrame> LEGACY_NODELETE localMainFrame() const;
-    WEBCORE_EXPORT RefPtr<LocalFrame> LEGACY_NODELETE localMainFrame();
+    NODELETE WEBCORE_EXPORT RefPtr<const LocalFrame> localMainFrame() const;
+    NODELETE WEBCORE_EXPORT RefPtr<LocalFrame> localMainFrame();
 
     inline Editor& editor() LIFETIME_BOUND; // Defined in LocalFrameInlines.h
     inline const Editor& editor() const LIFETIME_BOUND; // Defined in LocalFrameInlines.h
@@ -178,13 +178,13 @@ public:
     ScriptController& script() { return m_script; }
     const ScriptController& script() const { return m_script; }
     void resetScript();
-    FrameView* LEGACY_NODELETE virtualView() const final;
+    NODELETE FrameView* virtualView() const final;
 
     bool isRootFrame() const final { return m_rootFrame.get() == this; }
     const LocalFrame& rootFrame() const { return *m_rootFrame; }
     LocalFrame& rootFrame() { return *m_rootFrame; }
 
-    WEBCORE_EXPORT RenderView* LEGACY_NODELETE contentRenderer() const; // Root of the render tree for the document contained in this frame.
+    NODELETE WEBCORE_EXPORT RenderView* contentRenderer() const; // Root of the render tree for the document contained in this frame.
 
     bool documentIsBeingReplaced() const { return m_documentIsBeingReplaced; }
 
@@ -193,6 +193,12 @@ public:
 
     bool hasHadUserInteraction() const { return m_hasHadUserInteraction; }
     void setHasHadUserInteraction() { m_hasHadUserInteraction = true; }
+
+    unsigned cachedPageCount() const { return m_cachedPageCount; }
+    void incrementCachedPageCount() { ++m_cachedPageCount; }
+    void decrementCachedPageCount() { --m_cachedPageCount; }
+    bool existsOnlyForCachedPages() const { return m_existsOnlyForCachedPages; }
+    WEBCORE_EXPORT void willBeReplacedByRemoteFrame();
 
     bool requestDOMPasteAccess(DOMPasteAccessCategory = DOMPasteAccessCategory::General);
 
@@ -205,16 +211,16 @@ public:
 
     WEBCORE_EXPORT void injectUserScripts(UserScriptInjectionTime);
     WEBCORE_EXPORT void injectUserScriptImmediately(DOMWrapperWorld&, const UserScript&);
-    UserContentProvider* LEGACY_NODELETE userContentProvider();
-    const UserContentProvider* LEGACY_NODELETE userContentProvider() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE hasUserContentProvider(const UserContentProvider&);
+    NODELETE UserContentProvider* userContentProvider();
+    NODELETE const UserContentProvider* userContentProvider() const;
+    NODELETE WEBCORE_EXPORT bool hasUserContentProvider(const UserContentProvider&);
 
     WEBCORE_EXPORT String trackedRepaintRectsAsText() const;
 
-    WEBCORE_EXPORT static LocalFrame* LEGACY_NODELETE frameForWidget(const Widget&);
+    NODELETE WEBCORE_EXPORT static LocalFrame* frameForWidget(const Widget&);
 
     WEBCORE_EXPORT void setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize, NotifyUIProcess = NotifyUIProcess::Yes) final;
-    bool LEGACY_NODELETE shouldUsePrintingLayout() const;
+    NODELETE bool shouldUsePrintingLayout() const;
     WEBCORE_EXPORT FloatSize resizePageRectsKeepingRatio(const FloatSize& originalSize, const FloatSize& expectedSize);
 
     void setDocument(RefPtr<Document>&&);
@@ -332,7 +338,7 @@ public:
     WEBCORE_EXPORT FloatSize screenSize() const;
     void setOverrideScreenSize(FloatSize&&);
 
-    void LEGACY_NODELETE selfOnlyRef();
+    NODELETE void selfOnlyRef();
     void selfOnlyDeref();
 
     void documentURLOrOriginDidChange();
@@ -350,11 +356,11 @@ public:
     AutoplayPolicy autoplayPolicy() const final;
     ColorSchemePreference colorSchemePreference() const final;
 
-    WEBCORE_EXPORT SandboxFlags LEGACY_NODELETE effectiveSandboxFlags() const;
+    NODELETE WEBCORE_EXPORT SandboxFlags effectiveSandboxFlags() const;
     SandboxFlags sandboxFlagsFromSandboxAttributeNotCSP() { return m_sandboxFlags; }
     WEBCORE_EXPORT void updateSandboxFlags(SandboxFlags, NotifyUIProcess) final;
 
-    WEBCORE_EXPORT ReferrerPolicy LEGACY_NODELETE effectiveReferrerPolicy() const;
+    NODELETE WEBCORE_EXPORT ReferrerPolicy effectiveReferrerPolicy() const;
     WEBCORE_EXPORT void updateReferrerPolicy(ReferrerPolicy) final;
 
     ScrollbarMode scrollingMode() const { return m_scrollingMode; }
@@ -378,7 +384,7 @@ public:
     const FrameConsoleClient& console() const { return m_consoleClient.get(); }
 
     // The debugger to attach to this frame's global objects.
-    JSC::Debugger* LEGACY_NODELETE debugger() const LIFETIME_BOUND;
+    NODELETE JSC::Debugger* debugger() const LIFETIME_BOUND;
 
 protected:
     void frameWasDisconnectedFromOwner() const final;
@@ -401,9 +407,9 @@ private:
     String frameURLProtocol() const final;
 
     void disconnectView() final;
-    DOMWindow* LEGACY_NODELETE virtualWindow() const final;
+    NODELETE DOMWindow* virtualWindow() const final;
     void reinitializeDocumentSecurityContext() final;
-    FrameLoaderClient& LEGACY_NODELETE loaderClient() LIFETIME_BOUND final;
+    NODELETE FrameLoaderClient& loaderClient() LIFETIME_BOUND final;
     URL urlForConsoleLog() const final;
 
     WeakHashSet<FrameDestructionObserver> m_destructionObservers;
@@ -435,7 +441,9 @@ private:
     bool m_documentIsBeingReplaced { false };
     unsigned m_navigationDisableCount { 0 };
     unsigned m_selfOnlyRefCount { 0 };
+    unsigned m_cachedPageCount { 0 };
     bool m_hasHadUserInteraction { false };
+    bool m_existsOnlyForCachedPages { false };
 
     std::unique_ptr<OverrideScreenSize> m_overrideScreenSize;
 

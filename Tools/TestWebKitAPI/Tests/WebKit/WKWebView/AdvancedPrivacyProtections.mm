@@ -31,6 +31,7 @@
 #import "InstanceMethodSwizzler.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/TestDownloadDelegate.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestProtocol.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
@@ -41,6 +42,7 @@
 #import <WebKit/WKErrorPrivate.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKWebViewConfigurationPrivate.h>
+#import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <WebKit/WKWebpagePreferencesPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
@@ -994,8 +996,227 @@ TEST(AdvancedPrivacyProtections, LinkPreconnectUsesEnhancedPrivacy)
 #if CPU(X86_64)
     EXPECT_EQ([logMessages count], 0U);
 #else
-    EXPECT_EQ([logMessages count], 4U);
+    // The navigation itself does not preconnect when the request uses enhanced privacy mode.
+    EXPECT_EQ([logMessages count], 2U);
 #endif
+    for (NSString *message : logMessages)
+        EXPECT_TRUE([message containsString:@"enhanced privacy"]);
+#endif
+}
+
+static size_t connectionCountForCancelledNavigationPreconnect(bool useEnhancedPrivacyMode)
+{
+    size_t connectionCount = 0;
+    HTTPServer server([&](Connection connection) {
+        ++connectionCount;
+        connection.receiveHTTPRequest([](Vector<char>&&) { });
+    });
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600)]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    // Cancel the navigation so that only the preconnect is sent, not the actual HTTP request.
+    bool didCallDecisionHandler = false;
+    [navigationDelegate setDecidePolicyForNavigationAction:[&](WKNavigationAction *, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        didCallDecisionHandler = true;
+        decisionHandler(WKNavigationActionPolicyCancel);
+    }];
+
+    RetainPtr request = adoptNS([server.request() mutableCopy]);
+    if (useEnhancedPrivacyMode)
+        [request _setUseEnhancedPrivacyMode:YES];
+    [webView loadRequest:request.get()];
+    Util::run(&didCallDecisionHandler);
+
+    // Give the preconnect some additional time to reach the server before checking.
+    Util::spinRunLoop(10);
+    return connectionCount;
+}
+
+TEST(AdvancedPrivacyProtections, NavigationPreconnectSkippedForEnhancedPrivacy)
+{
+    EXPECT_EQ(connectionCountForCancelledNavigationPreconnect(true), 0U);
+}
+
+TEST(AdvancedPrivacyProtections, NavigationPreconnectHappensWithoutEnhancedPrivacy)
+{
+    // EXPECT_GE rather than EXPECT_EQ due to heuristics like ENABLE_ADDITIONAL_PRECONNECT_ON_HTTP_1X.
+    EXPECT_GE(connectionCountForCancelledNavigationPreconnect(false), 1U);
+}
+
+static NSURL *nonexistentDownloadDestination()
+{
+    NSURL *directory = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"AdvancedPrivacyProtectionsDownload"] isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    NSURL *file = [directory URLByAppendingPathComponent:@"example.txt"];
+    [NSFileManager.defaultManager removeItemAtURL:file error:nil];
+    return file;
+}
+
+static HTTPServer redirectingAttachmentServer()
+{
+    return HTTPServer({
+        { "/"_s, { 301, { { "Location"_s, "/example.txt"_s } } } },
+        { "/example.txt"_s, HTTPResponse { { { "Content-Disposition"_s, "attachment; filename=\"example.txt\""_s } }, "download contents"_s } },
+    });
+}
+
+struct ObservedRedirectFlags {
+    bool sawRedirect { false };
+    bool usedEnhancedPrivacy { false };
+    bool failedClosed { false };
+};
+
+// The redirected request is created by CFNetwork in the network process after
+// NetworkDataTaskCocoa applies the privacy flags, and NetworkLoad hands it to the client before
+// updateFromDelegatePreservingOldProperties runs, so it is the only request the UI process ever
+// sees carrying the flags the network process actually applied.
+static RetainPtr<TestDownloadDelegate> downloadDelegateObservingRedirect(ObservedRedirectFlags* observed)
+{
+    RetainPtr delegate = adoptNS([TestDownloadDelegate new]);
+    delegate.get().willPerformHTTPRedirection = ^(WKDownload *, NSHTTPURLResponse *, NSURLRequest *redirectRequest, void (^completionHandler)(WKDownloadRedirectPolicy)) {
+        observed->sawRedirect = true;
+        observed->usedEnhancedPrivacy = redirectRequest._useEnhancedPrivacyMode;
+        observed->failedClosed = redirectRequest._privacyProxyFailClosed;
+        completionHandler(WKDownloadRedirectPolicyAllow);
+    };
+    delegate.get().decideDestinationUsingResponse = ^(WKDownload *, NSURLResponse *, NSString *, void (^completionHandler)(NSURL *)) {
+        completionHandler(nonexistentDownloadDestination());
+    };
+    return delegate;
+}
+
+// _privacyProxyFailClosed has no WebCore::ResourceRequest mirror bit, so it can only reach the
+// network process by way of NetworkLoadParameters::advancedPrivacyProtections.
+static RetainPtr<TestWKWebView> webViewWithFailClosedPrivacyProtections()
+{
+    RetainPtr preferences = adoptNS([WKWebpagePreferences new]);
+    [preferences _setNetworkConnectionIntegrityPolicy:_WKWebsiteNetworkConnectionIntegrityPolicyEnabled | _WKWebsiteNetworkConnectionIntegrityPolicyRequestValidation | _WKWebsiteNetworkConnectionIntegrityPolicyFailClosedForAllHosts];
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    [configuration setWebsiteDataStore:WKWebsiteDataStore.nonPersistentDataStore];
+    [configuration setDefaultWebpagePreferences:preferences.get()];
+    return adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+}
+
+TEST(AdvancedPrivacyProtections, DownloadRedirectPreservesPrivacyFlagsFromRequest)
+{
+    auto server = redirectingAttachmentServer();
+    RetainPtr webView = adoptNS([WKWebView new]);
+
+    RetainPtr request = adoptNS([[NSMutableURLRequest alloc] initWithURL:server.request().URL]);
+    request.get()._useEnhancedPrivacyMode = YES;
+    request.get()._privacyProxyFailClosed = YES;
+
+    ObservedRedirectFlags observed;
+    RetainPtr delegate = downloadDelegateObservingRedirect(&observed);
+
+    [webView startDownloadUsingRequest:request.get() completionHandler:^(WKDownload *download) {
+        download.delegate = delegate.get();
+    }];
+    [delegate waitForDownloadDidFinish];
+
+    EXPECT_TRUE(observed.sawRedirect);
+    EXPECT_TRUE(observed.usedEnhancedPrivacy);
+    EXPECT_TRUE(observed.failedClosed);
+}
+
+TEST(AdvancedPrivacyProtections, DownloadStartedFromRequestInheritsPrivacyFlagsFromPage)
+{
+    HTTPServer pageServer({ { "/index.html"_s, { "<body>hello</body>"_s } } });
+    auto downloadServer = redirectingAttachmentServer();
+
+    auto webView = webViewWithFailClosedPrivacyProtections();
+    [webView synchronouslyLoadRequest:pageServer.request("/index.html"_s)];
+
+    ObservedRedirectFlags observed;
+    RetainPtr delegate = downloadDelegateObservingRedirect(&observed);
+
+    [webView startDownloadUsingRequest:downloadServer.request() completionHandler:^(WKDownload *download) {
+        download.delegate = delegate.get();
+    }];
+    [delegate waitForDownloadDidFinish];
+
+    EXPECT_TRUE(observed.sawRedirect);
+    EXPECT_TRUE(observed.usedEnhancedPrivacy);
+    EXPECT_TRUE(observed.failedClosed);
+}
+
+TEST(AdvancedPrivacyProtections, PolicyDecisionDownloadInheritsPrivacyFlagsFromPage)
+{
+    HTTPServer pageServer({ { "/index.html"_s, { "<body>hello</body>"_s } } });
+    auto downloadServer = redirectingAttachmentServer();
+
+    auto webView = webViewWithFailClosedPrivacyProtections();
+    [webView synchronouslyLoadRequest:pageServer.request("/index.html"_s)];
+
+    ObservedRedirectFlags observed;
+    RetainPtr delegate = downloadDelegateObservingRedirect(&observed);
+    delegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        decisionHandler(WKNavigationActionPolicyDownload);
+    };
+    delegate.get().navigationActionDidBecomeDownload = ^(WKWebView *, WKNavigationAction *, WKDownload *download) {
+        download.delegate = delegate.get();
+    };
+    [webView setNavigationDelegate:delegate.get()];
+
+    [webView loadRequest:downloadServer.request()];
+    [delegate waitForDownloadDidFinish];
+
+    EXPECT_TRUE(observed.sawRedirect);
+    EXPECT_TRUE(observed.usedEnhancedPrivacy);
+    EXPECT_TRUE(observed.failedClosed);
+}
+
+// The preconnect the network process issues on a navigation's behalf must carry that navigation's
+// advanced privacy protections. NetworkProcess::preconnectTo used to default-construct its
+// NetworkLoadParameters, so the preconnect reached the wire with an empty protection set and none of
+// the per-request privacy SPI applied to it.
+//
+// Unlike LinkPreconnectUsesEnhancedPrivacy above, this deliberately does not set
+// _useEnhancedPrivacyMode on the navigation's NSURLRequest: that flag survives from the request into
+// the preconnect on its own, which would mask the bug. Here the only thing that can mark the
+// preconnect is the protection set propagated through NetworkLoadParameters.
+TEST(AdvancedPrivacyProtections, NavigationPreconnectUsesEnhancedPrivacy)
+{
+    HTTPServer server { { { "/index.html"_s, { "<!DOCTYPE html><body>Hello world</body>"_s } } } };
+
+    auto webView = createWebViewWithAdvancedPrivacyProtections(YES, nil, WKWebsiteDataStore.defaultDataStore);
+    [webView synchronouslyLoadRequest:server.request("/index.html"_s)];
+
+    do {
+        Util::runFor(10_ms);
+    } while (!server.totalConnections());
+
+#if PLATFORM(MAC)
+    auto logMessages = [webView collectLogsForNewConnections];
+    EXPECT_GT([logMessages count], 0U);
+    for (NSString *message : logMessages)
+        EXPECT_TRUE([message containsString:@"enhanced privacy"]);
+#endif
+}
+
+// Same requirement for the -[WKWebView _preconnectToServer:] entry point into
+// NetworkProcess::preconnectTo. The page's protections are only populated once a navigation has
+// committed website policies, so navigate first.
+TEST(AdvancedPrivacyProtections, PreconnectToServerUsesEnhancedPrivacy)
+{
+    HTTPServer navigationServer { { { "/index.html"_s, { "<!DOCTYPE html><body>Hello world"_s } } } };
+    HTTPServer preconnectServer { { { "/"_s, { "hello"_s } } } };
+
+    auto webView = createWebViewWithAdvancedPrivacyProtections(YES, nil, WKWebsiteDataStore.defaultDataStore);
+    [webView synchronouslyLoadRequest:navigationServer.request("/index.html"_s)];
+
+    [webView _preconnectToServer:preconnectServer.request().URL];
+
+    do {
+        Util::runFor(10_ms);
+    } while (!preconnectServer.totalConnections());
+
+#if PLATFORM(MAC)
+    auto logMessages = [webView collectLogsForNewConnections];
+    EXPECT_GT([logMessages count], 0U);
     for (NSString *message : logMessages)
         EXPECT_TRUE([message containsString:@"enhanced privacy"]);
 #endif
@@ -1316,6 +1537,8 @@ TEST(AdvancedPrivacyProtections, AddNoiseToWebAudioAPIs)
     };
 
     checkFingerprintForNoise(@"testOscillatorCompressor");
+    checkFingerprintForNoise(@"testOscillatorCompressorAfterCopyToChannel");
+    checkFingerprintForNoise(@"testOscillatorCompressorAfterCopyToChannelAtOffset");
     checkFingerprintForNoise(@"testOscillatorCompressorWorklet");
     checkFingerprintForNoise(@"testOscillatorCompressorAnalyzer");
     checkFingerprintForNoise(@"testLoopingOscillatorCompressorBiquadFilter");

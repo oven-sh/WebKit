@@ -26,16 +26,18 @@
 #include "config.h"
 #include "InlineDisplayLineBuilder.h"
 
+#include "GraphicsContext.h"
 #include "InlineDisplayContentBuilder.h"
 #include "LayoutBoxGeometry.h"
-#include "LayoutIntegrationUtils.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextUtil.h"
+#include <wtf/text/StringBuilder.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 namespace Layout {
 
-static InlineRect LEGACY_NODELETE mapLineRectLogicalToVisual(const InlineRect& lineLogicalRect, const LayoutSize formattingRootBorderBoxSize, WritingMode writingMode)
+NODELETE static InlineRect mapLineRectLogicalToVisual(const InlineRect& lineLogicalRect, const LayoutSize formattingRootBorderBoxSize, WritingMode writingMode)
 {
     if (writingMode.isHorizontal())
         return lineLogicalRect;
@@ -172,66 +174,91 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& line
     };
 }
 
-static float truncateTextContentWithMismatchingDirection(InlineDisplay::Box& displayBox, float contentWidth, float availableWidthForContent, bool canFullyTruncate)
+struct VisibleText {
+    size_t length { 0 }; // 0 when the text is fully truncated.
+    float width { 0 };
+};
+
+// Truncates text (of the given length and width) so that it fits the available width, hiding what overflows at the end edge of the line.
+// That is the logical end of text in the direction of the line, and the logical start of text in the other direction (the visible part is
+// the logically leading or trailing length of the text, respectively).
+// breakWord(availableWidth) returns the logically leading part of the text that fits availableWidth (see TextUtil::breakWord),
+// width(from, to) measures a part of the text, characterLength(position) is the length of the user perceived character at position
+// and lastCharacterLength() is the length of the last user perceived character.
+template<typename BreakWord, typename Width, typename CharacterLength, typename LastCharacterLength>
+static VisibleText truncateText(size_t length, float contentWidth, float availableWidth, bool canFullyTruncate, bool hasLineDirection, NOESCAPE const BreakWord& breakWord, NOESCAPE const Width& width, NOESCAPE const CharacterLength& characterLength, NOESCAPE const LastCharacterLength& lastCharacterLength)
 {
-    // While truncation normally starts at the end of the content and progress backwards, with mismatching direction
-    // we take a different approach and truncate content the other way around (i.e. ellipsis follows inline direction truncating the beginning of the content).
-    // <div dir=rtl>some long content</div>
-    // [...ng content]
-    CheckedRef inlineTextBox = downcast<InlineTextBox>(displayBox.layoutBox());
-    auto& textContent = displayBox.text();
-
-    auto availableWidthForTruncatedContent = contentWidth - availableWidthForContent;
-    auto truncatedSide = TextUtil::breakWord(inlineTextBox, textContent.start(), textContent.length(), contentWidth, availableWidthForTruncatedContent, { }, displayBox.style().fontCascade());
-
-    ASSERT(truncatedSide.length < textContent.length());
-    auto visibleLength = textContent.length() - truncatedSide.length;
-    auto visibleWidth = contentWidth - truncatedSide.logicalWidth;
-    // TextUtil::breakWord never returns overflowing content (left side) which means the right side is normally wider (by one character) than what we need.
-    auto visibleContentOverflows = truncatedSide.logicalWidth < availableWidthForTruncatedContent;
-    if (!visibleContentOverflows) {
-        textContent.setPartiallyVisibleContentLength(visibleLength);
-        return visibleWidth;
-    }
-
-    auto wouldFullyTruncate = visibleLength <= 1;
-    if (wouldFullyTruncate && canFullyTruncate) {
-        displayBox.setIsFullyTruncated();
+    if (!availableWidth && canFullyTruncate)
         return { };
+
+    if (!hasLineDirection) {
+        // While truncation normally starts at the end of the content and progress backwards, with mismatching direction
+        // we take a different approach and truncate content the other way around (i.e. ellipsis follows inline direction truncating the beginning of the content).
+        // <div dir=rtl>some long content</div>
+        // [...ng content]
+        if (!availableWidth) {
+            auto lastLength = lastCharacterLength();
+            return { lastLength, width(length - lastLength, length) };
+        }
+        auto availableWidthForTruncatedContent = contentWidth - availableWidth;
+        auto truncatedSide = breakWord(availableWidthForTruncatedContent);
+
+        ASSERT(truncatedSide.length < length);
+        auto visibleLength = length - truncatedSide.length;
+        auto visibleWidth = contentWidth - truncatedSide.logicalWidth;
+        // TextUtil::breakWord never returns overflowing content (left side) which means the right side is normally wider (by one character) than what we need.
+        auto visibleContentOverflows = truncatedSide.logicalWidth < availableWidthForTruncatedContent;
+        if (!visibleContentOverflows)
+            return { visibleLength, visibleWidth };
+
+        auto firstVisibleCharacterLength = characterLength(length - visibleLength);
+        auto wouldFullyTruncate = firstVisibleCharacterLength >= visibleLength;
+        if (wouldFullyTruncate && canFullyTruncate)
+            return { };
+
+        // Drop the first visible character unless it is the only one.
+        if (!wouldFullyTruncate)
+            visibleLength -= firstVisibleCharacterLength;
+        return { visibleLength, width(length - visibleLength, length) };
     }
 
-    visibleLength = !wouldFullyTruncate ? visibleLength - 1 : 1;
-    textContent.setPartiallyVisibleContentLength(visibleLength);
-    auto visibleStartPosition = textContent.end() - visibleLength;
-    return TextUtil::width(inlineTextBox, displayBox.style().fontCascade(), visibleStartPosition, textContent.end(), { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::No);
+    auto visibleSide = breakWord(availableWidth);
+    if (visibleSide.length)
+        return { visibleSide.length, visibleSide.logicalWidth };
+    if (canFullyTruncate)
+        return { };
+    auto firstLength = characterLength(0);
+    return { firstLength, width(0, firstLength) };
 }
 
 static float truncate(InlineDisplay::Box& displayBox, float contentWidth, float availableWidthForContent, bool canFullyTruncate, bool isLeftToRightInlineDirection)
 {
     if (displayBox.isText()) {
-        if (!availableWidthForContent && canFullyTruncate) {
-            displayBox.setIsFullyTruncated();
-            return { };
-        }
-        auto isLeftToRightContent = !(displayBox.bidiLevel() % 2);
-        if (isLeftToRightContent != isLeftToRightInlineDirection)
-            return truncateTextContentWithMismatchingDirection(displayBox, contentWidth, availableWidthForContent, canFullyTruncate);
-
         CheckedRef inlineTextBox = downcast<InlineTextBox>(displayBox.layoutBox());
         auto& textContent = displayBox.text();
-        auto visibleSide = TextUtil::breakWord(inlineTextBox, textContent.start(), textContent.length(), contentWidth, availableWidthForContent, { }, displayBox.style().fontCascade());
-        if (visibleSide.length) {
-            textContent.setPartiallyVisibleContentLength(visibleSide.length);
-            return visibleSide.logicalWidth;
-        }
-        if (canFullyTruncate) {
+        CheckedRef fontCascade = displayBox.style().fontCascade();
+        auto start = textContent.start();
+        auto length = textContent.length();
+        auto isLeftToRightContent = !(displayBox.bidiLevel() % 2);
+        auto visibleText = truncateText(length, contentWidth, availableWidthForContent, canFullyTruncate, isLeftToRightContent == isLeftToRightInlineDirection,
+            [&](float availableWidth) {
+                return TextUtil::breakWord(inlineTextBox, start, length, contentWidth, availableWidth, { }, fontCascade);
+            },
+            [&](size_t from, size_t to) {
+                return TextUtil::width(inlineTextBox, fontCascade, start + from, start + to, { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::No);
+            },
+            [&](size_t position) {
+                return std::min(length - position, TextUtil::firstUserPerceivedCharacterLength(inlineTextBox, start + position, length - position));
+            },
+            [&] {
+                return TextUtil::lastUserPerceivedCharacterLength(StringView { inlineTextBox->content() }.substring(start, length));
+            });
+        if (!visibleText.length) {
             displayBox.setIsFullyTruncated();
             return { };
         }
-        auto firstCharacterLength = TextUtil::firstUserPerceivedCharacterLength(inlineTextBox, textContent.start(), textContent.length());
-        auto firstCharacterWidth = TextUtil::width(inlineTextBox, displayBox.style().fontCascade(), textContent.start(), textContent.start() + firstCharacterLength, { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::No);
-        textContent.setPartiallyVisibleContentLength(firstCharacterLength);
-        return firstCharacterWidth;
+        textContent.setPartiallyVisibleContentLength(visibleText.length);
+        return visibleText.width;
     }
 
     if (canFullyTruncate) {
@@ -321,7 +348,8 @@ static std::optional<FloatRect> trailingEllipsisVisualRectAfterTruncation(LineEn
 
     ASSERT(displayBoxes.front().isRootInlineBox());
     auto& rootInlineBox = displayBoxes.front();
-    CheckedRef rootStyle = rootInlineBox.style();
+    // The ellipsis is not part of ::first-line, and it is painted with the root style too (see EllipsisBoxPainter).
+    CheckedRef rootStyle = rootInlineBox.layoutBox().style();
     auto ellipsisWidth = std::max(0.f, rootStyle->fontCascade().width(ellipsisText));
 
     auto contentNeedsTruncation = [&] {
@@ -357,7 +385,7 @@ static std::optional<FloatRect> trailingEllipsisVisualRectAfterTruncation(LineEn
     return FloatRect { rootInlineBox.left(), ellipsisStart, rootInlineBox.width(), ellipsisWidth };
 }
 
-static inline bool LEGACY_NODELETE isEligibleForLinkBoxLineClamp(auto& displayBoxes)
+NODELETE static inline bool isEligibleForLinkBoxLineClamp(auto& displayBoxes)
 {
     if (displayBoxes.size() < 3) {
         // We need at least 3 display boxes to generate content with link ([root inline box][inline box][content])
@@ -400,12 +428,12 @@ static inline void makeRoomForLinkBoxOnClampedLineIfNeeded(auto& content, auto c
 
     content.setLineEllipsis(clampedLineIndex, { InlineDisplay::Line::Ellipsis::Type::Block,
         ellipsisBoxRect,
-        TextUtil::ellipsisTextInInlineDirection(clampedLine.isHorizontal())
+        TextUtil::ellipsisText()
     });
     clampedLine.setHasEllipsis();
 }
 
-static inline void LEGACY_NODELETE moveDisplayBoxToClampedLine(auto& content, auto clampedLineIndex, auto& displayBox, auto horizontalOffset)
+NODELETE static inline void moveDisplayBoxToClampedLine(auto& content, auto clampedLineIndex, auto& displayBox, auto horizontalOffset)
 {
     auto& clampedLine = content.lines[clampedLineIndex];
     displayBox.setLeft(content.lineEllipsis(clampedLineIndex)->visualRect.maxX() + horizontalOffset + legacyMatchingLinkBoxOffset);
@@ -494,7 +522,7 @@ void InlineDisplayLineBuilder::addLegacyLineClampTrailingLinkBoxIfApplicable(con
     clampedLine.setHasContentAfterEllipsisBox();
 }
 
-static InlineDisplay::Line::Ellipsis LEGACY_NODELETE trailingBlockEllipsis(const BlockOverflowEllipsis& blockEllipsis, const InlineDisplay::Line& displayLine, const InlineDisplay::Box& rootInlineBox)
+NODELETE static InlineDisplay::Line::Ellipsis trailingBlockEllipsis(const BlockOverflowEllipsis& blockEllipsis, const InlineDisplay::Line& displayLine, const InlineDisplay::Box& rootInlineBox)
 {
     ASSERT(rootInlineBox.isRootInlineBox());
     // Being an isolate at the paragraph embedding level that follows the content, it always ends up at the visual end of the line in the paragraph direction.
@@ -505,38 +533,139 @@ static InlineDisplay::Line::Ellipsis LEGACY_NODELETE trailingBlockEllipsis(const
     return { InlineDisplay::Line::Ellipsis::Type::Block, visualRect, blockEllipsis.text };
 }
 
-std::optional<InlineDisplay::Line::Ellipsis> InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(LineEndingTruncationPolicy truncationPolicy, const std::optional<BlockOverflowEllipsis>& blockEllipsis, InlineDisplay::Line& displayLine, std::span<InlineDisplay::Box> displayBoxes, bool isLegacyLineClamp)
+static AtomString textOverflowEllipsisText(const Style::ComputedStyle& style)
+{
+    return WTF::switchOn(style.textOverflow(),
+        [&](const CSS::Keyword::Clip&) -> AtomString {
+            return nullAtom();
+        },
+        [&](const CSS::Keyword::Ellipsis&) -> AtomString {
+            return TextUtil::ellipsisText();
+        },
+        [&](const Style::String& string) -> AtomString {
+            return AtomString { string.value };
+        }
+    );
+}
+
+// Returns the part of the text run that is visible when it is truncated like content (see truncateText).
+static StringView visiblePartOfTextRun(StringView text, float textWidth, bool hasLineDirection, float availableWidth, bool canFullyTruncate, const FontCascade& fontCascade)
+{
+    auto visibleText = truncateText(text.length(), textWidth, availableWidth, canFullyTruncate, hasLineDirection,
+        [&](float availableWidth) {
+            return TextUtil::breakWord(text, textWidth, availableWidth, fontCascade);
+        },
+        [&](size_t from, size_t to) {
+            return fontCascade.width(TextRun { text.substring(from, to - from) });
+        },
+        [&](size_t position) {
+            return TextUtil::firstUserPerceivedCharacterLength(text.substring(position));
+        },
+        [&] {
+            return TextUtil::lastUserPerceivedCharacterLength(text);
+        });
+    return hasLineDirection ? text.left(visibleText.length) : text.right(visibleText.length);
+}
+
+static void truncateBlockEllipsisForTextOverflow(InlineDisplay::Line::Ellipsis& blockEllipsis, float hangingWidth, bool isFirstContentOnLine, const InlineDisplay::Line& displayLine, const Style::ComputedStyle& styleForTruncation, const FontCascade& fontCascade)
+{
+    // "If a line has a block overflow ellipsis, then any handling relating to it, including displacing content from the end of the line, occurs first.
+    // If the line still overflows after that (e.g. because the block overflow ellipsis is too long), then it is ellipsed according to the text-overflow property."
+    // https://drafts.csswg.org/css-overflow-4/#text-overflow
+
+    // 1. Check that text-overflow applies: the box clips its overflow, and text-overflow is not clip.
+    if (styleForTruncation.overflowX() == Overflow::Visible)
+        return;
+    auto isHorizontal = displayLine.isHorizontal();
+    auto textOverflowText = textOverflowEllipsisText(styleForTruncation);
+    if (textOverflowText.isEmpty())
+        return;
+
+    // 2. Check whether the block ellipsis overflows the line box at its end edge (the right edge in left-to-right, the left edge in right-to-left).
+    // Hanging punctuation at the end of the block ellipsis is meant to hang outside of the line box, so it does not count as overflow.
+    auto lineBoxVisualLeft = isHorizontal ? displayLine.left() : displayLine.top();
+    auto lineBoxVisualRight = isHorizontal ? displayLine.right() : displayLine.bottom();
+    auto ellipsisVisualLeft = isHorizontal ? blockEllipsis.visualRect.x() : blockEllipsis.visualRect.y();
+    auto ellipsisVisualRight = isHorizontal ? blockEllipsis.visualRect.maxX() : blockEllipsis.visualRect.maxY();
+    auto isLeftToRight = displayLine.isLeftToRightInlineDirection();
+#if USE_FLOAT_AS_INLINE_LAYOUT_UNIT
+    // The line box width is a floored LayoutUnit while the ellipsis is measured in floats, so allow for epsilon-scale differences
+    // (see truncateOverflowingDisplayBoxes).
+    if (isLeftToRight)
+        lineBoxVisualRight += LayoutUnit::epsilon();
+    else
+        lineBoxVisualLeft -= LayoutUnit::epsilon();
+#endif
+    if (isLeftToRight ? ellipsisVisualRight - hangingWidth <= lineBoxVisualRight : ellipsisVisualLeft + hangingWidth >= lineBoxVisualLeft)
+        return;
+
+    // 3. Replace the block ellipsis with what is left of it after hiding what overflows the end edge, followed by the text-overflow ellipsis.
+    // The block ellipsis is painted as bidi runs in visual order (see GraphicsContext::drawBidiText), so hiding content at the end edge may take
+    // the logical end of some runs and the logical start of others. What is left of each run is appended in visual order from the start edge, and
+    // what is left of runs in the other direction is isolated, so that the line's direction lays them out in that order again.
+    auto availableWidth = (isLeftToRight ? lineBoxVisualRight - ellipsisVisualLeft : ellipsisVisualRight - lineBoxVisualLeft) - fontCascade.width(textOverflowText);
+    auto lineDirection = isLeftToRight ? TextDirection::LTR : TextDirection::RTL;
+    auto subruns = GraphicsContext::visuallyOrderedSubruns(TextRun { StringView { blockEllipsis.text }, 0, 0, ExpansionBehavior::defaultBehavior(), lineDirection });
+    if (!isLeftToRight)
+        subruns.reverse();
+    StringBuilder textBuilder;
+    for (CheckedRef subrun : subruns) {
+        auto hasLineDirection = subrun->direction() == lineDirection;
+        auto subrunWidth = fontCascade.width(subrun);
+        // "The first character or atomic inline-level element on a line must be clipped rather than ellipsed."
+        auto canFullyTruncate = !isFirstContentOnLine || !textBuilder.isEmpty();
+        auto visibleText = subrunWidth <= availableWidth ? subrun->text() : visiblePartOfTextRun(subrun->text(), subrunWidth, hasLineDirection, std::max(0.f, availableWidth), canFullyTruncate, fontCascade);
+        if (hasLineDirection)
+            textBuilder.append(visibleText);
+        else if (!visibleText.isEmpty())
+            textBuilder.append(isLeftToRight ? rightToLeftIsolate : leftToRightIsolate, visibleText, popDirectionalIsolate);
+        if (subrunWidth > availableWidth)
+            break;
+        availableWidth -= subrunWidth;
+    }
+    textBuilder.append(textOverflowText);
+
+    // 4. Keep the start edge of the block ellipsis in place.
+    auto text = textBuilder.toAtomString();
+    auto width = std::max(0.f, fontCascade.width(text));
+    auto start = isLeftToRight ? ellipsisVisualLeft : ellipsisVisualRight - width;
+    if (isHorizontal)
+        blockEllipsis.visualRect = { start, blockEllipsis.visualRect.y(), width, blockEllipsis.visualRect.height() };
+    else
+        blockEllipsis.visualRect = { blockEllipsis.visualRect.x(), start, blockEllipsis.visualRect.width(), width };
+    blockEllipsis.text = WTF::move(text);
+}
+
+std::optional<InlineDisplay::Line::Ellipsis> InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(LineEndingTruncationPolicy truncationPolicy, const Style::ComputedStyle& styleForTruncation, const std::optional<BlockOverflowEllipsis>& blockEllipsis, InlineDisplay::Line& displayLine, std::span<InlineDisplay::Box> displayBoxes, bool isLegacyLineClamp)
 {
     if (!displayBoxes.size())
         return { };
-    // Line breaking already made room for the block ellipsis. Otherwise the content is truncated here to make room for the ellipsis.
-    if (blockEllipsis)
-        return trailingBlockEllipsis(*blockEllipsis, displayLine, displayBoxes[0]);
+    // Line breaking already made room for the block ellipsis (as much as displacing content can), and text-overflow applies to what still overflows.
+    // Otherwise the content is truncated here to make room for the ellipsis.
+    if (blockEllipsis) {
+        auto ellipsis = trailingBlockEllipsis(*blockEllipsis, displayLine, displayBoxes[0]);
+        // "The first character or atomic inline-level element on a line must be clipped rather than ellipsed."
+        // https://drafts.csswg.org/css-overflow-4/#text-overflow
+        // The block ellipsis is the first content on the line when line breaking displaced all of the line's content to make room for it.
+        // Inline boxes are not content here (see truncateOverflowingDisplayBoxes).
+        auto isFirstContentOnLine = std::ranges::all_of(displayBoxes, [](auto& displayBox) {
+            return displayBox.isInlineBox();
+        });
+        // The block ellipsis is measured and painted with the root style, not the ::first-line style (see InlineFormattingUtils::blockEllipsisForLine).
+        truncateBlockEllipsisForTextOverflow(ellipsis, blockEllipsis->hangingWidth, isFirstContentOnLine, displayLine, styleForTruncation, displayBoxes[0].layoutBox().style().fontCascade());
+        return ellipsis;
+    }
     if (truncationPolicy == LineEndingTruncationPolicy::NoTruncation)
         return { };
     // Without a block ellipsis from line breaking (e.g. block-ellipsis: none), only legacy line clamp gets an ellipsis in the block direction.
     if (truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInBlockDirection && !isLegacyLineClamp)
         return { };
 
-    CheckedRef rootBox = displayBoxes[0].layoutBox();
-    CheckedRef styleForTruncation = rootBox->isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(rootBox) : rootBox->style();
-
     auto ellipsisText = [&] -> AtomString {
-        if (truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInInlineDirection) {
-            return WTF::switchOn(styleForTruncation->textOverflow(),
-                [&](const CSS::Keyword::Clip&) -> AtomString {
-                    return nullAtom();
-                },
-                [&](const CSS::Keyword::Ellipsis&) -> AtomString {
-                    return TextUtil::ellipsisTextInInlineDirection(displayLine.isHorizontal());
-                },
-                [&](const Style::String& string) -> AtomString {
-                    return AtomString { string.value };
-                }
-            );
-        }
+        if (truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInInlineDirection)
+            return textOverflowEllipsisText(styleForTruncation);
         // Legacy line clamp always uses ...
-        return TextUtil::ellipsisTextInInlineDirection(displayLine.isHorizontal());
+        return TextUtil::ellipsisText();
     }();
 
     if (ellipsisText.isEmpty())

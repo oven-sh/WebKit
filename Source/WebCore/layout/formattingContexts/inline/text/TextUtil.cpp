@@ -36,9 +36,11 @@
 #include "InlineLineTypes.h"
 #include "InlineTextItem.h"
 #include "Latin1TextIterator.h"
+#include "LayoutElementBox.h"
 #include "LayoutInlineTextBox.h"
 #include "RenderBox.h"
 #include "RenderGlyph.h"
+#include "RenderText.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "SurrogatePairAwareTextIterator.h"
 #include "TextRun.h"
@@ -59,6 +61,36 @@ InlineLayoutUnit TextUtil::singleSpaceWidth(const FontCascade& fontCascade, bool
     if (std::isnan(width) || std::isinf(width)) [[unlikely]]
         return std::isnan(width) ? 0.0f : maxInlineLayoutUnit();
     return width;
+}
+
+static std::optional<TextDirection> overridingDirectionFrom(auto ancestor, NOESCAPE const auto& isInlineBox, NOESCAPE const auto& parentOf)
+{
+    // Mirrors InlineItemsBuilder::buildBidiParagraph(): visual ordering, or else the closest ancestor with a unicode-bidi other than normal, decides.
+    for (; ancestor; ancestor = parentOf(*ancestor)) {
+        CheckedRef style = ancestor->style();
+        if (isInlineBox(*ancestor) && (style->rtlOrdering() == Order::Visual || style->unicodeBidi() == UnicodeBidi::Normal))
+            continue;
+        return isOverride(style->unicodeBidi()) || style->rtlOrdering() == Order::Visual ? std::optional { style->writingMode().bidiDirection() } : std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::optional<TextDirection> TextUtil::overridingDirection(const InlineTextBox& inlineTextBox)
+{
+    return overridingDirectionFrom(CheckedPtr { &inlineTextBox.parent() }, [](const auto& box) {
+        return box.isInlineBox();
+    }, [](const auto& box) {
+        return &box.parent();
+    });
+}
+
+std::optional<TextDirection> TextUtil::overridingDirection(const RenderText& renderText)
+{
+    return overridingDirectionFrom(CheckedPtr { renderText.parent() }, [](const auto& renderer) {
+        return renderer.isInlineBox();
+    }, [](const auto& renderer) {
+        return renderer.parent();
+    });
 }
 
 InlineLayoutUnit TextUtil::width(const InlineTextBox& inlineTextBox, const FontCascade& fontCascade, unsigned from, unsigned to, InlineLayoutUnit contentLogicalLeft, UseTrailingWhitespaceMeasuringOptimization useTrailingWhitespaceMeasuringOptimization, TextSpacing::SpacingState spacingState, GlyphOverflow* glyphOverflow)
@@ -85,17 +117,19 @@ InlineLayoutUnit TextUtil::width(const InlineTextBox& inlineTextBox, const FontC
     if (extendedMeasuring)
         ++to;
     auto width = 0.f;
+    auto forcedDirection = overridingDirection(inlineTextBox);
+    auto direction = forcedDirection.value_or(TextDirection::LTR);
+    auto directionalOverride = forcedDirection ? DirectionalOverride::Yes : DirectionalOverride::No;
     auto useSimplifiedContentMeasuring = inlineTextBox.canUseSimplifiedContentMeasuring();
     if (useSimplifiedContentMeasuring) {
         auto view = StringView(text).substring(from, to - from);
         if (fontCascade.canTakeFixedPitchFastContentMeasuring())
             width = fontCascade.widthForSimpleTextWithFixedPitch(view, inlineTextBox.style().collapseWhiteSpace());
         else
-            width = fontCascade.widthForTextUsingSimplifiedMeasuring(view);
+            width = fontCascade.widthForTextUsingSimplifiedMeasuring(view, direction, directionalOverride);
     } else {
         CheckedRef style = inlineTextBox.style();
-        auto directionalOverride = isOverride(style->unicodeBidi());
-        auto run = WebCore::TextRun { StringView(text).substring(from, to - from), contentLogicalLeft, { }, ExpansionBehavior::defaultBehavior(), directionalOverride ? style->writingMode().bidiDirection() : TextDirection::LTR, directionalOverride };
+        auto run = WebCore::TextRun { StringView(text).substring(from, to - from), contentLogicalLeft, { }, ExpansionBehavior::defaultBehavior(), direction, directionalOverride == DirectionalOverride::Yes };
         if (!style->collapseWhiteSpace() && !style->tabSize().isZero())
             run.setTabSize(true, Style::toPlatform(style->tabSize(), style->usedZoomForLength()));
         // FIXME: consider moving this to TextRun ctor
@@ -150,7 +184,7 @@ static void fallbackFontsForRunWithIterator(SingleThreadWeakHashSet<const Font>&
 
         auto addFallbackFontForCharacterIfApplicable = [&](auto character) {
             if (isSmallCaps)
-                character = u_toupper(character);
+                character = fontCascade.capitalForSynthesizedSmallCaps(character).value_or(character);
 
             auto glyphData = fontCascade.glyphDataForCharacter(character, isRTL);
             if (glyphData.glyph && glyphData.font && glyphData.font != primaryFont.ptr()) {
@@ -209,7 +243,7 @@ static TextUtil::EnclosingAscentDescent enclosingGlyphBoundsForRunWithIterator(c
 
         auto computeTopAndBottomForCharacter = [&](auto character) {
             if (isSmallCaps)
-                character = u_toupper(character);
+                character = fontCascade.capitalForSynthesizedSmallCaps(character).value_or(character);
 
             auto glyphData = fontCascade.glyphDataForCharacter(character, isRTL);
             Ref font = glyphData.font ? Ref { *glyphData.font } : primaryFont;
@@ -248,22 +282,24 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextItem& inlineTextItem
     return breakWord(protect(inlineTextItem.inlineTextBox()), inlineTextItem.start(), inlineTextItem.length(), textWidth, availableWidth, contentLogicalLeft, fontCascade);
 }
 
-TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, size_t startPosition, size_t length, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft, const FontCascade& fontCascade)
+// Measures the text with widthOfRange(from, to), where from and to are positions in the text.
+template<typename WidthOfRange>
+static TextUtil::WordBreakLeft breakWord(StringView text, size_t startPosition, size_t length, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, bool canUseSimpleFontCodePath, bool canUseSimplifiedContentMeasuring, const FontCascade& fontCascade, NOESCAPE const WidthOfRange& widthOfRange)
 {
     ASSERT(availableWidth >= 0);
     ASSERT(length);
-    auto& text = inlineTextBox.content();
 
     if (!textWidth) [[unlikely]] {
         ASSERT_NOT_REACHED();
         return { };
     }
 
-    if (inlineTextBox.canUseSimpleFontCodePath()) {
+    if (canUseSimpleFontCodePath) {
 
         auto findBreakingPositionInSimpleText = [&] {
             auto userPerceivedCharacterBoundaryAlignedIndex = [&] (auto index) -> size_t {
-                if (text.is8Bit())
+                // The end of the text is a boundary.
+                if (text.is8Bit() || index >= text.length())
                     return index;
                 auto alignedStartIndex = index;
                 U16_SET_CP_START(text, startPosition, alignedStartIndex);
@@ -271,50 +307,50 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
                 return alignedStartIndex;
             };
 
-            auto trySimplifiedBreakingPosition = [&] (auto start) -> std::optional<WordBreakLeft> {
-                auto mayUseSimplifiedBreakingPositionForFixedPitch = fontCascade.isFixedPitch() && inlineTextBox.canUseSimplifiedContentMeasuring();
+            auto trySimplifiedBreakingPosition = [&](auto start) -> std::optional<TextUtil::WordBreakLeft> {
+                auto mayUseSimplifiedBreakingPositionForFixedPitch = fontCascade.isFixedPitch() && canUseSimplifiedContentMeasuring;
                 if (!mayUseSimplifiedBreakingPositionForFixedPitch)
                     return { };
                 // FIXME: Check if we could bring webkit.org/b/221581 back for system monospace fonts.
                 auto monospaceCharacterWidth = fontCascade.widthOfSpaceString();
                 size_t estimatedCharacterCount = floorf(availableWidth / monospaceCharacterWidth);
                 auto end = userPerceivedCharacterBoundaryAlignedIndex(std::min(start + estimatedCharacterCount, start + length - 1));
-                auto underflowWidth = TextUtil::width(inlineTextBox, fontCascade, start, end, contentLogicalLeft);
+                auto underflowWidth = widthOfRange(start, end);
                 if (underflowWidth > availableWidth || underflowWidth + monospaceCharacterWidth < availableWidth) {
                     // This does not look like a real fixed pitch font. Let's just fall back to regular bisect.
                     // In some edge cases (float precision) using monospaceCharacterWidth here may produce an incorrect off-by-one visual overflow.
                     return { };
                 }
-                return { WordBreakLeft { end - start, underflowWidth } };
+                return { TextUtil::WordBreakLeft { end - start, underflowWidth } };
             };
             if (auto leftSide = trySimplifiedBreakingPosition(startPosition))
                 return *leftSide;
 
-            auto tryEstimateBreakingPosition = [&] (auto start) -> std::optional<WordBreakLeft> {
+            auto tryEstimateBreakingPosition = [&](auto start) -> std::optional<TextUtil::WordBreakLeft> {
                 // Determine if the breaking position can be found within the range of [-1, 1] by using the average width of the characters.
                 auto averageCharacterWidth = InlineLayoutUnit { textWidth / length };
                 size_t candidateLength = availableWidth / averageCharacterWidth;
                 auto candidateEnd = userPerceivedCharacterBoundaryAlignedIndex(start + candidateLength);
                 if (candidateEnd <= start || candidateEnd >= start + length)
                     return { };
-                auto contentWidthAtCandidatePosition = TextUtil::width(inlineTextBox, fontCascade, start, candidateEnd, contentLogicalLeft);
+                auto contentWidthAtCandidatePosition = widthOfRange(start, candidateEnd);
                 if (contentWidthAtCandidatePosition == availableWidth)
-                    return { WordBreakLeft { candidateEnd - start, contentWidthAtCandidatePosition } };
+                    return { TextUtil::WordBreakLeft { candidateEnd - start, contentWidthAtCandidatePosition } };
 
                 if (contentWidthAtCandidatePosition > availableWidth) {
                     // Overshot.
                     if (auto adjustedCandidateEnd = userPerceivedCharacterBoundaryAlignedIndex(candidateEnd - 1); adjustedCandidateEnd > start) {
-                        auto adjustedContentWidth = TextUtil::width(inlineTextBox, fontCascade, start, adjustedCandidateEnd, contentLogicalLeft);
+                        auto adjustedContentWidth = widthOfRange(start, adjustedCandidateEnd);
                         if (adjustedContentWidth <= availableWidth)
-                            return { WordBreakLeft { adjustedCandidateEnd - start, adjustedContentWidth } };
+                            return { TextUtil::WordBreakLeft { adjustedCandidateEnd - start, adjustedContentWidth } };
                     }
                 } else if (auto adjustedCandidateEnd = userPerceivedCharacterBoundaryAlignedIndex(candidateEnd + 1); adjustedCandidateEnd < start + length) {
                     // Undershot.
-                    auto adjustedContentWidth = TextUtil::width(inlineTextBox, fontCascade, start, adjustedCandidateEnd, contentLogicalLeft);
+                    auto adjustedContentWidth = widthOfRange(start, adjustedCandidateEnd);
                     if (adjustedContentWidth > availableWidth)
-                        return { WordBreakLeft { candidateEnd - start, contentWidthAtCandidatePosition } };
+                        return { TextUtil::WordBreakLeft { candidateEnd - start, contentWidthAtCandidatePosition } };
                     if (adjustedContentWidth == availableWidth)
-                        return { WordBreakLeft { adjustedCandidateEnd - start, adjustedContentWidth } };
+                        return { TextUtil::WordBreakLeft { adjustedCandidateEnd - start, adjustedContentWidth } };
                 }
                 return { };
             };
@@ -342,7 +378,7 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
                 auto middle = userPerceivedCharacterBoundaryAlignedIndex(std::midpoint(left, right));
                 ASSERT(middle >= left && middle < right);
                 auto endOfMiddleCharacter = nextUserPerceivedCharacterIndex(middle);
-                auto width = TextUtil::width(inlineTextBox, fontCascade, startPosition, endOfMiddleCharacter, contentLogicalLeft);
+                auto width = widthOfRange(startPosition, endOfMiddleCharacter);
                 if (width < availableWidth) {
                     left = endOfMiddleCharacter;
                     leftSideWidth = width;
@@ -355,15 +391,15 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
                 }
             }
             RELEASE_ASSERT(right >= startPosition);
-            return WordBreakLeft { right - startPosition, leftSideWidth };
+            return TextUtil::WordBreakLeft { right - startPosition, leftSideWidth };
         };
         return findBreakingPositionInSimpleText();
     }
 
-    auto graphemeClusterIterator = NonSharedCharacterBreakIterator { StringView { text }.substring(startPosition, length) };
+    auto graphemeClusterIterator = NonSharedCharacterBreakIterator { text.substring(startPosition, length) };
     auto leftSide = TextUtil::WordBreakLeft { };
     for (auto clusterStartPosition = ubrk_next(graphemeClusterIterator); clusterStartPosition != UBRK_DONE; clusterStartPosition = ubrk_next(graphemeClusterIterator)) {
-        auto width = TextUtil::width(inlineTextBox, fontCascade, startPosition, startPosition + clusterStartPosition, contentLogicalLeft);
+        auto width = widthOfRange(startPosition, startPosition + clusterStartPosition);
         if (width > availableWidth)
             return leftSide;
         leftSide = { static_cast<size_t>(clusterStartPosition), width };
@@ -371,6 +407,23 @@ TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, 
     // This content is not supposed to fit availableWidth.
     ASSERT_NOT_REACHED();
     return leftSide;
+}
+
+TextUtil::WordBreakLeft TextUtil::breakWord(const InlineTextBox& inlineTextBox, size_t startPosition, size_t length, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft, const FontCascade& fontCascade)
+{
+    return Layout::breakWord(inlineTextBox.content(), startPosition, length, textWidth, availableWidth, inlineTextBox.canUseSimpleFontCodePath(), inlineTextBox.canUseSimplifiedContentMeasuring(), fontCascade, [&](size_t from, size_t to) {
+        return TextUtil::width(inlineTextBox, fontCascade, from, to, contentLogicalLeft);
+    });
+}
+
+TextUtil::WordBreakLeft TextUtil::breakWord(StringView text, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, const FontCascade& fontCascade)
+{
+    auto canUseSimpleFontCodePath = text.is8Bit() || FontCascade::characterRangeCodePath(text.span16()) == FontCascade::CodePath::Simple;
+    return Layout::breakWord(text, 0, text.length(), textWidth, availableWidth, canUseSimpleFontCodePath, false, fontCascade, [&](size_t from, size_t to) -> InlineLayoutUnit {
+        if (from == to)
+            return { };
+        return fontCascade.width(TextRun { text.substring(from, to - from) });
+    });
 }
 
 bool TextUtil::mayBreakInBetween(const InlineTextItem& previousInlineItem, const InlineTextItem& nextInlineItem)
@@ -381,11 +434,10 @@ bool TextUtil::mayBreakInBetween(const InlineTextItem& previousInlineItem, const
     // its text box we can pass the box content directly. Only when leading content was dropped (e.g.
     // white-space-trim moves start() past 0) do we take the item's substring and pay for the allocation.
     String nextContent = nextInlineItem.start() ? nextInlineItem.content() : nextInlineItem.inlineTextBox().content();
-    return mayBreakInBetween(previousInlineItem.inlineTextBox().content(), protect(previousInlineItem.style()), nextContent, protect(nextInlineItem.style()));
-}
+    String previousContent = previousInlineItem.inlineTextBox().content();
+    CheckedRef previousContentStyle = previousInlineItem.style();
+    CheckedRef nextContentStyle = nextInlineItem.style();
 
-bool TextUtil::mayBreakInBetween(String previousContent, const Style::ComputedStyle& previousContentStyle, String nextContent, const Style::ComputedStyle& nextContentStyle)
-{
     // Now we need to collect at least 3 adjacent characters to be able to make a decision whether the previous text item ends with breaking opportunity.
     // [ex-][ample] <- second to last[x] last[-] current[a]
     // We need at least 1 character in the current inline text item and 2 more from previous inline items.
@@ -394,11 +446,11 @@ bool TextUtil::mayBreakInBetween(String previousContent, const Style::ComputedSt
         // See the templated CharacterType in nextBreakablePosition for last and lastlast characters.
         nextContent.convertTo16Bit();
     }
-    auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { nextContent, Style::toPlatform(nextContentStyle.usedLocale()), TextUtil::lineBreakIteratorMode(nextContentStyle.lineBreak()), TextUtil::contentAnalysis(nextContentStyle.wordBreak()) };
+    auto lineBreakIteratorFactory = CachedLineBreakIteratorFactory { nextContent, Style::toPlatform(nextContentStyle->usedLocale()), TextUtil::lineBreakIteratorMode(nextContentStyle->lineBreak()), TextUtil::contentAnalysis(nextContentStyle->wordBreak()) };
     auto previousContentLength = previousContent.length();
     // FIXME: We should look into the entire uncommitted content for more text context.
     char16_t lastCharacter = previousContentLength ? previousContent[previousContentLength - 1] : 0;
-    if (lastCharacter == softHyphen && previousContentStyle.hyphens() == Hyphens::None)
+    if (lastCharacter == softHyphen && previousContentStyle->hyphens() == Hyphens::None)
         return false;
     char16_t secondToLastCharacter = previousContentLength > 1 ? previousContent[previousContentLength - 2] : 0;
     lineBreakIteratorFactory.priorContext().set({ secondToLastCharacter, lastCharacter });
@@ -536,7 +588,7 @@ TextBreakIterator::ContentAnalysis TextUtil::contentAnalysis(WordBreak wordBreak
 // `Bidi_Class` of `ch` isn't `R`, `AL`, nor Bidi controls.
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=%5B%5B%3Abc%3DR%3A%5D%5B%3Abc%3DAL%3A%5D%5D&g=bc
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=[:Bidi_C:]
-static ALWAYS_INLINE bool LEGACY_NODELETE mayBeBidiRTL(char32_t ch)
+NODELETE static ALWAYS_INLINE bool mayBeBidiRTL(char32_t ch)
 {
     if (ch < 0x0590)
         return false;
@@ -650,6 +702,26 @@ size_t TextUtil::firstUserPerceivedCharacterLength(const InlineTextBox& inlineTe
     return nextPosition - startPosition;
 }
 
+size_t TextUtil::firstUserPerceivedCharacterLength(StringView text)
+{
+    RELEASE_ASSERT(!text.isEmpty());
+    auto graphemeClustersIterator = NonSharedCharacterBreakIterator { text };
+    auto nextPosition = ubrk_following(graphemeClustersIterator, 0);
+    if (nextPosition == UBRK_DONE)
+        return text.length();
+    return nextPosition;
+}
+
+size_t TextUtil::lastUserPerceivedCharacterLength(StringView text)
+{
+    RELEASE_ASSERT(!text.isEmpty());
+    auto graphemeClustersIterator = NonSharedCharacterBreakIterator { text };
+    auto previousPosition = ubrk_preceding(graphemeClustersIterator, text.length());
+    if (previousPosition == UBRK_DONE)
+        return text.length();
+    return text.length() - previousPosition;
+}
+
 size_t TextUtil::firstUserPerceivedCharacterLength(const InlineTextItem& inlineTextItem)
 {
     auto length = firstUserPerceivedCharacterLength(protect(inlineTextItem.inlineTextBox()), inlineTextItem.start(), inlineTextItem.length());
@@ -661,14 +733,10 @@ TextDirection TextUtil::directionForTextContent(StringView content)
     return baseTextDirection(content).value_or(TextDirection::LTR);
 }
 
-AtomString TextUtil::ellipsisTextInInlineDirection(bool isHorizontal)
+AtomString TextUtil::ellipsisText()
 {
-    if (isHorizontal) {
-        static MainThreadNeverDestroyed<const AtomString> horizontalEllipsisStr(span(horizontalEllipsis));
-        return horizontalEllipsisStr;
-    }
-    static MainThreadNeverDestroyed<const AtomString> verticalEllipsisStr(span(verticalEllipsis));
-    return verticalEllipsisStr;
+    static MainThreadNeverDestroyed<const AtomString> ellipsisStr(span(horizontalEllipsis));
+    return ellipsisStr;
 }
 
 InlineLayoutUnit TextUtil::hyphenWidth(const Style::ComputedStyle& style)
@@ -676,7 +744,7 @@ InlineLayoutUnit TextUtil::hyphenWidth(const Style::ComputedStyle& style)
     return std::max(0.f, protect(style.fontCascade())->width(StringView { style.hyphenString() }));
 }
 
-static bool LEGACY_NODELETE isASCIIHangableQuote(char32_t character)
+NODELETE static bool isASCIIHangableQuote(char32_t character)
 {
     return character == quotationMark || character == apostrophe;
 }

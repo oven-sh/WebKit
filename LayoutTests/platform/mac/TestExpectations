@@ -39,6 +39,8 @@ fast/images/eps-as-image.html [ Skip ]
 
 fast/text-autosizing/ios/programmatic-text-size-adjust.html [ Skip ]
 fast/text-autosizing/ios/text-size-adjust-inline-style.html [ Skip ]
+# Changing the viewport to reset text autosizing isn't supported on Mac.
+fast/text-autosizing/ios/reset-keeps-style-of-text-parent.html [ Skip ]
 fast/text-autosizing [ Pass ]
 # Tests for idempotent autosizing mode rely on viewport scaling which isn't implemented on Mac.
 fast/text-autosizing/ios/idempotentmode [ Skip ]
@@ -134,21 +136,6 @@ webkit.org/b/306558 accessibility/mac/style-range.html [ Failure ]
 
 http/tests/site-isolation/date-time-picker-in-cross-origin-iframe-001.html [ Pass ]
 http/tests/site-isolation/date-time-picker-in-cross-origin-iframe-002.html [ Pass ]
-
-# Site isolation accessibility tests using the accessibility client API:
-# Skip by default, enable tests that are stable.
-http/tests/site-isolation/accessibility/client [ Skip ]
-http/tests/site-isolation/accessibility/client/simple-iframe.html [ Pass ]
-http/tests/site-isolation/accessibility/client/iframe-bounds.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-iframe.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-iframe-in-scrolled-page.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-scrolled-iframe.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-scrolled-iframe-in-scrolled-page.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-nested-scrolled-iframes.html [ Pass ]
-http/tests/site-isolation/accessibility/client/walk-up-from-iframe-content.html [ Pass ]
-http/tests/site-isolation/accessibility/client/search-past-remote-frame-immediate-descendants.html [ Pass ]
-http/tests/site-isolation/accessibility/client/search-from-remote-frame-host.html [ Pass ]
-http/tests/site-isolation/accessibility/client/iframe-name-propagates-to-web-area.html [ Pass ]
 
 # Shared-process site isolation accessibility tests using the accessibility client API:
 # Skip by default, enable tests that are stable.
@@ -875,7 +862,6 @@ webkit.org/b/137589 compositing/hidpi-compositing-vs-non-compositing-check-on-te
 # Underlines' starting and ending positions need to be pixel-snapped
 
 # Tests that fail with the SVG -> OTF font converter, but are lower priority than live-on
-webkit.org/b/140588 svg/W3C-SVG-1.1/fonts-desc-02-t.svg [ Failure ]
 webkit.org/b/140590 svg/custom/svg-fonts-in-text-controls.html [ Failure ]
 webkit.org/b/140589 svg/W3C-SVG-1.1/text-text-06-t.svg [ Failure ]
 webkit.org/b/140589 svg/text/text-text-06-t.svg [ Failure ]
@@ -947,6 +933,8 @@ webkit.org/b/183880 [ Debug ] inspector/console/messageAdded-from-named-evaluati
 webkit.org/b/156634 inspector/formatting/formatting-javascript.html [ Pass Timeout ]
 webkit.org/b/158948 inspector/timeline [ Pass Timeout ]
 webkit.org/b/302413 inspector/timeline/timeline-event-TimerInstall.html [ Skip ]
+# Keep this test out of the [ Pass Timeout ] above.
+inspector/timeline/timeline-recording-multiple-targets.html [ Pass ]
 webkit.org/b/191539 http/tests/inspector/network/resource-security-connection.html [ Skip ]
 
 # Touch events are not enabled on Mac
@@ -1516,6 +1504,7 @@ fast/text/text-styles/-apple-system [ Pass ]
 # Skipping `setSinkId` tests due to lack of implementation.
 webkit.org/b/280303  imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiocontext-interface/audiocontext-sinkid-constructor.https.html [ Skip ]
 webkit.org/b/280303  imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiocontext-interface/audiocontext-sinkid-setsinkid.https.html [ Skip ]
+webkit.org/b/280303  imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiocontext-interface/audiocontext-sinkid-state-change.https.html [ Skip ]
 
 webkit.org/b/214498 imported/w3c/web-platform-tests/cors/remote-origin.htm [ Pass ]
 
@@ -1835,9 +1824,6 @@ webkit.org/b/243515 svg/compositing/svg-poster-circle.html [ Pass ImageOnlyFailu
 # See also webkit.org/b/252088
 webkit.org/b/243515 svg/compositing/outermost-svg-directly-composited-transformed-group-child.html [ Pass ImageOnlyFailure ]
 
-# The following test only works with LBSE activated -- text transform changes fail to repaint using the legacy engine.
-svg/repaint/text-repainting-after-modifying-transform.html [ ImageOnlyFailure ]
-
 webkit.org/b/245092 webaudio/offlineaudiocontext-gc.html [ Pass Failure ]
 
 webkit.org/b/245994 imported/w3c/web-platform-tests/streams/readable-byte-streams/construct-byob-request.any.worker.html [ Pass Failure ]
@@ -2012,9 +1998,6 @@ accessibility/prefers-non-blinking-cursor.html [ Skip ]
 imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-021.svg [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-022.svg [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-023.svg [ ImageOnlyFailure ]
-
-imported/w3c/web-platform-tests/svg/path/distance/pathlength-circle-mutating.svg [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/painting/svg-percent-stroke-width-viewbox-update.html [ ImageOnlyFailure ]
 
 webkit.org/b/269873 imported/w3c/web-platform-tests/webrtc-extensions/transfer-datachannel-service-worker.https.html [ Pass Failure ]
 
@@ -2394,9 +2377,6 @@ imported/w3c/web-platform-tests/storage-access-api/requestStorageAccess-web-sock
 # rdar://172914523 [macOS 27] imported/w3c/web-platform-tests/svg/shapes/reftests/pathlength-002.svg is a constant IMAGE failure
 [ GoldenGate ] imported/w3c/web-platform-tests/svg/shapes/reftests/pathlength-002.svg [ ImageOnlyFailure ]
 
-# rdar://173032378 REGRESSION(304821@main): [macOS 27] imported/w3c/web-platform-tests/css/css-overflow/text-overflow-with-selection.html is a constant IMAGE failure
-[ GoldenGate ] imported/w3c/web-platform-tests/css/css-overflow/text-overflow-with-selection.html [ ImageOnlyFailure ]
-
 # rdar://173034292 REGRESSION(macOS 27?): [macOS 27] media/modern-media-controls/tracks-support/sorted-by-user-preferred-languages.html is a constant TEXT failure
 [ GoldenGate ] media/modern-media-controls/tracks-support/sorted-by-user-preferred-languages.html [ Failure ]
 
@@ -2486,3 +2466,18 @@ webkit.org/b/327400 fast/canvas/canvas-gradient-premultiplied-color-not-exceedin
 # Multichannel (>2 ch) Opus decoding requires macOS 27.
 webkit.org/b/328460 [ Sequoia Tahoe ] http/wpt/webcodecs/audio-decoder-opus-multichannels.html [ Failure ]
 webkit.org/b/328460 [ Sequoia Tahoe ] webaudio/decode-audio-data-webm-opus-5.1.html [ Failure ]
+webkit.org/b/328460 [ Sequoia Tahoe ] http/wpt/webcodecs/audio-decoder-channel-order.https.any.html [ Failure ]
+webkit.org/b/328460 [ Sequoia Tahoe ] http/wpt/webcodecs/audio-decoder-channel-order.https.any.worker.html [ Failure ]
+
+webkit.org/b/329245 [ Sequoia ] webgl/video-formats/upload-path-av1-420-bt709-videorange.html [ Failure ]
+webkit.org/b/329239 webkit.org/b/329245 [ Sequoia ] webgl/video-formats/upload-path-h264-rgb.html [ Failure ]
+webkit.org/b/329237 webkit.org/b/329241 webkit.org/b/329244 [ Sequoia ] webgl/video-formats/upload-path-decoder.html [ Failure ]
+
+webkit.org/b/329245 [ x86_64 ] webgl/video-formats/upload-path-h264-420-bt709-fullrange.html [ Failure ]
+webkit.org/b/329245 [ x86_64 ] webgl/video-formats/upload-path-h264-422-bt709-videorange.html [ Failure ]
+webkit.org/b/329243 [ x86_64 ] webgl/video-formats/upload-path-hevc-420-12bit-bt709-videorange.html [ Failure ]
+webkit.org/b/329245 [ x86_64 ] webgl/video-formats/upload-path-hevc-444-8bit-bt709-videorange-321x193.html [ Failure ]
+webkit.org/b/329245 [ x86_64 ] webgl/video-formats/upload-path-hevc-444-8bit-bt709-videorange.html [ Failure ]
+webkit.org/b/322966 webkit.org/b/329234 webkit.org/b/329243 [ x86_64 ] webgl/video-formats/upload-path-hevcvt-alpha-bt709-videorange.html [ Failure ]
+webkit.org/b/329243 [ x86_64 ] webgl/video-formats/upload-path-raw-2vuy-bt709-videorange.html [ Failure ]
+webkit.org/b/322966 webkit.org/b/329234 webkit.org/b/329243 [ x86_64 ] webgl/video-formats/upload-path-raw-bgra.html [ Failure ]

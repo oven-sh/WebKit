@@ -33,6 +33,10 @@
 #include <wtf/Platform.h>
 #include <wtf/WeakPtr.h>
 
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+#include <WebCore/ImmersiveElement.h>
+#endif
+
 namespace WebCore {
 
 class CachedImage;
@@ -42,12 +46,18 @@ class HTMLFormElement;
 class HTMLImageLoader;
 class HTMLMapElement;
 class Image;
+class ImageAnimationTimeline;
 class LayoutSize;
 class SecurityOrigin;
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+template<typename IDLType> class DOMPromiseDeferred;
+#endif
 
 struct ImageCandidate;
 struct ImageOrientation;
 
+enum class ImageAnimationOverride : uint8_t;
 enum class ImageRequestState : uint8_t;
 enum class ReferrerPolicy : uint8_t;
 enum class RelevantMutation : bool;
@@ -59,6 +69,9 @@ class HTMLImageElement
     , public AttachmentAssociatedElement
 #endif
     , public FormAssociatedElement
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    , public ImmersiveElement
+#endif
     , public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(HTMLImageElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLImageElement);
@@ -85,11 +98,11 @@ public:
     const URL& currentURL() const LIFETIME_BOUND { return m_currentURL; }
     WEBCORE_EXPORT const AtomString& currentSrc();
 
-    bool LEGACY_NODELETE isServerMap() const;
+    NODELETE bool isServerMap() const;
 
-    const AtomString& LEGACY_NODELETE altText() const;
+    NODELETE const AtomString& altText() const;
 
-    WEBCORE_EXPORT CachedImage* LEGACY_NODELETE cachedImage() const;
+    NODELETE WEBCORE_EXPORT CachedImage* cachedImage() const;
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-state
     ImageRequestState currentRequestState() const;
@@ -101,15 +114,15 @@ public:
 
     RefPtr<Image> sourceImage() const;
 
-    void LEGACY_NODELETE setLoadManually(bool);
+    NODELETE void setLoadManually(bool);
 
-    bool LEGACY_NODELETE matchesUsemap(const AtomString&) const;
+    NODELETE bool matchesUsemap(const AtomString&) const;
     RefPtr<HTMLMapElement> associatedMapElement() const;
 
     WEBCORE_EXPORT String crossOrigin() const;
     WEBCORE_EXPORT int x() const;
     WEBCORE_EXPORT int y() const;
-    WEBCORE_EXPORT bool LEGACY_NODELETE complete() const;
+    NODELETE WEBCORE_EXPORT bool complete() const;
     String decoding() const;
 
     DecodingMode decodingMode() const;
@@ -127,7 +140,7 @@ public:
     void setAttachmentElement(Ref<HTMLAttachmentElement>&&) final;
 #endif
 
-    WEBCORE_EXPORT size_t LEGACY_NODELETE pendingDecodePromisesCountForTesting() const;
+    NODELETE WEBCORE_EXPORT size_t pendingDecodePromisesCountForTesting() const;
 
     bool canContainRangeEndPoint() const override { return false; }
 
@@ -138,8 +151,8 @@ public:
     void setImageMenuEnabled(bool value) { m_isImageMenuEnabled = value; }
 #endif
 
-    HTMLPictureElement* LEGACY_NODELETE pictureElement() const;
-    void LEGACY_NODELETE setPictureElement(HTMLPictureElement*);
+    NODELETE HTMLPictureElement* pictureElement() const;
+    NODELETE void setPictureElement(HTMLPictureElement*);
 
 #if USE(SYSTEM_PREVIEW)
     WEBCORE_EXPORT bool isSystemPreviewImage() const;
@@ -154,36 +167,37 @@ public:
 
     AtomString srcsetForBindings() const;
 
-    bool LEGACY_NODELETE usesSrcsetOrPicture() const;
+    NODELETE bool usesSrcsetOrPicture() const;
 
     enum LoadingValues { Lazy, Eager };
 
-    bool isLazyLoadable() const;
-    static bool hasLazyLoadableAttributeValue(StringView);
     bool hasAutoSizes() const;
+    bool allowsAutoSizes() const;
     static bool hasAutoSizesAttributeValue(StringView);
     void scheduleAutoSizesResolution();
 
-    bool LEGACY_NODELETE isDeferred() const;
+    NODELETE bool isDeferred() const;
 
     static bool isSupportedImageSourceType(const String& typeAttribute);
 
     bool isDroppedImagePlaceholder() const { return m_isDroppedImagePlaceholder; }
     void setIsDroppedImagePlaceholder() { m_isDroppedImagePlaceholder = true; }
 
-    void LEGACY_NODELETE setIsUserAgentShadowRootResource();
+    NODELETE void setIsUserAgentShadowRootResource();
 
     void evaluateDynamicMediaQueryDependencies();
 
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const;
 
-    bool LEGACY_NODELETE allowsOrientationOverride() const;
+    NODELETE bool allowsOrientationOverride() const;
 
     bool allowsAnimation() const;
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
-    WEBCORE_EXPORT void setAllowsAnimation(std::optional<bool>);
+    WEBCORE_EXPORT void setAnimationOverride(ImageAnimationOverride);
 #endif
+    Ref<ImageAnimationTimeline> imageAnimationTimeline() const;
+    void clearImageAnimationTimeline();
 
     String fetchPriorityForBindings() const;
     RequestPriority fetchPriority() const;
@@ -191,6 +205,10 @@ public:
     bool originClean(const SecurityOrigin&) const;
 
     Image* image() const;
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    void requestImmersive(DOMPromiseDeferred<void>&&);
+#endif
 
 protected:
     HTMLImageElement(const QualifiedName&, Document&);
@@ -213,6 +231,20 @@ private:
 
     // ActiveDOMObject.
     bool virtualHasPendingActivity() const final;
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    void suspend(ReasonForSuspension) final;
+    void stop() final;
+
+    void refImmersiveElement() const final { HTMLElement::ref(); }
+    void derefImmersiveElement() const final { HTMLElement::deref(); }
+
+    bool isImmersiveEnabled() const final;
+    void prepareImmersivePresentation(CompletionHandler<void(ExceptionOr<void>)>&&) final;
+    void presentImmersivePresentation(ChromeClient&, CompletionHandler<void(bool)>&&) final;
+
+    std::optional<Exception> immersiveImageError() const;
+    void exitImmersiveIfNeeded();
+#endif
 
     void didAttachRenderers() override;
     RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
@@ -221,8 +253,8 @@ private:
 
     bool canStartSelection() const override;
 
-    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const override;
-    bool LEGACY_NODELETE attributeContainsURL(const Attribute&) const override;
+    NODELETE bool isURLAttribute(const Attribute&) const override;
+    NODELETE bool attributeContainsURL(const Attribute&) const override;
     String completeURLsInAttributeValue(const URL& base, const Attribute&, ResolveURLs = ResolveURLs::YesExcludingURLsForPrivacy) const override;
     Attribute replaceURLsInAttributeValue(const Attribute&, const CSS::SerializationContext&) const override;
 
@@ -235,8 +267,8 @@ private:
     void removingSteps(RemovalType, ContainerNode&) override;
     void movingSteps(MovingType, ContainerNode&) override;
 
-    bool LEGACY_NODELETE isFormListedElement() const final { return false; }
-    FormAssociatedElement* LEGACY_NODELETE asFormAssociatedElement() final { return this; }
+    NODELETE bool isFormListedElement() const final { return false; }
+    NODELETE FormAssociatedElement* asFormAssociatedElement() final { return this; }
     HTMLImageElement& asHTMLElement() final { return *this; }
     const HTMLImageElement& asHTMLElement() const final { return *this; }
 
@@ -266,11 +298,11 @@ private:
     bool childShouldCreateRenderer(const Node&) const override;
 #endif
 
-    HTMLSourceElement* LEGACY_NODELETE sourceElement() const;
+    NODELETE HTMLSourceElement* sourceElement() const;
     void setSourceElement(HTMLSourceElement*);
 
     IntersectionObserverData& ensureIntersectionObserverData() final;
-    IntersectionObserverData* LEGACY_NODELETE intersectionObserverDataIfExists() const final;
+    NODELETE IntersectionObserverData* intersectionObserverDataIfExists() const final;
 
     const std::unique_ptr<HTMLImageLoader> m_imageLoader;
     const std::unique_ptr<IntersectionObserverData> m_intersectionObserverData;
@@ -280,6 +312,7 @@ private:
     AtomString m_currentSrc;
     AtomString m_parsedUsemap;
     float m_currentPixelDensity;
+    RefPtr<ImageAnimationTimeline> m_imageAnimationTimeline;
 #if ENABLE(SERVICE_CONTROLS)
     bool m_isImageMenuEnabled { false };
 #endif

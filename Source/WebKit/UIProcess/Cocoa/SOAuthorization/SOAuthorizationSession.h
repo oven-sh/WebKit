@@ -81,6 +81,8 @@ public:
     void complete(NSHTTPURLResponse *, NSData *);
     void presentViewController(SOAuthorizationViewController, UICallback);
 
+    bool isForAuthorization(SOAuthorization *authorization) const { return m_soAuthorization.get() == authorization; }
+
 protected:
     // FSM depends on derived classes.
     enum class State : uint8_t {
@@ -97,7 +99,7 @@ protected:
     WebPageProxy* page() const { return m_page.get(); }
     State state() const { return m_state; }
     ASCIILiteral stateString() const;
-    ASCIILiteral LEGACY_NODELETE initiatingActionString() const;
+    NODELETE ASCIILiteral initiatingActionString() const;
     void setState(State state) { m_state = state; }
     const API::NavigationAction* navigationAction() { return m_navigationAction.get(); }
     Ref<API::NavigationAction> releaseNavigationAction();

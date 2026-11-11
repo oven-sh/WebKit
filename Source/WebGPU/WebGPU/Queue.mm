@@ -32,14 +32,17 @@
 #import "CommandEncoder.h"
 #import "Device.h"
 #import "IsValidToUseWith.h"
+#import "MetalFunctionWriter.h"
 #import "MetalSPI.h"
 #import "Texture.h"
 #import "TextureView.h"
 #import <simd/simd.h>
 #import <wtf/Borrow.h>
+#import <wtf/Box.h>
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/darwin/DispatchExtras.h>
 
 #if ENABLE(WEBGPU_SWIFT)
 #import "CxxBridging.h"
@@ -147,6 +150,16 @@ void Queue::finalizeBlitCommandEncoder()
     // Finalizes the queue-owned staging command buffer, whichever encoder type is
     // currently open on it (blit, or the compute staged-copy encoder).
     if (m_blitCommandEncoder || m_stagedCopyEncoder) {
+        // Hand the command buffer any bytes its copies only alias, before it is committed: Metal
+        // accepts completed handlers on uncommitted command buffers only. Nothing is parked unless a
+        // writeBuffer() staged a copy through a newBufferWithBytesNoCopy MTLBuffer, so this is a
+        // no-op for every other caller. Mirrors the noCopy tail of writeTexture().
+        if (!m_noCopyStagingSource.isEmpty()) {
+            __block Vector<uint8_t> retainedStagingSource = WTF::move(m_noCopyStagingSource);
+            [m_commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+                retainedStagingSource = { };
+            }];
+        }
         id<MTLCommandEncoder> stagingEncoder = m_blitCommandEncoder;
         if (!stagingEncoder)
             stagingEncoder = m_stagedCopyEncoder;
@@ -281,6 +294,11 @@ void Queue::makeInvalid()
     m_onSubmittedWorkScheduledCallbacks.clear();
     m_onSubmittedWorkDoneCallbacks.clear();
 
+    for (auto& provisionalClear : std::exchange(m_provisionalTextureClears, { })) {
+        if (RefPtr texture = provisionalClear.texture.get())
+            texture->dropProvisionalClear(provisionalClear.mipLevel, provisionalClear.slice);
+    }
+
     while (m_createdNotCommittedBuffers.count)
         removeMTLCommandBuffer(m_createdNotCommittedBuffers.firstObject);
 
@@ -383,9 +401,19 @@ void Queue::waitForAllCommitedWorkToComplete()
 }
 
 template<unsigned errorCode>
-[[noreturn]] void crashGPUProcess(NSError* error, NSError* underlyingError)
+[[noreturn]] void crashGPUProcess(const RefPtr<Device>& device, NSError* error, NSError* underlyingError)
 {
     WTFLogAlways("Encountered fatal command buffer error %@, underlying error %@", error, underlyingError); // NOLINT
+    if (device)
+        device->loseTheDevice(WebGPU::DeviceLostReason::Unknown);
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+[[noreturn]] static void crashGPUProcess(const RefPtr<Device>& device, NSString *error)
+{
+    WTFLogAlways("Encountered fatal GPU error %@", error); // NOLINT
+    if (device)
+        device->loseTheDevice(WebGPU::DeviceLostReason::Unknown);
     RELEASE_ASSERT_NOT_REACHED();
 }
 
@@ -404,7 +432,9 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
                 callback();
         });
     }];
-    [commandBuffer addCompletedHandler:[protectedThis = protect(*this)](id<MTLCommandBuffer> mtlCommandBuffer) {
+    auto didComplete = Box<std::atomic<bool>>::create(false);
+    [commandBuffer addCompletedHandler:[protectedThis = protect(*this), didComplete](id<MTLCommandBuffer> mtlCommandBuffer) {
+        didComplete->store(true, std::memory_order_relaxed);
         MTLCommandBufferStatus status = mtlCommandBuffer.status;
         bool loseTheDevice = false;
         if (NSError *error = mtlCommandBuffer.error; status != MTLCommandBufferStatusCompleted) {
@@ -414,7 +444,8 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
                 if (underlyingError.code == 0x10a || underlyingError.code == 0x5)
                     loseTheDevice = false;
                 else {
-#define makeCase(N) case N: crashGPUProcess<N>(error, underlyingError);
+                    RefPtr device = protectedThis->m_device.get();
+#define makeCase(N) case N: crashGPUProcess<N>(device, error, underlyingError);
                     switch (underlyingError.code) {
                         makeCase(9); // kIOGPUCommandBufferCallbackErrorInvalidResource = 9,
                         makeCase(10); // kIOGPUCommandBufferCallbackErrorInvalidInput = 10,
@@ -455,6 +486,13 @@ void Queue::commitMTLCommandBuffer(id<MTLCommandBuffer> commandBuffer)
     }
     removeMTLCommandBufferInternal(commandBuffer);
     ++m_submittedCommandBufferCount;
+
+    NSString *label = commandBuffer.label;
+    ThreadSafeWeakPtr weakDevice = m_device;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        if (!didComplete->load(std::memory_order_relaxed))
+            crashGPUProcess(weakDevice.get(), [NSString stringWithFormat:@"WebGPU: command buffer %@ did not complete within 3s timeout", label]);
+    });
 }
 
 static void invalidateCommandBuffers(Vector<Ref<WebGPU::Metal::CommandBuffer>>&& commands, auto&& makeInvalidFunc)
@@ -597,7 +635,7 @@ id<MTLIndirectCommandBuffer> Queue::trimICB(id<MTLIndirectCommandBuffer> dest, i
     return dest;
 }
 
-static std::pair<uint32_t, uint16_t> LEGACY_NODELETE maxIndexValueSlow(std::span<uint8_t> data)
+NODELETE static std::pair<uint32_t, uint16_t> maxIndexValueSlow(std::span<uint8_t> data)
 {
     auto lengthUint32 = data.size() / 4;
     std::span<uint32_t> dataUint = unsafeMakeSpan(static_cast<uint32_t*>(static_cast<void*>(data.data())), lengthUint32);
@@ -710,26 +748,40 @@ static std::span<uint8_t> span(id<MTLBuffer> buffer)
     return unsafeMakeSpan(static_cast<uint8_t*>(buffer.contents), buffer.length);
 }
 
-std::pair<id<MTLBuffer>, uint64_t> Queue::newTemporaryBufferWithBytes(std::span<uint8_t> dataSpan, bool noCopy)
+std::pair<id<MTLBuffer>, uint64_t> Queue::reserveTemporaryBuffer(size_t size)
 {
     auto device = m_device.get();
     if (!device)
         return std::make_pair(nil, 0ull);
 
-    auto dataSize = dataSpan.size();
-    auto data = dataSpan.data();
-    if (noCopy)
-        return std::make_pair(device->newBufferWithBytesNoCopy(data, dataSize, MTLResourceStorageModeShared, skipMemoryAttribution), 0ull);
+    if (size >= largeBufferSize)
+        return std::make_pair(device->safeCreateBuffer(size, skipMemoryAttribution), 0ull);
 
-    if (!m_temporaryBuffer || m_temporaryBufferOffset + dataSize > m_temporaryBuffer.length) {
-        m_temporaryBuffer = device->safeCreateBuffer(std::max(dataSize, 64 * KB), skipMemoryAttribution);
+    if (!m_temporaryBuffer || m_temporaryBufferOffset + size > m_temporaryBuffer.length) {
+        m_temporaryBuffer = device->safeCreateBuffer(std::max(size, 64 * KB), skipMemoryAttribution);
         m_temporaryBufferOffset = 0;
     }
 
     auto priorOffset = m_temporaryBufferOffset;
-    m_temporaryBufferOffset += WTF::roundUpToMultipleOf(64, dataSize);
-    memcpySpan(span(m_temporaryBuffer).subspan(priorOffset), dataSpan);
+    m_temporaryBufferOffset += WTF::roundUpToMultipleOf(64, size);
     return std::make_pair(m_temporaryBuffer, priorOffset);
+}
+
+std::pair<id<MTLBuffer>, uint64_t> Queue::newTemporaryBufferWithBytes(std::span<uint8_t> dataSpan, bool noCopy)
+{
+    if (noCopy) {
+        auto device = m_device.get();
+        if (!device)
+            return std::make_pair(nil, 0ull);
+        return std::make_pair(device->newBufferWithBytesNoCopy(dataSpan.data(), dataSpan.size(), MTLResourceStorageModeShared, skipMemoryAttribution), 0ull);
+    }
+
+    auto reservation = reserveTemporaryBuffer(dataSpan.size());
+    if (!reservation.first)
+        return reservation;
+
+    memcpySpan(span(reservation.first).subspan(reservation.second), dataSpan);
+    return reservation;
 }
 
 void Queue::writeBuffer(id<MTLBuffer> buffer, uint64_t bufferOffset, std::span<uint8_t> data)
@@ -834,6 +886,29 @@ void Queue::clearBuffer(id<MTLBuffer> buffer, NSUInteger offset, NSUInteger size
     ensureBlitCommandEncoder();
     auto lengthMinusOffset = buffer.length - offset;
     [m_blitCommandEncoder fillBuffer:buffer range:NSMakeRange(offset, std::min<NSUInteger>(lengthMinusOffset, size)) value:0];
+}
+
+void Queue::copyBuffer(id<MTLBuffer> source, uint64_t sourceOffset, id<MTLBuffer> destination, uint64_t destinationOffset, uint64_t size)
+{
+    if (!source || !destination || !size)
+        return;
+
+    auto sourceEnd = checkedSum<uint64_t>(sourceOffset, size);
+    auto destinationEnd = checkedSum<uint64_t>(destinationOffset, size);
+    if (sourceEnd.hasOverflowed() || sourceEnd.value() > source.length || destinationEnd.hasOverflowed() || destinationEnd.value() > destination.length) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    if (!ensureBlitCommandEncoder())
+        return;
+
+    [m_blitCommandEncoder
+        copyFromBuffer:source
+        sourceOffset:sourceOffset
+        toBuffer:destination
+        destinationOffset:destinationOffset
+        size:size];
 }
 
 bool Queue::isIdle() const
@@ -1008,18 +1083,20 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
     auto textureDimension = texture->dimension();
     uint32_t sliceCount = textureDimension == WebGPU::TextureDimension::_3d ? 1 : size.depthOrArrayLayers;
     bool clearWasNeeded = false;
+    const bool writeCompletelyClearsSlice = writeWillCompletelyClear(textureDimension, widthForMetal, logicalSize.width, heightForMetal, logicalSize.height, depthForMetal, logicalSize.depthOrArrayLayers);
+    auto markSliceAsCleared = [&](NSUInteger destinationSlice) {
+        if (writeCompletelyClearsSlice)
+            texture->setPreviouslyCleared(destination.mipLevel, destinationSlice);
+    };
     for (uint32_t layer = 0; layer < sliceCount; ++layer) {
         auto checkedDestinationSlice = checkedSum<uint32_t>(destination.origin.z, layer);
         if (checkedDestinationSlice.hasOverflowed())
             return;
         NSUInteger destinationSlice = textureDimension == WebGPU::TextureDimension::_3d ? 0 : checkedDestinationSlice.value();
-        if (!texture->previouslyCleared(destination.mipLevel, destinationSlice)) {
-            if (writeWillCompletelyClear(textureDimension, widthForMetal, logicalSize.width, heightForMetal, logicalSize.height, depthForMetal, logicalSize.depthOrArrayLayers))
-                texture->setPreviouslyCleared(destination.mipLevel, destinationSlice);
-            else {
-                clearWasNeeded = true;
-                clearTextureIfNeeded(destination, destinationSlice);
-            }
+        texture->discardProvisionalClear(destination.mipLevel, destinationSlice);
+        if (!texture->previouslyCleared(destination.mipLevel, destinationSlice) && !writeCompletelyClearsSlice) {
+            clearWasNeeded = true;
+            clearTextureIfNeeded(destination, destinationSlice);
         }
     }
 
@@ -1120,7 +1197,6 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
         break;
     }
 
-    Vector<uint8_t> newData;
     auto checkedNewBytesPerRow = checkedProduct<uint32_t>(blockSize, ((widthForMetal / blockWidth) + ((widthForMetal % blockWidth) ? 1 : 0)));
     if (checkedNewBytesPerRow.hasOverflowed())
         return;
@@ -1128,6 +1204,8 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
     auto dataLayoutOffset = dataLayout.offset;
     const bool widthMismatch = newBytesPerRow != bytesPerRow && widthForMetal == logicalSize.width && heightForMetal == logicalSize.height;
     const bool multipleOfBlockSize = bytesPerRow % blockSize;
+    id<MTLBuffer> repackedBuffer = nil;
+    uint64_t repackedBufferOffset = 0;
     if (isCompressed && (widthMismatch || multipleOfBlockSize)) {
 
         const auto maxY = std::max<size_t>(blockHeight, heightForMetal) / blockHeight;
@@ -1139,8 +1217,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
         auto checkedNewBytesPerImageTimesMaxZ = checkedProduct<uint32_t>(newBytesPerImage, maxZ);
         if (checkedNewBytesPerImageTimesMaxZ.hasOverflowed())
             return;
-        newData = Vector<uint8_t>(FillWith { }, checkedNewBytesPerImageTimesMaxZ.value(), 0);
-        dataLayoutOffset = 0;
+        const auto newDataSize = checkedNewBytesPerImageTimesMaxZ.value();
 
         auto verticalOffset = checkedProduct<uint64_t>(maxY ? (maxY - 1) : 0, bytesPerRow);
         ASSERT(maxZ);
@@ -1162,22 +1239,34 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
             auto checkedBytesSum = checkedSum<uint32_t>(maxYMinus1TimesBytesPerRow.value(), maxZMinus1TimesBytesPerImage.value(), dataLayout.offset, newBytesPerRow);
             if (checkedNewBytesSum.hasOverflowed() || checkedBytesSum.hasOverflowed())
                 return;
-            if (checkedNewBytesSum.value() > newData.size() || checkedBytesSum.value() > data.size()) {
+            if (checkedNewBytesSum.value() > newDataSize || checkedBytesSum.value() > data.size()) {
                 auto y = (maxY - 1);
                 auto z = (maxZ - 1);
-                device->generateAValidationError([NSString stringWithFormat:@"y(%zu) * newBytesPerRow(%u) + z(%zu) * newBytesPerImage(%u) + newBytesPerRow(%u) > newData.size()(%zu) || y(%zu) * bytesPerRow(%lu) + z(%zu) * bytesPerImage(%lu) + newBytesPerRow(%u) > dataSize(%zu), copySize %u, %u, %u, textureSize %u, %u, %u, offset %llu", y, newBytesPerRow, z, newBytesPerImage, newBytesPerRow, newData.size(), y, static_cast<unsigned long>(bytesPerRow), z, static_cast<unsigned long>(bytesPerImage), newBytesPerRow, data.size(), widthForMetal, heightForMetal, depthForMetal, logicalSize.width, logicalSize.height, logicalSize.depthOrArrayLayers, dataLayout.offset]);
+                device->generateAValidationError([NSString stringWithFormat:@"y(%zu) * newBytesPerRow(%u) + z(%zu) * newBytesPerImage(%u) + newBytesPerRow(%u) > newDataSize(%zu) || y(%zu) * bytesPerRow(%lu) + z(%zu) * bytesPerImage(%lu) + newBytesPerRow(%u) > dataSize(%zu), copySize %u, %u, %u, textureSize %u, %u, %u, offset %llu", y, newBytesPerRow, z, newBytesPerImage, newBytesPerRow, static_cast<size_t>(newDataSize), y, static_cast<unsigned long>(bytesPerRow), z, static_cast<unsigned long>(bytesPerImage), newBytesPerRow, data.size(), widthForMetal, heightForMetal, depthForMetal, logicalSize.width, logicalSize.height, logicalSize.depthOrArrayLayers, dataLayout.offset]);
                 return;
             }
         }
 
-        auto newDataSpan = newData.mutableSpan();
+        auto checkedCopiedBytesPerImage = checkedProduct<uint32_t>(maxY, newBytesPerRow);
+        if (checkedCopiedBytesPerImage.hasOverflowed() || checkedCopiedBytesPerImage.value() > newBytesPerImage)
+            return;
+        const auto copiedBytesPerImage = checkedCopiedBytesPerImage.value();
+        auto reservation = reserveTemporaryBuffer(newDataSize);
+        if (!reservation.first)
+            return;
+        repackedBuffer = reservation.first;
+        repackedBufferOffset = reservation.second;
+
+        auto newDataSpan = span(repackedBuffer).subspan(repackedBufferOffset, newDataSize);
         for (size_t z = 0; z < maxZ; ++z) {
+            auto zTimesBytesPerImage = checkedProduct<uint32_t>(z, bytesPerImage);
+            auto zTimesNewBytesPerImage = checkedProduct<uint32_t>(z, newBytesPerImage);
+            if (zTimesBytesPerImage.hasOverflowed() || zTimesNewBytesPerImage.hasOverflowed())
+                return;
             for (size_t y = 0; y < maxY; ++y) {
                 auto yTimesBytesPerRow = checkedProduct<uint32_t>(y, bytesPerRow);
                 auto yTimesNewBytesPerRow = checkedProduct<uint32_t>(y, newBytesPerRow);
-                auto zTimesBytesPerImage = checkedProduct<uint32_t>(z, bytesPerImage);
-                auto zTimesNewBytesPerImage = checkedProduct<uint32_t>(z, newBytesPerImage);
-                if (yTimesBytesPerRow.hasOverflowed() || yTimesNewBytesPerRow.hasOverflowed() || zTimesBytesPerImage.hasOverflowed() || zTimesNewBytesPerImage.hasOverflowed())
+                if (yTimesBytesPerRow.hasOverflowed() || yTimesNewBytesPerRow.hasOverflowed())
                     return;
                 auto checkedYPlusZPlusOffset = checkedSum<uint32_t>(yTimesBytesPerRow.value(), zTimesBytesPerImage.value(), dataLayout.offset);
                 auto checkedNewYPlusNewZ = checkedSum<uint32_t>(yTimesNewBytesPerRow.value(), zTimesNewBytesPerImage.value());
@@ -1187,12 +1276,17 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
                 auto destBytesSpan = newDataSpan.subspan(checkedNewYPlusNewZ.value(), newBytesPerRow);
                 memcpySpan(destBytesSpan, sourceBytesSpan);
             }
+            auto checkedPaddingOffset = checkedSum<uint32_t>(zTimesNewBytesPerImage.value(), copiedBytesPerImage);
+            if (checkedPaddingOffset.hasOverflowed())
+                return;
+            memsetSpan(newDataSpan.subspan(checkedPaddingOffset.value(), newBytesPerImage - copiedBytesPerImage), 0);
         }
 
         bytesPerRow = newBytesPerRow;
-        dataByteSize = newData.size();
+        dataByteSize = newDataSize;
         bytesPerImage = newBytesPerImage;
-        data = newData.mutableSpan();
+        data = newDataSpan;
+        dataLayoutOffset = 0;
     }
 
     // FIXME(PERFORMANCE): Instead of checking whether or not the whole queue is idle,
@@ -1233,6 +1327,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
                             withBytes:byteCast<char>(data.subspan(sourceOffset).data())
                             bytesPerRow:0
                             bytesPerImage:0];
+                        markSliceAsCleared(destinationSlice);
                     }
                     break;
                 }
@@ -1263,6 +1358,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
                             withBytes:byteCast<char>(data.subspan(sourceOffset).data())
                             bytesPerRow:bytesPerRow
                             bytesPerImage:0];
+                        markSliceAsCleared(destinationSlice);
                     }
                     break;
                 }
@@ -1281,6 +1377,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
                         withBytes:byteCast<char>(data.subspan(sourceOffset).data())
                         bytesPerRow:bytesPerRow
                         bytesPerImage:bytesPerImage];
+                    markSliceAsCleared(0);
                     break;
                 }
                 }
@@ -1299,10 +1396,14 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
     // FIXME(PERFORMANCE): Suballocate, so the common case doesn't need to hit the kernel.
     // FIXME(PERFORMANCE): Should this temporary buffer really be shared?
     NSUInteger newBufferSize = dataByteSize - dataLayoutOffset;
-    bool noCopy = newBufferSize >= largeBufferSize;
-    auto temporaryBufferWithOffset = newTemporaryBufferWithBytes(data.subspan(dataLayoutOffset), noCopy);
-    id<MTLBuffer> temporaryBuffer = temporaryBufferWithOffset.first;
-    auto temporaryBufferOffset = temporaryBufferWithOffset.second;
+    bool noCopy = !repackedBuffer && newBufferSize >= largeBufferSize;
+    id<MTLBuffer> temporaryBuffer = repackedBuffer;
+    uint64_t temporaryBufferOffset = repackedBufferOffset;
+    if (!temporaryBuffer) {
+        auto temporaryBufferWithOffset = newTemporaryBufferWithBytes(data.subspan(dataLayoutOffset), noCopy);
+        temporaryBuffer = temporaryBufferWithOffset.first;
+        temporaryBufferOffset = temporaryBufferWithOffset.second;
+    }
     if (!temporaryBuffer)
         return;
     ASSERT(temporaryBuffer.length >= newBufferSize);
@@ -1348,6 +1449,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
                 destinationLevel:destination.mipLevel
                 destinationOrigin:destinationOrigin
                 options:options];
+            markSliceAsCleared(destinationSlice);
         }
         break;
     }
@@ -1381,6 +1483,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
                 destinationLevel:destination.mipLevel
                 destinationOrigin:destinationOrigin
                 options:options];
+            markSliceAsCleared(destinationSlice);
         }
         break;
     }
@@ -1401,20 +1504,13 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
             destinationLevel:destination.mipLevel
             destinationOrigin:destinationOrigin
             options:options];
+        markSliceAsCleared(0);
         break;
     }
     }
 
-    if (noCopy) {
-        if (!newData.isEmpty()) {
-            // The MTLBuffer above was created with newBufferWithBytesNoCopy and aliases newData's storage; keep that storage alive until the GPU has consumed it.
-            __block Vector<uint8_t> retainedNewData = WTF::move(newData);
-            [m_commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
-                retainedNewData = { };
-            }];
-        }
+    if (noCopy)
         finalizeBlitCommandEncoder();
-    }
 }
 
 // Host mirror of the MSL `WebKitCopyExternalImageArgs` declared in the shader source below, and a
@@ -1462,6 +1558,8 @@ enum CopyExternalImageFlags : uint32_t {
     CopyExternalImageEncodeDestinationTransferFunction = 1 << 5,
     CopyExternalImageCancelSRGBDestinationEncoding = 1 << 6,
     CopyExternalImageSourceIsVideoFrame = 1 << 7,
+    CopyExternalImageSourceIsPQ = 1 << 8,
+    CopyExternalImageSourceIsHLG = 1 << 9,
 };
 
 // https://drafts.csswg.org/css-color-4/#color-conversion-code, in row-major order and applied to
@@ -1608,6 +1706,18 @@ static std::array<float, 9> colorMatrixBetweenPrimaries(CopyExternalImageSourceP
     return identityColorMatrix;
 }
 
+HDRTransferFunction hdrTransferFunctionForPixelBuffer(CVPixelBufferRef pixelBuffer)
+{
+    RetainPtr transferFunction = adoptCF(static_cast<CFStringRef>(CVBufferCopyAttachment(pixelBuffer, kCVImageBufferTransferFunctionKey, nil)));
+    if (!transferFunction)
+        return HDRTransferFunction::None;
+    if (CFEqual(transferFunction.get(), kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ))
+        return HDRTransferFunction::PQ;
+    if (CFEqual(transferFunction.get(), kCVImageBufferTransferFunction_ITU_R_2100_HLG))
+        return HDRTransferFunction::HLG;
+    return HDRTransferFunction::None;
+}
+
 std::optional<std::array<float, 9>> primariesConversionMatrixForPixelBuffer(CVPixelBufferRef pixelBuffer, WebGPU::PredefinedColorSpace destination)
 {
     bool destinationIsDisplayP3 = destination == WebGPU::PredefinedColorSpace::DisplayP3 || destination == WebGPU::PredefinedColorSpace::DisplayP3Linear;
@@ -1647,9 +1757,10 @@ id<MTLRenderPipelineState> Queue::copyExternalImagePipelineState(MTLPixelFormat 
         return nil;
 
     NSError *error = nil;
-    /* NOLINT */ id<MTLLibrary> library = [mtlDevice newLibraryWithSource:@R"(#include <metal_stdlib>
-using namespace metal;
-struct WebKitCopyExternalImageArgs {
+    // The HDR to SDR mapping is the one importExternalTexture() applies, from the same source.
+    NSString *shaderPrologue = @"#include <metal_stdlib>\nusing namespace metal;\n";
+    NSString *hdrToSDRSource = [NSString stringWithUTF8String:WGSL::Metal::hdrToSDRMetalSource().characters()];
+    /* NOLINT */ NSString *shaderBody = @R"(struct WebKitCopyExternalImageArgs {
     uint sourceOriginX;
     uint sourceOriginY;
     uint destinationOriginX;
@@ -1671,6 +1782,8 @@ constant uint webKitCopyExternalImageDecodeSourceTransferFunction = 16;
 constant uint webKitCopyExternalImageEncodeDestinationTransferFunction = 32;
 constant uint webKitCopyExternalImageCancelSRGBDestinationEncoding = 64;
 constant uint webKitCopyExternalImageSourceIsVideoFrame = 128;
+constant uint webKitCopyExternalImageSourceIsPQ = 256;
+constant uint webKitCopyExternalImageSourceIsHLG = 512;
 // A frame's chroma plane is half resolution, so it has to be filtered rather than read, and the crop
 // the coordinates go through can leave them just outside the plane at the edges.
 constexpr sampler webKitCopyExternalImageFrameSampler(coord::normalized, address::clamp_to_edge, filter::linear);
@@ -1729,7 +1842,10 @@ struct WebKitCopyExternalImageVertexOut {
         color.a = 1.f;
     if ((args.flags & webKitCopyExternalImageUnpremultiplySource) && color.a > 0.f)
         color.rgb /= color.a;
-    if (args.flags & webKitCopyExternalImageDecodeSourceTransferFunction)
+    bool sourceIsHDR = args.flags & (webKitCopyExternalImageSourceIsPQ | webKitCopyExternalImageSourceIsHLG);
+    if (sourceIsHDR)
+        color.rgb = __wgslToneMapHDR(__wgslDecodeHDR(saturate(color.rgb), args.flags & webKitCopyExternalImageSourceIsHLG));
+    else if (args.flags & webKitCopyExternalImageDecodeSourceTransferFunction)
         color.rgb = webKitSRGBToLinear(color.rgb);
     // Explicit dot products, so that the host's row-major storage order is unambiguous. The matrix is
     // the identity when the source and destination share primaries, which leaves the values alone.
@@ -1738,7 +1854,7 @@ struct WebKitCopyExternalImageVertexOut {
     color.g = args.colorMatrix[3] * rgb.r + args.colorMatrix[4] * rgb.g + args.colorMatrix[5] * rgb.b;
     color.b = args.colorMatrix[6] * rgb.r + args.colorMatrix[7] * rgb.g + args.colorMatrix[8] * rgb.b;
     if (args.flags & webKitCopyExternalImageEncodeDestinationTransferFunction)
-        color.rgb = webKitLinearToSRGB(color.rgb);
+        color.rgb = sourceIsHDR ? __wgslLinearToBT1886(color.rgb) : webKitLinearToSRGB(color.rgb);
     if (args.flags & webKitCopyExternalImagePremultiplyDestination)
         color.rgb *= color.a;
     // Metal applies the sRGB transfer function on the way into an _sRGB attachment. Undo it here, so
@@ -1746,7 +1862,8 @@ struct WebKitCopyExternalImageVertexOut {
     if (args.flags & webKitCopyExternalImageCancelSRGBDestinationEncoding)
         color.rgb = webKitSRGBToLinear(color.rgb);
     return color;
-})" options:nil error:&error];
+})";
+    /* NOLINT */ id<MTLLibrary> library = [mtlDevice newLibraryWithSource:[NSString stringWithFormat:@"%@%@%@", shaderPrologue, hdrToSDRSource, shaderBody] options:nil error:&error];
     id<MTLFunction> vertexFunction = error ? nil : [library newFunctionWithName:@"vsCopyExternalImage"];
     id<MTLFunction> fragmentFunction = vertexFunction ? [library newFunctionWithName:@"fsCopyExternalImage"] : nil;
     id<MTLRenderPipelineState> pipelineState = nil;
@@ -1951,6 +2068,16 @@ void Queue::copyExternalImageToTexture(const WebGPU::ImageCopyExternalImage& sou
         // A frame's primaries are its own, and are usually neither of the two the caller can name.
         sourcePrimaries = sourcePrimariesForPixelBuffer(pixelBuffer.get());
         flags |= CopyExternalImageSourceIsVideoFrame;
+        switch (hdrTransferFunctionForPixelBuffer(pixelBuffer.get())) {
+        case HDRTransferFunction::None:
+            break;
+        case HDRTransferFunction::PQ:
+            flags |= CopyExternalImageSourceIsPQ;
+            break;
+        case HDRTransferFunction::HLG:
+            flags |= CopyExternalImageSourceIsHLG;
+            break;
+        }
     } else {
         RetainPtr ioSurface = source.source;
         auto surfaceWidth = static_cast<uint32_t>(IOSurfaceGetWidth(ioSurface.get()));
@@ -1995,11 +2122,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     auto colorMatrix = colorMatrixBetweenPrimaries(sourcePrimaries, isDisplayP3(destination.colorSpace));
     bool primariesDiffer = colorMatrix != identityColorMatrix;
     bool transferFunctionsDiffer = isLinear(source.colorSpace) != isLinear(destination.colorSpace);
-    bool convertsColor = primariesDiffer || transferFunctionsDiffer;
+    // An HDR frame is never in the destination's transfer function, so it is always decoded, by the
+    // shader's HDR path rather than the sRGB one, and tone mapped on the way.
+    bool sourceIsHDR = flags & (CopyExternalImageSourceIsPQ | CopyExternalImageSourceIsHLG);
+    bool convertsColor = primariesDiffer || transferFunctionsDiffer || sourceIsHDR;
     if (convertsColor) {
         // Primaries are converted in linear light, so the source is decoded and the destination
         // re-encoded around the matrix. Either step is skipped when that end is already linear.
-        if (!isLinear(source.colorSpace))
+        if (!isLinear(source.colorSpace) && !sourceIsHDR)
             flags |= CopyExternalImageDecodeSourceTransferFunction;
         if (!isLinear(destination.colorSpace))
             flags |= CopyExternalImageEncodeDestinationTransferFunction;
@@ -2169,6 +2299,69 @@ void Queue::clearTextureIfNeeded(Texture& parentTexture, uint32_t mipLevelCount,
     finalizeBlitCommandEncoder();
 }
 
+void Queue::addProvisionalTextureClear(Texture& texture, uint32_t mipLevel, uint32_t slice, uint64_t commandEncoderId)
+{
+    m_provisionalTextureClears.append(ProvisionalTextureClear { texture, mipLevel, slice, commandEncoderId });
+}
+
+void Queue::removeProvisionalTextureClears(const Texture& texture, uint32_t mipLevel, uint32_t slice)
+{
+    m_provisionalTextureClears.removeAllMatching([&](const auto& provisionalClear) {
+        return provisionalClear.texture.get() == &texture && provisionalClear.mipLevel == mipLevel && provisionalClear.slice == slice;
+    });
+}
+
+void Queue::discardProvisionalTextureClears(uint64_t commandEncoderId)
+{
+    m_provisionalTextureClears.removeAllMatching([&](const auto& provisionalClear) {
+        if (provisionalClear.commandEncoderId != commandEncoderId)
+            return false;
+        if (RefPtr texture = provisionalClear.texture.get())
+            texture->dropProvisionalClear(provisionalClear.mipLevel, provisionalClear.slice);
+        return true;
+    });
+}
+
+void Queue::resolveProvisionalTextureClears(std::optional<uint64_t> committingCommandEncoderId)
+{
+    if (m_provisionalTextureClears.isEmpty())
+        return;
+
+    auto provisionalClears = std::exchange(m_provisionalTextureClears, { });
+
+    for (auto& provisionalClear : provisionalClears) {
+        RefPtr texture = provisionalClear.texture.get();
+        if (!texture)
+            continue;
+        if (committingCommandEncoderId && provisionalClear.commandEncoderId == *committingCommandEncoderId) {
+            texture->promoteProvisionalClear(provisionalClear.mipLevel, provisionalClear.slice);
+            continue;
+        }
+
+        texture->dropProvisionalClear(provisionalClear.mipLevel, provisionalClear.slice);
+        m_provisionalTextureClears.append(provisionalClear);
+    }
+
+    RefPtr devicePtr = m_device.get();
+    if (!devicePtr)
+        return;
+
+    bool encodedAnyClear = false;
+    for (auto& provisionalClear : provisionalClears) {
+        if (committingCommandEncoderId && provisionalClear.commandEncoderId == *committingCommandEncoderId)
+            continue;
+        RefPtr texture = provisionalClear.texture.get();
+        if (!texture || texture->previouslyCleared(provisionalClear.mipLevel, provisionalClear.slice))
+            continue;
+
+        CommandEncoder::clearTextureIfNeeded(*texture, provisionalClear.mipLevel, provisionalClear.slice, *devicePtr, ensureBlitCommandEncoder());
+        encodedAnyClear = true;
+    }
+
+    if (encodedAnyClear)
+        finalizeBlitCommandEncoder();
+}
+
 id<MTLDevice> Queue::metalDevice() const
 {
     return device().device();
@@ -2178,58 +2371,70 @@ id<MTLDevice> Queue::metalDevice() const
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuQueueAddRef(WGPUQueue queue)
+NODELETE void wgpuQueueAddRef(WGPUQueue queue)
 {
     WebGPU::Metal::fromAPI(queue).ref();
 }
 
 void wgpuQueueRelease(WGPUQueue queue)
 {
-    WebGPU::Metal::fromAPI(queue).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(queue).deref();
+    }
 }
 
 // Work that cannot complete, because the device is lost, is WGPUQueueWorkDoneStatus_Error.
 WGPUFuture wgpuQueueOnSubmittedWorkDone(WGPUQueue queue, WGPUQueueWorkDoneCallbackInfo callbackInfo)
 {
-    Ref protectedQueue = WebGPU::Metal::fromAPI(queue);
-    WebGPU::Metal::CAPIFuture future { protect(protectedQueue->device())->instance() };
-    protectedQueue->onSubmittedWorkDone(CompletionHandler<void(bool)> { [callbackInfo, future](bool success) {
-        if (success)
-            callbackInfo.callback(WGPUQueueWorkDoneStatus_Success, WebGPU::Metal::toAPI(""_s), callbackInfo.userdata1, callbackInfo.userdata2);
-        else
-            callbackInfo.callback(WGPUQueueWorkDoneStatus_Error, WebGPU::Metal::toAPI("The device is lost"_s), callbackInfo.userdata1, callbackInfo.userdata2);
-        future.complete();
-    } });
-    return future.future();
+    @autoreleasepool {
+        Ref protectedQueue = WebGPU::Metal::fromAPI(queue);
+        WebGPU::Metal::CAPIFuture future { protect(protectedQueue->device())->instance() };
+        protectedQueue->onSubmittedWorkDone(CompletionHandler<void(bool)> { [callbackInfo, future](bool success) {
+            if (success)
+                callbackInfo.callback(WGPUQueueWorkDoneStatus_Success, WebGPU::Metal::toAPI(""_s), callbackInfo.userdata1, callbackInfo.userdata2);
+            else
+                callbackInfo.callback(WGPUQueueWorkDoneStatus_Error, WebGPU::Metal::toAPI("The device is lost"_s), callbackInfo.userdata1, callbackInfo.userdata2);
+            future.complete();
+        } });
+        return future.future();
+    }
 }
 
 void wgpuQueueSubmit(WGPUQueue queue, size_t commandCount, const WGPUCommandBuffer* commands)
 {
-    Vector<Ref<WebGPU::Metal::CommandBuffer>> commandsToForward;
-    for (auto& command : unsafeMakeSpan(commands, commandCount))
-        commandsToForward.append(protect(WebGPU::Metal::fromAPI(command)));
-    protect(WebGPU::Metal::fromAPI(queue))->submit(WTF::move(commandsToForward));
+    @autoreleasepool {
+        Vector<Ref<WebGPU::Metal::CommandBuffer>> commandsToForward;
+        for (auto& command : unsafeMakeSpan(commands, commandCount))
+            commandsToForward.append(protect(WebGPU::Metal::fromAPI(command)));
+        protect(WebGPU::Metal::fromAPI(queue))->submit(WTF::move(commandsToForward));
+    }
 }
 
 void wgpuQueueWriteBuffer(WGPUQueue queue, WGPUBuffer buffer, uint64_t bufferOffset, const void* data, size_t size)
 {
-    auto bytes = unsafeMakeSpan(static_cast<const uint8_t*>(data), size);
-    protect(WebGPU::Metal::fromAPI(queue))->writeBuffer(protect(WebGPU::Metal::fromAPI(buffer)), bufferOffset, bytes);
+    @autoreleasepool {
+        auto bytes = unsafeMakeSpan(static_cast<const uint8_t*>(data), size);
+        protect(WebGPU::Metal::fromAPI(queue))->writeBuffer(protect(WebGPU::Metal::fromAPI(buffer)), bufferOffset, spanConstCast<uint8_t>(bytes));
+    }
 }
 
 void wgpuQueueWriteTexture(WGPUQueue queue, const WGPUTexelCopyTextureInfo* destination, const void* data, size_t dataSize, const WGPUTexelCopyBufferLayout* dataLayout, const WGPUExtent3D* writeSize)
 {
-    auto bytes = unsafeMakeSpan(static_cast<const uint8_t*>(data), dataSize);
-    Ref protectedQueue = WebGPU::Metal::fromAPI(queue);
-    auto apiDestination = WebGPU::Metal::fromAPI(*destination);
-    if (!apiDestination) {
-        protectedQueue->generateAValidationError("GPUQueue.writeTexture: the destination has a null texture or an invalid aspect"_s);
-        return;
+    @autoreleasepool {
+        auto bytes = unsafeMakeSpan(static_cast<const uint8_t*>(data), dataSize);
+        Ref protectedQueue = WebGPU::Metal::fromAPI(queue);
+        auto apiDestination = WebGPU::Metal::fromAPI(*destination);
+        if (!apiDestination) {
+            protectedQueue->generateAValidationError("GPUQueue.writeTexture: the destination has a null texture or an invalid aspect"_s);
+            return;
+        }
+        protectedQueue->writeTexture(*apiDestination, bytes, WebGPU::Metal::fromAPI(*dataLayout), WebGPU::Metal::fromAPI(*writeSize));
     }
-    protectedQueue->writeTexture(*apiDestination, bytes, WebGPU::Metal::fromAPI(*dataLayout), WebGPU::Metal::fromAPI(*writeSize));
 }
 
 void wgpuQueueSetLabel(WGPUQueue queue, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(queue))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(queue))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

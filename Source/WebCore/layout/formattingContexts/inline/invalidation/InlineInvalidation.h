@@ -46,7 +46,7 @@ struct InvalidatedLine;
 
 class InlineInvalidation {
 public:
-    InlineInvalidation(InlineDamage&, const InlineItemList&, const InlineDisplay::Content&);
+    NODELETE InlineInvalidation(InlineDamage&, const InlineItemList&, const InlineDisplay::Content&);
 
     bool rootStyleWillChange(const ElementBox& formattingContextRoot, const Style::ComputedStyle& newStyle);
     bool styleWillChange(const Box&, const Style::ComputedStyle& newStyle, Style::Difference);
@@ -62,11 +62,18 @@ public:
 
     static bool mayOnlyNeedPartialLayout(const InlineDamage* inlineDamage) { return inlineDamage && inlineDamage->layoutStartPosition(); }
     static void resetInlineDamage(InlineDamage&);
-    static void LEGACY_NODELETE inlineItemListWillChange(InlineDamage&);
+    NODELETE static void inlineItemListWillChange(InlineDamage&);
+    // For content with inline items but no lines (e.g. inline items built for intrinsic sizing only). Returns whether the inline item list needs to be marked dirty.
+    static bool rootStyleChangeInvalidatesInlineItemsWithoutLines(const InlineDamage*, const InlineItemList&, const ElementBox& formattingContextRoot, const Style::ComputedStyle& newStyle);
+    static bool styleChangeInvalidatesInlineItemsWithoutLines(const InlineDamage*, const InlineItemList&, const Box&, const Style::ComputedStyle& newStyle);
     // For content that was never laid out.
-    static bool LEGACY_NODELETE isSafeToRemoveWithoutFullInvalidation(const Box&);
+    NODELETE static bool isSafeToRemoveWithoutFullInvalidation(const Box&);
 
 private:
+    // Whether a style change makes the inline item list stale. These only compare the old and new styles.
+    static bool rootStyleChangeNeedsInlineItemListUpdate(const ElementBox& formattingContextRoot, const Style::ComputedStyle& newStyle);
+    static bool styleChangeNeedsInlineItemListUpdate(const Box&, const Style::ComputedStyle& newStyle);
+
     enum class ShouldApplyRangeLayout : bool { No, Yes };
     bool updateInlineDamage(const InvalidatedLine&, InlineDamage::Reason, ShouldApplyRangeLayout = ShouldApplyRangeLayout::No, LayoutUnit restartPaginationAdjustment = 0_lu);
     bool setFullLayoutIfNeeded(const Box&);

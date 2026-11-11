@@ -242,7 +242,15 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
         fontDescription.setUsedSize(DefaultFontSize);
     }
 
-    if (newFont == state().unparsedFont && state().font.realized() && fontDescription == state().fontResolutionBase)
+    // Root font relative values ('rem', 'rex', ...) additionally depend on the root element's font.
+    // When there is no root font, they resolve against `fontDescription` and are covered by it.
+    // See https://github.com/whatwg/html/issues/10893 for the open question of how non-absolute
+    // <length> values should behave here.
+    CheckedPtr rootFontCascade = Style::rootFontCascadeForRootFontUnits(document.get());
+
+    if (newFont == state().unparsedFont && protect(state().font)->realized()
+        && fontDescription == state().fontResolutionBase
+        && (!rootFontCascade || rootFontCascade->fontDescription() == state().rootFontResolutionBase))
         return;
 
     // According to http://lists.w3.org/Archives/Public/public-html/2009Jul/0947.html,
@@ -264,10 +272,11 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     realizeSaves();
     modifiableState().unparsedFont = newFontSafeCopy;
     modifiableState().fontResolutionBase = WTF::move(fontDescription);
+    modifiableState().rootFontResolutionBase = rootFontCascade ? rootFontCascade->fontDescription() : FontCascadeDescription { };
 
-    modifiableState().font.initialize(protect(document->fontSelector()), protect(*fontCascade));
-    ASSERT(state().font.realized());
-    ASSERT(state().font.isPopulated());
+    protect(modifiableState().font)->initialize(protect(document->fontSelector()), protect(*fontCascade));
+    ASSERT(protect(state().font)->realized());
+    ASSERT(protect(state().font)->isPopulated());
 
     // Recompute the word and the letter spacing for the new font.
     String letterSpacing;
@@ -337,15 +346,16 @@ auto CanvasRenderingContext2D::fontProxy() -> const FontProxy*
     // This means that the style may end up being stale here, but that's at least better than running arbitrary JS in the middle of processing.
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    if (!state().font.realized())
+    if (!protect(state().font)->realized())
         setFontWithoutUpdatingStyle(state().unparsedFont);
-    else if (state().lang == "inherit"_s && state().font.fontDescription().computedLocale() != inheritedLanguage()) {
+    else if (state().lang == "inherit"_s && protect(state().font)->fontDescription().computedLocale() != inheritedLanguage()) {
         realizeSaves();
-        modifiableState().font.update([language = effectiveLanguage()](FontCascadeDescription& description) {
+        protect(modifiableState().font)->update([language = effectiveLanguage()](FontCascadeDescription& description) {
             description.setComputedLocale(language);
         });
     }
-    return &state().font;
+
+    return state().font.ptr();
 }
 
 void CanvasRenderingContext2D::drawTextInternal(const String& text, double x, double y, bool fill, std::optional<double> maxWidth)

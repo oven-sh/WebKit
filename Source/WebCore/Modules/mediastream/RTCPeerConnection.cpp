@@ -390,7 +390,7 @@ void RTCPeerConnection::createAnswer(RTCAnswerOptions&& options, Ref<DeferredPro
     });
 }
 
-static RTCSdpType LEGACY_NODELETE typeForSetLocalDescription(std::optional<RTCSdpType> descriptionType, RTCSignalingState signalingState)
+NODELETE static RTCSdpType typeForSetLocalDescription(std::optional<RTCSdpType> descriptionType, RTCSignalingState signalingState)
 {
     // https://w3c.github.io/webrtc-pc/#dom-peerconnection-setlocaldescription step 4.1.
     if (!descriptionType) {
@@ -580,8 +580,7 @@ ExceptionOr<Vector<MediaEndpointConfiguration::IceServerInfo>> RTCPeerConnection
     if (existingConfiguration && newConfiguration.iceCandidatePoolSize != existingConfiguration->iceCandidatePoolSize && isLocalDescriptionSet)
         return Exception { ExceptionCode::InvalidModificationError, "IceTransportPolicy pool size does not match existing pool size"_s };
 
-    Vector<MediaEndpointConfiguration::IceServerInfo> servers;
-    servers.reserveInitialCapacity(newConfiguration.iceServers.size());
+    Vector<MediaEndpointConfiguration::IceServerInfo> servers(ReserveCapacityTag { }, newConfiguration.iceServers.size());
     for (auto& server : newConfiguration.iceServers) {
         Vector<String> urls;
         WTF::switchOn(server.urls, [&urls] (String& url) {
@@ -642,8 +641,7 @@ ExceptionOr<Vector<MediaEndpointConfiguration::CertificatePEM>> RTCPeerConnectio
     auto currentMilliSeconds = WallTime::now().secondsSinceEpoch().milliseconds();
     Ref origin = protect(document())->securityOrigin();
 
-    Vector<MediaEndpointConfiguration::CertificatePEM> certificates;
-    certificates.reserveInitialCapacity(configuration.certificates.size());
+    Vector<MediaEndpointConfiguration::CertificatePEM> certificates(ReserveCapacityTag { }, configuration.certificates.size());
     for (auto& certificate : configuration.certificates) {
         if (!origin->isSameOriginAs(certificate->origin()))
             return Exception { ExceptionCode::InvalidAccessError, "Certificate does not have a valid origin"_s };
@@ -944,7 +942,7 @@ void RTCPeerConnection::updateIceConnectionState(RTCIceConnectionState)
     });
 }
 
-static bool LEGACY_NODELETE isIceTransportUsedByTransceiver(const RTCIceTransport& iceTransport, RTCRtpTransceiver& transceiver)
+NODELETE static bool isIceTransportUsedByTransceiver(const RTCIceTransport& iceTransport, RTCRtpTransceiver& transceiver)
 {
     auto* dtlsTransport = transceiver.sender().transport();
     return dtlsTransport && &dtlsTransport->iceTransport() == &iceTransport;

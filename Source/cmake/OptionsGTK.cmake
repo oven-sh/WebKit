@@ -65,11 +65,10 @@ WEBKIT_OPTION_DEPEND(USE_GBM USE_LIBDRM)
 # Private options specific to the GTK port. Changing these options is
 # completely unsupported. They are intended for use only by WebKit developers.
 WEBKIT_OPTION_DEFINE(ENABLE_FUTURE_GLIB_API "Whether to build public API changes intended for a future API version." PRIVATE OFF)
-WEBKIT_OPTION_DEFINE(USE_OPENSSL "Whether to use OpenSSL instead of libgcrypt as the crypto backend." PRIVATE OFF)
+WEBKIT_OPTION_DEFINE(USE_OPENSSL "Whether to use OpenSSL instead of libgcrypt as the crypto backend." PRIVATE ON)
 WEBKIT_OPTION_DEFINE(USE_SPIEL "Whether to enable usage of LibSpiel for speech synthesis." PRIVATE OFF)
 WEBKIT_OPTION_DEFINE(USE_SYSPROF_CAPTURE "Whether to use libsysprof-capture for tracing." PRIVATE ON)
 WEBKIT_OPTION_DEFINE(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifdef" PRIVATE ON)
-WEBKIT_OPTION_DEFINE(USE_TEXTURE_MAPPER "Whether to use TextureMapper for compositing instead of Skia" PRIVATE OFF)
 
 WEBKIT_OPTION_DEPEND(USE_SYSTEM_SYSPROF_CAPTURE USE_SYSPROF_CAPTURE)
 
@@ -144,6 +143,7 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WK_WEB_EXTENSIONS PRIVATE ${ENABLE_EXPER
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBXR PRIVATE ${ENABLE_EXPERIMENTAL_FEATURES})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBXR_HIT_TEST PRIVATE ${ENABLE_EXPERIMENTAL_FEATURES})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBXR_LAYERS PRIVATE ${ENABLE_EXPERIMENTAL_FEATURES})
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBXR_PLANE_DETECTION PRIVATE ${ENABLE_EXPERIMENTAL_FEATURES})
 
 # Enable interactions even if ENABLE_WEBDRIVER itself is disabled, because WebKitWebDriver is not
 # parallel-installable between GTK 4 and GTK 3, so we can only use ENABLE_WEBDRIVER when building

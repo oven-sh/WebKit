@@ -115,7 +115,7 @@ public:
 #endif
 
     WTF_EXPORT_PRIVATE static RunLoop& currentSingleton();
-    WTF_EXPORT_PRIVATE static RunLoop& LEGACY_NODELETE mainSingleton();
+    NODELETE WTF_EXPORT_PRIVATE static RunLoop& mainSingleton();
 #if USE(WEB_THREAD)
     WTF_EXPORT_PRIVATE static RunLoop& webSingleton();
     WTF_EXPORT_PRIVATE static RunLoop* webIfExists();
@@ -134,6 +134,10 @@ public:
     WTF_EXPORT_PRIVATE static void run();
     WTF_EXPORT_PRIVATE void stop();
     WTF_EXPORT_PRIVATE void wakeUp();
+
+#if USE(COCOA_EVENT_LOOP)
+    mach_port_t wakeUpPortForTesting() const { return m_wakeUpPort; }
+#endif
 
     WTF_EXPORT_PRIVATE void suspendFunctionDispatchForCurrentCycle();
 
@@ -414,6 +418,8 @@ private:
     static void performWork(void*);
     const RetainPtr<CFRunLoopRef> m_runLoop;
     const RetainPtr<CFRunLoopSourceRef> m_runLoopSource;
+    RetainPtr<CFRunLoopSourceRef> m_wakeUpPortSource;
+    mach_port_t m_wakeUpPort { MACH_PORT_NULL };
 #elif USE(GLIB_EVENT_LOOP)
     void notifyEvent(Event, const char*);
     void notifyActivity(Activity);

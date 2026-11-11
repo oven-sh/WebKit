@@ -322,7 +322,7 @@ ScrollOffset RenderLayerScrollableArea::scrollToOffset(const ScrollOffset& scrol
         // cancelling it. Cancelling tears the animation down, which prematurely fires a
         // scrollend event at the current intermediate position rather than running to
         // the new destination.
-        if (options.animated == ScrollIsAnimated::Yes && scrollAnimator().retargetRunningAnimation(snappedPosition))
+        if (options.animated == ScrollIsAnimated::Yes && scrollAnimator().retargetRunningAnimation(snappedPosition, options.animationCurve))
             return snappedOffset;
         scrollAnimator().cancelAnimations();
         stopAsyncAnimatedScroll();
@@ -880,7 +880,7 @@ void RenderLayerScrollableArea::createScrollbarsController()
     m_layer.page().chrome().client().ensureScrollbarsController(protect(m_layer.page()), *this);
 }
 
-static inline RenderElement* LEGACY_NODELETE rendererForScrollbar(RenderLayerModelObject& renderer)
+NODELETE static inline RenderElement* rendererForScrollbar(RenderLayerModelObject& renderer)
 {
     if (auto* element = renderer.element()) {
         if (auto* shadowRoot = element->containingShadowRoot()) {

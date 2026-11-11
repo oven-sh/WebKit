@@ -554,17 +554,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     allDenseStrings = false;
 
     if (firstPutElement && firstPutElement->value()->isSpreadExpression()) {
-        bool hasElision = m_elision;
-        if (!hasElision) {
-            for (ElementNode* node = firstPutElement; node; node = node->next()) {
-                if (node->elision()) {
-                    hasElision = true;
-                    break;
-                }
-            }
-        }
-
-        if (!hasElision)
+        if (!hasElision())
             return generator.emitNewArrayWithSpread(generator.finalDestination(dst), m_element);
     }
 
@@ -611,6 +601,17 @@ handleSpread:
         generator.emitPutById(array.get(), generator.propertyNames().length, index.get());
     }
     return generator.move(dst, array.get());
+}
+
+bool ArrayNode::hasElision() const
+{
+    if (m_elision)
+        return true;
+    for (ElementNode* node = m_element; node; node = node->next()) {
+        if (node->elision())
+            return true;
+    }
+    return false;
 }
 
 bool ArrayNode::isSimpleArray() const
@@ -1694,7 +1695,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getPrototypeOf(BytecodeGenerat
     return generator.emitGetPrototypeOf(generator.finalDestination(dst), value.get());
 }
 
-static JSGenerator::Field LEGACY_NODELETE generatorInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSGenerator::Field generatorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldState)
@@ -1709,7 +1710,7 @@ static JSGenerator::Field LEGACY_NODELETE generatorInternalFieldIndex(BytecodeIn
     return JSGenerator::Field::State;
 }
 
-static JSIteratorHelper::Field LEGACY_NODELETE iteratorHelperInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSIteratorHelper::Field iteratorHelperInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_iteratorHelperFieldGenerator)
@@ -1720,7 +1721,7 @@ static JSIteratorHelper::Field LEGACY_NODELETE iteratorHelperInternalFieldIndex(
     return JSIteratorHelper::Field::Generator;
 }
 
-static JSArrayIterator::Field LEGACY_NODELETE arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSArrayIterator::Field arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_arrayIteratorFieldIndex)
@@ -1733,7 +1734,7 @@ static JSArrayIterator::Field LEGACY_NODELETE arrayIteratorInternalFieldIndex(By
     return JSArrayIterator::Field::Index;
 }
 
-static ProxyObject::Field LEGACY_NODELETE proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static ProxyObject::Field proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_proxyFieldTarget)
@@ -1756,7 +1757,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getInternalField(BytecodeGener
     return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
 }
 
-static JSWrapForValidIterator::Field LEGACY_NODELETE wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSWrapForValidIterator::Field wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_wrapForValidIteratorFieldIteratedIterator)
@@ -1767,7 +1768,7 @@ static JSWrapForValidIterator::Field LEGACY_NODELETE wrapForValidIteratorInterna
     return JSWrapForValidIterator::Field::IteratedNextMethod;
 }
 
-static JSDisposableStack::Field LEGACY_NODELETE disposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSDisposableStack::Field disposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_disposableStackFieldState)
@@ -1778,7 +1779,7 @@ static JSDisposableStack::Field LEGACY_NODELETE disposableStackInternalFieldInde
     return JSDisposableStack::Field::State;
 }
 
-static JSAsyncDisposableStack::Field LEGACY_NODELETE asyncDisposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSAsyncDisposableStack::Field asyncDisposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncDisposableStackFieldState)
@@ -3449,7 +3450,7 @@ void BinaryOpNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
         generator.emitNodeInConditionContext(branchExpression, falseTarget, trueTarget, invert(fallThroughMode));
 }
 
-static inline bool LEGACY_NODELETE canFoldToBranch(OpcodeID opcodeID, ExpressionNode* branchExpression, JSValue constant)
+NODELETE static inline bool canFoldToBranch(OpcodeID opcodeID, ExpressionNode* branchExpression, JSValue constant)
 {
     ResultType expressionType = branchExpression->resultDescriptor();
 
@@ -4121,7 +4122,7 @@ RegisterID* ShortCircuitReadModifyResolveNode::emitBytecode(BytecodeGenerator& g
 
 // ------------------------------ AssignResolveNode -----------------------------------
 
-static InitializationMode LEGACY_NODELETE initializationModeForAssignmentContext(AssignmentContext assignmentContext)
+NODELETE static InitializationMode initializationModeForAssignmentContext(AssignmentContext assignmentContext)
 {
     switch (assignmentContext) {
     case AssignmentContext::DeclarationStatement:
@@ -4138,7 +4139,7 @@ static InitializationMode LEGACY_NODELETE initializationModeForAssignmentContext
     return InitializationMode::NotInitialization;
 }
 
-static inline bool LEGACY_NODELETE isUsingOrAwaitUsingAssignmentContext(AssignmentContext context)
+NODELETE static inline bool isUsingOrAwaitUsingAssignmentContext(AssignmentContext context)
 {
     return context == AssignmentContext::UsingDeclarationStatement || context == AssignmentContext::AwaitUsingDeclarationStatement;
 }
@@ -6245,6 +6246,7 @@ void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) 
                 generator.emitLoad(index.get(), jsNumber(0));
                 Ref<Label> loopStart = generator.newLabel();
                 generator.emitLabel(loopStart.get());
+                generator.emitLoopHint();
 
                 RefPtr<RegisterID> value = generator.newTemporary();
                 {

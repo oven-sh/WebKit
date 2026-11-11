@@ -64,7 +64,7 @@ static uint64_t nextLogIdentifier()
 }
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& LEGACY_NODELETE logChannel()
+NODELETE static WTFLogChannel& logChannel()
 {
     return LogMedia;
 }
@@ -93,7 +93,7 @@ static PlatformMediaSession::RemoteControlCommandType platformCommandForMediaSes
     return map.get(action, PlatformMediaSession::RemoteControlCommandType::NoCommand);
 }
 
-static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> LEGACY_NODELETE platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
+NODELETE static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
 {
     PlatformMediaSession::RemoteControlCommandType command = PlatformMediaSession::RemoteControlCommandType::NoCommand;
     PlatformMediaSession::RemoteCommandArgument argument;
@@ -137,6 +137,9 @@ static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, P
         command = PlatformMediaSession::RemoteControlCommandType::NextTrackCommand;
         break;
     case MediaSessionAction::Settrack:
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    case MediaSessionAction::CallToAction:
+#endif
     case MediaSessionAction::Hangup:
     case MediaSessionAction::Enterpictureinpicture:
         // Not supported at present.
@@ -255,8 +258,7 @@ ExceptionOr<void> MediaSession::setPlaylist(ScriptExecutionContext& context, Vec
 {
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    Vector<Ref<MediaMetadata>> resolvedPlaylist;
-    resolvedPlaylist.reserveInitialCapacity(playlist.size());
+    Vector<Ref<MediaMetadata>> resolvedPlaylist(ReserveCapacityTag { }, playlist.size());
 
     for (auto& entry : playlist) {
         auto resolvedEntry = MediaMetadata::create(context, { entry->metadata() });
@@ -295,7 +297,11 @@ void MediaSession::setPlaybackState(MediaSessionPlaybackState state)
     notifyPlaybackStateObservers();
 }
 
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefPtr<MediaSessionActionHandler>&& handler, MediaSessionActionHandlerOptions&& options)
+#else
 ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefPtr<MediaSessionActionHandler>&& handler)
+#endif
 {
     RefPtr document = this->document();
 #if ENABLE(MEDIA_STREAM)
@@ -314,11 +320,22 @@ ExceptionOr<void> MediaSession::setActionHandler(MediaSessionAction action, RefP
     if (document && !document->settings().mediaSessionExtendedActionsEnabled() && (action == MediaSessionAction::Hangup || action == MediaSessionAction::Previousslide || action == MediaSessionAction::Nextslide || action == MediaSessionAction::Enterpictureinpicture))
         return Exception { ExceptionCode::TypeError, makeString("Argument 1 ('action') to MediaSession.setActionHandler must be a value other than '"_s, convertEnumerationToString(action), "'"_s) };
 
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    if (document && !document->settings().mediaSessionCallToActionEnabled() && action == MediaSessionAction::CallToAction)
+        return Exception { ExceptionCode::TypeError, makeString("Argument 1 ('action') to MediaSession.setActionHandler must be a value other than '"_s, convertEnumerationToString(action), "'"_s) };
+#endif
+
     RefPtr sessionManager = this->sessionManager();
     if (!sessionManager)
         ERROR_LOG(LOGIDENTIFIER, "NULL session manager");
     if (handler) {
         ALWAYS_LOG(LOGIDENTIFIER, "adding ", action);
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+        if (action == MediaSessionAction::CallToAction) {
+            m_callToActionLabel = options.label;
+            ALWAYS_LOG(LOGIDENTIFIER, "call to action label ", m_callToActionLabel);
+        }
+#endif
         {
             Locker lock { m_actionHandlersLock };
             m_actionHandlers.set(action, handler.releaseNonNull());
@@ -587,8 +604,7 @@ static Vector<URL> fallbackArtwork(DocumentLoader* loader)
     if (!size)
         return { };
 
-    Vector<URL> images;
-    images.reserveInitialCapacity(size);
+    Vector<URL> images(ReserveCapacityTag { }, size);
     for (const auto& icon : loader->linkIcons()) {
         if (icon.url.protocolIsInHTTPFamily())
             images.append(icon.url);
@@ -618,7 +634,7 @@ void MediaSession::updateNowPlayingInfo(NowPlayingInfo& info)
         info.metadata.artwork = { {
             .src = metadataWithImage->artworkSrc(),
             .mimeType = image->mimeType(),
-            .image = image->nativeImage(artworkImage.concreteObjectSize),
+            .image = image->nativeImage(ImageDrawDescriptor { artworkImage.concreteObjectSize }),
         } };
     }
     if (m_metadata) {

@@ -120,12 +120,12 @@ static const AtomString& listBoxSlotName()
 
 // Only attributes decide this, so that slotting does not depend on style. Where the select is not
 // rendered as the box type this implies, it is rendered natively, which does not use the slots.
-static bool LEGACY_NODELETE usesListBoxSlot(const HTMLSelectElement& select)
+NODELETE static bool usesListBoxSlot(const HTMLSelectElement& select)
 {
     return select.document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled() && !select.supportsPickerPseudoElement();
 }
 
-static bool LEGACY_NODELETE isFirstElementChildButton(const Node& child)
+NODELETE static bool isFirstElementChildButton(const Node& child)
 {
     return is<HTMLButtonElement>(child) && !child.previousElementSibling();
 }
@@ -134,10 +134,10 @@ class SelectSlotAssignment final : public NamedSlotAssignment {
 private:
     void hostChildElementDidChange(const Element&, ShadowRoot&) final;
     void didChangeSlotNamesOfShadowHostChildren(ShadowRoot&) final;
-    const AtomString& LEGACY_NODELETE slotNameForHostChild(const Node&) const final;
+    NODELETE const AtomString& slotNameForHostChild(const Node&) const final;
 };
 
-SUPPRESS_NODELETE static const AtomString& LEGACY_NODELETE optionSlotName(const Node* host)
+NODELETE SUPPRESS_NODELETE static const AtomString& optionSlotName(const Node* host)
 {
     auto* select = dynamicDowncast<HTMLSelectElement>(host);
     return select && usesListBoxSlot(*select) ? listBoxSlotName() : NamedSlotAssignment::defaultSlotName();
@@ -273,7 +273,7 @@ HTMLSelectElement* HTMLSelectElement::findOwnerSelect(ContainerNode* startNode, 
     return findOwnerSelect(startNode->parentNode(), excludeOptGroup);
 }
 
-static bool LEGACY_NODELETE hasBaseAppearance(const Style::ComputedStyle* style)
+NODELETE static bool hasBaseAppearance(const Style::ComputedStyle* style)
 {
     return style && style->usedAppearance() == StyleAppearance::Base;
 }
@@ -418,7 +418,7 @@ bool HTMLSelectElement::usesMenuList() const
     return true;
 #elif PLATFORM(MAC)
     if (m_multiple)
-        return m_size == 1 && document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled() && document().settings().htmlEnhancedSelectMultipleDropdownBoxEnabled();
+        return m_size == 1 && document().settings().htmlEnhancedSelectMultipleDropdownBoxEnabled();
     return m_size <= 1;
 #else
     return !m_multiple && m_size <= 1;
@@ -899,9 +899,16 @@ bool HTMLSelectElement::isMouseFocusable() const
     return HTMLFormControlElement::isMouseFocusable();
 }
 
+bool HTMLSelectElement::canHaveBaseAppearance() const
+{
+    if (m_multiple && usesMenuList())
+        return document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled();
+    return true;
+}
+
 bool HTMLSelectElement::supportsBaseAppearance(StyleAppearance appearance) const
 {
-    return appearance == StyleAppearance::Base || appearance == StyleAppearance::BaseSelect;
+    return (appearance == StyleAppearance::Base || appearance == StyleAppearance::BaseSelect) && canHaveBaseAppearance();
 }
 
 RenderPtr<RenderElement> HTMLSelectElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
@@ -966,46 +973,6 @@ void HTMLSelectElement::updateListItemSelectedStates(AllowStyleInvalidation allo
         recalcListItems(true, allowStyleInvalidation);
 }
 
-CompletionHandlerCallingScope HTMLSelectElement::optionToSelectFromChildChangeScope(const ContainerNode::ChildChange& change)
-{
-    if (multiple())
-        return { };
-
-    auto getLastSelectedOption = [](HTMLOptGroupElement& optGroup) -> HTMLOptionElement* {
-        for (auto* option = Traversal<HTMLOptionElement>::lastChild(optGroup); option; option = Traversal<HTMLOptionElement>::previousSibling(*option)) {
-            if (option->selectedWithoutUpdate())
-                return option;
-        }
-        return nullptr;
-    };
-
-    RefPtr<HTMLOptionElement> optionToSelect;
-    if (change.type == ChildChange::Type::ElementInserted || change.type == ChildChange::Type::ElementAndTextInserted || change.type == ChildChange::Type::ElementMovedInto) {
-        auto handleInsertedElement = [&](Element& insertedElement) {
-            if (auto* option = dynamicDowncast<HTMLOptionElement>(insertedElement)) {
-                if (option->selectedWithoutUpdate())
-                    optionToSelect = option;
-            } else if (auto* optGroup = dynamicDowncast<HTMLOptGroupElement>(insertedElement))
-                optionToSelect = getLastSelectedOption(*optGroup);
-        };
-        if (RefPtr element = change.siblingChanged)
-            handleInsertedElement(*element);
-        else if (change.insertedChildren) {
-            for (auto& child : *change.insertedChildren) {
-                if (RefPtr element = dynamicDowncast<Element>(child))
-                    handleInsertedElement(*element);
-            }
-        }
-    }
-
-    return CompletionHandlerCallingScope { [optionToSelect = WTF::move(optionToSelect), isInsertion = change.isInsertion(), select = Ref { *this }] {
-        if (optionToSelect)
-            select->selectOption(optionToSelect->index(), SelectOptionFlag::SkipSelectedContentUpdate);
-        else if (isInsertion)
-            select->scrollToSelection();
-    } };
-}
-
 // FIXME: we should really make this disappear, but https://github.com/whatwg/html/issues/11825
 // needs to be resolved. It might not be possible without a risky behavioral change.
 void HTMLSelectElement::childrenChanged(const ChildChange& change)
@@ -1017,15 +984,25 @@ void HTMLSelectElement::childrenChanged(const ChildChange& change)
         return;
     }
 
-    auto selectOptionIfNecessaryScope = optionToSelectFromChildChangeScope(change);
-
     setRecalcListItems();
     updateValidity();
     m_lastOnChangeSelection.clear();
 
     HTMLFormControlElement::childrenChanged(change);
 
+    // Changes made while cloning skip descendantsChanged().
+    if (change.source == ChildChange::Source::Clone)
+        selectAddedOption();
+
     invalidateButtonText();
+
+    if (!multiple() && change.isInsertion())
+        scrollToSelection();
+}
+
+void HTMLSelectElement::descendantsChanged()
+{
+    selectAddedOption();
 }
 
 // Select the given option as the default if no option is explicitly selected.
@@ -1057,6 +1034,18 @@ void HTMLSelectElement::selectDefaultOptionIfNeeded(HTMLOptionElement& candidate
         if (!protect(*it)->isDisabledFormControl())
             return;
     }
+}
+
+void HTMLSelectElement::selectedOptionAdded(HTMLOptionElement& option)
+{
+    if (!m_multiple)
+        m_addedSelectedOption = option;
+}
+
+void HTMLSelectElement::selectAddedOption()
+{
+    if (RefPtr option = std::exchange(m_addedSelectedOption, nullptr); option && option->ownerSelectElement() == this)
+        selectOption(option->index(), SelectOptionFlag::SkipSelectedContentUpdate);
 }
 
 auto HTMLSelectElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> NeedsPostConnectionSteps
@@ -1881,9 +1870,10 @@ void HTMLSelectElement::parseMultipleAttribute(const AtomString& value)
 {
     auto oldBoxType = boxType();
     bool oldMultiple = m_multiple;
+    bool couldHaveBaseAppearance = canHaveBaseAppearance();
     int oldSelectedIndex = selectedIndex();
     setSizeAndMultiple(m_size, !value.isNull());
-    if (oldBoxType != boxType())
+    if (oldBoxType != boxType() || couldHaveBaseAppearance != canHaveBaseAppearance())
         invalidateStyleAndRenderersForSubtree();
     if (oldMultiple != m_multiple) {
         if (oldSelectedIndex >= 0)
@@ -2841,13 +2831,18 @@ void HTMLSelectElement::resetSelectedness(HTMLOptionElement* oldSelectedOption)
         updateSelectedContentIfEnabled(selectedOption.get());
 }
 
-// https://html.spec.whatwg.org/#queue-an-update-of-a-select's-descendant-selectedcontent-elements
 void HTMLSelectElement::queueSelectedContentUpdate(const HTMLOptionElement& option)
 {
-    if (m_hasQueuedSelectedContentUpdate || !m_selectedContentDescendantCount || !updatesSelectedContent())
+    if (!m_multiple && !option.selectedWithoutUpdate() && (m_selectedContentShowsOption || m_size > 1))
         return;
 
-    if (!m_multiple && !option.selectedWithoutUpdate() && (m_selectedContentShowsOption || m_size > 1))
+    queueSelectedContentUpdate();
+}
+
+// https://html.spec.whatwg.org/#queue-an-update-of-a-select's-descendant-selectedcontent-elements
+void HTMLSelectElement::queueSelectedContentUpdate()
+{
+    if (m_hasQueuedSelectedContentUpdate || !m_selectedContentDescendantCount || !updatesSelectedContent())
         return;
 
     m_hasQueuedSelectedContentUpdate = true;

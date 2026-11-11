@@ -119,14 +119,14 @@ void EvacuatedStackSlice::dump(PrintStream& out) const
     out.print(", entryPC=", RawPointer(m_entryPC), " }");
 }
 
-static const Register* LEGACY_NODELETE alignStackPointer(const Register* ptr)
+NODELETE static const Register* alignStackPointer(const Register* ptr)
 {
     constexpr size_t stackAlignmentMask = stackAlignmentBytes() - 1;
     uintptr_t alignedAddress = (reinterpret_cast<uintptr_t>(ptr) + stackAlignmentMask) & ~stackAlignmentMask;
     return reinterpret_cast<const Register*>(alignedAddress);
 }
 
-static const Register* LEGACY_NODELETE topOfFrame(const CallFrame* callFrame)
+NODELETE static const Register* topOfFrame(const CallFrame* callFrame)
 {
     // We include a few extra slots above the frame record via the
     // headroomSlotCount parameter of StackSlicer::evacuatePendingSlice, but we still count
@@ -145,12 +145,16 @@ static const Register* LEGACY_NODELETE topOfFrame(const CallFrame* callFrame)
         case Wasm::CompilationMode::IPIntMode:
         case Wasm::CompilationMode::BBQMode:
         case Wasm::CompilationMode::OMGMode:
+        case Wasm::CompilationMode::RestoreFrameMode:
             return callFrame->registers() + 2;
         case Wasm::CompilationMode::JSToWasmMode:
             return alignStackPointer(callFrame->registers() + static_cast<size_t>(CallFrameSlot::firstArgument) + callFrame->argumentCount());
-        default:
+        case Wasm::CompilationMode::OMGForOSREntryMode:
+        case Wasm::CompilationMode::JSToWasmICMode:
+        case Wasm::CompilationMode::WasmBuiltinMode:
             RELEASE_ASSERT_NOT_REACHED(); // case not accounted for
         }
+        RELEASE_ASSERT_NOT_REACHED();
     } else {
         // A JSFunction
         return alignStackPointer(callFrame->registers() + static_cast<size_t>(CallFrameSlot::firstArgument) + callFrame->argumentCount());
@@ -164,7 +168,7 @@ static ALWAYS_INLINE const Register* bottomOfCallerFrame(const CallFrame* callFr
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-static std::optional<Wasm::CompilationMode> LEGACY_NODELETE compilationModeOfCallee(CalleeBits calleeBits)
+NODELETE static std::optional<Wasm::CompilationMode> compilationModeOfCallee(CalleeBits calleeBits)
 {
     if (!calleeBits.isNativeCallee())
         return std::nullopt;
@@ -359,7 +363,8 @@ IterationStatus SlabSlicer::step(VM& vm, StackVisitor& visitor)
             case Wasm::CompilationMode::IPIntMode:
             case Wasm::CompilationMode::BBQMode:
             case Wasm::CompilationMode::OMGMode:
-            case Wasm::CompilationMode::OMGForOSREntryMode: {
+            case Wasm::CompilationMode::OMGForOSREntryMode:
+            case Wasm::CompilationMode::RestoreFrameMode: {
                 m_pendingFrameRecords.append(callFrame);
                 break;
             }
@@ -369,7 +374,7 @@ IterationStatus SlabSlicer::step(VM& vm, StackVisitor& visitor)
                 m_state = State::ScannedJSToWasm;
                 break;
             }
-            default: {
+            case Wasm::CompilationMode::WasmBuiltinMode: {
                 setErrorMessageWithCompilationMode("unrecognized type of Wasm frame: "_s, *compilationMode);
                 m_state = State::Failure;
             }
@@ -457,6 +462,7 @@ IterationStatus FragSlicer::step(VM& vm, StackVisitor& visitor)
         break;
     }
     case State::ScannedWasmToJS: {
+        // FIXME: Keep RestoreFrameMode in the same slice as the tail-callee frame below it.
         if (compilationMode == Wasm::CompilationMode::IPIntMode
             || compilationMode == Wasm::CompilationMode::BBQMode
             || compilationMode == Wasm::CompilationMode::OMGMode
@@ -494,7 +500,10 @@ IterationStatus FragSlicer::step(VM& vm, StackVisitor& visitor)
                 m_state = State::ScannedJSToWasm;
                 break;
             }
-            default: {
+            case Wasm::CompilationMode::WasmToJSMode:
+            // FIXME: Handle RestoreFrameMode here as well.
+            case Wasm::CompilationMode::RestoreFrameMode:
+            case Wasm::CompilationMode::WasmBuiltinMode: {
                 setErrorMessageWithCompilationMode("unrecognized type of Wasm frame: "_s, *compilationMode);
                 m_state = State::Failure;
             }

@@ -34,23 +34,23 @@ namespace JSC { namespace Yarr {
 
 class SyntaxChecker {
 public:
-    void LEGACY_NODELETE assertionBOL() { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE assertionEOL() { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE assertionWordBoundary(bool) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE atomPatternCharacter(char32_t, bool) { }
-    void LEGACY_NODELETE atomBuiltInCharacterClass(BuiltInCharacterClassID, bool) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE atomCharacterClassBegin(bool = false) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE atomCharacterClassAtom(char16_t) { }
-    void LEGACY_NODELETE atomCharacterClassRange(char16_t, char16_t) { }
-    void LEGACY_NODELETE atomCharacterClassBuiltIn(BuiltInCharacterClassID, bool) { }
-    void LEGACY_NODELETE atomClassStringDisjunction(Vector<Vector<char32_t>>&) { }
-    void LEGACY_NODELETE atomCharacterClassSetOp(CharacterClassSetOp) { }
-    void LEGACY_NODELETE atomCharacterClassPushNested(bool) { }
-    void LEGACY_NODELETE atomCharacterClassPopNested(bool) { }
-    void LEGACY_NODELETE atomCharacterClassEnd() { }
-    void LEGACY_NODELETE atomCharacterClassRemembered(unsigned) { }
-    bool LEGACY_NODELETE atomCharacterClassRepeated(unsigned) { return true; }
-    void LEGACY_NODELETE atomParenthesesSubpatternBegin(bool capture, std::optional<String> groupName = std::nullopt)
+    NODELETE void assertionBOL() { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void assertionEOL() { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void assertionWordBoundary(bool) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void atomPatternCharacter(char32_t, bool) { }
+    NODELETE void atomBuiltInCharacterClass(BuiltInCharacterClassID, bool) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void atomCharacterClassBegin(bool = false) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void atomCharacterClassAtom(char16_t) { }
+    NODELETE void atomCharacterClassRange(char16_t, char16_t) { }
+    NODELETE void atomCharacterClassBuiltIn(BuiltInCharacterClassID, bool) { }
+    NODELETE void atomClassStringDisjunction(Vector<Vector<char32_t>>&) { }
+    NODELETE void atomCharacterClassSetOp(CharacterClassSetOp) { }
+    NODELETE void atomCharacterClassPushNested(bool) { }
+    NODELETE void atomCharacterClassPopNested(bool) { }
+    NODELETE void atomCharacterClassEnd() { }
+    NODELETE void atomCharacterClassRemembered(unsigned) { }
+    NODELETE bool atomCharacterClassRepeated(unsigned) { return true; }
+    NODELETE void atomParenthesesSubpatternBegin(bool capture, std::optional<String> groupName = std::nullopt)
     {
         parenthesesBegin();
         if (!capture)
@@ -59,20 +59,20 @@ public:
         if (groupName)
             m_summary.hasNamedCaptureGroups = true;
     }
-    void LEGACY_NODELETE atomParentheticalAssertionBegin(bool, MatchDirection) { parenthesesBegin(); }
-    void LEGACY_NODELETE atomParentheticalModifierBegin(OptionSet<Flags>, OptionSet<Flags>) { parenthesesBegin(); }
-    void LEGACY_NODELETE atomParenthesesEnd() { --m_parenthesesDepth; }
-    void LEGACY_NODELETE atomBackReference(unsigned) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE atomNamedBackReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE atomNamedForwardReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE quantifyAtom(unsigned min, unsigned max, bool)
+    NODELETE void atomParentheticalAssertionBegin(bool, MatchDirection) { parenthesesBegin(); }
+    NODELETE void atomParentheticalModifierBegin(OptionSet<Flags>, OptionSet<Flags>) { parenthesesBegin(); }
+    NODELETE void atomParenthesesEnd() { --m_parenthesesDepth; }
+    NODELETE void atomBackReference(unsigned) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void atomNamedBackReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void atomNamedForwardReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void quantifyAtom(unsigned min, unsigned max, bool)
     {
         m_summary.isOnlyPatternCharacters = false;
         m_summary.hasCountedQuantifier |= min > 1 || (max > 1 && max != quantifyInfinite);
     }
-    void LEGACY_NODELETE disjunction(CreateDisjunctionPurpose) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE willLookUpUnicodeProperty() { m_summary.hasUnicodePropertyLookup = true; }
-    void LEGACY_NODELETE resetForReparsing()
+    NODELETE void disjunction(CreateDisjunctionPurpose) { m_summary.isOnlyPatternCharacters = false; }
+    NODELETE void willLookUpUnicodeProperty() { m_summary.hasUnicodePropertyLookup = true; }
+    NODELETE void resetForReparsing()
     {
         bool hasUnicodePropertyLookup = m_summary.hasUnicodePropertyLookup;
         m_summary = { };
@@ -80,8 +80,8 @@ public:
         m_parenthesesDepth = 0;
     }
 
-    constexpr static bool LEGACY_NODELETE abortedDueToError() { return false; }
-    constexpr static ErrorCode LEGACY_NODELETE abortErrorCode() { return ErrorCode::NoError; }
+    NODELETE constexpr static bool abortedDueToError() { return false; }
+    NODELETE constexpr static ErrorCode abortErrorCode() { return ErrorCode::NoError; }
 
     SyntaxSummary m_summary;
 

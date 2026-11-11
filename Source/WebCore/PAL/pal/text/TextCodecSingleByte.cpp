@@ -223,7 +223,7 @@ static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding enco
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const SingleByteDecodeTable& LEGACY_NODELETE tableForDecoding(TextCodecSingleByte::Encoding encoding)
+NODELETE static const SingleByteDecodeTable& tableForDecoding(TextCodecSingleByte::Encoding encoding)
 {
     switch (encoding) {
     case TextCodecSingleByte::Encoding::ISO_8859_3:
@@ -254,8 +254,7 @@ static const SingleByteDecodeTable& LEGACY_NODELETE tableForDecoding(TextCodecSi
 static Vector<uint8_t> encode(const SingleByteEncodeTable& table, StringView string, NOESCAPE const Function<void(char32_t, Vector<uint8_t>&)>& unencodableHandler)
 {
     // FIXME: Consider adding an ASCII fast path like the one in TextCodecLatin1::decode.
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
+    Vector<uint8_t> result(ReserveCapacityTag { }, string.length());
     for (auto codePoint : string.codePoints()) {
         if (isASCII(codePoint)) {
             result.append(codePoint);

@@ -332,8 +332,10 @@ static void appendListItem(StringBuilder& builder, const ValueType& value)
 }
 
 template <typename ContainerType>
-static String buildList(const ContainerType& values)
+static String buildIntegerList(const ContainerType& values)
 {
+    using ValueType = std::remove_reference_t<decltype(*std::begin(values))>;
+    static_assert(std::is_arithmetic_v<ValueType>, "buildIntegerList() must only be used with integer domain IDs, not domain strings");
     StringBuilder builder;
     for (auto& value : values)
         appendListItem(builder, value);
@@ -341,15 +343,16 @@ static String buildList(const ContainerType& values)
 }
 
 template <typename ValueType>
-static String buildList(const Vector<ValueType>& values)
+static String buildIntegerList(const Vector<ValueType>& values)
 {
+    static_assert(std::is_arithmetic_v<ValueType>, "buildIntegerList() must only be used with integer domain IDs, not domain strings");
     StringBuilder builder;
     for (auto& value : borrow(values))
         appendListItem(builder, value);
     return builder.toString();
 }
 
-static WeakHashSet<ResourceLoadStatisticsStore>& LEGACY_NODELETE allStores()
+NODELETE static WeakHashSet<ResourceLoadStatisticsStore>& allStores()
 {
     ASSERT(!RunLoop::isMain());
 
@@ -780,8 +783,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
         return;
     }
 
-    Vector<RegistrableDomain> batch;
-    batch.reserveInitialCapacity(maxNumberOfDomainsInOneLogStatement);
+    Vector<RegistrableDomain> batch(ReserveCapacityTag { }, maxNumberOfDomainsInOneLogStatement);
 #if !RELEASE_LOG_DISABLED
     auto batchNumber = 1;
     unsigned numberOfBatches = std::ceil(domains.size() / static_cast<float>(maxNumberOfDomainsInOneLogStatement));
@@ -1001,7 +1003,7 @@ void ResourceLoadStatisticsStore::addMissingTablesIfNecessary()
         ITP_RELEASE_LOG_ERROR("addMissingTablesIfNecessary: failed to create unique indices");
 }
 
-template<typename T, typename U, size_t size> bool LEGACY_NODELETE vectorEqualsArray(const Vector<T>& vector, const std::array<U, size> array)
+template<typename T, typename U, size_t size> NODELETE bool vectorEqualsArray(const Vector<T>& vector, const std::array<U, size> array)
 {
     if (vector.size() != size)
         return false;
@@ -1295,29 +1297,46 @@ std::optional<unsigned> ResourceLoadStatisticsStore::domainID(const RegistrableD
     return scopedStatement->columnInt(0);
 }
 
-String ResourceLoadStatisticsStore::ensureAndMakeDomainList(const HashSet<RegistrableDomain>& domainList)
+Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensureAndMakeDomainList(const HashSet<RegistrableDomain>& domainList)
 {
-    StringBuilder builder;
+    Vector<RegistrableDomain> ensuredDomains;
     for (auto& topFrameResource : domainList) {
         // Insert query will fail if top frame domain is not already in the database
         if (ensureResourceStatisticsForRegistrableDomain(topFrameResource, "ensureAndMakeDomainList"_s).second)
-            builder.append(builder.isEmpty() ? ""_s : ", "_s, '"', topFrameResource.string(), '"');
+            ensuredDomains.append(topFrameResource);
     }
-    return builder.toString();
+    return ensuredDomains;
 }
 
 void ResourceLoadStatisticsStore::insertDomainRelationshipList(const String& statement, const HashSet<RegistrableDomain>& domainList, unsigned domainID)
 {
-    auto insertRelationshipStatement = m_database->prepareStatementSlow(makeString(statement, ensureAndMakeDomainList(domainList), " );"_s));
+    auto ensuredDomains = ensureAndMakeDomainList(domainList);
+    if (ensuredDomains.isEmpty())
+        return;
+
+    StringBuilder placeholders;
+    for (size_t i = 0; i < ensuredDomains.size(); ++i)
+        placeholders.append(i ? ", ?"_s : "?"_s);
+
+    auto insertRelationshipStatement = m_database->prepareStatementSlow(makeString(statement, placeholders.toString(), " );"_s));
 
     if (!insertRelationshipStatement || insertRelationshipStatement->bindInt(1, domainID) != SQLITE_OK) {
         ITP_RELEASE_LOG_DATABASE_ERROR("insertDomainRelationshipList: failed to bind first parameter");
         return;
     }
 
+    int domainBindStart = 2;
     if (statement.contains("REPLACE"_s)) {
         if (insertRelationshipStatement->bindDouble(2, nowTime(m_timeAdvanceForTesting).secondsSinceEpoch().value()) != SQLITE_OK) {
             ITP_RELEASE_LOG_DATABASE_ERROR("insertDomainRelationshipList: failed to bind second parameter");
+            return;
+        }
+        domainBindStart = 3;
+    }
+
+    for (size_t i = 0; i < ensuredDomains.size(); ++i) {
+        if (insertRelationshipStatement->bindText(domainBindStart + static_cast<int>(i), ensuredDomains[i].string()) != SQLITE_OK) {
+            ITP_RELEASE_LOG_DATABASE_ERROR("insertDomainRelationshipList: failed to bind domain");
             return;
         }
     }
@@ -1468,7 +1487,7 @@ Vector<ITPThirdPartyDataForSpecificFirstParty> ResourceLoadStatisticsStore::getT
     return thirdPartyDataForSpecificFirstPartyDomains;
 }
 
-static bool LEGACY_NODELETE hasBeenThirdParty(unsigned timesUnderFirstParty)
+NODELETE static bool hasBeenThirdParty(unsigned timesUnderFirstParty)
 {
     return timesUnderFirstParty > 0;
 }
@@ -1501,13 +1520,38 @@ Vector<ITPThirdPartyData> ResourceLoadStatisticsStore::aggregatedThirdPartyData(
     return thirdPartyDataList;
 }
 
-void ResourceLoadStatisticsStore::incrementRecordsDeletedCountForDomains(HashSet<RegistrableDomain>&& domains)
+void ResourceLoadStatisticsStore::updateObservedDomainsList(ASCIILiteral updateClause, const HashSet<RegistrableDomain>& domains, ASCIILiteral logContext)
 {
     ASSERT(!RunLoop::isMain());
 
-    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET dataRecordsRemoved = dataRecordsRemoved + 1 WHERE registrableDomain IN ("_s, buildList(domains), ')'));
-    if (!domainsToUpdateStatement || domainsToUpdateStatement->step() != SQLITE_DONE)
-        ITP_RELEASE_LOG_DATABASE_ERROR("incrementRecordsDeletedCountForDomains: failed to step statement");
+    if (domains.isEmpty())
+        return;
+
+    StringBuilder placeholders;
+    for (size_t i = 0; i < domains.size(); ++i)
+        placeholders.append(i ? ", ?"_s : "?"_s);
+
+    auto statement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET "_s, updateClause, " WHERE registrableDomain IN ("_s, placeholders.toString(), ')'));
+    if (!statement) {
+        ITP_RELEASE_LOG_DATABASE_ERROR("%" PUBLIC_LOG_STRING ": failed to prepare statement", logContext.characters());
+        return;
+    }
+
+    int bindIndex = 1;
+    for (auto& domain : domains) {
+        if (statement->bindText(bindIndex++, domain.string()) != SQLITE_OK) {
+            ITP_RELEASE_LOG_DATABASE_ERROR("%" PUBLIC_LOG_STRING ": failed to bind domain", logContext.characters());
+            return;
+        }
+    }
+
+    if (statement->step() != SQLITE_DONE)
+        ITP_RELEASE_LOG_DATABASE_ERROR("%" PUBLIC_LOG_STRING ": failed to step statement", logContext.characters());
+}
+
+void ResourceLoadStatisticsStore::incrementRecordsDeletedCountForDomains(HashSet<RegistrableDomain>&& domains)
+{
+    updateObservedDomainsList("dataRecordsRemoved = dataRecordsRemoved + 1"_s, domains, "incrementRecordsDeletedCountForDomains"_s);
 }
 
 static constexpr unsigned maxNumberOfRecursiveCallsInRedirectTraceBack { 50 };
@@ -1577,7 +1621,7 @@ void ResourceLoadStatisticsStore::markAsPrevalentIfHasRedirectedToPrevalent()
             prevalentDueToRedirect.insert(topFrameRedirectStatement->columnInt(0));
     }
 
-    auto markPrevalentStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildList(prevalentDueToRedirect), ')'));
+    auto markPrevalentStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildIntegerList(prevalentDueToRedirect), ')'));
     if (!markPrevalentStatement || markPrevalentStatement->step() != SQLITE_DONE)
         ITP_RELEASE_LOG_DATABASE_ERROR("markAsPrevalentIfHasRedirectedToPrevalent: failed to step statement");
 }
@@ -1600,7 +1644,7 @@ HashMap<unsigned, ResourceLoadStatisticsStore::NotVeryPrevalentResources> Resour
         }
     }
 
-    auto domainIDsOfInterest = buildList(results.keys());
+    auto domainIDsOfInterest = buildIntegerList(results.keys());
 
     auto subresourceUnderTopFrameDomainsStatement = m_database->prepareStatementSlow(makeString("SELECT subresourceDomainID, COUNT(topFrameDomainID) FROM SubresourceUnderTopFrameDomains WHERE subresourceDomainID IN ("_s, domainIDsOfInterest, ") GROUP BY subresourceDomainID"_s));
     if (subresourceUnderTopFrameDomainsStatement) {
@@ -1948,6 +1992,7 @@ void ResourceLoadStatisticsStore::grantStorageAccessInternal(SubFrameDomain&& su
 void ResourceLoadStatisticsStore::grandfatherDataForDomains(const HashSet<RegistrableDomain>& domains)
 {
     ASSERT(!RunLoop::isMain());
+
     if (domains.isEmpty())
         return;
 
@@ -1958,9 +2003,7 @@ void ResourceLoadStatisticsStore::grandfatherDataForDomains(const HashSet<Regist
         UNUSED_PARAM(result);
     }
 
-    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET grandfathered = 1 WHERE registrableDomain IN ("_s, buildList(domains), ')'));
-    if (!domainsToUpdateStatement || domainsToUpdateStatement->step() != SQLITE_DONE)
-        ITP_RELEASE_LOG_DATABASE_ERROR("grandfatherDataForDomains: failed to step statement");
+    updateObservedDomainsList("grandfathered = 1"_s, domains, "grandfatherDataForDomains"_s);
 }
 
 Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesForDebugMode()
@@ -1970,8 +2013,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesF
     if (!debugModeEnabled())
         return { };
 
-    Vector<RegistrableDomain> primaryDomainsToBlock;
-    primaryDomainsToBlock.reserveInitialCapacity(2);
+    Vector<RegistrableDomain> primaryDomainsToBlock(ReserveCapacityTag { }, 2);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -2228,7 +2270,7 @@ void ResourceLoadStatisticsStore::setDomainsAsPrevalent(StdSet<unsigned>&& domai
 {
     ASSERT(!RunLoop::isMain());
 
-    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildList(domains), ')'));
+    auto domainsToUpdateStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET isPrevalent = 1 WHERE domainID IN ("_s, buildIntegerList(domains), ')'));
     if (!domainsToUpdateStatement || domainsToUpdateStatement->step() != SQLITE_DONE)
         ITP_RELEASE_LOG_DATABASE_ERROR("setDomainsAsPrevalent: failed to step statement");
 }
@@ -2570,6 +2612,8 @@ std::pair<ResourceLoadStatisticsStore::AddedRecord, std::optional<unsigned>> Res
 
 void ResourceLoadStatisticsStore::clearDatabaseContents()
 {
+    auto transactionScope = beginTransactionIfNecessary();
+
     m_database->clearAllTables();
 
     if (!createSchema())
@@ -2817,7 +2861,7 @@ void ResourceLoadStatisticsStore::clearGrandfathering(Vector<unsigned>&& domainI
     if (domainIDsToClear.isEmpty())
         return;
 
-    auto listToClear = buildList(domainIDsToClear);
+    auto listToClear = buildIntegerList(domainIDsToClear);
 
     auto clearGrandfatheringStatement = m_database->prepareStatementSlow(makeString("UPDATE ObservedDomains SET grandfathered = 0 WHERE domainID IN ("_s, listToClear, ')'));
     if (!clearGrandfatheringStatement)
@@ -2985,7 +3029,7 @@ void ResourceLoadStatisticsStore::pruneStatisticsIfNeeded()
     while (recordsToPrune->step() == SQLITE_ROW)
         entriesToPrune.append(recordsToPrune->columnInt(0));
 
-    auto listToPrune = buildList(entriesToPrune);
+    auto listToPrune = buildIntegerList(entriesToPrune);
 
     auto pruneCommand = m_database->prepareStatementSlow(makeString("DELETE from ObservedDomains WHERE domainID IN ("_s, listToPrune, ')'));
     if (!pruneCommand || pruneCommand->step() != SQLITE_DONE)
@@ -3168,7 +3212,7 @@ void ResourceLoadStatisticsStore::appendSubStatisticList(StringBuilder& builder,
     }
 }
 
-SUPPRESS_NODELETE static bool LEGACY_NODELETE hasHadRecentUserInteraction(WTF::Seconds interactionTimeSeconds, WallTime now)
+NODELETE SUPPRESS_NODELETE static bool hasHadRecentUserInteraction(WTF::Seconds interactionTimeSeconds, WallTime now)
 {
     return interactionTimeSeconds > Seconds(0) && now.secondsSinceEpoch() - interactionTimeSeconds < 24_h;
 }

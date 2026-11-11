@@ -58,6 +58,7 @@
 #include "StyleListStyleType.h"
 #include "StyleScope.h"
 #include "TextUtil.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -201,7 +202,7 @@ void RenderListOutsideMarker::layoutContentContainer(RenderBlockFlow& container)
     // inline-block, then adopt the resulting size and baseline.
     auto contentLogicalWidth = container.maxContentLogicalWidthContribution();
     container.setOverridingBorderBoxLogicalWidth(contentLogicalWidth);
-    container.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    container.setNeedsLayout(MarkingBehavior::OnlyThis);
     container.layoutIfNeeded();
     container.clearOverridingBorderBoxLogicalWidth();
 
@@ -239,6 +240,13 @@ void RenderListOutsideMarker::layoutContentContainer(RenderBlockFlow& container)
     auto contentVisualOverflow = container.visualOverflowRect();
     contentVisualOverflow.moveBy(container.location());
     addVisualOverflow(contentVisualOverflow);
+}
+
+void RenderListOutsideMarker::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    RenderBox::forEachStyleImage(function);
+    if (RefPtr image = style().listStyleImage().tryStyleImage())
+        function(*image);
 }
 
 void RenderListOutsideMarker::imageChanged(WrappedImagePtr o, const IntRect* rect)
@@ -333,7 +341,7 @@ void RenderListOutsideMarker::updateContentContainerText(const ListMarkerTextCon
     textRenderer->setText(textContent.textWithSuffix);
 }
 
-void RenderListOutsideMarker::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderListOutsideMarker::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
@@ -341,27 +349,31 @@ void RenderListOutsideMarker::computeIntrinsicLogicalWidthContributions()
     ASSERT(container);
 
     // The marker is non-wrapping, so its min- and max-content widths are both the content's max-content width.
+    // (A ::marker has no border or padding.)
     auto logicalWidth = container ? container->maxContentLogicalWidthContribution() : 0_lu;
-    m_minContentLogicalWidthContribution = logicalWidth;
-    m_maxContentLogicalWidthContribution = logicalWidth;
-    clearContentLogicalWidthsInvalidation();
-    updateInlineMargins();
+    updateInlineMargins(logicalWidth);
+    return { logicalWidth, logicalWidth };
 }
 
 void RenderListOutsideMarker::updateInlineMargins()
+{
+    updateInlineMargins(minContentLogicalWidthContribution());
+}
+
+void RenderListOutsideMarker::updateInlineMargins(LayoutUnit logicalWidth)
 {
     constexpr int markerPadding = listMarkerImagePadding;
     const FontMetrics& fontMetrics = style().metricsOfPrimaryFont();
 
     auto marginsForOutsideMarker = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
         if (isImage())
-            return { -minContentLogicalWidthContribution() - markerPadding, markerPadding };
+            return { -logicalWidth - markerPadding, markerPadding };
 
         int offset = fontMetrics.intAscent() * 2 / 3;
         if (synthesizesGlyph())
-            return { -offset - markerPadding - 1, offset + markerPadding + 1 - minContentLogicalWidthContribution() };
+            return { -offset - markerPadding - 1, offset + markerPadding + 1 - logicalWidth };
 
-        return { -minContentLogicalWidthContribution(), 0 };
+        return { -logicalWidth, 0 };
     };
 
     auto [marginStart, marginEnd] = marginsForOutsideMarker();

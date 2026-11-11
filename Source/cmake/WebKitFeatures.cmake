@@ -176,6 +176,19 @@ macro(WEBKIT_OPTION_BEGIN)
         set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
     endif ()
 
+    if (NOT DEFINED ENABLE_JAVASCRIPTCORE_TOOLS)
+        # Currently, libJavaScriptCoreTools relies on Mach API (for the corpse code). Hence,
+        # only Apple platforms are supported. Simulators and MacCatalyst are not supported by design.
+        if (APPLE AND NOT WEBKIT_SDK_IS_SIMULATOR AND NOT WEBKIT_SDK_IS_MACCATALYST)
+            set(ENABLE_JAVASCRIPTCORE_TOOLS ON)
+        else ()
+            set(ENABLE_JAVASCRIPTCORE_TOOLS OFF)
+        endif ()
+    endif ()
+    if (NOT APPLE)
+        SET_AND_EXPOSE_TO_BUILD(ENABLE_LIB_JSC_TOOLS ${ENABLE_JAVASCRIPTCORE_TOOLS})
+    endif ()
+
     # Annotating WTF's ref-counted base classes for Swift needs Swift 6.4 or newer;
     # older toolchains don't apply the annotation to derived classes. Cocoa ports
     # gate this in PlatformEnable.h on the SDK version instead.
@@ -330,6 +343,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR "Toggle WebXR support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_HIT_TEST "Toggle WebXR Hit Test Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_LAYERS "Toggle WebXR Layers support" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_PLANE_DETECTION "Toggle WebXR Plane Detection Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_API_STATISTICS "Toggle Web API statistics support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_AUDIO "Toggle Web Audio support" PRIVATE ON)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_AUTHN "Toggle Web AuthN support" PRIVATE OFF)
@@ -378,6 +392,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR ENABLE_WEBGL)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_HIT_TEST ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_LAYERS ENABLE_WEBXR)
+    WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_PLANE_DETECTION ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(USE_SKIA_ENCODERS USE_SKIA)
     WEBKIT_OPTION_DEPEND(USE_EXTERNAL_MIMALLOC USE_MIMALLOC)
 endmacro()

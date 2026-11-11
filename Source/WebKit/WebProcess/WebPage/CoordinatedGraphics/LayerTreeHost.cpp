@@ -46,7 +46,6 @@
 #include <WebCore/NativeImage.h>
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/PlatformDisplay.h>
-#include <WebCore/ProcessCapabilities.h>
 #include <WebCore/RenderLayerBacking.h>
 #include <WebCore/RenderView.h>
 #include <WebCore/ScrollingThread.h>
@@ -68,18 +67,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LayerTreeHost);
 static bool damageOverlayForcesPropagation()
 {
     // WEBKIT_SHOW_DAMAGE draws the damage the layers report, so it needs propagation on even when the
-    // propagateDamagingInformation setting that normally turns it on is off. Only the Skia accumulated-damage
-    // overlay is handled here. The non-Skia TextureMapperDamageVisualizer draws off the propagation flags instead.
-#if USE(TEXTURE_MAPPER)
-    return false;
-#else
+    // propagateDamagingInformation setting that normally turns it on is off.
     const auto* showDamageEnvvar = getenv("WEBKIT_SHOW_DAMAGE");
     if (!showDamageEnvvar)
         return false;
 
     auto value = parseInteger<unsigned>(StringView::fromLatin1(showDamageEnvvar));
     return value && *value;
-#endif
 }
 #endif
 
@@ -109,11 +103,7 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
     }
 
     lazyInitialize(m_compositor, ThreadedCompositor::create(webPage, *this, m_sceneState.get()));
-#if USE(TEXTURE_MAPPER)
-    m_tileManager = CoordinatedTileManager::create(nullptr);
-#else
     m_tileManager = CoordinatedTileManager::create(m_compositor->threadSafeGrContext());
-#endif
 
 #if ENABLE(DAMAGE_TRACKING)
     std::optional<OptionSet<ThreadedCompositor::DamagePropagationFlags>> damagePropagationFlags;
@@ -184,6 +174,10 @@ void LayerTreeHost::updateRendering()
 
     TraceScope traceScope(LayerTreeHostRenderingUpdateStart, LayerTreeHostRenderingUpdateEnd);
 
+    m_renderingUpdateID++;
+
+    m_tileManager->didStartRenderingUpdate(m_renderingUpdateID);
+
     Ref page = m_webPage;
     page->updateRendering();
     page->flushPendingEditorStateUpdate();
@@ -219,6 +213,7 @@ void LayerTreeHost::updateRendering()
         drawingArea->dispatchPendingCallbacksAfterEnsuringDrawing();
 
     bool didChangeSceneState = m_sceneState->flush();
+    m_tileManager->didFinishRenderingUpdate();
     if (m_compositionRequired || m_pendingResize || m_forceFrameSync || didChangeSceneState)
         requestCompositionForRenderingUpdate();
 
@@ -410,15 +405,19 @@ void LayerTreeHost::didPaintTile()
     m_compositor->pendingTilesDidChange();
 }
 
+#if USE(SKIA)
+void LayerTreeHost::didPaintPreRenderedTile(CoordinatedPlatformLayer& layer)
+{
+    if (m_sceneState->didPaintPreRenderedTile(layer) == CoordinatedSceneState::ChangedPreRenderedTiles::Yes)
+        m_compositor->preRenderedTilesDidChange();
+}
+#endif
+
 Ref<CoordinatedImageBackingStore> LayerTreeHost::imageBackingStore(Ref<NativeImage>&& nativeImage)
 {
     auto nativeImageID = nativeImage->uniqueID();
     auto addResult = m_imageBackingStores.ensure(nativeImageID, [&] {
-#if USE(TEXTURE_MAPPER)
-        return CoordinatedImageBackingStore::create(WTF::move(nativeImage));
-#else
         return CoordinatedImageBackingStore::create(WTF::move(nativeImage), m_compositor->threadSafeGrContext());
-#endif
     });
     return addResult.iterator->value;
 }
@@ -599,18 +598,7 @@ void LayerTreeHost::foreachRegionInDamageHistoryForTesting(NOESCAPE const Functi
 
 void LayerTreeHost::fillGLInformation(RenderProcessInfo&& info, CompletionHandler<void(RenderProcessInfo&&)>&& completionHandler)
 {
-#if USE(TEXTURE_MAPPER)
-    if (ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext())
-        info.gpuPaintingThreadsCount = CoordinatedTileManager::numberOfGPUPaintingThreads();
-    else
-        info.cpuPaintingThreadsCount = CoordinatedTileManager::numberOfCPUPaintingThreads();
-#else
-    auto threadsCount = CoordinatedTileManager::numberOfCPUPaintingThreads();
-    if (ProcessCapabilities::canUseAcceleratedBuffers())
-        info.gpuPaintingThreadsCount = threadsCount;
-    else
-        info.cpuPaintingThreadsCount = threadsCount;
-#endif
+    info.paintingThreadsCount = CoordinatedTileManager::numberOfPaintingThreads();
     m_compositor->fillGLInformation(WTF::move(info), WTF::move(completionHandler));
 }
 

@@ -67,10 +67,10 @@ public:
     {
     }
 
-    void LEGACY_NODELETE get(JSObject*, PropertySlot&) const;
+    NODELETE void get(JSObject*, PropertySlot&) const;
     void get(PropertyDescriptor&) const;
     bool put(JSGlobalObject*, JSValue thisValue, SparseArrayValueMap*, JSValue, bool shouldThrow);
-    JSValue LEGACY_NODELETE getNonSparseMode() const;
+    NODELETE JSValue getNonSparseMode() const;
     JSValue getConcurrently() const;
     JSValue get() const;
 
@@ -200,17 +200,22 @@ public:
 
     JSValue getConcurrently(unsigned index);
 
+    void seal();
+    void freeze();
+
     // These methods do not mutate the contents of the map.
     iterator notFound() { return m_set.end(); }
     bool isEmpty() const { return m_set.isEmpty(); }
     bool contains(unsigned i) const { return m_set.contains<SparseArrayEntryTranslator>(i); }
     size_t size() const { return m_set.size(); }
+    bool isSealed() const;
+    bool isFrozen() const;
     // Only allow const begin/end iteration.
     const_iterator begin() const { return m_set.begin(); }
     const_iterator end() const { return m_set.end(); }
 
     static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(SparseArrayValueMap, m_set) + Set::offsetOfTable(); }
-    static constexpr ptrdiff_t offsetOfTableSizeMask() { return Set::offsetOfTableSizeMask(); }
+    static constexpr ptrdiff_t offsetOfTableSize() { return Set::offsetOfTableSize(); }
 
 private:
     Set m_set;

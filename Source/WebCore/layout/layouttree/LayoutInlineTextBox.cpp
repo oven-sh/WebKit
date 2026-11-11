@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,21 +26,48 @@
 #include "config.h"
 #include "LayoutInlineTextBox.h"
 
-#include "RenderObject.h"
 #include "StyleComputedStyle.h"
-#include <wtf/TZoneMallocInlines.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 namespace Layout {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineTextBox);
-
-InlineTextBox::InlineTextBox(String content, bool isCombined, EnumSet<ContentCharacteristic> contentCharacteristicSet, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle)
-: Box({ NodeType::Text, IsAnonymous::Yes }, WTF::move(style), WTF::move(firstLineStyle), Box::InlineTextBoxFlag)
-    , m_content(content)
-    , m_isCombined(isCombined)
-    , m_contentCharacteristicSet(contentCharacteristicSet)
+// Combined text is rare.
+static HashMap<const InlineTextBox*, std::unique_ptr<InlineTextBox::CombinedText>>& combinedTextMap()
 {
+    static NeverDestroyed<HashMap<const InlineTextBox*, std::unique_ptr<InlineTextBox::CombinedText>>> map;
+    return map;
+}
+
+InlineTextBox::InlineTextBox(Style::ComputedStyle&& style)
+    : Box(WTF::move(style), { NodeType::Text, IsAnonymous::Yes }, Box::InlineTextBoxFlag)
+{
+}
+
+InlineTextBox::~InlineTextBox()
+{
+    if (m_isCombined)
+        combinedTextMap().remove(this);
+}
+
+const InlineTextBox::CombinedText& InlineTextBox::combinedText() const
+{
+    ASSERT(m_isCombined);
+    return *combinedTextMap().get(this);
+}
+
+void InlineTextBox::setCombinedText(std::unique_ptr<CombinedText>&& combinedText)
+{
+    if (combinedText) {
+        m_isCombined = true;
+        combinedTextMap().set(this, WTF::move(combinedText));
+        return;
+    }
+    if (!m_isCombined)
+        return;
+    m_isCombined = false;
+    combinedTextMap().remove(this);
 }
 
 }

@@ -40,6 +40,10 @@ enum class LoadedWebArchive : bool;
 
 // Note: This object should only be referenced by WebFrameProxy because its destructor is an
 // important part of managing the lifetime of a frame and the process used by the frame.
+// The exceptions are WebPageProxy::didDestroyFrame(), which keeps a removed frame's FrameProcess
+// alive until the frame's process finishes removing the frame, so that frames created in the
+// meantime keep using the same process, and WebBackForwardCacheEntry, which keeps the process
+// that holds a document cached in place in the browsing context group.
 class FrameProcess : public RefCountedAndCanMakeWeakPtr<FrameProcess> {
 public:
     ~FrameProcess();
@@ -51,7 +55,7 @@ public:
     const WebCore::Site& sharedProcessMainFrameSite() const LIFETIME_BOUND { ASSERT(!m_site); return m_mainFrameSite; }
     bool isArchiveProcess() const { return m_isArchiveProcess; }
 
-    BrowsingContextGroup* LEGACY_NODELETE browsingContextGroup() const;
+    NODELETE BrowsingContextGroup* browsingContextGroup() const;
 
     void incrementFrameCount() { m_frameCount++; }
     void decrementFrameCount() { m_frameCount--; }

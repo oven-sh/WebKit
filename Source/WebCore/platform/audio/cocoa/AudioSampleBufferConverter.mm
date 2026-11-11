@@ -27,6 +27,7 @@
 
 #if USE(AVFOUNDATION)
 
+#include "AudioUtilitiesCocoa.h"
 #include "CAAudioStreamDescription.h"
 #include "CMUtilities.h"
 #include "Logging.h"
@@ -276,6 +277,11 @@ OSStatus AudioSampleBufferConverter::initAudioConverterForSourceFormatDescriptio
         }
     }(m_sourceFormat.mFormatID);
 
+    if (isPCM() && m_sourceFormat.mChannelsPerFrame == m_destinationFormat.mChannelsPerFrame) {
+        if (const auto* audioFormatListItem = PAL::CMAudioFormatDescriptionGetRichestDecodableFormat(formatDescription))
+            m_destinationChannelLayout = setWebAudioChannelOrderIfNeeded(converter, audioFormatListItem->mChannelLayoutTag, m_destinationFormat.mChannelsPerFrame);
+    }
+
     if (!isPCM()) {
         bool shouldSetDefaultOutputBitRate = true;
         if (m_options.outputBitRate) {
@@ -419,9 +425,13 @@ std::expected<RetainPtr<CMSampleBufferRef>, OSStatus> AudioSampleBufferConverter
             }
         }
 
+        auto [channelLayout, channelLayoutSize] = m_destinationChannelLayout
+            ? channelLayoutFromMediaChannelLayout(*m_destinationChannelLayout, m_destinationFormat.mChannelsPerFrame)
+            : AudioChannelLayoutWithSize { };
+
         // This is an out-parameter which is immediately adopted below.
         SUPPRESS_UNRETAINED_LOCAL CMFormatDescriptionRef destinationFormatDescription;
-        if (auto error = PAL::CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &m_destinationFormat, 0, nullptr, cookieSize, cookie.span().data(), nullptr, &destinationFormatDescription)) {
+        if (auto error = PAL::CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &m_destinationFormat, channelLayoutSize, channelLayout.get(), cookieSize, cookie.span().data(), nullptr, &destinationFormatDescription)) {
             RELEASE_LOG_ERROR(MediaStream, "AudioSampleBufferConverter CMAudioFormatDescriptionCreate failed with %d", static_cast<int>(error));
             return makeUnexpected(error);
         }

@@ -304,9 +304,9 @@ void PageClientImpl::didCreateContextInModelProcessForVisibilityPropagation(Laye
     [m_contentView _modelProcessDidCreateContextForVisibilityPropagation];
 }
 
-void PageClientImpl::didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier> nodeID)
+void PageClientImpl::didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID)
 {
-    [m_contentView didReceiveInteractiveModelElement:nodeID];
+    [m_contentView didReceiveInteractiveModelElement:nodeID frameID:frameID];
 }
 #endif // ENABLE(MODEL_PROCESS)
 
@@ -694,10 +694,6 @@ CALayer* PageClientImpl::textIndicatorInstallationLayer()
     return [contentView() textIndicatorInstallationLayer];
 }
 
-void PageClientImpl::enterAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-}
-
 void PageClientImpl::makeViewBlank(bool makeBlank)
 {
     [contentView() layer].opacity = makeBlank ? 0 : 1;
@@ -724,15 +720,6 @@ void PageClientImpl::clearBrowsingWarningIfForMainFrameNavigation()
 bool PageClientImpl::hasBrowsingWarning() const
 {
     return !![webView() _safeBrowsingWarning];
-}
-
-void PageClientImpl::exitAcceleratedCompositingMode()
-{
-    notImplemented();
-}
-
-void PageClientImpl::updateAcceleratedCompositingMode(const LayerTreeContext&)
-{
 }
 
 void PageClientImpl::didPerformDictionaryLookup(const DictionaryPopupInfo& dictionaryPopupInfo)
@@ -780,11 +767,6 @@ void PageClientImpl::didCommitLayerTree(const RemoteLayerTreeTransaction& layerT
     PageClientImplCocoa::didCommitLayerTree(layerTreeTransaction, mainFrameData, pageData, transactionID);
 
     [contentView() _didCommitLayerTree:layerTreeTransaction mainFrameData:mainFrameData pageData:pageData transactionID:transactionID];
-}
-
-void PageClientImpl::didCommitMainFrameData(const MainFrameData& mainFrameData)
-{
-    PageClientImplCocoa::didCommitMainFrameData(mainFrameData);
 }
 
 void PageClientImpl::layerTreeCommitComplete()

@@ -42,14 +42,14 @@ public:
 
     RenderBlockFlow* multiColumnBlockFlow() const { return downcast<RenderBlockFlow>(parent()); }
 
-    RenderMultiColumnSet* LEGACY_NODELETE firstMultiColumnSet() const;
-    RenderMultiColumnSet* LEGACY_NODELETE lastMultiColumnSet() const;
-    RenderBox* LEGACY_NODELETE firstColumnSetOrSpanner() const;
+    NODELETE RenderMultiColumnSet* firstMultiColumnSet() const;
+    NODELETE RenderMultiColumnSet* lastMultiColumnSet() const;
+    NODELETE RenderBox* firstColumnSetOrSpanner() const;
     bool hasColumnSpanner() const { return !m_spannerMap.isEmptyIgnoringNullReferences(); }
-    static RenderBox* LEGACY_NODELETE nextColumnSetOrSpannerSiblingOf(const RenderBox*);
-    static RenderBox* LEGACY_NODELETE previousColumnSetOrSpannerSiblingOf(const RenderBox*);
+    NODELETE static RenderBox* nextColumnSetOrSpannerSiblingOf(const RenderBox*);
+    NODELETE static RenderBox* previousColumnSetOrSpannerSiblingOf(const RenderBox*);
 
-    RenderMultiColumnSpannerPlaceholder* LEGACY_NODELETE findColumnSpannerPlaceholder(const RenderBox& spanner) const;
+    NODELETE RenderMultiColumnSpannerPlaceholder* findColumnSpannerPlaceholder(const RenderBox& spanner) const;
 
     void layout() override;
 
@@ -106,6 +106,9 @@ private:
     void fragmentedFlowDescendantBoxLaidOut(RenderBox*) override;
     LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const override;
     LayoutUnit initialLogicalWidth() const override;
+    // The multi-column container takes its baselines from its column sets, which know which part of the flow is in each column.
+    std::optional<LayoutUnit> firstLineBaseline() const final { return { }; }
+    std::optional<LayoutUnit> lastLineBaseline() const final { return { }; }
     void setPageBreak(const RenderBlock*, LayoutUnit offset, LayoutUnit spaceShortage) override;
     void updateMinimumPageHeight(const RenderBlock*, LayoutUnit offset, LayoutUnit minHeight) override;
     void updateSpaceShortageForSizeContainment(const RenderBlock*, LayoutUnit offset, LayoutUnit shortage) override;

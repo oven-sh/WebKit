@@ -63,7 +63,7 @@ namespace WebCore {
 using namespace HTMLNames;
 
 // The anonymous text renderer inside ::first-letter has no DOM node.
-static RenderTextFragment* LEGACY_NODELETE remainingTextFragmentForFirstLetter(const RenderObject& renderer)
+NODELETE static RenderTextFragment* remainingTextFragmentForFirstLetter(const RenderObject& renderer)
 {
     if (renderer.node())
         return { };
@@ -89,10 +89,10 @@ VisiblePosition VisiblePosition::next(EditingBoundaryCrossingRule rule, bool* re
     if (reachedBoundary)
         *reachedBoundary = false;
     // FIXME: Support CanSkipEditingBoundary
-    ASSERT(rule == CanCrossEditingBoundary || rule == CannotCrossEditingBoundary);
+    ASSERT(rule == EditingBoundaryCrossingRule::CanCross || rule == EditingBoundaryCrossingRule::CannotCross);
     VisiblePosition next(nextVisuallyDistinctCandidate(m_deepPosition), m_affinity);
 
-    if (rule == CanCrossEditingBoundary)
+    if (rule == EditingBoundaryCrossingRule::CanCross)
         return next;
 
     return honorEditingBoundaryAtOrAfter(next, reachedBoundary);
@@ -103,7 +103,7 @@ VisiblePosition VisiblePosition::previous(EditingBoundaryCrossingRule rule, bool
     if (reachedBoundary)
         *reachedBoundary = false;
     // FIXME: Support CanSkipEditingBoundary
-    ASSERT(rule == CanCrossEditingBoundary || rule == CannotCrossEditingBoundary);
+    ASSERT(rule == EditingBoundaryCrossingRule::CanCross || rule == EditingBoundaryCrossingRule::CannotCross);
     // find first previous DOM position that is visible
     Position pos = previousVisuallyDistinctCandidate(m_deepPosition);
 
@@ -127,7 +127,7 @@ VisiblePosition VisiblePosition::previous(EditingBoundaryCrossingRule rule, bool
     }
 #endif
 
-    if (rule == CanCrossEditingBoundary)
+    if (rule == EditingBoundaryCrossingRule::CanCross)
         return prev;
     
     return honorEditingBoundaryAtOrBefore(prev, reachedBoundary);

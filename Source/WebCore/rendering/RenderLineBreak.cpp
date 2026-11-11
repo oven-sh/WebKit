@@ -30,7 +30,7 @@
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorSVGTextBox.h"
 #include "InlineRunAndOffset.h"
-#include "LineSelection.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "LogicalSelectionOffsetCachesInlines.h"
 #include "RenderBlock.h"
 #include "RenderBoxModelObjectInlines.h"
@@ -103,8 +103,8 @@ void RenderLineBreak::collectSelectionGeometries(Vector<SelectionGeometry>& rect
         return;
     auto lineBox = run->lineBox();
 
-    auto lineSelectionRect = LineSelection::logicalRect(lineBox);
-    LayoutRect rect = IntRect(run->logicalLeftIgnoringInlineDirection(), lineSelectionRect.y(), 0, lineSelectionRect.height());
+    auto lineRect = lineBox.contentLogicalRectAdjustedForAdjacentLineBoxes();
+    LayoutRect rect = IntRect(run->logicalLeftIgnoringInlineDirection(), lineRect.y(), 0, lineRect.height());
     if (!lineBox.isHorizontal())
         rect = rect.transposedRect();
 
@@ -115,12 +115,12 @@ void RenderLineBreak::collectSelectionGeometries(Vector<SelectionGeometry>& rect
             rect.shiftXEdgeTo(lineBox.logicalTop());
     }
 
-    // FIXME: Out-of-flow positioned line breaks do not follow normal containing block chain.
-    CheckedPtr containingBlock = RenderObject::containingBlockForPositionType(PositionType::Static, *this);
+    // Selection extents span the lines of the block that establishes our inline formatting context.
+    CheckedRef formattingContextRoot = LayoutIntegration::LineLayout::containing(*this)->flow();
     // Map rect, extended left to leftOffset, and right to rightOffset, through transforms to get minX and maxX.
-    LogicalSelectionOffsetCaches cache(*containingBlock);
-    LayoutUnit leftOffset = containingBlock->logicalLeftSelectionOffset(*containingBlock, LayoutUnit(run->logicalTop()), cache);
-    LayoutUnit rightOffset = containingBlock->logicalRightSelectionOffset(*containingBlock, LayoutUnit(run->logicalTop()), cache);
+    LogicalSelectionOffsetCaches cache(formattingContextRoot);
+    LayoutUnit leftOffset = formattingContextRoot->logicalLeftSelectionOffset(formattingContextRoot, LayoutUnit(run->logicalTop()), cache);
+    LayoutUnit rightOffset = formattingContextRoot->logicalRightSelectionOffset(formattingContextRoot, LayoutUnit(run->logicalTop()), cache);
     LayoutRect extentsRect = rect;
     if (run->isHorizontal()) {
         extentsRect.setX(leftOffset);

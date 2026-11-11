@@ -159,8 +159,8 @@ void DocumentFullscreen::requestFullscreen(Ref<Element>&& element, FullscreenChe
             if (!renderer)
                 continue;
 
-            auto area = renderer->videoBox().area();
-            if (!area || area.hasOverflowed())
+            auto area = renderer->videoBox().area<RecordOverflow>();
+            if (area.hasOverflowed() || !area)
                 continue;
 
             video->webkitRequestFullscreen();
@@ -374,7 +374,7 @@ void DocumentFullscreen::elementEnterFullscreen(Element& element)
 
     document->hidePopoversForTopLayerElement(element, FireEvents::No);
 
-    auto containingBlockBeforeStyleResolution = SingleThreadWeakPtr<RenderBlock> { };
+    auto containingBlockBeforeStyleResolution = SingleThreadWeakPtr<RenderBoxModelObject> { };
     if (CheckedPtr renderer = element.renderer())
         containingBlockBeforeStyleResolution = renderer->containingBlock();
 
@@ -721,7 +721,7 @@ void DocumentFullscreen::fullyExitFullscreen()
     });
 }
 
-static bool LEGACY_NODELETE hasJSEventListener(Node& node, const AtomString& eventType)
+NODELETE static bool hasJSEventListener(Node& node, const AtomString& eventType)
 {
     for (const auto& listener : node.eventListeners(eventType)) {
         if (listener->callback().type() == EventListener::JSEventListenerType)

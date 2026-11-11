@@ -45,8 +45,11 @@
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <mach-o/dyld.h>
+#import <pal/spi/cocoa/PassKitSPI.h>
 #import <pal/spi/mac/NSApplicationSPI.h>
 #import <wtf/darwin/DispatchExtras.h>
+
+#import <pal/cocoa/PassKitSoftLink.h>
 
 @interface NSMenu ()
 - (id)_menuImpl;
@@ -64,6 +67,24 @@
     completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
 }
 @end
+
+#if ENABLE(APPLE_PAY)
+@interface WKTRFakePaymentAuthorizationViewController : NSViewController
+@end
+
+@implementation WKTRFakePaymentAuthorizationViewController
+- (void)loadView
+{
+    RetainPtr view = adoptNS([[NSView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)]);
+    self.view = view;
+}
+
+- (void)setDelegate:(id)delegate { }
+- (void)setPrivateDelegate:(id)delegate { }
+- (id)delegate { return nil; }
+- (id)privateDelegate { return nil; }
+@end
+#endif // ENABLE(APPLE_PAY)
 
 namespace WTR {
 
@@ -192,6 +213,10 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
         [menu cancelTracking];
 
     cocoaResetStateToConsistentValues(options);
+
+#if ENABLE(APPLE_PAY)
+    setHasFakePaymentUIForTesting(false);
+#endif
 
     if (RetainPtr webView = m_mainWebView ? m_mainWebView->platformView() : nil) {
         auto newObscuredInsetTop = options.obscuredInsetTop();
@@ -519,8 +544,10 @@ void TestController::initializeWebProcessAccessibility()
 
     // Allow all accessibility authentication requests for testing, so that
     // site-isolated iframe web content processes can be accessed by AX clients
-    // without requiring TCC accessibility permission.
-    WKContextSetAllowAXAuthenticationForTesting(m_context.get(), true);
+    // without requiring TCC accessibility permission. A test that denies them
+    // may do so before enabling client accessibility mode.
+    if (!m_didDenyAXAuthenticationForTesting)
+        [(WKProcessPool *)m_context.get() _setAXAuthenticationModeForTesting:_WKAXAuthenticationTestingModeAllow];
 
     // Reduce the messaging timeout. Occasionally an accessibility client request goes to
     // a web content process before it's ready to serve that request on the AX thread, causing
@@ -534,6 +561,69 @@ void TestController::initializeWebProcessAccessibility()
     // WebProcessPool::initializeAccessibilityIfNecessary() to send the InitializeAccessibility
     // IPC message to the web content process.
     [platformView accessibilityAttributeValue:NSAccessibilityRoleAttribute];
+}
+
+#if ENABLE(APPLE_PAY)
+
+static void fakeRequestViewControllerWithPaymentRequest(id, SEL, id, void (^completion)(id viewController, NSError *error))
+{
+    RetainPtr viewController = adoptNS([[WKTRFakePaymentAuthorizationViewController alloc] init]);
+    completion(viewController, nil);
+}
+
+static void fakeBeginSheet(id, SEL, NSWindow *, void (^)(NSModalResponse))
+{
+}
+
+FakePaymentUIForTesting::FakePaymentUIForTesting()
+{
+    RetainPtr paymentAuthorizationViewControllerClass = PAL::getPKPaymentAuthorizationViewControllerClassSingleton();
+    SEL requestViewControllerSelector = @selector(requestViewControllerWithPaymentRequest:completion:);
+    if (!paymentAuthorizationViewControllerClass || !class_getClassMethod(paymentAuthorizationViewControllerClass, requestViewControllerSelector))
+        return;
+
+    m_requestViewControllerSwizzler = makeUnique<ClassMethodSwizzler>(paymentAuthorizationViewControllerClass, requestViewControllerSelector, reinterpret_cast<IMP>(fakeRequestViewControllerWithPaymentRequest));
+    m_beginSheetSwizzler = makeUnique<InstanceMethodSwizzler>(NSWindow.class, @selector(beginSheet:completionHandler:), reinterpret_cast<IMP>(fakeBeginSheet));
+}
+
+#endif // ENABLE(APPLE_PAY)
+
+void TestController::setHasFakePaymentUIForTesting(bool hasFakePaymentUI)
+{
+#if ENABLE(APPLE_PAY)
+    if (!hasFakePaymentUI) {
+        m_fakePaymentUI = nullptr;
+        return;
+    }
+
+    if (!m_fakePaymentUI)
+        m_fakePaymentUI = makeUnique<FakePaymentUIForTesting>();
+#else
+    UNUSED_PARAM(hasFakePaymentUI);
+#endif
+}
+
+void TestController::setAXAuthenticationDeniedForTesting(bool denied)
+{
+    [(WKProcessPool *)m_context.get() _setAXAuthenticationModeForTesting:denied ? _WKAXAuthenticationTestingModeDeny : _WKAXAuthenticationTestingModeAllow];
+    if (denied)
+        m_didDenyAXAuthenticationForTesting = true;
+}
+
+void TestController::resetAXAuthenticationModeForTesting()
+{
+    [(WKProcessPool *)m_context.get() _setAXAuthenticationModeForTesting:_WKAXAuthenticationTestingModeDefault];
+}
+
+void TestController::terminateWebContentProcessesIfAXAuthenticationWasDenied()
+{
+    // A web content process remembers its first answer for an accessibility client, so later tests
+    // mustn't reuse a process that was told to deny this one.
+    if (!std::exchange(m_didDenyAXAuthenticationForTesting, false))
+        return;
+
+    [(WKProcessPool *)m_context.get() _terminateAllWebContentProcesses];
+    reattachPageToWebProcess();
 }
 
 } // namespace WTR

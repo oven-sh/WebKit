@@ -182,7 +182,7 @@ String quoteAndEscapeNonPrintables(StringView s)
     return result.toString();
 }
 
-inline bool LEGACY_NODELETE shouldEnableSubpixelPrecisionForTextDump(const Document& document)
+NODELETE inline bool shouldEnableSubpixelPrecisionForTextDump(const Document& document)
 {
     // If LBSE is activated and the document contains outermost <svg> elements, generate the text
     // representation with subpixel precision. It would be awkward to only see the SVG part of a
@@ -481,7 +481,7 @@ static inline void writeTextRuns(TextStream& ts, auto& textRenderer)
         // FIXME: Use non-logical width. webkit.org/b/206809.
         int logicalWidth = ceilf(rect.x() + (textRun.isHorizontal() ? rect.width() : rect.height())) - x;
         // FIXME: Table cell adjustment is temporary until results can be updated.
-        if (auto* tableCell = dynamicDowncast<RenderTableCell>(*textRenderer.containingBlock()))
+        if (auto* tableCell = dynamicDowncast<RenderTableCell>(textRun.formattingContextRoot()))
             y -= floorToInt(tableCell->intrinsicPaddingBefore());
 
         ts << "text run at ("_s << x << ',' << y << ") width "_s << logicalWidth;

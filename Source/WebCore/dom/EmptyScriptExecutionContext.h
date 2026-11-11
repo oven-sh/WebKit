@@ -38,9 +38,12 @@
 
 namespace WebCore {
 
-class EmptyScriptExecutionContext final : public RefCounted<EmptyScriptExecutionContext>, public ScriptExecutionContext {
+class EmptyScriptExecutionContext final : public RefCounted<EmptyScriptExecutionContext>, public ScriptExecutionContext, public CanMakeCheckedPtr<EmptyScriptExecutionContext> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(EmptyScriptExecutionContext);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EmptyScriptExecutionContext);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     static Ref<EmptyScriptExecutionContext> create(JSC::VM& vm)
     {
         return adoptRef(*new EmptyScriptExecutionContext(vm));
@@ -48,6 +51,8 @@ public:
 
     ~EmptyScriptExecutionContext()
     {
+        // RejectedPromiseTracker holds a CheckedRef to us, so it must be destroyed while the CheckedPtr counter is still alive.
+        removeRejectedPromiseTracker();
         m_eventLoop->removeAssociatedContext(*this);
     }
 
@@ -107,7 +112,7 @@ private:
     void addMessage(MessageSource, MessageLevel, const String&, const String&, unsigned, unsigned, RefPtr<Inspector::ScriptCallStack>&&, JSC::JSGlobalObject* = nullptr, unsigned long = 0) final { }
     void logExceptionToConsole(const String&, const String&, int, int, RefPtr<Inspector::ScriptCallStack>&&) final { }
 
-    const SettingsValues& LEGACY_NODELETE settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    NODELETE const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
     const NetworkLoadPolicy& networkLoadPolicy() const final { return NetworkLoadPolicy::unrestricted(); }
 
 #if ENABLE(NOTIFICATIONS)

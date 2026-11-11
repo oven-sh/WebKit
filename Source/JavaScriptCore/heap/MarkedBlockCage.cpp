@@ -1114,6 +1114,22 @@ void MarkedBlockCage::willAddArrayBuffer(VM& vm)
 #endif
 }
 
+bool MarkedBlockCage::willAddBlock(VM& vm, BlockDirectory& directory)
+{
+    if (!s_isGrowable)
+        return true;
+    MarkedBlockSet& blocks = vm.heap.objectSpace().blocks();
+    // After a growth that failed the set still takes the blocks that it has room for.
+    if (!blocks.tryGrowEarly() && !blocks.tryReserveCapacityForAdd()) [[unlikely]]
+        return false;
+    return directory.tryMakeRoomForBlock();
+}
+
+bool MarkedBlockCage::willStealBlock(BlockDirectory& directory)
+{
+    return !s_isGrowable || directory.tryMakeRoomForBlock();
+}
+
 bool MarkedBlockCage::keepsSpareWeakBlocks()
 {
     return s_isGrowable;

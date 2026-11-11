@@ -37,7 +37,7 @@
 
 namespace WebCore {
 
-static RealtimeMediaSourceSupportedConstraints LEGACY_NODELETE supportedRealtimeIncomingVideoSourceSettingConstraints()
+NODELETE static RealtimeMediaSourceSupportedConstraints supportedRealtimeIncomingVideoSourceSettingConstraints()
 {
     RealtimeMediaSourceSupportedConstraints constraints;
     constraints.setSupportsWidth(true);
@@ -96,6 +96,12 @@ void RealtimeIncomingVideoSource::startProducingData()
 void RealtimeIncomingVideoSource::stopProducingData()
 {
     m_videoTrack->RemoveSink(this);
+}
+
+void RealtimeIncomingVideoSource::requestKeyFrame()
+{
+    if (auto* source = m_videoTrack->GetSource())
+        source->GenerateKeyFrame();
 }
 
 void RealtimeIncomingVideoSource::OnChanged()

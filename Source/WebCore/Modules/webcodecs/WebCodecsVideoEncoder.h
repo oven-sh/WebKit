@@ -75,7 +75,7 @@ private:
 
     // ActiveDOMObject.
     void stop() final;
-    void LEGACY_NODELETE suspend(ReasonForSuspension) final;
+    NODELETE void suspend(ReasonForSuspension) final;
 
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::WebCodecsVideoEncoder; }
@@ -84,7 +84,13 @@ private:
     ExceptionOr<void> resetEncoder(const Exception&);
     void setInternalEncoder(Ref<VideoEncoder>&&);
 
-    WebCodecsEncodedVideoChunkMetadata createEncodedChunkMetadata(std::optional<unsigned>);
+    struct Orientation {
+        double rotation { 0 };
+        bool flip { false };
+        friend bool operator==(const Orientation&, const Orientation&) = default;
+    };
+
+    WebCodecsEncodedVideoChunkMetadata createEncodedChunkMetadata(std::optional<unsigned> temporalIndex, Orientation);
     void updateRates(const WebCodecsVideoEncoderConfig&);
 
     const Ref<WebCodecsEncodedVideoChunkOutputCallback> m_output;
@@ -96,6 +102,8 @@ private:
     VideoEncoder::ActiveConfiguration m_activeConfiguration;
     bool m_hasNewActiveConfiguration { false };
     size_t m_encoderCount { 0 };
+    std::optional<Orientation> m_activeOrientation;
+    std::optional<Orientation> m_activeOutputOrientation;
 };
 
 } // namespace WebCore

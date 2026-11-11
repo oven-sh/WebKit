@@ -36,7 +36,7 @@ public:
     RenderSlider(HTMLInputElement&, Style::ComputedStyle&&);
     virtual ~RenderSlider();
 
-    HTMLInputElement& LEGACY_NODELETE element() const;
+    NODELETE HTMLInputElement& element() const;
 
     bool canHaveGeneratedChildren() const override { return false; }
 
@@ -48,7 +48,7 @@ private:
     ASCIILiteral renderName() const override { return "RenderSlider"_s; }
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
 
     bool isFlexibleBoxImpl() const override { return true; }
 };

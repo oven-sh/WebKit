@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
 #include <WebCore/ImageBufferAllocator.h>
 #include <WebCore/ImageBufferBackend.h>
 #include <WebCore/ImageBufferFormat.h>
@@ -132,14 +133,14 @@ public:
     WEBCORE_EXPORT static IntSize calculateBackendSize(FloatSize logicalSize, float resolutionScale);
 
     // Supported get, putPixelBuffer formats.
-    WEBCORE_EXPORT static bool LEGACY_NODELETE supportedPixelBufferFormats(PixelFormat);
+    NODELETE WEBCORE_EXPORT static bool supportedPixelBufferFormats(PixelFormat);
 
     // These functions are used when clamping the ImageBuffer which is created for filter, masker or clipper.
     static bool sizeNeedsClamping(const FloatSize&);
     static bool sizeNeedsClamping(const FloatSize&, FloatSize& scale);
-    static FloatSize LEGACY_NODELETE clampedSize(const FloatSize&);
-    static FloatSize LEGACY_NODELETE clampedSize(const FloatSize&, FloatSize& scale);
-    static FloatRect LEGACY_NODELETE clampedRect(const FloatRect&);
+    NODELETE static FloatSize clampedSize(const FloatSize&);
+    NODELETE static FloatSize clampedSize(const FloatSize&, FloatSize& scale);
+    NODELETE static FloatRect clampedRect(const FloatRect&);
 
     WEBCORE_EXPORT RefPtr<ImageBuffer> clone() const;
 
@@ -182,9 +183,6 @@ public:
     WEBCORE_EXPORT virtual RefPtr<NativeImage> createNativeImageReference() const;
     WEBCORE_EXPORT virtual bool isRemoteImageBufferProxy() const;
 
-    WEBCORE_EXPORT virtual RefPtr<NativeImage> filteredNativeImage(Filter&);
-    RefPtr<NativeImage> filteredNativeImage(Filter&, Function<void(GraphicsContext&)> drawCallback);
-
 #if HAVE(IOSURFACE)
     WEBCORE_EXPORT IOSurface* surface();
 #endif
@@ -214,15 +212,12 @@ public:
     WEBCORE_EXPORT static RefPtr<NativeImage> sinkIntoNativeImage(RefPtr<ImageBuffer>);
     WEBCORE_EXPORT static RefPtr<ImageBuffer> sinkIntoBufferForDifferentThread(RefPtr<ImageBuffer>);
     WEBCORE_EXPORT static std::unique_ptr<SerializedImageBuffer> sinkIntoSerializedImageBuffer(RefPtr<ImageBuffer>&&);
-    WEBCORE_EXPORT static RefPtr<SharedBuffer> sinkIntoPDFDocument(RefPtr<ImageBuffer>);
 
     WEBCORE_EXPORT virtual void convertToLuminanceMask();
     WEBCORE_EXPORT virtual void transformToColorSpace(const ColorSpace& newColorSpace);
 
     WEBCORE_EXPORT virtual RefPtr<PixelBuffer> getPixelBuffer(const PixelBufferFormat& outputFormat, const IntRect& srcRect, const ImageBufferAllocator& = ImageBufferAllocator()) const;
     WEBCORE_EXPORT virtual void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint = { }, AlphaPremultiplication destFormat = AlphaPremultiplication::Premultiplied);
-
-    WEBCORE_EXPORT virtual RefPtr<SharedBuffer> sinkIntoPDFDocument();
 
     WEBCORE_EXPORT bool isInUse() const;
     WEBCORE_EXPORT virtual void releaseGraphicsContext();
@@ -232,9 +227,6 @@ public:
     WEBCORE_EXPORT void setVolatilityState(VolatilityState);
     WEBCORE_EXPORT void setVolatileAndPurgeForTesting();
     WEBCORE_EXPORT virtual std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher();
-
-    // This value increments when the ImageBuffer gets a new backend, which can happen if, for example, the GPU Process exits.
-    WEBCORE_EXPORT unsigned LEGACY_NODELETE backendGeneration() const;
 
     WEBCORE_EXPORT virtual String debugDescription() const;
 
@@ -253,7 +245,6 @@ protected:
     Parameters m_parameters;
     std::unique_ptr<ImageBufferBackend> m_backend;
     RenderingResourceIdentifier m_renderingResourceIdentifier;
-    unsigned m_backendGeneration { 0 };
     bool m_hasForcedPurgeForTesting { false };
 };
 

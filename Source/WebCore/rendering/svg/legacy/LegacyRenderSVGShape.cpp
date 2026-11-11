@@ -85,7 +85,7 @@ void LegacyRenderSVGShape::strokeShape(GraphicsContext& context) const
     Path* usePath = m_path.get();
 
     if (hasNonScalingStroke())
-        usePath = nonScalingStrokePath(usePath, nonScalingStrokeTransform());
+        usePath = nonScalingStrokePath(usePath, computeNonScalingStrokeTransform());
 
     context.strokePath(*usePath);
 }
@@ -94,7 +94,7 @@ bool LegacyRenderSVGShape::shapeDependentStrokeContains(const FloatPoint& point,
 {
     if (hasNonScalingStroke() && pointCoordinateSpace != LocalCoordinateSpace) {
         ASSERT(m_path);
-        AffineTransform nonScalingTransform = nonScalingStrokeTransform();
+        AffineTransform nonScalingTransform = computeNonScalingStrokeTransform();
         Path* usePath = nonScalingStrokePath(m_path.get(), nonScalingTransform);
         return usePath->strokeContains(nonScalingTransform.mapPoint(point), [this] (GraphicsContext& context) {
             SVGRenderSupport::applyStrokeStyleToContext(context, style(), *this);
@@ -199,49 +199,9 @@ bool LegacyRenderSVGShape::setupNonScalingStrokeContext(AffineTransform& strokeT
     return true;
 }
 
-static AffineTransform legacyNonScalingStrokeCTM(const Ref<SVGGraphicsElement>& element)
+AffineTransform LegacyRenderSVGShape::computeNonScalingStrokeTransform() const
 {
-    // We intentionally do NOT use getScreenCTM() here. getScreenCTM() now returns
-    // the full accumulated CSS transform matrix (including transforms from HTML
-    // ancestors like a scaled <body>). However, the legacy SVG paint context only
-    // includes SVG-internal transforms plus position offsets — HTML ancestor CSS
-    // transforms are applied at the compositing/layer level. Using the full
-    // getScreenCTM() would cause non-scaling-stroke to over-compensate for
-    // transforms that are already handled by the layer system.
-    //
-    // Instead, walk the SVG ancestor chain accumulating SVG-internal transforms,
-    // and at the outermost <svg>, use localToAbsolute (point-mapping only) which
-    // correctly discards the rotation/scale components of HTML ancestor CSS transforms.
-    AffineTransform ctm;
-    RefPtr<SVGSVGElement> outermostSVG;
-    for (RefPtr<Element> current = element.ptr(); current; current = current->parentOrShadowHostElement()) {
-        RefPtr svgElement = dynamicDowncast<SVGElement>(*current);
-        if (!svgElement)
-            break;
-        ctm = svgElement->localCoordinateSpaceTransform(CTMScope::NearestViewportScope).multiply(ctm);
-        if (RefPtr svgSVGElement = dynamicDowncast<SVGSVGElement>(*svgElement))
-            outermostSVG = WTF::move(svgSVGElement);
-    }
-
-    // Now add the outermost SVG's screen position as a translation.
-    if (outermostSVG) {
-        if (CheckedPtr renderer = outermostSVG->renderer()) {
-            if (CheckedPtr legacyRoot = dynamicDowncast<LegacyRenderSVGRoot>(*renderer)) {
-                FloatPoint location = legacyRoot->localToBorderBoxTransform().mapPoint(FloatPoint());
-                float zoomFactor = 1 / renderer->style().usedZoom();
-                location = renderer->localToAbsolute(location, MapCoordinatesMode::UseTransforms);
-                location.scale(zoomFactor);
-                ctm = AffineTransform::makeTranslation(toFloatSize(location)) * ctm;
-            }
-        }
-    }
-
-    return ctm;
-}
-
-AffineTransform LegacyRenderSVGShape::nonScalingStrokeTransform() const
-{
-    return legacyNonScalingStrokeCTM(protect(graphicsElement()));
+    return SVGRenderSupport::legacyNonScalingStrokeTransform(protect(graphicsElement()));
 }
 
 void LegacyRenderSVGShape::fillShape(const Style::ComputedStyle& style, GraphicsContext& originalContext)
@@ -283,7 +243,7 @@ void LegacyRenderSVGShape::strokeShape(const Style::ComputedStyle& style, Graphi
 
     GraphicsContextStateSaver stateSaver(context, false);
     if (hasNonScalingStroke()) {
-        AffineTransform nonScalingTransform = nonScalingStrokeTransform();
+        AffineTransform nonScalingTransform = computeNonScalingStrokeTransform();
         if (!setupNonScalingStrokeContext(nonScalingTransform, stateSaver))
             return;
     }
@@ -365,7 +325,7 @@ bool LegacyRenderSVGShape::isPointInStroke(const FloatPoint& point)
         return false;
 
     if (hasNonScalingStroke() && hasPath()) {
-        AffineTransform nonScalingTransform = nonScalingStrokeTransform();
+        AffineTransform nonScalingTransform = computeNonScalingStrokeTransform();
         auto& usePath = *nonScalingStrokePath(m_path.get(), nonScalingTransform);
         return usePath.strokeContains(nonScalingTransform.mapPoint(point), [checkedThis = CheckedRef { *this }](GraphicsContext& context) {
             SVGRenderSupport::applyStrokeStyleToContext(context, checkedThis->style(), checkedThis.get());
@@ -439,7 +399,7 @@ FloatRect LegacyRenderSVGShape::calculateStrokeBoundingBox() const
 
     if (!style().stroke().isNone()) {
         if (hasNonScalingStroke()) {
-            AffineTransform nonScalingTransform = nonScalingStrokeTransform();
+            AffineTransform nonScalingTransform = computeNonScalingStrokeTransform();
             if (std::optional<AffineTransform> inverse = nonScalingTransform.inverse()) {
                 Path* usePath = nonScalingStrokePath(m_path.get(), nonScalingTransform);
                 FloatRect strokeBoundingRect = usePath->strokeBoundingRect(Function<void(GraphicsContext&)> { [this] (GraphicsContext& context) {
@@ -544,7 +504,7 @@ float LegacyRenderSVGShape::strokeWidthForMarkerUnits() const
     if (!hasNonScalingStroke())
         return strokeWidth;
 
-    auto nonScalingTransform = nonScalingStrokeTransform();
+    auto nonScalingTransform = computeNonScalingStrokeTransform();
     if (!nonScalingTransform.isInvertible())
         return 0.f;
 
@@ -559,10 +519,8 @@ float LegacyRenderSVGShape::strokeWidthForMarkerUnits() const
 
 Path& LegacyRenderSVGShape::ensurePath()
 {
-    if (!hasPath()) {
+    if (!hasPath())
         m_path = createPath();
-        m_path->setNotTransient();
-    }
     return path();
 }
 

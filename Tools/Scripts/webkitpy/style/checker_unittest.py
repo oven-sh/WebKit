@@ -52,6 +52,7 @@ from webkitpy.style.checker import ProcessorBase
 from webkitpy.style.checker import StyleProcessor
 from webkitpy.style.checker import StyleProcessorConfiguration
 from webkitpy.style.checkers.basexcconfig import BaseXcconfigChecker
+from webkitpy.style.checkers.api_test_allowlist import APITestAllowlistChecker
 from webkitpy.style.checkers.changelog import ChangeLogChecker
 from webkitpy.style.checkers.cpp import CppChecker
 from webkitpy.style.checkers.deprecated_js_test_includes import DeprecatedJSTestIncludesChecker
@@ -470,6 +471,9 @@ class CheckerDispatcherDispatchTest(unittest.TestCase):
         """Assert that the dispatched checker is a XMLChecker."""
         self.assert_checker(file_path, XMLChecker)
 
+    def test_api_test_allowlist_paths(self):
+        self.assert_checker(os.path.join('Tools', 'Scripts', 'webkitpy', 'api_tests', 'allowlist.txt'), APITestAllowlistChecker)
+
     def test_basexcconfig_paths(self):
         """Test paths that should be checked as Base.xcconfig files."""
         paths = [
@@ -723,13 +727,14 @@ class StyleProcessorConfigurationTest(LoggingTestCase):
         # Test the category check code path by varying the category.
         self.assertFalse(config.is_reportable("whitespace/line", 4, "foo.txt"))
 
-    def _call_write_style_error(self, output_format):
+    def _call_write_style_error(self, output_format, column_number=None):
         config = self._style_checker_configuration(output_format=output_format)
         config.write_style_error(category="whitespace/tab",
                                  confidence_in_error=5,
                                  file_path="foo.h",
                                  line_number=100,
-                                 message="message")
+                                 message="message",
+                                 column_number=column_number)
 
     def test_write_style_error_emacs(self):
         """Test the write_style_error() method."""
@@ -741,6 +746,17 @@ class StyleProcessorConfigurationTest(LoggingTestCase):
         """Test the write_style_error() method."""
         self._call_write_style_error("vs7")
         self.assertLog(["foo.h(100): error: [whitespace/tab]  message\n"])
+
+    def test_write_style_error_emacs_with_column(self):
+        """Test the write_style_error() method with a column number."""
+        self._call_write_style_error("emacs", column_number=7)
+        expected = f"{ANSIColor.WHITE}foo.h:100:7:{ANSIColor.RESET} {ANSIColor.RED}error:{ANSIColor.RESET} {ANSIColor.YELLOW}[whitespace/tab]{ANSIColor.RESET} {ANSIColor.WHITE}message{ANSIColor.RESET}\n"
+        self.assertLog([expected])
+
+    def test_write_style_error_vs7_with_column(self):
+        """Test the write_style_error() method with a column number."""
+        self._call_write_style_error("vs7", column_number=7)
+        self.assertLog(["foo.h(100,7): error: [whitespace/tab]  message\n"])
 
 
 class StyleProcessor_EndToEndTest(LoggingTestCase):
