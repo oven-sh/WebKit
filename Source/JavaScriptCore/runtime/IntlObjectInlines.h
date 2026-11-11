@@ -47,19 +47,19 @@ static constexpr uint32_t computeTwoCharacters16Code(const StringType& string)
     return static_cast<uint16_t>(string.codeUnitAt(0)) | (static_cast<uint32_t>(static_cast<uint16_t>(string.codeUnitAt(1))) << 16);
 }
 
-template<typename Predicate> String bestAvailableLocale(const String& locale, Predicate predicate)
+template<typename StringType, typename Predicate> StringType bestAvailableLocale(const StringType& locale, Predicate predicate)
 {
     // BestAvailableLocale (availableLocales, locale)
     // https://tc39.github.io/ecma402/#sec-bestavailablelocale
 
-    String candidate = locale;
+    StringType candidate = locale;
     while (!candidate.isEmpty()) {
         if (predicate(candidate))
             return candidate;
 
         size_t pos = candidate.reverseFind('-');
         if (pos == notFound)
-            return String();
+            return StringType();
 
         if (pos >= 2 && candidate[pos - 2] == '-')
             pos -= 2;
@@ -67,7 +67,7 @@ template<typename Predicate> String bestAvailableLocale(const String& locale, Pr
         candidate = candidate.left(pos);
     }
 
-    return String();
+    return StringType();
 }
 
 template<typename Constructor, typename Factory>

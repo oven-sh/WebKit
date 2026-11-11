@@ -788,6 +788,8 @@ TriState IntlLocale::numeric()
     return m_numeric;
 }
 
+// Step 1 of CalendarsOfLocale, CollationsOfLocale, HourCyclesOfLocale and NumberingSystemsOfLocale asks whether the
+// locale has the keyword. The value "true" is the empty string, and is the answer too.
 JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -796,7 +798,7 @@ JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)
     Vector<String, 1> elements;
 
     String preferred = calendar();
-    if (!preferred.isEmpty()) {
+    if (!preferred.isNull()) {
         elements.append(WTF::move(preferred));
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
@@ -830,6 +832,59 @@ JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+// The locale that an info getter of Intl.Locale takes its data from: what ECMA-402 LookupMatchingLocaleByPrefix finds
+// for the tag of the locale among the available locales of a service. ICU answers for a locale that it has no data
+// for from the data of its default locale, which comes from the host, so ICU only gets a locale from here.
+class DataLocale {
+    WTF_MAKE_NONCOPYABLE(DataLocale);
+public:
+    DataLocale(const LocaleSet& availableLocales, const ASCIICString& localeID);
+
+    // Null when no prefix of the tag is an available locale.
+    const char* tag() const { return m_isFound ? m_tag.span().data() : nullptr; }
+
+private:
+    Vector<char, 32> m_tag;
+    bool m_isFound { false };
+};
+
+DataLocale::DataLocale(const LocaleSet& availableLocales, const ASCIICString& localeID)
+{
+    auto isIn = [](const LocaleSet& locales, std::span<const char> tag) {
+        return locales.contains<StringViewHashTranslator>(StringView { tag });
+    };
+
+    // The locale ID without its keywords, with '-' for '_'. It is the tag of the locale without its extensions when
+    // it is an available locale of a service.
+    auto base = localeID.span();
+    if (size_t keywords = WTF::find(base, ULOC_KEYWORD_SEPARATOR); keywords != notFound)
+        base = base.first(keywords);
+    m_tag.append(base);
+    std::ranges::replace(m_tag.mutableSpan(), '_', '-');
+
+    size_t length = m_tag.size();
+    if (!isIn(availableLocales, m_tag.span())) {
+        // ICU makes the tag of every other locale ID: it replaces a language or a region there ("iw" is "he"), and it
+        // writes variants in its own way.
+        if (!isIn(intlAvailableLocales(), m_tag.span())) {
+            Vector<char, 32> baseID(base);
+            baseID.append('\0');
+            if (U_FAILURE(callBufferProducingFunction(uloc_toLanguageTag, baseID.span().data(), m_tag, false)))
+                return;
+        }
+        length = bestAvailableLocale(StringView { m_tag.span() }, [&](StringView candidate) {
+            return availableLocales.contains<StringViewHashTranslator>(candidate);
+        }).length();
+        if (!length)
+            return;
+    }
+
+    m_tag.shrink(length);
+    m_tag.append('\0');
+    m_isFound = true;
+}
+
+// https://tc39.es/ecma402/#sec-collationsoflocale
 JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -838,14 +893,18 @@ JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
     Vector<String, 1> elements;
 
     String preferred = collation();
-    if (!preferred.isEmpty()) {
+    if (!preferred.isNull()) {
         elements.append(WTF::move(preferred));
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
 
+    DataLocale dataLocale(intlCollatorAvailableLocales(), m_localeID);
+    if (!dataLocale.tag())
+        RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, Vector<String, 2> { "emoji"_s, "eor"_s }));
+
     UErrorCode status = U_ZERO_ERROR;
     constexpr bool commonlyUsed = true;
-    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", m_localeID.data(), commonlyUsed, &status));
+    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", dataLocale.tag(), commonlyUsed, &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return nullptr;
@@ -884,7 +943,7 @@ JSArray* IntlLocale::hourCycles(JSGlobalObject* globalObject)
     Vector<String, 1> elements;
 
     String preferred = hourCycle();
-    if (!preferred.isEmpty()) {
+    if (!preferred.isNull()) {
         elements.append(WTF::move(preferred));
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
@@ -931,6 +990,7 @@ JSArray* IntlLocale::hourCycles(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+// https://tc39.es/ecma402/#sec-numberingsystemsoflocale
 JSArray* IntlLocale::numberingSystems(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -938,13 +998,19 @@ JSArray* IntlLocale::numberingSystems(JSGlobalObject* globalObject)
 
     Vector<String, 1> elements;
     String preferred = numberingSystem();
-    if (!preferred.isEmpty()) {
+    if (!preferred.isNull()) {
         elements.append(WTF::move(preferred));
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
 
+    DataLocale dataLocale(intlNumberFormatAvailableLocales(), m_localeID);
+    if (!dataLocale.tag()) {
+        elements.append("latn"_s);
+        RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
+    }
+
     UErrorCode status = U_ZERO_ERROR;
-    auto numberingSystem = std::unique_ptr<UNumberingSystem, ICUDeleter<unumsys_close>>(unumsys_open(m_localeID.data(), &status));
+    auto numberingSystem = std::unique_ptr<UNumberingSystem, ICUDeleter<unumsys_close>>(unumsys_open(dataLocale.tag(), &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return nullptr;
