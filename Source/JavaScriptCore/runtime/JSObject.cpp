@@ -2586,6 +2586,24 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     return true;
 }
 
+// Reached by a delete that found an element that is not configurable. Out of line, and given only what deletePropertyByIndex()
+// holds at that point, so that the other deletes keep their code. Such a delete fails but in VM::DeletePropertyMode::IgnoreConfigurable.
+// There, the object gets a structure that no other object has: the DFG folds a read of an element that is read-only and not
+// configurable into the code (foldGetByValOnConstantProperty() in DFGAbstractInterpreterInlines.h), and what that code checks or
+// watches is the structure. A check can list several structures, so the new one is in no transition table.
+// The element goes first: a compiler thread that reads the map after that finds nothing to fold.
+static NEVER_INLINE bool deleteNonConfigurableElement(JSObject* object, unsigned i)
+{
+    VM& vm = object->vm();
+    if (vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable)
+        return false;
+    object->butterfly()->arrayStorage()->m_sparseMap->remove(i);
+    Structure* oldStructure = object->structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    object->setStructure(vm, Structure::deleteNonConfigurableElementTransition(vm, oldStructure, &deferred));
+    return true;
+}
+
 bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned i)
 {
     VM& vm = globalObject->vm();
@@ -2649,7 +2667,7 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
             SparseArrayValueMap::iterator it = map->find(i);
             if (it != map->notFound()) {
                 if (it->attributes() & PropertyAttribute::DontDelete)
-                    return false;
+                    return deleteNonConfigurableElement(thisObject, i);
                 map->remove(it);
             }
         }

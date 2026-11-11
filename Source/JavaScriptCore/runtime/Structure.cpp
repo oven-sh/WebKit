@@ -734,6 +734,7 @@ Structure::PristineBits Structure::pristineBitsAfterTransition(VM& vm, Structure
     case TransitionKind::MakePropertiesImmutable:
     case TransitionKind::MakeListedPropertiesImmutable:
     case TransitionKind::AllocateElementsStartOffset:
+    case TransitionKind::DeleteNonConfigurableElement:
         return bits;
     case TransitionKind::Unknown:
     case TransitionKind::AllocateSlowPutArrayStorage:
@@ -1375,6 +1376,28 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (!structure->isDictionary()) {
         Locker locker { structure->m_lock };
         structure->m_transitionTable.add(vm, structure, transition);
+    }
+
+    transition->checkOffsetConsistency();
+    return transition;
+}
+
+// In no transition table: each call makes a structure for one object alone. From a table, a second object of `structure` would
+// come to a structure that compiled code already lists beside `structure`, and that code would keep what it read from the object.
+Structure* Structure::deleteNonConfigurableElementTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+{
+    Structure* transition = Structure::create(vm, structure, deferred);
+    DeferGC deferGC(vm);
+
+    transition->setTransitionKind(TransitionKind::DeleteNonConfigurableElement);
+    transition->inheritPristineBits(vm, structure);
+
+    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->setMaxOffset(vm, structure->maxOffset());
+    checkOffset(transition->maxOffset(), transition->inlineCapacity());
+    if (structure->isDictionary()) {
+        PropertyTable* table = transition->ensurePropertyTable(vm);
+        transition->pin(Locker { transition->m_lock }, vm, table);
     }
 
     transition->checkOffsetConsistency();
@@ -2632,6 +2655,9 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::AllocateElementsStartOffset:
         kindName = "AllocateElementsStartOffset";
+        break;
+    case TransitionKind::DeleteNonConfigurableElement:
+        kindName = "DeleteNonConfigurableElement";
         break;
     }
 
