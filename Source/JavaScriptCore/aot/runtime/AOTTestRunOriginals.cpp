@@ -1306,9 +1306,16 @@ static ModuleNamespace* namespaceOfCompiledOriginal(JSModuleRecord* record)
 std::optional<ModuleID> Modules::compiledOriginalNamedBy(const Identifier& key)
 {
     std::optional<ModuleID> module = originalNamedBy(key);
-    if (!module || key.string().contains("&actual"_s) || !hasInstances(*module) || !data(*module).isESModuleOfProgram() || data(*module).isFacade() || isEvicted(*module) || delegatesToHost(*module))
+    if (!module || key.string().contains("&actual"_s) || !hasInstances(*module) || !data(*module).isESModuleOfProgram() || data(*module).isFacade() || delegatesOriginalToHost(*module) || wasWrittenSinceBuild(fileOf(*module)))
         return std::nullopt;
     return module;
+}
+
+bool Modules::delegatesOriginalToHost(ModuleID module)
+{
+    if (!isEvicted(module))
+        return delegatesToHost(module);
+    return !isReplacedInRequireCache(module) || (host().hasResolvePlugins && host().hasResolvePlugins(m_instance.globalObject));
 }
 
 std::optional<ModuleID> Modules::commonJSOriginalNamedBy(const Identifier& key)
@@ -1317,7 +1324,7 @@ std::optional<ModuleID> Modules::commonJSOriginalNamedBy(const Identifier& key)
     if (!module || key.string().contains("&actual"_s))
         return std::nullopt;
     ModuleID file = fileOf(*module);
-    if (!data(file).mayRunAsOriginal() || !data(file).bodyFunction() || isEvicted(file) || delegatesToHost(file))
+    if (!data(file).mayRunAsOriginal() || !data(file).bodyFunction() || delegatesOriginalToHost(file))
         return std::nullopt;
     return file;
 }
@@ -1938,7 +1945,10 @@ bool isCompiledOriginal(JSGlobalObject* realm, const String& key)
     if (!modules)
         return false;
     Identifier name = Identifier::fromString(realm->vm(), key);
-    return modules->compiledOriginalNamedBy(name) || modules->commonJSOriginalNamedBy(name);
+    if (modules->compiledOriginalNamedBy(name))
+        return true;
+    std::optional<ModuleID> file = modules->commonJSOriginalNamedBy(name);
+    return file && !modules->wasWrittenSinceBuild(*file);
 }
 
 bool hasLoadedCommonJSFile(JSGlobalObject* realm)

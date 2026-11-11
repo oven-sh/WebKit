@@ -683,9 +683,13 @@ void Modules::tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> cal
 
 void Modules::noteHostImportCall(ModuleID module, JSPromise* promise)
 {
-    m_hostImportCalls.removeAllMatching([](const auto& call) { return call.second->status() != JSPromise::Status::Pending; });
-    if (promise->status() == JSPromise::Status::Pending)
-        m_hostImportCalls.append({ module, Strong<JSPromise>(*m_instance.vm, promise) });
+    if (promise->status() != JSPromise::Status::Pending)
+        return;
+    if (m_hostImportCalls.size() >= m_hostImportCallLimit) {
+        m_hostImportCalls.removeAllMatching([](const auto& call) { return call.second->status() != JSPromise::Status::Pending; });
+        m_hostImportCallLimit = std::max<size_t>(minimumHostImportCallLimit, 2 * m_hostImportCalls.size());
+    }
+    m_hostImportCalls.append({ module, Strong<JSPromise>(*m_instance.vm, promise) });
 }
 
 void Modules::tellIfFactoryImportsAbsentExport(ModuleID requested)

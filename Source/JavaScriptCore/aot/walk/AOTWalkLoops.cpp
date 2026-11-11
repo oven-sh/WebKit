@@ -2321,6 +2321,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
     size_t numberOfFieldArraysBefore = m_fieldArrayReads.size();
     Vector<Reference, 8> enteringKept;
     enteringKept.append(entering);
+    Vector<Reference, 4> carriedInFront = carriedValuesInFrame(frameIndex);
     if (!program().moduleInstances.isEmpty())
         hoistModuleLinks(*this, inputHead);
     auto forgetFieldArrayReads = makeScopeExit([this, kept = m_fieldArrayReads.size()] {
@@ -2666,6 +2667,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             endOfValues = std::max(endOfValues, index.block(member).endOfValues().index());
         Vector<Reference> boundByPlainWalk;
         boundByPlainWalk.append(m_frames[frameIndex].references.span().subspan(firstValue, endOfValues - firstValue));
+        Vector<Reference, 4> carriedByPlainWalk = carriedValuesInFrame(frameIndex);
         m_block = front.block;
         setSerialOfNewestMark(++m_numberOfMarksTaken);
         releaseEndedPendingBlocks();
@@ -2675,6 +2677,8 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             behindPlainWalk.putBack(*this);
             for (uint32_t value = firstValue; value < endOfValues; ++value)
                 m_frames[frameIndex].references.placeOf<NamesOfValues::Writer::UndoesTypedBuild>(value) = boundByPlainWalk[value - firstValue];
+            for (uint32_t number = 0; number < carriedByPlainWalk.size(); ++number)
+                m_frames[frameIndex].references.placeOf<NamesOfValues::Writer::UndoesTypedBuild>(index.numberOfValues() + number) = carriedByPlainWalk[number];
         };
         BlockID entryOfPlainWalk;
         BlockID startOfPlainWalk;
@@ -2699,6 +2703,8 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             BodyBlock head = index.block(inputHead);
             for (uint32_t parameter = 0; parameter < head.numberOfParameters(); ++parameter)
                 m_frames[frameIndex].references.placeOf<NamesOfValues::Writer::StandsBesidePlainWalk>(head.parameter(parameter).index()) = enteringKept[parameter];
+            for (uint32_t number = 0; number < carriedInFront.size(); ++number)
+                m_frames[frameIndex].references.placeOf<NamesOfValues::Writer::StandsBesidePlainWalk>(index.numberOfValues() + number) = carriedInFront[number];
             BlockID start = addBlock();
             startOfPlainWalk = start;
             BlockID entry = addBlock();

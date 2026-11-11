@@ -581,6 +581,7 @@ void Modules::makeESModuleReadyToRunAgain(ModuleID module)
 void Modules::delegateToHostUnlessEvaluated(ModuleID module)
 {
     ModuleID file = fileOf(module);
+    m_filesReplacedInRequireCache.clear(file.index());
     if (status(file) >= ModuleStatus::Evaluating || isEvicted(file) || hasRun(file))
         return;
     delegateToHost(file);
@@ -625,6 +626,12 @@ bool Modules::isChangedOnDisk(ModuleID file)
         return true;
     evictHostCachedSource(file);
     return false;
+}
+
+bool Modules::wasWrittenSinceBuild(ModuleID file) const
+{
+    std::optional<uint64_t> stampOfBuild = m_table.sourceStamp(file);
+    return stampOfBuild && host().computeFileStamp && host().computeFileStamp(m_table.pathInUTF8(file).span()) != *stampOfBuild;
 }
 
 void Modules::evictHostCachedSource(ModuleID file)
@@ -7257,11 +7264,15 @@ static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy taken
         return;
     if (takenOutBy == TakenOutBy::Deletion)
         modules->retainMockForLinkedImporters(module);
+    bool wasDelegated = modules->isEvicted(module) && !modules->isReplacedInRequireCache(module);
     modules->evict(module, takenOutBy == TakenOutBy::Reset);
     if (isDeleted && modules->isEvicted(module))
         modules->takeOutOfLoader(module);
-    if (standsInPlaceOfFile)
+    if (standsInPlaceOfFile) {
         modules->delegateToHostUnlessEvaluated(module);
+        if (!wasDelegated)
+            modules->setIsReplacedInRequireCache(module);
+    }
 }
 
 void willReevaluateEntryPoint(JSGlobalObject* realm, ModuleID module)
@@ -9236,6 +9247,12 @@ JSObject* namespaceBeforeMock(JSGlobalObject* realm, ModuleID module)
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "namespaceBeforeMock"_s);
     return modules ? modules->namespaceBeforeMock(module) : nullptr;
+}
+
+void noteHostImportCall(JSGlobalObject* realm, ModuleID imported, JSPromise* promise)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->noteHostImportCall(imported, promise);
 }
 
 void didCallHostImport(JSGlobalObject* realm, ModuleID imported, JSPromise* promise)

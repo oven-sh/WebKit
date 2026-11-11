@@ -1006,6 +1006,8 @@ public:
     JSValue currentImportWaitState() const { return m_currentImportWaitState; }
     void tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> caller);
     void noteHostImportCall(ModuleID, JSPromise*);
+    static constexpr size_t minimumHostImportCallLimit = 16;
+    size_t m_hostImportCallLimit { minimumHostImportCallLimit };
     Vector<std::pair<ModuleID, Strong<JSPromise>>, 2> m_hostImportCalls;
     void tellIfFactoryImportsAbsentExport(ModuleID requested);
     void forgetCallOfMock(ModuleID fileOrModule);
@@ -1376,6 +1378,8 @@ public:
     void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID);
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
+    bool isReplacedInRequireCache(ModuleID module) const { return m_filesReplacedInRequireCache.get(fileOf(module).index()); }
+    void setIsReplacedInRequireCache(ModuleID module) { m_filesReplacedInRequireCache.set(fileOf(module).index()); }
     bool hasRun(ModuleID);
     bool hasRun(ModuleID, bool& importsAreFollowed);
     bool isListedBeforeItHasRun(ModuleID);
@@ -1406,6 +1410,7 @@ public:
     bool holdsCodeThatMayBeEvicted();
     BitVector collectEvaluatedModules();
     bool delegatesToHost(ModuleID);
+    bool delegatesOriginalToHost(ModuleID);
     bool delegatesWithoutPlugins(ModuleID);
     bool isRequiredModulePatchPending(ModuleID);
     bool isPatchPending(ModuleID file) const;
@@ -1415,6 +1420,7 @@ public:
     bool isRequireUnderPendingMock(ModuleID required, ModuleID requirer);
     bool requiresPatch(ModuleID, JSObject*& exports) const;
     bool wasModifiedSinceBuild(StringView path) const;
+    bool wasWrittenSinceBuild(ModuleID file) const;
     bool isImportedDataURL(StringView url) const;
     bool rejectsLoadsByName() const { return !m_loadsModulesByName && !m_runsUncompiledCode && !m_hostRunsCopiesFromDisk && !isInHostRequest(); }
     bool isInHostRequest() const { return m_currentHostRequest && !isHostRequestStale(); }
@@ -2462,6 +2468,7 @@ private:
         return found == m_exportsLeftOut.end() ? BitVector() : found->value;
     }
     BitVector m_evictedFiles;
+    BitVector m_filesReplacedInRequireCache;
     BitVector m_filesModifiedSinceBuild;
     bool m_hasNotedTextsThatHostKeeps { false };
     BitVector m_dataFilesThatHostPrintsAsJavaScript;

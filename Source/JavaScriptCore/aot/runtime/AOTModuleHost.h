@@ -441,6 +441,7 @@ JS_EXPORT_PRIVATE bool shouldDeferFetchFulfillment(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void deferFetchFulfillment(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void didFetch(JSGlobalObject*, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void noteHostImportInFlight(JSGlobalObject*, ModuleID, JSPromise*, bool isFromOwnFactory);
+JS_EXPORT_PRIVATE void noteHostImportCall(JSGlobalObject*, ModuleID, JSPromise*);
 JS_EXPORT_PRIVATE bool isMockUnseen(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasOriginalRequiredFirst(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void evictLoadedModules(JSGlobalObject*);
