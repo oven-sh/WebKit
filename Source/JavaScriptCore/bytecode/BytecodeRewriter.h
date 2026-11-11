@@ -130,6 +130,8 @@ private:
         InsertionPoint index;
         Type type;
         IncludeBranch includeBranch;
+        // What this Insertion and every one in front of it add to the bytecode, less what they remove. execute() sets it.
+        int differenceThrough;
         size_t removeLength;
         JSInstructionStreamWriter instructions;
     };
@@ -193,7 +195,7 @@ public:
     template<class Function>
     void replaceBytecodeWithFragment(const JSInstructionStream::Ref& instruction, Function function)
     {
-        m_insertions.append(Insertion { InsertionPoint(instruction.offset(), Position::OriginalBytecodePoint), Insertion::Type::Remove, IncludeBranch::No, instruction->size(), { } });
+        m_insertions.append(Insertion { InsertionPoint(instruction.offset(), Position::OriginalBytecodePoint), Insertion::Type::Remove, IncludeBranch::No, 0, instruction->size(), { } });
         insertFragmentAfter(instruction, function);
     }
 
@@ -236,14 +238,11 @@ private:
 template<typename Iterator>
 inline int BytecodeRewriter::calculateDifference(Iterator begin, Iterator end)
 {
-    int result = 0;
-    for (; begin != end; ++begin) {
-        if (begin->type == Insertion::Type::Remove)
-            result -= begin->length();
-        else
-            result += begin->length();
-    }
-    return result;
+    ASSERT(begin <= end);
+    if (begin == end)
+        return 0;
+    int differenceBeforeBegin = begin == m_insertions.begin() ? 0 : (begin - 1)->differenceThrough;
+    return (end - 1)->differenceThrough - differenceBeforeBegin;
 }
 
 template<typename Func>

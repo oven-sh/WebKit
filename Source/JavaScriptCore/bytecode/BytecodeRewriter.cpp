@@ -59,6 +59,16 @@ void BytecodeRewriter::execute()
         return lhs.index < rhs.index;
     });
 
+    // Every jump, exception handler and chapter of expression info asks calculateDifference() about a range of these.
+    int difference = 0;
+    for (auto& insertion : m_insertions) {
+        if (insertion.type == Insertion::Type::Remove)
+            difference -= insertion.length();
+        else
+            difference += insertion.length();
+        insertion.differenceThrough = difference;
+    }
+
     m_codeBlock->applyModification(*this);
 }
 
@@ -82,6 +92,7 @@ void BytecodeRewriter::insertImpl(InsertionPoint insertionPoint, IncludeBranch i
         insertionPoint,
         Insertion::Type::Insert,
         includeBranch,
+        0,
         0,
         WTF::move(writer)
     });

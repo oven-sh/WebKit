@@ -191,6 +191,9 @@ public:
     Entry entryForInstPC(const ConcurrentJSLocker&, InstPC);
     // Decodes without touching the cache: takes no lock and does not allocate (UnlinkedCodeBlock::expressionInfoIfDecoded).
     Entry LEGACY_NODELETE decodeEntryForInstPC(InstPC);
+    // For tests: how many EncodedInfo words decodeEntryForInstPC() steps over, from the start of the chapter to the
+    // entry behind the one that it returns.
+    unsigned LEGACY_NODELETE numberOfEncodedInfoDecodedForInstPC(InstPC);
 
     // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
     // sourceOffset. Decoding an entry starts from the start of its chapter, and stack traces ask for the
@@ -202,6 +205,8 @@ public:
     LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
+    unsigned numberOfEncodedInfo() const { return m_numberOfEncodedInfo; }
+    unsigned numberOfChapters() const { return m_numberOfChapters; }
     size_t LEGACY_NODELETE byteSize() const; // owned by this object
     size_t LEGACY_NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
 
@@ -327,8 +332,6 @@ private:
 
     static constexpr unsigned multiSizeShift = firstFieldIDShift - multiSizeBits;
     static constexpr unsigned multiFirstFieldShift = multiSizeShift - fieldIDBits;
-
-    static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
     using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
 

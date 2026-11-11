@@ -177,6 +177,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, validateBytecodeOptimizerStaticScopes, false, Normal, "check statically resolved scopes against JSScope::abstractResolve when linking") \
     v(Bool, dumpBytecodeOptimizer, false, Normal, "dump the bytecode optimizer IR") \
     v(Bool, reportBytecodeOptimizer, false, Normal, "report per-code-block bytecode optimizer statistics") \
+    v(Unsigned, expressionInfoWordsBetweenChapters, 256, Restricted, "How many words of expression info a chapter has before the next one starts. A lookup of a source position decodes from the start of a chapter. Tests lower it so that a small function has chapters: every lookup gives the same answer."_s) \
     v(Bool, dumpBytecodeLivenessResults, false, Normal, nullptr) \
     v(Bool, validateBytecode, false, Normal, nullptr) \
     v(Bool, forceDebuggerBytecodeGeneration, false, Normal, nullptr) \
