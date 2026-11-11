@@ -32,6 +32,7 @@ struct NameCandidate {
 struct NamesAndStringsToNumber {
     Vector<NameCandidate> names;
     BitVector numberedConstants;
+    Vector<StringID> codedStrings;
     Vector<FunctionByModule> firstFunctionsNamingTexts;
 };
 

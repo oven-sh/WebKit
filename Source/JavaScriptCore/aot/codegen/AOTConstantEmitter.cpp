@@ -307,6 +307,12 @@ CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, Stu
     });
 }
 
+bool ConstantEmitter::loadsStringConstantByStub(const OperationContext& context, StringID id)
+{
+    std::span<const uint8_t> text = types().bytesOf(id);
+    return !text.empty() && !singleLatin1CharacterOf(text) && formOfConstantsWithCellsAt(context).form == Form::Closed;
+}
+
 CellPointer ConstantEmitter::stringConstant(const OperationContext& context, StringID id)
 {
     std::span<const uint8_t> text = types().bytesOf(id);

@@ -57,6 +57,7 @@ struct BitsOfDividendCompared {
 std::optional<BitsOfDividendCompared> tryCompareBitsOfDividend(Walker&, Origin, const WholeRemainder&, int64_t comparedWith);
 Reference buildComparisonWhereDivisorsAreNotZero(Walker&, Draft&& comparison, std::span<const ValueID> divisorsThatMayBeZero);
 bool buildNumberRemainderWithItsTest(Walker&, const BodyValue& remainder);
+ValueID findTestOfRemainder(Walker&, const BodyValue& remainder);
 
 inline constexpr OpcodeSet opcodesThatBuildNumberFormTakes = allBitwiseOperators | allEqualities | allRelations | OpcodeSet { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow,
     Opcode::LogicalNot, Opcode::ToBoolean };

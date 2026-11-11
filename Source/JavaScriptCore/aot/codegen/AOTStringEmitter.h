@@ -22,6 +22,8 @@ struct CharacterView {
     Word32 length;
     Condition is8Bit;
     CellPointer owner;
+    ValueID possibleRope { };
+    Word32 implFlags { };
 };
 
 struct CharacterSource {
@@ -112,8 +114,11 @@ public:
     std::optional<FlatStringCell> flatStringByType(ValueID string);
     Pointer implOfFlatString(FlatStringCell);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
+    CharacterView viewWithoutResolving(const OperationContext&, CellPointer string, BlockEdge otherwise);
 
     Word32 codeUnitAt(const CharacterView&, Word32 index, std::optional<Integer> indexInWholeNumber = std::nullopt);
+    Word32 codeUnitOfPossibleRope(const CharacterView&, Word32 index);
+    void passOpenedRope(ValueID string, BlockID from, LValue characters, LValue implFlags);
     Word32 codePointAt(const CharacterView&, Word32 index);
     CellPointer stringFromCodeUnit(const OperationContext&, Word32 codeUnit);
     CellPointer substring(const OperationContext&, CellPointer string, CodeUnitRange);
@@ -138,8 +143,22 @@ public:
     Word32 find(const CharacterView& subject, const CharacterView& sought, Word32 position, SearchDirection);
     Word32 findCodeUnit(const CharacterView& subject, Word32 codeUnit, Word32 position, SearchDirection);
 
-    CellPointer concatenate(const OperationContext&, std::span<const CellPointer>);
-    CellPointer concatenate(const OperationContext& context, std::initializer_list<CellPointer> strings) { return concatenate(context, std::span<const CellPointer>(strings.begin(), strings.size())); }
+    struct StringPart {
+        StringPart(CellPointer cell)
+            : cell(cell)
+        {
+        }
+        StringPart(StringID constant)
+            : constant(constant)
+        {
+        }
+
+        std::optional<CellPointer> cell { };
+        StringID constant { };
+    };
+    StringID findNumberedStringConstant(const OperationContext&, ValueID);
+    CellPointer concatenate(const OperationContext&, std::span<const StringPart>);
+    CellPointer concatenate(const OperationContext& context, std::initializer_list<StringPart> parts) { return concatenate(context, std::span<const StringPart>(parts.begin(), parts.size())); }
     enum class KeyUse : uint8_t { AnyKey, NameOfProperty };
     CellPointer concatenateKey(const OperationContext&, std::span<const Boxed> primitives, KeyUse);
     CellPointer integerToString(const OperationContext& context, Word32 value) { return integerToString(context, signExtended(value)); }
@@ -149,6 +168,8 @@ public:
 private:
     static constexpr unsigned maxLengthComparedInPlace = maxLengthOfTextComparedInPlace;
 
+    CellPointer cellOf(const OperationContext&, const StringPart&);
+    CellPointer concatenateTwoOrThree(const OperationContext&, std::span<const StringPart>);
     Word32 flagsInImpl(Pointer impl);
     CharacterSource sourceInImpl(Pointer impl);
     CharacterSource sourceOfRope(const OperationContext&, CellPointer rope, Pointer fiber);
@@ -172,7 +193,16 @@ private:
     struct OpenedString {
         Pointer impl;
         CharacterSource source;
+        bool mayBeRope { false };
     };
+    struct OpenedRope {
+        ValueID string;
+        BlockID block;
+        Pointer characters;
+        Word32 implFlags;
+    };
+    const OpenedRope& openedRopeAt(ValueID string, BlockID) const;
+    Vector<OpenedRope, 4> m_openedRopes;
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
     Vector<LValue, 2> m_flagsFoundNarrow;
     Vector<LValue, 2> m_flagsFoundWide;

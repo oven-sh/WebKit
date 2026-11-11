@@ -9,6 +9,7 @@
 
 #include "AOTMachine.h"
 #include "AOTMachineNumbering.h"
+#include <array>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 
@@ -223,6 +224,12 @@ private:
         return index < m_epochOfLastInheritedFind.size() && m_epochOfLastInheritedFind[index] == m_scopeEpoch;
     }
     Operation* appendLoadLike(const Operation* load, Operation* base);
+    Operation* makeSumOfStore(Operation* sum);
+#if CPU(ARM64)
+    Operation* sharedSumFor(Operation* sum);
+#else
+    Operation* sharedSumFor(Operation* sum) { return sum; }
+#endif
     void verifyReusedLoad(Operation* load, Operation* baseAsked, int32_t offsetAsked);
     void noteNumberedLoadForStores(Operation* load);
     void stopIfLoadOfStoredWordStands(const Operation* store);
@@ -282,6 +289,9 @@ private:
     std::array<Operation*, numberOfSmallConstantsKept> m_smallConstants64 { };
     ArenaVector<uint32_t> m_epochOfLastInheritedFind;
     uint32_t m_scopeEpoch { 0 };
+#if CPU(ARM64)
+    std::array<Operation*, 16> m_lastSharedSums { };
+#endif
     bool m_hasInheritedFindsInEpoch { false };
     bool m_isDuplicating { false };
     bool m_isVerifyingReusedLoad { false };

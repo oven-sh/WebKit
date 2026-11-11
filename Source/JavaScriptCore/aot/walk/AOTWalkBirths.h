@@ -31,7 +31,7 @@ struct StoresListedAtBirth {
 };
 StoresListedAtBirth findStoresThatAllocationMayList(Walker&, LayoutID, std::span<const PropertyKeyID> keys, std::span<const TypeID> stored, std::span<const PropertyKeyID> keysStoredFurtherOn);
 bool looksAtCellsAskForLayoutPrototype(Walker&, LayoutID);
-void noteGuardsShownByTest(Walker&, std::span<const MemberConditionRecord>, Reference test);
+void noteGuardsShownByTest(Walker&, std::span<const MemberConditionRecord>, Reference test, Reference receiver = { });
 void checkGuardsThatAreRemembered(Walker&, std::span<const MemberConditionRecord>, Origin);
 void askWholeSideWhereGuardsMayNotHaveBegun(Walker&, LayoutID classLayout, Vector<MemberConditionRecord, 8>& conditions);
 std::optional<MemberConditionRecord> findGuardOfCallOffConstructorFunction(Walker&, FunctionID);

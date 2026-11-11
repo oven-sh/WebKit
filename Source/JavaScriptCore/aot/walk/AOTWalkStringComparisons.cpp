@@ -262,7 +262,10 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
 
     bool subjectIsString = isProvenString(walker, walker.typeOf(subject));
     if (narrowsNothing && (subjectIsString || (value.opcode() == Opcode::StrictEq && lengthOfTextForStrings(walker, text)))) {
-        if (std::optional<PieceOfString> piece = pieceInSight(walker, subject, !subjectIsString)) {
+        std::optional<PieceOfString> piece = pieceReadInLoop(walker, subject, origin);
+        if (!piece)
+            piece = pieceInSight(walker, subject, !subjectIsString);
+        if (piece) {
             if (Reference answer = comparePieceWithTextForStringComparisons(walker, *piece, text, origin)) {
                 walker.bind(value.id(), answer);
                 return true;

@@ -97,7 +97,7 @@ enum class SlotKindFlag : uint8_t {
     v(FieldGetter, Field, HiddenWordOffset, ReadsSlot, AbsentIsUndefined) \
     v(FieldCreation, Field, HiddenWordOffset, Unknown, None) \
     v(FieldOrInherited, FieldAndHolder, WordIndex, Unknown, InheritsGetter) \
-    v(FieldOrInheritedSetter, FieldAndHolder, WordIndex, Unknown, None) \
+    v(FieldOrInheritedAccessor, FieldAndHolder, WordIndex, Unknown, None) \
     v(InheritedField, Holder, None, Unknown, None) \
     v(FieldOrInheritedField, FieldAndHolder, HiddenWordOffset, Unknown, None) \
     v(Variable, Field, HiddenWordOffset, Present, None) \
@@ -309,7 +309,7 @@ struct alignas(16) Slot {
     {
         static_assert(OBJECT_OFFSETOF(FieldPayload, slot) == OBJECT_OFFSETOF(FieldAndHolderPayload, slot));
         ASSERT(payloadOf(kind) == SlotPayload::Field || payloadOf(kind) == SlotPayload::FieldAndHolder);
-        ASSERT(kind != Kind::FieldOrInheritedSetter || !has(emptySlotMayBeUndefined));
+        ASSERT(kind != Kind::FieldOrInheritedAccessor || !has(emptySlotMayBeUndefined));
         return field.slot;
     }
     bool namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uintptr_t cageBase) const;

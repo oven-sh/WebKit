@@ -22,8 +22,7 @@ constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterC
 constexpr StubKey startModule() { return StubKey(StubFamily::StartModule); }
 constexpr StubKey startModuleThatRunTimeNames() { return StubKey(StubFamily::StartModuleThatRunTimeNames); }
 
-enum class AdapterCaller : uint8_t { NativeCodeOrInterpreter, NativeCodeForJobOfCoroutine };
-void emitEnterAdapter(StubAssembler&, AdapterCaller, unsigned extraBytes = 0);
+void emitEnterAdapter(StubAssembler&, unsigned extraBytes = 0);
 static constexpr unsigned adapterArgumentCountWithOutOfLineArguments = numberOfArgumentGPRs + 2;
 static constexpr unsigned outOfLineArgumentCountTagShift = 48;
 static constexpr uint16_t outOfLineArgumentCountTag = 1;

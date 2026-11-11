@@ -823,6 +823,8 @@ private:
     bool isMemberWrittenByItsFields(JSObject&);
     bool writeListedFieldsOfMember(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     void appendElementsInCompiledProgram(JSArray&);
+    enum class ArrayResult : uint8_t { No, Yes, Failed };
+    ArrayResult writePrimitiveArray(Cursor&, JSArray&);
     bool isCompiledStructureKnown(const JSObject& object) const { return (m_compiledStructuresKnown & knowsCompiledStructure) && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
 #endif
     String result();
@@ -2852,6 +2854,20 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
                 }
                 continue;
             } else if constexpr (writesLatin1 && hasGap == HasGap::No) {
+                if (type == ArrayType) {
+                    appendKey();
+                    switch (writePrimitiveArray(cursor, *asArray(&cell))) {
+                    case ArrayResult::Yes:
+                        if (!reserve(cursor, reservation)) [[unlikely]]
+                            return false;
+                        continue;
+                    case ArrayResult::Failed:
+                        return false;
+                    case ArrayResult::No:
+                        cursor.next = buffer() + positionOfMember;
+                        break;
+                    }
+                }
                 // A compiled object that is fully known continues with this cursor.
                 if (type == CompiledObjectType && !AOT::PropertyWalk::hasExtraProperties(asObject(&cell))) {
                     if (!isMemberWrittenByItsFields(*asObject(&cell))) [[unlikely]] {
@@ -2905,6 +2921,81 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     *brace = '{';
     *cursor.next++ = '}';
     return true;
+}
+
+// Writes an array of strings, numbers, booleans, null and undefined. Writes nothing if there are other elements, or strings that cannot be copied verbatim.
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE auto FastStringifier<CharType, bufferMode>::writePrimitiveArray(Cursor& cursor, JSArray& array) -> ArrayResult
+{
+    if constexpr (std::same_as<CharType, Latin1Character>) {
+        // append() checks the prototype of arrays at the first array.
+        if (!m_checkedArrayPrototype || !m_globalObject.isOriginalArrayStructure(array.structure()))
+            return ArrayResult::No;
+        IndexingType indexingType = array.indexingType();
+        if (!hasInt32(indexingType) && !hasContiguous(indexingType))
+            return ArrayResult::No;
+        auto* butterfly = array.butterfly();
+        const unsigned length = butterfly->publicLength();
+        if (length > butterfly->vectorLength()) [[unlikely]]
+            return ArrayResult::No;
+
+        // A comma, a non-string value and the closing bracket.
+        constexpr size_t maxShortElementLength = 1 + std::max<size_t>(AOT::maxJSONNumberLength, maxInt32StringLength) + 1;
+        auto elements = butterfly->contiguous();
+        const size_t arrayOffset = cursor.next - buffer();
+        if (!enterHolder<HasGap::No>() || !reserve(cursor, 2)) [[unlikely]]
+            return ArrayResult::Failed;
+        auto rollBack = [&] {
+            leaveHolder<HasGap::No>();
+            cursor.next = buffer() + arrayOffset;
+            return ArrayResult::No;
+        };
+        *cursor.next++ = '[';
+        for (unsigned i = 0; i < length; ++i) {
+            if (!reserve(cursor, maxShortElementLength)) [[unlikely]]
+                return ArrayResult::Failed;
+            if (i)
+                *cursor.next++ = ',';
+            JSValue element = elements.at(&array, i).get();
+            if (element.isInt32()) {
+                cursor.next = AOT::appendJSONInteger(cursor.next, element.asInt32());
+                continue;
+            }
+            if (!element) [[unlikely]]
+                return rollBack();
+            if (element.isCell()) {
+                if (element.asCell()->type() != StringType)
+                    return rollBack();
+                const StringImpl* string = asString(element.asCell())->tryGetValueImpl();
+                if (!string || !string->is8Bit()) [[unlikely]]
+                    return rollBack();
+                const size_t stringLength = string->length();
+                if (!reserve(cursor, 1 + stringLength + 1 + 1)) [[unlikely]]
+                    return ArrayResult::Failed;
+                *cursor.next = '"';
+                if (stringCopySameType<CharType, true>(string->span8(), cursor.next + 1)) [[unlikely]]
+                    return rollBack();
+                cursor.next[1 + stringLength] = '"';
+                cursor.next += 1 + stringLength + 1;
+                continue;
+            }
+            if (element.isDouble())
+                cursor.next = AOT::appendJSONNumber(cursor.next, element.asDouble());
+            else if (element.isBoolean())
+                cursor.next = AOT::appendJSONBoolean(cursor.next, element.isTrue());
+            else if (element.isUndefinedOrNull())
+                cursor.next = AOT::appendJSONLiteral(cursor.next, "null"_s);
+            else
+                return rollBack();
+        }
+        *cursor.next++ = ']';
+        leaveHolder<HasGap::No>();
+        return ArrayResult::Yes;
+    } else {
+        UNUSED_PARAM(cursor);
+        UNUSED_PARAM(array);
+        return ArrayResult::No;
+    }
 }
 
 // The checks that appendCompiledObject() makes on an object without extra properties before it writes the fields.

@@ -120,6 +120,7 @@ StubSignature signatureOfHandleExceptionAtPrologue(StubKey) { return { }; }
 StubSignature signatureOfThrowStackOverflow(StubKey) { return { }; }
 StubSignature signatureOfCatch(StubKey) { return { }; }
 StubSignature signatureOfRejectInFrame(StubKey) { return { }; }
+StubSignature signatureOfRejectAwaitedCall(StubKey) { return { }; }
 
 void generateHandleException(StubAssembler& jit)
 {
@@ -215,6 +216,29 @@ void generateRejectInFrame(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     if (liesBelowSpilledArguments)
         emitDropSpilledArgumentRegisters(jit);
+    jit.ret();
+}
+
+void generateRejectAwaitedCall(StubAssembler& jit)
+{
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    static_assert(stackAlignmentBytes() == 2 * sizeof(void*));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), T9);
+    jit.move(T9, sp);
+#if CPU(X86_64)
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), T9);
+    jit.push(T9);
+#else
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), CCallHelpers::linkRegister);
+#endif
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(stackAlignmentBytes()), sp);
+    jit.storePtr(GPRInfo::callFrameRegister, Address(sp));
+    jit.storePtr(GPRInfo::callFrameRegister, Address(sp, sizeof(void*)));
+    jit.move(instanceGPR, A0);
+    jit.move(sp, A1);
+    jit.callOperation(Entry::operationAOTRejectWithException, T9);
+    jit.emitFunctionEpilogue();
     jit.ret();
 }
 

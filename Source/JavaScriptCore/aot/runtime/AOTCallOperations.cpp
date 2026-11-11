@@ -422,12 +422,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstructWithArray, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSuperConstruct);
-    MarkedArgumentBuffer arguments;
-    fill(arguments, count, argumentValues);
-    if (arguments.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, encodedJSValue());
-    }
+    ArgList arguments(const_cast<EncodedJSValue*>(argumentValues), count);
     OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 

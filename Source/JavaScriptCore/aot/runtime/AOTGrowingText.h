@@ -33,6 +33,9 @@ ALWAYS_INLINE JSString* joinTexts(JSGlobalObject* globalObject, Instance& instan
 
 JS_EXPORT_PRIVATE bool canGrowInPlace(Instance&, JSString* text);
 
+bool tryResolveInGrowingBuffer(Instance&, JSRopeString*);
+void noteResolvedText(Instance&, const JSString*);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

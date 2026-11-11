@@ -157,7 +157,9 @@ struct ImageWords {
     const FunctionKindData* closureFunctionKinds;
     const ImageRegExp* regExps;
     const uint8_t* regExpCode;
-    const uint32_t* functionStarts;
+    const uint16_t* functionSteps;
+    const uint32_t* functionStartGroups;
+    uint64_t endOfIdentifiers;
 };
 
 struct LazyStringWords {

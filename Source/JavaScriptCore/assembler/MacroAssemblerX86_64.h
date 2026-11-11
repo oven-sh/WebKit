@@ -989,13 +989,13 @@ public:
 
     void sub32(RegisterID left, RegisterID right, RegisterID dest)
     {
+        if (left == right) {
+            move(TrustedImm32(0), dest);
+            return;
+        }
         if (dest == right) {
             neg32(dest);
             add32(left, dest);
-            return;
-        }
-        if (left == right) {
-            move(TrustedImm32(0), dest);
             return;
         }
         move(left, dest);
@@ -3140,7 +3140,7 @@ public:
 
     void moveConditionallyTest32(ResultCondition cond, RegisterID testReg, TrustedImm32 mask, RegisterID src, RegisterID dest)
     {
-        test32(testReg, mask);
+        test32(testReg, mask, cond);
         cmov(x86Condition(cond), src, dest);
     }
 
@@ -3149,7 +3149,7 @@ public:
         ASSERT(isInvertible(cond));
         ASSERT_WITH_MESSAGE(cond != Overflow, "TEST does not set the Overflow Flag.");
 
-        test32(testReg, mask);
+        test32(testReg, mask, cond);
 
         if (thenCase != dest && elseCase != dest) {
             move(elseCase, dest);
@@ -3167,7 +3167,7 @@ public:
         ASSERT(isInvertible(cond));
         ASSERT_WITH_MESSAGE(cond != Overflow, "TEST does not set the Overflow Flag.");
 
-        test32(testReg, mask);
+        test32(testReg, mask, cond);
 
         if (elseCase == dest) {
             moveWithoutClobberingFlags(thenCase, scratchRegister());
@@ -3338,6 +3338,12 @@ public:
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
+    Jump branch32(RelationalCondition cond, RegisterID left, BaseIndex right)
+    {
+        m_assembler.cmpl_mr(right.offset, right.base, right.index, right.scale, left);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
     Jump branch32(RelationalCondition cond, Address left, RegisterID right)
     {
         m_assembler.cmpl_rm(right, left.offset, left.base);
@@ -3403,11 +3409,13 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void test32(RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
+    static constexpr bool readsSignFlag(ResultCondition cond) { return cond == Signed || cond == PositiveOrZero; }
+
+    void test32(RegisterID reg, TrustedImm32 mask = TrustedImm32(-1), ResultCondition cond = NonZero)
     {
         if (mask.m_value == -1)
             m_assembler.testl_rr(reg, reg);
-        else if (!(mask.m_value & ~0xff) && (reg < X86Registers::esp || policy().shortensEncodings)) {
+        else if (!(mask.m_value & ~0xff) && !readsSignFlag(cond) && (reg < X86Registers::esp || policy().shortensEncodings)) {
             if (mask.m_value == 0xff)
                 m_assembler.testb_rr(reg, reg);
             else
@@ -3423,13 +3431,16 @@ public:
 
     Jump branchTest32(ResultCondition cond, RegisterID reg, TrustedImm32 mask = TrustedImm32(-1))
     {
-        test32(reg, mask);
+        test32(reg, mask, cond);
         return branch(cond);
     }
 
     Jump branchTest32(ResultCondition cond, Address address, TrustedImm32 mask = TrustedImm32(-1))
     {
-        generateTest32(address, mask);
+        if (readsSignFlag(cond) && mask.m_value != -1)
+            m_assembler.testl_i32m(mask.m_value, address.offset, address.base);
+        else
+            generateTest32(address, mask);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
@@ -3784,7 +3795,10 @@ public:
 
     void test32(ResultCondition cond, Address address, TrustedImm32 mask, RegisterID dest)
     {
-        generateTest32(address, mask);
+        if (readsSignFlag(cond) && mask.m_value != -1)
+            m_assembler.testl_i32m(mask.m_value, address.offset, address.base);
+        else
+            generateTest32(address, mask);
         set32(x86Condition(cond), dest);
     }
 
@@ -3796,7 +3810,7 @@ public:
 
     void test32(ResultCondition cond, RegisterID reg, TrustedImm32 mask, RegisterID dest)
     {
-        test32(reg, mask);
+        test32(reg, mask, cond);
         set32(x86Condition(cond), dest);
     }
 
@@ -4896,6 +4910,8 @@ private:
             m_assembler.cmpl_im(0, address.offset, address.base);
         else if (!(mask.m_value & ~0xff))
             m_assembler.testb_im(mask.m_value, address.offset, address.base);
+        else if (address.offset > std::numeric_limits<int32_t>::max() - 3)
+            m_assembler.testl_i32m(mask.m_value, address.offset, address.base);
         else if (!(mask.m_value & ~0xff00))
             m_assembler.testb_im(mask.m_value >> 8, address.offset + 1, address.base);
         else if (!(mask.m_value & ~0xff0000))
@@ -5518,6 +5534,10 @@ public:
 
     void clearBits64WithMask(RegisterID mask, RegisterID dest, ClearBitsAttributes maskPreservation = ClearBitsAttributes::OKToClobberMask)
     {
+        if (mask == dest) {
+            move(TrustedImm32(0), dest);
+            return;
+        }
         not64(mask);
         m_assembler.andq_rr(mask, dest);
         if (maskPreservation == ClearBitsAttributes::MustPreserveMask)
@@ -5526,6 +5546,15 @@ public:
 
     void clearBits64WithMask(RegisterID src, RegisterID mask, RegisterID dest, ClearBitsAttributes maskPreservation = ClearBitsAttributes::OKToClobberMask)
     {
+        if (mask == dest) {
+            if (src == dest)
+                move(TrustedImm32(0), dest);
+            else {
+                not64(dest);
+                and64(src, dest);
+            }
+            return;
+        }
         move(src, dest);
         clearBits64WithMask(mask, dest, maskPreservation);
     }
@@ -5594,14 +5623,13 @@ public:
 
     void lshift64(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
     {
-        if (shiftAmount == dest) {
-            move(imm, scratchRegister());
-            lshift64(shiftAmount, scratchRegister());
-            move(scratchRegister(), dest);
-        } else {
-            move(imm, dest);
-            lshift64(shiftAmount, dest);
-        }
+        RegisterID target = shiftAmount == dest ? scratchRegister() : dest;
+        if (imm.m_value < 0)
+            signExtend32ToPtr(imm, target);
+        else
+            move(imm, target);
+        lshift64(shiftAmount, target);
+        move(target, dest);
     }
 
     void lshift64(Address src, RegisterID shiftAmount, RegisterID dest)
@@ -5972,13 +6000,13 @@ public:
     
     void sub64(RegisterID left, RegisterID right, RegisterID dest)
     {
+        if (left == right) {
+            move(TrustedImm32(0), dest);
+            return;
+        }
         if (dest == right) {
             neg64(dest);
             add64(left, dest);
-            return;
-        }
-        if (left == right) {
-            move(TrustedImm32(0), dest);
             return;
         }
         move(left, dest);
@@ -6897,6 +6925,12 @@ public:
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
+    Jump branch64(RelationalCondition cond, RegisterID left, BaseIndex right)
+    {
+        m_assembler.cmpq_mr(right.offset, right.base, right.index, right.scale, left);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
     Jump branch64(RelationalCondition cond, AbsoluteAddress left, RegisterID right)
     {
         move(TrustedImmPtr(left.m_ptr), scratchRegister());
@@ -6924,6 +6958,12 @@ public:
     Jump branch64(RelationalCondition cond, BaseIndex address, RegisterID right)
     {
         m_assembler.cmpq_rm(right, address.offset, address.base, address.index, address.scale);
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    Jump branch64(RelationalCondition cond, BaseIndex left, TrustedImm32 right)
+    {
+        m_assembler.cmpq_im(right.m_value, left.offset, left.base, left.index, left.scale);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
 
@@ -7093,7 +7133,7 @@ public:
         if (op2 == dest)
             return branchAdd64(cond, op1, dest);
         if (op1.base == dest) {
-            load32(op1, dest);
+            load64(op1, dest);
             return branchAdd64(cond, op2, dest);
         }
         move(op2, dest);
@@ -9783,6 +9823,8 @@ public:
     void vectorAddSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         ASSERT(simdInfo.signMode != SIMDSignMode::None);
+        if (dest == right)
+            std::swap(left, right);
 
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
@@ -9823,6 +9865,10 @@ public:
     void vectorSubSat(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        if (!supportsAVX() && dest == right && dest != left) {
+            moveVector(right, fpTempRegister);
+            right = fpTempRegister;
+        }
 
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
@@ -10040,6 +10086,8 @@ public:
 
     void vectorAvgRound(SIMDInfo simdInfo, FPRegisterID a, FPRegisterID b, FPRegisterID dest)
     {
+        if (dest == b)
+            std::swap(a, b);
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
             if (supportsAVX())
@@ -10351,6 +10399,20 @@ public:
         Label start = label();
         m_assembler.movq_rip(dest);
         return start;
+    }
+
+    Label comparePCRelative64(RegisterID left)
+    {
+        Label start = label();
+        m_assembler.cmpq_rip(left);
+        return start;
+    }
+
+    Label loadPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.movsd_rip(dest);
+        // Relocations of this kind are the last bytes of the instruction. Only a Jump creates a Label that is not at the end of the buffer.
+        return Jump(m_assembler.buffer().label().labelAtOffset(-static_cast<int>(relocationSize(RelocationKind::Load64)))).label();
     }
 
     Label moveInstanceAddress(RegisterID instance, RegisterID dest)

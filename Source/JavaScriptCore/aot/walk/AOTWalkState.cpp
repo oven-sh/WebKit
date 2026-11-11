@@ -1689,7 +1689,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
             Holder& record = m_holders.mutableAt(holder);
             record.isListedAsFreshWithElements = false;
             uint32_t next = std::exchange(record.nextFreshWithElements, none);
-            if (!record.hasEnded)
+            if (!record.hasEnded && !record.elementsLieOutsideViews)
                 endPlacesOf(holder, ListOfPlaces::Elements, endsAlways);
             holder = next;
         }
@@ -1903,8 +1903,11 @@ void WalkState::Held::meetWith(const Held& other, RecordsLastMet* last)
             if (record.shape != same.shape)
                 endShape(holder);
             invalidateCellFacts(holder, factsKnownHereAlone);
-            if (record.elementsLieOutsideViews && !same.elementsLieOutsideViews)
+            if (record.elementsLieOutsideViews && !same.elementsLieOutsideViews) {
                 m_holders.mutableAt(holder).elementsLieOutsideViews = false;
+                if (m_holders[holder].isFresh && m_holders[holder].firstElement != none)
+                    listAsFreshWithElements(holder);
+            }
             if (leaves)
                 letLeave(holder);
         }

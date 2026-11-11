@@ -1,5 +1,5 @@
-# More than four functions that met at one place are no longer told apart, so a call of what lies at such a place may enter any function that is lost. Two that met elsewhere are still named, and nobody has lost them. If they stayed so where what lies there flows on into the place of the many, `six` would be entered without code.
-# function run(f) { return f(); }  function pass(f) { return f; }  run(one); run(two); run(three); run(four); run(five); pass(five); run(pass(six));
+# More than eight functions that met at one place are no longer told apart, so a call of what lies at such a place may enter any function that is lost. Two that met elsewhere are still named, and nobody has lost them. If they stayed so where what lies there flows on into the place of the many, `six` would be entered without code.
+# function run(f) { return f(); }  function pass(f) { return f; }  run(one); run(two); run(three); run(four); run(five); run(<one of four more>); pass(five); run(pass(six));
 # RUN: link functions mechanisms=all
 # CHECK: function f3
 # CHECK-NOT: unreached
@@ -22,16 +22,24 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v5 = NewClosure function=f6
     v6 = NewClosure function=f7
     v7 = NewClosure function=f8
-    v8 = Call v0, -, v2 calleeName="run"
-    v9 = Call v0, -, v3 calleeName="run"
-    v10 = Call v0, -, v4 calleeName="run"
-    v11 = Call v0, -, v5 calleeName="run"
-    v12 = Call v0, -, v6 calleeName="run"
-    v13 = Call v1, -, v6 calleeName="pass"
-    v14 = Call v1, -, v7 calleeName="pass"
-    v15 = Call v0, -, v14 calleeName="run"
-    v16 = Undefined
-    Return v16
+    v8 = NewClosure function=f9
+    v9 = NewClosure function=f10
+    v10 = NewClosure function=f11
+    v11 = NewClosure function=f12
+    v12 = Call v0, -, v2 calleeName="run"
+    v13 = Call v0, -, v3 calleeName="run"
+    v14 = Call v0, -, v4 calleeName="run"
+    v15 = Call v0, -, v5 calleeName="run"
+    v16 = Call v0, -, v6 calleeName="run"
+    v17 = Call v0, -, v8 calleeName="run"
+    v18 = Call v0, -, v9 calleeName="run"
+    v19 = Call v0, -, v10 calleeName="run"
+    v20 = Call v0, -, v11 calleeName="run"
+    v21 = Call v1, -, v6 calleeName="pass"
+    v22 = Call v1, -, v7 calleeName="pass"
+    v23 = Call v0, -, v22 calleeName="run"
+    v24 = Undefined
+    Return v24
 }
 function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -70,5 +78,25 @@ function f7 name="five" module=m0 thisType={type=anything} results=[{type=anythi
 function f8 name="six" module=m0 thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=6
+    Return v0
+}
+function f9 name="more9" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    Return v0
+}
+function f10 name="more10" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    Return v0
+}
+function f11 name="more11" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    Return v0
+}
+function f12 name="more12" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
     Return v0
 }

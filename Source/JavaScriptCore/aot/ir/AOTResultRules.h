@@ -217,6 +217,7 @@ Range quotientsRoundedEitherWay(Range dividends, Range divisors);
 template<typename Operation> TypeID typeOfConstant(const TypingContext&, const Operation&, ObjectID created = { });
 TypeID typeOfKeyConstant(const TypingContext&, PropertyKeyID);
 TypeID typeOfBuiltinObject(const TypingContext&, BuiltinID);
+BuiltinID findNativeFunction(const BuiltinTable&, BuiltinID binding);
 TypeID typeOfData(const TypingContext&, const DataNode&, ObjectID created = { });
 TypeID typeOfAllocatedLayout(const TypingContext&, LayoutID, ObjectID created = { });
 TypeID typeOfDeclaredLayout(const TypingContext&, LayoutID);

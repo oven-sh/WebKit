@@ -897,7 +897,7 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
     if (opcode == Opcode::PutHeapFrameWord && !operation.remembersFrame() && m_types.at(m_code.at(operation.valueOperand()).type).hasCells())
         return fail(block, id, "what may be a cell is stored into a word of a frame in the heap, and the store does not remember the frame"_s, operation.valueOperand());
 
-    if (opcode == Opcode::GetArrayElement && operation.holdsDoublesOperand()) {
+    if ((opcode == Opcode::GetArrayElement || opcode == Opcode::IsElementPresent) && operation.holdsDoublesOperand()) {
         const Operation& kind = m_code.at(operation.holdsDoublesOperand());
         if (kind.opcode != Opcode::HasArrayStorage || kind.arrayStorage() != ArrayStorage::Double || kind.admitsInt32Storage() || !areSameCells(kind.arrayOperand(), operation.arrayOperand()))
             return fail(block, id, "a read takes for the kind of its list what no question of that list for doubles gives"_s, operation.holdsDoublesOperand());
@@ -1046,13 +1046,20 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
     BlockID home = m_code.blockOf(ground);
     BlockID block = m_code.blockOf(access);
     ValueID list = m_code.at(access).operand(0);
+    auto writesLists = [&](const Operation& operation) {
+        FunctionID callee = operation.opcode == Opcode::CallDirect && m_facts ? operation.function() : FunctionID();
+        if (!callee)
+            return declaredBoundOf(operation.opcode).writes.containsAny(heapsOfLists);
+        const LinkedFunction& linked = m_facts->linked().function(callee);
+        return linked.effectsOnReturn().writes.containsAny(heapsOfLists) || linked.effectsOnThrow().writes.containsAny(heapsOfLists);
+    };
     auto findIn = [&](BlockID in, uint32_t after, uint32_t before) -> ValueID {
         for (ValueID each : operationsOf(in)) {
             uint32_t place = m_places[each.index()];
             const Operation& operation = m_code.at(each);
             if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
                 continue;
-            if (declaredBoundOf(operation.opcode).writes.containsAny(heapsOfLists) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
+            if (writesLists(operation) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
                 return each;
         }
         return { };
@@ -1416,7 +1423,7 @@ bool CodeVerifier::treatsUndefinedAsNaN(ValueID id, const Operation& user, uint3
     }
     if (arithmeticOnTwoNumbersInCodeVerifier.contains(user.opcode) || allRelations.contains(user.opcode))
         return operandIndex < 2;
-    if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32 || allBitwiseOperators.contains(user.opcode))
+    if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32 || user.opcode == Opcode::ToNumber || user.opcode == Opcode::IntegerBound || allBitwiseOperators.contains(user.opcode))
         return true;
     if (user.opcode == Opcode::TypeTest) {
         const Type& tested = m_types.at(user.testedType());
@@ -1663,9 +1670,7 @@ const DataNode::Array* CodeVerifier::findWrittenDataShownOf(ValueID cell, BlockI
     for (ValueID test : *m_testsForWrittenData) {
         if (underlyingCell(m_code.at(test).arrayOperand()) != asked)
             continue;
-        EdgeID passes = m_code.at(m_code.blockOf(test)).terminator.taken();
-        BlockID behind = m_code.at(passes).to;
-        if (m_code.at(behind).firstEdgeIn() == passes && !m_code.at(passes).nextInto() && dominates(headOf(behind), headOf(block)))
+        if (isAnsweredAt(test, true, block, 0))
             return m_program.at(m_code.at(test).data()).root.tryAs<DataNode::Array>();
     }
     return nullptr;
@@ -1786,8 +1791,11 @@ void CodeVerifier::verifyTestsPassed()
                 const Operation& test = m_code.at(side.test);
                 if (!writtenBy)
                     writtenBy = findArrayWriteAfter(side.test);
-                for (uint32_t operand = 0; !writtenBy && operand < test.numberOfOperands(); ++operand)
-                    writtenBy = findArrayWriteAfter(test.operand(operand));
+                ValueID position = valueBeforeConversions(underlyingCell(access.operand(1)));
+                for (uint32_t operand = 0; !writtenBy && operand < test.numberOfOperands(); ++operand) {
+                    if (test.operand(operand) && valueBeforeConversions(underlyingCell(test.operand(operand))) != position)
+                        writtenBy = findArrayWriteAfter(test.operand(operand));
+                }
             }
             if (writtenBy)
                 return fail(block, id, "the storage or the length of a list is written between a ground of an access and the access"_s, writtenBy);
@@ -1880,9 +1888,10 @@ void CodeVerifier::verifyKindsOfStorageNamed()
                     return fail(block, id, "a store is taken to lay an element into a list that is not made here, or under what is no known index"_s, access.arrayOperand());
                 continue;
             }
-            if (!accessesAtLevels.contains(access.opcode) || access.level() != KnowledgeLevel::Proven || !hasArrayStorageForm(access.arrayStorage()))
+            bool isNumericStore = access.opcode == Opcode::PutContiguousIndex && access.hasNumericStorage();
+            if (!isNumericStore && (!accessesAtLevels.contains(access.opcode) || access.level() != KnowledgeLevel::Proven || !hasArrayStorageForm(access.arrayStorage())))
                 continue;
-            ArrayStorage named = access.arrayStorage();
+            ArrayStorage named = isNumericStore ? ArrayStorage::Other : access.arrayStorage();
             bool admitsInt32Storage = access.opcode == Opcode::GetArrayElement && access.admitsInt32Storage();
             Vector<ValueID, 4> cells;
             collectUnderlyingCells(access.operand(0), cells);
@@ -1895,10 +1904,10 @@ void CodeVerifier::verifyKindsOfStorageNamed()
                 if (!everyMakerIsInSight)
                     break;
                 ArrayStorage born = written ? arrayStorageOfData(m_program, *written) : storageThatLiteralIsSurelyBornWith(m_program, m_types, m_code, made);
-                if (born != named && !(admitsInt32Storage && born == ArrayStorage::Int32))
+                if (isNumericStore ? !isNumericStorage(born) : born != named && !(admitsInt32Storage && born == ArrayStorage::Int32))
                     bornOtherwise = cell;
             }
-            if (!everyMakerIsInSight || !bornOtherwise)
+            if (everyMakerIsInSight ? !bornOtherwise : !isNumericStore)
                 continue;
             if (!tests) {
                 tests.emplace();
@@ -1909,11 +1918,14 @@ void CodeVerifier::verifyKindsOfStorageNamed()
                     }
                 }
             }
+            auto showsKind = [&](const Operation& test) {
+                return isNumericStore ? test.isWritable() && isNumericStorage(test.arrayStorage()) : test.arrayStorage() == named;
+            };
             bool hasPassedTest = std::ranges::any_of(*tests, [&](ValueID test) {
-                return m_code.at(test).arrayStorage() == named && areSameCells(m_code.at(test).arrayOperand(), access.operand(0)) && isAnsweredAt(test, true, block, m_places[id.index()]);
+                return showsKind(m_code.at(test)) && areSameCells(m_code.at(test).arrayOperand(), access.operand(0)) && isAnsweredAt(test, true, block, m_places[id.index()]);
             });
             if (!hasPassedTest)
-                return fail(block, id, "an access names a kind of storage that a maker of its list is not surely born with, and no test of that kind has passed"_s, bornOtherwise, InternalErrorKind::InvalidGuard);
+                return fail(block, id, isNumericStore ? "a store names a numeric kind of storage that no passed test of its array shows"_s : "an access names a kind of storage that a maker of its list is not surely born with, and no test of that kind has passed"_s, isNumericStore ? access.arrayOperand() : bornOtherwise, InternalErrorKind::InvalidGuard);
         }
     }
 }

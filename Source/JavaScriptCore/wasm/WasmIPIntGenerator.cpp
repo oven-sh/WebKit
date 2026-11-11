@@ -2815,6 +2815,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
         m_maxStackSize = m_stackSize + extraWasmStackInBytes / 16;
 
     ASSERT(!(stackArgumentsAndResultsInBytes % 16)); // mINT requires this for 16-bytes at a time tail-call arguments copy
+    m_info.m_usesTailCalls.storeRelaxed(true);
 }
 
 [[nodiscard]] PartialResult IPIntGenerator::addCall(unsigned callProfileIndex, FunctionSpaceIndex index, const RTT& signature, ArgumentList&, ResultList& results, CallType callType)

@@ -170,7 +170,7 @@ static InlineForm chooseFormOfReflectApply(const InlineBuiltinQuery& query)
 static InlineForm chooseFormOfReflectConstruct(const InlineBuiltinQuery& query)
 {
     bool takesOperands = (query.numberOfArguments() == 2 || query.numberOfArguments() == 3) && everyArgumentButThisMayBeObjectForReflect(query, std::nullopt);
-    return query.hasSlowPath && query.isDoneInPlace && takesOperands ? InlineForm::TwoWay : InlineForm::Call;
+    return query.hasSlowPath && takesOperands ? InlineForm::TwoWay : InlineForm::Call;
 }
 
 InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinQuery& query)

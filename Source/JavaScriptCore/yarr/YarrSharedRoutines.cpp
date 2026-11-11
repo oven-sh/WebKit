@@ -73,7 +73,7 @@ void add(Hasher& hasher, const SharedRoutine& routine)
             add(hasher, payload.charSize);
         },
         [&](const SharedRoutine::FindFirstPairOfUnits& payload) {
-            add(hasher, payload.charSize, payload.distance, payload.foldsCaseOfFirst, payload.foldsCaseOfSecond);
+            add(hasher, payload.charSize, payload.distance, payload.first, payload.second);
         },
         [&](const SharedRoutine::CanonicalEquivalence& payload) {
             add(hasher, payload.mode);
@@ -947,7 +947,8 @@ struct FirstPairOfUnitsSearchGenerator {
     static constexpr MacroAssembler::RegisterID limit = YarrJITDefaultRegisters::regT3;
     static constexpr FPRReg firstUnits = YarrJITDefaultRegisters::vectorTemp0;
     static constexpr FPRReg secondUnits = YarrJITDefaultRegisters::vectorTemp1;
-    static constexpr FPRReg caseBits = YarrJITDefaultRegisters::vectorTemp2;
+    // The ASCII case bit in every lane, or the second unit of the position that matches two.
+    static constexpr FPRReg caseBitOrAlternate = YarrJITDefaultRegisters::vectorTemp2;
     static constexpr FPRReg lowerOfFirst = YarrJITDefaultRegisters::vectorInput0;
     static constexpr FPRReg upperOfFirst = YarrJITDefaultRegisters::vectorInput1;
     static constexpr FPRReg lowerOfSecond = YarrJITDefaultRegisters::vectorScratch0;
@@ -960,7 +961,12 @@ struct FirstPairOfUnitsSearchGenerator {
 
     void loadVectorConstants()
     {
-        const bool foldsCase = payload.foldsCaseOfFirst || payload.foldsCaseOfSecond;
+        auto isOneOf = [&](PositionUnits units) {
+            return payload.first == units || payload.second == units;
+        };
+        const bool foldsCase = isOneOf(PositionUnits::IgnoreCase);
+        const bool hasAlternateUnit = isOneOf(PositionUnits::Two);
+        RELEASE_ASSERT(!hasAlternateUnit || (!foldsCase && payload.first != payload.second));
         if (foldsCase)
             jit.move(MacroAssembler::TrustedImm32(isWide ? 0x00200020 : 0x20202020), found);
 #if CPU(X86_64)
@@ -968,68 +974,80 @@ struct FirstPairOfUnitsSearchGenerator {
         assembler.movq_rr(bothUnits, secondUnits);
         assembler.pshufd_i8rr(0x00, secondUnits, firstUnits);
         assembler.pshufd_i8rr(0x55, secondUnits, secondUnits);
-        if (foldsCase) {
-            assembler.movd_rr(found, caseBits);
-            assembler.pshufd_i8rr(0x00, caseBits, caseBits);
+        if (foldsCase || hasAlternateUnit) {
+            assembler.movd_rr(found, caseBitOrAlternate);
+            assembler.pshufd_i8rr(0x00, caseBitOrAlternate, caseBitOrAlternate);
         }
 #else
         jit.vectorSplatInt32(bothUnits, firstUnits);
         jit.urshift64(bothUnits, MacroAssembler::TrustedImm32(32), bothUnits);
         jit.vectorSplatInt32(bothUnits, secondUnits);
-        if (foldsCase)
-            jit.vectorSplatInt32(found, caseBits);
+        if (foldsCase || hasAlternateUnit)
+            jit.vectorSplatInt32(found, caseBitOrAlternate);
 #endif
     }
 
     MacroAssembler::Jump testVector()
     {
         emitVerifySubjectRead(jit, subjectAt(0), (unitsInStep + payload.distance) << unitShift, regs.input, regs.length, unitShift, __LINE__);
-        struct Half {
-            FPRReg vector;
-            int32_t units;
-            FPRReg sought;
-            bool foldsCase;
-        };
-        const Half halves[] = {
-            { lowerOfFirst, 0, firstUnits, payload.foldsCaseOfFirst },
-            { lowerOfSecond, payload.distance, secondUnits, payload.foldsCaseOfSecond },
-            { upperOfFirst, 8, firstUnits, payload.foldsCaseOfFirst },
-            { upperOfSecond, payload.distance + 8, secondUnits, payload.foldsCaseOfSecond },
-        };
-        const std::span<const Half> used = std::span(halves).first(isWide ? 4 : 2);
 #if CPU(X86_64)
         auto& assembler = jit.m_assembler;
-        for (const Half& half : used) {
-            assembler.movdqu_mr(half.units << unitShift, regs.input, regs.index, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne, half.vector);
-            if (half.foldsCase)
-                assembler.por_rr(caseBits, half.vector);
+        auto compare = [&](FPRReg sought, FPRReg vector) {
             if (isWide)
-                assembler.pcmpeqw_rr(half.sought, half.vector);
+                assembler.pcmpeqw_rr(sought, vector);
             else
-                assembler.pcmpeqb_rr(half.sought, half.vector);
-        }
-        assembler.pand_rr(lowerOfSecond, lowerOfFirst);
-        if (isWide) {
-            assembler.pand_rr(upperOfSecond, upperOfFirst);
-            assembler.packsswb_rr(upperOfFirst, lowerOfFirst);
-        }
-        assembler.pmovmskb_rr(lowerOfFirst, found);
-        return jit.branchTest32(MacroAssembler::NonZero, found);
+                assembler.pcmpeqb_rr(sought, vector);
+        };
+        auto loadAndCompare = [&](int32_t units, PositionUnits held, FPRReg sought, FPRReg vector, FPRReg scratch) {
+            assembler.movdqu_mr(units << unitShift, regs.input, regs.index, isWide ? MacroAssembler::TimesTwo : MacroAssembler::TimesOne, vector);
+            if (held == PositionUnits::IgnoreCase)
+                assembler.por_rr(caseBitOrAlternate, vector);
+            if (held == PositionUnits::Two) {
+                assembler.movaps_rr(vector, scratch);
+                compare(caseBitOrAlternate, scratch);
+            }
+            compare(sought, vector);
+            if (held == PositionUnits::Two)
+                assembler.por_rr(scratch, vector);
+        };
+        auto join = [&](FPRReg vector, FPRReg into) {
+            assembler.pand_rr(vector, into);
+        };
 #else
         constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::Unsigned };
         constexpr SIMDInfo words16 { SIMDLane::i16x8, SIMDSignMode::Unsigned };
         constexpr SIMDInfo whole { SIMDLane::v128, SIMDSignMode::None };
-        for (const Half& half : used) {
-            jit.loadVector(subjectAt(half.units), half.vector);
-            if (half.foldsCase)
-                jit.vectorOr(whole, half.vector, caseBits, half.vector);
-            jit.compareIntegerVector(MacroAssembler::Equal, isWide ? words16 : bytes, half.vector, half.sought, half.vector);
-        }
-        jit.vectorAnd(whole, lowerOfFirst, lowerOfSecond, lowerOfFirst);
+        auto loadAndCompare = [&](int32_t units, PositionUnits held, FPRReg sought, FPRReg vector, FPRReg scratch) {
+            jit.loadVector(subjectAt(units), vector);
+            if (held == PositionUnits::IgnoreCase)
+                jit.vectorOr(whole, vector, caseBitOrAlternate, vector);
+            if (held == PositionUnits::Two)
+                jit.compareIntegerVector(MacroAssembler::Equal, isWide ? words16 : bytes, vector, caseBitOrAlternate, scratch);
+            jit.compareIntegerVector(MacroAssembler::Equal, isWide ? words16 : bytes, vector, sought, vector);
+            if (held == PositionUnits::Two)
+                jit.vectorOr(whole, vector, scratch, vector);
+        };
+        auto join = [&](FPRReg vector, FPRReg into) {
+            jit.vectorAnd(whole, into, vector, into);
+        };
+#endif
+        loadAndCompare(0, payload.first, firstUnits, lowerOfFirst, lowerOfSecond);
+        if (isWide)
+            loadAndCompare(8, payload.first, firstUnits, upperOfFirst, upperOfSecond);
+        loadAndCompare(payload.distance, payload.second, secondUnits, lowerOfSecond, upperOfSecond);
+        join(lowerOfSecond, lowerOfFirst);
         if (isWide) {
-            jit.vectorAnd(whole, upperOfFirst, upperOfSecond, upperOfFirst);
-            jit.vectorUnzipEven(bytes, lowerOfFirst, upperOfFirst, lowerOfFirst);
+            loadAndCompare(payload.distance + 8, payload.second, secondUnits, upperOfSecond, lowerOfSecond);
+            join(upperOfSecond, upperOfFirst);
         }
+#if CPU(X86_64)
+        if (isWide)
+            assembler.packsswb_rr(upperOfFirst, lowerOfFirst);
+        assembler.pmovmskb_rr(lowerOfFirst, found);
+        return jit.branchTest32(MacroAssembler::NonZero, found);
+#else
+        if (isWide)
+            jit.vectorUnzipEven(bytes, lowerOfFirst, upperOfFirst, lowerOfFirst);
         jit.vectorShrnInt8(lowerOfFirst, 4, lowerOfFirst);
         jit.moveDoubleTo64(lowerOfFirst, found);
         return jit.branchTest64(MacroAssembler::NonZero, found);

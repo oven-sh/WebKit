@@ -1,0 +1,75 @@
+# function count(n) { let found = 0; for (let i = 0; i < n; i++) { const it = { kind: i, size: n }; if (it.hasOwnProperty("size")) found++; } return found; }
+# function listed(n) { let found = 0; for (let i = 0; i < n; i++) { const it = { kind: i, hasOwnProperty: n }; if (it.hasOwnProperty("kind")) found++; } return found; }
+# A record that lists no such name finds the method on Object.prototype, which nobody changes.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: PropGet
+# CHECK-NOT: = Call
+# RUN(LISTED): walk f2 mechanisms=all
+# LISTED: = Call
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="hasOwnProperty" declared={type=anything} flags=[IsRequired]}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v0 key="count"
+    PropSet v2, v1 key="listed"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="count" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = NewObject -, v4, v0 layout=L0 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = PropGet v8 key="hasOwnProperty"
+    v10 = String string="size"
+    v11 = Call v9, v8, v10 calleeKey="hasOwnProperty"
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(| 0), notTaken b4(v3)
+  b3(v13):
+    v14 = Increment v3
+    Jump -> next b4(v14)
+  b4(v15):
+    v16 = Increment v4
+    Jump -> next b1(v15, v16)
+  b5():
+    Return v3
+}
+function f2 name="listed" module=m0 position=24 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = NewObject -, v4, v0 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = PropGet v8 key="hasOwnProperty"
+    v10 = String string="kind"
+    v11 = Call v9, v8, v10 calleeKey="hasOwnProperty"
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(| 0), notTaken b4(v3)
+  b3(v13):
+    v14 = Increment v3
+    Jump -> next b4(v14)
+  b4(v15):
+    v16 = Increment v4
+    Jump -> next b1(v15, v16)
+  b5():
+    Return v3
+}

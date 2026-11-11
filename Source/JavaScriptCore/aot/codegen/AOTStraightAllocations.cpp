@@ -202,7 +202,7 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
             }
         }
     }
-    bool canBeMade = hasSlots ? placed && !placed->isBornUnfinished : program.at(layout).kind == LayoutKind::Record;
+    bool canBeMade = hasSlots ? placed && !placed->isBornUnfinished && (prototype || program.at(layout).kind != LayoutKind::Instance || plan.slots().hasDirectInstances(layout)) : program.at(layout).kind == LayoutKind::Record;
     if (!canBeMade || (isEnvironment && numberListed != fields.size()) || (prototype && (!hasSlots || isEnvironment || !fields.isEmpty()))) {
         emitter.fail(value);
         return;

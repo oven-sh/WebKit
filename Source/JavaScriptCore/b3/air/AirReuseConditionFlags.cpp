@@ -14,6 +14,8 @@
 #include "AirInstInlines.h"
 #include "AirOpcodeUtils.h"
 #include "AirPhaseScope.h"
+#include "B3PatchpointValue.h"
+#include "B3ValueInlines.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/GraphOrdering.h>
@@ -177,6 +179,12 @@ std::optional<std::pair<Tmp, Width>> resultInFlagsOf(const Inst& inst)
     if (!isX86())
         return std::nullopt;
     std::span<const Arg> args = inst.args();
+    if (inst.kind.opcode == Patch) {
+        auto* patchpoint = inst.origin ? inst.origin->as<PatchpointValue>() : nullptr;
+        if (!patchpoint || !patchpoint->zeroFlagReflectsFirstResult || !args[1].isReg())
+            return std::nullopt;
+        return std::pair { args[1].tmp(), Width32 };
+    }
     if (args.size() < 2 || args.size() > 3 || !args.back().isTmp() || !args.back().isGP())
         return std::nullopt;
     for (const Arg& arg : args) {
@@ -271,7 +279,30 @@ private:
         return comparison;
     }
 
-    // The operation right in front of the branch has made the register that the branch compares with zero.
+    // Skips only flag-preserving moves between the operation and the branch.
+    std::optional<MacroAssembler::ResultCondition> findResultConditionBefore(BasicBlock* block, unsigned index) const
+    {
+        Inst& branch = block->at(index);
+        while (index--) {
+            Inst& inst = block->at(index);
+            if (std::optional<MacroAssembler::ResultCondition> condition = conditionOnResultOf(inst, branch))
+                return condition;
+            if (!isFlagPreservingMove(inst) || overwritesOperandOf(inst, branch))
+                return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
+    static bool overwritesOperandOf(Inst& move, Inst& branch)
+    {
+        bool result = false;
+        branch.forEachTmpFast([&](Tmp& tmp) {
+            result |= move.args()[1] == Arg(tmp);
+        });
+        return result;
+    }
+
+    // The branch compares the result of the operation with zero.
     std::optional<MacroAssembler::ResultCondition> conditionOnResultOf(const Inst& operation, Inst& branch) const
     {
         std::optional<std::pair<Tmp, Width>> result = resultInFlagsOf(operation);
@@ -298,6 +329,12 @@ private:
         default:
             return std::nullopt;
         }
+    }
+
+    static bool isBranchOnIntegers(const Inst& inst)
+    {
+        std::optional<OpcodeParts> parts = partsOf(inst.kind.opcode);
+        return parts && parts->consumer == FlagsConsumer::Branch;
     }
 
     static Inst definerFor(const Inst& user, const Comparison& comparison)
@@ -333,7 +370,7 @@ private:
         std::optional<AvailableFlags> flags = flagsAtHead(block);
         for (unsigned index = 0; index < block->size(); ++index) {
             Inst& inst = block->at(index);
-            if (std::optional<MacroAssembler::ResultCondition> condition = index ? conditionOnResultOf(block->at(index - 1), inst) : std::nullopt) {
+            if (std::optional<MacroAssembler::ResultCondition> condition = isBranchOnIntegers(inst) ? findResultConditionBefore(block, index) : std::nullopt) {
                 inst = Inst(BranchOnFlags, inst.origin, Arg::resCond(*condition));
                 // They are not the flags of a comparison with zero: carry and overflow may be anything.
                 flags = std::nullopt;
@@ -397,6 +434,15 @@ private:
 bool setsFlagsToResult(const Inst& inst)
 {
     return !!resultInFlagsOf(inst);
+}
+
+bool isFlagPreservingMove(const Inst& inst)
+{
+    if (!isX86() || (inst.kind.opcode != Move && inst.kind.opcode != Move32))
+        return false;
+    std::span<const Arg> args = inst.args();
+    // A move of zero is emitted as an xor, which sets the flags.
+    return args.size() == 2 && !args[0].isSomeImm();
 }
 
 bool reuseConditionFlags(Code& code)

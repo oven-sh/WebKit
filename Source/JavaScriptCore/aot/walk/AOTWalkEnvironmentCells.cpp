@@ -256,22 +256,34 @@ void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states
     if (states.size() < 2)
         return;
     Vector<Representation, 4> forms;
-    auto comesRoundOpenLoop = [&](Reference environment, FieldReference place) {
-        for (const OpenLoop& loop : m_openLoops) {
-            auto fields = m_fieldsOfScopesOfHeads.find(loop.head.index());
-            if (fields != m_fieldsOfScopesOfHeads.end() && fields->value.containsIf([&](const FieldOfScope& field) { return field.scope == environment && field.field.layout == place.layout && field.field.field == place.field; }))
-                return true;
+    Vector<const Vector<FieldOfScope>*, 4> fieldsOfOpenLoops;
+    for (const OpenLoop& loop : m_openLoops) {
+        if (auto fields = m_fieldsOfScopesOfHeads.find(loop.head.index()); fields != m_fieldsOfScopesOfHeads.end())
+            fieldsOfOpenLoops.append(&fields->value);
+    }
+    if (fieldsOfOpenLoops.isEmpty() && !unitHasMadeScopes())
+        return;
+    auto findCarriedField = [&](Reference holder, FieldReference place, bool isSlot) -> const FieldOfScope* {
+        for (const Vector<FieldOfScope>* fields : fieldsOfOpenLoops) {
+            size_t found = fields->findIf([&](const FieldOfScope& field) { return field.scope == holder && !!field.slotKey == isSlot && field.field.layout == place.layout && field.field.field == place.field; });
+            if (found != notFound)
+                return &fields->at(found);
         }
-        return false;
+        return nullptr;
     };
-    states[0]->forEachEnvironmentFieldNotSharedWithAll(states, [&](Reference environment, FieldReference place, Reference first) {
-        if (!isEnvironmentAllocation(environment) && !comesRoundOpenLoop(environment, place))
+    states[0]->forEachFieldNotSharedWithAll(states, [&](Reference holder, FieldReference place, Reference first, bool isSlot) {
+        const FieldOfScope* carried = isSlot || !isEnvironmentAllocation(holder) ? findCarriedField(holder, place, isSlot) : nullptr;
+        if (!carried && (isSlot || !isEnvironmentAllocation(holder)))
             return;
-        FieldOfScope field { environment, place, TypeID(), Representation::JSValue, { }, { }, { } };
+        FieldOfScope field { holder, place, TypeID(), Representation::JSValue, { }, { }, { } };
+        if (isSlot) {
+            field.slotKey = carried->slotKey;
+            field.receivers = carried->receivers;
+        }
         bool allBringOneValue = true;
         forms.shrink(0);
         for (const WalkState* state : states) {
-            Reference value = state->environmentField(environment, place);
+            Reference value = isSlot ? state->slot(holder, place) : state->environmentField(holder, place);
             TypeID type = ownTypeOf(value);
             if (!type || (m_types.at(type).primitives & Primitive::Absent) || representationOf(value) == Representation::Void || namesFreshCell(*state, value) || isClosureLeftUnmade(*this, value))
                 return;
@@ -282,6 +294,8 @@ void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states
         }
         if (allBringOneValue)
             return;
+        if (isSlot)
+            count(StatisticID::CarriedSlotsMergedAtJoins);
         field.form = formOfParameter(field.type, forms.span());
         found.append(WTF::move(field));
     });
@@ -298,13 +312,235 @@ void Walker::findFieldsOfScopesInFrontOfLoop(const LoopPreview& look, Vector<Fie
     }
 }
 
-void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead, const Effects& ofTurns, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
+void Walker::noteSlotRead(Reference object, PropertyKeyID key, Reference read)
+{
+    TypeID type = m_trialVisits.isEmpty() || !object.isValue() ? TypeID() : ownTypeOf(read);
+    if (!type || !canCarrySlotType(type))
+        return;
+    ValueID cell = underlyingCellOf(m_code, object.id());
+    size_t openLoop = m_openLoops.size();
+    for (size_t place = m_trialVisits.size(); place--;) {
+        TrialVisit& visit = m_trialVisits[place];
+        if (cell.index() >= visit.firstRecord)
+            return;
+        auto isVisited = [&](const OpenLoop& loop) {
+            return loop.frame == visit.frameIndex && m_frames[loop.frame].index->loop(loop.loop).head == visit.inputHead;
+        };
+        while (openLoop && !isVisited(m_openLoops[openLoop - 1]))
+            --openLoop;
+        if (!openLoop)
+            return;
+        if (executesOnEveryIteration(openLoop - 1, currentHoistPoint()))
+            visit.slotAccesses.append(SlotAccess { cell, key, underlyingCellOf(m_code, read.id()), { } });
+    }
+}
+
+static constexpr uint32_t weightOfInt32Position = 2;
+static constexpr uint32_t weightTakenByMethods = 1 << 16;
+
+void Walker::notePositions(const BodyValue& operation)
+{
+    const BodyIndex& index = currentBodyIndex();
+    Vector<std::pair<ValueID, uint32_t>, 4>& positions = m_trialVisits.last().positions;
+    auto note = [&](ValueID operand, uint32_t weight) {
+        Reference position = operand ? referenceOf(index.stripCasts(operand)) : Reference();
+        TypeID type = position && position.isValue() && !m_code.isConstant(position.id()) ? ownTypeOf(position) : TypeID();
+        if (!type || !m_types.at(type).isNumber())
+            return;
+        ValueID taken = underlyingCellOf(m_code, position.id());
+        positions.append({ taken, weight });
+        const Operation& made = m_code.at(taken);
+        static constexpr OpcodeSet stepsAndSums { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
+        if (!stepsAndSums.contains(made.opcode))
+            return;
+        for (ValueID term : made.operands())
+            positions.append({ underlyingCellOf(m_code, term), weight });
+    };
+    if (operation.opcode() != Opcode::Call) {
+        Reference object = referenceOf(operation.objectOperand());
+        TypeID type = object && object.isRecord() ? typeOf(object) : TypeID();
+        return note(operation.propertyOperand(), type && isViewOfNumbersReadInLine(*this, type) ? 1 : weightOfInt32Position);
+    }
+    ValueID callee = index.stripCasts(operation.operand(OperandIndex::Call::callee));
+    if (index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet)
+        return;
+    for (ValueID argument : operation.variadicOperands())
+        note(argument, weightTakenByMethods);
+}
+
+void Walker::noteSlotStore(Reference object, PropertyKeyID key, Reference before, Reference stored)
+{
+    TypeID type = m_trialVisits.isEmpty() || !object.isValue() || !stored.isValue() ? TypeID() : ownTypeOf(stored);
+    if (!type)
+        return;
+    ValueID cell = underlyingCellOf(m_code, object.id());
+    auto isInt32 = [&](TypeID asked) {
+        return asked && m_types.isSubset(asked, TypeTable::int32);
+    };
+    auto isOwnValue = [&](ValueID operand) {
+        return before && before.isValue() && underlyingCellOf(m_code, operand) == underlyingCellOf(m_code, before.id());
+    };
+    auto isSumWithInt32 = [&] {
+        if (!stored.isValue() || m_code.isConstant(stored.id()))
+            return false;
+        const Operation& sum = m_code.at(underlyingCellOf(m_code, stored.id()));
+        if (sum.opcode == Opcode::Increment || sum.opcode == Opcode::Decrement)
+            return isOwnValue(sum.operand(0));
+        if (sum.opcode != Opcode::Add && sum.opcode != Opcode::Sub)
+            return false;
+        return (isOwnValue(sum.operand(0)) && isInt32(typeOf(Reference::value(sum.operand(1))))) || (sum.opcode == Opcode::Add && isOwnValue(sum.operand(1)) && isInt32(typeOf(Reference::value(sum.operand(0)))));
+    };
+    auto isStep = [&](std::initializer_list<Opcode> steps) {
+        if (m_code.isConstant(stored.id()))
+            return false;
+        const Operation& step = m_code.at(underlyingCellOf(m_code, stored.id()));
+        return std::ranges::contains(steps, step.opcode) && isOwnValue(step.operand(0));
+    };
+    std::optional<bool> staysInt32;
+    bool isStepOfOne = isStep({ Opcode::Increment, Opcode::Decrement });
+    bool isStepUp = isStep({ Opcode::Increment });
+    for (size_t place = m_trialVisits.size(); place--;) {
+        TrialVisit& visit = m_trialVisits[place];
+        if (cell.index() >= visit.firstRecord)
+            return;
+        if (!staysInt32)
+            staysInt32 = isInt32(type) || isSumWithInt32();
+        visit.slotAccesses.append(SlotAccess { cell, key, before && before.isValue() ? underlyingCellOf(m_code, before.id()) : ValueID(), underlyingCellOf(m_code, stored.id()), *staysInt32, isStepOfOne, isStepUp });
+    }
+}
+
+bool Walker::learnSlotsOfLoop(LoopSummary& summary, TrialVisit& visit)
+{
+    Vector<SlotAccess, 2>& accesses = visit.slotAccesses;
+    if (accesses.isEmpty())
+        return false;
+    auto keyOf = [](const SlotAccess& access) {
+        return std::tuple { access.object, access.key.bits(), !!access.stored };
+    };
+    std::ranges::sort(accesses, { }, keyOf);
+    std::ranges::sort(visit.positions);
+    auto weightOfPosition = [&](ValueID value) {
+        uint32_t weight = 0;
+        for (const auto& [position, weightOfUse] : std::ranges::equal_range(visit.positions, value, { }, &std::pair<ValueID, uint32_t>::first))
+            weight += weightOfUse;
+        return weight;
+    };
+    Vector<SlotOfLoop, 2>& slots = summary.storesIntoScopes.slots;
+    const BodyIndex& index = *m_frames[visit.frameIndex].index;
+    uint32_t firstValueOfLoop = index.block(visit.inputHead).firstParameter().index();
+    HashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> holders;
+    bool hasNamedHolders = false;
+    auto typeOfHolder = [&](ValueID holder) {
+        return typeOf(m_frames[visit.frameIndex].references[holder.index()]);
+    };
+    auto isObjectAlone = [&](ValueID holder) {
+        TypeID type = typeOfHolder(holder);
+        return type && !m_types.at(type).primitives;
+    };
+    auto nameHolders = [&] {
+        if (std::exchange(hasNamedHolders, true))
+            return;
+        for (BlockID member : index.membersOf(index.loopOf(visit.inputHead))) {
+            for (BodyValue operation : index.block(member).values()) {
+                operation.forEachOperand([&](ValueID operand, uint32_t) {
+                    ValueID holder = operand ? index.stripCasts(operand) : ValueID();
+                    Reference named = holder && holder.index() < firstValueOfLoop ? m_frames[visit.frameIndex].references[holder.index()] : Reference();
+                    if (!named || !named.isValue())
+                        return;
+                    auto added = holders.add(underlyingCellOf(m_code, named.id()).index(), holder);
+                    if (!added.isNewEntry && !isObjectAlone(added.iterator->value) && isObjectAlone(holder))
+                        added.iterator->value = holder;
+                });
+            }
+        }
+    };
+    bool hasLearnedMore = false;
+    for (size_t first = 0; first < accesses.size();) {
+        size_t end = first;
+        bool isStored = false;
+        Vector<ValueID, 8> values;
+        bool staysInt32 = true;
+        bool isSteppedByOne = true;
+        bool onlyGrows = true;
+        while (end < accesses.size() && accesses[end].object == accesses[first].object && accesses[end].key == accesses[first].key) {
+            isStored |= !!accesses[end].stored;
+            for (ValueID value : { accesses[end].before, accesses[end].stored }) {
+                if (value)
+                    values.append(value);
+            }
+            staysInt32 &= accesses[end].staysInt32;
+            isSteppedByOne &= accesses[end].isStep;
+            onlyGrows &= accesses[end].isStepUp;
+            ++end;
+        }
+        SlotAccess access = accesses[first];
+        bool isRead = !access.stored;
+        first = end;
+        std::ranges::sort(values);
+        values.shrink(std::ranges::unique(values).begin() - values.begin());
+        uint32_t weight = 0;
+        for (ValueID value : values)
+            weight += weightOfPosition(value);
+        bool isInt32Position = staysInt32 && weight >= weightOfInt32Position;
+        if (!isStored)
+            continue;
+        nameHolders();
+        auto found = holders.find(access.object.index());
+        if (found == holders.end())
+            continue;
+        auto place = std::ranges::lower_bound(slots, std::pair { found->value, access.key.bits() }, { }, &SlotOfLoop::order);
+        if (place != slots.end() && place->holder == found->value && place->key == access.key) {
+            place->isInt32Position = isInt32Position;
+            place->isPosition = weight;
+            place->isSteppedByOne = isSteppedByOne && weight < weightTakenByMethods;
+            place->onlyGrows = onlyGrows;
+            continue;
+        }
+        if (!isRead || !findFilledSlot(*this, typeOfHolder(found->value), access.key))
+            continue;
+        slots.insert(place - slots.begin(), SlotOfLoop { found->value, access.key, isInt32Position, !!weight, false, isSteppedByOne && weight < weightTakenByMethods, onlyGrows });
+        hasLearnedMore = true;
+    }
+    return hasLearnedMore;
+}
+
+void Walker::findSlotsOfLoop(std::span<const SlotOfLoop> slots, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
+{
+    for (const SlotOfLoop& slot : slots) {
+        Reference object = referenceOf(slot.holder);
+        std::optional<FilledSlot> filled = object && object.isRecord() ? findFilledSlot(*this, typeOf(object), slot.key) : std::nullopt;
+        if (!filled)
+            continue;
+        FieldOfScope found { object, filled->place, TypeID(), Representation::JSValue, { }, { }, { } };
+        found.slotKey = slot.key;
+        found.receivers = filled->receivers;
+        found.slotIsInt32Position = slot.isInt32Position;
+        found.slotHolder = slot.holder;
+        found.slotIsSteppedByOne = slot.isSteppedByOne;
+        found.slotOnlyGrows = slot.onlyGrows;
+        found.mayStartAsInteger = slot.isPosition && !slot.hasLeftIntegers;
+        TypeID read = resultTypeOf(draftVariableRead(found));
+        if (!read || !canCarrySlotType(read))
+            continue;
+        Reference value = valueKnownOf(found);
+        if (!value && shouldReadBeforeHeader)
+            value = build(draftReadBeforeHeader(found, ReadBeforeHeaderUse::LoopCarriedValue));
+        if (shouldReadBeforeHeader && isUnreachable())
+            return;
+        found.values.append(value);
+        if (value || !shouldReadBeforeHeader)
+            known.append(WTF::move(found));
+    }
+}
+
+void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead, const Effects& ofTurns, std::span<const SlotOfLoop> slots, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
 {
     bool isTypedBuildWithCalls = !m_versionedLoops.isEmpty() && m_versionedLoops.last().turnsThatRunOtherCodeComeRound && m_versionedLoops.last().frameIndex == m_frames.size() - 1 && m_versionedLoops.last().inputHead == inputHead;
     if (!has(Mechanism::LoopInvariants) || !has(Mechanism::Folding) || m_coldCopyDepth || (ofTurns.mayRunOtherCode() && !isTypedBuildWithCalls) || ofTurns.maySuspend || (shouldReadBeforeHeader && isUnreachable()))
         return;
     const BodyIndex& index = currentBodyIndex();
-    if (!index.opcodes().contains(Opcode::PutEnvironmentField) && !index.opcodes().contains(Opcode::PutModuleVariable))
+    findSlotsOfLoop(slots, known, shouldReadBeforeHeader);
+    if ((!index.opcodes().contains(Opcode::PutEnvironmentField) && !index.opcodes().contains(Opcode::PutModuleVariable)) || (shouldReadBeforeHeader && isUnreachable()))
         return;
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
     LoopID loop = index.loopOf(inputHead);
@@ -421,7 +657,7 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
                     readTakenBySum = readOfPlaceTakenAlone(index.value(stored).operand(1));
             }
             size_t listed = known.findIf([&](const FieldOfScope& field) {
-                return field.variable == variable && field.scope == scope && field.field.layout == place.layout && field.field.field == place.field;
+                return field.variable == variable && !field.slotKey && field.scope == scope && field.field.layout == place.layout && field.field.field == place.field;
             });
             if (listed != notFound) {
                 known[listed].isSteppedByOne &= isStep;
@@ -504,7 +740,7 @@ TypeID Walker::backEdgeTypeOfVariable(BlockID inputHead, const FieldOfScope& fie
     if (versionedLoop.frameIndex != m_frames.size() - 1 || versionedLoop.inputHead != inputHead || !versionedLoop.entry)
         return { };
     for (const FieldOfScope& held : versionedLoop.variableBackEdgeChecks) {
-        if (held.variable == field.variable && held.scope == field.scope && held.field.layout == field.field.layout && held.field.field == field.field.field)
+        if (held.variable == field.variable && held.slotKey == field.slotKey && held.scope == field.scope && held.field.layout == field.field.layout && held.field.field == field.field.field)
             return held.type;
     }
     return { };
@@ -514,12 +750,23 @@ bool Walker::mayBeInDeadZone(const FieldOfScope& field) const
 {
     if (field.variable)
         return program().at(field.variable).initialization == VariableInitialization::Uninitialized && !m_state.isPastDeadZone(field.variable);
+    if (field.slotKey)
+        return false;
     TypeID written = program().at(field.field.layout).fields[field.field.field].declared.written();
     return written && (program().at(written).primitives & Primitive::Absent) && !m_state.isPastDeadZone(field.scope, field.field);
 }
 
 Draft Walker::draftVariableRead(const FieldOfScope& field)
 {
+    if (field.slotKey) {
+        Draft read(Opcode::GetSlot, m_origin);
+        chooseConservativeFields(read);
+        read.setObjectOperand(field.scope);
+        read.setKey(field.slotKey);
+        read.setReceivers(field.receivers);
+        read.setLevel(KnowledgeLevel::Proven);
+        return read;
+    }
     if (!field.variable)
         return draftCapturedVariableRead(field.scope, field.field);
     Draft read(Opcode::GetModuleVariable, m_origin);
@@ -532,6 +779,8 @@ Draft Walker::draftVariableRead(const FieldOfScope& field)
 Draft Walker::draftReadBeforeHeader(const FieldOfScope& field, ReadBeforeHeaderUse use, bool moduleMayBeUnevaluated)
 {
     Draft read = draftVariableRead(field);
+    if (field.slotKey)
+        return read;
     if (!field.variable) {
         if (use == ReadBeforeHeaderUse::GuardOperand && !shouldAssumeSlotsInitialized())
             read.setIsKnownInitialized(false);
@@ -578,7 +827,7 @@ Reference Walker::fitForParameterOfField(const FieldOfScope& field, Reference kn
 bool Walker::mayHandFieldOfScopeToBlock(FieldOfScope& field, BlockID inputHeadOfLoopEntered)
 {
     Reference entering = field.values[0];
-    if (!field.variable) {
+    if (!field.variable && !field.slotKey) {
         const Vector<Field>& fields = program().at(field.field.layout).fields;
         if (field.field.field >= fields.size() || fields[field.field.field].declared.isEstablished())
             return false;
@@ -591,9 +840,13 @@ bool Walker::mayHandFieldOfScopeToBlock(FieldOfScope& field, BlockID inputHeadOf
     if (TypeID held = backEdgeTypeOfVariable(inputHeadOfLoopEntered, field), own = ownTypeOf(entering); held && own && m_types.isSubset(own, held) && !m_types.isSubset(field.type, held)) {
         field.type = held;
         field.isHeld = true;
+    } else if (TypeID integer = m_types.integer(Range::exact()); field.mayStartAsInteger && inputHeadOfLoopEntered && own && hasOpenTrialVisit(m_frames.size() - 1, inputHeadOfLoopEntered)
+        && m_types.isSubset(own, integer) && m_types.isSubset(integer, field.type) && !m_types.isSubset(field.type, integer)) {
+        field.type = integer;
+        field.startsAsInteger = true;
     }
     field.form = formOfParameter(field.type, { });
-    if ((field.form == Representation::JSValue || optionalRepresentations.contains(field.form)) && isEnforced(ProofSource::SlotOfScope))
+    if (!field.slotKey && (field.form == Representation::JSValue || optionalRepresentations.contains(field.form)) && isEnforced(ProofSource::SlotOfScope))
         field.shown = typeThatUnitMayTestFor(m_types.testablePartOf(field.type), true, true);
     return isFitForParameterOfField(field, entering);
 }
@@ -613,7 +866,7 @@ void Walker::keepFieldsOfScopesThatLoopWrites(BlockID inputHead, Vector<FieldOfS
         return !field.values[0];
     });
     for (const FieldOfScope& field : known) {
-        if (!field.variable && isEnvironmentAllocation(field.scope))
+        if (!field.variable && !field.slotKey && isEnvironmentAllocation(field.scope))
             m_scopesWhoseFieldsHaveComeRound.add(field.scope.id().index());
     }
 }
@@ -631,6 +884,12 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
     size_t numberBesideFieldsOfScopes = arguments.size();
     for (const FieldOfScope& field : fields->value) {
         Reference value = fitForParameterOfField(field, valueKnownOf(field));
+        if (TrialVisit* visit = !value && field.startsAsInteger ? findTryOfBlockAheadOfEdges(head) : nullptr) {
+            for (SlotOfLoop& slot : m_loopSummaries[visit->summaryIndex].storesIntoScopes.slots)
+                slot.hasLeftIntegers |= slot.holder == field.slotHolder && slot.key == field.slotKey;
+            visit->misfits = true;
+            value = field.parameter;
+        }
         if (!value && field.isHeld && !m_versionedLoops.isEmpty() && backEdgeTypeOfVariable(m_versionedLoops.last().inputHead, field) == field.type) {
             value = askAgainWhereItComesRound(edge, head, field.type, arguments.span().first(numberBesideFieldsOfScopes), scopedLambda<Reference()>([&] {
                 if (Reference atHand = valueKnownOf(field))
@@ -1119,6 +1378,7 @@ void Walker::handScopesKeptAtHeadToPreview(const BodyIndex& index, BlockID input
 {
     Vector<Reference, 2>& scopes = preview.scopesThatTurnsOnlyBorrow;
     scopes.shrink(0);
+    preview.slots = stores.slots;
     for (const FreshObjectKeptAtHead& object : kept) {
         if (isEnvironmentAllocation(object.object))
             scopes.append(object.object);

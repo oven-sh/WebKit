@@ -1013,13 +1013,19 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
     JSObject* made = constructEmptyObject(m_realm.get());
     uint64_t numberOfExports = module.exports.size() + module.syntheticExports.size();
     payForPlacesMadeOutOfCharacters(numberOfExports, numberOfExports);
+    auto define = [&](StringID name, VariableID exported) {
+        JSValue value = variable(exported);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        made->putDirectMayBeIndex(m_realm.get(), Identifier::fromString(vm, charactersOf(name)), value);
+        return !hasThrown(scope);
+    };
     for (const ModuleExport& exported : module.exports) {
-        if (exported.kind == ModuleExportKind::Variable && exported.variable)
-            made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), variable(exported.variable));
+        if (exported.kind == ModuleExportKind::Variable && exported.variable && !define(exported.name, exported.variable))
+            return unknown();
     }
     for (const SyntheticExport& synthetic : module.syntheticExports) {
-        if (synthetic.variable)
-            made->putDirect(vm, Identifier::fromString(vm, charactersOf(synthetic.name)), variable(synthetic.variable));
+        if (synthetic.variable && !define(synthetic.name, synthetic.variable))
+            return unknown();
     }
     if (m_statesOfModules[id.index()] == StateOfModule::HasRun)
         m_namespaces[id.index()] = made;

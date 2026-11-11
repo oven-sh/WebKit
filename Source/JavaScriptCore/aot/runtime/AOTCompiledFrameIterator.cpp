@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncResumption.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCallSiteCache.h"
 #include "AOTCompiledCallee.h"
@@ -752,6 +753,7 @@ void CompiledFrameIterator::advanceToCallerMachineFrame()
     m_cursor.engineCalleeStubFrame = nullptr;
     m_cursor.plainFunctionConstructFrame = nullptr;
     m_cursor.constructFrameMakesThis = false;
+    m_cursor.isAmongFramesThatWait |= m_instance && m_cursor.callFrame && m_cursor.callFrame == std::bit_cast<const CallFrame*>(frameWithAwaitingCallers(*m_instance));
     m_calleeWasEntered = true;
     enterMachineFrame(findCallerFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
@@ -1081,7 +1083,7 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     FunctionDescription innermostDescription(innermost.function);
     entry.innermostVisibility = innermostDescription.visibility();
     entry.innermostIsAsync = innermostDescription.isAsync();
-    entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
+    entry.namesConstructedCallee = returnSite.hasConstructedCallees && image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
     entry.namesTailCallingBuiltin = entry.site.calledBuiltin && leavesByTailCall(entry.site.calledBuiltin);
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());

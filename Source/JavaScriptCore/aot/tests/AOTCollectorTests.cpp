@@ -21,6 +21,7 @@
 #include "JSLock.h"
 #include "MarkedSpace.h"
 #include "ObjectConstructor.h"
+#include "ReleaseHeapAccessScope.h"
 #include "RememberedSlot.h"
 #include "SimpleMarkingConstraint.h"
 #include "VM.h"
@@ -28,6 +29,7 @@
 #include "WeakInlines.h"
 #include <optional>
 #include <wtf/DataLog.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ParallelHelperPool.h>
@@ -67,12 +69,14 @@ private:
 
 } // anonymous namespace
 
-template<void (*body)()>
+enum class CollectorPause : uint8_t { Short, Unlimited };
+
+template<void (*body)(), CollectorPause pause>
 static void runInProcessWithCompiledCodeOptions()
 {
     ASCIILiteral name;
     for (const NativeTest& test : collectorTests()) {
-        if (test.run == &runInProcessWithCompiledCodeOptions<body>)
+        if (test.run == &runInProcessWithCompiledCodeOptions<body, pause>)
             name = test.name;
     }
     AOT_TEST_CHECK(!name.isNull());
@@ -83,7 +87,11 @@ static void runInProcessWithCompiledCodeOptions()
     }
 
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s, "--minimumGCPauseMS=10000"_s, "--gcPauseScale=10000"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s };
+    if constexpr (pause == CollectorPause::Unlimited)
+        arguments.appendList({ "--minimumGCPauseMS=10000"_str, "--gcPauseScale=10000"_str });
+    else
+        arguments.appendList({ "--minimumGCPauseMS=0"_str, "--gcPauseScale=0"_str });
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
         dataLogLn(result.output);
@@ -222,6 +230,38 @@ static void checkWideHeapStartsHelpers()
     AOT_TEST_CHECK(vm.heap.collector().hasStartedHelpers());
     for (unsigned index = 0; index < length; index += 997)
         AOT_TEST_CHECK(array->getDirectIndex(realm, index).isObject());
+    ensureStillAliveHere(array);
+}
+
+static void checkCollectorThreadMarksWithoutHelpers()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    constexpr unsigned length = 100000;
+    JSArray* array = JSArray::tryCreate(vm, realm->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
+    AOT_TEST_CHECK(array);
+    for (unsigned index = 0; index < length; ++index)
+        array->putDirectIndex(realm, index, constructEmptyObject(realm));
+
+    unsigned numberOfConcurrentCollections = 0;
+    vm.heap.collector().willCollectWithoutHelpers();
+    for (unsigned count = 0; count < 20; ++count) {
+        vm.heap.collectNow(Async, CollectionScope::Full);
+        if (vm.heap.objectSpace().isMarking())
+            ++numberOfConcurrentCollections;
+        MonotonicTime deadline = MonotonicTime::now() + 10_s;
+        while (vm.heap.objectSpace().isMarking() && MonotonicTime::now() < deadline) {
+            {
+                ReleaseHeapAccessScope releaseAccess(vm.heap);
+            }
+            sleep(1_ms);
+            vm.heap.stopIfNecessary();
+        }
+        AOT_TEST_CHECK(!vm.heap.objectSpace().isMarking());
+    }
+    vm.heap.collector().didCollectWithoutHelpers();
+    AOT_TEST_CHECK(numberOfConcurrentCollections);
     ensureStillAliveHere(array);
 }
 
@@ -564,7 +604,10 @@ static void testTransitionChainStaysWithoutCompiledCode()
 }
 
 template<void (*body)()>
-static constexpr void (*withCompiledCodeOptions)() = runInProcessWithCompiledCodeOptions<body>;
+static constexpr void (*withCompiledCodeOptions)() = runInProcessWithCompiledCodeOptions<body, CollectorPause::Unlimited>;
+
+template<void (*body)()>
+static constexpr void (*withConcurrentMarking)() = runInProcessWithCompiledCodeOptions<body, CollectorPause::Short>;
 
 std::span<const NativeTest> collectorTests()
 {
@@ -576,6 +619,7 @@ std::span<const NativeTest> collectorTests()
         { "collector/larger-cells/off-without-compiled-code"_s, testNothingIsBorrowedWithoutCompiledCode },
         { "collector/helpers/small-heap-starts-none"_s, withCompiledCodeOptions<checkSmallHeapStartsNoHelper> },
         { "collector/helpers/wide-heap-starts-them"_s, withCompiledCodeOptions<checkWideHeapStartsHelpers> },
+        { "collector/helpers/collector-thread-marks-without-them"_s, withConcurrentMarking<checkCollectorThreadMarksWithoutHelpers> },
         { "collector/helpers/eager-without-compiled-code"_s, testHelpersStartEagerlyWithoutCompiledCode },
         { "collector/roots/full-collection-defers-regions"_s, withCompiledCodeOptions<checkFullCollectionDefersRegionsOfRoots> },
         { "collector/roots/store-after-deferral-is-seen"_s, withCompiledCodeOptions<checkStoreAfterDeferralIsSeen> },

@@ -431,6 +431,44 @@ static void returnConstantInRegisterOfKey(StubAssembler& jit, CreatedConstant co
     jit.returnToCaller();
 }
 
+void loadStringConstantsAndJump(StubAssembler& jit, std::span<const GPRReg> numbers, StubKey target)
+{
+    struct LateConstant {
+        Jump isNotCreated;
+        GPRReg number;
+        Label isLoaded;
+    };
+
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg word = ownedScratch;
+    const bool isNarrow = !jit.options().useWideReferences;
+    Vector<LateConstant, 2> lateConstants;
+    for (GPRReg number : numbers) {
+        RELEASE_ASSERT(noOverlap(number, word, instanceGPR, cellCageBaseGPR));
+        Jump isNotCreated;
+        if (isNarrow) {
+            jit.load32(BaseIndex(instanceGPR, number, CCallHelpers::TimesFour, InstanceLayout::offsetOfStringCells), word);
+            isNotCreated = jit.branchTest32(CCallHelpers::Zero, word);
+            decodeCell32(jit, word, number);
+        } else {
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.wideStringCells)), word);
+            jit.load64(BaseIndex(word, number, CCallHelpers::TimesEight), word);
+            isNotCreated = jit.branchTest64(CCallHelpers::Zero, word);
+            jit.move(word, number);
+        }
+        lateConstants.append({ isNotCreated, number, jit.label() });
+    }
+    jit.jumpToStub(target);
+
+    for (const LateConstant& late : lateConstants) {
+        late.isNotCreated.link(&jit);
+        callMakerOfConstantAndReturn(jit, createConstant(CreatedConstant::String), late.number, [&](GPRReg number) {
+            jit.move(late.number, number);
+        });
+        jit.jump().linkTo(late.isLoaded, &jit);
+    }
+}
+
 void generateCreateConstant(StubAssembler& jit)
 {
     if (jit.key().operandRegister())

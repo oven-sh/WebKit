@@ -123,6 +123,7 @@ private:
 };
 
 JS_EXPORT_PRIVATE void emitPadding(CCallHelpers&);
+JS_EXPORT_PRIVATE void emitUnreachable(CCallHelpers&);
 
 enum class InstanceWordWidth : uint8_t { Byte, Word32, Word64 };
 
@@ -205,6 +206,10 @@ public:
 
     void moveAddress(CodeSymbol, GPRReg dest, PCRelativeReach);
     void load64(CodeSymbol, GPRReg dest);
+#if CPU(X86_64)
+    void loadDouble(CodeSymbol, FPRReg dest);
+    void compare64(GPRReg left, CodeSymbol);
+#endif
     ALWAYS_INLINE uint32_t call(CodeSymbol symbol)
     {
         CCallHelpers::Label site = m_jit.label();
@@ -253,6 +258,20 @@ public:
     }
 #endif
 
+#if CPU(X86_64)
+    template<typename Functor>
+    auto withNumberAsImmediate(CodeSymbol symbol, const Functor& functor)
+    {
+        auto& buffer = m_jit.m_assembler.buffer();
+        auto result = functor(placeholderOfNumber);
+        std::span<uint8_t> immediate = WTF::unsafeMakeSpan(static_cast<uint8_t*>(buffer.data()), buffer.codeSize()).last(sizeof(int32_t));
+        RELEASE_ASSERT(WTF::unalignedLoad<int32_t>(immediate.data()) == placeholderOfNumber);
+        WTF::unalignedStore<int32_t>(immediate.data(), 0);
+        append(CCallHelpers::Jump(buffer.label().labelAtOffset(-static_cast<int>(sizeof(int32_t)))).label(), RelocationKind::Number32, symbol);
+        return result;
+    }
+#endif
+
     uint32_t numberOfRelocations() const { return m_pending.size(); }
     void reserveRoomFor(size_t number) { m_pending.reserveCapacity(number); }
 
@@ -262,6 +281,7 @@ public:
 private:
 #if CPU(X86_64)
     static constexpr int32_t placeholderOfInstanceWordDistance = 0x12345678;
+    static constexpr int32_t placeholderOfNumber = 0x23456789;
 #endif
 
     struct PendingRelocation {

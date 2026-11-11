@@ -272,6 +272,8 @@ void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArraySt
     }
     if (!elements().boxIsMadeInFormOfType(stored) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::SkipInt32Reboxing))
         rawElement = emitter<ConversionEmitter>().inFormOfType(rawElement, typeOf(stored));
+    if (elements().checksBounds())
+        elements().stopUnlessInside(value, logicalOr(isInt32(rawElement.as<Boxed>()), elements().hasArrayStorage(elements().askedAnew(array), ArrayStorage::Contiguous)));
     elements().storeWordOfOperand(value, stored, rawElement.as<Boxed>(), storage, position);
     barrierAfterStore(value, array, typeOf(stored));
 }
@@ -310,6 +312,8 @@ void ArrayIntrinsicEmitter::putNumberInBounds(const ValueContext& value, const A
 
 void ArrayIntrinsicEmitter::generatePutContiguousIndex(const ValueContext& value)
 {
+    if (value->hasNumericStorage() && elements().checksBounds())
+        elements().stopUnlessInside(value, elements().hasWritableNumericStorage(elements().askedAnew(in<CellPointer>(value->arrayOperand()))));
     if (!value->goesByKindOfStorage()) {
         putInBounds(value, contiguous);
         return;
@@ -778,6 +782,13 @@ void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
     m_out.appendTo(otherwise);
     join.add(boolean(false));
     define(value, join.finish());
+}
+
+void ArrayIntrinsicEmitter::generateSortNumbers(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Integer direction = integerOperand(value->directionOperand());
+    define(value, callOperation<Condition>(value, RuntimeOperation::SortNumbers, { array, low32(direction) }));
 }
 
 void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)

@@ -22,6 +22,8 @@ constexpr StubKey throwStackOverflow(bool isAtPrologue = false) { return StubKey
 constexpr StubKey catchException() { return StubKey(StubFamily::Catch); }
 constexpr StubKey rejectInFrame(bool liesBelowSpilledArguments) { return StubKey(StubFamily::RejectInFrame).withForm(static_cast<uint8_t>(liesBelowSpilledArguments ? RejectedFrameForm::BelowSpilledArguments : RejectedFrameForm::Plain)); }
 
+constexpr StubKey rejectAwaitedCall() { return StubKey(StubFamily::RejectAwaitedCall); }
+
 void emitUnwind(StubAssembler&);
 void emitThrowStackOverflow(StubAssembler&);
 

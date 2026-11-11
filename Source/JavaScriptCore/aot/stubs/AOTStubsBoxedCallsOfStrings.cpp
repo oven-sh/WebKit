@@ -66,9 +66,11 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     RELEASE_ASSERT(noOverlap(impl, unit, trail, calleeGPR, thisGPR, instanceGPR, argumentGPR(0)));
 
     callsHostFunction.append(jit.branchIfNotInt32(argumentGPR(0)));
+    Label hasString = jit.label();
     jit.loadPtr(Address(thisGPR, JSString::offsetOfValue()), impl);
     Jump isRope = jit.branchIfRopeStringImpl(impl);
     JumpList isOutside;
+    JumpList isNotSubstring;
     isOutside.append(jit.branch32(CCallHelpers::AboveOrEqual, argumentGPR(0), Address(impl, StringImpl::lengthMemoryOffset())));
     jit.zeroExtend32ToWord(argumentGPR(0), unit);
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
@@ -79,7 +81,7 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     jit.returnToCaller();
 
     isRope.link(&jit);
-    loadSubstringCharacters(jit, thisGPR, impl, trail, unit, callsHostFunction);
+    loadSubstringCharacters(jit, thisGPR, impl, trail, unit, isNotSubstring);
     isOutside.append(jit.branch32(CCallHelpers::AboveOrEqual, argumentGPR(0), unit));
     jit.zeroExtend32ToWord(argumentGPR(0), unit);
     Jump pieceIs16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
@@ -122,6 +124,9 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     isOneUnit.link(&jit);
     boxInt32(jit, unit, jit.result());
     jit.returnToCaller();
+
+    isNotSubstring.link(&jit);
+    flattenSubject(jit, thisGPR, { thisGPR, argumentGPR(0) }, hasString);
 }
 
 void emitStringCharacterAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)

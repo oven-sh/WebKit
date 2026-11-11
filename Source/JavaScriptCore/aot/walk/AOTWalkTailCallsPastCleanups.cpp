@@ -54,16 +54,32 @@ ValueID iteratorClosedLeavingLoop(const BodyIndex& index, BodyBlock block, LoopI
     return iteratorClosedByHandler(index, block);
 }
 
-bool Walker::handlerOnlyClosesIterations(const BodyIndex& index, BodyBlock block) const
+bool Walker::handlerOnlyClosesIterations(Frame& frame, BodyBlock block) const
 {
+    const BodyIndex& index = *frame.index;
+    bool onlyClosesIterations = false;
+    Vector<BlockID, 8> classified;
     for (BodyBlock covered = block;;) {
+        InputBlock& record = frame.blocks[covered.id().index()];
+        if (record.handlerIsClassified) {
+            onlyClosesIterations = record.handlerOnlyClosesIterations;
+            break;
+        }
+        classified.append(covered.id());
         if (!iteratorClosedByHandler(index, covered))
-            return false;
-        BodyBlock cleanup = index.block(covered.handler().block());
-        if (!cleanup.hasHandler())
-            return true;
-        covered = cleanup;
+            break;
+        covered = index.block(covered.handler().block());
+        if (!covered.hasHandler()) {
+            onlyClosesIterations = true;
+            break;
+        }
     }
+    for (BlockID covered : classified) {
+        InputBlock& record = frame.blocks[covered.index()];
+        record.handlerIsClassified = true;
+        record.handlerOnlyClosesIterations = onlyClosesIterations;
+    }
+    return onlyClosesIterations;
 }
 
 bool Walker::throwsPastHandlerOf(BodyBlock block) const

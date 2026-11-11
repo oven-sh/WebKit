@@ -901,7 +901,8 @@ static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& all
             allocator.noteFrameUse();
             if ((allocator.m_valueFacts[leaf->index()].lastUse <= allocator.m_position || !allocator.hasFreeRegister(bank, candidates)) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
                 return allocator.memoryLocationOf(leaf);
-        }
+        } else if (comparesConstantInMemory(*user, childIndex, *leaf) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
+            return Location::immediate();
         reg = allocator.bringIntoRegister(leaf, candidates, hintIfAmong(allocator.hintOf(leaf), candidates));
         if (!reg) {
             allocator.m_proc.fail(FailureKind::OutOfRegisters, user);

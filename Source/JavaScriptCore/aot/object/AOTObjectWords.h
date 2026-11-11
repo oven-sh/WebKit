@@ -119,7 +119,7 @@ struct PrototypeTransition {
 };
 
 static constexpr uint32_t numberOfPrototypeTransitions = 1024;
-static constexpr unsigned prototypeTransitionHashShift = 6;
+static constexpr unsigned prototypeTransitionHashShift = 4;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }
 static constexpr uint32_t maxIndexOfFirstElementStoredContiguously = 7;
 

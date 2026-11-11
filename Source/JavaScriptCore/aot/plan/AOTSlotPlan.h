@@ -57,6 +57,7 @@ struct StorageOfLayouts {
     bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
 
     BitVector layoutsNeverAllocated;
+    BitVector layoutsWithoutDirectInstances;
     BitVector layoutsThatRepeatTheirBases;
     Vector<LayoutID> nearestLayoutsAboveThatDoNotRepeat;
     Vector<StorageOfLayout> layouts;
@@ -104,6 +105,8 @@ struct PlacedSlot {
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
     bool mayTakeWordLeftInCell { false };
+    bool isStable { false };
+    bool isStableWithoutNullish { false };
     uint32_t offset { 0 };
     std::optional<uint16_t> indexInLayoutRecord;
     FunctionID deferredFunction;
@@ -345,6 +348,7 @@ struct SlotPlanParts {
     BitVector functionsWhosePrototypePropertyStaysAsMade;
     Vector<ClassCreationPlan> classCreation;
     BitVector layoutsNeverAllocated;
+    BitVector layoutsWithoutDirectInstances;
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
     Vector<uint32_t> firstModuleThatWritesFieldUnder;
@@ -408,6 +412,7 @@ public:
     const PlannedLayout& layout(LayoutID id) const { return id.index() < m_parts.layouts.size() ? m_parts.layouts[id.index()] : m_unplannedLayout; }
     bool holdsCompiledObjects(LayoutID id) const { return layout(id).holdsCompiledObjects(); }
     bool isNeverAllocated(LayoutID id) const { return m_parts.layoutsNeverAllocated.get(id.index()); }
+    bool hasDirectInstances(LayoutID id) const { return !m_parts.layoutsWithoutDirectInstances.get(id.index()); }
     bool someLayoutInUseHoldsOtherThanCompiledObjects(uint32_t wordOfLayouts, uint64_t layoutsInWord) const { return wordOfLayouts >= m_layoutsInUseThatHoldOtherThanCompiledObjects.size() || (m_layoutsInUseThatHoldOtherThanCompiledObjects[wordOfLayouts] & layoutsInWord); }
 
     const PlacedSlot& slot(LayoutID id, FieldIndex field) const

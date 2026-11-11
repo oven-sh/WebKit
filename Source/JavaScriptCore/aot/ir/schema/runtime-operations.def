@@ -111,6 +111,7 @@ runtime StringBuilderToString, StringBuilderFinish : JSCell* (JSCell* builder, u
 runtime StringBuilderDiscard : void (JSCell* builder) ; reads(all) writes(StringBuilderContents, RuntimeState)
 runtime StackStringBuilderGrow : uint8_t* (uint8_t* builder, uint8_t* cursor) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StackStringBuilderAppend : uint8_t* (uint8_t* builder, uint8_t* cursor, EncodedJSValue primitive) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
+runtime StackStringBuilderAppendCodeUnit : uint8_t* (uint8_t* builder, uint8_t* cursor, uint32_t codeUnit) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StackStringBuilderAppendStringRange : uint8_t* (uint8_t* builder, uint8_t* cursor, JSCell* string, int32_t start, int32_t end) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StackStringBuilderToString : JSCell* (uint8_t* builder, uint8_t* cursor) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StackStringBuilderFinish : JSCell* (uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects

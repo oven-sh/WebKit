@@ -253,9 +253,8 @@ private:
             }
             m_strings.continueIf(belowOrEqual(sub(m_strings.lengthOf(string), word32(static_cast<int32_t>(shortest))), word32(static_cast<int32_t>(longest - shortest))), m_otherwise);
         }
-        Pointer answer(callStub(m_terminator, narrowCharactersOfString(), { string.value() }).first);
-        Word32 lengthWrittenDown(loadBytes(m_out, sizeof(uint32_t), m_out.address(m_heaps.characters8.atAnyIndex(), answer.value(), OBJECT_OFFSETOF(NarrowCharactersOfString, length))));
-        goOnWith(Pointer(m_out.add(answer.value(), m_out.constIntPtr(OBJECT_OFFSETOF(NarrowCharactersOfString, characters)))), lengthWrittenDown);
+        StubCallResult narrow = callStub(m_terminator, narrowCharactersOfString(), { string.value() });
+        goOnWith(Pointer(narrow.first), low32(Integer(narrow.second)));
 
         m_out.appendToJoin(hasCharacters, fork);
         switchOverLengthGroups(string, { Pointer(characters), Word32(length), boolean(true), string }, cases);

@@ -23,6 +23,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTStronglyConnectedComponents.h"
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <utility>
@@ -384,8 +385,10 @@ std::optional<FindsNothing> LinkTables::findsNothing(const Program& program, Lay
     };
     for (LayoutID current = layout; current; current = of == Of::HolderAndAbove ? program.at(current).base : LayoutID()) {
         const Layout& written = program.at(current);
+        if (side == ClassSide::Prototype && (isLaidOnPrototypeOf(current, key) || mayBeLaidOnPrototypeUnderUnknownKey(program, current, key)))
+            return std::nullopt;
         if (written.has(LayoutFlags::IsConstructorFunction)) {
-            if (side == ClassSide::Static || isLaidOnPrototypeOf(current, key) || mayBeLaidOnPrototypeUnderUnknownKey(program, current, key))
+            if (side == ClassSide::Static)
                 return std::nullopt;
             continue;
         }
@@ -405,16 +408,15 @@ bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout,
         return std::pair { laid.layout, laid.key };
     };
     for (LayoutID current = layout; current; current = program.at(current).base) {
-        if (program.at(current).has(LayoutFlags::IsConstructorFunction)) {
-            if (mayBeLaidOnPrototypeUnderUnknownKey(program, current, key))
+        if (mayBeLaidOnPrototypeUnderUnknownKey(program, current, key))
+            return false;
+        for (const LinkedNameOnPrototype& laid : std::ranges::equal_range(namesOnPrototypes, std::pair { current, key }, { }, placeOf)) {
+            if (!laid.function)
                 return false;
-            for (const LinkedNameOnPrototype& laid : std::ranges::equal_range(namesOnPrototypes, std::pair { current, key }, { }, placeOf)) {
-                if (!laid.function)
-                    return false;
-                functions.append(laid.function);
-            }
-            continue;
+            functions.append(laid.function);
         }
+        if (program.at(current).has(LayoutFlags::IsConstructorFunction))
+            continue;
         std::span<const uint32_t> places = membersUnder(current, ClassSide::Prototype, key);
         if (places.empty() && classHolderIsMadeWithName(program, ClassSide::Prototype, key))
             return false;
@@ -481,8 +483,13 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
         if (isKnown)
             firstClassAsked = nearest;
     }
+    auto isLaidOnPrototypeOf = [&](LayoutID holder) {
+        return std::ranges::binary_search(namesOnPrototypes, std::pair { holder, key }, { }, [](const LinkedNameOnPrototype& laid) {
+            return std::pair { laid.layout, laid.key };
+        });
+    };
     for (LayoutID current = firstClassAsked; current; current = program.at(current).base) {
-        if (side == ClassSide::Prototype && program.at(current).has(LayoutFlags::IsConstructorFunction))
+        if (side == ClassSide::Prototype && (program.at(current).has(LayoutFlags::IsConstructorFunction) || isLaidOnPrototypeOf(current)))
             return { };
         MemberFound found;
         unsigned numberFound = 0;
@@ -647,6 +654,7 @@ private:
     void writeCallsThatFindBuiltins();
     void noteCallersThatFindBuiltins();
     void writeResultsOfReadsByKey();
+    void writeNativeCallResults();
     void writeContentsAtOperations();
     void writeReceiversThatStayAsMade();
     void writeReadsOffViewsOfWrittenLengths();
@@ -801,6 +809,7 @@ void WriterOfLink::writeWhatMakesTypes(TypeArena& types)
     writeCoroutinesOfLink(m_program, m_flow, types, m_tables);
     writeCatches();
     writeResultsOfReadsByKey();
+    writeNativeCallResults();
     writeContentsAtOperations();
 }
 
@@ -2002,6 +2011,54 @@ void WriterOfLink::writeResultsOfReadsByKey()
     }
 }
 
+void WriterOfLink::writeNativeCallResults()
+{
+    if (writesWhatIsExpected())
+        return;
+    const BuiltinTable& builtins = m_program.builtins();
+    m_tables.nativeCallResults = collectInParallel<LinkedNativeCallResult>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<LinkedNativeCallResult>& calls) {
+        if (!m_flow.reached.get(index))
+            return;
+        FunctionID caller(index);
+        const ThinSummary& summary = m_flow.summaries.at(caller);
+        uint32_t firstCall = m_flow.firstCallOfFunction[index];
+        BitVector nativeCalls;
+        Vector<ValueID> sites;
+        for (uint32_t number = 0; number < summary.calls.size(); ++number) {
+            const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[firstCall + number];
+            if (callees.builtins().isEmpty())
+                continue;
+            const SummaryCall& call = summary.calls[number];
+            bool hasOtherCallees = !callees.listed().isEmpty() || !callees.shared().isEmpty() || std::ranges::any_of(callees.builtins().span(), [&](BuiltinID callee) {
+                return builtins.at(callee).scope != BuiltinScope::Module;
+            });
+            if (!hasOtherCallees && call.site && !call.isMadeByProtocol && !call.isConstruction && !call.passesList)
+                nativeCalls.set(number);
+        }
+        if (nativeCalls.isEmpty())
+            return;
+        for (const SummaryCall& call : summary.calls)
+            sites.append(call.site);
+        std::ranges::sort(sites);
+        size_t first = calls.size();
+        for (uint32_t node = 1; node < summary.nodes.size(); ++node) {
+            const SummaryNode& result = summary.nodes[node];
+            if (result.kind != SummaryNode::Kind::ResultOfCall || result.second || !nativeCalls.get(result.first))
+                continue;
+            ValueID site = summary.calls[result.first].site;
+            const LinkType& given = m_flow.typeAt(m_flow.nodeOf(caller, node));
+            bool holdsObjects = given.objects != LinkType::Objects::None || given.functions != LinkType::Functions::None || given.classes != LinkType::Classes::None || given.builtin || given.hasUnknownObjects || given.holdsLostBuiltins;
+            if (given.isNever() || holdsObjects || std::ranges::equal_range(sites, site).size() != 1)
+                continue;
+            if (TypeID proven = typeIDOf(given); proven && holdsOnlyPrimitives(proven))
+                calls.append(LinkedNativeCallResult { caller, site, proven });
+        }
+        std::ranges::sort(calls.mutableSpan().subspan(first), { }, &LinkedNativeCallResult::site);
+    });
+    for (const LinkedNativeCallResult& call : m_tables.nativeCallResults)
+        m_tables.nativeFunctionCallers.set(call.function.index());
+}
+
 void WriterOfLink::writeContentsAtOperations()
 {
     struct Operation {
@@ -2230,6 +2287,7 @@ ALWAYS_INLINE void WriterOfLink::writeFunction(FunctionID id)
         return;
 
     const Function& function = m_program.at(id);
+    linked.isIterationCallback = m_flow.iterationCallbacks.get(index);
     linked.everyCallerIsKnown = everyCallerIsKnownOf(index);
     linked.holdsInt32Promise = m_flow.summaries.at(id).has(SummaryTrait::HoldsInt32Promise);
     bool sharesNoCall = linked.everyCallerIsKnown && !m_functionsSharingCalls.get(index) && !m_functionsThatTextsOfLibraryName.get(index);
@@ -2240,6 +2298,11 @@ ALWAYS_INLINE void WriterOfLink::writeFunction(FunctionID id)
         linked.result = typeIDOf(m_flow.typeAt(m_flow.result(id, 0)));
         if (std::optional<ProvenInEveryVersion> established = function.results[0].established(); established && !linked.result)
             linked.result = unlessAnything(*established);
+        if (m_flow.summaries.at(id).has(SummaryTrait::ReturnsUInt32) && linked.result && holdsOnlyPrimitives(linked.result) && primitivesInID(linked.result) == Primitive::Integer) {
+            constexpr Range uint32 { 0, std::numeric_limits<uint32_t>::max() };
+            if (std::optional<TypeID> narrower = integersInID(linked.result).isSubsetOf(uint32) ? std::nullopt : tryMakeTypeOfPrimitives(Primitive::Integer, uint32))
+                linked.result = *narrower;
+        }
     }
     writeParameters(id, linked);
 }
@@ -2278,6 +2341,8 @@ void WriterOfLink::findFunctionsThatRunAtMostOnce()
         uint8_t& number = numberOfCallsThatEnter[call.callee.index()];
         number = std::min<uint8_t>(number + 1, several);
     }
+    for (uint32_t index = 0; index < m_numberOfFunctions; ++index)
+        m_tables.functions[index].hasSingleCallSite = numberOfCallsThatEnter[index] == 1 && m_tables.functions[index].everyCallHasOneCallee;
 
     Vector<FunctionID> functionsToFollow;
     for (size_t body : bodiesThatLoaderEntersAtMostOnce(m_program)) {
@@ -3553,7 +3618,7 @@ static void stopWhereLinkFindsLessFromMore(Program& program, BuildContext& build
         const LinkedLayout& ofMore = givenMore.layouts[index];
         if (!ofProgram.isAllocated)
             continue;
-        if (!ofMore.isAllocated || (ofProgram.reachesUnseenCode && !ofMore.reachesUnseenCode) || !ofMore.possibleChanges.containsAll(ofProgram.possibleChanges))
+        if (!ofMore.isAllocated || (ofProgram.hasDirectInstances && !ofMore.hasDirectInstances) || (ofProgram.reachesUnseenCode && !ofMore.reachesUnseenCode) || !ofMore.possibleChanges.containsAll(ofProgram.possibleChanges))
             note("layout "_s, index, ": what befalls its objects"_s);
         if (ofMore.onlyFunctionThatMakesObjects && ofMore.onlyFunctionThatMakesObjects != ofProgram.onlyFunctionThatMakesObjects)
             note("layout "_s, index, ": who makes its objects"_s);

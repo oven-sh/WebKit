@@ -39,6 +39,7 @@ struct BodyIndexTable::Worker {
     Vector<BlockID> worklist;
     Vector<BodyLoop> loops;
     Vector<BodyMentionOfIteration> mentionsOfIterations;
+    Vector<BodyIndex::BlockPlace> blocks;
 };
 
 inline constexpr OpcodeSet opcodesThatMayNameIterationsInBodyIndex {
@@ -70,6 +71,8 @@ private:
     void indexWords();
     void adoptLoops();
     void adoptMentionsOfIterations();
+    void adoptBlocks();
+    BodyIndex::RareParts& ensureRareParts();
 
     void computeDominators();
     BlockID nearestCommonDominator(BlockID, BlockID) const;
@@ -86,8 +89,11 @@ private:
     std::span<BlockID> m_blocksInDominatorOrder;
     std::span<uint32_t> m_placesOfValues;
     std::span<uint32_t> m_onlyUsersOfValues;
+    std::span<uint16_t> m_narrowOnlyUsersOfValues;
     std::span<uint8_t> m_usesOfValues;
     OpcodeSet m_opcodes;
+    BodyIndex::RareParts* m_rareParts { nullptr };
+    bool m_hasNarrowNumbers { false };
 };
 
 ALWAYS_INLINE void BodyIndexBuilder::fileBlock(BlockID block, uint32_t wordOffset, uint32_t firstParameter, uint32_t numberOfParameters, uint32_t numberOfValues)
@@ -122,7 +128,10 @@ ALWAYS_INLINE void BodyIndexBuilder::fileUse(ValueID used, BodyUseKind kind, uin
     uint32_t count = uses & BodyIndex::maxCountedUses;
     if (!count) {
         uses = static_cast<uint8_t>(static_cast<unsigned>(kind) << BodyIndex::bitsOfUseCount | 1);
-        m_onlyUsersOfValues[used.index()] = user;
+        if (m_hasNarrowNumbers) [[likely]]
+            m_narrowOnlyUsersOfValues[used.index()] = static_cast<uint16_t>(user);
+        else
+            m_onlyUsersOfValues[used.index()] = user;
         return;
     }
     if (count < BodyIndex::maxCountedUses)

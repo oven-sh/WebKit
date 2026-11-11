@@ -102,11 +102,11 @@ struct HashedStream {
 
 } // anonymous namespace
 
-static Vector<HashedStream> sortStreamsByHash(const ParallelLoops& loops, std::span<const Vector<uint8_t>> streams)
+static Vector<HashedStream> sortStreamsByHash(const ParallelLoops& loops, std::span<const Vector<uint16_t>> streams)
 {
     Vector<HashedStream> entries = collectInParallel<HashedStream>(loops, streams.size(), [&](unsigned index, Vector<HashedStream>& hashed) {
         if (!streams[index].isEmpty())
-            hashed.append({ hashOfStream(streams[index].span()), index });
+            hashed.append({ hashOfStream(asBytes(streams[index].span())), index });
     });
     radixSortKeepingEqualKeysInOrder<32>(entries, [](const HashedStream& entry) {
         return entry.hash;
@@ -114,13 +114,8 @@ static Vector<HashedStream> sortStreamsByHash(const ParallelLoops& loops, std::s
     return entries;
 }
 
-Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> streams)
+Vector<uint32_t> findFirstEqualStreams(std::span<const Vector<uint16_t>> streams, const ParallelLoops& loops)
 {
-    Vector<uint32_t> offsets(FillWith { }, streams.size(), 0);
-    if (m_didOverflow)
-        return offsets;
-
-    const ParallelLoops& loops = m_context.parallelLoops();
     Vector<HashedStream> entries = sortStreamsByHash(loops, streams);
     Vector<uint32_t> firstEqualStream(streams.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
@@ -145,29 +140,7 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
             }
         }
     });
-
-    size_t newSize = m_bytes.size();
-    for (size_t index = 0; index < streams.size(); ++index) {
-        if (streams[index].isEmpty() || firstEqualStream[index] != index)
-            continue;
-        offsets[index] = static_cast<uint32_t>(newSize);
-        newSize += streams[index].size();
-    }
-    if (!canGrowTo(newSize)) {
-        offsets.fill(0);
-        return offsets;
-    }
-    growSectionTo(m_bytes, newSize);
-    std::span<uint8_t> section = m_bytes.mutableSpan();
-    forEachRangeOfIndicesInParallel(loops, streams.size(), [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index) {
-            if (firstEqualStream[index] != index)
-                offsets[index] = offsets[firstEqualStream[index]];
-            else if (!streams[index].isEmpty())
-                memcpySpan(section.subspan(offsets[index]), streams[index].span());
-        }
-    });
-    return offsets;
+    return firstEqualStream;
 }
 
 } } // namespace JSC::AOT

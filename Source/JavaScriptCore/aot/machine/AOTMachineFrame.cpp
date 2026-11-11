@@ -793,6 +793,12 @@ void Allocator::findFramedPart()
                 standsUnderHeadsOf(block, dominatorOf(block));
             continue;
         }
+        if (const Block* dominator = dominatorOf(block); dominator && liesInFramedPart(dominator)) {
+            marks[block->index()] &= ~isHead;
+            isInFramedPart.set(block->index());
+            standsUnderHeadsOf(block, dominator);
+            continue;
+        }
         const BlockPlace& place = placeOf(block);
         const Block* usualWayIn = nullptr;
         bool someRareWayInBringsHeads = false;

@@ -304,14 +304,14 @@ void setFlagThatFieldHasLeft(StubAssembler& jit, GPRReg cell, GPRReg scratch)
 
 void setMarkOfCell(StubAssembler& jit, GPRReg cell, GPRReg scratch)
 {
-    const Address byteWithMark(cell, offsetOfByteWithMark);
+    const Address shapeWord(cell, offsetOfShapeWord);
 #if CPU(X86_64)
     UNUSED_PARAM(scratch);
-    jit.and8(TrustedImm32(static_cast<uint8_t>(~byteWithMarkIsUnmarked)), byteWithMark);
+    jit.and32(TrustedImm32(static_cast<int32_t>(~shapeWordIsUnmarked)), shapeWord);
 #else
-    jit.load8(byteWithMark, scratch);
-    jit.and32(TrustedImm32(static_cast<uint8_t>(~byteWithMarkIsUnmarked)), scratch);
-    jit.store8(scratch, byteWithMark);
+    jit.load32(shapeWord, scratch);
+    jit.and32(TrustedImm32(static_cast<int32_t>(~shapeWordIsUnmarked)), scratch);
+    jit.store32(scratch, shapeWord);
 #endif
 }
 

@@ -139,7 +139,10 @@ inline void checkPartsOfCodeAddUp(TestBuild& build, const TestImage& image)
     uint64_t sizeOfRegExpCode = build.statistic(StatisticID::RegExpCodeBytesEmitted);
     AOT_TEST_CHECK(sizeOfRegExpCode <= roomOfRegExpCode && roomOfRegExpCode - sizeOfRegExpCode < RegExpSection::alignment);
     AOT_TEST_CHECK(build.statistic(StatisticID::RegExp16BitCodeBytes) <= sizeOfRegExpCode);
-    AOT_TEST_CHECK(WTF::roundUpToMultipleOf<imageConstantsAlignment>(header.executableSize + build.statistic(StatisticID::RegExpTableBytesEmitted)) == ranges.constantsOffset);
+    if (ranges.constantsOffset < header.executableSize)
+        AOT_TEST_CHECK(!roomOfRegExpCode && !ranges.ffiCodeSize && ranges.constantsOffset + WTF::roundUpToMultipleOf<imageConstantsAlignment>(ranges.constantsSize) == header.executableSize && header.codeSize == header.executableSize);
+    else
+        AOT_TEST_CHECK(WTF::roundUpToMultipleOf<imageConstantsAlignment>(header.executableSize + build.statistic(StatisticID::RegExpTableBytesEmitted)) == ranges.constantsOffset);
     AOT_TEST_CHECK(build.statistic(StatisticID::WasmCodeBytesEmitted) == ranges.webAssemblyCodeSize);
     AOT_TEST_CHECK(build.statistic(StatisticID::FFICodeBytesEmitted) == ranges.ffiCodeSize);
     AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesEmitted) == ranges.constantsSize);

@@ -412,10 +412,13 @@ static RegExpObject* ensureSharedRegExpLiteral(VM& vm, Instance* instance, uint3
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance* instance, uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRegExpLiteral);
-    RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
-    ASSERT(regExp->isValid());
-    if (staticsOffset != noSharedRegExpOffset)
+    RegExpLiterals& literals = *vm.aotState().regExpLiterals;
+    RegExp* regExp = literals.regExpIfCreated(RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
+    if (regExp && staticsOffset != noSharedRegExpOffset)
         ensureSharedRegExpLiteral(vm, instance, staticsOffset, regExp);
+    if (!regExp)
+        regExp = literals.regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
+    ASSERT(regExp->isValid());
     Structure* structure = WTF::opaque(globalObject->regExpStructure());
     prepareInlineAllocation<RegExpObject>(instance, InlineAllocation::RegExpObject, structure);
     OPERATION_RETURN(scope, RegExpObject::create(vm, structure, regExp));
@@ -886,18 +889,37 @@ RegExpLiterals::RegExpLiterals(CacheRegistry& registry)
     registry.add(CacheKind::StrongRoots, "regexp literals"_s, *this, RootVolatility::GreyedByExecution);
 }
 
+uint64_t RegExpLiterals::keyOf(RegExpRecordID id, OptionSet<Yarr::Flags> flags)
+{
+    static_assert(sizeof(flags.toRaw()) <= sizeof(uint32_t));
+    return static_cast<uint64_t>(id.index()) << 32 | flags.toRaw();
+}
+
+RegExp* RegExpLiterals::regExpIfCreated(RegExpRecordID id, OptionSet<Yarr::Flags> flags) const
+{
+    uint32_t firstCell = m_records ? m_firstCellOfRecord[id.index()] : 0;
+    if (!firstCell)
+        return nullptr;
+    if (RegExp* first = m_cellsInOrderOfCreation[firstCell - 1]; first->flags() == flags) [[likely]]
+        return first;
+    return m_cellsWithOtherFlags.get(keyOf(id, flags));
+}
+
 RegExp* RegExpLiterals::regExpFor(VM& vm, RegExpRecordID id, OptionSet<Yarr::Flags> flags)
 {
-    if (!m_records) [[unlikely]]
-        m_records = &RegExpRecords(*vm.aotState().image).at(id) - id.index();
+    if (RegExp* known = regExpIfCreated(id, flags))
+        return known;
+    if (!m_records) [[unlikely]] {
+        RegExpRecords records(*vm.aotState().image);
+        m_records = &records.at(id) - id.index();
+        m_firstCellOfRecord.fill(0, records.size());
+    }
     const ImageRegExp& record = m_records[id.index()];
-    static_assert(sizeof(flags.toRaw()) <= sizeof(uint32_t));
-    uint64_t key = static_cast<uint64_t>(id.index()) << 32 | flags.toRaw();
-    if (auto known = m_cells.find(key); known != m_cells.end())
-        return known->value;
-
     RegExp* regExp = RegExp::createFromImage(vm, regExpPatternOf(vm, record), flags, record);
-    m_cells.add(key, regExp);
+    if (uint32_t& firstCell = m_firstCellOfRecord[id.index()])
+        m_cellsWithOtherFlags.add(keyOf(id, flags), regExp);
+    else
+        firstCell = static_cast<uint32_t>(m_cellsInOrderOfCreation.size() + 1);
     m_cellsInOrderOfCreation.append(regExp);
     return regExp;
 }

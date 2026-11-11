@@ -63,6 +63,8 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject*, JSPropertyNameEnumerator*, JSVa
 
 void initializeIterationWords(Instance&);
 void appendElementsOfList(JSGlobalObject*, JSArray* target, JSArray* source);
+bool tryAppendCharacters(Instance&, JSArray* target, JSString*);
+JSString* stringOfCharacter(Instance&, char16_t);
 void appendMembersOfSet(JSGlobalObject*, JSArray* target, JSSet* source);
 bool tryAppendPairsOfMap(JSGlobalObject*, JSArray* target, JSMap* source);
 bool tryAppendPairsLeftIn(JSGlobalObject*, JSArray* target, JSMapIterator*);

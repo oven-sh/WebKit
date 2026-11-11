@@ -237,10 +237,16 @@ static void checkOrderLeftToOperation(StubRunner& runner, StubKey key, uint64_t 
     }
 }
 
+static int64_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES findNoOrderInPlace(JSCell*, JSCell*)
+{
+    return noOrderOfStringsInPlace;
+}
+
 static void testBinaryOperationStringOrder()
 {
     StubRunner runner;
     runner.install(Entry::operationAOTCompareStringImpls, operationAOTCompareStringImpls);
+    runner.install(Entry::operationAOTCompareStringsInPlace, findNoOrderInPlace);
 
     FakeString flat("order"_s, CharacterWidth::Is8Bit);
     FakeString wideFlat("order"_s, CharacterWidth::Is16Bit);

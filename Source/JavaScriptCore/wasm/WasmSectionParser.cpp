@@ -1351,83 +1351,33 @@ auto SectionParser::parseData() -> PartialResult
     WASM_PARSER_FAIL_IF(segmentCount > maxDataSegments, "Data section's count is too big "_s, segmentCount, " maximum "_s, maxDataSegments);
     if (m_info->numberOfDataSegments)
         WASM_PARSER_FAIL_IF(segmentCount != m_info->numberOfDataSegments.value(), "Data section's count "_s, segmentCount, " is different from Data Count section's count "_s, m_info->numberOfDataSegments.value());
-    RELEASE_ASSERT(!m_info->data.capacity());
-    WASM_ALLOCATOR_FAIL_IF(!m_info->data.tryReserveInitialCapacity(segmentCount), "can't allocate enough memory for Data section's "_s, segmentCount, " segments"_s);
+    RELEASE_ASSERT(!m_info->data.sizeInBytes());
+    WASM_ALLOCATOR_FAIL_IF(!m_info->data.tryReserve(segmentCount, source().size() - m_offset, m_info->dataSegmentsCount()), "can't allocate enough memory for Data section's "_s, segmentCount, " segments"_s);
 
     for (uint32_t segmentNumber = 0; segmentNumber < segmentCount; ++segmentNumber) {
-        uint32_t memoryIndexOrDataFlag = UINT32_MAX;
-        WASM_PARSER_FAIL_IF(!parseVarUInt32(memoryIndexOrDataFlag), "can't get "_s, segmentNumber, "th Data segment's flag"_s);
+        enum DataFlag : uint32_t { Active, Passive, ActiveWithMemoryIndex };
+        uint32_t dataFlag;
+        WASM_PARSER_FAIL_IF(!parseVarUInt32(dataFlag), "can't get "_s, segmentNumber, "th Data segment's flag"_s);
+        WASM_PARSER_FAIL_IF(dataFlag > ActiveWithMemoryIndex, "unknown "_s, segmentNumber, "th Data segment's flag"_s);
 
-        if (!memoryIndexOrDataFlag) {
-            const uint32_t memoryIndex = memoryIndexOrDataFlag;
-            WASM_PARSER_FAIL_IF(memoryIndex >= m_info->memoryCount(), segmentNumber, "th Data segment has index "_s, memoryIndex, " which exceeds the number of Memories "_s, m_info->memoryCount());
-
-            std::optional<I32InitExpr> initExpr;
-            if (m_info->memory(memoryIndex).isMemory64())
-                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForDataSection(initExpr));
+        Segment segment { dataFlag == Passive ? Segment::Kind::Passive : Segment::Kind::Active, 0, std::nullopt, { } };
+        if (dataFlag == ActiveWithMemoryIndex)
+            WASM_PARSER_FAIL_IF(!parseVarUInt32(segment.memoryIndex), "can't get "_s, segmentNumber, "th Data segment's index"_s);
+        if (segment.isActive()) {
+            WASM_PARSER_FAIL_IF(segment.memoryIndex >= m_info->memoryCount(), segmentNumber, "th Data segment has index "_s, segment.memoryIndex, " which exceeds the number of Memories "_s, m_info->memoryCount());
+            if (m_info->memory(segment.memoryIndex).isMemory64())
+                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForDataSection(segment.offsetIfActive));
             else
-                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForDataSection(initExpr));
-
-            uint32_t dataByteLength;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(dataByteLength), "can't get "_s, segmentNumber, "th Data segment's data byte length"_s);
-            WASM_PARSER_FAIL_IF(dataByteLength > maxModuleSize, segmentNumber, "th Data segment's data byte length is too big "_s, dataByteLength, " maximum "_s, maxModuleSize);
-
-            auto segment = Segment::tryCreate(*initExpr, dataByteLength, Segment::Kind::Active);
-            WASM_PARSER_FAIL_IF(!segment, "can't allocate enough memory for "_s, segmentNumber, "th Data segment of size "_s, dataByteLength);
-
-            WASM_PARSER_FAIL_IF(source().size() < dataByteLength || (source().size() - dataByteLength) < m_offset, "can't get data bytes from "_s, segmentNumber, "th Data segment"_s);
-
-            memcpySpan(segment->span(), source().subspan(m_offset, dataByteLength));
-            m_offset += dataByteLength;
-            m_info->data.append(WTF::move(segment));
-            continue;
+                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForDataSection(segment.offsetIfActive));
         }
 
-        const uint32_t dataFlag = memoryIndexOrDataFlag;
-        if (dataFlag == 0x01) {
-            uint32_t dataByteLength;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(dataByteLength), "can't get "_s, segmentNumber, "th Data segment's data byte length"_s);
-            WASM_PARSER_FAIL_IF(dataByteLength > maxModuleSize, segmentNumber, "th Data segment's data byte length is too big "_s, dataByteLength, " maximum "_s, maxModuleSize);
-
-            auto segment = Segment::tryCreate(std::nullopt, dataByteLength, Segment::Kind::Passive);
-            WASM_PARSER_FAIL_IF(!segment, "can't allocate enough memory for "_s, segmentNumber, "th Data segment of size "_s, dataByteLength);
-
-            WASM_PARSER_FAIL_IF(source().size() < dataByteLength || (source().size() - dataByteLength) < m_offset, "can't get data bytes from "_s, segmentNumber, "th Data segment"_s);
-
-            memcpySpan(segment->span(), source().subspan(m_offset, dataByteLength));
-            m_offset += dataByteLength;
-            m_info->data.append(WTF::move(segment));
-            continue;
-
-        }
-
-        if (dataFlag == 0x02) {
-            uint32_t memoryIndex;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(memoryIndex), "can't get "_s, segmentNumber, "th Data segment's index"_s);
-            WASM_PARSER_FAIL_IF(memoryIndex >= m_info->memoryCount(), segmentNumber, "th Data segment has index "_s, memoryIndex, " which exceeds the number of Memories "_s, m_info->memoryCount());
-
-            std::optional<I32InitExpr> initExpr;
-            if (m_info->memory(memoryIndex).isMemory64())
-                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForDataSection(initExpr));
-            else
-                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForDataSection(initExpr));
-
-            uint32_t dataByteLength;
-            WASM_PARSER_FAIL_IF(!parseVarUInt32(dataByteLength), "can't get "_s, segmentNumber, "th Data segment's data byte length"_s);
-            WASM_PARSER_FAIL_IF(dataByteLength > maxModuleSize, segmentNumber, "th Data segment's data byte length is too big "_s, dataByteLength, " maximum "_s, maxModuleSize);
-
-            auto segment = Segment::tryCreate(*initExpr, dataByteLength, Segment::Kind::Active, memoryIndex);
-            WASM_PARSER_FAIL_IF(!segment, "can't allocate enough memory for "_s, segmentNumber, "th Data segment of size "_s, dataByteLength);
-
-            WASM_PARSER_FAIL_IF(source().size() < dataByteLength || (source().size() - dataByteLength) < m_offset, "can't get data bytes from "_s, segmentNumber, "th Data segment"_s);
-
-            memcpySpan(segment->span(), source().subspan(m_offset, dataByteLength));
-            m_offset += dataByteLength;
-            m_info->data.append(WTF::move(segment));
-            continue;
-        }
-
-        WASM_PARSER_FAIL_IF(true, "unknown "_s, segmentNumber, "th Data segment's flag"_s);
+        uint32_t dataByteLength;
+        WASM_PARSER_FAIL_IF(!parseVarUInt32(dataByteLength), "can't get "_s, segmentNumber, "th Data segment's data byte length"_s);
+        WASM_PARSER_FAIL_IF(dataByteLength > maxModuleSize, segmentNumber, "th Data segment's data byte length is too big "_s, dataByteLength, " maximum "_s, maxModuleSize);
+        WASM_PARSER_FAIL_IF(source().size() < dataByteLength || (source().size() - dataByteLength) < m_offset, "can't get data bytes from "_s, segmentNumber, "th Data segment"_s);
+        segment.bytes = source().subspan(m_offset, dataByteLength);
+        m_offset += dataByteLength;
+        WASM_ALLOCATOR_FAIL_IF(!m_info->data.tryAppend(segment), "can't allocate enough memory for "_s, segmentNumber, "th Data segment of size "_s, dataByteLength);
     }
 
     return { };
