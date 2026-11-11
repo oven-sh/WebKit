@@ -21,6 +21,8 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStatics.h"
+#include "AOTPropertyWalk.h"
+#include "AOTRemovableFeature.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "BuiltinNames.h"
@@ -34,7 +36,7 @@
 #include "JSCellButterfly.h"
 #include "JSDestructibleObject.h"
 #include "JSLexicalEnvironmentInlines.h"
-#include "JSNativeStdFunction.h"
+#include "JSWeakMapInlines.h"
 #include "JSWithScope.h"
 #include "ObjectConstructor.h"
 #include "Symbol.h"
@@ -92,13 +94,36 @@ static DirectArguments* mappedArgumentsOf(JSCellButterfly* operands, const EvalB
     return arguments;
 }
 
+// A binding that is stored keeps its value in a variable of the module, or in a slot of an environment.
+static JSValue readStoredSlot(Instance& instance, SlotData slot, Environment* environmentOrNull)
+{
+    if (!environmentOrNull)
+        return ProgramStatics::readVariable(instance, slot);
+    return readSlot(slot.representation(), &environmentOrNull->at<uint8_t>(slot.offset), instance);
+}
+
+static void writeStoredSlot(VM& vm, Instance& instance, SlotData slot, Environment* environmentOrNull, JSValue value)
+{
+    SlotRepresentation representation = slot.representation();
+    if (environmentOrNull) {
+        RELEASE_ASSERT(tryWriteSlot(instance, representation, &environmentOrNull->at<uint8_t>(slot.offset), value));
+        vm.writeBarrier(environmentOrNull, value);
+        return;
+    }
+    RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
+    instance.state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
+    RELEASE_ASSERT(tryWriteSlot(instance, representation, instance.statics() + slot.offset, value));
+    if (traitsOf(representation).holdsCell)
+        instance.state->statics->didStoreRootInStatics(slot.offset);
+}
+
 static JSValue readBinding(Instance* instance, JSCellButterfly* operands, const EvalBindingData& binding)
 {
     switch (formOf(binding)) {
     case EvalBindingForm::ModuleVariable:
-        return ProgramStatics::readVariable(*instance, binding.slot);
+        return readStoredSlot(*instance, binding.slot, nullptr);
     case EvalBindingForm::EnvironmentSlot:
-        return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance);
+        return readStoredSlot(*instance, binding.slot, cellOperandOf<Environment>(operands, binding));
     case EvalBindingForm::MappedArgument:
         return mappedArgumentsOf(operands, binding)->argument(DirectArgumentsOffset(binding.slot.offset)).get();
     case EvalBindingForm::Operand:
@@ -149,7 +174,7 @@ static std::optional<PrivateNameEntry> privateNameEntryOf(const EvalBindingData&
     uint16_t staticTrait = binding.privateKey ? Traits::None : Traits::IsStatic;
     switch (kindOf(binding)) {
     case EvalBindingKind::PrivateName:
-        return PrivateNameEntry(isStaticPrivateField(binding) ? Traits::IsStatic | Traits::IsGetter | Traits::IsSetter : Traits::None);
+        return PrivateNameEntry(Traits::None);
     case EvalBindingKind::PrivateMethod:
         return PrivateNameEntry(staticTrait | Traits::IsMethod);
     case EvalBindingKind::PrivateAccessor: {
@@ -252,6 +277,8 @@ JSValue DerivedConstructorStandIn::getPrototype(JSObject* object, JSGlobalObject
     return uncheckedDowncast<DerivedConstructorStandIn>(object)->m_constructor->getPrototype(globalObject);
 }
 
+static Symbol* nameOfStaticFieldOfClassObject(VM&, Instance&, JSObject* classObject, const EvalBindingData&, Environment* environmentOrNull);
+
 class EvalBindings final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -288,12 +315,10 @@ private:
 
     std::span<const EvalBindingData> bindings() const { return unsafeMakeSpan(m_request->bindings + m_first, m_count); }
     uint32_t privateValueIndexOf(const EvalBindingData& binding) const { return m_operands->length() - m_request->numberOfBindings + static_cast<uint32_t>(&binding - m_request->bindings); }
-    JSCell* createPrivateValue(VM&, const EvalBindingData&);
+    Symbol* createPrivateValue(const EvalBindingData&);
     JSValue readWhatBindingHolds(uint32_t index) const;
     JSValue readAccessorPair(JSGlobalObject*, const EvalBindingData&);
-    JSObject* createStaticFieldAccessors(VM&, const EvalBindingData&);
-    JSValue readStaticField(JSGlobalObject*, const EvalBindingData&) const;
-    void storeStaticField(JSGlobalObject*, const EvalBindingData&, JSValue);
+    Symbol* nameOfStaticField(VM&, const EvalBindingData&);
     bool storeVariable(JSGlobalObject*, const EvalBindingData&, JSValue);
     void writeBinding(VM&, const EvalBindingData&, JSValue);
 
@@ -307,11 +332,9 @@ private:
 
 const ClassInfo EvalBindings::s_info = { "EvalBindings"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(EvalBindings) };
 
-JSCell* EvalBindings::createPrivateValue(VM& vm, const EvalBindingData& binding)
+Symbol* EvalBindings::createPrivateValue(const EvalBindingData& binding)
 {
-    if (isStaticPrivateField(binding))
-        return createStaticFieldAccessors(vm, binding);
-    if (kindOf(binding) == EvalBindingKind::PrivateName)
+    if (kindOf(binding) == EvalBindingKind::PrivateName && !isStaticPrivateField(binding))
         return privateSymbolOf(m_instance, m_operands.get(), binding);
     return nullptr;
 }
@@ -348,37 +371,29 @@ JSValue EvalBindings::readAccessorPair(JSGlobalObject* globalObject, const EvalB
     return pair;
 }
 
-JSObject* EvalBindings::createStaticFieldAccessors(VM& vm, const EvalBindingData& binding)
+// The value of a static private field lies in a slot, and no object has a property for it. So texts get a private name of their own
+// for the field of a class object, the same name at every call. JSObject's private field functions find no such property and ask here.
+Symbol* EvalBindings::nameOfStaticField(VM& vm, const EvalBindingData& binding)
 {
-    const EvalBindingData* field = &binding;
-    JSObject* getter = JSNativeStdFunction::create(vm, realm(), 0, String(), [this, field](JSGlobalObject* lexicalGlobalObject, CallFrame*) {
-        return JSValue::encode(readStaticField(lexicalGlobalObject, *field));
-    }, JSValue(this));
-    JSObject* setter = JSNativeStdFunction::create(vm, realm(), 1, String(), [this, field](JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame) {
-        storeStaticField(lexicalGlobalObject, *field, callFrame->argument(0));
-        return JSValue::encode(jsUndefined());
-    }, JSValue(this));
-    return createAccessorPair(vm, realm(), getter, setter);
-}
-
-JSValue EvalBindings::readStaticField(JSGlobalObject* globalObject, const EvalBindingData& binding) const
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = readBinding(m_instance, m_operands.get(), binding);
-    if (!value)
-        throwException(globalObject, scope, createInvalidPrivateNameError(globalObject));
-    return value;
-}
-
-void EvalBindings::storeStaticField(JSGlobalObject* globalObject, const EvalBindingData& binding, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    readStaticField(globalObject, binding);
-    RETURN_IF_EXCEPTION(scope, void());
-    scope.release();
-    storeVariable(globalObject, binding, value);
+    uint32_t index = privateValueIndexOf(binding);
+    if (JSValue known = m_operands->get(index))
+        return asSymbol(known);
+    // The verifier of programs holds a static private field to the two assertions below: isStoredBesideItsClassObject.
+    auto bindingsOfRequest = unsafeMakeSpan(m_request->bindings, m_request->numberOfBindings);
+    auto bindingOfClassObject = std::ranges::find_if(bindingsOfRequest, [&](const EvalBindingData& other) {
+        return kindOf(other) == EvalBindingKind::ClassObject && other.depth == binding.depth;
+    });
+    RELEASE_ASSERT(bindingOfClassObject != bindingsOfRequest.end());
+    JSValue classObject = readBinding(m_instance, m_operands.get(), *bindingOfClassObject);
+    // A text in a computed key runs before its class object is there. No value has the field then: a name that leads to no class object says so.
+    if (!classObject || !classObject.isObject())
+        return Symbol::create(vm, PrivateSymbolImpl::create(*identifierAt(m_instance, binding.name).impl()).get());
+    EvalBindingForm form = formOf(binding);
+    RELEASE_ASSERT(form == EvalBindingForm::ModuleVariable || form == EvalBindingForm::EnvironmentSlot);
+    Environment* environment = form == EvalBindingForm::EnvironmentSlot ? cellOperandOf<Environment>(m_operands.get(), binding) : nullptr;
+    Symbol* name = nameOfStaticFieldOfClassObject(vm, *m_instance, asObject(classObject), binding, environment);
+    m_operands->setIndex(vm, index, name);
+    return name;
 }
 
 EvalBindings* EvalBindings::createWithoutPrivateValues(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
@@ -392,7 +407,7 @@ EvalBindings* EvalBindings::create(VM& vm, Structure* structure, Instance* insta
 {
     EvalBindings* result = createWithoutPrivateValues(vm, structure, instance, request, operands, homeObjectHolder, bindings);
     for (auto& binding : bindings) {
-        if (JSCell* value = result->createPrivateValue(vm, binding))
+        if (Symbol* value = result->createPrivateValue(binding))
             operands->setIndex(vm, result->privateValueIndexOf(binding), value);
     }
     return result;
@@ -439,7 +454,7 @@ JSValue EvalBindings::read(JSGlobalObject* globalObject, const EvalBindingData& 
     if (kind == EvalBindingKind::HomeObject)
         return m_homeObjectHolder.get();
     if (kind == EvalBindingKind::PrivateName)
-        return m_operands->get(privateValueIndexOf(binding));
+        return isStaticPrivateField(binding) ? JSValue(nameOfStaticField(globalObject->vm(), binding)) : m_operands->get(privateValueIndexOf(binding));
     if (kind == EvalBindingKind::PrivateAccessor)
         return readAccessorPair(globalObject, binding);
     if (kind == EvalBindingKind::PrivateMethod)
@@ -475,27 +490,16 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
 
 void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue value)
 {
-    SlotRepresentation representation = binding.slot.representation();
-    uint32_t offset = binding.slot.offset;
     switch (formOf(binding)) {
-    case EvalBindingForm::ModuleVariable: {
-        RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
-        ProgramStatics& statics = *m_instance->state->statics;
-        m_instance->state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
-        RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, m_instance->statics() + offset, value));
-        if (traitsOf(representation).holdsCell)
-            statics.didStoreRootInStatics(offset);
+    case EvalBindingForm::ModuleVariable:
+        writeStoredSlot(vm, *m_instance, binding.slot, nullptr, value);
         return;
-    }
-    case EvalBindingForm::EnvironmentSlot: {
-        auto* environment = cellOperandOf<Environment>(m_operands.get(), binding);
-        RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, &environment->at<uint8_t>(offset), value));
-        vm.writeBarrier(environment, value);
+    case EvalBindingForm::EnvironmentSlot:
+        writeStoredSlot(vm, *m_instance, binding.slot, cellOperandOf<Environment>(m_operands.get(), binding), value);
         return;
-    }
     case EvalBindingForm::MappedArgument: {
         DirectArguments* arguments = mappedArgumentsOf(m_operands.get(), binding);
-        arguments->argument(DirectArgumentsOffset(offset)).set(vm, arguments, value);
+        arguments->argument(DirectArgumentsOffset(binding.slot.offset)).set(vm, arguments, value);
         return;
     }
     case EvalBindingForm::Operand:
@@ -835,6 +839,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     DirectEvalCodeCache& ensureCacheOf(uint32_t requestOffset);
+    Symbol* nameOfStaticField(VM&, Instance&, JSObject* classObject, const EvalBindingData&, Environment* environmentOrNull);
+    JSCellButterfly* staticFieldsNamedByTexts(JSObject* classObject) const;
 
 private:
     DirectEvalCaches(VM& vm, Structure* structure)
@@ -843,6 +849,7 @@ private:
     }
 
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<DirectEvalCodeCache>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_caches;
+    WriteBarrier<JSWeakMap> m_staticFieldsNamedByTexts;
 };
 
 const ClassInfo DirectEvalCaches::s_info = { "DirectEvalCaches"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DirectEvalCaches) };
@@ -861,6 +868,7 @@ void DirectEvalCaches::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<DirectEvalCaches>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_staticFieldsNamedByTexts);
     Locker locker { thisObject->cellLock() };
     for (auto& cache : thisObject->m_caches.values())
         cache->visitAggregate(visitor);
@@ -878,6 +886,114 @@ DirectEvalCodeCache& DirectEvalCaches::ensureCacheOf(uint32_t requestOffset)
     m_caches.add(requestOffset, WTF::move(created));
     return cache;
 }
+
+// What texts call the static private fields of one class object: a list that a weak map holds under the class object, so the list lives as long as the class object does.
+// It has four words for each field that some text has named: the number of the written name, the private Symbol that texts get for it,
+// the environment that holds its slot (null where the slot is a variable of the module), and the slot.
+namespace NamedStaticField {
+static constexpr unsigned numberOfWords = 4;
+static constexpr unsigned numberOfName = 0;
+static constexpr unsigned name = 1;
+static constexpr unsigned environment = 2;
+static constexpr unsigned slot = 3;
+}
+
+JSCellButterfly* DirectEvalCaches::staticFieldsNamedByTexts(JSObject* classObject) const
+{
+    JSValue fields = m_staticFieldsNamedByTexts ? m_staticFieldsNamedByTexts->get(classObject) : JSValue();
+    return fields && fields.isCell() ? uncheckedDowncast<JSCellButterfly>(fields.asCell()) : nullptr;
+}
+
+Symbol* DirectEvalCaches::nameOfStaticField(VM& vm, Instance& instance, JSObject* classObject, const EvalBindingData& binding, Environment* environmentOrNull)
+{
+    if (!m_staticFieldsNamedByTexts)
+        m_staticFieldsNamedByTexts.set(vm, this, JSWeakMap::create(vm, instance.globalObject->weakMapStructure()));
+    JSCellButterfly* fields = staticFieldsNamedByTexts(classObject);
+    unsigned length = fields ? fields->length() : 0;
+    for (unsigned at = 0; at < length; at += NamedStaticField::numberOfWords) {
+        if (fields->get(at + NamedStaticField::numberOfName).asNumber() == binding.name)
+            return asSymbol(fields->get(at + NamedStaticField::name));
+    }
+    Symbol* name = Symbol::create(vm, PrivateSymbolImpl::create(*identifierAt(&instance, binding.name).impl()).get());
+    auto* grown = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, length + NamedStaticField::numberOfWords);
+    for (unsigned at = 0; at < length; ++at)
+        grown->setIndex(vm, at, fields->get(at));
+    grown->setIndex(vm, length + NamedStaticField::numberOfName, jsNumber(binding.name));
+    grown->setIndex(vm, length + NamedStaticField::name, name);
+    grown->setIndex(vm, length + NamedStaticField::environment, environmentOrNull ? JSValue(environmentOrNull) : jsNull());
+    grown->setIndex(vm, length + NamedStaticField::slot, jsNumber(binding.slot.encoded()));
+    m_staticFieldsNamedByTexts->set(vm, classObject, grown);
+    vm.aotState().someTextNamesStaticPrivateField = true;
+    return name;
+}
+
+static Symbol* nameOfStaticFieldOfClassObject(VM& vm, Instance& instance, JSObject* classObject, const EvalBindingData& binding, Environment* environmentOrNull)
+{
+    DirectEvalCaches* caches = instance.state->objects->caches->directEvalCaches;
+    RELEASE_ASSERT(caches);
+    return caches->nameOfStaticField(vm, instance, classObject, binding, environmentOrNull);
+}
+
+namespace {
+struct StaticFieldNamedByText {
+    explicit operator bool() const { return instance; }
+
+    Instance* instance { nullptr };
+    SlotData slot { };
+    Environment* environment { nullptr };
+};
+}
+
+static StaticFieldNamedByText findStaticFieldNamedByText(VM& vm, JSObject* holder, UniquedStringImpl* name)
+{
+    // A class object is callable, and most values that are asked for a private name are not.
+    if (!holder->isCallable())
+        return { };
+    for (Instance* instance : vm.aotState().instances) {
+        State* state = instance->state;
+        DirectEvalCaches* caches = state && state->objects ? state->objects->caches->directEvalCaches : nullptr;
+        JSCellButterfly* fields = caches ? caches->staticFieldsNamedByTexts(holder) : nullptr;
+        unsigned length = fields ? fields->length() : 0;
+        for (unsigned at = 0; at < length; at += NamedStaticField::numberOfWords) {
+            if (&asSymbol(fields->get(at + NamedStaticField::name))->uid() != name)
+                continue;
+            JSValue environment = fields->get(at + NamedStaticField::environment);
+            return { instance, SlotData::decode(static_cast<uint32_t>(fields->get(at + NamedStaticField::slot).asNumber())), environment.isNull() ? nullptr : uncheckedDowncast<Environment>(environment.asCell()) };
+        }
+    }
+    return { };
+}
+
+static NEVER_INLINE JSValue readStaticFieldUnderNameOfText(VM& vm, JSObject* holder, PropertyName name)
+{
+    auto field = findStaticFieldNamedByText(vm, holder, name.uid());
+    return field ? readStoredSlot(*field.instance, field.slot, field.environment) : JSValue();
+}
+
+static NEVER_INLINE bool storeStaticFieldUnderNameOfText(VM& vm, JSObject* holder, PropertyName name, JSValue value)
+{
+    auto field = findStaticFieldNamedByText(vm, holder, name.uid());
+    if (!field || !readStoredSlot(*field.instance, field.slot, field.environment))
+        return false;
+    writeStoredSlot(vm, *field.instance, field.slot, field.environment, value);
+    return true;
+}
+
+namespace PropertyWalk {
+
+// The interpreter's slow paths come here, and they stay in every executable. Only a direct eval makes such a name:
+// where a build removed what compiled code calls for a direct eval, the answer is that of no name, and the two functions above go with it.
+JSValue getStaticFieldOfText(VM& vm, JSObject* holder, PropertyName name)
+{
+    return callRemovable<RemovableFeature::OperationsOfDirectEval, RemovedFeatureStub::ReturnDefault, readStaticFieldUnderNameOfText>(vm, holder, name);
+}
+
+bool putStaticFieldOfText(VM& vm, JSObject* holder, PropertyName name, JSValue value)
+{
+    return callRemovable<RemovableFeature::OperationsOfDirectEval, RemovedFeatureStub::ReturnDefault, storeStaticFieldUnderNameOfText>(vm, holder, name, value);
+}
+
+} // namespace PropertyWalk
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* instance, EncodedJSValue text, uint32_t requestOffset, uint32_t count, const EncodedJSValue* operands))
 {

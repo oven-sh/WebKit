@@ -1,0 +1,637 @@
+# function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } }
+# const early = [];
+# class Outer {
+#   static #outer = "outer";
+#   static #shared = "shared of the outer";
+#   #mixed = "of an object";
+#   static Inner = class Inner {
+#     static { report(eval("String(#late in Outer) + (#late in this)")); report(attempt(() => eval("Outer.#late"))); }
+#     static #inner = "inner";
+#     static #shared = "shared of the inner";
+#     static #mixed = "of the inner";
+#     static ask(text, value) { return eval(text); }
+#   };
+#   static Bare = class { static ask(text, value) { return eval(text); } };
+#   static #late = "late";
+#   static read() { return Outer.#outer + ", " + Outer.#shared + ", " + Outer.#late; }
+# }
+# function probe(inner, name, value) { report(attempt(() => inner.ask("#" + name + " in value", value))); report(attempt(() => inner.ask("value.#" + name, value))); report(attempt(() => inner.ask("value.#" + name + " += '!'", value))); }
+# function probeAll(inner, name) { probe(inner, name, Outer); probe(inner, name, Outer.Inner); probe(inner, name, new Outer()); probe(inner, name, {}); }
+# probeAll(Outer.Inner, "outer");
+# probeAll(Outer.Inner, "inner");
+# probeAll(Outer.Inner, "shared");
+# probeAll(Outer.Inner, "mixed");
+# probeAll(Outer.Inner, "late");
+# probeAll(Outer.Bare, "outer");
+# report(Outer.read());
+# class Keyed { static #key = 1; static [(early.push(attempt(() => eval("#key in early")), attempt(() => eval("early.#key")), eval("value => String(#key in value) + value.#key")), "named")] = 1; }
+# report(early[0]);
+# report(early[1]);
+# report(early[2](Keyed));
+# report(attempt(() => early[2]({})));
+# report("end");
+# A STATIC PRIVATE FIELD OF THE CLASS AROUND A CLASS, ASKED FOR BY THE TEXT OF A DIRECT EVAL IN THE INNER CLASS. The bindings of such a call list the names and the class object of each class, one depth for each.
+# Each name of the text leads to the class object of the class that declares it: where both classes use one name, where the outer class uses it for a field of its objects, where the inner class has no name of its own, and before the later field of the outer class has its value.
+# A text in a computed key runs before its class is there: it finds the field on no value, and a function that it made finds it on the class once the value is there.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } const early = []; class Outer {   static #outer = "outer";   static #shared = "shared of the outer";   #mixed = "of an object";   static Inner = class Inner {     static { report(eval("String(#late in Outer) + (#late in this)")); report(attempt(() => eval("Outer.#late"))); }     static #inner = "inner";     static #shared = "shared of the inner";     static #mixed = "of the inner";     static ask(text, value) { return eval(text); }   };   static Bare = class { static ask(text, value) { return eval(text); } };   static #late = "late";   static read() { return Outer.#outer + ", " + Outer.#shared + ", " + Outer.#late; } } function probe(inner, name, value) { report(attempt(() => inner.ask("#" + name + " in value", value))); report(attempt(() => inner.ask("value.#" + name, value))); report(attempt(() => inner.ask("value.#" + name + " += '!'", value))); } function probeAll(inner, name) { probe(inner, name, Outer); probe(inner, name, Outer.Inner); probe(inner, name, new Outer()); probe(inner, name, {}); } probeAll(Outer.Inner, "outer"); probeAll(Outer.Inner, "inner"); probeAll(Outer.Inner, "shared"); probeAll(Outer.Inner, "mixed"); probeAll(Outer.Inner, "late"); probeAll(Outer.Bare, "outer"); report(Outer.read()); class Keyed { static #key = 1; static [(early.push(attempt(() => eval("#key in early")), attempt(() => eval("early.#key")), eval("value => String(#key in value) + value.#key")), "named")] = 1; } report(early[0]); report(early[1]); report(early[2](Keyed)); report(attempt(() => early[2]({}))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 80 of 80 of 80
+# CHECK-NEXT: exited with 0
+# The same answers with a collection at every allocation that leaves the fast path, full and then eden: the name that texts have for the field lives in a list that a weak map holds under the class object,
+# and both are used across collections.
+# RUN(COLLECTS): run-in-shell --slowPathAllocsBetweenGCs=1 --useZombieMode=1 --scribbleFreeCells=1 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } const early = []; class Outer {   static #outer = "outer";   static #shared = "shared of the outer";   #mixed = "of an object";   static Inner = class Inner {     static { report(eval("String(#late in Outer) + (#late in this)")); report(attempt(() => eval("Outer.#late"))); }     static #inner = "inner";     static #shared = "shared of the inner";     static #mixed = "of the inner";     static ask(text, value) { return eval(text); }   };   static Bare = class { static ask(text, value) { return eval(text); } };   static #late = "late";   static read() { return Outer.#outer + ", " + Outer.#shared + ", " + Outer.#late; } } function probe(inner, name, value) { report(attempt(() => inner.ask("#" + name + " in value", value))); report(attempt(() => inner.ask("value.#" + name, value))); report(attempt(() => inner.ask("value.#" + name + " += '!'", value))); } function probeAll(inner, name) { probe(inner, name, Outer); probe(inner, name, Outer.Inner); probe(inner, name, new Outer()); probe(inner, name, {}); } probeAll(Outer.Inner, "outer"); probeAll(Outer.Inner, "inner"); probeAll(Outer.Inner, "shared"); probeAll(Outer.Inner, "mixed"); probeAll(Outer.Inner, "late"); probeAll(Outer.Bare, "outer"); report(Outer.read()); class Keyed { static #key = 1; static [(early.push(attempt(() => eval("#key in early")), attempt(() => eval("early.#key")), eval("value => String(#key in value) + value.#key")), "named")] = 1; } report(early[0]); report(early[1]); report(early[2](Keyed)); report(attempt(() => early[2]({}))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# COLLECTS: 80 of 80 of 80
+# COLLECTS-NEXT: exited with 0
+# RUN(EDEN): run-in-shell --slowPathAllocsBetweenGCs=1 --useEdenCollectionsAtSlowPathAllocs=1 --useZombieMode=1 --scribbleFreeCells=1 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } const early = []; class Outer {   static #outer = "outer";   static #shared = "shared of the outer";   #mixed = "of an object";   static Inner = class Inner {     static { report(eval("String(#late in Outer) + (#late in this)")); report(attempt(() => eval("Outer.#late"))); }     static #inner = "inner";     static #shared = "shared of the inner";     static #mixed = "of the inner";     static ask(text, value) { return eval(text); }   };   static Bare = class { static ask(text, value) { return eval(text); } };   static #late = "late";   static read() { return Outer.#outer + ", " + Outer.#shared + ", " + Outer.#late; } } function probe(inner, name, value) { report(attempt(() => inner.ask("#" + name + " in value", value))); report(attempt(() => inner.ask("value.#" + name, value))); report(attempt(() => inner.ask("value.#" + name + " += '!'", value))); } function probeAll(inner, name) { probe(inner, name, Outer); probe(inner, name, Outer.Inner); probe(inner, name, new Outer()); probe(inner, name, {}); } probeAll(Outer.Inner, "outer"); probeAll(Outer.Inner, "inner"); probeAll(Outer.Inner, "shared"); probeAll(Outer.Inner, "mixed"); probeAll(Outer.Inner, "late"); probeAll(Outer.Bare, "outer"); report(Outer.read()); class Keyed { static #key = 1; static [(early.push(attempt(() => eval("#key in early")), attempt(() => eval("early.#key")), eval("value => String(#key in value) + value.#key")), "named")] = 1; } report(early[0]); report(early[1]); report(early[2](Keyed)); report(attempt(() => early[2]({}))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# EDEN: 80 of 80 of 80
+# EDEN-NEXT: exited with 0
+# JSObject's private field functions declare a scope that may throw, and ask the run time of direct eval from inside it before they throw.
+# Under the option of the run below an engine built with assertions aborts where such a scope is left with a check owed. Any other engine takes the option and checks nothing.
+# RUN(SCOPES): run-in-shell --validateExceptionChecks=1 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(run) { try { return String(run()); } catch (error) { return error.name + ": " + error.message; } } const early = []; class Outer {   static #outer = "outer";   static #shared = "shared of the outer";   #mixed = "of an object";   static Inner = class Inner {     static { report(eval("String(#late in Outer) + (#late in this)")); report(attempt(() => eval("Outer.#late"))); }     static #inner = "inner";     static #shared = "shared of the inner";     static #mixed = "of the inner";     static ask(text, value) { return eval(text); }   };   static Bare = class { static ask(text, value) { return eval(text); } };   static #late = "late";   static read() { return Outer.#outer + ", " + Outer.#shared + ", " + Outer.#late; } } function probe(inner, name, value) { report(attempt(() => inner.ask("#" + name + " in value", value))); report(attempt(() => inner.ask("value.#" + name, value))); report(attempt(() => inner.ask("value.#" + name + " += '!'", value))); } function probeAll(inner, name) { probe(inner, name, Outer); probe(inner, name, Outer.Inner); probe(inner, name, new Outer()); probe(inner, name, {}); } probeAll(Outer.Inner, "outer"); probeAll(Outer.Inner, "inner"); probeAll(Outer.Inner, "shared"); probeAll(Outer.Inner, "mixed"); probeAll(Outer.Inner, "late"); probeAll(Outer.Bare, "outer"); report(Outer.read()); class Keyed { static #key = 1; static [(early.push(attempt(() => eval("#key in early")), attempt(() => eval("early.#key")), eval("value => String(#key in value) + value.#key")), "named")] = 1; } report(early[0]); report(early[1]); report(early[2](Keyed)); report(attempt(() => early[2]({}))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# SCOPES: 80 of 80 of 80
+# SCOPES-NEXT: exited with 0
+
+module m0 path="evaluated-text-asks-for-a-static-private-field-of-the-class-around-its-class.js" displayPath="evaluated-text-asks-for-a-static-private-field-of-the-class-around-its-class.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Inner" module=m0 position=267 constructor=f16 place=267
+layout L1 kind=Instance module=m0 position=573 constructor=f19 place=573
+layout L2 kind=Instance name="Outer" module=m0 position=140 constructor=f4 fields=[{key=#"class brand"@L2 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#mixed"@L2 declared={type=anything} flags=[IsRequired, IsPrivate]}] staticFields=[{key="Inner" variable=g12}, {key="Bare" variable=g13}] place=140 ownFieldCount=2
+layout L3 kind=Instance name="Keyed" module=m0 position=1350 constructor=f7 place=1350
+layout L4 module=m0 position=1124 place=1124
+layout L5 module=m0 position=1630 place=1630
+layout L6 kind=Environment module=m0 fields=[{key=@"0" declared={type=absent|f16 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="Inner"}] place=76 ownFieldCount=1
+layout L7 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent}}, {key=@"1" declared={type=anything|absent}}, {key=@"2" declared={type=anything|absent}}] place=79 ownFieldCount=3
+layout L8 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired] variableName="text"}, {key=@"1" declared={type=anything} flags=[IsRequired] variableName="value"}] place=101 ownFieldCount=2
+layout L9 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired] variableName="text"}, {key=@"1" declared={type=anything} flags=[IsRequired] variableName="value"}] place=115 ownFieldCount=2
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Object{layout=L4} module=m0
+data d2 root=Object{layout=L5} module=m0
+variable g0 name="attempt" module=m0 declared={type=anything} initialization=Function function=f1 place=1
+variable g1 name="probe" module=m0 declared={type=anything} initialization=Function function=f2 place=2
+variable g2 name="probeAll" module=m0 declared={type=anything} initialization=Function function=f3 place=3
+variable g3 name="early" module=m0 declared={type=absent|Array flags=[IsExpected]} flags=[IsImmutable] place=4
+variable g4 name="Outer" module=m0 declared={type=anything|absent} place=5
+variable g5 name="Keyed" module=m0 declared={type=anything|absent} place=22
+variable g6 name="Outer" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=26
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=64
+variable g8 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable] place=65
+variable g9 module=m0 declared={type=anything|absent} place=99
+variable g10 module=m0 declared={type=anything|absent} place=107
+variable g11 module=m0 declared={type=anything|absent} place=139
+variable g12 module=m0 declared={type=anything} owner=L2 place=123
+variable g13 module=m0 declared={type=anything} owner=L2 place=131
+variable g14 name="Keyed" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=27
+variable g15 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=72
+variable g16 module=m0 declared={type=string|symbol flags=[IsFromCompiler]} flags=[IsImmutable] place=163
+variable g17 module=m0 declared={type=anything|absent} place=155
+evalscope e0 bindings=[{name="early" kind=Constant variable=g3}, {name="Outer" variable=g4}, {name="Keyed" variable=g5}, {name="attempt" depth=1 variable=g0}, {name="probe" depth=1 variable=g1}, {name="probeAll" depth=1 variable=g2}]
+evalscope e1 bindings=[{name="Keyed" kind=Constant depth=3 variable=g14}, {kind=ClassObject depth=3 variable=g15}, {name="#key" kind=PrivateName depth=3 variable=g17 operand=0}] outer=e0
+evalscope e2 flags=[IsInArrowFunction] bindings=[{name="Keyed" kind=Constant depth=5 variable=g14}, {kind=ClassObject depth=5 variable=g15}, {name="#key" kind=PrivateName depth=5 variable=g17 operand=0}] outer=e0
+evalscope e3 flags=[IsInArrowFunction] bindings=[{name="Keyed" kind=Constant depth=5 variable=g14}, {kind=ClassObject depth=5 variable=g15}, {name="#key" kind=PrivateName depth=5 variable=g17 operand=0}] outer=e0
+evalscope e4 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="text" depth=1 layout=L8 field=0 operand=0}, {name="value" depth=1 layout=L8 field=1 operand=0}, {name="arguments" kind=Arguments depth=1 operand=2}, {kind=HomeObject depth=1 operand=3}, {kind=ClassObject depth=5 operand=4}, {name="#inner" kind=PrivateName depth=5 layout=L7 field=0 operand=6}, {name="#shared" kind=PrivateName depth=5 layout=L7 field=1 operand=6}, {name="#mixed" kind=PrivateName depth=5 layout=L7 field=2 operand=6}, {name="Inner" kind=Constant depth=7 layout=L6 field=0 operand=1}, {name="Outer" kind=Constant depth=13 variable=g6}, {kind=ClassObject depth=13 variable=g7}, {name="#outer" kind=PrivateName depth=13 variable=g9 operand=8}, {name="#shared" kind=PrivateName depth=13 variable=g10 operand=8}, {name="#mixed" kind=PrivateName depth=13 layout=L2 field=1 operand=7}, {name="#late" kind=PrivateName depth=13 variable=g11 operand=8}] outer=e0
+evalscope e5 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="text" depth=1 layout=L9 field=0 operand=0}, {name="value" depth=1 layout=L9 field=1 operand=0}, {name="arguments" kind=Arguments depth=1 operand=1}, {kind=HomeObject depth=1 operand=2}, {name="Outer" kind=Constant depth=11 variable=g6}, {kind=ClassObject depth=11 variable=g7}, {name="#outer" kind=PrivateName depth=11 variable=g9 operand=4}, {name="#shared" kind=PrivateName depth=11 variable=g10 operand=4}, {name="#mixed" kind=PrivateName depth=11 layout=L2 field=1 operand=3}, {name="#late" kind=PrivateName depth=11 variable=g11 operand=4}] outer=e0
+evalscope e6 flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=1 operand=1}, {kind=HomeObject depth=1 operand=2}, {kind=ClassObject depth=5 operand=3}, {name="#inner" kind=PrivateName depth=5 layout=L7 field=0 operand=5}, {name="#shared" kind=PrivateName depth=5 layout=L7 field=1 operand=5}, {name="#mixed" kind=PrivateName depth=5 layout=L7 field=2 operand=5}, {name="Inner" kind=Constant depth=7 operand=0}, {name="Outer" kind=Constant depth=13 variable=g6}, {kind=ClassObject depth=13 variable=g7}, {name="#outer" kind=PrivateName depth=13 variable=g9 operand=7}, {name="#shared" kind=PrivateName depth=13 variable=g10 operand=7}, {name="#mixed" kind=PrivateName depth=13 layout=L2 field=1 operand=6}, {name="#late" kind=PrivateName depth=13 variable=g11 operand=7}] outer=e0
+evalscope e7 flags=[IsInFunction, IsInArrowFunction, AllowsSuperProperty, AllowsNewTarget] bindings=[{name="arguments" kind=Arguments depth=3 operand=1}, {kind=HomeObject depth=3 operand=2}, {kind=ClassObject depth=7 operand=3}, {name="#inner" kind=PrivateName depth=7 layout=L7 field=0 operand=5}, {name="#shared" kind=PrivateName depth=7 layout=L7 field=1 operand=5}, {name="#mixed" kind=PrivateName depth=7 layout=L7 field=2 operand=5}, {name="Inner" kind=Constant depth=9 operand=0}, {name="Outer" kind=Constant depth=15 variable=g6}, {kind=ClassObject depth=15 variable=g7}, {name="#outer" kind=PrivateName depth=15 variable=g9 operand=7}, {name="#shared" kind=PrivateName depth=15 variable=g10 operand=7}, {name="#mixed" kind=PrivateName depth=15 layout=L2 field=1 operand=6}, {name="#late" kind=PrivateName depth=15 variable=g11 operand=7}] outer=e0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0 @130
+    PutModuleVariable v0 variable=g3 @122
+    v2 = NewClassToken layout=L2 @134
+    PutModuleVariable v2 variable=g8 @134
+    v4 = NewClosure function=f4 @134
+    v5 = NewClass v4 layout=L2 @134
+    PutModuleVariable v5 variable=g7 @134
+    v7 = NewClosure function=f5 @665
+    DefineMethod v5, v7 layout=L2 side=Static key="read" @665
+    v9 = FinishClass v5 layout=L2 @134
+    PutModuleVariable v9 variable=g6 @134
+    v11 = Convert v9 declared={type=function flags=[IsFromCompiler]} @134
+    v12 = CallDirect v11 function=f6 @134
+    PutModuleVariable v9 variable=g4 @134
+    v14 = GetModuleVariable variable=g2 @1131
+    v15 = GetModuleVariable variable=g4 @1140
+    v16 = CheckInitialized v15 name="Outer" @1140
+    v17 = PropGet v16 key="Inner" @1140
+    v18 = String string="outer" @1153
+    v19 = Call v14, -, v17, v18 calleeName="probeAll" @1131
+    v20 = GetModuleVariable variable=g2 @1163
+    v21 = GetModuleVariable variable=g4 @1172
+    v22 = CheckInitialized v21 name="Outer" @1172
+    v23 = PropGet v22 key="Inner" @1172
+    v24 = String string="inner" @1185
+    v25 = Call v20, -, v23, v24 calleeName="probeAll" @1163
+    v26 = GetModuleVariable variable=g2 @1195
+    v27 = GetModuleVariable variable=g4 @1204
+    v28 = CheckInitialized v27 name="Outer" @1204
+    v29 = PropGet v28 key="Inner" @1204
+    v30 = String string="shared" @1217
+    v31 = Call v26, -, v29, v30 calleeName="probeAll" @1195
+    v32 = GetModuleVariable variable=g2 @1228
+    v33 = GetModuleVariable variable=g4 @1237
+    v34 = CheckInitialized v33 name="Outer" @1237
+    v35 = PropGet v34 key="Inner" @1237
+    v36 = String string="mixed" @1250
+    v37 = Call v32, -, v35, v36 calleeName="probeAll" @1228
+    v38 = GetModuleVariable variable=g2 @1260
+    v39 = GetModuleVariable variable=g4 @1269
+    v40 = CheckInitialized v39 name="Outer" @1269
+    v41 = PropGet v40 key="Inner" @1269
+    v42 = String string="late" @1282
+    v43 = Call v38, -, v41, v42 calleeName="probeAll" @1260
+    v44 = GetModuleVariable variable=g2 @1291
+    v45 = GetModuleVariable variable=g4 @1300
+    v46 = CheckInitialized v45 name="Outer" @1300
+    v47 = PropGet v46 key="Bare" @1300
+    v48 = String string="outer" @1312
+    v49 = Call v44, -, v47, v48 calleeName="probeAll" @1291
+    v50 = Builtin builtin=GlobalThis @1322
+    v51 = PropGet v50 key="report" [isFreeName] @1322
+    v52 = GetModuleVariable variable=g4 @1329
+    v53 = CheckInitialized v52 name="Outer" @1329
+    v54 = PropGet v53 key="read" @1329
+    v55 = Call v54, v53 calleeKey="read" calleeName="Outer.read" @1335
+    v56 = Call v51, -, v55 calleeName="report" @1322
+    v57 = NewClosure function=f7 @1344
+    v58 = NewClass v57 layout=L3 @1344
+    PutModuleVariable v58 variable=g15 @1344
+    v60 = PropGet v0 key="push" @1384
+    v61 = GetModuleVariable variable=g0 @1395
+    v62 = NewClosure function=f8 @1403
+    v63 = Call v61, -, v62 calleeName="attempt" @1395
+    v64 = GetModuleVariable variable=g0 @1433
+    v65 = NewClosure function=f9 @1441
+    v66 = Call v64, -, v65 calleeName="attempt" @1433
+    v67 = Builtin builtin=GlobalThis @1468
+    v68 = PropGet v67 key="eval" [isFreeName] @1468
+    v69 = Convert v68 declared={type=builtin(Eval) flags=[IsExpected]} @1468
+    v70 = String string="value => String(#key in value) + value.#key" @1473
+    v71 = Builtin builtin=Eval [isNotReadFromHolder] @1468
+    v72 = StrictEq v69, v71 @1468
+    Branch v72 -> taken b1(), notTaken b2(| 0) @1468
+  b1():
+    v73 = Undefined @1468
+    v74 = DirectEval v70, v73, -, v58 evalScope=e1 @1468
+    Jump -> next b3(v74) @1468
+  b2(v75):
+    v76 = Call v75, -, v70 calleeName="eval" @1468
+    Jump -> next b3(v76) @1468
+  b3(v77):
+    v78 = Call v60, v0, v63, v66, v77 calleeKey="push" calleeName="early.push" @1390
+    v79 = String string="named" @1522
+    v80 = ToPropertyKey v79 @1522
+    v81 = String string="prototype" @1382
+    v82 = StrictEq v80, v81 @1382
+    Branch v82 -> taken b4(), notTaken b5() @1382
+  b4():
+    v83 = NewRuntimeError runtimeError=StaticPrototypeKey @1382
+    Throw v83 @1382
+  b5():
+    PutModuleVariable v80 variable=g16 @1382
+    v85 = FinishClass v58 layout=L3 @1344
+    PutModuleVariable v85 variable=g14 @1344
+    v87 = Convert v85 declared={type=function flags=[IsFromCompiler]} @1344
+    v88 = CallDirect v87 function=f10 @1344
+    PutModuleVariable v85 variable=g5 @1344
+    v90 = Builtin builtin=GlobalThis @1539
+    v91 = PropGet v90 key="report" [isFreeName] @1539
+    v92 = Integer @1546
+    v93 = ElemGet v0, v92 @1546
+    v94 = Call v91, -, v93 calleeName="report" @1539
+    v95 = Builtin builtin=GlobalThis @1557
+    v96 = PropGet v95 key="report" [isFreeName] @1557
+    v97 = Integer integer=1 @1564
+    v98 = ElemGet v0, v97 @1564
+    v99 = Call v96, -, v98 calleeName="report" @1557
+    v100 = Builtin builtin=GlobalThis @1575
+    v101 = PropGet v100 key="report" [isFreeName] @1575
+    v102 = Integer integer=2 @1582
+    v103 = ElemGet v0, v102 @1582
+    v104 = GetModuleVariable variable=g5 @1591
+    v105 = CheckInitialized v104 name="Keyed" @1591
+    v106 = Call v103, v0, v105 calleeName="early[2]" @1588
+    v107 = Call v101, -, v106 calleeName="report" @1575
+    v108 = Builtin builtin=GlobalThis @1600
+    v109 = PropGet v108 key="report" [isFreeName] @1600
+    v110 = GetModuleVariable variable=g0 @1607
+    v111 = NewClosure function=f11 @1615
+    v112 = Call v110, -, v111 calleeName="attempt" @1607
+    v113 = Call v109, -, v112 calleeName="report" @1600
+    v114 = Builtin builtin=GlobalThis @1637
+    v115 = PropGet v114 key="report" [isFreeName] @1637
+    v116 = String string="end" @1644
+    v117 = Call v115, -, v116 calleeName="report" @1637
+    v118 = Undefined @1637
+    Return v118 @1637
+}
+function f1 name="attempt" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @24
+  b1() handler=b2():
+    v1 = Builtin builtin=String @37
+    v2 = Call v0 calleeName="run" @44
+    v3 = Call v1, -, v2 calleeName="String" @37
+    Return v3 @37
+  b2() role=CatchHandler:
+    v4 = CatchValue @68
+    v5 = PropGet v4 key="name" @77
+    v6 = String string=": " @90
+    v7 = Add v5, v6 @90
+    v8 = PropGet v4 key="message" @97
+    v9 = Add v7, v8 @97
+    Return v9 @97
+}
+function f2 name="probe" module=m0 position=743 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    v3 = Builtin builtin=GlobalThis @780
+    v4 = PropGet v3 key="report" [isFreeName] @780
+    v5 = GetModuleVariable variable=g0 @787
+    v6 = NewClosure v0, v1, v2 function=f12 @795
+    v7 = Call v5, -, v6 calleeName="attempt" @787
+    v8 = Call v4, -, v7 calleeName="report" @780
+    v9 = Builtin builtin=GlobalThis @847
+    v10 = PropGet v9 key="report" [isFreeName] @847
+    v11 = GetModuleVariable variable=g0 @854
+    v12 = NewClosure v0, v1, v2 function=f13 @862
+    v13 = Call v11, -, v12 calleeName="attempt" @854
+    v14 = Call v10, -, v13 calleeName="report" @847
+    v15 = Builtin builtin=GlobalThis @906
+    v16 = PropGet v15 key="report" [isFreeName] @906
+    v17 = GetModuleVariable variable=g0 @913
+    v18 = NewClosure v0, v1, v2 function=f14 @921
+    v19 = Call v17, -, v18 calleeName="attempt" @913
+    v20 = Call v16, -, v19 calleeName="report" @906
+    v21 = Undefined @906
+    Return v21 @906
+}
+function f3 name="probeAll" module=m0 position=979 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = GetModuleVariable variable=g1 @1012
+    v3 = GetModuleVariable variable=g4 @1031
+    v4 = CheckInitialized v3 name="Outer" @1031
+    v5 = Call v2, -, v0, v1, v4 calleeName="probe" @1012
+    v6 = GetModuleVariable variable=g1 @1039
+    v7 = GetModuleVariable variable=g4 @1058
+    v8 = CheckInitialized v7 name="Outer" @1058
+    v9 = PropGet v8 key="Inner" @1058
+    v10 = Call v6, -, v0, v1, v9 calleeName="probe" @1039
+    v11 = GetModuleVariable variable=g1 @1072
+    v12 = GetModuleVariable variable=g4 @1095
+    v13 = CheckInitialized v12 name="Outer" @1095
+    v14 = Construct v13 calleeName="Outer" @1095
+    v15 = Call v11, -, v0, v1, v14 calleeName="probe" @1072
+    v16 = GetModuleVariable variable=g1 @1105
+    v17 = Data data=d1 @1124
+    v18 = Call v16, -, v0, v1, v17 calleeName="probe" @1105
+    v19 = Undefined @1105
+    Return v19 @1105
+}
+function f4 name="Outer" module=m0 position=140 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2 @140
+    v2 = NewObject v1 layout=L2 @140
+    v3 = Convert v2 declared={type=L2} @140
+    v4 = CallDirect v3 function=f15 @140
+    Return v3 @140
+}
+function f5 name="read" module=m0 position=658 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g6 @681
+    v1 = CheckInitialized v0 name="Outer" @681
+    v2 = GetModuleVariable variable=g7 @681
+    v3 = StrictEq v1, v2 @681
+    Branch v3 -> taken b1(), notTaken b16() @681
+  b1():
+    v4 = GetModuleVariable variable=g9 @681
+    v5 = TypeTest v4 testedType=absent @681
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0) @681
+  b2(v6):
+    v7 = NewRuntimeError runtimeError=InvalidPrivateRead @681
+    Throw v7 @681
+  b3(v8):
+    v9 = String string=", " @696
+    v10 = Add v8, v9 @696
+    v11 = GetModuleVariable variable=g6 @703
+    v12 = CheckInitialized v11 name="Outer" @703
+    v13 = GetModuleVariable variable=g7 @703
+    v14 = StrictEq v12, v13 @703
+    Branch v14 -> taken b4(), notTaken b13() @703
+  b4():
+    v15 = GetModuleVariable variable=g10 @703
+    v16 = TypeTest v15 testedType=absent @703
+    Branch v16 -> taken b5(| 0), notTaken b6(| 0) @703
+  b5(v17):
+    v18 = NewRuntimeError runtimeError=InvalidPrivateRead @703
+    Throw v18 @703
+  b6(v19):
+    v20 = Add v10, v19 @703
+    v21 = String string=", " @719
+    v22 = Add v20, v21 @719
+    v23 = GetModuleVariable variable=g6 @726
+    v24 = CheckInitialized v23 name="Outer" @726
+    v25 = GetModuleVariable variable=g7 @726
+    v26 = StrictEq v24, v25 @726
+    Branch v26 -> taken b7(), notTaken b10() @726
+  b7():
+    v27 = GetModuleVariable variable=g11 @726
+    v28 = TypeTest v27 testedType=absent @726
+    Branch v28 -> taken b8(| 0), notTaken b9(| 0) @726
+  b8(v29):
+    v30 = NewRuntimeError runtimeError=InvalidPrivateRead @726
+    Throw v30 @726
+  b9(v31):
+    v32 = Add v22, v31 @726
+    Return v32 @726
+  b10():
+    v33 = TypeTest v24 testedType=undefined|null @726
+    Branch v33 -> taken b11(| 0), notTaken b12(| 0) @726
+  b11(v34):
+    v35 = PropGet v34 key="#late" @726
+    Unreachable @726
+  b12(v36):
+    v37 = NewRuntimeError runtimeError=InvalidPrivateRead @726
+    Throw v37 @726
+  b13():
+    v38 = TypeTest v12 testedType=undefined|null @703
+    Branch v38 -> taken b14(| 0), notTaken b15(| 0) @703
+  b14(v39):
+    v40 = PropGet v39 key="#shared" @703
+    Unreachable @703
+  b15(v41):
+    v42 = NewRuntimeError runtimeError=InvalidPrivateRead @703
+    Throw v42 @703
+  b16():
+    v43 = TypeTest v1 testedType=undefined|null @681
+    Branch v43 -> taken b17(| 0), notTaken b18(| 0) @681
+  b17(v44):
+    v45 = PropGet v44 key="#outer" @681
+    Unreachable @681
+  b18(v46):
+    v47 = NewRuntimeError runtimeError=InvalidPrivateRead @681
+    Throw v47 @681
+}
+function f6 module=m0 position=140 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @140
+    v2 = String string="outer" @166
+    PutModuleVariable v2 variable=g9 @157
+    v4 = String string="shared of the outer" @194
+    PutModuleVariable v4 variable=g10 @184
+    v6 = NewObject layout=L6 @261
+    v7 = NewObject layout=L7 @261
+    v8 = NewClosure function=f16 @261
+    v9 = NewClass v8 layout=L0 @261
+    v10 = NewClosure v6, v7, v9 function=f17 @512
+    DefineMethod v9, v10 layout=L0 side=Static key="ask" @512
+    v12 = FinishClass v9 layout=L0 @261
+    v13 = Convert v12 declared={type=f16 flags=[IsFromCompiler]} @261
+    PutEnvironmentField v6, v13 layout=L6 @261
+    v15 = Convert v12 declared={type=function flags=[IsFromCompiler]} @261
+    v16 = CallDirect v7, v13, v9, v15 function=f18 @261
+    PropDefine v1, v12 key="Inner" @253
+    v18 = NewClosure function=f19 @573
+    v19 = NewClass v18 layout=L1 @573
+    v20 = NewClosure v19 function=f20 @588
+    DefineMethod v19, v20 layout=L1 side=Static key="ask" @588
+    v22 = FinishClass v19 layout=L1 @573
+    PropDefine v1, v22 key="Bare" @566
+    v24 = String string="late" @648
+    PutModuleVariable v24 variable=g11 @640
+    v26 = Undefined @140
+    Return v26 @140
+}
+function f7 name="Keyed" module=m0 position=1350 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3 @1350
+    v2 = NewObject v1 layout=L3 @1350
+    v3 = Convert v2 declared={type=L3} @1350
+    Return v3 @1350
+}
+function f8 module=m0 position=1403 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1409
+    v1 = PropGet v0 key="eval" [isFreeName] @1409
+    v2 = Convert v1 declared={type=builtin(Eval) flags=[IsExpected]} @1409
+    v3 = String string="#key in early" @1414
+    v4 = Builtin builtin=Eval [isNotReadFromHolder] @1409
+    v5 = StrictEq v2, v4 @1409
+    Branch v5 -> taken b1(), notTaken b2(| 0) @1409
+  b1():
+    v6 = Undefined @1409
+    v7 = GetModuleVariable variable=g15 @1409
+    v8 = DirectEval v3, v6, -, v7 evalScope=e2 @1409
+    Jump -> next b3(v8) @1409
+  b2(v9):
+    v10 = Call v9, -, v3 calleeName="eval" @1409
+    Jump -> next b3(v10) @1409
+  b3(v11):
+    Return v11 @1409
+}
+function f9 module=m0 position=1441 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1447
+    v1 = PropGet v0 key="eval" [isFreeName] @1447
+    v2 = Convert v1 declared={type=builtin(Eval) flags=[IsExpected]} @1447
+    v3 = String string="early.#key" @1452
+    v4 = Builtin builtin=Eval [isNotReadFromHolder] @1447
+    v5 = StrictEq v2, v4 @1447
+    Branch v5 -> taken b1(), notTaken b2(| 0) @1447
+  b1():
+    v6 = Undefined @1447
+    v7 = GetModuleVariable variable=g15 @1447
+    v8 = DirectEval v3, v6, -, v7 evalScope=e3 @1447
+    Jump -> next b3(v8) @1447
+  b2(v9):
+    v10 = Call v9, -, v3 calleeName="eval" @1447
+    Jump -> next b3(v10) @1447
+  b3(v11):
+    Return v11 @1447
+}
+function f10 module=m0 position=1350 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1350
+    v2 = Integer integer=1 @1372
+    PutModuleVariable v2 variable=g17 @1365
+    v4 = GetModuleVariable variable=g16 @1350
+    v5 = Integer integer=1 @1534
+    ElemDefine v1, v4, v5 @1382
+    v7 = Undefined @1350
+    Return v7 @1350
+}
+function f11 module=m0 position=1615 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g3 @1621
+    v1 = CheckInitialized v0 name="early" @1621
+    v2 = Integer integer=2 @1621
+    v3 = ElemGet v1, v2 @1621
+    v4 = Data data=d2 @1630
+    v5 = Call v3, v1, v4 calleeName="early[2]" @1627
+    ReturnCall v5 @1627
+}
+function f12 module=m0 position=795 kind=Arrow captures=[{type=anything flags=[IsExpected] variableName="inner"}, {type=undefined|null|string flags=[IsExpected] variableName="name"}, {type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    v3 = PropGet v0 key="ask" @801
+    v4 = String string="#" @811
+    v5 = Add v4, v1 @817
+    v6 = String string=" in value" @824
+    v7 = Add v5, v6 @824
+    v8 = Call v3, v0, v7, v2 calleeKey="ask" calleeName="inner.ask" @807
+    ReturnCall v8 @807
+}
+function f13 module=m0 position=862 kind=Arrow captures=[{type=anything flags=[IsExpected] variableName="inner"}, {type=undefined|null|string flags=[IsExpected] variableName="name"}, {type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    v3 = PropGet v0 key="ask" @868
+    v4 = String string="value.#" @878
+    v5 = Add v4, v1 @890
+    v6 = Call v3, v0, v5, v2 calleeKey="ask" calleeName="inner.ask" @874
+    ReturnCall v6 @874
+}
+function f14 module=m0 position=921 kind=Arrow captures=[{type=anything flags=[IsExpected] variableName="inner"}, {type=undefined|null|string flags=[IsExpected] variableName="name"}, {type=anything variableName="value"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    v3 = PropGet v0 key="ask" @927
+    v4 = String string="value.#" @937
+    v5 = Add v4, v1 @949
+    v6 = String string=" += '!'" @956
+    v7 = Add v5, v6 @956
+    v8 = Call v3, v0, v7, v2 calleeKey="ask" calleeName="inner.ask" @933
+    ReturnCall v8 @933
+}
+function f15 module=m0 position=140 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @140
+    v2 = GetModuleVariable variable=g8 @140
+    PrivateDefine v1, v2, v2 layout=L2 @140
+    v4 = String string="of an object" @228
+    v5 = GetModuleVariable variable=g8 @219
+    PrivateDefine v1, v5, v4 layout=L2 field=1 @219
+    v7 = Undefined @140
+    Return v7 @140
+}
+function f16 name="Inner" module=m0 position=267 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @267
+    v2 = NewObject v1 layout=L0 @267
+    v3 = Convert v2 declared={type=L0} @267
+    Return v3 @267
+}
+function f17 name="ask" module=m0 position=505 kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env L6 flags=[IsFromCompiler]}, {type=env L7 flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L6, v1: env L7, v2: function, v3: function, v4: int[0, 4294967295], v5: undefined|null|string, v6: anything, v7: Array):
+    v8 = CreateUnmappedArguments v4, v7, v5, v6 @505
+    v9 = NewObject -, v5, v6 layout=L8 fields=[0, 1] @522
+    v10 = Builtin builtin=GlobalThis @538
+    v11 = PropGet v10 key="eval" [isFreeName] @538
+    v12 = Convert v11 declared={type=builtin(Eval) flags=[IsExpected]} @538
+    v13 = GetEnvironmentField v9 layout=L8 @543
+    v14 = Builtin builtin=Eval [isNotReadFromHolder] @538
+    v15 = StrictEq v12, v14 @538
+    Branch v15 -> taken b1(), notTaken b2(| 0) @538
+  b1():
+    v16 = Undefined @538
+    v17 = GetModuleVariable variable=g8 @538
+    v18 = GetModuleVariable variable=g7 @538
+    v19 = DirectEval v13, v3, v16, v9, v0, v8, v2, v2, v2, v1, v17, v18 evalScope=e4 @538
+    Jump -> next b3(v19) @538
+  b2(v20):
+    v21 = Call v20, -, v13 calleeName="eval" @538
+    Jump -> next b3(v21) @538
+  b3(v22):
+    Return v22 @538
+}
+function f18 module=m0 position=267 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=env L7 flags=[IsFromCompiler]}, {type=f16 flags=[IsFromCompiler] variableName="Inner"}, {type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L7, v1: f16, v2: function, v3: function):
+    v4 = Convert v3 declared={type=object flags=[IsFromCompiler, IsClaim]} @267
+    v5 = Convert v4 declared={type=function flags=[IsFromCompiler]} @267
+    v6 = Integer @267
+    v7 = NewArray contents=anything @267
+    v8 = CallDirect v0, v1, v2, v5, v6, v7 function=f21 @267
+    v9 = String string="inner" @412
+    PutEnvironmentField v0, v9 layout=L7 @403
+    v11 = String string="shared of the inner" @442
+    PutEnvironmentField v0, v11 layout=L7 field=1 @432
+    v13 = String string="of the inner" @485
+    PutEnvironmentField v0, v13 layout=L7 field=2 @476
+    v15 = Undefined @267
+    Return v15 @267
+}
+function f19 name="Bare" module=m0 position=573 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1 @573
+    v2 = NewObject v1 layout=L1 @573
+    v3 = Convert v2 declared={type=L1} @573
+    Return v3 @573
+}
+function f20 name="ask" module=m0 position=581 kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: function, v2: int[0, 4294967295], v3: undefined|null|string, v4: anything, v5: Array):
+    v6 = CreateUnmappedArguments v2, v5, v3, v4 @581
+    v7 = NewObject -, v3, v4 layout=L9 fields=[0, 1] @598
+    v8 = Builtin builtin=GlobalThis @614
+    v9 = PropGet v8 key="eval" [isFreeName] @614
+    v10 = Convert v9 declared={type=builtin(Eval) flags=[IsExpected]} @614
+    v11 = GetEnvironmentField v7 layout=L9 @619
+    v12 = Builtin builtin=Eval [isNotReadFromHolder] @614
+    v13 = StrictEq v10, v12 @614
+    Branch v13 -> taken b1(), notTaken b2(| 0) @614
+  b1():
+    v14 = Undefined @614
+    v15 = GetModuleVariable variable=g8 @614
+    v16 = GetModuleVariable variable=g7 @614
+    v17 = DirectEval v11, v1, v14, v7, v6, v0, v15, v16 evalScope=e5 @614
+    Jump -> next b3(v17) @614
+  b2(v18):
+    v19 = Call v18, -, v11 calleeName="eval" @614
+    Jump -> next b3(v19) @614
+  b3(v20):
+    Return v20 @614
+}
+function f21 module=m0 position=279 kind=Method flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=env L7 flags=[IsFromCompiler]}, {type=f16 flags=[IsFromCompiler] variableName="Inner"}, {type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L7, v1: f16, v2: function, v3: function, v4: int[0, 4294967295], v5: Array):
+    v6 = CreateUnmappedArguments v4, v5 @279
+    v7 = Builtin builtin=GlobalThis @288
+    v8 = PropGet v7 key="report" [isFreeName] @288
+    v9 = Builtin builtin=GlobalThis @295
+    v10 = PropGet v9 key="eval" [isFreeName] @295
+    v11 = Convert v10 declared={type=builtin(Eval) flags=[IsExpected]} @295
+    v12 = String string="String(#late in Outer) + (#late in this)" @300
+    v13 = Builtin builtin=Eval [isNotReadFromHolder] @295
+    v14 = StrictEq v11, v13 @295
+    Branch v14 -> taken b1(), notTaken b2(| 0) @295
+  b1():
+    v15 = Undefined @295
+    v16 = GetModuleVariable variable=g8 @295
+    v17 = GetModuleVariable variable=g7 @295
+    v18 = DirectEval v12, v3, v15, v1, v6, v2, v2, v2, v0, v16, v17 evalScope=e6 @295
+    Jump -> next b3(v18) @295
+  b2(v19):
+    v20 = Call v19, -, v12 calleeName="eval" @295
+    Jump -> next b3(v20) @295
+  b3(v21):
+    v22 = Call v8, -, v21 calleeName="report" @288
+    v23 = Builtin builtin=GlobalThis @346
+    v24 = PropGet v23 key="report" [isFreeName] @346
+    v25 = GetModuleVariable variable=g0 @353
+    v26 = NewClosure v0, v1, v2, v3, v6, v6 function=f22 @361
+    v27 = Call v25, -, v26 calleeName="attempt" @353
+    v28 = Call v24, -, v27 calleeName="report" @346
+    v29 = Undefined @346
+    Return v29 @346
+}
+function f22 module=m0 position=361 kind=Arrow captures=[{type=env L7 flags=[IsFromCompiler]}, {type=f16 flags=[IsFromCompiler] variableName="Inner"}, {type=function flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler] variableName="this"}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L7, v1: f16, v2: function, v3: function, v4: object, v5: anything):
+    v6 = Builtin builtin=GlobalThis @367
+    v7 = PropGet v6 key="eval" [isFreeName] @367
+    v8 = Convert v7 declared={type=builtin(Eval) flags=[IsExpected]} @367
+    v9 = String string="Outer.#late" @372
+    v10 = Builtin builtin=Eval [isNotReadFromHolder] @367
+    v11 = StrictEq v8, v10 @367
+    Branch v11 -> taken b1(), notTaken b2(| 0) @367
+  b1():
+    v12 = Undefined @367
+    v13 = GetModuleVariable variable=g8 @367
+    v14 = GetModuleVariable variable=g7 @367
+    v15 = DirectEval v9, v3, v12, v1, v5, v2, v2, v2, v0, v13, v14 evalScope=e7 @367
+    Jump -> next b3(v15) @367
+  b2(v16):
+    v17 = Call v16, -, v9 calleeName="eval" @367
+    Jump -> next b3(v17) @367
+  b3(v18):
+    Return v18 @367
+}

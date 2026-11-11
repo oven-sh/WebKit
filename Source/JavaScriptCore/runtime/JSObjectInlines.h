@@ -1050,8 +1050,12 @@ inline bool JSObject::hasPrivateField(JSGlobalObject* globalObject, PropertyName
     if (structure()->get(vm, propertyName, attributes) != invalidOffset)
         return true;
 #if ENABLE(AOT)
-    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
-        return !!AOT::PropertyWalk::getDirect(vm, this, propertyName, nullptr);
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        if (AOT::PropertyWalk::isCompiledObject(this))
+            return !!AOT::PropertyWalk::getDirect(vm, this, propertyName, nullptr);
+        if (vm.aotState().someTextNamesStaticPrivateField)
+            return !!AOT::PropertyWalk::getStaticFieldOfText(vm, this, propertyName);
+    }
 #endif
     return false;
 }
@@ -1062,6 +1066,14 @@ inline bool JSObject::getPrivateField(JSGlobalObject* globalObject, PropertyName
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(!slot.isVMInquiry());
     if (!JSObject::getPrivateFieldSlot(this, globalObject, propertyName, slot)) {
+#if ENABLE(AOT)
+        if (vm.aotState().someTextNamesStaticPrivateField) [[unlikely]] {
+            if (JSValue value = AOT::PropertyWalk::getStaticFieldOfText(vm, this, propertyName)) {
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), value);
+                return true;
+            }
+        }
+#endif
         throwException(globalObject, scope, createInvalidPrivateNameError(globalObject));
         return false;
     }
@@ -1075,6 +1087,12 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(this, PropertySlot::InternalMethodType::HasProperty);
     if (!JSObject::getPrivateFieldSlot(this, globalObject, propertyName, slot)) {
+#if ENABLE(AOT)
+        if (vm.aotState().someTextNamesStaticPrivateField) [[unlikely]] {
+            if (AOT::PropertyWalk::putStaticFieldOfText(vm, this, propertyName, value))
+                return;
+        }
+#endif
         throwException(globalObject, scope, createInvalidPrivateNameError(globalObject));
         return;
     }

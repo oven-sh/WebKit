@@ -188,6 +188,7 @@ public:
     bool isResolvingImportCall { false };
     bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };
+    bool someTextNamesStaticPrivateField { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
     CountedFiles countedFiles;
     struct ComputedFunctionName {

@@ -87,6 +87,10 @@ JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStrin
 using DescriptorMembers = std::array<JSValue, 6>;
 JS_EXPORT_PRIVATE bool tryReadDescriptorMembers(JSObject* compiledObject, DescriptorMembers&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);
+// A static private field of a compiled class under the name that evaluated text has for it. Its value lies in a slot beside the class object.
+// Empty, or false: the object is not the class object of such a name, or the field has no value yet.
+JS_EXPORT_PRIVATE JSValue getStaticFieldOfText(VM&, JSObject* holder, PropertyName);
+JS_EXPORT_PRIVATE bool putStaticFieldOfText(VM&, JSObject* holder, PropertyName, JSValue);
 JS_EXPORT_PRIVATE unsigned countPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject*);
 JS_EXPORT_PRIVATE bool matchPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches);
 void prepareForFreeze(JSObject* compiledObject);

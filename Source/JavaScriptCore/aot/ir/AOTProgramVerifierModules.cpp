@@ -835,12 +835,29 @@ static bool namesItsFunctions(const EvalScope& scope, const EvalBinding& binding
         && (!binding.setter || namesBindingOfKind(scope, binding.setter, EvalBindingKind::PrivateFunction));
 }
 
+// A private name that is no field of objects is a static private field.
+static bool isStaticPrivateField(const Program& program, const EvalBinding& binding)
+{
+    return binding.variable || !binding.layout || program.at(binding.layout).kind == LayoutKind::Environment;
+}
+
+// The text of a direct eval can store to a static private field, and asks the class object for it. So the field is never handed over by value:
+// it lies in a variable of the module or in a field of an environment, and its scope lists the class object at the depth of the name.
+static bool isStoredBesideItsClassObject(const EvalScope& scope, const EvalBinding& binding)
+{
+    if (!binding.variable && !binding.layout)
+        return false;
+    return std::ranges::any_of(scope.bindings, [&](const EvalBinding& other) {
+        return other.kind == EvalBindingKind::ClassObject && other.depth == binding.depth;
+    });
+}
+
 static bool isValidEvalBinding(const Program& program, const EvalScope& scope, const EvalBinding& binding)
 {
     bool hasFunctions = binding.function || binding.setter;
     switch (binding.kind) {
     case EvalBindingKind::PrivateName:
-        return !hasFunctions && hasValidPrivateHolder(program, binding);
+        return !hasFunctions && hasValidPrivateHolder(program, binding) && (!isStaticPrivateField(program, binding) || isStoredBesideItsClassObject(scope, binding));
     case EvalBindingKind::PrivateMethod:
         return !binding.setter && namesItsFunctions(scope, binding) && hasValidPrivateHolder(program, binding);
     case EvalBindingKind::PrivateAccessor:
