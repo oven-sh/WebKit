@@ -571,6 +571,8 @@ private:
         uint32_t firstPositional = function.firstParameterIndex();
         uint32_t endOfPositional = firstPositional + function.numberOfPositionalParameters();
         for (uint32_t place = 0; place < function.numberOfEntryParameters(); ++place) {
+            if (m_inputs.plan.promotedEnvironments().isRemoved(callee, place))
+                continue;
             bool isPositional = place >= firstPositional && place < endOfPositional;
             TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place, isPositional);
             if (left == TypeTable::anything || (isUnitOfCallee && !left))

@@ -770,14 +770,20 @@ void Walker::proveWhatLooksCountOnAt(const BodyValue& operation)
         if (!proofPays)
             return;
     }
+    auto isRawNumberWithoutProof = [&](ValueID operand, TypeID proven) {
+        Reference built = referenceOf(operand);
+        return built && built.isRecord() && m_types.at(typeOf(built)).isNumber() && representationOf(built) != Representation::JSValue && !m_types.at(proven).isInteger();
+    };
     Vector<std::pair<ValueID, TypeID>, 2> wanted;
-    forEachTypeThatGuessWouldProveAt(*this, operation, TypesOfInputs(typeAsBuilt), [&](ValueID operand, TypeID expected, TypeID) {
+    forEachTypeThatGuessWouldProveAt(*this, operation, TypesOfInputs(typeAsBuilt), [&](ValueID operand, TypeID expected, TypeID proven) {
+        if (operators.contains(operation.opcode()) && isRawNumberWithoutProof(operand, proven))
+            return;
         if (!guessAtCalleeAsksForBuiltinWhereItFails(*this, operation, operand) && (operand != operation.operand(0) || !rowIsToldApartFromViewsInTurn(*this, operation, expected)))
             wanted.append({ operand, expected });
     });
     for (auto [operand, expected] : wanted) {
-        if (canRestartIteration())
-            guardExpectedType(*this, operand, expected, draftOf(operation).origin());
+        if (canRestartIteration() && referenceOf(operand))
+            guardExpectedType(*this, operand, expected, originOf(operation));
     }
 }
 

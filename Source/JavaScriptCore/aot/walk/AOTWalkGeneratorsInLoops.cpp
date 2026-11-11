@@ -871,6 +871,7 @@ void Walker::moveFrame(size_t from, size_t to)
         for (size_t index = lowestNotAsked; index <= from; ++index)
             m_frames[index].numberOfFramesUpToHandlerBelow = !index ? 0 : m_frames[index - 1].hasHandler ? static_cast<uint32_t>(index) : m_frames[index - 1].numberOfFramesUpToHandlerBelow;
         Frame moved = WTF::move(m_frames[from]);
+        m_frames[from].callCopied = std::exchange(moved.callCopied, ValueID());
         m_frames[from].hasHandler = false;
         m_frames[from].isOfUnit = false;
         m_frames.append(WTF::move(moved));
@@ -878,6 +879,7 @@ void Walker::moveFrame(size_t from, size_t to)
         Frame moved = WTF::move(m_frames[from]);
         RELEASE_ASSERT(from + 1 == m_frames.size());
         m_frames.removeLast();
+        moved.callCopied = m_frames[to].callCopied;
         m_frames[to] = WTF::move(moved);
     }
     for (GeneratorWalkedInConsumer& walked : m_generatorsWalkedInConsumers) {

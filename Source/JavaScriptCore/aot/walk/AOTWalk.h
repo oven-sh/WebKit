@@ -140,6 +140,7 @@ bool openGuessAtAllocation(Walker&, const BodyValue&);
 bool replaceOperation(Walker&, const BodyValue&);
 
 std::optional<uint32_t> onlyTargetKnownToFolding(Walker&, const BodyTerminator&);
+std::optional<uint32_t> onlyTargetOfWrittenConstants(Walker&, const BodyTerminator&);
 bool buildTypedAccess(Walker&, const BodyValue&);
 bool buildTypedElementAccess(Walker&, const BodyValue&);
 AOT_LINK_OF_WALK(buildPushOntoLiteralThatLoopFills, opcodesThatBuildPushOntoLiteralThatLoopFillsTakes)

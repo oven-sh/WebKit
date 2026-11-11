@@ -504,6 +504,39 @@ std::optional<uint32_t> onlyTargetKnownToFolding(Walker& walker, const BodyTermi
     return onlyTargetWith(walker.types(), terminator, primitiveHeldInFolding(walker, operand));
 }
 
+std::optional<uint32_t> onlyTargetOfWrittenConstants(Walker& walker, const BodyTerminator& terminator)
+{
+    if (!goesByOneOperand(terminator.kind()) || !terminator.operand(0) || walker.facts().summaries().at(walker.currentFunction()).blocksNeverEntered.span().empty())
+        return std::nullopt;
+    const BodyIndex& index = walker.currentBodyIndex();
+    UncheckedKeyHashMap<unsigned, PrimitiveKnownToFolding, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> found;
+    ValueID unvisited;
+    auto findPrimitive = [&](ValueID value) -> PrimitiveKnownToFolding {
+        if (index.isParameter(value) || !operationsThatConstantsMayDecide.contains(index.opcodeOf(value)))
+            return { };
+        if (auto known = found.find(value.index()); known != found.end())
+            return known->value;
+        unvisited = value;
+        return { };
+    };
+    PrimitiveKnownToFolding known = findPrimitive(terminator.operand(0));
+    Vector<ValueID, 8> pending;
+    if (unvisited)
+        pending.append(unvisited);
+    while (!pending.isEmpty()) {
+        ValueID current = pending.last();
+        unvisited = { };
+        known = primitiveMadeOfConstants(walker.program(), index.value(current), scopedLambda<PrimitiveKnownToFolding(ValueID)>(findPrimitive));
+        if (unvisited) {
+            pending.append(unvisited);
+            continue;
+        }
+        found.set(current.index(), known);
+        pending.removeLast();
+    }
+    return onlyTargetWith(walker.types(), terminator, known);
+}
+
 static TypingContext typingForFolding(Walker& walker)
 {
     return { walker.program(), walker.types(), PositionTypes::knowingNothing() };

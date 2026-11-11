@@ -2724,7 +2724,10 @@ bool Walker::letTestInFrontOfBranchAskWhatContainerHasJustGiven(const BodyValue&
     if (end.kind() != TerminatorKind::Branch || end.operand(0) != test.id() || test.id().index() + 1 != block.firstValue().index() + block.numberOfValues())
         return false;
     TypeID whole = typeOf(given);
-    TypeID passing = m_types.intersectionOf(whole, test.as<Opcode::TypeTest>().testedType());
+    TypeID tested = test.as<Opcode::TypeTest>().testedType();
+    TypeID passing = m_types.intersectionOf(whole, tested);
+    if (!m_types.isSubset(passing, tested))
+        return false;
     TypeID failing = m_types.differenceOf(whole, passing);
     if (isNeverType(passing) || isNeverType(failing) || m_types.testablePartOf(passing) != passing || m_types.testablePartOf(failing) != failing)
         return false;
@@ -8456,9 +8459,10 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
     std::optional<uint32_t> onlyTarget;
     if (has(Mechanism::Folding)) {
         onlyTarget = isBranch && mayBeTrueOrFalseInWalk(*this, condition) ? onlyTargetDecidedOnWay(*this, terminator) : onlyTargetKnownToFolding(*this, terminator);
-        if (onlyTarget && draft)
-            draft->become(TerminatorKind::Jump);
-    }
+    } else
+        onlyTarget = onlyTargetOfWrittenConstants(*this, terminator);
+    if (onlyTarget && draft)
+        draft->become(TerminatorKind::Jump);
 
     if (isBranch && !onlyTarget && isAsBranchTakesItInWalk(*this, condition)) {
         RELEASE_ASSERT(terminator.numberOfTargets() == 2);

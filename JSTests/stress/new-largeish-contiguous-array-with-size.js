@@ -1,6 +1,6 @@
 // We only need one run of this with any GC or JIT strategy. This test is not particularly fast.
 // Unfortunately, it needs to run for a while to test the thing it's testing.
-//@ runWithRAMSize(10000000)
+//@ runWithRAMSize(10000000, "--smallHeapRAMFraction=0.25", "--mediumHeapRAMFraction=0.5")
 //@ slow!
 
 // Note: Due to the conservative stack scanning, it is possible that arbitrary

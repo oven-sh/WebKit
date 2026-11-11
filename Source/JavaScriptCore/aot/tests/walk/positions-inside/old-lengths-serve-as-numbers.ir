@@ -1,0 +1,40 @@
+# list[list.length - 1] behind a write: the length that was read before the write is one side of a relation, and there it is a number from zero up. The first read rests on the length read behind the write
+# and passes. The second read rests on the old length as its bound, and there the verifier stops.
+# RUN: verify-grounds access=v9 view=v0 position=v8 length=v6 from-zero-up=v7 passed=v7 access=v12 view=v0 position=v1 length=v4 below=v11 passed=v11
+# CHECK: v12 (GetArrayElement): the storage or the length of a list is written between a ground of an access and the access: v5 (ConvertToDoubleStorage)
+# -- code
+# code f1:Body {
+#   constants:
+#     v2: 1 @Int64 = Integer integer=1
+#     v3: undefined @JSValue = Undefined
+#   b0(v0: Array @Cell, v1: int[0, 2147483647] @Int32) entry=0:
+#     v4: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v5 @Void = ConvertToDoubleStorage v0 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v6: int[0, 4294967295] @Int64 = GetArrayLength v0 traits=[mayTouchMemory]
+#     v7: boolean @Boolean = Greater v6, v4 form=Integers
+#     Branch v7 -> taken b1(), notTaken b3()
+#   b1():
+#     v8: int[-1, 4294967294] @Int64 = Sub v6, v2 form=Integers
+#     v9: anything @JSValue = GetArrayElement v0, v8 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     v10: int[0, 2147483647] @Int64 = WidenInteger v1
+#     v11: boolean @Boolean = Less v10, v4 form=Integers
+#     Branch v11 -> taken b2(), notTaken b3()
+#   b2():
+#     v12: anything @JSValue = GetArrayElement v0, v1 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     Return v12
+#   b3():
+#     Return v3
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

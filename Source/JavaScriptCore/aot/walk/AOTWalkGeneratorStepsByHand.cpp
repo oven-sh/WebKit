@@ -365,7 +365,8 @@ static bool isStepOfGenerator(Walker& walker, const BodyValue& call)
     TypeID typeOfGenerator = walker.typeOf(generator);
     if (!types.at(typeOfGenerator).isObject() || !types.isSubset(typeOfGenerator, types.builtinClass(BuiltinClasses::Generator))) {
         TypeID expected = walker.has(Mechanism::Guesses) ? findExpectation(walker, call.thisValueOperand()).type : TypeID();
-        if (!expected || !types.isSubset(types.withoutNullish(expected), types.builtinClass(BuiltinClasses::Generator)))
+        TypeID present = expected ? types.withoutNullish(expected) : TypeID();
+        if (!present || isNeverType(present) || !types.isSubset(present, types.builtinClass(BuiltinClasses::Generator)))
             return false;
     }
     return walker.isInLoop() || findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(walker).quickGet(call.id().index());
@@ -503,7 +504,8 @@ bool buildAwaitedStepWrittenByHand(Walker& walker, const BodyValue& call)
     TypeID typeOfReceiver = walker.typeOf(receiver);
     if (!types.at(typeOfReceiver).isObject() || !types.isSubset(typeOfReceiver, generators)) {
         TypeID expected = findExpectation(walker, call.thisValueOperand()).type;
-        if (!expected || !types.isSubset(types.withoutNullish(expected), generators))
+        TypeID present = expected ? types.withoutNullish(expected) : TypeID();
+        if (!present || isNeverType(present) || !types.isSubset(present, generators))
             return false;
     }
 

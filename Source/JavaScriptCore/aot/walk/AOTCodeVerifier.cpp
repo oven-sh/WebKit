@@ -1786,11 +1786,17 @@ void CodeVerifier::verifyTestsPassed()
                     return ValueID();
                 return findArrayWriteBetween(named, id);
             };
+            bool someGroundIsSwept = false;
+            for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.stepNonNegativeCheck, grounds.limitWithinLengthCheck })
+                someGroundIsSwept |= named && m_code.isSwept() && !m_code.isConstant(named) && !m_code.isNeeded(named);
+            static constexpr OpcodeSet presenceTests { Opcode::IsElementPresent, Opcode::HasContiguousIndex };
             ValueID writtenBy = findArrayWriteAfter(grounds.length);
             for (const PassedTest::Side& side : passed->sides()) {
                 const Operation& test = m_code.at(side.test);
                 if (!writtenBy)
                     writtenBy = findArrayWriteAfter(side.test);
+                if (!presenceTests.contains(test.opcode) && !someGroundIsSwept)
+                    continue;
                 ValueID position = valueBeforeConversions(underlyingCell(access.operand(1)));
                 for (uint32_t operand = 0; !writtenBy && operand < test.numberOfOperands(); ++operand) {
                     if (test.operand(operand) && valueBeforeConversions(underlyingCell(test.operand(operand))) != position)
@@ -1830,9 +1836,6 @@ void CodeVerifier::verifyTestsPassed()
                     return fail(block, id, "a store is taken to lie below a length that no raise in front of it has made"_s, grounds.length);
                 continue;
             }
-            bool someGroundIsSwept = false;
-            for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.stepNonNegativeCheck, grounds.limitWithinLengthCheck })
-                someGroundIsSwept |= named && m_code.isSwept() && !m_code.isConstant(named) && !m_code.isNeeded(named);
             if (someGroundIsSwept)
                 continue;
             for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.limitWithinLengthCheck }) {

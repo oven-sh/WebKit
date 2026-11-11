@@ -191,6 +191,7 @@ private:
 
     bool isSummarized(uint32_t function) const { return m_isSummarized.get(function); }
     bool isAnyCodeByItsOwnText(FunctionID, const ThinSummary&) const;
+    bool isEnteredByNobody(FunctionID) const;
     bool keepsDefaults(FunctionID, const ThinSummary&, OptionSet<SummaryTrait>) const;
     uint32_t nodeOfLostFunctions() const { return m_numberOfFunctions; }
     uint32_t nodeOfSharedCall(uint32_t shared) const { return m_numberOfFunctions + 1 + shared; }

@@ -226,6 +226,19 @@ bool CalleeSummarizerForLinkEffects::callStillWaits(FunctionID id, const Summary
     return awaited != noSummaryNode && typeAt(id, awaited).isNever();
 }
 
+bool CalleeSummarizerForLinkEffects::isEnteredByNobody(FunctionID id) const
+{
+    if (m_tables.function(id).everyCallerIsKnown)
+        return false;
+    const Function& function = m_program.at(id);
+    for (uint32_t index = 0; index < function.numberOfEntryParameters(); ++index) {
+        EntryParameter kind = function.entryParameterKind(index);
+        if ((kind == EntryParameter::This || kind == EntryParameter::Parameter) && m_flow.typeAt(m_flow.parameter(id, index)).isNever())
+            return true;
+    }
+    return false;
+}
+
 bool CalleeSummarizerForLinkEffects::callNeverRuns(FunctionID id, const SummaryCall& call) const
 {
     switch (call.callee) {
@@ -537,7 +550,7 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
     };
 
     bool isKnown = !keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) && !summary.ownEffectsMayCallUnknownCode()
-        && !handsObjectToCodeNobodyNames(id, summary) && !listingOfKeysMayRunCode(id, summary);
+        && !handsObjectToCodeNobodyNames(id, summary) && !listingOfKeysMayRunCode(id, summary) && !isEnteredByNobody(id);
     EffectsOfComponentInKnownEffects effects;
     GivenArgumentsInKnownEffects given;
     if (isKnown) {
