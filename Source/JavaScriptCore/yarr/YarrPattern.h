@@ -284,6 +284,11 @@ struct PatternTerm {
             bool isTailLoop : 1; // See YarrPatternConstructor::markTailLoops(). Only the JIT looks at it.
             bool isStringList : 1;
             bool isEOLStringList: 1;
+            // A Greedy or NonGreedy group whose single alternative has a fixed, non-zero width and
+            // nothing to backtrack into (characters, classes and simple assertions only, no captures
+            // inside). An iteration is given back by stepping the input back by that width, so no
+            // per-iteration context is kept (see isFixedWidthLoop in YarrPattern.cpp).
+            bool isFixedWidthLoop : 1;
         } parentheses;
         struct {
             bool bolAnchor : 1;
@@ -345,6 +350,7 @@ struct PatternTerm {
         parentheses.isTailLoop = false;
         parentheses.isStringList = false;
         parentheses.isEOLStringList = false;
+        parentheses.isFixedWidthLoop = false;
         quantityType = QuantifierType::FixedCount;
         quantityMinCount = quantityMaxCount = 1;
     }
@@ -850,6 +856,16 @@ private:
 
         static unsigned beginIndex() { return offsetof(BackTrackInfoParenthesesTerminal, begin) / sizeof(uintptr_t); }
         static unsigned entryPositionIndex() { return offsetof(BackTrackInfoParenthesesTerminal, entryPosition) / sizeof(uintptr_t); }
+    };
+
+    // For a group marked isFixedWidthLoop. It takes the frame slots of BackTrackInfoParentheses, which
+    // setupAlternativeOffsets reserves before it knows the group's shape.
+    struct BackTrackInfoParenthesesFixedWidth {
+        uintptr_t begin;
+        uintptr_t matchAmount;
+
+        static unsigned beginIndex() { return offsetof(BackTrackInfoParenthesesFixedWidth, begin) / sizeof(uintptr_t); }
+        static unsigned matchAmountIndex() { return offsetof(BackTrackInfoParenthesesFixedWidth, matchAmount) / sizeof(uintptr_t); }
     };
 
     struct BackTrackInfoParentheses {
