@@ -208,6 +208,9 @@ public:
 #elif USE(BUN_EVENT_LOOP)
         // WTFTimer in Timer.zig
         struct Bun__WTFTimer;
+
+        // The thread's event loop ends, and the timer will not fire.
+        virtual void didAbandon() { }
 #endif
 
         ASCIILiteral description() const { return m_description; }
@@ -348,6 +351,11 @@ public:
         {
             m_function = WTF::move(function);
         }
+#if USE(BUN_EVENT_LOOP)
+        // scheduleTimer() gives the function a reference to the timer.
+        void didAbandon() final { auto function = WTF::move(m_function); }
+#endif
+
     private:
         void fired() final { m_function(); }
 

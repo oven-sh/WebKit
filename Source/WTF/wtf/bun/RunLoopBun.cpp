@@ -127,6 +127,11 @@ extern "C" void WTFTimer__fire(RunLoop::TimerBase* timer)
     timer->fired();
 }
 
+extern "C" void WTFTimer__abandon(RunLoop::TimerBase* timer)
+{
+    timer->didAbandon();
+}
+
 // probably more Bun-specific TimerBase methods
 
 RunLoop::RunLoop()
