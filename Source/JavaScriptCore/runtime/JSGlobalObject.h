@@ -466,6 +466,9 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_moduleRecordStructure;
     LazyProperty<JSGlobalObject, Structure> m_syntheticModuleRecordStructure;
     LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
+#if USE(BUN_JSC_ADDITIONS)
+    LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructureWithoutPropertyCaching;
+#endif
     LazyProperty<JSGlobalObject, Structure> m_proxyObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_callableProxyObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_proxyRevocableResultStructure;
@@ -1088,6 +1091,9 @@ public:
     Structure* moduleRecordStructure() const { return m_moduleRecordStructure.get(this); }
     Structure* syntheticModuleRecordStructure() const { return m_syntheticModuleRecordStructure.get(this); }
     Structure* moduleNamespaceObjectStructure() const { return m_moduleNamespaceObjectStructure.get(this); }
+#if USE(BUN_JSC_ADDITIONS)
+    Structure* moduleNamespaceObjectStructureWithoutPropertyCaching() const { return m_moduleNamespaceObjectStructureWithoutPropertyCaching.get(this); }
+#endif
     Structure* proxyObjectStructure() const { return m_proxyObjectStructure.get(this); }
     Structure* callableProxyObjectStructure() const { return m_callableProxyObjectStructure.get(this); }
     Structure* proxyRevocableResultStructure() const { return m_proxyRevocableResultStructure.get(this); }

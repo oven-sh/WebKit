@@ -32,7 +32,18 @@ namespace JSC {
 
 inline Structure* JSModuleNamespaceObject::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSObject* prototypeObject = prototype.getObject())
+        preventExtensionsOfPrototype(globalObject, prototypeObject);
+#endif
     return Structure::create(vm, globalObject, prototype, TypeInfo(ModuleNamespaceObjectType, StructureFlags), info());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+inline Structure* JSModuleNamespaceObject::createStructureWithoutPropertyCaching(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ModuleNamespaceObjectType, StructureFlags | ProhibitsPropertyCaching), info());
+}
+#endif
 
 } // namespace JSC

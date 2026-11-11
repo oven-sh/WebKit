@@ -90,6 +90,15 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, bool 
     auto scope = DECLARE_THROW_SCOPE(vm);
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun's prototype for namespace objects answers `__esModule`, and a property cache keys that answer on the Structure alone.
+    // So every namespace object with the shared Structure must let that lookup reach the prototype, and do nothing else on the
+    // way. One that exports `__esModule`, or that is deferred or live, does not. None of that changes after the constructor.
+    if (structure()->storedPrototypeObject() && (m_isDeferredOrLive || m_exports.contains(vm.propertyNames->__esModule.impl()))) {
+        ASSERT(structure() == globalObject->moduleNamespaceObjectStructure());
+        setStructure(vm, globalObject->moduleNamespaceObjectStructureWithoutPropertyCaching());
+    }
+#endif
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, m_isDeferred ? "Deferred Module"_s : "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -105,6 +114,33 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, bool 
 
     scope.assertNoExceptionExceptTermination();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// A lookup that misses on a namespace object goes on to the prototype, and a property cache keys what it finds there on the
+// namespace's Structure alone. So the prototype may only have a name that no namespace object with that Structure answers
+// itself. finishCreation() sees to that for `__esModule`. This keeps script from adding another name. Native code can still
+// add one with putDirect(), and must not.
+void JSModuleNamespaceObject::preventExtensionsOfPrototype(JSGlobalObject* globalObject, JSObject* prototype)
+{
+#if ASSERT_ENABLED
+    VM& vm = globalObject->vm();
+    ASSERT(prototype->getPrototypeDirect().isNull());
+    prototype->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        ASSERT(entry.key()->isSymbol() || entry.key() == vm.propertyNames->__esModule.impl());
+        return true;
+    });
+#endif
+    JSObject::preventExtensions(prototype, globalObject);
+}
+
+#if ASSERT_ENABLED
+// Whether a property cache can key on this Structure what a lookup finds on the prototype. See finishCreation().
+static bool lookupsThatReachPrototypeAreCached(Structure* structure)
+{
+    return structure->storedPrototypeObject() && !structure->typeInfo().prohibitsPropertyCaching();
+}
+#endif
+#endif
 
 void JSModuleNamespaceObject::destroy(JSCell* cell)
 {
@@ -183,6 +219,7 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
 
 #if USE(BUN_JSC_ADDITIONS)
     if (m_isDeferredOrLive) [[unlikely]] {
+        ASSERT(!lookupsThatReachPrototypeAreCached(structure()));
         std::optional<bool> result = getOwnPropertySlotIfDeferredOrLive(globalObject, propertyName, slot);
         RETURN_IF_EXCEPTION(scope, false);
         if (result)
@@ -204,6 +241,9 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
 #endif
         return false;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(propertyName != vm.propertyNames->__esModule || !lookupsThatReachPrototypeAreCached(structure()));
+#endif
 
     ExportEntry& exportEntry = iterator->value;
 
@@ -379,7 +419,9 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
     } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) [[unlikely]] {
         RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
     }
+    ASSERT(propertyName != vm.propertyNames->__esModule || !lookupsThatReachPrototypeAreCached(thisObject->structure()));
     if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
+        ASSERT(!lookupsThatReachPrototypeAreCached(thisObject->structure()));
         if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
             return false;
         if (isThisValueAltered(slot, thisObject)) [[unlikely]]

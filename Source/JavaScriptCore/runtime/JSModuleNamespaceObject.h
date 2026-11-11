@@ -71,6 +71,10 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+#if USE(BUN_JSC_ADDITIONS)
+    // For the namespace objects that finishCreation() moves off the Structure of createStructure().
+    inline static Structure* createStructureWithoutPropertyCaching(VM&, JSGlobalObject*, JSValue);
+#endif
 
     AbstractModuleRecord* moduleRecord() LIFETIME_BOUND { return m_moduleRecord.get(); }
 
@@ -86,6 +90,7 @@ private:
     bool getOwnPropertySlotForLiveExports(JSGlobalObject*, PropertyName, PropertySlot&);
     std::optional<bool> getOwnPropertySlotIfDeferredOrLive(JSGlobalObject*, PropertyName, PropertySlot&);
     JSObject* liveExportsSource() const { return m_isDeferredOrLive && m_moduleRecord->hasLiveExports() ? m_moduleRecord->liveExportsSource() : nullptr; }
+    JS_EXPORT_PRIVATE static void preventExtensionsOfPrototype(JSGlobalObject*, JSObject*);
 #endif
     ALWAYS_INLINE bool isSymbolLikeNamespaceKey(VM&, PropertyName);
     void ensureDeferredNamespaceEvaluation(JSGlobalObject*);

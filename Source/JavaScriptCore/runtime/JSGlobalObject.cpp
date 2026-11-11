@@ -1421,6 +1421,13 @@ void JSGlobalObject::init(VM& vm)
         [] (const Initializer<Structure>& init) {
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, jsNull()));
         });
+#if USE(BUN_JSC_ADDITIONS)
+    m_moduleNamespaceObjectStructureWithoutPropertyCaching.initLater(
+        [] (const Initializer<Structure>& init) {
+            // The embedder can replace the initializer above. Both Structures have the prototype that it chose.
+            init.set(JSModuleNamespaceObject::createStructureWithoutPropertyCaching(init.vm, init.owner, init.owner->moduleNamespaceObjectStructure()->storedPrototype()));
+        });
+#endif
     m_proxyObjectStructure.initLater(
         [] (const Initializer<Structure>& init) {
             bool isCallable = false;
@@ -3452,6 +3459,9 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_moduleRecordStructure.visit(visitor);
     thisObject->m_syntheticModuleRecordStructure.visit(visitor);
     thisObject->m_moduleNamespaceObjectStructure.visit(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    thisObject->m_moduleNamespaceObjectStructureWithoutPropertyCaching.visit(visitor);
+#endif
     thisObject->m_proxyObjectStructure.visit(visitor);
     thisObject->m_callableProxyObjectStructure.visit(visitor);
     thisObject->m_proxyRevocableResultStructure.visit(visitor);
