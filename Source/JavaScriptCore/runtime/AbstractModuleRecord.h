@@ -352,8 +352,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isTypeScript = false;
 
-    // Live exports, used for module mocks. Exports of a live record are never cached: every read, through an import binding or a
-    // namespace object, does liveExportsSource()->get(exportName).
+    // Live exports, used for module mocks. Exports of a live record are never cached: every lookup, through an import binding or a
+    // namespace object, asks liveExportsSource() with getLiveExportSlot().
     // - Any export name resolves to (record, exportName), declared or not. A query that arrives through `export *` only matches
     //   names the record declares or gets from its own `export *`, or that no other module exports. See resolveExportImpl().
     // - A live export never makes a name ambiguous. The first `export *` that provides the name wins.
@@ -364,12 +364,25 @@ public:
     // Null until the embedder sets it. Reading an export before that throws a TDZ error.
     JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
     JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
-    // All three can run arbitrary JS and throw.
+    // All of these can run arbitrary JS and throw.
+    // Asks `source` what `exportName` is, with a lookup of the kind of `slot`, and states the answer in `slot` as a property of
+    // `slotBase`. Returns false if the source has no such property.
+    // - The source answers in its own getOwnPropertySlot hook, like the other internal methods that a namespace object forwards
+    //   to it. Its prototype chain is not consulted.
+    // - The source gets a slot of its own and never `slot`: a source that is a namespace object annotates its slot for the
+    //   inline cache of a `get_by_id` on itself.
+    // - An accessor stays an accessor, with the receiver the source names. Whoever reads the value of `slot` calls it, and a
+    //   lookup that only describes the export calls nothing.
+    static bool getLiveExportSlot(JSGlobalObject*, JSObject* source, PropertyName exportName, JSObject* slotBase, PropertySlot&);
+    // liveExportsSource(), or null with a TDZ error thrown.
+    JSObject* liveExportsSourceForRead(JSGlobalObject*, PropertyName exportName);
+    // The value of an export, or undefined if the source doesn't have it.
     JSValue getLiveExport(JSGlobalObject*, PropertyName exportName);
-    bool hasLiveExport(JSGlobalObject*, PropertyName exportName);
     // For a read through another module's `export { x } from` or `export *`. A name the source doesn't have is undefined, as in
-    // Vitest. The source's [[Get]] can then throw for such a name, and only an import from the live record itself sees that.
+    // Vitest. The source's [[Get]] can throw for such a name, and only an import from the live record itself sees that.
     JSValue getReexportedLiveExport(JSGlobalObject*, PropertyName exportName);
+    // The same read as a Get slot of `slotBase`, which leaves an accessor of the source uncalled.
+    bool getReexportedLiveExportSlot(JSGlobalObject*, PropertyName exportName, JSObject* slotBase, PropertySlot&);
 
     // Options::usePrelinkedModuleInfo(): this record is module `prelinkedIndex()` of an embedder-resolved graph. Its
     // requests, import and export entries live in the graph; a request that names a graph module is answered by the
