@@ -581,7 +581,6 @@ void Modules::makeESModuleReadyToRunAgain(ModuleID module)
 void Modules::delegateToHostUnlessEvaluated(ModuleID module)
 {
     ModuleID file = fileOf(module);
-    m_filesReplacedInRequireCache.clear(file.index());
     if (status(file) >= ModuleStatus::Evaluating || isEvicted(file) || hasRun(file))
         return;
     delegateToHost(file);
@@ -7264,15 +7263,11 @@ static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy taken
         return;
     if (takenOutBy == TakenOutBy::Deletion)
         modules->retainMockForLinkedImporters(module);
-    bool wasDelegated = modules->isEvicted(module) && !modules->isReplacedInRequireCache(module);
     modules->evict(module, takenOutBy == TakenOutBy::Reset);
     if (isDeleted && modules->isEvicted(module))
         modules->takeOutOfLoader(module);
-    if (standsInPlaceOfFile) {
+    if (standsInPlaceOfFile)
         modules->delegateToHostUnlessEvaluated(module);
-        if (!wasDelegated)
-            modules->setIsReplacedInRequireCache(module);
-    }
 }
 
 void willReevaluateEntryPoint(JSGlobalObject* realm, ModuleID module)

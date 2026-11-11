@@ -1125,6 +1125,8 @@ void Modules::captureExports(ModuleID module)
         deferredExportsSource = generateNativeModuleExports(module, names, values);
         RETURN_IF_EXCEPTION(scope, void());
     } else {
+        if (!m_displacedRunImporters.isEmpty() && m_displacedRunImporters.contains(fileOf(module).index()) && status(fileOf(module)) <= ModuleStatus::Linked) [[unlikely]]
+            tellOfKeptRun(fileOf(module));
         JSValue value = evaluateForCapture(module);
         RETURN_IF_EXCEPTION(scope, void());
         if (loaded.capturedExports || loaded.capturedFields)

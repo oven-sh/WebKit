@@ -1378,8 +1378,6 @@ public:
     void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID);
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
-    bool isReplacedInRequireCache(ModuleID module) const { return m_filesReplacedInRequireCache.get(fileOf(module).index()); }
-    void setIsReplacedInRequireCache(ModuleID module) { m_filesReplacedInRequireCache.set(fileOf(module).index()); }
     bool hasRun(ModuleID);
     bool hasRun(ModuleID, bool& importsAreFollowed);
     bool isListedBeforeItHasRun(ModuleID);
@@ -1410,7 +1408,6 @@ public:
     bool holdsCodeThatMayBeEvicted();
     BitVector collectEvaluatedModules();
     bool delegatesToHost(ModuleID);
-    bool delegatesOriginalToHost(ModuleID);
     bool delegatesWithoutPlugins(ModuleID);
     bool isRequiredModulePatchPending(ModuleID);
     bool isPatchPending(ModuleID file) const;
@@ -2468,7 +2465,6 @@ private:
         return found == m_exportsLeftOut.end() ? BitVector() : found->value;
     }
     BitVector m_evictedFiles;
-    BitVector m_filesReplacedInRequireCache;
     BitVector m_filesModifiedSinceBuild;
     bool m_hasNotedTextsThatHostKeeps { false };
     BitVector m_dataFilesThatHostPrintsAsJavaScript;

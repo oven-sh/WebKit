@@ -1306,16 +1306,9 @@ static ModuleNamespace* namespaceOfCompiledOriginal(JSModuleRecord* record)
 std::optional<ModuleID> Modules::compiledOriginalNamedBy(const Identifier& key)
 {
     std::optional<ModuleID> module = originalNamedBy(key);
-    if (!module || key.string().contains("&actual"_s) || !hasInstances(*module) || !data(*module).isESModuleOfProgram() || data(*module).isFacade() || delegatesOriginalToHost(*module) || wasWrittenSinceBuild(fileOf(*module)))
+    if (!module || key.string().contains("&actual"_s) || !hasInstances(*module) || !data(*module).isESModuleOfProgram() || data(*module).isFacade() || isEvicted(*module) || delegatesToHost(*module) || wasWrittenSinceBuild(fileOf(*module)))
         return std::nullopt;
     return module;
-}
-
-bool Modules::delegatesOriginalToHost(ModuleID module)
-{
-    if (!isEvicted(module))
-        return delegatesToHost(module);
-    return !isReplacedInRequireCache(module) || (host().hasResolvePlugins && host().hasResolvePlugins(m_instance.globalObject));
 }
 
 std::optional<ModuleID> Modules::commonJSOriginalNamedBy(const Identifier& key)
@@ -1324,7 +1317,7 @@ std::optional<ModuleID> Modules::commonJSOriginalNamedBy(const Identifier& key)
     if (!module || key.string().contains("&actual"_s))
         return std::nullopt;
     ModuleID file = fileOf(*module);
-    if (!data(file).mayRunAsOriginal() || !data(file).bodyFunction() || delegatesOriginalToHost(file))
+    if (!data(file).mayRunAsOriginal() || !data(file).bodyFunction() || isEvicted(file) || delegatesToHost(file))
         return std::nullopt;
     return file;
 }
