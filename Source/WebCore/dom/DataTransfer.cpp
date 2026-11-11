@@ -70,10 +70,10 @@ class DragImageLoader final : public CachedImageClient, public RefCounted<DragIm
     WTF_MAKE_TZONE_ALLOCATED(DragImageLoader);
     WTF_MAKE_NONCOPYABLE(DragImageLoader);
 public:
-    static Ref<DragImageLoader> LEGACY_NODELETE create(DataTransfer&, const Document&);
+    NODELETE static Ref<DragImageLoader> create(DataTransfer&, const Document&);
     void startLoading(CachedResourceHandle<CachedImage>&);
     void stopLoading(CachedResourceHandle<CachedImage>&);
-    void LEGACY_NODELETE moveToDataTransfer(DataTransfer&);
+    NODELETE void moveToDataTransfer(DataTransfer&);
 
     // CachedResourceClient.
     void ref() const final { RefCounted::ref(); }
@@ -652,7 +652,7 @@ std::pair<DragImage, IntPoint> DataTransfer::createDragImage(const Document* doc
         // FIXME; Sizing images for DataTransfer is not fully specified. See https://github.com/whatwg/html/issues/13099.
 
         Ref image = *protect(m_dragImage)->image();
-        RefPtr nativeImage = image->currentNativeImage(DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()));
+        RefPtr nativeImage = image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()) });
         if (!nativeImage)
             return { };
 

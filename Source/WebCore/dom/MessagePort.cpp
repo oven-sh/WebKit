@@ -52,13 +52,13 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
 
 static Lock allMessagePortsLock;
-static HashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>& LEGACY_NODELETE allMessagePorts() WTF_REQUIRES_LOCK(allMessagePortsLock)
+NODELETE static HashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>& allMessagePorts() WTF_REQUIRES_LOCK(allMessagePortsLock)
 {
     static NeverDestroyed<HashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>> map;
     return map;
 }
 
-static HashMap<MessagePortIdentifier, ScriptExecutionContextIdentifier>& LEGACY_NODELETE portToContextIdentifier() WTF_REQUIRES_LOCK(allMessagePortsLock)
+NODELETE static HashMap<MessagePortIdentifier, ScriptExecutionContextIdentifier>& portToContextIdentifier() WTF_REQUIRES_LOCK(allMessagePortsLock)
 {
     static NeverDestroyed<HashMap<MessagePortIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
@@ -114,6 +114,12 @@ void MessagePort::notifyAllConnectionsClosed()
             RefPtr port = weakPort.get();
             if (!port || port->isDetached())
                 return;
+            // Locally entangled ports deliver without the provider, so they stay usable.
+            // lenientDisentangle() gives the provider their channel again if one of them is ever shipped.
+            if (port->m_localPartner.get()) {
+                port->m_isUnknownToProvider = true;
+                return;
+            }
             port->m_state = State::Disentangled;
             port->removeAllEventListeners();
         });
@@ -236,7 +242,19 @@ TransferredMessagePort MessagePort::lenientDisentangle()
     m_state = State::Disentangled;
 
     Ref context = *scriptExecutionContext();
-    if (RefPtr localSibling = m_localPartner) {
+    RefPtr localSibling = m_localPartner;
+    if (std::exchange(m_isUnknownToProvider, false)) {
+        protect(MessagePortChannelProvider::fromContext(context))->createNewMessagePortChannel(m_identifier, m_remoteIdentifier);
+        if (localSibling)
+            localSibling->m_isUnknownToProvider = false;
+        else {
+            // The other port was closed while the provider didn't know the channel.
+            ensureOnMainThread([remoteIdentifier = m_remoteIdentifier] {
+                MessagePortChannelProvider::singleton().messagePortClosed(remoteIdentifier);
+            });
+        }
+    }
+    if (localSibling) {
         localSibling->m_localPartner = nullptr;
         m_localPartner = nullptr;
     }
@@ -493,7 +511,7 @@ SUPPRESS_NODELETE void MessagePort::entangleLocally(MessagePort& port1, MessageP
     ASSERT(port1.scriptExecutionContext() == port2.scriptExecutionContext());
     ASSERT(port2.identifier() == port1.m_remoteIdentifier);
     ASSERT(port1.identifier() == port2.m_remoteIdentifier);
-    // Assertions ensure the assignment doesn't violate LEGACY_NODELETE.
+    // Assertions ensure the assignment doesn't violate NODELETE.
     ASSERT(!port1.m_localPartner.get());
     ASSERT(!port2.m_localPartner.get());
     port1.m_localPartner = port2;

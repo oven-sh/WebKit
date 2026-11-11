@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,16 +41,20 @@ enum class PropertyAllowlist : uint8_t {
     CueBackground,
 #endif
     Highlight,
+    FirstLetter,
+    FirstLine
 };
 
-PropertyAllowlist LEGACY_NODELETE propertyAllowlistForPseudoElement(PseudoElementType);
+NODELETE PropertyAllowlist propertyAllowlistForPseudoElement(PseudoElementType);
 
-bool LEGACY_NODELETE isValidHighlightStyleProperty(CSSPropertyID);
-bool LEGACY_NODELETE isValidMarkerStyleProperty(CSSPropertyID);
+NODELETE bool isValidHighlightStyleProperty(CSSPropertyID);
+NODELETE bool isValidMarkerStyleProperty(CSSPropertyID);
+NODELETE bool isValidFirstLetterStyleProperty(CSSPropertyID);
+NODELETE bool isValidFirstLineStyleProperty(CSSPropertyID);
 #if ENABLE(VIDEO)
-bool LEGACY_NODELETE isValidCueStyleProperty(CSSPropertyID);
-bool LEGACY_NODELETE isValidCueSelectorStyleProperty(CSSPropertyID);
-bool LEGACY_NODELETE isValidCueBackgroundStyleProperty(CSSPropertyID);
+NODELETE bool isValidCueStyleProperty(CSSPropertyID);
+NODELETE bool isValidCueSelectorStyleProperty(CSSPropertyID);
+NODELETE bool isValidCueBackgroundStyleProperty(CSSPropertyID);
 #endif
 
 }

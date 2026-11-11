@@ -26,8 +26,12 @@
 #pragma once
 
 #include "Untrusted.h"
+#include "WebFrameProxy.h"
+#include "WebGeolocationManagerProxy.h"
+#include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <WebCore/ClientOrigin.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Site.h>
@@ -208,6 +212,62 @@ private:
     WeakPtr<const WebProcessProxy> m_process;
 };
 
+class ProcessHostsFrameInPage : public IPC::CanValidateUntrusted<ProcessHostsFrameInPage> {
+public:
+    explicit ProcessHostsFrameInPage(const WebProcessProxy& sender, const WebPageProxy& page)
+        : m_sender(sender)
+        , m_page(page)
+    {
+    }
+
+    std::optional<IPC::ValidationFailure> checkUntrusted(const WebCore::FrameIdentifier& frameID) const
+    {
+        if (!m_sender || !m_page)
+            return IPC::ValidationFailure::Ignore;
+
+        RefPtr frame { WebFrameProxy::webFrame(frameID) };
+        if (!frame || !frame->page())
+            return IPC::ValidationFailure::Ignore;
+
+        if (frame->page() != m_page.get())
+            return IPC::ValidationFailure::Terminate;
+
+        // The frame's previous process can still send messages for it until it receives LoadDidCommitInAnotherProcess.
+        if (&frame->process() != m_sender.get())
+            return IPC::ValidationFailure::Ignore;
+
+        return std::nullopt;
+    }
+
+private:
+    WeakPtr<const WebProcessProxy> m_sender;
+    WeakPtr<const WebPageProxy> m_page;
+};
+
+class ProcessIsGeolocationWatcher : public IPC::CanValidateUntrusted<ProcessIsGeolocationWatcher> {
+public:
+    explicit ProcessIsGeolocationWatcher(const WebGeolocationManagerProxy& proxy, const WebProcessProxy& process)
+        : m_proxy(proxy)
+        , m_process(process)
+    {
+    }
+
+    std::optional<IPC::ValidationFailure> checkUntrusted(const WebCore::RegistrableDomain& registrableDomain) const
+    {
+        Ref proxy = m_proxy;
+        RefPtr process = m_process;
+        if (!process)
+            return IPC::ValidationFailure::Ignore;
+        if (!proxy->webProcessHasStartedUpdatingLocation(registrableDomain, *process))
+            return IPC::ValidationFailure::Terminate;
+        return std::nullopt;
+    }
+
+private:
+    Ref<const WebGeolocationManagerProxy> m_proxy;
+    WeakPtr<const WebProcessProxy> m_process;
+};
+
 } // namespace WebKit
 
 namespace IPC {
@@ -220,5 +280,8 @@ template<> struct IsValidationProcedureFor<WebKit::ProcessParticipatesInPageWith
 
 template<> struct IsValidationProcedureFor<WebKit::ProcessCommittedClientOrigin, WebCore::ClientOrigin> : std::true_type { };
 template<> struct IsValidationProcedureFor<WebKit::ProcessCommittedStorageClientOrigin, WebCore::ClientOrigin> : std::true_type { };
+
+template<> struct IsValidationProcedureFor<WebKit::ProcessHostsFrameInPage, WebCore::FrameIdentifier> : std::true_type { };
+template<> struct IsValidationProcedureFor<WebKit::ProcessIsGeolocationWatcher, WebCore::RegistrableDomain> : std::true_type { };
 
 } // namespace IPC

@@ -241,7 +241,7 @@ private:
         return integer->type() == Int32 || integer->opcode() == ZExt32 || integer->opcode() == SExt32;
     }
 
-    bool LEGACY_NODELETE canBeTransformedToFloat(Value* value)
+    NODELETE bool canBeTransformedToFloat(Value* value)
     {
         if (value->opcode() == FloatToDouble)
             return true;

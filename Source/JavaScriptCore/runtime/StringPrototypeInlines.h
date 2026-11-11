@@ -498,7 +498,7 @@ ALWAYS_INLINE JSString* stringReplaceAllStringString(JSGlobalObject* globalObjec
         return nullptr;
     }
 
-    return jsString(vm, resultBuilder.toString());
+    return jsString(vm, WTF::move(resultBuilder).toString());
 }
 
 enum class StringReplaceMode : bool { Single, Global };
@@ -959,11 +959,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
             bufferPos += substring.length();
 
             auto replacement = asString(slot)->value(globalObject);
-            // A later call of the function may have used this answer as a key, and a key takes the characters of the name, whatever their width.
-            if (StringView view { replacement }; view.is8Bit()) [[likely]]
-                view.getCharacters8(buffer.subspan(bufferPos));
-            else
-                view.getCharacters(buffer.subspan(bufferPos));
+            StringView { replacement }.getCharacters(buffer.subspan(bufferPos));
             bufferPos += replacement->length();
 
             ++index;
@@ -1539,7 +1535,7 @@ ALWAYS_INLINE JSString* replaceAllWithStringUsingRegExpSearch(VM& vm, JSGlobalOb
         resultBuilder.append(StringView { source }.substring(lastIndex));
     if (resultBuilder.hasOverflowed()) [[unlikely]]
         OUT_OF_MEMORY(globalObject, scope);
-    RELEASE_AND_RETURN(scope, jsString(vm, resultBuilder.toString()));
+    RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(resultBuilder).toString()));
 }
 
 ALWAYS_INLINE JSString* replaceOneWithStringUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, StringView source, RegExp* regExp, const String& replacementString)

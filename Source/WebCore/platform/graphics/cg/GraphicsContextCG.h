@@ -55,7 +55,7 @@ public:
     void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
 
     using GraphicsContext::drawNativeImage;
-    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions = { }) final;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions = { }) final;
     void drawRect(const FloatRect&, float borderThickness = 1) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawEllipse(const FloatRect&) final;
@@ -98,6 +98,7 @@ public:
     void clipOut(const Path&) final;
 
     void clipPath(const Path&, WindRule = WindRule::EvenOdd) final;
+    void clipTransformedPath(const AffineTransform&, const Path&, WindRule = WindRule::EvenOdd) final;
 
     void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
 
@@ -108,7 +109,7 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions = { }) final;
 
     using GraphicsContext::scale;
     void scale(const FloatSize&) final;
@@ -153,7 +154,7 @@ public:
 
     // Returns false if there has not been any potential draws since last call.
     // Returns true if there has been potential draws since last call.
-    bool LEGACY_NODELETE consumeHasDrawn();
+    NODELETE bool consumeHasDrawn();
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     void setMaxEDRHeadroom(std::optional<float>) final;
@@ -175,7 +176,7 @@ private:
 #endif
 
     // Returns the platform context for purposes of context state change, not draws.
-    const RetainPtr<CGContextRef>& LEGACY_NODELETE contextForState() const;
+    NODELETE const RetainPtr<CGContextRef>& contextForState() const;
 
     const RetainPtr<CGContextRef> m_cgContext;
     mutable std::optional<ColorSpace> m_colorSpace;
@@ -184,6 +185,10 @@ private:
 #endif
     const RenderingMode m_renderingMode : 2; // NOLINT
     const bool m_isLayerCGContext : 1;
+#if HAVE(CGCONTEXT_STROKE_ARC)
+    // Whether the renderer draws a butt-capped stroked arc with exactly the coverage of filling its outline.
+    const bool m_strokesArcsLikeFills : 1;
+#endif
     mutable bool m_userToDeviceTransformKnownToBeIdentity : 1 { false };
     // Flag for pending draws. Start with true because we do not know what commands have been scheduled to the context.
     mutable bool m_hasDrawn : 1 { true };

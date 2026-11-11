@@ -131,12 +131,13 @@ NEVER_INLINE RegExp* RegExpCache::ensureEmptyRegExpSlow(VM& vm)
     return regExp;
 }
 
-NEVER_INLINE void RegExpCache::finalize(Handle<Unknown> handle, void*)
+NEVER_INLINE WeakHandleOwner::FinalizeResult RegExpCache::finalize(Handle<Unknown> handle, void*)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCache::finalize);
     Locker locker { m_lock };
     RegExp* regExp = static_cast<RegExp*>(handle.get().asCell());
     weakRemove(m_weakCache, regExp->key(), regExp);
+    return FinalizeResult::KeepImpl;
 }
 
 void RegExpCache::addToStrongCache(RegExp* regExp)

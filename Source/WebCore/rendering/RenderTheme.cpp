@@ -22,7 +22,6 @@
 #include "config.h"
 #include "RenderTheme.h"
 
-#include "BitmapImage.h"
 #include "BorderShape.h"
 #include "ButtonPart.h"
 #include "CSSContrastColorResolver.h"
@@ -54,7 +53,6 @@
 #include "HTMLProgressElement.h"
 #include "HTMLSelectElement.h"
 #include "HTMLTextAreaElement.h"
-#include "ImageAdapter.h"
 #include "ImageControlsButtonPart.h"
 #include "InnerSpinButtonPart.h"
 #include "LocalFrame.h"
@@ -62,6 +60,7 @@
 #include "MenuListButtonPart.h"
 #include "MenuListPart.h"
 #include "MeterPart.h"
+#include "NativeImage.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "PlatformRenderTheme.h"
@@ -223,7 +222,7 @@ StyleAppearance RenderTheme::adjustAppearanceForElement(Style::ComputedStyle& st
     return appearance;
 }
 
-static bool LEGACY_NODELETE isAppearanceAllowedForAllElements(StyleAppearance appearance)
+NODELETE static bool isAppearanceAllowedForAllElements(StyleAppearance appearance)
 {
 #if ENABLE(APPLE_PAY)
     if (appearance == StyleAppearance::ApplePayButton)
@@ -243,7 +242,7 @@ static bool devolvableWidgetsSupported()
 #endif
 }
 
-static bool LEGACY_NODELETE shouldCheckLegacyStylesForNativeAppearance(const Element* element)
+NODELETE static bool shouldCheckLegacyStylesForNativeAppearance(const Element* element)
 {
 #if PLATFORM(MAC)
 #if ENABLE(FORM_CONTROL_REFRESH)
@@ -556,7 +555,7 @@ static void updateMeterPartForRenderer(MeterPart& meterPart, const RenderMeter& 
     meterPart.setMaximum(element->max());
 }
 
-static void LEGACY_NODELETE updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, const RenderProgress& renderProgress)
+NODELETE static void updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, const RenderProgress& renderProgress)
 {
     progressBarPart.setPosition(renderProgress.position());
     progressBarPart.setAnimationStartTime(renderProgress.animationStartTime().secondsSinceEpoch());
@@ -810,7 +809,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
     return states;
 }
 
-static const RenderElement* LEGACY_NODELETE effectiveRendererForAppearance(const RenderObject& renderObject)
+NODELETE static const RenderElement* effectiveRendererForAppearance(const RenderObject& renderObject)
 {
     auto* renderer = dynamicDowncast<RenderElement>(renderObject);
     if (!renderer) {
@@ -1653,33 +1652,32 @@ void RenderTheme::paintSliderTicks(const RenderElement& renderer, const PaintInf
 
 void RenderTheme::paintPlatformResizer(const RenderLayerModelObject& renderer, GraphicsContext& context, const LayoutRect& resizerCornerRect)
 {
-    RefPtr<BitmapImage> resizeCornerImage;
-    FloatSize cornerResizerSize;
-    Ref document = renderer.document();
-    if (document->deviceScaleFactor() >= 2) {
-        static NeverDestroyed<BitmapImage*> resizeCornerImageHiRes(&ImageAdapter::loadPlatformResource("textAreaResizeCorner@2x").leakRef());
-        resizeCornerImage = resizeCornerImageHiRes;
-        cornerResizerSize = resizeCornerImage->size();
-        cornerResizerSize.scale(0.5f);
+    RefPtr<NativeImage> resizeCornerImage;
+    auto deviceScaleFactor = renderer.document().deviceScaleFactor();
+    if (deviceScaleFactor >= 2) {
+        static NeverDestroyed<RefPtr<NativeImage>> resizeCornerImageHiRes = NativeImage::createFromPlatformResource("textAreaResizeCorner@2x"_s);
+        resizeCornerImage = resizeCornerImageHiRes.get();
     } else {
-        static NeverDestroyed<BitmapImage*> resizeCornerImageLoRes(&ImageAdapter::loadPlatformResource("textAreaResizeCorner").leakRef());
-        resizeCornerImage = resizeCornerImageLoRes;
-        cornerResizerSize = resizeCornerImage->size();
+        static NeverDestroyed<RefPtr<NativeImage>> resizeCornerImageLoRes = NativeImage::createFromPlatformResource("textAreaResizeCorner"_s);
+        resizeCornerImage = resizeCornerImageLoRes.get();
     }
+    if (!resizeCornerImage)
+        return;
+
+    FloatSize cornerResizerSize = resizeCornerImage->size();
+    if (deviceScaleFactor >= 2)
+        cornerResizerSize.scale(0.5f);
 
     if (renderer.shouldPlaceVerticalScrollbarOnLeft()) {
         GraphicsContextStateSaver stateSaver(context);
         context.translate(resizerCornerRect.x() + cornerResizerSize.width(), resizerCornerRect.y() + resizerCornerRect.height() - cornerResizerSize.height());
         context.scale(FloatSize(-1.0, 1.0));
-        if (resizeCornerImage)
-            resizeCornerImage->draw(context, FloatRect { { }, cornerResizerSize });
+        context.drawNativeImage(*resizeCornerImage, FloatRect { FloatPoint { }, cornerResizerSize });
         return;
     }
 
-    if (!resizeCornerImage)
-        return;
-    FloatRect imageRect = snapRectToDevicePixels(LayoutRect(resizerCornerRect.maxXMaxYCorner() - cornerResizerSize, cornerResizerSize), document->deviceScaleFactor());
-    resizeCornerImage->draw(context, imageRect);
+    FloatRect imageRect = snapRectToDevicePixels(LayoutRect(resizerCornerRect.maxXMaxYCorner() - cornerResizerSize, cornerResizerSize), deviceScaleFactor);
+    context.drawNativeImage(*resizeCornerImage, imageRect);
 }
 
 void RenderTheme::paintPlatformResizerFrame(const RenderLayerModelObject&, GraphicsContext& context, const LayoutRect& resizerAbsRect)

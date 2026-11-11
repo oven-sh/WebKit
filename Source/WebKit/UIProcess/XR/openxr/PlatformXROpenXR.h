@@ -41,6 +41,9 @@ namespace WebKit {
 #if ENABLE(WEBXR_HIT_TEST)
 class OpenXRHitTestManager;
 #endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+class OpenXRPlaneDetectionManager;
+#endif
 class OpenXRGraphicsBinding;
 class OpenXRInput;
 class OpenXRLayer;
@@ -60,6 +63,7 @@ public:
 
 #if ENABLE(WEBXR_LAYERS)
     void createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, CreateCompositionLayerCallback&&) override;
+    void deleteLayer(WebPageProxy&, PlatformXR::LayerHandle) override;
 #endif
 
     void startSession(WebPageProxy&, WeakPtr<PlatformXRCoordinatorSessionEventClient>&&, const WebCore::SecurityOriginData&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, std::optional<WebCore::XRCanvasConfiguration>&&) override;
@@ -140,6 +144,9 @@ private:
 
 #if ENABLE(WEBXR_HIT_TEST)
     std::unique_ptr<OpenXRHitTestManager> m_hitTestManager;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    std::unique_ptr<OpenXRPlaneDetectionManager> m_planeDetectionManager;
 #endif
 };
 

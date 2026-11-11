@@ -25,6 +25,8 @@
 
 namespace WebCore {
 
+enum class FontVariantCaps : uint8_t;
+
 class SVGFontElement;
 class StyleRuleFontFace;
 
@@ -47,7 +49,9 @@ public:
     int descent() const;
     String fontFamily() const;
 
-    SVGFontElement* LEGACY_NODELETE associatedFontElement() const;
+    bool supportsVariantCaps(FontVariantCaps) const;
+
+    NODELETE SVGFontElement* associatedFontElement() const;
     void rebuildFontFace();
 
     StyleRuleFontFace& fontFaceRule() const { return m_fontFaceRule.get(); }

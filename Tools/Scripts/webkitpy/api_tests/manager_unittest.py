@@ -23,9 +23,17 @@
 """Unit tests for manager.py."""
 
 import unittest
+from unittest.mock import MagicMock, patch
+
+from webkitcorepy import OutputCapture
 
 from webkitpy.api_tests.manager import Manager
+from webkitpy.api_tests.runner import Runner
 from webkitpy.api_tests.test_expectations import PASS, FAIL, CRASH, TIMEOUT
+from webkitpy.common.host_mock import MockHost
+from webkitpy.common.program_status import ProgramStatus
+from webkitpy.common.program_status_mock import TTYStringIO, encoded
+from webkitpy.tool.mocktool import MockOptions
 from webkitexpectationspy.expectations import Expectation
 
 
@@ -157,3 +165,92 @@ TestWebKitAPI.WKWebViewSwiftOverlayTests/evaluateJavaScriptYieldsExpectedRespons
     def test_expected_results_for_upload_flaky(self):
         result = Manager._expected_results_for_upload(Expectation('TestWebKitAPI.WebKit.SomeTest', expected={PASS, FAIL}))
         self.assertEqual({'PASS', 'FAIL'}, set(result.split()))
+
+    def test_program_status_reports_how_the_run_finished(self):
+        cases = [
+            (Manager.SUCCESS, False, 'state=done:app=run-api-tests'),
+            (Manager.FAILED_BUILD_CHECK, False, 'state=error:app=run-api-tests:msg=' + encoded('Build check failed')),
+            (Manager.FAILED_COLLECT_TESTS, False, 'state=error:app=run-api-tests:msg=' + encoded('Failed to collect tests')),
+            (Manager.FAILED_TESTS, False, 'state=error:app=run-api-tests:msg=' + encoded('Test suite failed')),
+            (Manager.FAILED_UPLOAD, False, 'state=error:app=run-api-tests:msg=' + encoded('Upload failed')),
+            (Manager.SUCCESS, True, 'state=idle:app=run-api-tests'),
+            (Manager.FAILED_TESTS, True, 'state=idle:app=run-api-tests'),
+        ]
+        for result, interrupted, expected_report in cases:
+            with self.subTest(result=result, interrupted=interrupted):
+                stream = TTYStringIO()
+                manager = Manager(MagicMock(), MagicMock(), MagicMock(), status=ProgramStatus(stream, 'run-api-tests'))
+                manager._interrupted = interrupted
+                manager._report_finished(result)
+                self.assertEqual(stream.program_status_reports(), [expected_report])
+
+    def test_program_status_reports_the_unexpected_failure_count(self):
+        stream = TTYStringIO()
+        manager = Manager(MagicMock(), MagicMock(), MagicMock(), status=ProgramStatus(stream, 'run-api-tests'))
+        manager._unexpected_failure_count = 3
+        manager._report_finished(Manager.FAILED_TESTS)
+        self.assertEqual(stream.program_status_reports(), ['state=error:app=run-api-tests:msg=' + encoded('3 unexpected failures')])
+
+    def test_write_update_reports_the_phase(self):
+        stream = TTYStringIO()
+        manager_stream = MagicMock()
+        manager = Manager(MagicMock(), MagicMock(), manager_stream, status=ProgramStatus(stream, 'run-api-tests'))
+        manager._write_update('Collecting tests ...')
+        manager_stream.write_update.assert_called_once_with('Collecting tests ...')
+        self.assertEqual(stream.program_status_reports(), ['state=working:app=run-api-tests:msg=' + encoded('Collecting tests ...')])
+
+    def test_run_reports_working_before_the_run_and_finishes_with_its_result(self):
+        stream = TTYStringIO()
+        manager = Manager(MagicMock(), MagicMock(), MagicMock(), status=ProgramStatus(stream, 'run-api-tests'))
+        manager._run = lambda args, json_output: Manager.FAILED_BUILD_CHECK
+        self.assertEqual(manager.run([]), Manager.FAILED_BUILD_CHECK)
+        self.assertEqual(stream.program_status_reports(), [
+            'state=working:app=run-api-tests',
+            'state=error:app=run-api-tests:msg=' + encoded('Build check failed'),
+        ])
+
+    def test_run_warns_once_about_ignored_sanitizer_options(self):
+        port = MockHost().port_factory.get('test', options=MockOptions(additional_env_var=[], api_binary=['TestWTF']))
+        port.check_api_test_build = lambda binaries: False
+        manager = Manager(port, MockOptions(test_list=None), MagicMock())
+        with patch.dict('os.environ', {'ASAN_OPTIONS': 'log_path=/tmp/shell'}), OutputCapture() as captured:
+            self.assertEqual(manager.run([]), Manager.FAILED_BUILD_CHECK)
+        warnings = [line for line in captured.root.log.getvalue().splitlines() if line.startswith('ASAN_OPTIONS is set')]
+        self.assertEqual(['ASAN_OPTIONS is set in the environment but is ignored; pass it with --additional-env-var=ASAN_OPTIONS=... instead.'], warnings)
+
+    FAILURE_OUTPUT = 'Tools/TestWebKitAPI/Tests/WebKit/WKWebView/AdvancedPrivacyProtections.mm:647\nValue of: referrerFromPopup.startsWith(mainURLPrefix)\n  Actual: false\nExpected: true\n'
+
+    def _sample_upload(self):
+        return Manager._upload_results_with_logs({
+            'TestWebKitAPI.AdvancedPrivacyProtections.DoNotHideReferrerInPopupWindow': {'actual': 'FAIL', 'time': 3717},
+            'TestWebKitAPI.GetUserMedia.OriginAndWebArchivePermission': {'actual': 'TIMEOUT', 'time': 33285},
+            'TestWebKitAPI.ContextMenuMouseEvents.RightClick': {'expected': 'PASS FAIL', 'actual': 'FAIL', 'time': 2429},
+            'TestIPC.ArgumentCoderEditingRange.OverflowingRangeIsRejectedNotCrashed': {'time': 76},
+        }, {
+            'TestWebKitAPI.AdvancedPrivacyProtections.DoNotHideReferrerInPopupWindow': (Runner.STATUS_FAILED, self.FAILURE_OUTPUT, 3.717),
+            'TestWebKitAPI.GetUserMedia.OriginAndWebArchivePermission': (Runner.STATUS_TIMEOUT, '', 33.285),
+        })
+
+    def test_upload_log_for_unexpected_failure(self):
+        self.assertEqual(self.FAILURE_OUTPUT, self._sample_upload()['TestWebKitAPI.AdvancedPrivacyProtections.DoNotHideReferrerInPopupWindow']['log'])
+
+    def test_no_upload_log_for_unexpected_failure_without_output(self):
+        self.assertNotIn('log', self._sample_upload()['TestWebKitAPI.GetUserMedia.OriginAndWebArchivePermission'])
+
+    def test_no_upload_log_for_expected_failure(self):
+        self.assertNotIn('log', self._sample_upload()['TestWebKitAPI.ContextMenuMouseEvents.RightClick'])
+
+    def test_no_upload_log_for_pass(self):
+        self.assertNotIn('log', self._sample_upload()['TestIPC.ArgumentCoderEditingRange.OverflowingRangeIsRejectedNotCrashed'])
+
+    def test_upload_logs_stop_at_run_limit(self):
+        outputs = ['x' * 14610] * 175 + ['x' * 32]
+        unexpected_failures = {f'TestWebKitAPI.Crash.Test{index}': (Runner.STATUS_CRASHED, output, 1.0) for index, output in enumerate(outputs)}
+        results = Manager._upload_results_with_logs({test: {'actual': 'CRASH'} for test in unexpected_failures}, unexpected_failures)
+        self.assertEqual([8191] * 32 + [0] * 144, [len(result.get('log', '')) for result in results.values()])
+
+    def test_upload_log_truncated(self):
+        output = self.FAILURE_OUTPUT + 'x' * 10000 + '\n'
+        unexpected_failures = {'TestWebKitAPI.MediaSamplesDecoder.DecodeVP8IntoSharedMemory': (Runner.STATUS_FAILED, output, 1.0)}
+        results = Manager._upload_results_with_logs({test: {'actual': 'FAIL'} for test in unexpected_failures}, unexpected_failures)
+        self.assertEqual(self.FAILURE_OUTPUT + 'x' * 8009 + ' [1,991 more bytes]\n', results['TestWebKitAPI.MediaSamplesDecoder.DecodeVP8IntoSharedMemory']['log'])

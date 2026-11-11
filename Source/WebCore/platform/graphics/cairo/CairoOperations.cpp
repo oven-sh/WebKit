@@ -836,7 +836,7 @@ void drawGlyphs(GraphicsContextCairo& platformContext, const FillSource& fillSou
     cairo_restore(cr);
 }
 
-void drawPlatformImage(GraphicsContextCairo& platformContext, cairo_surface_t* surface, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options, float globalAlpha, const ShadowState& shadowState)
+void drawPlatformImage(GraphicsContextCairo& platformContext, cairo_surface_t* surface, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options, float globalAlpha, const ShadowState& shadowState)
 {
     platformContext.save();
 
@@ -864,7 +864,7 @@ void drawPlatformImage(GraphicsContextCairo& platformContext, cairo_surface_t* s
     platformContext.restore();
 }
 
-void drawPattern(GraphicsContextCairo& platformContext, cairo_surface_t* surface, const IntSize& size, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void drawPattern(GraphicsContextCairo& platformContext, cairo_surface_t* surface, const IntSize& size, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     // FIXME: Investigate why the size has to be passed in as an IntRect.
     drawPatternToCairoContext(platformContext.cr(), surface, size, tileRect, patternTransform, phase, spacing, toCairoOperator(options.compositeOperator(), options.blendMode()), options.interpolationQuality(), destRect);
@@ -1110,8 +1110,7 @@ void drawLinesForText(GraphicsContextCairo& platformContext, const FloatPoint& p
     Color modifiedColor = color;
     FloatRect bounds = computeLineBoundsAndAntialiasingModeForText(platformContext, point, lineSegments.back().end, printing, modifiedColor, strokeThickness);
 
-    Vector<FloatRect, 4> dashBounds;
-    dashBounds.reserveInitialCapacity(lineSegments.size());
+    Vector<FloatRect, 4> dashBounds(ReserveCapacityTag { }, lineSegments.size());
     for (const auto& lineSegment : lineSegments)
         dashBounds.append(FloatRect(FloatPoint(bounds.x() + lineSegment.begin, bounds.y()), FloatSize(lineSegment.length(), bounds.height())));
 

@@ -79,6 +79,10 @@ public:
     // Retires the protocol ID the frame had in the process it left (the hosting process is part of the ID).
     void frameSwappedOutOfProcess(WebCore::FrameIdentifier, WebCore::ProcessIdentifier oldProcessID);
 
+    // The document request of a discarded provisional load may have made the frontend create a frame under the protocol ID
+    // the frame has in that process, and nothing will commit under it now. Sent only while the Page agent is enabled, like any Page event.
+    void provisionalFrameDiscarded(WebCore::FrameIdentifier, WebCore::ProcessIdentifier);
+
     // PageBackendDispatcherHandler
     CommandResult<void> enable() final;
     CommandResult<void> disable() final;
@@ -133,10 +137,11 @@ private:
     bool m_enabled { false };
     HashMap<std::pair<WebCore::ProcessIdentifier, WebCore::PageIdentifier>, unsigned> m_instrumentedProcessPageCounts;
 
-    // Latest paint-rects toggle and bootstrap script, sent to every instrumented process and replayed
+    // Latest paint-rects toggle, bootstrap script and setting overrides, sent to every instrumented process and replayed
     // to any process that registers later (e.g. a cross-origin navigation spawns a new one).
     bool m_showPaintRects { false };
     String m_bootstrapScript;
+    HashMap<String, bool> m_settingOverrides;
 
     // Pin each instrumented WebProcessProxy alive while we hold an IPC message
     // receiver registration on it. Without this, the process can be destructed

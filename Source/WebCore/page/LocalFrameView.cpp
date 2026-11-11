@@ -95,6 +95,7 @@
 #include "PlatformRenderTheme.h"
 #include "ProgressTracker.h"
 #include "Quirks.h"
+#include "RemoteFrame.h"
 #include "RenderAncestorIterator.h"
 #include "RenderBoxInlines.h"
 #include "RenderElementInlines.h"
@@ -2348,8 +2349,7 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
 
     TraceScope tracingScope { FixedContainerEdgeSamplingStart, FixedContainerEdgeSamplingEnd };
 
-    static constexpr auto sampleRectThickness = 2;
-    static constexpr auto sampleRectMargin = 4;
+    static constexpr auto sampleRectMargin = PageColorSampler::fixedContainerSampleRectMargin;
     static constexpr auto thinBorderWidth = 10;
 
     struct FixedContainerResult {
@@ -2360,6 +2360,7 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
         bool isDimmingLayer : 1 { false };
         bool isSidebar : 1 { false };
         Color backgroundColor;
+        std::optional<FrameIdentifier> remoteFrameID { };
     };
 
     auto sizeForViewportUnits = LayoutSize { sizeForCSSDefaultViewportUnits() };
@@ -2429,22 +2430,6 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
             return { rect.maxX(), (rect.y() + rect.maxY()) / 2 };
         case BoxSide::Bottom:
             return { (rect.x() + rect.maxX()) / 2, rect.maxY() };
-        default:
-            ASSERT_NOT_REACHED();
-            return { };
-        }
-    };
-
-    auto computeSampleRectIgnoringBorderWidth = [](LayoutRect rect, BoxSide side) -> LayoutRect {
-        switch (side) {
-        case BoxSide::Top:
-            return { rect.minXMinYCorner(), LayoutPoint { rect.maxX(), rect.y() + sampleRectThickness } };
-        case BoxSide::Left:
-            return { rect.minXMinYCorner(), LayoutPoint { rect.x() + sampleRectThickness, rect.maxY() } };
-        case BoxSide::Right:
-            return { LayoutPoint { rect.maxX() - sampleRectThickness, rect.y() }, rect.maxXMaxYCorner() };
-        case BoxSide::Bottom:
-            return { LayoutPoint { rect.x(), rect.maxY() - sampleRectThickness }, rect.maxXMaxYCorner() };
         default:
             ASSERT_NOT_REACHED();
             return { };
@@ -2561,6 +2546,12 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
         if (!renderer)
             return { };
 
+        std::optional<FrameIdentifier> remoteFrameID;
+        if (CheckedPtr widget = dynamicDowncast<RenderWidget>(*renderer); widget && result.isOverWidget()) {
+            if (RefPtr remoteFrame = widget->remoteFrame())
+                remoteFrameID = remoteFrame->frameID();
+        }
+
         auto containerResultFromBackdrop = [&] -> std::optional<FixedContainerResult> {
             RefPtr container = dynamicDowncast<Element>(*hitNode);
             if (!container)
@@ -2632,6 +2623,7 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
                     .isDimmingLayer = candidateType == IsDimmingLayer,
                     .isSidebar = candidateType == IsSidebar,
                     .backgroundColor = hasMultipleBackgroundColors ? Color { } : WTF::move(primaryBackgroundColor),
+                    .remoteFrameID = remoteFrameID,
                 };
             }
             }
@@ -2649,7 +2641,7 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
     };
 
     auto computeSamplingRect = [&](const Style::ComputedStyle* style, BoxSide side) -> LayoutRect {
-        auto samplingRect = computeSampleRectIgnoringBorderWidth(fixedRect, side);
+        auto samplingRect = PageColorSampler::fixedContainerSampleRect(fixedRect, side);
         if (!style)
             return samplingRect;
 
@@ -2699,15 +2691,7 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
         return samplingRect;
     };
 
-    static constexpr auto minimumOpacityThresholdToClampToSolidColor = 0.75;
-
     auto pageBackgroundColor = page->pageExtendedBackgroundColor();
-    auto blendAgainstPageBackground = [&pageBackgroundColor](const Color& color) {
-        if (color.isOpaque())
-            return color;
-
-        return blendSourceOver(pageBackgroundColor, color);
-    };
 
     for (auto side : sides) {
         auto result = findFixedContainer(side, IgnoreCSSPointerEvents::Yes);
@@ -2731,29 +2715,26 @@ std::pair<FixedContainerEdges, WeakElementEdges> LocalFrameView::fixedContainerE
         }
 
         if (result.backgroundColor.isVisible()) {
-            edges.colors.setAt(side, [&] {
-                if (result.isDimmingLayer || result.backgroundColor.alphaAsFloat() < minimumOpacityThresholdToClampToSolidColor)
-                    return blendAgainstPageBackground(result.backgroundColor);
-                return result.backgroundColor.colorWithAlpha(1);
-            }());
+            edges.colors.setAt(side, PageColorSampler::finishedFixedContainerColor(result.backgroundColor, result.isDimmingLayer, pageBackgroundColor));
             continue;
         }
 
-        if (page->lastFixedContainer(side) == result.container && page->fixedContainerEdges().hasFixedEdge(side)) {
+        if (result.remoteFrameID) {
+            edges.colors.setAt(side, *result.remoteFrameID);
+            continue;
+        }
+
+        if (page->lastFixedContainer(side) == result.container && page->fixedContainerEdges().hasFixedEdge(side) && !std::holds_alternative<FrameIdentifier>(page->fixedContainerEdges().colors.at(side))) {
             edges.colors.setAt(side, page->fixedContainerEdges().colors.at(side));
             continue;
         }
 
         edges.colors.setAt(side, [&] -> FixedContainerEdge {
-            auto samplingResult = PageColorSampler::predominantColor(*page, computeSamplingRect(protect(protect(result.container)->renderStyle()), side));
+            auto samplingResult = PageColorSampler::predominantColor(m_frame.get(), computeSamplingRect(protect(protect(result.container)->renderStyle()), side));
             if (!std::holds_alternative<Color>(samplingResult))
-                return samplingResult;
+                return std::get<PredominantColorType>(samplingResult);
 
-            auto color = std::get<Color>(samplingResult);
-            if (result.isDimmingLayer || color.alphaAsFloat() < minimumOpacityThresholdToClampToSolidColor)
-                return blendAgainstPageBackground(color);
-
-            return color.colorWithAlpha(1);
+            return PageColorSampler::finishedFixedContainerColor(std::get<Color>(samplingResult), result.isDimmingLayer, pageBackgroundColor);
         }());
     }
 
@@ -3592,7 +3573,7 @@ void LocalFrameView::cancelScheduledTextFragmentIndicatorTimer()
     m_delayedTextFragmentIndicatorTimer.stop();
 }
 
-static void LEGACY_NODELETE adjustScrollRectToVisibleOptionsForHiddenOverflow(ScrollRectToVisibleOptions& options, const Style::ComputedStyle& style)
+NODELETE static void adjustScrollRectToVisibleOptionsForHiddenOverflow(ScrollRectToVisibleOptions& options, const Style::ComputedStyle& style)
 {
     if (options.allowScrollingOverflowHidden == AllowScrollingOverflowHidden::Yes)
         return;
@@ -4342,7 +4323,7 @@ void LocalFrameView::adjustTiledBackingCoverage()
 #endif
 }
 
-static bool LEGACY_NODELETE shouldEnableSpeculativeTilingDuringLoading(const LocalFrameView& view)
+NODELETE static bool shouldEnableSpeculativeTilingDuringLoading(const LocalFrameView& view)
 {
     auto* page = view.frame().page();
     return page && view.isVisuallyNonEmpty() && !page->progress().isMainLoadProgressing();
@@ -5279,8 +5260,14 @@ void LocalFrameView::performSizeToContentAutoSize()
             if (!localVerticalScrollbar)
                 localVerticalScrollbar = createScrollbar(ScrollbarOrientation::Vertical);
             newSize.expand(localVerticalScrollbar->occupiedWidth(), 0);
+            // scrollbar-gutter: stable both-edges also reserves a gutter on the leading edge.
+            if (scrollbarGutterStyle().isStableBothEdges())
+                newSize.expand(localVerticalScrollbar->occupiedWidth(), 0);
             // Don't bother checking for a horizontal scrollbar because the height is
             // already greater the maximum.
+        } else if (!verticalScrollbar()) {
+            // No scrollbar is needed, but scrollbar-gutter may still reserve space that is not part of the content.
+            newSize.expand(totalScrollbarSpace().width(), 0);
         }
 
         // Ensure the size is at least the min bounds.
@@ -5326,6 +5313,14 @@ void LocalFrameView::performSizeToContentAutoSize()
     // FIXME: Use the final layout's result as the content size (webkit.org/b/173561).
     layoutWithAdjustedStyleIfNeeded();
     m_autoSizeContentSize = contentsSize();
+    if (RefPtr scrollbar = verticalScrollbar()) {
+        m_autoSizeContentSize.expand(scrollbar->occupiedWidth(), 0);
+        if (scrollbarGutterStyle().isStableBothEdges())
+            m_autoSizeContentSize.expand(scrollbar->occupiedWidth(), 0);
+    } else
+        m_autoSizeContentSize.expand(totalScrollbarSpace().width(), 0);
+    if (RefPtr scrollbar = horizontalScrollbar())
+        m_autoSizeContentSize.expand(0, scrollbar->occupiedHeight());
 }
 
 void LocalFrameView::setAutoSizeFixedMinimumHeight(int fixedMinimumHeight)
@@ -5972,7 +5967,8 @@ void LocalFrameView::paintContents(GraphicsContext& context, const IntRect& dirt
         if (m_frame->document()->printing())
             return false; // Printing, don't fill with warning color (can't remember why).
 
-        if (m_frame->ownerElement())
+        // Not ownerElement(): with Site Isolation, a subframe's owner element can be in another process.
+        if (!m_frame->isMainFrame())
             return false; // Subframe, don't fill with warning color.
 
         if (isTransparent())
@@ -7247,10 +7243,15 @@ FloatSize LocalFrameView::calculateSizeForCSSViewportUnitsOverride(std::optional
 
 FloatSize LocalFrameView::sizeForCSSDynamicViewportUnits() const
 {
+    bool useFixedLayout = this->useFixedLayout();
+
+    if (useFixedLayout && sizeForCSSSmallViewportUnits() == sizeForCSSLargeViewportUnits())
+        return fixedLayoutSize();
+
     if (m_layoutViewportOverrideRect)
         return m_layoutViewportOverrideRect->size();
 
-    if (useFixedLayout())
+    if (useFixedLayout)
         return fixedLayoutSize();
 
     if (m_frame->settings().visualViewportEnabled()) {

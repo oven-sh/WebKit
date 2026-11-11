@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,9 +53,9 @@ class WTF_CAPABILITY_LOCK WordLock final {
 public:
     constexpr WordLock() = default;
 
-    SUPPRESS_NODELETE void LEGACY_NODELETE lock() WTF_ACQUIRES_LOCK()
+    NODELETE SUPPRESS_NODELETE void lock() WTF_ACQUIRES_LOCK()
     {
-        if (m_word.compareExchangeWeak(0, isLockedBit, std::memory_order_acquire)) [[likely]] {
+        if (m_word.compareExchangeWeak<MemoryOrder::Acquire>(0, isLockedBit)) [[likely]] {
             // WordLock acquired!
             TSAN_ANNOTATE_HAPPENS_AFTER(this);
             return;
@@ -65,10 +65,10 @@ public:
         TSAN_ANNOTATE_HAPPENS_AFTER(this);
     }
 
-    SUPPRESS_NODELETE void LEGACY_NODELETE unlock() WTF_RELEASES_LOCK()
+    NODELETE SUPPRESS_NODELETE void unlock() WTF_RELEASES_LOCK()
     {
         TSAN_ANNOTATE_HAPPENS_BEFORE(this);
-        if (m_word.compareExchangeWeak(isLockedBit, 0, std::memory_order_release)) [[likely]] {
+        if (m_word.compareExchangeWeak<MemoryOrder::Release>(isLockedBit, 0)) [[likely]] {
             // WordLock released, and nobody was waiting!
             return;
         }
@@ -78,7 +78,7 @@ public:
 
     bool isHeld() const
     {
-        return m_word.load(std::memory_order_acquire) & isLockedBit;
+        return m_word.load<MemoryOrder::Acquire>() & isLockedBit;
     }
 
     bool isLocked() const

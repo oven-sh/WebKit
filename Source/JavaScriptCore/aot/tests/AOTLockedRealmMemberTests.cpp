@@ -979,7 +979,7 @@ ASCIILiteral nameOfTest(void (*run)())
 void runInProcessWithSharedArrayBuffer(ASCIILiteral testName, std::span<const String> otherOptions)
 {
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--useSharedArrayBuffer=1"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--alwaysUseSharedArrayBuffer=1"_s };
     arguments.append(otherOptions);
     ChildProcessResult result = launcher.run(arguments.span());
     if (result.exitedWith(0))
@@ -994,7 +994,7 @@ void runInProcessWithSharedArrayBuffer(ASCIILiteral testName, std::span<const St
 template<RealmsCheck check>
 static void withoutImage()
 {
-    if (!Options::useSharedArrayBuffer()) {
+    if (!Options::alwaysUseSharedArrayBuffer()) {
         runInProcessWithSharedArrayBuffer(nameOfTest(&withoutImage<check>), { });
         return;
     }

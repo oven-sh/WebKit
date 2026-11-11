@@ -65,8 +65,8 @@ public:
     void gcUnprotect(JSObject*);
     bool gcIsProtected(JSObject*);
 
-    const void* LEGACY_NODELETE nativeHandle() const;
-    WEBCORE_EXPORT JSGlobalObject* LEGACY_NODELETE globalObject() const;
+    NODELETE const void* nativeHandle() const;
+    NODELETE WEBCORE_EXPORT JSGlobalObject* globalObject() const;
     void updateGlobalObject(JSGlobalObject*);
 
     void addRuntimeObject(VM&, RuntimeObject*);
@@ -82,7 +82,7 @@ private:
     RootObject(const void* nativeHandle, JSGlobalObject*);
 
     // WeakHandleOwner
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) override;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) override;
 
     bool m_isValid;
     

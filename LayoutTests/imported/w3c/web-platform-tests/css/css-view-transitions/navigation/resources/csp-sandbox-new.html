@@ -24,8 +24,4 @@ addEventListener("pagereveal", event => {
     else
         report();
 });
-setTimeout(() => {
-    if (window.opener)
-        window.opener.postMessage({ hasViewTransition: false, keyframes: [] }, "*");
-}, 3000);
 </script>

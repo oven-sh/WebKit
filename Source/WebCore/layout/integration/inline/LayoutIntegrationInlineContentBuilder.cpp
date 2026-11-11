@@ -137,7 +137,7 @@ static inline FloatBoxExtent strokeAndTextShadowInkOverflowOutsets(const Style::
     return { strokeWidth - textShadow.top(), strokeWidth + textShadow.right(), strokeWidth + textShadow.bottom(), strokeWidth - textShadow.left() };
 }
 
-static float LEGACY_NODELETE logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
+NODELETE static float logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
 {
     auto logicalBottom = std::optional<float> { };
     for (auto& displayBox : boxes) {
@@ -220,7 +220,7 @@ void InlineContentBuilder::updateInkOverflowForBoxes(InlineContent& inlineConten
     // group the boxes by the line index they carry.
     auto& displayContent = inlineContent.displayContent();
     auto boxes = displayContent.boxes.mutableSpan();
-    CheckedRef root = downcast<Layout::ElementBox>(*m_blockFlow.layoutBox());
+    CheckedRef root = m_blockFlow.layoutBox();
     auto initialContainingBlockSize = ceiledIntSize(LayoutSize { m_blockFlow.view().contentBoxWidth(), m_blockFlow.view().contentBoxHeight() });
 
     size_t firstBoxIndex = 0;
@@ -267,8 +267,15 @@ void InlineContentBuilder::updateInkOverflowForText(std::span<InlineDisplay::Box
             inkOverflow.expand(-letterSpacing, { });
         }
 
+        // Glyph overflow is measured on the line-over (top) and line-under (bottom) sides, while this rect (not yet flipped
+        // for block direction) has block-start at its top in horizontal and at its left in vertical writing modes.
         auto glyphOverflow = displayBox.glyphOverflow();
-        inkOverflow.inflate(0.f, glyphOverflow.top(), 0.f, glyphOverflow.bottom());
+        auto blockStartGlyphOverflow = writingMode.isLineInverted() ? glyphOverflow.bottom() : glyphOverflow.top();
+        auto blockEndGlyphOverflow = writingMode.isLineInverted() ? glyphOverflow.top() : glyphOverflow.bottom();
+        if (writingMode.isHorizontal())
+            inkOverflow.inflate(0.f, blockStartGlyphOverflow, 0.f, blockEndGlyphOverflow);
+        else
+            inkOverflow.inflate(blockStartGlyphOverflow, 0.f, blockEndGlyphOverflow, 0.f);
 
         auto outsets = strokeAndTextShadowInkOverflowOutsets(textStyle, initialContainingBlockSize);
         inkOverflow.inflate(outsets.left(), outsets.top(), outsets.right(), outsets.bottom());

@@ -468,6 +468,18 @@ JSC_DEFINE_CUSTOM_GETTER(getHolder, (JSGlobalObject*, EncodedJSValue holder, Pro
     return holder;
 }
 
+static JSValue lastHolderSeenBySetter;
+static JSValue lastValueSeenBySetter;
+
+static JSC_DECLARE_CUSTOM_SETTER(setSeen);
+
+JSC_DEFINE_CUSTOM_SETTER(setSeen, (JSGlobalObject*, EncodedJSValue holder, EncodedJSValue value, PropertyName))
+{
+    lastHolderSeenBySetter = JSValue::decode(holder);
+    lastValueSeenBySetter = JSValue::decode(value);
+    return true;
+}
+
 static bool hasDirectProperty(LoadedProgram& program, JSObject* object, const Identifier& name, JSValue value, unsigned attributes)
 {
     unsigned foundAttributes = 0;
@@ -516,6 +528,27 @@ static void checkDefinitionsByNativeCode(LoadedProgram& program)
     AOT_TEST_CHECK(isCompiledObject(object) && object->get(program.realm(), lazy) == JSValue(object) && keysOf(program, object) == "b,c,d,a,lazy"_s);
     AOT_TEST_CHECK(put(program, object, lazy, jsNumber(9)) && hasOwnProperty(program, object, lazy, jsNumber(9), noAttributes));
     AOT_TEST_CHECK(object->shapeWord() == shapeWord);
+
+    // A custom value with a setter. A store hands the value to the setter, and so does a definition that gives a value and changes no attribute.
+    // The setter gets the object both times, and the property stays the custom value. A definition that changes an attribute replaces it.
+    Identifier stateful = Identifier::fromString(vm, "stateful"_s);
+    AOT_TEST_CHECK(object->putDirectCustomAccessor(vm, stateful, CustomGetterSetter::create(vm, getHolder, setSeen), static_cast<unsigned>(PropertyAttribute::CustomValue)));
+    AOT_TEST_CHECK(put(program, object, stateful, jsNumber(10)) && lastHolderSeenBySetter == JSValue(object) && lastValueSeenBySetter == jsNumber(10));
+    PropertyDescriptor valueAlone;
+    valueAlone.setValue(jsNumber(11));
+    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), stateful, valueAlone, false));
+    AOT_TEST_CHECK(lastHolderSeenBySetter == JSValue(object) && lastValueSeenBySetter == jsNumber(11) && object->get(program.realm(), stateful) == JSValue(object));
+    PropertyDescriptor sameValue;
+    sameValue.setValue(object);
+    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), stateful, sameValue, false) && lastValueSeenBySetter == jsNumber(11));
+    PropertyDescriptor hidden;
+    hidden.setValue(jsNumber(12));
+    hidden.setEnumerable(false);
+    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), stateful, hidden, false));
+    AOT_TEST_CHECK(lastValueSeenBySetter == jsNumber(11) && hasOwnProperty(program, object, stateful, jsNumber(12), dontEnum));
+    AOT_TEST_CHECK(isCompiledObject(object) && object->shapeWord() == shapeWord);
+    lastHolderSeenBySetter = { };
+    lastValueSeenBySetter = { };
 }
 
 static constexpr unsigned numberOfBagFields = 9;

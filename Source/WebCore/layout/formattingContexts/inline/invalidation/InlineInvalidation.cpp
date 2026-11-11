@@ -57,37 +57,40 @@ bool InlineInvalidation::rootStyleWillChange(const ElementBox& formattingContext
     if (m_inlineDamage.isInlineItemListDirty())
         return true;
 
-    auto inlineItemListNeedsUpdate = [&] {
-        CheckedRef oldStyle = formattingContextRoot.style();
-
-        if (TextBreakingPositionContext { oldStyle } != TextBreakingPositionContext { newStyle })
-            return true;
-
-        if (!oldStyle->fontCascadeEqual(newStyle))
-            return true;
-
-        CheckedPtr newFirstLineStyle = newStyle.pseudoElementStyle({ PseudoElementType::FirstLine });
-        CheckedPtr oldFirstLineStyle = oldStyle->pseudoElementStyle({ PseudoElementType::FirstLine });
-        if (newFirstLineStyle && oldFirstLineStyle && !oldFirstLineStyle->fontCascadeEqual(*newFirstLineStyle))
-            return true;
-
-        if ((newFirstLineStyle && !newFirstLineStyle->fontCascadeEqual(oldStyle)) || (oldFirstLineStyle && !oldFirstLineStyle->fontCascadeEqual(newStyle)))
-            return true;
-
-        if (oldStyle->writingMode().bidiDirection() != newStyle.writingMode().bidiDirection() || oldStyle->unicodeBidi() != newStyle.unicodeBidi() || oldStyle->tabSize() != newStyle.tabSize() || oldStyle->textSecurity() != newStyle.textSecurity())
-            return true;
-
-        // 'white-space-trim' changes which collapsible white space items are generated for this formatting context.
-        if (oldStyle->whiteSpaceTrim() != newStyle.whiteSpaceTrim())
-            return true;
-
-        return false;
-    };
-
-    if (inlineItemListNeedsUpdate())
+    if (rootStyleChangeNeedsInlineItemListUpdate(formattingContextRoot, newStyle))
         m_inlineDamage.setInlineItemListDirty();
 
     return true;
+}
+
+bool InlineInvalidation::rootStyleChangeNeedsInlineItemListUpdate(const ElementBox& formattingContextRoot, const Style::ComputedStyle& newStyle)
+{
+    ASSERT(formattingContextRoot.establishesInlineFormattingContext());
+
+    CheckedRef oldStyle = formattingContextRoot.style();
+
+    if (TextBreakingPositionContext { oldStyle } != TextBreakingPositionContext { newStyle })
+        return true;
+
+    if (!oldStyle->fontCascadeEqual(newStyle))
+        return true;
+
+    CheckedPtr newFirstLineStyle = newStyle.pseudoElementStyle({ PseudoElementType::FirstLine });
+    CheckedPtr oldFirstLineStyle = oldStyle->pseudoElementStyle({ PseudoElementType::FirstLine });
+    if (newFirstLineStyle && oldFirstLineStyle && !oldFirstLineStyle->fontCascadeEqual(*newFirstLineStyle))
+        return true;
+
+    if ((newFirstLineStyle && !newFirstLineStyle->fontCascadeEqual(oldStyle)) || (oldFirstLineStyle && !oldFirstLineStyle->fontCascadeEqual(newStyle)))
+        return true;
+
+    if (oldStyle->writingMode().bidiDirection() != newStyle.writingMode().bidiDirection() || oldStyle->unicodeBidi() != newStyle.unicodeBidi() || oldStyle->tabSize() != newStyle.tabSize() || oldStyle->textSecurity() != newStyle.textSecurity())
+        return true;
+
+    // 'white-space-trim' changes which collapsible white space items are generated for this formatting context.
+    if (oldStyle->whiteSpaceTrim() != newStyle.whiteSpaceTrim())
+        return true;
+
+    return false;
 }
 
 bool InlineInvalidation::styleWillChange(const Box& layoutBox, const Style::ComputedStyle& newStyle, Style::Difference diff)
@@ -100,43 +103,61 @@ bool InlineInvalidation::styleWillChange(const Box& layoutBox, const Style::Comp
     if (m_inlineDamage.isInlineItemListDirty())
         return true;
 
-    if (layoutBox.isInlineTextBox()) {
-        // Either the root or parent inline box takes care of this style change.
-        return true;
-    }
-
-    auto inlineItemListNeedsUpdate = [&] {
-        CheckedRef oldStyle = layoutBox.style();
-
-        auto hasInlineItemTypeChanged = oldStyle->hasOutOfFlowPosition() != newStyle.hasOutOfFlowPosition()
-            || (oldStyle->floating() != Float::None) != (newStyle.floating() != Float::None)
-            || oldStyle->display() != newStyle.display();
-        if (hasInlineItemTypeChanged)
-            return true;
-
-        // 'white-space-trim' changes which collapsible white space items are generated around its carrier
-        // (an inline box or an inline-block), so the inline item list must be rebuilt.
-        if (oldStyle->whiteSpaceTrim() != newStyle.whiteSpaceTrim())
-            return true;
-
-        if (!layoutBox.isInlineBox())
-            return false;
-
-        auto contentMayNeedNewBreakingPositionsAndMeasuring = TextBreakingPositionContext { oldStyle } != TextBreakingPositionContext { newStyle } || !oldStyle->fontCascadeEqual(newStyle);
-        if (contentMayNeedNewBreakingPositionsAndMeasuring)
-            return true;
-
-        auto bidiContextChanged = oldStyle->unicodeBidi() != newStyle.unicodeBidi() || oldStyle->writingMode().bidiDirection() != newStyle.writingMode().bidiDirection();
-        if (bidiContextChanged)
-            return true;
-
-        return false;
-    };
-
-    if (inlineItemListNeedsUpdate())
+    if (styleChangeNeedsInlineItemListUpdate(layoutBox, newStyle))
         m_inlineDamage.setInlineItemListDirty();
 
     return true;
+}
+
+bool InlineInvalidation::styleChangeNeedsInlineItemListUpdate(const Box& layoutBox, const Style::ComputedStyle& newStyle)
+{
+    if (layoutBox.isInlineTextBox()) {
+        // Either the root or parent inline box takes care of this style change.
+        return false;
+    }
+
+    CheckedRef oldStyle = layoutBox.style();
+
+    auto hasInlineItemTypeChanged = oldStyle->hasOutOfFlowPosition() != newStyle.hasOutOfFlowPosition()
+        || (oldStyle->floating() != Float::None) != (newStyle.floating() != Float::None)
+        || oldStyle->display() != newStyle.display();
+    if (hasInlineItemTypeChanged)
+        return true;
+
+    // 'white-space-trim' changes which collapsible white space items are generated around its carrier
+    // (an inline box or an inline-block), so the inline item list must be rebuilt.
+    if (oldStyle->whiteSpaceTrim() != newStyle.whiteSpaceTrim())
+        return true;
+
+    if (!layoutBox.isInlineBox())
+        return false;
+
+    auto contentMayNeedNewBreakingPositionsAndMeasuring = TextBreakingPositionContext { oldStyle } != TextBreakingPositionContext { newStyle } || !oldStyle->fontCascadeEqual(newStyle);
+    if (contentMayNeedNewBreakingPositionsAndMeasuring)
+        return true;
+
+    auto bidiContextChanged = oldStyle->unicodeBidi() != newStyle.unicodeBidi() || oldStyle->writingMode().bidiDirection() != newStyle.writingMode().bidiDirection();
+    if (bidiContextChanged)
+        return true;
+
+    return false;
+}
+
+static bool hasCleanInlineItemList(const InlineDamage* inlineDamage, const InlineItemList& inlineItemList)
+{
+    if (inlineItemList.isEmpty())
+        return false;
+    return !inlineDamage || !inlineDamage->isInlineItemListDirty();
+}
+
+bool InlineInvalidation::rootStyleChangeInvalidatesInlineItemsWithoutLines(const InlineDamage* inlineDamage, const InlineItemList& inlineItemList, const ElementBox& formattingContextRoot, const Style::ComputedStyle& newStyle)
+{
+    return hasCleanInlineItemList(inlineDamage, inlineItemList) && rootStyleChangeNeedsInlineItemListUpdate(formattingContextRoot, newStyle);
+}
+
+bool InlineInvalidation::styleChangeInvalidatesInlineItemsWithoutLines(const InlineDamage* inlineDamage, const InlineItemList& inlineItemList, const Box& layoutBox, const Style::ComputedStyle& newStyle)
+{
+    return hasCleanInlineItemList(inlineDamage, inlineItemList) && styleChangeNeedsInlineItemListUpdate(layoutBox, newStyle);
 }
 
 bool InlineInvalidation::inlineLevelBoxContentWillChange(const Box&)
@@ -191,6 +212,22 @@ static std::optional<size_t> damagedLineIndex(const DamagedContent& damagedConte
         // In case of content deletion, we may need to damage the "previous" line.
         if (damagedContent.type == DamagedContent::Type::Insertion || !damagedDisplayBox.lineIndex())
             return { damagedDisplayBox.lineIndex() };
+        auto previousLineEndsWithLineBreak = [&] {
+            // Under bidi, the line break may not be the visually last box on the previous line. Going back a line is unnecessary then, but still correct.
+            for (auto index = damagedDisplayBoxIndex; index--;) {
+                if (displayBoxes[index].lineIndex() != damagedDisplayBox.lineIndex())
+                    return displayBoxes[index].isLineBreak();
+            }
+            ASSERT_NOT_REACHED();
+            return false;
+        };
+        if (!previousLineEndsWithLineBreak()) {
+            // Removal may shrink the line's leading content so that it now fits on the previous line.
+            // FIXME: Only removals before the first soft wrap opportunity on the line can do that. Non-whitespace inline items end at
+            // soft wrap opportunities, so we could stay on the current line when the removal is past the line's leading inline item
+            // (keeping in mind that the leading content may continue into the next inline box, e.g. <b>ma</b>kes).
+            return { damagedDisplayBox.lineIndex() - 1 };
+        }
         if (!displayBoxes[damagedDisplayBoxIndex - 1].isRootInlineBox()) {
             // There's more content in front, it's safe to stay on the current line.
             ASSERT(displayBoxes[damagedDisplayBoxIndex - 1].lineIndex() == damagedDisplayBox.lineIndex());
@@ -359,7 +396,7 @@ static std::optional<InlineItemPosition> inlineItemPositionForDamagedContentPosi
     return { };
 }
 
-static bool LEGACY_NODELETE isValidInlineItemPositionForLine(const InlineItemPosition& inlineItemPosition, size_t lineIndex)
+NODELETE static bool isValidInlineItemPositionForLine(const InlineItemPosition& inlineItemPosition, size_t lineIndex)
 {
     // It's clearly not correct when starting position is 0 while the damaged line is not the first one.
     if (!inlineItemPosition && lineIndex)
@@ -422,7 +459,7 @@ static std::optional<InvalidatedLine> invalidatedLineByDamagedBox(const DamagedC
     return { };
 }
 
-static bool LEGACY_NODELETE startsAtRemovedBox(const InvalidatedLine& invalidatedLine, const Box& removedBox, const InlineItemList& inlineItemList)
+NODELETE static bool startsAtRemovedBox(const InvalidatedLine& invalidatedLine, const Box& removedBox, const InlineItemList& inlineItemList)
 {
     // Partial inline item building starts at the leading inline item's layout box, so that box has to stay in the tree.
     auto& startPosition = invalidatedLine.leadingInlineItemPosition;
@@ -489,7 +526,7 @@ bool InlineInvalidation::updateInlineDamage(const InvalidatedLine& invalidatedLi
     return true;
 }
 
-static bool LEGACY_NODELETE isSupportedContent(const Box& layoutBox)
+NODELETE static bool isSupportedContent(const Box& layoutBox)
 {
     return is<InlineTextBox>(layoutBox) || layoutBox.isLineBreakBox() || layoutBox.isReplacedBox() || layoutBox.isInlineBox();
 }

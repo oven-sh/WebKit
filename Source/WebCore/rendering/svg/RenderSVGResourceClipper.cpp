@@ -63,7 +63,7 @@ enum class ClippingMode {
     MaskClipping
 };
 
-static ClippingMode& LEGACY_NODELETE currentClippingMode()
+NODELETE static ClippingMode& currentClippingMode()
 {
     static ClippingMode s_clippingMode { ClippingMode::NoClipping };
     return s_clippingMode;
@@ -164,12 +164,8 @@ void RenderSVGResourceClipper::applyPathClipping(GraphicsContext& context, const
     // The SVG specification wants us to clip everything, if clip-path doesn't have a child.
     if (clipPath.isEmpty())
         context.clipPath(sharedClipAllPath(), windRule);
-    else {
-        auto ctm = context.getCTM();
-        context.concatCTM(clipPathTransform);
-        context.clipPath(clipPath, windRule);
-        context.setCTM(ctm);
-    }
+    else
+        context.clipTransformedPath(clipPathTransform, clipPath, windRule);
 }
 
 void RenderSVGResourceClipper::applyMaskClipping(PaintInfo& paintInfo, const RenderLayerModelObject& targetRenderer, const FloatRect& objectBoundingBox)
@@ -281,19 +277,7 @@ bool RenderSVGResourceClipper::hitTestClipContent(const FloatRect& objectBoundin
 
         auto testPoint = point;
         if (svgChild->isTransformed()) {
-            // Compute the child's SVG transform and inverse-map the point.
-            // For non-layer children, localTransform() is already populated.
-            // For layer children, localTransform() is not maintained, so compute it.
-            AffineTransform childTransform;
-            if (svgChild->hasLayer()) {
-                TransformationMatrix tm;
-                CheckedRef childStyle = svgChild->style();
-                auto referenceBoxRect = svgChild->transformReferenceBoxRect(childStyle);
-                svgChild->applyTransform(tm, childStyle, referenceBoxRect, Style::TransformResolver::allTransformOperations);
-                childTransform = tm.toAffineTransform();
-            } else
-                childTransform = svgChild->localTransform();
-
+            auto childTransform = svgChild->nominalTransform();
             auto inverseTransform = childTransform.inverse();
             if (!inverseTransform)
                 continue;

@@ -98,7 +98,7 @@ bool Location::isRegister() const
     return isGPR() || isFPR();
 }
 
-uint32_t LEGACY_NODELETE BBQJIT::sizeOfType(TypeKind type)
+NODELETE uint32_t BBQJIT::sizeOfType(TypeKind type)
 {
     switch (type) {
     case TypeKind::I32:
@@ -643,23 +643,24 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
         RELEASE_ASSERT_NOT_REACHED();
     }
 #elif CPU(ARM64)
+    GPRReg statusGPR = m_jit.scratchRegister();
     switch (accessWidth) {
     case Width8:
-        m_jit.storeCondRel8(scratchGPR, address, scratchGPR);
+        m_jit.storeCondRel8(scratchGPR, address, statusGPR);
         break;
     case Width16:
-        m_jit.storeCondRel16(scratchGPR, address, scratchGPR);
+        m_jit.storeCondRel16(scratchGPR, address, statusGPR);
         break;
     case Width32:
-        m_jit.storeCondRel32(scratchGPR, address, scratchGPR);
+        m_jit.storeCondRel32(scratchGPR, address, statusGPR);
         break;
     case Width64:
-        m_jit.storeCondRel64(scratchGPR, address, scratchGPR);
+        m_jit.storeCondRel64(scratchGPR, address, statusGPR);
         break;
     case Width128:
         RELEASE_ASSERT_NOT_REACHED();
     }
-    m_jit.branchTest32(ResultCondition::NonZero, scratchGPR).linkTo(reloopLabel, &m_jit);
+    m_jit.branchTest32(ResultCondition::NonZero, statusGPR).linkTo(reloopLabel, &m_jit);
 #endif
 }
 
@@ -1563,8 +1564,8 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
         m_jit.jump(loop);
         done.link(m_jit);
 
-        if (Wasm::isRefType(elementType.unpacked()))
-            emitMutatorFence();
+        // Fence all initializing stores, including the cell header, before the array becomes visible to the GC.
+        emitMutatorFence();
 
 #if ASSERT_ENABLED
         if (Wasm::isRefType(elementType.unpacked())) {
@@ -1610,9 +1611,8 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
             consume(args[i]);
         }
 
-        if (Wasm::isRefType(elementType.unpacked()))
-            emitMutatorFence();
-
+        // Fence all initializing stores, including the cell header, before the array becomes visible to the GC.
+        emitMutatorFence();
     }
 
     result = topValue(TypeKind::Ref);
@@ -1657,8 +1657,8 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
         m_jit.jump(loop);
         done.link(m_jit);
 
-        if (Wasm::isRefType(elementType.unpacked()))
-            emitMutatorFence();
+        // Fence all initializing stores, including the cell header, before the array becomes visible to the GC.
+        emitMutatorFence();
     }
 
     consume(size);
@@ -2133,19 +2133,22 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
         emitAllocateGCStructUninitialized(resultGPR, typeIndex, wasmScratchGPR, scratchGPR);
 
         JIT_COMMENT(m_jit, "Struct allocation done, do initialization");
-        bool needsMutatorFence = structType.hasRefFieldTypes();
+
+        bool needsWriteBarrier = false;
         for (StructFieldCount i = 0; i < structType.fieldCount(); ++i) {
             if (Wasm::isRefType(structType.field(i).type))
-                needsMutatorFence |= emitStructSet(resultGPR, structType, i, Value::fromRef(TypeKind::RefNull, JSValue::encode(jsNull())));
+                needsWriteBarrier |= emitStructSet(resultGPR, structType, i, Value::fromRef(TypeKind::RefNull, JSValue::encode(jsNull())));
             else if (structType.field(i).type.unpacked().isV128()) {
                 materializeVectorConstant(v128_t { }, Location::fromFPR(wasmScratchFPR));
-                needsMutatorFence |= emitStructSet(resultGPR, structType, i, Value::pinned(TypeKind::V128, Location::fromFPR(wasmScratchFPR)));
+                needsWriteBarrier |= emitStructSet(resultGPR, structType, i, Value::pinned(TypeKind::V128, Location::fromFPR(wasmScratchFPR)));
             } else
-                needsMutatorFence |= emitStructSet(resultGPR, structType, i, Value::fromI64(0));
+                needsWriteBarrier |= emitStructSet(resultGPR, structType, i, Value::fromI64(0));
         }
-
-        if (needsMutatorFence)
-            emitMutatorFence();
+        // No write barrier is needed since the struct is not yet visible to the GC. The fields are
+        // all constants, so emitStructSet doesn't ask for one anyway.
+        ASSERT_UNUSED(needsWriteBarrier, !needsWriteBarrier);
+        // Fence all initializing stores, including the cell header, before the struct becomes visible to the GC.
+        emitMutatorFence();
     }
 
     result = topValue(TypeKind::Ref);
@@ -2179,13 +2182,15 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
         emitAllocateGCStructUninitialized(resultGPR, typeIndex, wasmScratchGPR, scratchGPR);
 
         JIT_COMMENT(m_jit, "Struct allocation done, do initialization");
-        bool needsMutatorFence = structType.hasRefFieldTypes();
+
+        bool needsWriteBarrier = false;
         for (uint32_t i = 0; i < args.size(); ++i)
-            needsMutatorFence |= emitStructSet(resultGPR, structType, i, args[i]);
+            needsWriteBarrier |= emitStructSet(resultGPR, structType, i, args[i]);
 
-        if (needsMutatorFence)
-            emitMutatorFence();
-
+        // No write barrier is needed since the struct is not yet visible to the GC.
+        UNUSED_VARIABLE(needsWriteBarrier);
+        // Fence all initializing stores, including the cell header, before the struct becomes visible to the GC.
+        emitMutatorFence();
     }
 
     result = topValue(TypeKind::Ref);
@@ -3596,7 +3601,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
     return { };
 }
 
-int LEGACY_NODELETE BBQJIT::alignedFrameSize(int frameSize) const
+NODELETE int BBQJIT::alignedFrameSize(int frameSize) const
 {
     return WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize);
 }
@@ -3625,7 +3630,7 @@ void BBQJIT::restoreWebAssemblyGlobalStateAfterWasmCall()
 
 // SIMD
 
-void LEGACY_NODELETE BBQJIT::notifyFunctionUsesSIMD()
+NODELETE void BBQJIT::notifyFunctionUsesSIMD()
 {
     ASSERT(m_info.usesSIMD(m_functionIndex));
     m_usesSIMD = true;
@@ -3733,6 +3738,31 @@ void LEGACY_NODELETE BBQJIT::notifyFunctionUsesSIMD()
 
 [[nodiscard]] PartialResult BBQJIT::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType b, ExpressionType& result)
 {
+    // A shuffle reading from only one of its inputs needs neither the other input nor the
+    // adjacent register pair of the two-table TBL.
+    if (auto oneSide = SIMDShuffle::isOnlyOneSideMask(imm)) {
+        auto [side, pattern] = *oneSide;
+        // The parser rejects shuffle indices >= 32, so some lane always reads an input.
+        ASSERT(side != SIMDShuffleSide::AllOutOfBounds);
+        ExpressionType source = side == SIMDShuffleSide::Right ? b : a;
+        Location sourceLocation = loadIfNecessary(source);
+        consume(a);
+        consume(b);
+
+        result = topValue(TypeKind::V128);
+        Location resultLocation = allocate(result);
+        LOG_INSTRUCTION("VectorShuffle", a, b, source, sourceLocation, RESULT(result));
+
+        if (auto dup = SIMDShuffle::isDupElement(pattern)) {
+            auto [lane, index] = *dup;
+            m_jit.vectorDupElement(lane, TrustedImm32(index), sourceLocation.asFPR(), resultLocation.asFPR());
+        } else {
+            materializeVectorConstant(pattern, Location::fromFPR(wasmScratchFPR));
+            m_jit.vectorSwizzle(sourceLocation.asFPR(), wasmScratchFPR, resultLocation.asFPR());
+        }
+        return { };
+    }
+
 #if CPU(X86_64)
     ScratchScope<0, 1> scratches(*this);
 #elif CPU(ARM64)

@@ -79,7 +79,7 @@ FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, Text
 
     LayoutRect selectionRect { textOrigin, LayoutSize(0, LayoutUnit(fragment.height * scalingFactor)) };
     TextRun run = constructTextRun(renderer.text(), direction, style, fragment);
-    scaledFont.adjustSelectionRectForText(renderer.canUseSimplifiedTextMeasuring().value_or(false), run, selectionRect, startPosition, endPosition);
+    scaledFont.adjustSelectionRectForText(renderer.canUseSimplifiedTextMeasuringWithScaledFont().value_or(false), run, selectionRect, startPosition, endPosition);
     FloatRect snappedSelectionRect = snapRectToDevicePixelsWithWritingDirection(selectionRect, renderer.document().deviceScaleFactor(), run.ltr());
     if (scalingFactor == 1)
         return snappedSelectionRect;
@@ -88,7 +88,7 @@ FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, Text
     return snappedSelectionRect;
 }
 
-static inline bool LEGACY_NODELETE textShouldBePainted(const RenderSVGInlineText& textRenderer)
+NODELETE static inline bool textShouldBePainted(const RenderSVGInlineText& textRenderer)
 {
     return textRenderer.scaledFont().size() >= 0.5;
 }
@@ -101,8 +101,7 @@ void SVGTextBoxPainter::paintSelectionBackground()
     if (renderer().usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
-    auto& parentRenderer = this->parentRenderer();
-    ASSERT(!parentRenderer.document().printing());
+    ASSERT(!parentRenderer().document().printing());
 
     // Determine whether or not we're selected.
     bool paintSelectedTextOnly = m_paintInfo.phase == PaintPhase::Selection;
@@ -116,7 +115,7 @@ void SVGTextBoxPainter::paintSelectionBackground()
     if (!textShouldBePainted(renderer()))
         return;
 
-    auto& style = parentRenderer.style();
+    auto& style = renderer().style();
 
     auto [startPosition, endPosition] = selectionStartEnd();
 
@@ -167,7 +166,7 @@ void SVGTextBoxPainter::paint()
     if (!textShouldBePainted(renderer()))
         return;
 
-    auto& style = parentRenderer.style();
+    auto& style = renderer().style();
 
     bool hasFill = !style.fill().isNone();
     bool hasVisibleStroke = !style.stroke().isNone() && style.strokeWidth().isPossiblyPositive();
@@ -234,7 +233,7 @@ void SVGTextBoxPainter::paint()
     }
 
     // Finally, paint the outline if any.
-    if (style.hasOutline()) {
+    if (parentRenderer.style().hasOutline()) {
         if (parentRenderer.isInlineBox())
             OutlinePainter { m_paintInfo }.paintOutline(parentRenderer, m_paintOffset);
     }
@@ -260,17 +259,9 @@ bool SVGTextBoxPainter::acquirePaintingResource(SVGPaintServerHandling& paintSer
         context.save();
         context.setTextDrawingMode(TextDrawingMode::Stroke);
 
-        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
-            if (style.fontDescription().textRenderingMode() == TextRenderingMode::GeometricPrecision)
-                scalingFactor = 1.0 / RenderSVGInlineText::computeScalingFactorForRenderer(renderer);
-            else
-                scalingFactor = 1.0;
-
-            if (auto zoomFactor = renderer.style().usedZoom(); zoomFactor != 1.0)
-                scalingFactor *= zoomFactor;
-
-            if (auto deviceScaleFactor = renderer.document().deviceScaleFactor(); deviceScaleFactor != 1.0)
-                scalingFactor *= deviceScaleFactor;
+        if (renderer.style().vectorEffect() == VectorEffect::NonScalingStroke) {
+            if (auto nonScalingStrokeScale = RenderSVGInlineText::computeNonScalingStrokeScaleForRenderer(renderer); nonScalingStrokeScale > 0)
+                scalingFactor /= nonScalingStrokeScale;
         }
 
         if (scalingFactor != 1.0)
@@ -326,17 +317,9 @@ bool SVGTextBoxPainter::acquireLegacyPaintingResource(GraphicsContext*& context,
     }
 
     if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToStroke)) {
-        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
-            if (style.fontDescription().textRenderingMode() == TextRenderingMode::GeometricPrecision)
-                scalingFactor = 1.0 / RenderSVGInlineText::computeScalingFactorForRenderer(renderer);
-            else
-                scalingFactor = 1.0;
-
-            if (auto zoomFactor = renderer.style().usedZoom(); zoomFactor != 1.0)
-                scalingFactor *= zoomFactor;
-
-            if (auto deviceScaleFactor = renderer.document().deviceScaleFactor(); deviceScaleFactor != 1.0)
-                scalingFactor *= deviceScaleFactor;
+        if (renderer.style().vectorEffect() == VectorEffect::NonScalingStroke) {
+            if (auto nonScalingStrokeScale = RenderSVGInlineText::computeNonScalingStrokeScaleForRenderer(renderer); nonScalingStrokeScale > 0)
+                scalingFactor /= nonScalingStrokeScale;
         }
 
         if (scalingFactor != 1.0)
@@ -372,7 +355,7 @@ bool mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SV
     return true;
 }
 
-static inline float LEGACY_NODELETE positionOffsetForDecoration(Style::TextDecorationLine decoration, const FontMetrics& fontMetrics, float thickness)
+NODELETE static inline float positionOffsetForDecoration(Style::TextDecorationLine decoration, const FontMetrics& fontMetrics, float thickness)
 {
     // FIXME: For SVG Fonts we need to use the attributes defined in the <font-face> if specified.
     // Compatible with Batik/Opera.
@@ -388,7 +371,7 @@ static inline float LEGACY_NODELETE positionOffsetForDecoration(Style::TextDecor
     return 0.0f;
 }
 
-static inline float LEGACY_NODELETE thicknessForDecoration(Style::TextDecorationLine, const FontCascade& font)
+NODELETE static inline float thicknessForDecoration(Style::TextDecorationLine, const FontCascade& font)
 {
     // FIXME: For SVG Fonts we need to use the attributes defined in the <font-face> if specified.
     // Compatible with Batik/Opera

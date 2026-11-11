@@ -239,7 +239,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     return fastArrayJoin(globalObject, thisObject, separator, length, sawHoles, genericCase);
 }
 
-inline bool LEGACY_NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
+NODELETE inline bool canUseDefaultArrayJoinForToString(JSObject* thisObject)
 {
     JSGlobalObject* globalObject = thisObject->realmMayBeNull();
     if (!globalObject)
@@ -2390,7 +2390,7 @@ static uint64_t flatIntoArray(JSGlobalObject* globalObject, JSObject* target, JS
             RETURN_IF_EXCEPTION(scope, { });
         } else {
             if (targetIndex >= maxSafeIntegerAsUInt64()) [[unlikely]] {
-                throwTypeError(globalObject, scope, "flatten array exceeds 2**52 - 1");
+                throwTypeError(globalObject, scope, "flatten array exceeds 2**53 - 1");
                 return { };
             }
             target->putDirectIndex(globalObject, targetIndex, element, 0, PutDirectIndexShouldThrow);

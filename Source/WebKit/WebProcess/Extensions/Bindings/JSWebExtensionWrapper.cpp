@@ -29,6 +29,7 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "JSWebExtensionWrappable.h"
+#include "Logging.h"
 #include "WebExtensionAPIRuntime.h"
 #include "WebFrame.h"
 #include "WebPage.h"
@@ -42,6 +43,7 @@
 #include <JavaScriptCore/JSWeakObjectMapRefPrivate.h>
 #include <WebCore/JSDOMExceptionHandling.h>
 #include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/SerializedScriptValue.h>
 
 namespace WebKit {
 
@@ -223,6 +225,8 @@ String toString(JSContextRef context, JSValueRef value, NullStringPolicy nullStr
         RefPtr string = adoptRef(JSValueToStringCopy(context, value, 0));
         return toString(string.get());
     }
+
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 String toString(JSStringRef string)
@@ -382,6 +386,55 @@ JSValueRef fromJSON(JSContextRef context, RefPtr<JSON::Value> value)
     return JSValueMakeUndefined(context);
 }
 
+JSValueRef fromMessageJSON(JSContextRef context, JSStringRef messageJSON)
+{
+    if (!context)
+        return nullptr;
+
+    if (!messageJSON)
+        return JSValueMakeUndefined(context);
+
+    JSValueRef value = JSValueMakeFromJSONString(context, messageJSON);
+    return value ?: JSValueMakeUndefined(context);
+}
+
+std::optional<WebExtensionMessage> serializeMessage(JSContextRef context, JSValueRef value, bool useStructuredClone, JSValueRef* exception)
+{
+    ASSERT(context);
+
+    if (!value)
+        return std::nullopt;
+
+    if (!useStructuredClone) {
+        auto json = serializeJSObject(context, value, exception);
+        if (json.isNull())
+            return std::nullopt;
+        return WebExtensionMessage { WTF::move(json) };
+    }
+
+    RefPtr serialized = WebCore::SerializedScriptValue::create(context, value, exception);
+    if (!serialized)
+        return std::nullopt;
+    return WebExtensionMessage { serialized.releaseNonNull() };
+}
+
+JSValueRef WebExtensionMessage::toJSValue(JSContextRef context) const
+{
+    ASSERT(context);
+
+    if (auto json = this->json())
+        return fromMessageJSON(context, toJSString(*json).get());
+
+    RefPtr structuredClone = this->structuredClone();
+    if (!structuredClone)
+        return JSValueMakeUndefined(context);
+
+    JSValueRef exception = nullptr;
+    JSValueRef value = structuredClone->deserialize(context, &exception);
+
+    return value && !exception ? value : JSValueMakeUndefined(context);
+}
+
 JSValueRef fromArray(JSContextRef context, Vector<Protected<JSValueRef>>&& array)
 {
     if (!context)
@@ -431,7 +484,7 @@ JSValueRef fromObject(JSContextRef context, HashMap<String, Protected<JSValueRef
     return result;
 }
 
-static HashMap<JSGlobalContextRef, JSWeakObjectMapRef>& LEGACY_NODELETE wrapperCache()
+NODELETE static HashMap<JSGlobalContextRef, JSWeakObjectMapRef>& wrapperCache()
 {
     static NeverDestroyed<HashMap<JSGlobalContextRef, JSWeakObjectMapRef>> wrappers;
     return wrappers;

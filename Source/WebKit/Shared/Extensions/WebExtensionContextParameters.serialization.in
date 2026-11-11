@@ -36,6 +36,7 @@ struct WebKit::WebExtensionContextParameters {
     RefPtr<API::Data> manifestJSON;
 
     double manifestVersion;
+    bool usesStructuredCloneMessageSerialization;
 
     HashMap<WebKit::WebExtensionDataType, WebKit::WebExtensionStorageAccessLevel> storageAccessLevels;
 
@@ -43,14 +44,14 @@ struct WebKit::WebExtensionContextParameters {
 
     std::optional<WebCore::PageIdentifier> backgroundPageIdentifier;
 #if ENABLE(INSPECTOR_EXTENSIONS)
-    Vector<WebKit::WebExtensionContext::PageIdentifierTuple> inspectorPageIdentifiers;
-    Vector<WebKit::WebExtensionContext::PageIdentifierTuple> inspectorBackgroundPageIdentifiers;
+    Vector<WebKit::WebExtensionPageIdentifierTuple> inspectorPageIdentifiers;
+    Vector<WebKit::WebExtensionPageIdentifierTuple> inspectorBackgroundPageIdentifiers;
 #endif
-    Vector<WebKit::WebExtensionContext::PageIdentifierTuple> popupPageIdentifiers;
-    Vector<WebKit::WebExtensionContext::PageIdentifierTuple> tabPageIdentifiers;
+    Vector<WebKit::WebExtensionPageIdentifierTuple> popupPageIdentifiers;
+    Vector<WebKit::WebExtensionPageIdentifierTuple> tabPageIdentifiers;
 }
 
 using WebKit::WebExtensionError = String;
-using WebKit::WebExtensionContext::PageIdentifierTuple = std::tuple<WebCore::PageIdentifier, std::optional<WebKit::WebExtensionTabIdentifier>, std::optional<WebKit::WebExtensionWindowIdentifier>>;
+using WebKit::WebExtensionPageIdentifierTuple = std::tuple<WebCore::PageIdentifier, std::optional<WebKit::WebExtensionTabIdentifier>, std::optional<WebKit::WebExtensionWindowIdentifier>>;
 
 #endif

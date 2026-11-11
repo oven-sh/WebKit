@@ -31,7 +31,6 @@
 #include "GPUConnectionToWebProcessMessages.h"
 #include "IPCEvent.h"
 #include "ImageBufferRemoteDisplayListBackend.h"
-#include "ImageBufferRemotePDFDocumentBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "RemoteImageBufferMessages.h"
@@ -48,7 +47,6 @@
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferRemoteIOSurfaceBackend.h"
-#include "ImageBufferShareableMappedIOSurfaceBackend.h"
 #endif
 
 #if PLATFORM(COCOA)
@@ -358,7 +356,22 @@ RefPtr<NativeImage> RemoteImageBufferProxy::createNativeImageReference() const
 
 RefPtr<NativeImage> RemoteImageBufferProxy::sinkIntoNativeImage()
 {
-    return copyNativeImage();
+    auto* backend = ImageBuffer::backend();
+    if (!backend)
+        return nullptr;
+    // Mappable buffers keep a local copy, so that readers in this process do not need to fetch the
+    // pixels and images cached in this process survive a GPU process relaunch.
+    if (backend->canMapBackingStore() || !hasOneRef())
+        return copyNativeImage();
+    RefPtr renderingBackend = m_renderingBackend;
+    if (!renderingBackend) [[unlikely]]
+        return nullptr;
+    sendPendingDrawsIfNecessary();
+    m_context.abandon();
+    Ref nativeImage = renderingBackend->sinkIntoNativeImage(*this);
+    disconnect();
+    m_renderingBackend = nullptr;
+    return nativeImage;
 }
 
 RefPtr<ImageBuffer> RemoteImageBufferProxy::sinkIntoBufferForDifferentThread()
@@ -371,26 +384,6 @@ RefPtr<ImageBuffer> RemoteImageBufferProxy::sinkIntoBufferForDifferentThread()
 
     copyBuffer->context().drawImageBuffer(*this, FloatPoint { }, { CompositeOperator::Copy });
     return copyBuffer;
-}
-
-RefPtr<NativeImage> RemoteImageBufferProxy::filteredNativeImage(Filter& filter)
-{
-    if (!m_renderingBackend) [[unlikely]]
-        return nullptr;
-    // FilteredNativeImage reads the buffer in the GPU process, so send any
-    // buffered line strokes into the stream first.
-    sendPendingDrawsIfNecessary();
-    auto sendResult = sendSync(Messages::RemoteImageBuffer::FilteredNativeImage(filter));
-    if (!sendResult.succeeded())
-        return nullptr;
-    auto [handle] = sendResult.takeReply();
-    if (!handle)
-        return nullptr;
-    handle->takeOwnershipOfMemory(MemoryLedger::Graphics);
-    auto bitmap = ShareableBitmap::create(WTF::move(*handle));
-    if (!bitmap)
-        return nullptr;
-    return NativeImage::create(bitmap->createPlatformImage(DontCopyBackingStore, ShouldInterpolate::No));
 }
 
 RefPtr<PixelBuffer> RemoteImageBufferProxy::getPixelBuffer(const PixelBufferFormat& destinationFormat, const IntRect& sourceRect, const ImageBufferAllocator& allocator) const

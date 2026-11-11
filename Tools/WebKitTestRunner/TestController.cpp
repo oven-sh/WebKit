@@ -611,6 +611,8 @@ void TestController::Callbacks::notifyListeners()
 void TestController::closeOtherPage(WKPageRef page, PlatformWebView* view)
 {
     WKPageClose(page);
+    if (m_targetView == view)
+        m_targetView = nullptr;
     auto index = m_auxiliaryWebViews.findIf([view](auto& auxiliaryWebView) { return auxiliaryWebView.ptr() == view; });
     if (index != notFound)
         m_auxiliaryWebViews.removeAt(index);
@@ -1273,6 +1275,10 @@ void TestController::resumeBackgroundFetch(WKStringRef)
 {
 }
 
+void TestController::setStatisticsLinkDecorationFilteringData(WKStringRef)
+{
+}
+
 void TestController::simulateClickBackgroundFetch(WKStringRef)
 {
 }
@@ -1475,6 +1481,7 @@ void TestController::ensureViewSupportsOptionsForTest(const TestInvocation& test
         WKPageSetPageNavigationClient(m_mainWebView->page(), nullptr);
         WKPageClose(m_mainWebView->page());
 
+        m_targetView = nullptr;
         m_mainWebView = nullptr;
         m_createdOtherPage = false;
     }
@@ -1542,8 +1549,10 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
 #if PLATFORM(MAC)
     handleAXRemoveNotificationListener();
+    resetAXAuthenticationModeForTesting();
 #endif
 
+    m_targetView = nullptr;
     for (auto& auxiliaryWebView : std::exchange(m_auxiliaryWebViews, { }))
         WKPageClose(auxiliaryWebView->page());
 
@@ -2223,6 +2232,10 @@ TestOptions TestController::testOptionsForTest(const TestCommand& command) const
     merge(features, featureDefaultsFromTestHeaderForTest(command, TestOptions::keyTypeMapping()));
     merge(features, featureFromAdditionalHeaderOption(command, TestOptions::keyTypeMapping()));
     merge(features, platformSpecificFeatureOverridesDefaultsForTest(command));
+
+    if (features.boolTestRunnerFeatures["dumpCSSPageBoxes"])
+        features.boolWebPreferenceFeatures.insert_or_assign("ShouldPrintBackgrounds", true);
+
     return TestOptions { features };
 }
 
@@ -3115,8 +3128,7 @@ void TestController::didReceiveScriptMessage(WKScriptMessageRef message, Complet
     if (WKStringIsEqualToUTF8CString(command, "SetAllowedMenuActions")) {
         auto argumentArray = dynamic_wk_cast<WKArrayRef>(argument);
         auto size = WKArrayGetSize(argumentArray);
-        Vector<String> actions;
-        actions.reserveInitialCapacity(size);
+        Vector<String> actions(ReserveCapacityTag { }, size);
         for (size_t index = 0; index < size; ++index)
             actions.append(toWTFString(stringValue(WKArrayGetItemAtIndex(argumentArray, index))));
         TestController::singleton().setAllowedMenuActions(actions);
@@ -5896,6 +5908,12 @@ void TestController::setHasMouseDeviceForTesting(bool)
 }
 #endif
 
+#if !PLATFORM(MAC)
+void TestController::setHasFakePaymentUIForTesting(bool)
+{
+}
+#endif
+
 #if PLATFORM(MAC)
 // Client accessibility IPC implementation
 
@@ -6130,8 +6148,7 @@ WKRetainPtr<WKTypeRef> TestController::handleAXCopyAttributeValueAsElementArray(
     CFArrayRef elementArray = static_cast<CFArrayRef>(value.get());
     CFIndex count = CFArrayGetCount(elementArray);
 
-    Vector<WKTypeRef> tokens;
-    tokens.reserveInitialCapacity(count);
+    Vector<WKTypeRef> tokens(ReserveCapacityTag { }, count);
 
     for (CFIndex i = 0; i < count; i++) {
         CFTypeRef childElement = CFArrayGetValueAtIndex(elementArray, i);

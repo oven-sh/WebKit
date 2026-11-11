@@ -69,6 +69,14 @@ ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
     return block.isMarked(m_objectSpace.markingVersion(), cell);
 }
 
+ALWAYS_INLINE bool Heap::isMarked(HeapVersion markingVersion, const void* rawCell)
+{
+    HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().isMarked();
+    return cell->markedBlock().isMarked(markingVersion, cell);
+}
+
 ALWAYS_INLINE bool Heap::testAndSetMarked(HeapVersion markingVersion, const void* rawCell)
 {
     HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
@@ -213,9 +221,36 @@ inline void Heap::acquireAccess()
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
-    if (m_worldState.compareExchangeWeak(0, hasAccessBit))
+    if (m_worldState.compareExchangeWeak(0, hasAccessBit)) {
+        noteAccessAcquired();
         return;
+    }
     acquireAccessSlow();
+}
+
+inline void Heap::releaseAccess()
+{
+    assertIsAccessHolder();
+    noteAccessReleased();
+    if (m_worldState.compareExchangeWeak(hasAccessBit, 0))
+        return;
+    releaseAccessSlow();
+}
+
+inline void Heap::noteAccessAcquired()
+{
+#if ASSERT_ENABLED
+    m_accessHolderThreadUID.storeRelaxed(Thread::currentSingleton().uid());
+    m_accessHolderCount.exchangeAdd(1);
+#endif
+}
+
+inline void Heap::noteAccessReleased()
+{
+#if ASSERT_ENABLED
+    m_accessHolderThreadUID.storeRelaxed(0);
+    m_accessHolderCount.exchangeSub(1);
+#endif
 }
 
 inline void Heap::stopIfNecessary()

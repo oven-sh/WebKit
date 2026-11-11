@@ -260,7 +260,7 @@ static String runInShell(OptionWords optionWords, ASCIILiteral way)
 
     TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
-        String("--useSharedArrayBuffer=1"_s),
+        String("--alwaysUseSharedArrayBuffer=1"_s),
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
         makeString(scriptStart, "runCompiledEntryPoint("_s, entryModuleIDs[0], ").then(() => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),

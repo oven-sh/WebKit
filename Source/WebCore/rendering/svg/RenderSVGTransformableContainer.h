@@ -40,13 +40,13 @@ private:
     ASCIILiteral renderName() const final { return "RenderSVGTransformableContainer"_s; }
 
     void element() const = delete;
-    SVGGraphicsElement& LEGACY_NODELETE graphicsElement() const;
+    NODELETE SVGGraphicsElement& graphicsElement() const;
 
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
-    void updateLayerTransform() final;
+    void updateSupplementalTransform() final;
     bool needsHasSVGTransformFlags() const final;
 
-    AffineTransform m_supplementalLayerTransform;
+    AffineTransform m_supplementalTransform;
 };
 
 } // namespace WebCore

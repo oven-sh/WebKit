@@ -68,6 +68,7 @@ ResourceResponseBase::ResourceResponseBase(URL&& url, String&& mimeType, long lo
     , m_certificateInfo(CertificateInfo()) // Empty but valid for synthetic responses.
     , m_isNull(false)
 {
+    ASSERT(m_mimeType == extractMIMETypeFromMediaType(m_mimeType));
 }
 
 ResourceResponseBase::ResourceResponseBase(std::optional<ResourceResponseData>&& data)
@@ -93,6 +94,7 @@ ResourceResponseBase::ResourceResponseBase(std::optional<ResourceResponseData>&&
     , m_type(data ? data->type : Type::Default)
     , m_ipAddressSpace(data ? data->ipAddressSpace : IPAddressSpace::Unknown)
 {
+    ASSERT(m_mimeType == extractMIMETypeFromMediaType(m_mimeType));
 }
 
 ResourceResponseData ResourceResponseData::isolatedCopy() const
@@ -208,6 +210,12 @@ ResourceResponse ResourceResponseBase::dataURLResponse(const URL& url, const Dat
     return dataResponse;
 }
 
+ResourceResponse ResourceResponseBase::responseForMIMEType(URL&& url, const String& mimeType, long long expectedLength, const String& textEncodingName)
+{
+    String encoding = textEncodingName.isEmpty() ? extractCharsetFromMediaType(mimeType).toString() : textEncodingName;
+    return ResourceResponse { WTF::move(url), extractMIMETypeFromMediaType(mimeType), expectedLength, WTF::move(encoding) };
+}
+
 ResourceResponse ResourceResponseBase::filter(const ResourceResponse& response, PerformExposeAllHeadersCheck performCheck)
 {
     if (response.tainting() == Tainting::Opaque) {
@@ -291,6 +299,7 @@ void ResourceResponseBase::setMimeType(String&& mimeType)
     m_isNull = false;
 
     // FIXME: MIME type is determined by HTTP Content-Type header. We should update the header, so that it doesn't disagree with m_mimeType.
+    ASSERT(mimeType == extractMIMETypeFromMediaType(mimeType));
     m_mimeType = WTF::move(mimeType);
 
     // FIXME: Should invalidate or update platform response if present.
@@ -427,7 +436,7 @@ void ResourceResponseBase::setHTTPVersion(String&& versionText)
     // FIXME: Should invalidate or update platform response if present.
 }
 
-static bool LEGACY_NODELETE isSafeRedirectionResponseHeader(HTTPHeaderName name)
+NODELETE static bool isSafeRedirectionResponseHeader(HTTPHeaderName name)
 {
     // WebCore needs to keep location and cache related headers as it does caching.
     // We also keep CORS/ReferrerPolicy headers until CORS checks/Referrer computation are done in NetworkProcess.
@@ -456,7 +465,7 @@ static bool LEGACY_NODELETE isSafeRedirectionResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::TimingAllowOrigin;
 }
 
-static bool LEGACY_NODELETE isSafeCrossOriginResponseHeader(HTTPHeaderName name)
+NODELETE static bool isSafeCrossOriginResponseHeader(HTTPHeaderName name)
 {
     // All known response headers used in WebProcesses.
     return name == HTTPHeaderName::AcceptRanges

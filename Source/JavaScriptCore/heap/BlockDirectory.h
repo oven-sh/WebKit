@@ -73,16 +73,16 @@ class BlockDirectory {
 public:
     BlockDirectory(size_t cellSize);
     ~BlockDirectory();
-    void LEGACY_NODELETE setSubspace(Subspace*);
+    NODELETE void setSubspace(Subspace*);
     void lastChanceToFinalize();
     void prepareForAllocation();
     void stopAllocating();
     void stopAllocatingForGood();
     void resumeAllocating();
-    void LEGACY_NODELETE beginMarkingForFullCollection();
+    NODELETE void beginMarkingForFullCollection();
     void endMarking();
-    void LEGACY_NODELETE snapshotUnsweptForEdenCollection();
-    void LEGACY_NODELETE snapshotUnsweptForFullCollection();
+    NODELETE void snapshotUnsweptForEdenCollection();
+    NODELETE void snapshotUnsweptForFullCollection();
     void sweepAll();
     void shrink();
     void assertNoUnswept();
@@ -100,14 +100,16 @@ public:
     RefPtr<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyBlockSource();
     
     void addBlock(MarkedBlock::Handle*);
+    // After true, the next addBlock() does not grow the list of blocks.
+    bool tryMakeRoomForBlock();
     enum class WillDeleteBlock : bool { No, Yes };
     // If WillDeleteBlock::Yes is passed then the block will be left in an invalid state. We do this, however, to avoid potentially paging in / decompressing old blocks to update their handle just before freeing them.
     void removeBlock(MarkedBlock::Handle*, WillDeleteBlock = WillDeleteBlock::No);
 
 #if ASSERT_ENABLED
-    JS_EXPORT_PRIVATE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
+    JS_EXPORT_PRIVATE void assertMayAccessBitsUnlocked() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock);
 #else
-    ALWAYS_INLINE void assertIsMutatorOrMutatorIsStopped() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock) { }
+    ALWAYS_INLINE void assertMayAccessBitsUnlocked() const WTF_ASSERTS_ACQUIRED_SHARED_LOCK(m_bitvectorLock) { }
 #endif
     MutateGrowLock& bitvectorLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_bitvectorLock) { return m_bitvectorLock; }
 
@@ -132,13 +134,13 @@ public:
 #define BLOCK_DIRECTORY_BIT_OWNERSHIP_BlockOwned WTF_REQUIRES_LOCK(m_blockOwnership)
 #define BLOCK_DIRECTORY_BIT_OWNERSHIP_Unowned
 #define BLOCK_DIRECTORY_BIT_ACCESSORS(lowerBitName, capitalBitName, ownership)     \
-    bool is ## capitalBitName(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.bit<BlockDirectoryBits::Kind::capitalBitName>(index).concurrentGet(std::memory_order_relaxed); } \
+    bool is ## capitalBitName(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.bit<BlockDirectoryBits::Kind::capitalBitName>(index).concurrentGet<MemoryOrder::Relaxed>(); } \
     bool is ## capitalBitName(MarkedBlock::Handle* block) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return is ## capitalBitName(block->index()); } \
     BlockDirectoryBits::BlockDirectoryBitVectorView<BlockDirectoryBits::Kind::capitalBitName> lowerBitName ## BitsView() const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return m_bits.lowerBitName(); } \
     \
-    void setIs ## capitalBitName(size_t index, bool value) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) BLOCK_DIRECTORY_BIT_OWNERSHIP_ ## ownership { m_bits.bit<BlockDirectoryBits::Kind::capitalBitName>(index).concurrentSet(value, std::memory_order_relaxed); } \
+    void setIs ## capitalBitName(size_t index, bool value) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) BLOCK_DIRECTORY_BIT_OWNERSHIP_ ## ownership { m_bits.bit<BlockDirectoryBits::Kind::capitalBitName>(index).concurrentSet<MemoryOrder::Relaxed>(value); } \
     void setIs ## capitalBitName(MarkedBlock::Handle* block, bool value) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) BLOCK_DIRECTORY_BIT_OWNERSHIP_ ## ownership { setIs ## capitalBitName(block->index(), value); } \
-    bool testAndClearIs ## capitalBitName(size_t index) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) BLOCK_DIRECTORY_BIT_OWNERSHIP_ ## ownership { return m_bits.bit<BlockDirectoryBits::Kind::capitalBitName>(index).concurrentTestAndClear(std::memory_order_relaxed); } \
+    bool testAndClearIs ## capitalBitName(size_t index) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) BLOCK_DIRECTORY_BIT_OWNERSHIP_ ## ownership { return m_bits.bit<BlockDirectoryBits::Kind::capitalBitName>(index).concurrentTestAndClear<MemoryOrder::Relaxed>(); } \
     BlockDirectoryBits::BlockDirectoryBitVectorRef<BlockDirectoryBits::Kind::capitalBitName> lowerBitName ## Bits() WTF_REQUIRES_LOCK(m_bitvectorLock) { return m_bits.lowerBitName(); }
 
     FOR_EACH_BLOCK_DIRECTORY_BIT(BLOCK_DIRECTORY_BIT_ACCESSORS)
@@ -150,7 +152,7 @@ public:
     // Callers that pick a block by scanning the bits must recheck those bits after this returns true.
     [[nodiscard]] bool claimInUse(size_t index) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock)
     {
-        return !m_bits.bit<BlockDirectoryBits::Kind::InUse>(index).concurrentTestAndSet(std::memory_order_acquire);
+        return !m_bits.bit<BlockDirectoryBits::Kind::InUse>(index).concurrentTestAndSet<MemoryOrder::Acquire>();
     }
 
     void claimInUseOrCrash(size_t index) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) WTF_ASSERTS_ACQUIRED_CAPABILITY(m_blockOwnership)
@@ -159,9 +161,10 @@ public:
         RELEASE_ASSERT(claimed);
     }
 
+    template<MemoryOrder order = MemoryOrder::Release>
     void releaseInUse(size_t index) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock)
     {
-        m_bits.bit<BlockDirectoryBits::Kind::InUse>(index).concurrentSet(false, std::memory_order_release);
+        m_bits.bit<BlockDirectoryBits::Kind::InUse>(index).concurrentSet<order>(false);
     }
 
     // A destructible block still owes its old owner a destructor pass over every one of its cells,
@@ -212,13 +215,13 @@ public:
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
 
     // FIXME: rdar://139998916
-    MarkedBlock::Handle* LEGACY_NODELETE findMarkedBlockHandleDebug(MarkedBlock*);
+    NODELETE MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
 
     void didFinishUsingBlock(MarkedBlock::Handle*);
     void didFinishUsingBlock(AbstractLocker&, MarkedBlock::Handle*) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
 
     Subspace* subspace() const { return m_subspace; }
-    MarkedSpace& LEGACY_NODELETE markedSpace() const;
+    NODELETE MarkedSpace& markedSpace() const;
     
     void dump(PrintStream&) const;
     void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
@@ -255,11 +258,12 @@ private:
     //   (assertWorldIsStopped()).
     // - Exception: notifyNeedsDestruction() may set a block's destructible bit without holding inUse;
     //   see assertMayNotifyNeedsDestruction().
-    // - Exception: growth only happens on the mutator, so the mutator, or anyone while the world is
-    //   stopped, may read the bits without mutate(); see assertIsMutatorOrMutatorIsStopped().
+    // - Exception: growth only happens on the thread with access (addBlock() and removeBlock() assert it),
+    //   and one thread at a time has access, so that thread, or the conductor and its marking helpers while
+    //   the world is stopped, may read and write single bits without mutate(); see assertMayAccessBitsUnlocked().
     BlockDirectoryBits m_bits WTF_GUARDED_BY_LOCK(m_bitvectorLock); // Don't access this directly use one of the accessors above.
     MutateGrowLock m_bitvectorLock;
-    [[no_unique_address]] BlockOwnership m_blockOwnership;
+    NO_UNIQUE_ADDRESS BlockOwnership m_blockOwnership;
     Lock m_localAllocatorsLock;
     CellAttributes m_attributes;
 

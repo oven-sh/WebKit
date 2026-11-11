@@ -90,15 +90,19 @@ float usedFontSizeFromComputedSize(float computedSize, bool isAbsoluteSize, floa
     return std::min(maximumAllowedFontSize, zoomedSize);
 }
 
+float textZoomFactorForFontSize(const ComputedStyle& style, const Document& document)
+{
+    auto* frame = document.frame();
+    if (!frame || style.textZoom() == TextZoom::Reset)
+        return 1.0f;
+    return frame->textZoomFactor();
+}
+
 UsedFontSize usedFontSizeFromComputedSize(float computedSize, bool isAbsoluteSize, bool useSVGZoomRules, const ComputedStyle& style, const Document& document)
 {
     float zoomFactor = 1.0f;
-    if (!useSVGZoomRules) {
-        zoomFactor = style.usedZoom();
-        auto* frame = document.frame();
-        if (frame && style.textZoom() != TextZoom::Reset)
-            zoomFactor *= frame->textZoomFactor();
-    }
+    if (!useSVGZoomRules)
+        zoomFactor = style.usedZoom() * textZoomFactorForFontSize(style, document);
     return { usedFontSizeFromComputedSize(computedSize, isAbsoluteSize, zoomFactor, useSVGZoomRules ? MinimumFontSizeRule::None : MinimumFontSizeRule::AbsoluteAndRelative, document.settingsValues()), zoomFactor };
 }
 
@@ -180,7 +184,7 @@ float fontSizeForKeyword(CSSValueID keyword, bool shouldUseFixedDefaultSize, con
 }
 
 template<typename T, std::size_t Extent>
-static int LEGACY_NODELETE findNearestLegacyFontSize(int pixelFontSize, std::span<const T, Extent> table, int multiplier)
+NODELETE static int findNearestLegacyFontSize(int pixelFontSize, std::span<const T, Extent> table, int multiplier)
 {
     // Ignore table[0] because xx-small does not correspond to any legacy font size.
     for (size_t i = 1; i < table.size() - 1; ++i) {
@@ -202,7 +206,7 @@ int legacyFontSizeForPixelSize(int pixelFontSize, bool shouldUseFixedDefaultSize
     return findNearestLegacyFontSize(pixelFontSize, std::span { fontSizeFactors }, mediumSize);
 }
 
-static float LEGACY_NODELETE adjustedFontSize(float size, float sizeAdjust, float metricValue)
+NODELETE static float adjustedFontSize(float size, float sizeAdjust, float metricValue)
 {
     ASSERT(sizeAdjust > 0);
     if (!size)

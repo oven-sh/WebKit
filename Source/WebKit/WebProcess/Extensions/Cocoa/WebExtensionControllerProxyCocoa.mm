@@ -37,15 +37,20 @@
 #include "JSWebExtensionWrapper.h"
 #include "MessageSenderInlines.h"
 #include "WebExtensionAPINamespace.h"
+#include "WebExtensionAPITest.h"
 #include "WebExtensionAPIWebPageNamespace.h"
 #include "WebExtensionContextProxy.h"
 #include "WebExtensionControllerMessages.h"
 #include "WebExtensionFrameIdentifier.h"
+#include "WebExtensionUtilities.h"
 #include "WebFrame.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include <JavaScriptCore/APICast.h>
+#include <WebCore/DocumentLoader.h>
+#include <WebCore/FrameLoader.h>
 #include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/LocalFrame.h>
 
 namespace WebKit {
 
@@ -79,6 +84,10 @@ void WebExtensionControllerProxy::globalObjectIsAvailableForFrame(WebPage& page,
 
     if (!isMainWorld)
         extension->setContentScriptWorld(world);
+    else if (RefPtr coreFrame = frame.coreLocalFrame()) {
+        if (RefPtr documentLoader = coreFrame->loader().loaderForWebsitePolicies())
+            documentLoader->setAllowsJSHandleCreationInPageWorld(true);
+    }
 
     auto contentWorldType = isMainWorld ? WebExtensionContentWorldType::Main : WebExtensionContentWorldType::ContentScript;
 
@@ -176,6 +185,37 @@ void WebExtensionControllerProxy::addBindingsToWebPageFrameIfNecessary(WebFrame&
             });
         }
     }
+}
+
+void WebExtensionControllerProxy::addFrameWithTestListeners(WebFrame& frame)
+{
+    m_framesWithTestListeners.add(frame);
+}
+
+void WebExtensionControllerProxy::addTestListenersToContext(WebExtensionContextProxy& context)
+{
+    if (!m_testingMode)
+        return;
+
+    m_framesWithTestListeners.forEach([&](auto& frame) {
+        auto jsContext = frame.jsContextForWorld(WebExtensionContextProxy::mainWorldSingleton());
+        auto globalObject = JSContextGetGlobalObject(jsContext);
+
+        auto browserObject = JSObjectGetProperty(jsContext, globalObject, toJSString("browser"_s).get(), nullptr);
+        if (!browserObject || !JSValueIsObject(jsContext, browserObject))
+            return;
+
+        RefPtr namespaceObject = toWebExtensionAPIWebPageNamespace(jsContext, browserObject);
+        if (!namespaceObject)
+            return;
+
+        context.addFrameWithExtensionContent(frame);
+
+        Ref testObject = namespaceObject->test();
+        protect(testObject->onMessage())->addListenersToContext(context);
+        protect(testObject->onTestStarted())->addListenersToContext(context);
+        protect(testObject->onTestFinished())->addListenersToContext(context);
+    });
 }
 
 static WebExtensionFrameParameters toFrameParameters(WebFrame& frame, const URL& url, bool includeDocumentIdentifier = true)

@@ -42,7 +42,6 @@
 #include "FrameInspectorController.h"
 #include "FrameTree.h"
 #include "GraphicsContext.h"
-#include "InspectorAnimationAgent.h"
 #include "InspectorBackendClient.h"
 #include "InspectorCPUProfilerAgent.h"
 #include "InspectorCSSAgent.h"
@@ -62,6 +61,7 @@
 #include "LocalFrame.h"
 #include "NodeDocument.h"
 #include "Page.h"
+#include "PageAnimationAgent.h"
 #include "PageAuditAgent.h"
 #include "PageCanvasAgent.h"
 #include "PageConsoleAgent.h"
@@ -78,7 +78,6 @@
 #include "SharedBuffer.h"
 #include "WebInjectedScriptHost.h"
 #include "WebInjectedScriptManager.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/InspectorAgent.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
@@ -123,15 +122,52 @@ void PageInspectorController::suspendForDebuggerSession(DebuggerPauseSessionIden
     if (!CheckedRef { m_debuggerSuspensionController }->addSessionHold(sessionID))
         return;
 
-    protect(m_page.get())->forEachLocalFrame([](LocalFrame& frame) {
-        if (CheckedPtr debuggerAgent = frame.inspectorController().instrumentingAgents().enabledFrameDebuggerAgent())
-            debuggerAgent->cancelPauseAtNextOpportunity();
+    forEachEnabledFrameDebuggerAgent([](FrameDebuggerAgent& debuggerAgent) {
+        debuggerAgent.cancelPauseAtNextOpportunity();
     });
 }
 
 void PageInspectorController::resumeFromDebuggerSession(DebuggerPauseSessionIdentifier sessionID)
 {
     CheckedRef { m_debuggerSuspensionController.get() }->removeSessionHold(sessionID);
+}
+
+void PageInspectorController::mainFrameStartedLoading()
+{
+    if (!DebuggerSuspensionController::isFrameDebuggerPaused())
+        return;
+
+    bool hasPausedAgent = false;
+    forEachEnabledFrameDebuggerAgent([&](FrameDebuggerAgent& debuggerAgent) {
+        hasPausedAgent |= debuggerAgent.isPaused();
+    });
+    if (!hasPausedAgent)
+        return;
+
+    m_isSuppressingPausesForNavigation = true;
+    forEachEnabledFrameDebuggerAgent([](FrameDebuggerAgent& debuggerAgent) {
+        debuggerAgent.setSuppressAllPauses(true);
+        if (debuggerAgent.isPaused())
+            std::ignore = debuggerAgent.resume();
+    });
+}
+
+void PageInspectorController::endPauseSuppressionForNavigation()
+{
+    if (!std::exchange(m_isSuppressingPausesForNavigation, false))
+        return;
+
+    forEachEnabledFrameDebuggerAgent([](FrameDebuggerAgent& debuggerAgent) {
+        debuggerAgent.setSuppressAllPauses(false);
+    });
+}
+
+void PageInspectorController::forEachEnabledFrameDebuggerAgent(NOESCAPE const Function<void(FrameDebuggerAgent&)>& function)
+{
+    protect(m_page.get())->forEachLocalFrame([&](LocalFrame& frame) {
+        if (CheckedPtr debuggerAgent = frame.inspectorController().instrumentingAgents().enabledFrameDebuggerAgent())
+            function(*debuggerAgent);
+    });
 }
 
 PageInspectorController::~PageInspectorController()
@@ -217,12 +253,14 @@ void PageInspectorController::createLazyAgents()
     m_agents.append(makeUniqueRef<PageAuditAgent>(pageContext));
     m_agents.append(makeUniqueRef<PageCanvasAgent>(pageContext));
     m_agents.append(makeUniqueRef<PageTimelineAgent>(pageContext));
-    m_agents.append(makeUniqueRef<InspectorAnimationAgent>(pageContext));
+    m_agents.append(makeUniqueRef<PageAnimationAgent>(pageContext));
 }
 
 void PageInspectorController::siteIsolationFirstEnabled()
 {
     m_identifierRegistry = Inspector::BackendIdentifierRegistry::create();
+    m_executionStopwatch->startAtMonotonicEpoch();
+    m_executionStopwatchIsShared = true;
 }
 
 void PageInspectorController::inspectedPageDestroyed()
@@ -426,7 +464,7 @@ bool PageInspectorController::shouldShowOverlay() const
 
 // The page DOM agent covers the main frame's document and the documents of the frames below it that live in
 // this process. A frame with a RemoteFrame ancestor is only reachable through its own FrameDOMAgent.
-static bool isCoveredByPageDOMAgent(const LocalFrame& frame)
+bool PageInspectorController::isCoveredByPageDOMAgent(const LocalFrame& frame)
 {
     for (RefPtr<const Frame> ancestor = &frame; ancestor; ancestor = ancestor->tree().parent()) {
         if (!is<LocalFrame>(*ancestor))

@@ -80,15 +80,15 @@ public:
         ASSERT(m_completionHandler);
     }
 
-    Storage::ReadOperationIdentifier LEGACY_NODELETE identifier() const { return m_identifier; }
-    const Key& LEGACY_NODELETE key() const { return m_key; }
-    unsigned LEGACY_NODELETE priority() const { return m_priority; }
-    bool LEGACY_NODELETE isCanceled() const { return m_isCanceled; }
-    bool LEGACY_NODELETE canFinish() const { return !m_waitsForRecord && !m_waitsForBlob; }
+    NODELETE Storage::ReadOperationIdentifier identifier() const { return m_identifier; }
+    NODELETE const Key& key() const { return m_key; }
+    NODELETE unsigned priority() const { return m_priority; }
+    NODELETE bool isCanceled() const { return m_isCanceled; }
+    NODELETE bool canFinish() const { return !m_waitsForRecord && !m_waitsForBlob; }
 
     void updateForStart(size_t readOperationDispatchCount);
     void updateForDispatch(bool synchronizationInProgress, bool shrinkInProgress, size_t readOperationDispatchCount);
-    void LEGACY_NODELETE setWaitsForBlob() { m_waitsForBlob = true; }
+    NODELETE void setWaitsForBlob() { m_waitsForBlob = true; }
     void finishReadRecord(Record&&, MonotonicTime recordIOStartTime, MonotonicTime recordIOEndTime);
     void finishReadBlob(BlobStorage::Blob&&, MonotonicTime blobIOStartTime, MonotonicTime blobIOEndTime);
     void cancel();
@@ -222,10 +222,10 @@ public:
         ASSERT(isMainRunLoop());
     }
 
-    Storage::WriteOperationIdentifier LEGACY_NODELETE identifier() const { return m_identifier; }
-    const Record& LEGACY_NODELETE record() const WTF_REQUIRES_CAPABILITY(mainThread) { return m_record; }
+    NODELETE Storage::WriteOperationIdentifier identifier() const { return m_identifier; }
+    NODELETE const Record& record() const WTF_REQUIRES_CAPABILITY(mainThread) { return m_record; }
     void invokeMappedBodyHandler(const Data&);
-    bool LEGACY_NODELETE storeBlobInMemoryCache() const { return m_storeBlobInMemoryCache; }
+    NODELETE bool storeBlobInMemoryCache() const { return m_storeBlobInMemoryCache; }
 
 private:
     Storage::WriteOperationIdentifier m_identifier;
@@ -491,11 +491,16 @@ size_t Storage::estimateRecordsSize(unsigned recordCount, unsigned blobCount) co
 
 void Storage::synchronize()
 {
-    ASSERT(RunLoop::isMain());
+    assertIsMainThread();
 
     if (m_synchronizationInProgress || m_shrinkInProgress)
         return;
     m_synchronizationInProgress = true;
+
+    for (auto& operation : m_pendingWriteOperations)
+        m_recordFilterHashesAddedDuringSynchronization.append(operation->record().key.hash());
+    for (auto& operation : m_activeWriteOperations.values())
+        m_recordFilterHashesAddedDuringSynchronization.append(operation->record().key.hash());
 
     LOG(NetworkCacheStorage, "(NetworkProcess) synchronizing cache");
 
@@ -820,6 +825,19 @@ void Storage::removeFromPendingWriteOperations(const Key& key)
 
         m_pendingWriteOperations.remove(found);
     }
+}
+
+Vector<Key> Storage::pendingWriteKeys(const String& type, const std::optional<String>& partition) const
+{
+    assertIsMainThread();
+
+    Vector<Key> keys;
+    for (auto& operation : m_pendingWriteOperations) {
+        auto& key = operation->record().key;
+        if (key.type() == type && (!partition || equalIgnoringNullity(key.partition(), *partition)))
+            keys.append(key);
+    }
+    return keys;
 }
 
 void Storage::remove(const Key& key)
@@ -1272,6 +1290,12 @@ void Storage::clear(String&& type, WallTime modifiedSinceTime, CompletionHandler
     if (m_blobFilter)
         m_blobFilter->clear();
     m_approximateRecordsSize = 0;
+
+    m_pendingWriteOperations.removeAllMatching([&type, modifiedSinceTime](auto& operation) {
+        assertIsMainThread();
+
+        return (type.isEmpty() || operation->record().key.type() == type) && operation->record().timeStamp >= modifiedSinceTime;
+    });
 
     ioQueue().dispatch([this, protectedThis = Ref { *this }, modifiedSinceTime, completionHandler = WTF::move(completionHandler), type = WTF::move(type).isolatedCopy()] () mutable {
         auto recordsPath = this->recordsPathIsolatedCopy();

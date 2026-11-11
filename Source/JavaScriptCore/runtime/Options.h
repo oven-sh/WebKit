@@ -155,7 +155,7 @@ public: \
     static constexpr bool runsCompiledImage() { return false; }
 #endif
 
-    static bool LEGACY_NODELETE isAvailable(ID, Availability);
+    NODELETE static bool isAvailable(ID, Availability);
     JS_EXPORT_PRIVATE static SandboxPolicy machExceptionHandlerSandboxPolicy;
 
 private:
@@ -179,7 +179,7 @@ private:
 
     static void setAllJITCodeValidations(bool);
 
-    static bool LEGACY_NODELETE defaultTCSMValue();
+    NODELETE static bool defaultTCSMValue();
     static unsigned computeNumberOfGCMarkers(unsigned maxNumberOfGCMarkers);
     static unsigned computeNumberOfWorkerThreads(int maxNumberOfWorkerThreads, int minimum = 1);
     static int32_t computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelta, int32_t multiCorePriorityDelta);

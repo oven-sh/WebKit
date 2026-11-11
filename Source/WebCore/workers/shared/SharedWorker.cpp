@@ -33,6 +33,7 @@
 #include "EventNames.h"
 #include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
+#include "InspectorObjectIdentifier.h"
 #include "Logging.h"
 #include "MessageChannel.h"
 #include "MessagePort.h"
@@ -44,7 +45,6 @@
 #include "SharedWorkerProvider.h"
 #include "TrustedType.h"
 #include "WorkerOptions.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -60,7 +60,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SharedWorker);
 #define SHARED_WORKER_RELEASE_LOG(fmt, ...) RELEASE_LOG(SharedWorker, "%p - [identifier=%" PUBLIC_LOG_STRING "] SharedWorker::" fmt, this, identifier().toString().utf8(), ##__VA_ARGS__)
 #define SHARED_WORKER_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(SharedWorker, "%p - [identifier=%" PUBLIC_LOG_STRING "] SharedWorker::" fmt, this, identifier().toString().utf8(), ##__VA_ARGS__)
 
-static HashMap<SharedWorkerObjectIdentifier, WeakRef<SharedWorker, WeakPtrImplWithEventTargetData>>& LEGACY_NODELETE allSharedWorkers()
+NODELETE static HashMap<SharedWorkerObjectIdentifier, WeakRef<SharedWorker, WeakPtrImplWithEventTargetData>>& allSharedWorkers()
 {
     ASSERT(isMainThread());
     static NeverDestroyed<HashMap<SharedWorkerObjectIdentifier, WeakRef<SharedWorker, WeakPtrImplWithEventTargetData>>> allSharedWorkers;
@@ -128,7 +128,7 @@ SharedWorker::SharedWorker(Document& document, const SharedWorkerKey& key, Ref<M
     : ActiveDOMObject(&document)
     , m_key(key)
     , m_port(WTF::move(port))
-    , m_identifierForInspector(makeString("SharedWorker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
+    , m_identifierForInspector(makeString("SharedWorker:"_s, generateInspectorObjectIdentifierString()))
     , m_blobURLExtension({ m_key.url.protocolIsBlob() ? m_key.url : URL(), document.topOrigin().data() }) // Keep blob URL alive until the worker has finished loading.
 #if ENABLE(CONTENT_EXTENSIONS)
     , m_resourceMonitor(document.resourceMonitorIfExists())

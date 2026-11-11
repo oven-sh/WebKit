@@ -40,7 +40,7 @@ class CSSTokenizerInputStream {
     WTF_MAKE_NONCOPYABLE(CSSTokenizerInputStream);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSTokenizerInputStream, CSSTokenizerInputStream);
 public:
-    explicit CSSTokenizerInputStream(StringView string LIFETIME_BOUND);
+    NODELETE explicit CSSTokenizerInputStream(StringView string LIFETIME_BOUND);
 
     // Gets the char in the stream. Will return (NUL) kEndOfFileMarker when at the
     // end of the stream.
@@ -82,6 +82,17 @@ public:
                 ++offset;
         }
         return offset;
+    }
+
+    bool is8Bit() const { return m_string.is8Bit(); }
+
+    // Gets the 8-bit characters from lookaheadOffset to the end of the stream.
+    std::span<const Latin1Character> remainingSpan8(unsigned lookaheadOffset) const
+    {
+        ASSERT(is8Bit());
+        if ((m_offset + lookaheadOffset) >= m_stringLength)
+            return { };
+        return m_string.span8().subspan(m_offset + lookaheadOffset);
     }
 
     void advanceUntilNonWhitespace();

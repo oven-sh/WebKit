@@ -44,7 +44,7 @@ public:
         for (uint32_t parent = parentOf(parents, member); parent != member; parent = parentOf(parents, member)) {
             uint32_t above = parentOf(parents, parent);
             if (above != parent)
-                WTF::atomicStore(parents + member, above, std::memory_order_relaxed);
+                WTF::atomicStore<MemoryOrder::Relaxed>(parents + member, above);
             member = above;
         }
         return member;
@@ -92,7 +92,7 @@ public:
     }
 
 private:
-    static uint32_t parentOf(const uint32_t* parents, uint32_t member) { return WTF::atomicLoad(const_cast<uint32_t*>(parents) + member, std::memory_order_relaxed); }
+    static uint32_t parentOf(const uint32_t* parents, uint32_t member) { return WTF::atomicLoad<MemoryOrder::Relaxed>(const_cast<uint32_t*>(parents) + member); }
 
     mutable Vector<uint32_t> m_parent;
     Vector<uint32_t> m_next;

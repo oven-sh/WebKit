@@ -113,7 +113,7 @@ using namespace Inspector;
 static std::atomic<CrossOriginMode> globalCrossOriginMode { CrossOriginMode::Shared };
 
 static Lock allScriptExecutionContextsMapLock;
-static HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>& LEGACY_NODELETE allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
+NODELETE static HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {
     static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>> contexts;
     ASSERT(allScriptExecutionContextsMapLock.isLocked());
@@ -216,6 +216,10 @@ ScriptExecutionContext::~ScriptExecutionContext()
         ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
     }
 #endif // ASSERT_ENABLED
+
+    // Subclasses must destroy RejectedPromiseTracker since it holds a CheckedRef to us and the CheckedPtr counter
+    // lives in the subclass, which has already been destroyed at this point.
+    ASSERT(!m_rejectedPromiseTracker);
 
     m_inScriptExecutionContextDestructor = true;
 
@@ -941,7 +945,7 @@ ClientOrigin ScriptExecutionContext::storageClientOrigin() const
     return { storageTopOrigin().data(), securityOrigin()->data() };
 }
 
-static bool LEGACY_NODELETE isOriginEquivalentToLocal(const SecurityOrigin& origin)
+NODELETE static bool isOriginEquivalentToLocal(const SecurityOrigin& origin)
 {
     return origin.isLocal() && !origin.needsStorageAccessFromFileURLsQuirk() && !origin.hasUniversalAccess();
 }

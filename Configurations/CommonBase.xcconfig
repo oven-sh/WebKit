@@ -119,7 +119,7 @@ WK_OTHER_AUDIT_SPI_FLAGS_164901718[sdk=iphoneos26.*.internal] = -DSDKDB_HAS_1649
 GCC_WARN_NON_VIRTUAL_DESTRUCTOR = YES;
 GCC_THREADSAFE_STATICS = YES;
 
-WK_COMMON_WARNING_CFLAGS = -Wall -Wc99-designator -Wconditional-uninitialized -Wextra -Wdeprecated-enum-enum-conversion -Wdeprecated-enum-float-conversion -Wenum-float-conversion -Wfinal-dtor-non-final-class -Wformat=2 -Wmisleading-indentation -Wpointer-to-int-cast -Wreorder-init-list -Wundef -Wunused-but-set-variable -Wvla -Werror=unguarded-availability -Wthread-safety;
+WK_COMMON_WARNING_CFLAGS = -Wall -Wc99-designator -Wconditional-uninitialized -Wextra -Wdeprecated-enum-enum-conversion -Wdeprecated-enum-float-conversion -Wenum-float-conversion -Wfinal-dtor-non-final-class -Wformat=2 -Wmisleading-indentation -Wpointer-to-int-cast -Wreorder-init-list -Wundef -Wunused-but-set-variable -Wvla -Walloca -Werror=unguarded-availability -Wthread-safety;
 WARNING_CFLAGS = $(inherited) $(WK_COMMON_WARNING_CFLAGS) $(WK_SANITIZER_WARNING_CFLAGS);
 
 CLANG_CXX_STANDARD_LIBRARY_HARDENING = extensive;
@@ -129,11 +129,14 @@ SWIFT_VERSION = 6.0;
 SWIFT_OPTIMIZATION_LEVEL = -O;
 SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone;
 
+SWIFT_COMPILATION_MODE = wholemodule;
+SWIFT_COMPILATION_MODE[config=Debug] = singlefile;
+
 // Enable strict memory safety in Swift.
 WK_SWIFT_MEMORY_SAFETY_FLAGS = -strict-memory-safety -enable-experimental-feature Lifetimes -enable-experimental-feature LifetimeDependence -enable-experimental-feature ImportNonPublicCxxMembers;
 
 // Treat memory safety warnings as errors.
-WK_SWIFT_MEMORY_SAFETY_ERROR_FLAGS = -Werror StrictMemorySafety -Werror ForeignReferenceType -Werror RegionIsolation;
+WK_SWIFT_MEMORY_SAFETY_ERROR_FLAGS = -Werror StrictMemorySafety -Werror ForeignReferenceType -Werror RegionIsolation -Werror SendableClosureCaptures;
 // rdar://164903024: Work around false positives in some SDK versions.
 WK_SWIFT_MEMORY_SAFETY_ERROR_FLAGS[sdk=*26.3*] = ;
 
@@ -147,6 +150,11 @@ WK_SWIFT_VARIABLE_NEVER_MUTATED_ERROR_FLAGS[sdk=*26.*] = ;
 WK_SWIFT_UNUSED_IMPORT_ACCESS_ERROR_FLAGS = -Werror UnusedImportAccess;
 WK_SWIFT_UNUSED_IMPORT_ACCESS_ERROR_FLAGS[sdk=*26.*] = ;
 
+// Enable the experimental SuppressedAssociatedTypes feature only with SDKs that ship Swift 6.3. Later Swift
+// versions deprecate it in favor of SE-503, which SuppressedAssociatedTypesWithDefaults enables.
+WK_SWIFT_SUPPRESSED_ASSOCIATED_TYPES_FLAGS = ;
+WK_SWIFT_SUPPRESSED_ASSOCIATED_TYPES_FLAGS[sdk=*26.*] = -enable-experimental-feature SuppressedAssociatedTypes;
+
 // rdar://168992837 requires us to tell swiftc to tell clang how to set version macros
 // when interpreting C++ headers as clang modules, so that we get identical feature
 // enablement to C++ interpretation of those headers (otherwise we get mismatched data members etc.)
@@ -155,6 +163,6 @@ WK_SWIFT_CLANG_DEPLOYMENT_TARGET_macosx = -clang-target $(CURRENT_ARCH)-apple-ma
 
 // rdar://170129992: remove -track-system-dependencies when resolved
 // FIXME(rdar://189511928, rdar://189512247): remove -disable-round-trip-debug-types when both are resolved
-OTHER_SWIFT_FLAGS = $(inherited) $(WK_AVAILABILITY_OVERLAY_SWIFT_FLAGS) -Xcc -fvisibility=hidden -Werror ExistentialAny -Werror NoUseUnstructuredThrowingTask -Werror NoUsage $(WK_SWIFT_VARIABLE_NEVER_MUTATED_ERROR_FLAGS) $(WK_SWIFT_UNUSED_IMPORT_ACCESS_ERROR_FLAGS) -enable-upcoming-feature ExistentialAny $(WK_SWIFT_MEMORY_SAFETY_FLAGS) $(WK_SWIFT_MEMORY_SAFETY_ERROR_FLAGS) $(WK_SWIFT_CLANG_DEPLOYMENT_TARGET) $(WK_SANITIZER_OTHER_SWIFT_FLAGS) -enable-upcoming-feature InternalImportsByDefault -enable-upcoming-feature MemberImportVisibility -track-system-dependencies -enable-experimental-feature ImportCxxMembersLazily -enable-experimental-feature SuppressedAssociatedTypes -enable-experimental-feature SuppressedAssociatedTypesWithDefaults -enable-experimental-feature ForeignReferenceTypeInheritance -Xfrontend -disable-round-trip-debug-types -enable-experimental-feature SafeInteropWrappers;
+OTHER_SWIFT_FLAGS = $(inherited) $(WK_AVAILABILITY_OVERLAY_SWIFT_FLAGS) -Xcc -fvisibility=hidden -Werror ExistentialAny -Werror NoUseUnstructuredThrowingTask -Werror NoUsage -Werror UnnecessaryEffectMarker $(WK_SWIFT_VARIABLE_NEVER_MUTATED_ERROR_FLAGS) $(WK_SWIFT_UNUSED_IMPORT_ACCESS_ERROR_FLAGS) -enable-upcoming-feature ExistentialAny $(WK_SWIFT_MEMORY_SAFETY_FLAGS) $(WK_SWIFT_MEMORY_SAFETY_ERROR_FLAGS) $(WK_SWIFT_CLANG_DEPLOYMENT_TARGET) $(WK_SANITIZER_OTHER_SWIFT_FLAGS) -enable-upcoming-feature InternalImportsByDefault -enable-upcoming-feature MemberImportVisibility -enable-upcoming-feature NonisolatedNonsendingByDefault -track-system-dependencies -enable-experimental-feature ImportCxxMembersLazily $(WK_SWIFT_SUPPRESSED_ASSOCIATED_TYPES_FLAGS) -enable-experimental-feature SuppressedAssociatedTypesWithDefaults -enable-experimental-feature ForeignReferenceTypeInheritance -Xfrontend -disable-round-trip-debug-types -enable-experimental-feature SafeInteropWrappers;
 
 OTHER_LIBTOOLFLAGS = -no_warning_for_no_symbols;

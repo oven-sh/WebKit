@@ -132,6 +132,7 @@ static bool s_isGstDebugDotFilesSupportEnabled;
 #if ENABLE(VIDEO)
 bool getVideoSizeAndFormatFromCaps(const GstCaps* caps, WebCore::IntSize& size, GstVideoFormat& format, int& pixelAspectRatioNumerator, int& pixelAspectRatioDenominator, int& stride, double& frameRate, PlatformVideoColorSpace& colorSpace)
 {
+    frameRate = 0;
     if (!doCapsHaveType(caps, GST_VIDEO_CAPS_TYPE_PREFIX)) {
         GST_WARNING("Failed to get the video size and format, these are not a video caps");
         return false;
@@ -1075,8 +1076,7 @@ template<typename T> Vector<std::span<T>> GstMappedAudioBuffer::samples(size_t o
 
     if (GST_AUDIO_INFO_LAYOUT(&m_buffer.info) == GST_AUDIO_LAYOUT_INTERLEAVED) {
         auto planeSizeInBytes = (m_buffer.n_samples - offset) * GST_AUDIO_INFO_BPS(&m_buffer.info);
-        Vector<std::span<T>> result;
-        result.reserveInitialCapacity(planeCount);
+        Vector<std::span<T>> result(ReserveCapacityTag { }, planeCount);
         for (uint32_t i = 0; i < planeCount; i++) {
             auto plane = MallocSpan<T>::malloc(planeSizeInBytes);
             result.append(plane.leakSpan());

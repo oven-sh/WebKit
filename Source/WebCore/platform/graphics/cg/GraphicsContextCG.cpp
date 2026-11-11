@@ -62,6 +62,13 @@
 #include <WebKitAdditions/IOSurfaceAdditionsBefore.mm>
 #endif
 
+#ifndef CGIOSurfaceContextUsingWebKitBehavior
+static inline bool CGIOSurfaceContextUsingWebKitBehavior(CGContextRef)
+{
+    return false;
+}
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GraphicsContextCG);
@@ -70,6 +77,33 @@ static void setCGFillColor(CGContextRef context, const Color& color, const Color
 {
     CGContextSetFillColorWithColor(context, cachedCGColorInDestinationStandardRange(color, colorSpace).get());
 }
+
+#if HAVE(CGCONTEXT_STROKE_ARC)
+// A butt-capped stroke of width r along the arc of radius r / 2 covers exactly the pie wedge of radius r.
+// Drawing the wedge as a stroked arc lets the renderer batch it with other stroked arcs.
+static void fillPieWedgeAsStrokeArc(CGContextRef context, const PathArc& arc, const Color& color, const ColorSpace& colorSpace)
+{
+    CGContextSaveGState(context);
+    CGContextSetStrokeColorWithColor(context, cachedCGColorInDestinationStandardRange(color, colorSpace).get());
+    CGContextSetLineWidth(context, arc.radius);
+    CGContextSetLineCap(context, kCGLineCapButt);
+    CGContextSetLineDash(context, 0, nullptr, 0);
+    CGContextStrokeArc(context, arc.center.x(), arc.center.y(), arc.radius / 2, arc.startAngle, arc.endAngle, arc.direction == RotationDirection::Counterclockwise);
+    CGContextRestoreGState(context);
+}
+
+// Limited to fills where any coverage difference between the stroke and the fill is invisible: a pixel drawn twice looks
+// the same as once, and a wedge that winds more than once is filled solid, as the stroke paints it.
+static bool canFillPieWedgeAsStrokeArc(const GraphicsContext& context)
+{
+    return context.fillRule() == WindRule::NonZero
+        && context.fillColor().isOpaque()
+        && context.alpha() == 1
+        && context.compositeOperation() == CompositeOperator::SourceOver
+        && context.blendMode() == BlendMode::Normal
+        && !context.hasDropShadow();
+}
+#endif
 
 CGAffineTransform getUserToBaseCTM(CGContextRef context)
 {
@@ -104,7 +138,7 @@ static InterpolationQuality coreInterpolationQuality(CGContextRef context)
     return InterpolationQuality::Default;
 }
 
-static CGTextDrawingMode LEGACY_NODELETE cgTextDrawingMode(TextDrawingModeFlags mode)
+NODELETE static CGTextDrawingMode cgTextDrawingMode(TextDrawingModeFlags mode)
 {
     bool fill = mode.contains(TextDrawingMode::Fill);
     bool stroke = mode.contains(TextDrawingMode::Stroke);
@@ -115,7 +149,7 @@ static CGTextDrawingMode LEGACY_NODELETE cgTextDrawingMode(TextDrawingModeFlags 
     return kCGTextStroke;
 }
 
-static CGBlendMode LEGACY_NODELETE selectCGBlendMode(CompositeOperator compositeOperator, BlendMode blendMode)
+NODELETE static CGBlendMode selectCGBlendMode(CompositeOperator compositeOperator, BlendMode blendMode)
 {
     switch (blendMode) {
     case BlendMode::Normal:
@@ -299,6 +333,9 @@ GraphicsContextCG::GraphicsContextCG(CGContextRef cgContext, CGContextSource sou
     , m_cgContext(cgContext)
     , m_renderingMode(knownRenderingMode.value_or(renderingModeForCGContext(cgContext, source)))
     , m_isLayerCGContext(source == GraphicsContextCG::CGContextFromCALayer)
+#if HAVE(CGCONTEXT_STROKE_ARC)
+    , m_strokesArcsLikeFills(CGIOSurfaceContextUsingWebKitBehavior(cgContext))
+#endif
 {
     if (!cgContext)
         return;
@@ -357,16 +394,21 @@ void GraphicsContextCG::restore(GraphicsContextState::Purpose purpose)
     m_userToDeviceTransformKnownToBeIdentity = false;
 }
 
-void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     auto image = nativeImage.platformImage();
     if (!image)
         return;
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE) && HAVE(CGSTYLE_COLORMATRIX_BLUR)
-    if (options.invertContent() == InvertContent::Yes) {
-        auto sourceRect = options.orientation() == ImageOrientation::Orientation::None ? std::optional { normalizeRect(srcRect) } : std::nullopt;
-        if (auto colorMatrix = AXCustomColorModeController::colorMatrixForImageInversion(nativeImage.paintTimeTransformation(sourceRect))) {
+    if (auto invertContent = options.invertContent(); invertContent == InvertContent::Yes || invertContent == InvertContent::Forced) {
+        auto colorMatrix = [&] -> std::optional<GraphicsColorMatrix> {
+            if (invertContent == InvertContent::Forced)
+                return AXCustomColorModeController::colorPreservingInvertMatrix();
+            auto sourceRect = options.orientation() == ImageOrientation::Orientation::None ? std::optional { normalizeRect(srcRect) } : std::nullopt;
+            return AXCustomColorModeController::colorMatrixForImageInversion(nativeImage.paintTimeTransformation(sourceRect));
+        }();
+        if (colorMatrix) {
             GraphicsContextStateSaver stateSaver(*this);
             clip(normalizeRect(destRect));
             setStyle(*colorMatrix);
@@ -401,7 +443,7 @@ void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const Fl
         return !WTF::areEssentiallyEqual(xScale, yScale) || xScale > 1;
     };
 
-    auto getSubimage = [](CGImageRef image, const FloatSize& imageSize, const FloatRect& subimageRect, ImageDrawingOptions options) -> RetainPtr<CGImageRef> {
+    auto getSubimage = [](CGImageRef image, const FloatSize& imageSize, const FloatRect& subimageRect, RasterDrawingOptions options) -> RetainPtr<CGImageRef> {
         auto physicalSubimageRect = subimageRect;
 
         if (options.orientation() != ImageOrientation::Orientation::None) {
@@ -560,10 +602,24 @@ static void drawPatternReleaseCallback(void* info)
     SUPPRESS_RETAINPTR_CTOR_ADOPT callOnMainThread([image = adoptCF(static_cast<CGImageRef>(info))] { });
 }
 
-void GraphicsContextCG::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void GraphicsContextCG::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE) && HAVE(CGSTYLE_COLORMATRIX_BLUR)
+    // Tiles are never classified, so only an unconditional inversion applies to them.
+    if (options.invertContent() == InvertContent::Forced) {
+        GraphicsContextStateSaver stateSaver(*this);
+        clip(destRect);
+        setStyle(AXCustomColorModeController::colorPreservingInvertMatrix());
+        setCompositeOperation(options.compositeOperator(), options.blendMode());
+        beginTransparencyLayer(options.compositeOperator(), options.blendMode());
+        drawPattern(nativeImage, destRect, tileRect, patternTransform, phase, spacing, { options, InvertContent::No, CompositeOperator::SourceOver, BlendMode::Normal });
+        endTransparencyLayer();
+        return;
+    }
+#endif
 
     auto image = nativeImage.platformImage();
     auto imageSize = nativeImage.size();
@@ -785,7 +841,7 @@ void GraphicsContextCG::applyFillPattern()
     CGContextSetFillPattern(cgContext, platformPattern.get(), &patternAlpha);
 }
 
-static inline bool LEGACY_NODELETE calculateDrawingMode(const GraphicsContext& context, CGPathDrawingMode& mode)
+NODELETE static inline bool calculateDrawingMode(const GraphicsContext& context, CGPathDrawingMode& mode)
 {
     bool shouldFill = context.fillBrush().isVisible();
     bool shouldStroke = context.strokeBrush().isVisible() || (context.strokeStyle() != StrokeStyle::NoStroke);
@@ -860,6 +916,12 @@ void GraphicsContextCG::fillPath(const Path& path)
 
     if (fillPattern())
         applyFillPattern();
+#if HAVE(CGCONTEXT_STROKE_ARC)
+    else if (auto arc = m_strokesArcsLikeFills ? path.pieWedgeArc() : std::nullopt; arc && arc->radius > 0 && canFillPieWedgeAsStrokeArc(*this)) {
+        fillPieWedgeAsStrokeArc(context.get(), *arc, fillColor(), colorSpace());
+        return;
+    }
+#endif
 
     drawPathWithCGContext(context, fillRule() == WindRule::EvenOdd ? kCGPathEOFill : kCGPathFill, path);
 }
@@ -1091,6 +1153,24 @@ void GraphicsContextCG::clipPath(const Path& path, WindRule clipRule)
     }
 }
 
+void GraphicsContextCG::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule clipRule)
+{
+    const RetainPtr<CGContextRef>& context = contextForDraw();
+    if (path.isEmpty()) {
+        CGContextClipToRect(context, CGRectZero);
+        return;
+    }
+    // The clip is stored in device space, so the CTM can be restored afterwards without affecting it.
+    auto ctm = CGContextGetCTM(context);
+    CGContextConcatCTM(context, pathTransform);
+    setCGContextPath(context, path);
+    if (clipRule == WindRule::EvenOdd)
+        CGContextEOClip(context);
+    else
+        CGContextClip(context);
+    CGContextSetCTM(context, ctm);
+}
+
 void GraphicsContextCG::clipToImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect)
 {
     auto nativeImage = imageBuffer.createNativeImageReference();
@@ -1174,9 +1254,8 @@ void GraphicsContextCG::setCGDropShadow(const std::optional<GraphicsDropShadow>&
     const RetainPtr<CGContextRef>& context = contextForDraw();
     auto [offset, blurRadius] = baseSpaceDropShadow(*shadow, getUserToBaseCTM(context), shadowsIgnoreTransforms);
 
-    CGContextSetAlpha(context, shadow->opacity);
-
-    auto style = adoptCF(CGStyleCreateShadow2(offset, blurRadius, cachedCGColorInDestinationStandardRange(shadow->color, colorSpace()).get()));
+    // Apply the opacity to the shadow color. Setting it as the context alpha would override the alpha of the drawing.
+    RetainPtr style = adoptCF(CGStyleCreateShadow2(offset, blurRadius, cachedCGColorInDestinationStandardRange(shadow->color.colorWithAlphaMultipliedBy(shadow->opacity), colorSpace()).get()));
     CGContextSetStyle(context, style.get());
 }
 

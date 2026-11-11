@@ -161,7 +161,7 @@ EditAction EditCommand::editingAction() const
     return m_editingAction;
 }
 
-static RefPtr<EditCommandComposition> LEGACY_NODELETE compositionIfPossible(EditCommand& command)
+NODELETE static RefPtr<EditCommandComposition> compositionIfPossible(EditCommand& command)
 {
     auto* compositeCommand = dynamicDowncast<CompositeEditCommand>(command);
     return compositeCommand ? compositeCommand->composition() : nullptr;
@@ -218,7 +218,7 @@ void EditCommand::postTextStateChangeNotification(AXTextEditType type, const Str
     CheckedPtr cache = document().existingAXObjectCache();
     if (!cache)
         return;
-    RefPtr node { highestEditableRoot(position.deepEquivalent(), HasEditableAXRole) };
+    RefPtr node { highestEditableRoot(position.deepEquivalent(), EditableType::AXRole) };
     cache->postTextStateChangeNotification(node.get(), type, text, position);
 }
 

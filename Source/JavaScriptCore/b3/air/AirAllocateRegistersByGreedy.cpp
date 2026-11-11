@@ -141,7 +141,7 @@ enum InsertionPhase : unsigned {
     SpillMoveFrom,
 };
 
-static bool LEGACY_NODELETE verbose() { return Options::airGreedyRegAllocVerbose(); }
+NODELETE static bool verbose() { return Options::airGreedyRegAllocVerbose(); }
 
 // Terminology / core data-structures:
 //
@@ -323,7 +323,7 @@ public:
         validate();
     }
 
-    inline void LEGACY_NODELETE validate()
+    NODELETE inline void validate()
     {
 #if ASSERT_ENABLED
         size_t size = 0;
@@ -387,17 +387,17 @@ public:
         validate();
     }
 
-    Intervals LEGACY_NODELETE intervals() const
+    NODELETE Intervals intervals() const
     {
         return { m_intervals, m_count };
     }
 
-    size_t LEGACY_NODELETE size() const
+    NODELETE size_t size() const
     {
         return m_size;
     }
 
-    bool LEGACY_NODELETE contains(Point point) const
+    NODELETE bool contains(Point point) const
     {
         for (auto& interval : intervals()) {
             if (interval.end() <= point)
@@ -407,7 +407,7 @@ public:
         return false;
     }
 
-    bool LEGACY_NODELETE overlaps(const LiveRange& other) const
+    NODELETE bool overlaps(const LiveRange& other) const
     {
         if (!m_count || !other.m_count || m_intervals[m_count - 1].end() <= other.m_intervals[0].begin() || other.m_intervals[other.m_count - 1].end() <= m_intervals[0].begin())
             return false;
@@ -525,7 +525,7 @@ private:
     static constexpr size_t tmpIndexShift = rangeSizeShift - tmpIndexBits;
     static_assert(!tmpIndexShift);
 
-    inline void LEGACY_NODELETE packPriority(uint64_t val, size_t numBits, size_t shift, bool reverse)
+    NODELETE inline void packPriority(uint64_t val, size_t numBits, size_t shift, bool reverse)
     {
         const uint64_t mask = (1ull << numBits) - 1;
         val &= mask;
@@ -551,9 +551,9 @@ public:
         packPriority(tmp.tmpIndex(), tmpIndexBits, tmpIndexShift, true);
     }
 
-    Tmp LEGACY_NODELETE tmp() { return m_tmp; }
+    NODELETE Tmp tmp() { return m_tmp; }
 
-    Stage LEGACY_NODELETE stage() const
+    NODELETE Stage stage() const
     {
         const uint64_t mask = (1 << stageBits) - 1;
         uint64_t stageReversed = m_priority >> stageShift;
@@ -568,7 +568,7 @@ public:
 
     // The packed priority is built so that a numerically greater value is more urgent, which is the
     // order PriorityQueue serves.
-    friend bool LEGACY_NODELETE operator<(const TmpPriority& left, const TmpPriority& right)
+    NODELETE friend bool operator<(const TmpPriority& left, const TmpPriority& right)
     {
         return left.m_priority < right.m_priority;
     }
@@ -598,7 +598,7 @@ public:
             , tmp(pair.second)
         { }
 
-        bool LEGACY_NODELETE operator<(const AllocatedInterval& other) const
+        NODELETE bool operator<(const AllocatedInterval& other) const
         {
             return this->interval.end() < other.interval.end();
         }
@@ -637,7 +637,7 @@ public:
             m_allocations.erase(interval);
     }
 
-    bool LEGACY_NODELETE hasConflict(const LiveRange& range, Width width)
+    NODELETE bool hasConflict(const LiveRange& range, Width width)
     {
         for (auto interval : range.intervals()) {
             if (m_allocations.hasOverlap(interval))
@@ -679,7 +679,7 @@ public:
         forEachConflictImpl(m_allocationsHigh64, range, func);
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return m_allocations.isEmpty() && m_allocationsHigh64.isEmpty();
     }
@@ -886,7 +886,7 @@ struct TmpData {
         return std::min(cost, maxSpillableSpillCost);
     }
 
-    void LEGACY_NODELETE validate()
+    NODELETE void validate()
     {
         ASSERT(!!assigned == (stage == Stage::Assigned));
         ASSERT(liveRange.intervals().isEmpty() == !liveRange.size());
@@ -1471,7 +1471,7 @@ public:
         }
     }
 
-    const List& LEGACY_NODELETE useDefs() const { return m_instPoints; }
+    NODELETE const List& useDefs() const { return m_instPoints; }
 
     void dump(PrintStream& out) const
     {
@@ -6906,7 +6906,7 @@ private:
         return trySplitIntoClusters<bank>(tmp, m_splitPolicy.splitsIntoClustersOverBlocks && !tmpData.isClusterOverBlocks && !tmpData.isOnStackInSomeBlocks ? ClusterReach::OverBlocks : ClusterReach::WithinBlock);
     }
 
-    static unsigned LEGACY_NODELETE stackSlotMinimumWidth(Width width)
+    NODELETE static unsigned stackSlotMinimumWidth(Width width)
     {
         if (width <= Width32)
             return 4;
@@ -6946,7 +6946,7 @@ private:
         tmpData.validate();
     }
 
-    bool LEGACY_NODELETE queueContainsOnlySpills()
+    NODELETE bool queueContainsOnlySpills()
     {
         for (auto& elem : m_queue) {
             if (elem.stage() != Stage::Spill)
@@ -7640,7 +7640,7 @@ private:
         dataLogLnIf(verbose(), "AroundLoop fixup: nonLoop=", nonLoopTmp, " loop=", loopTmp, " header=BB", *header);
     }
 
-    bool LEGACY_NODELETE mayBeCoalescable(Inst& inst)
+    NODELETE bool mayBeCoalescable(Inst& inst)
     {
         switch (inst.kind.opcode) {
         case Move:

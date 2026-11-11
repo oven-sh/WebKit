@@ -77,7 +77,7 @@ void RuleSet::addToRuleSet(const AtomString& key, AtomRuleMap& map, const RuleDa
     rules->append(ruleData);
 }
 
-static unsigned LEGACY_NODELETE rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
+NODELETE static unsigned rulesCountForName(const RuleSet::AtomRuleMap& map, const AtomString& name)
 {
     if (const auto* rules = map.get(name))
         return rules->size();
@@ -533,7 +533,7 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
 
 void RuleSet::addPageRule(StyleRulePage& rule)
 {
-    m_pageRules.append(&rule);
+    m_pageRules.append(rule);
 }
 
 void RuleSet::setViewTransitionRule(StyleRuleViewTransition& rule)

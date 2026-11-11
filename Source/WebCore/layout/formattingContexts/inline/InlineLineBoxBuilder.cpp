@@ -114,12 +114,21 @@ TextUtil::FallbackFontList LineBoxBuilder::collectFallbackFonts(const InlineLeve
 {
     ASSERT(parentInlineBox.isInlineBox());
     auto& inlineTextBox = downcast<InlineTextBox>(run.layoutBox());
-    if (inlineTextBox.canUseSimplifiedContentMeasuring()) {
-        // Simplified text measuring works with primary font only.
-        return { };
+    auto fallbackFonts = [&] -> TextUtil::FallbackFontList {
+        if (inlineTextBox.canUseSimplifiedContentMeasuring()) {
+            // Simplified text measuring works with primary font only.
+            return { };
+        }
+        auto& text = run.textContent();
+        return TextUtil::fallbackFontsForText(StringView(inlineTextBox.content()).substring(text.start, text.length), style, text.needsHyphen ? TextUtil::IncludeHyphen::Yes : TextUtil::IncludeHyphen::No);
+    }();
+    if (inlineTextBox.inheritsStyleFromDisplayContentsParent()) {
+        // Text in a display: contents element can have a font of its own. Like glyphs from fallback fonts, it only stretches
+        // a parent inline box with line-height: normal (css-inline-3).
+        auto& parentStyle = isFirstFormattedLine() ? parentInlineBox.layoutBox().firstLineStyle() : parentInlineBox.layoutBox().style();
+        if (Ref primaryFont = style.fontCascade().primaryFont(); primaryFont.ptr() != &parentStyle.fontCascade().primaryFont())
+            fallbackFonts.add(primaryFont.get());
     }
-    auto& text = run.textContent();
-    auto fallbackFonts = TextUtil::fallbackFontsForText(StringView(inlineTextBox.content()).substring(text.start, text.length), style, text.needsHyphen ? TextUtil::IncludeHyphen::Yes : TextUtil::IncludeHyphen::No);
     if (fallbackFonts.isEmptyIgnoringNullReferences())
         return { };
 
@@ -133,7 +142,7 @@ TextUtil::FallbackFontList LineBoxBuilder::collectFallbackFonts(const InlineLeve
     return fallbackFonts;
 }
 
-static InlineLevelBox::AscentAndDescent LEGACY_NODELETE primaryFontMetricsForInlineBox(const InlineLevelBox& inlineBox, FontBaseline fontBaseline = FontBaseline::Alphabetic)
+NODELETE static InlineLevelBox::AscentAndDescent primaryFontMetricsForInlineBox(const InlineLevelBox& inlineBox, FontBaseline fontBaseline = FontBaseline::Alphabetic)
 {
     ASSERT(inlineBox.isInlineBox());
     auto& fontMetrics = inlineBox.primarymetricsOfPrimaryFont();
@@ -142,7 +151,7 @@ static InlineLevelBox::AscentAndDescent LEGACY_NODELETE primaryFontMetricsForInl
     return { ascent, descent };
 }
 
-static bool LEGACY_NODELETE isLineFitEdgeLeading(const InlineLevelBox& inlineBox)
+NODELETE static bool isLineFitEdgeLeading(const InlineLevelBox& inlineBox)
 {
     ASSERT(inlineBox.isInlineBox());
     return inlineBox.lineFitEdge().isLeading();
@@ -155,6 +164,10 @@ static InlineLevelBox::AscentAndDescent layoutBoundsWithEdgeAdjustmentForInlineB
     if (inlineBox.isRootInlineBox())
         return { fontMetrics.ascent(fontBaseline), fontMetrics.descent(fontBaseline) };
 
+    // Vertical lines are aligned on the ideographic (central) baseline (see adjustIdeographicBaselineIfApplicable), but cap height,
+    // x-height and the alphabetic edge are measured from the alphabetic baseline, which sits this much below it.
+    auto alphabeticBaselineOffset = fontBaseline == FontBaseline::Ideographic ? fontMetrics.ascent(FontBaseline::Alphabetic) - fontMetrics.ascent(FontBaseline::Ideographic) : 0.f;
+
     auto ascent = [&] -> InlineLayoutUnit {
         return WTF::switchOn(inlineBox.lineFitEdge(),
             [&](CSS::Keyword::Leading) -> InlineLayoutUnit {
@@ -165,9 +178,9 @@ static InlineLevelBox::AscentAndDescent layoutBoundsWithEdgeAdjustmentForInlineB
                 case TextEdgeOver::Text:
                     return fontMetrics.ascent(fontBaseline);
                 case TextEdgeOver::Cap:
-                    return fontMetrics.capHeight().value_or(0.f);
+                    return fontMetrics.capHeight().value_or(0.f) - alphabeticBaselineOffset;
                 case TextEdgeOver::Ex:
-                    return fontMetrics.xHeight().value_or(0.f);
+                    return fontMetrics.xHeight().value_or(0.f) - alphabeticBaselineOffset;
                 case TextEdgeOver::Ideographic:
                     return fontMetrics.ascent(FontBaseline::Ideographic);
                 case TextEdgeOver::IdeographicInk:
@@ -189,7 +202,7 @@ static InlineLevelBox::AscentAndDescent layoutBoundsWithEdgeAdjustmentForInlineB
                 case TextEdgeUnder::Text:
                     return fontMetrics.descent(fontBaseline);
                 case TextEdgeUnder::Alphabetic:
-                    return 0.f;
+                    return alphabeticBaselineOffset;
                 case TextEdgeUnder::Ideographic:
                     return fontMetrics.descent(FontBaseline::Ideographic);
                 case TextEdgeUnder::IdeographicInk:
@@ -210,9 +223,20 @@ static InlineLevelBox::AscentAndDescent textBoxAdjustedInlineBoxHeight(const Inl
     if (inlineBox.isRootInlineBox())
         return { fontMetrics.ascent(fontBaseline), fontMetrics.descent(fontBaseline) };
 
+    // Vertical lines are aligned on the ideographic (central) baseline (see adjustIdeographicBaselineIfApplicable), but cap height,
+    // x-height and the alphabetic edge are measured from the alphabetic baseline, which sits this much below it.
+    auto alphabeticBaselineOffset = fontBaseline == FontBaseline::Ideographic ? fontMetrics.ascent(FontBaseline::Alphabetic) - fontMetrics.ascent(FontBaseline::Ideographic) : 0.f;
+
     auto inlineBoxTextBoxTrim = inlineBox.textBoxTrim();
+    auto trimsBlockStart = inlineBoxTextBoxTrim == TextBoxTrim::TrimStart || inlineBoxTextBoxTrim == TextBoxTrim::TrimBoth;
+    auto trimsBlockEnd = inlineBoxTextBoxTrim == TextBoxTrim::TrimEnd || inlineBoxTextBoxTrim == TextBoxTrim::TrimBoth;
+    // The block-start side is the line-under side when lines are inverted (e.g. vertical-lr).
+    auto isLineInverted = inlineBox.layoutBox().writingMode().isLineInverted();
+    auto trimsLineOver = isLineInverted ? trimsBlockEnd : trimsBlockStart;
+    auto trimsLineUnder = isLineInverted ? trimsBlockStart : trimsBlockEnd;
+
     auto ascent = [&] -> InlineLayoutUnit {
-        auto textBoxEdge = inlineBoxTextBoxTrim == TextBoxTrim::TrimStart || inlineBoxTextBoxTrim == TextBoxTrim::TrimBoth ? inlineBox.textBoxEdge().tryTextEdgePair() : std::nullopt;
+        auto textBoxEdge = trimsLineOver ? inlineBox.textBoxEdge().tryTextEdgePair() : std::nullopt;
         if (!textBoxEdge)
             return fontMetrics.ascent(fontBaseline);
 
@@ -220,9 +244,9 @@ static InlineLevelBox::AscentAndDescent textBoxAdjustedInlineBoxHeight(const Inl
         case TextEdgeOver::Text:
             return fontMetrics.ascent(fontBaseline);
         case TextEdgeOver::Cap:
-            return fontMetrics.capHeight().value_or(0.f);
+            return fontMetrics.capHeight().value_or(0.f) - alphabeticBaselineOffset;
         case TextEdgeOver::Ex:
-            return fontMetrics.xHeight().value_or(0.f);
+            return fontMetrics.xHeight().value_or(0.f) - alphabeticBaselineOffset;
         case TextEdgeOver::Ideographic:
             return fontMetrics.ascent(FontBaseline::Ideographic);
         case TextEdgeOver::IdeographicInk:
@@ -233,7 +257,7 @@ static InlineLevelBox::AscentAndDescent textBoxAdjustedInlineBoxHeight(const Inl
     };
 
     auto descent = [&] -> InlineLayoutUnit {
-        auto textBoxEdge = inlineBoxTextBoxTrim == TextBoxTrim::TrimEnd || inlineBoxTextBoxTrim == TextBoxTrim::TrimBoth ? inlineBox.textBoxEdge().tryTextEdgePair() : std::nullopt;
+        auto textBoxEdge = trimsLineUnder ? inlineBox.textBoxEdge().tryTextEdgePair() : std::nullopt;
         if (!textBoxEdge)
             return fontMetrics.descent(fontBaseline);
 
@@ -241,7 +265,7 @@ static InlineLevelBox::AscentAndDescent textBoxAdjustedInlineBoxHeight(const Inl
         case TextEdgeUnder::Text:
             return fontMetrics.descent(fontBaseline);
         case TextEdgeUnder::Alphabetic:
-            return 0.f;
+            return alphabeticBaselineOffset;
         case TextEdgeUnder::Ideographic:
             return fontMetrics.descent(FontBaseline::Ideographic);
         case TextEdgeUnder::IdeographicInk:
@@ -381,7 +405,7 @@ void LineBoxBuilder::setVerticalPropertiesForInlineLevelBox(const LineBox& lineB
             inlineLevelBox.setLogicalHeight(marginBoxHeight);
             return;
         }
-        if (auto ascent = layoutBox.baselineForIntegration()) {
+        if (auto ascent = listMarkerBoxGeometry.baseline()) {
             if (layoutBox.isListMarkerImage())
                 return setVerticalProperties({ *ascent, marginBoxHeight - *ascent });
             // Special list marker handling. Text driven list markers behave as text when it comes to layout bounds/ascent descent.
@@ -407,7 +431,7 @@ void LineBoxBuilder::setVerticalPropertiesForInlineLevelBox(const LineBox& lineB
         auto marginBoxHeight = inlineLevelBoxGeometry.marginBoxHeight();
         auto ascent = [&]() -> InlineLayoutUnit {
             if (layoutState().shouldNotSynthesizeInlineBlockBaseline())
-                return downcast<ElementBox>(layoutBox).baselineForIntegration().value_or(marginBoxHeight);
+                return inlineLevelBoxGeometry.baseline().value_or(marginBoxHeight);
 
             if (layoutBox.isInlineBlockBox()) {
                 // The baseline of an 'inline-block' is the baseline of its last line box in the normal flow, unless it has either no in-flow line boxes or
@@ -747,7 +771,7 @@ void LineBoxBuilder::adjustIdeographicBaselineIfApplicable(LineBox& lineBox)
                 // Integration codepath sets ideographic baseline by default for non-horizontal content.
                 continue;
             }
-            auto isInlineBlockWithNonSyntheticBaseline = layoutBox.isInlineBlockBox() && downcast<ElementBox>(layoutBox).baselineForIntegration().has_value();
+            auto isInlineBlockWithNonSyntheticBaseline = layoutBox.isInlineBlockBox() && formattingContext().geometryForBox(layoutBox).baseline().has_value();
             if (isInlineBlockWithNonSyntheticBaseline && !layoutBox.writingMode().isHorizontal())
                 continue;
         }

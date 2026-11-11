@@ -66,6 +66,11 @@ RenderBundle::RenderBundle(NSArray<RenderBundleICBWithResources*> *resources, Ve
     , m_commandCount(commandCount)
     , m_makeSubmitInvalid(makeSubmitInvalid)
 {
+    // This bundle's indirect command buffer references these bind groups' argument buffers, and its
+    // residency snapshot is frozen here. See BindGroup::updateExternalTextures().
+    for (RefPtr bindGroup : m_bindGroups)
+        bindGroup->addRenderBundleConsumer();
+
     ASSERT(m_renderBundleEncoder || m_renderBundlesResources);
 }
 
@@ -75,7 +80,11 @@ RenderBundle::RenderBundle(Device& device, NSString* errorString)
 {
 }
 
-RenderBundle::~RenderBundle() = default;
+RenderBundle::~RenderBundle()
+{
+    for (RefPtr bindGroup : m_bindGroups)
+        bindGroup->removeRenderBundleConsumer();
+}
 
 bool RenderBundle::isValid() const
 {
@@ -106,8 +115,11 @@ void RenderBundle::updateMinMaxDepths(float minDepth, float maxDepth)
     m_minDepth = minDepth;
     m_maxDepth = maxDepth;
     std::array<float, 2> twoFloats = { m_minDepth, m_maxDepth };
-    for (RenderBundleICBWithResources* icb in m_renderBundlesResources)
+    for (RenderBundleICBWithResources* icb in m_renderBundlesResources) {
         m_device->getQueue()->writeBuffer(icb.fragmentDynamicOffsetsBuffer, 0, asWritableBytes(std::span(twoFloats)));
+        for (auto headerOffset : icb.fragmentDynamicOffsetsHeaderOffsets)
+            m_device->getQueue()->writeBuffer(icb.fragmentDynamicOffsetsBuffer, headerOffset, asWritableBytes(std::span(twoFloats)));
+    }
 }
 
 uint64_t RenderBundle::drawCount() const
@@ -203,17 +215,21 @@ void RenderBundle::releaseDestroyedResources()
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuRenderBundleAddRef(WGPURenderBundle renderBundle)
+NODELETE void wgpuRenderBundleAddRef(WGPURenderBundle renderBundle)
 {
     WebGPU::Metal::fromAPI(renderBundle).ref();
 }
 
 void wgpuRenderBundleRelease(WGPURenderBundle renderBundle)
 {
-    WebGPU::Metal::fromAPI(renderBundle).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(renderBundle).deref();
+    }
 }
 
 void wgpuRenderBundleSetLabel(WGPURenderBundle renderBundle, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(renderBundle))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderBundle))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

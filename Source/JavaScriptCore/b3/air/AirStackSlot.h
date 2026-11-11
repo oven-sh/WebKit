@@ -81,10 +81,10 @@ public:
 
     // This should usually just be called from phases that do stack allocation. But you can
     // totally force a stack slot to land at some offset.
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE setOffsetFromFP(intptr_t);
+    NODELETE JS_EXPORT_PRIVATE void setOffsetFromFP(intptr_t);
     
     // This computes a hash for comparing this to JSAir's StackSlot.
-    unsigned LEGACY_NODELETE jsHash() const;
+    NODELETE unsigned jsHash() const;
 
     void dump(PrintStream&) const;
     void deepDump(PrintStream&) const;

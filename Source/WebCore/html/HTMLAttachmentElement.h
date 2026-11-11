@@ -28,8 +28,8 @@
 #include <wtf/Platform.h>
 #if ENABLE(ATTACHMENT_ELEMENT)
 
-#include <WebCore/BitmapImage.h>
 #include <WebCore/HTMLElement.h>
+#include <WebCore/NativeImage.h>
 
 namespace WebCore {
 
@@ -52,7 +52,7 @@ public:
     static URL archiveResourceURL(const String&);
 
     WEBCORE_EXPORT URL blobURL() const;
-    WEBCORE_EXPORT File* LEGACY_NODELETE file() const;
+    NODELETE WEBCORE_EXPORT File* file() const;
 
     enum class UpdateDisplayAttributes : bool { No, Yes };
     void setFile(RefPtr<File>&&, UpdateDisplayAttributes = UpdateDisplayAttributes::No);
@@ -64,24 +64,24 @@ public:
 
     WEBCORE_EXPORT void updateAttributes(std::optional<uint64_t>&& newFileSize, const AtomString& newContentType, const AtomString& newFilename);
     WEBCORE_EXPORT void updateAssociatedElementWithData(const String& contentType, Ref<FragmentedSharedBuffer>&& data);
-    WEBCORE_EXPORT void updateIconForNarrowLayout(const RefPtr<BitmapImage>& icon, const WebCore::FloatSize&);
+    WEBCORE_EXPORT void updateIconForNarrowLayout(const RefPtr<NativeImage>& icon, const WebCore::FloatSize&);
     WEBCORE_EXPORT void updateIconForWideLayout(Vector<uint8_t>&&);
 
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
     void removingSteps(RemovalType, ContainerNode&) final;
 
     String ensureUniqueIdentifier();
-    AttachmentAssociatedElement* LEGACY_NODELETE associatedElement() const;
+    NODELETE AttachmentAssociatedElement* associatedElement() const;
     AttachmentAssociatedElementType associatedElementType() const;
 
-    WEBCORE_EXPORT String LEGACY_NODELETE attachmentTitle() const;
-    const AtomString& LEGACY_NODELETE attachmentSubtitle() const;
-    const AtomString& LEGACY_NODELETE attachmentActionForDisplay() const;
+    NODELETE WEBCORE_EXPORT String attachmentTitle() const;
+    NODELETE const AtomString& attachmentSubtitle() const;
+    NODELETE const AtomString& attachmentActionForDisplay() const;
     String attachmentTitleForDisplay() const;
-    const AtomString& LEGACY_NODELETE attachmentSubtitleForDisplay() const;
-    WEBCORE_EXPORT String LEGACY_NODELETE attachmentType() const;
-    String LEGACY_NODELETE attachmentPath() const;
-    RefPtr<BitmapImage> icon() const { return m_icon; }
+    NODELETE const AtomString& attachmentSubtitleForDisplay() const;
+    NODELETE WEBCORE_EXPORT String attachmentType() const;
+    NODELETE String attachmentPath() const;
+    RefPtr<NativeImage> icon() const { return m_icon; }
     void requestIconIfNeededWithSize(const FloatSize&);
     void requestWideLayoutIconIfNeeded();
     FloatSize iconSize() const { return m_iconSize; }
@@ -95,7 +95,7 @@ public:
 
     bool isWideLayout() const { return m_implementation == Implementation::WideLayout; }
     HTMLElement* wideLayoutShadowContainer() const { return m_containerElement.get(); }
-    HTMLElement* LEGACY_NODELETE wideLayoutImageElement() const;
+    NODELETE HTMLElement* wideLayoutImageElement() const;
     WEBCORE_EXPORT static String shadowUserAgentStyleSheetText();
 
     enum class HighlightState : uint8_t {
@@ -119,7 +119,7 @@ private:
     void updateSaveButton(bool);
     void updateImage();
 
-    void LEGACY_NODELETE setNeedsIconRequest();
+    NODELETE void setNeedsIconRequest();
 
     RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
@@ -141,7 +141,7 @@ private:
 
     RefPtr<File> m_file;
     String m_uniqueIdentifier;
-    RefPtr<BitmapImage> m_icon;
+    RefPtr<NativeImage> m_icon;
     FloatSize m_iconSize;
 
     Vector<uint8_t> m_iconForWideLayout;

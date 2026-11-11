@@ -84,6 +84,18 @@ private:
 };
 #endif
 
+#if PLATFORM(MAC) && ENABLE(APPLE_PAY)
+class FakePaymentUIForTesting {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FakePaymentUIForTesting);
+    WTF_MAKE_NONCOPYABLE(FakePaymentUIForTesting);
+public:
+    FakePaymentUIForTesting();
+private:
+    std::unique_ptr<ClassMethodSwizzler> m_requestViewControllerSwizzler;
+    std::unique_ptr<InstanceMethodSwizzler> m_beginSheetSwizzler;
+};
+#endif
+
 class AsyncTask {
 public:
     AsyncTask(WTF::Function<void ()>&& task, WTF::Seconds timeout)
@@ -294,6 +306,7 @@ public:
     void setStatisticsTopFrameUniqueRedirectTo(WKStringRef host, WKStringRef hostRedirectedTo);
     void setStatisticsTopFrameUniqueRedirectFrom(WKStringRef host, WKStringRef hostRedirectedFrom);
     void setStatisticsCrossSiteLoadWithLinkDecoration(WKStringRef fromHost, WKStringRef toHost, bool wasFiltered);
+    void setStatisticsLinkDecorationFilteringData(WKStringRef queryParameter);
 #if PLATFORM(COCOA)
     using SetStatisticsCrossSiteLoadWithLinkDecorationCallBack = void(*)(void* functionContext);
     void platformSetStatisticsCrossSiteLoadWithLinkDecoration(WKStringRef fromHost, WKStringRef toHost, bool wasFiltered, void* context, SetStatisticsCrossSiteLoadWithLinkDecorationCallBack);
@@ -504,9 +517,14 @@ public:
     bool useWorkQueue() const { return m_useWorkQueue; }
 
     void setHasMouseDeviceForTesting(bool);
+    void setHasFakePaymentUIForTesting(bool);
 
 #if HAVE(MOUSE_DEVICE_OBSERVATION)
     std::unique_ptr<FakeMouseDevice> m_fakeMouseDevice;
+#endif
+
+#if PLATFORM(MAC) && ENABLE(APPLE_PAY)
+    std::unique_ptr<FakePaymentUIForTesting> m_fakePaymentUI;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
@@ -523,6 +541,9 @@ public:
 #if PLATFORM(MAC)
     // Client accessibility testing support
     void initializeWebProcessAccessibility();
+    void setAXAuthenticationDeniedForTesting(bool);
+    void resetAXAuthenticationModeForTesting();
+    void terminateWebContentProcessesIfAXAuthenticationWasDenied();
     void axNotificationReceived(CFTypeRef element, CFStringRef notification, CFDictionaryRef userInfo, pid_t observedPid);
 #endif
 
@@ -981,6 +1002,7 @@ private:
     HashMap<uint64_t, RetainPtr<CFTypeRef>> m_axElementTokens WTF_GUARDED_BY_LOCK(m_axElementTokensLock);
     RetainPtr<CFTypeRef> m_axWebContentElement WTF_GUARDED_BY_LOCK(m_axElementTokensLock);
     RefPtr<WorkQueue> m_axRequestQueue;
+    bool m_didDenyAXAuthenticationForTesting { false };
     // One AXObserver per observed web content process, keyed by pid, with the application element it
     // observes. Non-empty only while a client-mode test has a notification listener installed.
     struct AXApplicationObserver {

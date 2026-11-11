@@ -72,7 +72,7 @@ enum class MarkerSearchBoxType : uint8_t {
     NestedListInQuirksMode,
     TableRubyOrReplaced,
 };
-static MarkerSearchBoxType LEGACY_NODELETE markerSearchBoxType(const RenderObject& box)
+NODELETE static MarkerSearchBoxType markerSearchBoxType(const RenderObject& box)
 {
     if (box.isFloating() || box.isOutOfFlowPositioned())
         return MarkerSearchBoxType::Opaque;
@@ -458,13 +458,13 @@ void RenderListItem::styleDidChange(Style::Difference diff, const Style::Compute
     }
 }
 
-void RenderListItem::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderListItem::computeIntrinsicLogicalWidthContributions()
 {
     // FIXME: RenderListOutsideMarker::updateInlineMargins() mutates margin style which affects preferred widths.
     if (CheckedPtr marker = markerBox(); marker && marker->hasInvalidContentLogicalWidths())
         marker->updateInlineMarginsAndContent();
 
-    RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
+    return RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
 }
 
 std::pair<LayoutUnit, LayoutUnit> RenderListItem::computeIntrinsicLogicalWidths() const
@@ -518,7 +518,7 @@ void RenderListItem::layoutExcludedChildren(RelayoutChildren relayoutChildren)
 
     excludedMarker->setIsExcludedFromNormalLayout(true);
     if (relayoutChildren == RelayoutChildren::Yes)
-        excludedMarker->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        excludedMarker->setNeedsLayout(MarkingBehavior::OnlyThis);
     auto oldLayoutBounds = excludedMarker->layoutBounds();
     excludedMarker->layoutIfNeeded();
 
@@ -747,7 +747,7 @@ RenderListItem::FirstFormattedLineCandidate RenderListItem::firstFormattedLineRo
 
 CheckedPtr<RenderListOutsideMarker> RenderListItem::excludedMarkerAnchoredTo(const RenderBlockFlow& firstFormattedLineRoot)
 {
-    for (CheckedPtr<const RenderBlock> ancestor = &firstFormattedLineRoot; ancestor; ancestor = ancestor->containingBlock()) {
+    for (CheckedPtr<const RenderBoxModelObject> ancestor = &firstFormattedLineRoot; ancestor; ancestor = ancestor->containingBlock()) {
         auto* listItem = dynamicDowncast<RenderListItem>(ancestor);
         CheckedPtr marker = listItem ? listItem->markerBox() : nullptr;
         if (!marker || !marker->isExcludedMarker())

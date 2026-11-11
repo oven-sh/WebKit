@@ -6,16 +6,23 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-# Mirror Xcode's "Embed Testing.framework" phase. ditto merges into whatever is already there;
-# use a stamp to record a rewrite in case of $_testing_platform_id change
+# Mirror Xcode's "Embed Testing.framework" phase, which copies from the internal SDK's
+# AppleInternal directory when TEST_BUILD_STYLE is _APPLEINTERNAL (i.e. USE_INTERNAL_SDK).
+# ditto merges into whatever is already there; use a stamp to record a rewrite in case of
+# $_testing_source_id change.
+if (USE_APPLE_INTERNAL_SDK)
+    set(_testing_developer_dir "${CMAKE_OSX_SYSROOT}/AppleInternal/Developer")
+else ()
+    set(_testing_developer_dir "${_platform_dir}/Developer")
+endif ()
 set(_testing_staged)
 set(_testing_stamp_dir "${CMAKE_BINARY_DIR}/DerivedSources/TestWebKitAPI")
-string(MD5 _testing_platform_id "${_platform_dir}")
+string(MD5 _testing_source_id "${_testing_developer_dir}")
 foreach (_fw Testing _Testing_AppKit _Testing_CoreGraphics _Testing_CoreImage
         _Testing_CoreTransferable _Testing_Foundation _Testing_UIKit)
-    set(_src "${_platform_dir}/Developer/Library/Frameworks/${_fw}.framework")
+    set(_src "${_testing_developer_dir}/Library/Frameworks/${_fw}.framework")
     set(_dst "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${_fw}.framework")
-    set(_stamp "${_testing_stamp_dir}/staged-${_fw}-${_testing_platform_id}.stamp")
+    set(_stamp "${_testing_stamp_dir}/staged-${_fw}-${_testing_source_id}.stamp")
 
     if (EXISTS "${_src}")
         add_custom_command(OUTPUT "${_stamp}"
@@ -30,7 +37,7 @@ foreach (_fw Testing _Testing_AppKit _Testing_CoreGraphics _Testing_CoreImage
         list(APPEND _testing_staged "${_stamp}")
     endif ()
 endforeach ()
-set(_src "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib")
+set(_src "${_testing_developer_dir}/usr/lib/lib_TestingInterop.dylib")
 set(_dst "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib")
 if (EXISTS "${_src}")
     add_custom_command(OUTPUT "${_dst}"
@@ -71,17 +78,10 @@ if (CMAKE_Swift_COMPILER_TARGET)
 endif ()
 
 # @Test and @Suite expand through libTestingMacros, in a `testing` subdirectory
-# swiftc does not search on its own. It must come from the default toolchain to
-# match the Testing.framework staged above.
-WEBKIT_XCRUN(_swift_plugin_server --toolchain XcodeDefault --find swift-plugin-server)
-get_filename_component(_swift_toolchain_bin "${_swift_plugin_server}" DIRECTORY)
-get_filename_component(_swift_toolchain_usr "${_swift_toolchain_bin}" DIRECTORY)
-set(_swift_testing_plugins "${_swift_toolchain_usr}/lib/swift/host/plugins/testing")
-if (IS_DIRECTORY "${_swift_testing_plugins}")
-    # Out of process, as Xcode runs macros: the plugin is not from this compiler's toolchain.
-    list(APPEND _testwebkitapi_swift_options
-        "-external-plugin-path ${_swift_testing_plugins}#${_swift_plugin_server}"
-    )
+# swiftc does not search on its own. WebKitXcodeSDK.cmake finds the plugin from
+# the toolchain that built the Testing.framework staged above.
+if (SWIFT_TESTING_PLUGIN_FLAGS)
+    list(APPEND _testwebkitapi_swift_options "${SWIFT_TESTING_PLUGIN_FLAGS}")
 endif ()
 foreach (_f IN LISTS _test_swift_cc_flags)
     list(APPEND _testwebkitapi_swift_options "-Xcc ${_f}")
@@ -138,6 +138,7 @@ list(APPEND TestWTF_SOURCES
     Tests/WTF/cocoa/RetainPtrHashingCocoaARC.mm
     Tests/WTF/cocoa/RetainRef.mm
     Tests/WTF/cocoa/RetainRefARC.mm
+    Tests/WTF/cocoa/RunLoopCocoa.mm
     Tests/WTF/cocoa/TextStreamCocoa.cpp
     Tests/WTF/cocoa/TextStreamCocoa.mm
     Tests/WTF/cocoa/TypeCastsCocoa.mm
@@ -167,7 +168,7 @@ set_source_files_properties(
     COMPILE_FLAGS "-fobjc-arc -include ${CMAKE_CURRENT_SOURCE_DIR}/Helpers/TestWebKitAPIPrefix.h"
     SKIP_PRECOMPILE_HEADERS ON)
 
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestWTF_SOURCES Tests/WTF/bmalloc/MAR.cpp)
     list(APPEND TestWTF_LIBRARIES "-framework Carbon" "-framework Cocoa")
 endif ()
@@ -243,7 +244,7 @@ list(APPEND TestWebCore_SOURCES
 list(APPEND TestWebCore_LIBRARIES
     ${QUARTZCORE_LIBRARY}
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestWebCore_LIBRARIES "-framework Cocoa")
 endif ()
 
@@ -259,7 +260,7 @@ list(APPEND TestWebKitLegacy_LIBRARIES
     WebKit
 )
 
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestWebKitLegacy_SOURCES
         Tests/WebKitLegacy/mac/AccessingPastedImage.mm
         Tests/WebKitLegacy/mac/ClosingWebView.mm
@@ -274,6 +275,7 @@ if (WEBKIT_SDK_IS_MACOS)
         Tests/WebKitLegacy/mac/PreventImageLoadWithAutoResizing.mm
         Tests/WebKitLegacy/mac/URLExtras.mm
         Tests/WebKitLegacy/mac/UserContentTest.mm
+        Tests/WebKitLegacy/mac/WindowScriptObjectReentrancy.mm
         Tests/WebKitLegacy/mac/WKBrowsingContextLoadDelegateTest.mm
     )
     list(APPEND TestWebKitLegacy_LIBRARIES "-framework Carbon" "-framework Cocoa")
@@ -298,7 +300,7 @@ set(TestWebKit_DERIVED_SOURCES_DIR "${CMAKE_BINARY_DIR}/DerivedSources/TestWebKi
 list(APPEND TestWebKit_UNIFIED_SOURCE_LIST_FILES
     "SourcesCocoa.txt"
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestWebKit_UNIFIED_SOURCE_LIST_FILES "SourcesMac.txt")
 endif ()
 
@@ -415,7 +417,7 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WebPage/EnhancedSecurityTests.swift
 )
 
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestWebKit_SOURCES
         ${TOOLS_DIR}/TestRunnerShared/mac/SyntheticNSEvent.mm
 
@@ -552,7 +554,7 @@ list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
     ${WebKit_DERIVED_SOURCES_DIR}/IPC
     ${WEBKIT_DIR}/Platform/cocoa
 )
-if (NOT WEBKIT_SDK_IS_MACOS)
+if (NOT WEBKIT_PLATFORM_MAC)
     list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
         ${TESTWEBKITAPI_DIR}/Helpers/ios
         ${TESTWEBKITAPI_DIR}/Tests/WebCore/ios
@@ -572,7 +574,7 @@ list(APPEND TestWebKit_LIBRARIES
     WebCoreTestSupport
     WebKitLegacy
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestWebKit_LIBRARIES
         "-framework AuthenticationServices"
         "-framework Carbon"
@@ -583,20 +585,29 @@ if (WEBKIT_SDK_IS_MACOS)
 else ()
     list(APPEND TestWebKit_LIBRARIES
         "-framework AVKit"
-        "-framework BrowserEngineKit"
         "-framework GameController"
         "-framework MobileCoreServices"
         "-framework PDFKit"
         "-framework UIKit"
     )
+    if (NOT WEBKIT_SDK_IS_MACCATALYST)
+        list(APPEND TestWebKit_LIBRARIES "-framework BrowserEngineKit")
+    endif ()
     target_link_options(TestWebKit PRIVATE "LINKER:-delay_framework,CoreTelephony")
 endif ()
 
 target_link_options(TestWebKit PRIVATE
     "LINKER:-weak_framework,WritingTools"
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     target_link_options(TestWebKit PRIVATE "LINKER:-weak_framework,WritingToolsUI")
+endif ()
+
+# WebKit.h leaves out WebKitLegacy.h on Mac Catalyst, as config.h's Xcode path
+# accounts for.
+if (WEBKIT_SDK_IS_MACCATALYST)
+    target_compile_options(TestWebKit PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:SHELL:-include WebKit/WebKit.h -include WebKit/WebKitLegacy.h>")
 endif ()
 
 set_source_files_properties(
@@ -655,7 +666,12 @@ if (ENABLE_WEBGPU)
     list(APPEND TestWGSL_SOURCES
         Tests/WGSL/MetalCompilationTests.mm
         Tests/WGSL/TypeCheckingTests.mm
+
+        Tests/WebGPU/UncapturedErrorCallbackTests.cpp
     )
+
+    # The tests of the WebGPU C API.
+    list(APPEND TestWGSL_FRAMEWORKS WebGPU)
 
     list(APPEND TestWGSL_PRIVATE_INCLUDE_DIRECTORIES
         ${WTF_FRAMEWORK_HEADERS_DIR}
@@ -663,7 +679,7 @@ if (ENABLE_WEBGPU)
     )
 
     list(APPEND TestWGSL_LIBRARIES "-framework Metal")
-    if (WEBKIT_SDK_IS_MACOS)
+    if (WEBKIT_PLATFORM_MAC)
         list(APPEND TestWGSL_LIBRARIES "-framework Carbon")
     endif ()
 
@@ -755,6 +771,7 @@ add_library(TestWebKitAPILibrary OBJECT
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/JavaScriptMessages.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/JavaScriptTypes.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/PDFTestHelpers.swift
+    ${TESTWEBKITAPI_DIR}/Helpers/cocoa/ProcessSwapTestUtilities.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/SafeBrowsingTestUtilities.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/SiteIsolationTestUtilities.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/StdLibExtras.swift
@@ -802,8 +819,15 @@ list(APPEND TestWebKit_SOURCES
     "Tests/WebKit/WebPage/AppKit Gesture Tests/SiteIsolationAppKitGesturesTests.swift"
 
     Tests/WebKit/WKWebView/CodingTests.swift
+    Tests/WebKit/WKWebView/ContentAutoSizing.swift
     Tests/WebKit/WKWebView/HTTP2Server.swift
     Tests/WebKit/WKWebView/HTTP3Server.swift
+    Tests/WebKit/WKWebView/PDFLookUpTests.swift
+    Tests/WebKit/WKWebView/ProcessSwapStaleNavigationTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationAnimationControlTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationAutocorrectionTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationBackForwardTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationBrowsingContextGroupTests.swift
     Tests/WebKit/WKWebView/SiteIsolationContentsOfAllFramesTests.swift
     Tests/WebKit/WKWebView/SiteIsolationCookieTests.swift
     Tests/WebKit/WKWebView/SiteIsolationDataDetectionTests.swift
@@ -813,11 +837,16 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WKWebView/SiteIsolationLinkIndicatorTests.swift
     Tests/WebKit/WKWebView/SiteIsolationLookUpTests.swift
     Tests/WebKit/WKWebView/SiteIsolationNavigationTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationProvisionalPageTests.swift
     Tests/WebKit/WKWebView/SiteIsolationServiceWorkerTests.swift
     Tests/WebKit/WKWebView/SiteIsolationSessionStateTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationSnapshotTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationTextExtractionTests.swift
     Tests/WebKit/WKWebView/SiteIsolationTextFragmentTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationTextPreviewTests.swift
     Tests/WebKit/WKWebView/SiteIsolationUIDelegateTests.swift
     Tests/WebKit/WKWebView/SiteIsolationUserAgentTests.swift
+    Tests/WebKit/WKWebView/SiteIsolationWebExtensionTests.swift
     Tests/WebKit/WKWebView/TextExtractionTests.swift
     Tests/WebKit/WKWebView/TextFragments.swift
     Tests/WebKit/WKWebView/TextManipulation.swift
@@ -867,7 +896,7 @@ list(APPEND TestWebKit_SOURCES
 
 # FIXME: Needs the Swift overlay in WKUserContentController.swift, which the iOS
 # WebKit module can't build yet: it needs the C++ interop the macOS build uses.
-if (NOT WEBKIT_SDK_IS_MACOS)
+if (NOT WEBKIT_PLATFORM_MAC)
     list(REMOVE_ITEM TestWebKit_SOURCES Tests/WebKit/WebPage/UserContentControllerTests.swift)
 endif ()
 
@@ -893,7 +922,7 @@ target_sources(TestWebKitAPIInjectedBundle PRIVATE
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKPage/PasteboardNotifications_Bundle.cpp
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKPage/cocoa/InjectedBundleAppleEvent_Bundle.cpp
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     target_sources(TestWebKitAPIInjectedBundle PRIVATE
         ${TESTWEBKITAPI_DIR}/Helpers/cocoa/TestNSBundleExtras.m
         ${TESTWEBKITAPI_DIR}/InjectedBundle/mac/InjectedBundleControllerMac.mm
@@ -939,7 +968,7 @@ target_link_libraries(TestWebKitAPIInjectedBundle PRIVATE
     WebKit
     "-framework Foundation"
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     target_link_libraries(TestWebKitAPIInjectedBundle PRIVATE "-framework Cocoa")
 endif ()
 
@@ -983,14 +1012,12 @@ add_library(TestWebKitAPIWebProcessPlugIn MODULE
 
     # Also in TestWebKit via SourcesCocoa.txt; WEBKIT_COMPUTE_SOURCES marks the
     # originals HEADER_FILE_ONLY, so build them here via #include shims.
-    ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-ClickAutoFillButton.mm
     ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-InjectedBundleNodeHandleIsSelectElement.mm
     ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-InjectedBundleNodeHandleIsTextField.mm
     ${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-TestAwakener.mm
 )
 
 foreach (_dual_src
-    ClickAutoFillButton
     InjectedBundleNodeHandleIsSelectElement
     InjectedBundleNodeHandleIsTextField
     TestAwakener
@@ -1019,7 +1046,7 @@ target_include_directories(TestWebKitAPIWebProcessPlugIn PRIVATE
 target_compile_options(TestWebKitAPIWebProcessPlugIn PRIVATE -Wno-deprecated-declarations)
 
 # PlatformUtilities.h tests WK_HAVE_C_SPI, which config.h only defines for macOS.
-if (NOT WEBKIT_SDK_IS_MACOS)
+if (NOT WEBKIT_PLATFORM_MAC)
     target_compile_options(TestWebKitAPIWebProcessPlugIn PRIVATE -Wno-undef)
 endif ()
 
@@ -1047,6 +1074,14 @@ set_target_properties(TestWebKitAPIWebProcessPlugIn PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/WebProcessPlugIn-Info.plist"
 )
 
+if (WEBKIT_SDK_IS_MACCATALYST)
+    set(_twkapi_main_bundle_resources_dir "${TESTWEBKITAPI_RUNTIME_OUTPUT_DIRECTORY}/TestWebKitAPI.app/Contents/Resources")
+    set_target_properties(TestWebKitAPIWebProcessPlugIn PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${_twkapi_main_bundle_resources_dir}")
+else ()
+    set(_twkapi_main_bundle_resources_dir "${TESTWEBKITAPI_RUNTIME_OUTPUT_DIRECTORY}")
+endif ()
+
 # Same rationale as TestWebKitAPIInjectedBundle: WebCoreTestSupport references
 # WTF symbols that the hosting WebContent process provides.
 target_link_options(TestWebKitAPIWebProcessPlugIn PRIVATE "LINKER:-undefined,dynamic_lookup")
@@ -1057,7 +1092,7 @@ target_link_libraries(TestWebKitAPIWebProcessPlugIn PRIVATE
     WebKit::gtest
     "-framework Foundation"
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     target_link_libraries(TestWebKitAPIWebProcessPlugIn PRIVATE "-framework Cocoa")
 endif ()
 
@@ -1075,7 +1110,7 @@ add_dependencies(TestWebKit TestWebKitAPIWebProcessPlugIn)
 # (e.g. WKWebExtension.mm) load entire subdirectories as nested bundles via
 # URLForResource:withExtension:@"", which requires web-extension/, *.appex/,
 # and *.mlmodelc/ to retain their layout.
-set(_resources_bundle_dir "${TESTWEBKITAPI_RUNTIME_OUTPUT_DIRECTORY}/TestWebKitAPIResources.bundle")
+set(_resources_bundle_dir "${_twkapi_main_bundle_resources_dir}/TestWebKitAPIResources.bundle")
 if (WEBKIT_SDK_IS_MACOS)
     set(_resources_info_plist "${_resources_bundle_dir}/Contents/Info.plist")
     set(_resources_dir "${_resources_bundle_dir}/Contents/Resources")
@@ -1236,7 +1271,7 @@ list(APPEND TestIPC_LIBRARIES
     "-framework Security"
     "-framework UniformTypeIdentifiers"
 )
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND TestIPC_LIBRARIES
         "-framework Cocoa"
     )

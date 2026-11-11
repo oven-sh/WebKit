@@ -32,6 +32,8 @@ namespace WebCore {
 class GraphicsContext;
 class SVGMaskElement;
 
+struct ImageDrawDescriptor;
+
 struct MaskerData {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MaskerData);
     RefPtr<ImageBuffer> maskImage;
@@ -50,7 +52,7 @@ public:
     void removeClientFromCache(RenderElement&) override;
     OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override;
     bool drawContentIntoContext(GraphicsContext&, const FloatRect& objectBoundingBox);
-    bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions);
+    bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, const ImageDrawDescriptor&);
     FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) override;
 
     inline SVGUnitTypes::SVGUnitType maskUnits() const;

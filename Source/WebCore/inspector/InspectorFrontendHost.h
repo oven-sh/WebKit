@@ -71,7 +71,7 @@ public:
     void bringToFront();
     void inspectedURLChanged(const String&);
 
-    bool LEGACY_NODELETE supportsShowCertificate() const;
+    NODELETE bool supportsShowCertificate() const;
     bool showCertificate(const String& serializedCertificate);
 
     void setZoomFactor(float);
@@ -114,6 +114,8 @@ public:
 
     void openURLExternally(const String& url);
     void revealFileExternally(const String& path);
+
+    void requestDisableSiteIsolation();
 
     using SaveMode = InspectorFrontendClient::SaveMode;
     using SaveData = InspectorFrontendClient::SaveData;
@@ -166,7 +168,7 @@ public:
 
     // IDL extensions.
 
-    String LEGACY_NODELETE getPath(const File&) const;
+    NODELETE String getPath(const File&) const;
 
     float getCurrentX(const CanvasRenderingContext2D&) const;
     float getCurrentY(const CanvasRenderingContext2D&) const;

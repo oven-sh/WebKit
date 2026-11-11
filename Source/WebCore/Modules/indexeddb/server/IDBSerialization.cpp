@@ -101,7 +101,7 @@ bool deserializeIDBKeyPath(std::span<const uint8_t> data, std::optional<IDBKeyPa
     return true;
 }
 
-static bool LEGACY_NODELETE isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
+NODELETE static bool isLegacySerializedIDBKeyData(std::span<const uint8_t> data)
 {
 #if USE(CF)
     // This is the magic character that begins serialized PropertyLists, and tells us whether
@@ -191,7 +191,7 @@ template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T v
     buffer.append(asByteSpan(value));
 }
 
-template <typename T> static bool LEGACY_NODELETE readLittleEndian(std::span<const uint8_t>& data, T& value)
+template <typename T> NODELETE static bool readLittleEndian(std::span<const uint8_t>& data, T& value)
 {
     if (data.size() < sizeof(value))
         return false;
@@ -205,7 +205,7 @@ static void writeDouble(Vector<uint8_t>& data, double d)
     writeLittleEndian(data, *reinterpret_cast<uint64_t*>(&d));
 }
 
-static bool LEGACY_NODELETE readDouble(std::span<const uint8_t>& data, double& d)
+NODELETE static bool readDouble(std::span<const uint8_t>& data, double& d)
 {
     return readLittleEndian(data, *reinterpret_cast<uint64_t*>(&d));
 }
@@ -305,8 +305,7 @@ RefPtr<SharedBuffer> serializeIDBKeyData(const IDBKeyData& key)
         if (data.size() < static_cast<size_t>(length) * 2)
             return false;
 
-        Vector<char16_t> buffer;
-        buffer.reserveInitialCapacity(length);
+        Vector<char16_t> buffer(ReserveCapacityTag { }, length);
         for (size_t i = 0; i < length; i++) {
             uint16_t ch;
             if (!readLittleEndian(data, ch))
@@ -345,8 +344,7 @@ RefPtr<SharedBuffer> serializeIDBKeyData(const IDBKeyData& key)
             return false;
 
         size_t size = static_cast<size_t>(size64);
-        Vector<IDBKeyData> array;
-        array.reserveInitialCapacity(size);
+        Vector<IDBKeyData> array(ReserveCapacityTag { }, size);
 
         for (size_t i = 0; i < size; ++i) {
             IDBKeyData keyData;
