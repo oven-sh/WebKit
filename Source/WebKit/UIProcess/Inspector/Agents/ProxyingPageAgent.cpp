@@ -177,6 +177,14 @@ void ProxyingPageAgent::frameSwappedOutOfProcess(FrameIdentifier frameID, Proces
     m_frontendDispatcher->frameDetached(IdentifierRegistry::protocolFrameId(frameID, oldProcessID));
 }
 
+void ProxyingPageAgent::provisionalFrameDiscarded(FrameIdentifier frameID, ProcessIdentifier processID)
+{
+    if (!m_enabled)
+        return;
+
+    m_frontendDispatcher->frameDetached(IdentifierRegistry::protocolFrameId(frameID, processID));
+}
+
 // MARK: - Frontend lifecycle
 
 void ProxyingPageAgent::didCreateFrontendAndBackend()
@@ -209,6 +217,9 @@ void ProxyingPageAgent::enableInstrumentationForProcess(WebProcessProxy& webProc
     // exactly once per (process, page) registration, guarded above.
     if (m_showPaintRects)
         webProcess.send(Messages::WebInspectorBackend::SetShowPaintRects { true }, pageID);
+
+    for (auto& [setting, value] : m_settingOverrides)
+        webProcess.send(Messages::WebInspectorBackend::SetSettingOverride { setting, value }, pageID);
 
     // Sent before the provisional frame's load is allowed to start (see WebFrameProxy::prepareForProvisionalLoadInProcess),
     // so the first document committed in a new process already sees the script.
@@ -299,6 +310,8 @@ CommandResult<void> ProxyingPageAgent::enable()
 
 CommandResult<void> ProxyingPageAgent::disable()
 {
+    m_settingOverrides.clear();
+
     if (!m_enabled)
         return { };
 
@@ -471,8 +484,22 @@ CommandResult<void> ProxyingPageAgent::overrideUserAgent(const String&)
     return { };
 }
 
-CommandResult<void> ProxyingPageAgent::overrideSetting(Protocol::Page::Setting, std::optional<bool>&&)
+// Only the frontend may set this: relaying settings from a WebContent process would let one site change another site's process.
+CommandResult<void> ProxyingPageAgent::overrideSetting(Protocol::Page::Setting setting, std::optional<bool>&& value)
 {
+    auto settingName = Protocol::Helpers::getEnumConstantValue(setting);
+    if (value)
+        m_settingOverrides.set(settingName, *value);
+    else
+        m_settingOverrides.remove(settingName);
+
+    if (!m_enabled)
+        return { };
+
+    forEachInstrumentedProcess([&](auto& webProcess, auto pageID) {
+        webProcess.send(Messages::WebInspectorBackend::SetSettingOverride { settingName, value }, pageID);
+    });
+
     return { };
 }
 
@@ -481,20 +508,21 @@ CommandResult<void> ProxyingPageAgent::overrideUserPreference(Protocol::Page::Us
     return { };
 }
 
-// FIXME: <https://webkit.org/b/308900> Forward cookie commands to correct WebContent process.
+// Required by PageBackendDispatcherHandler. These commands are targetTypes ["page"], so the frontend
+// sends them to the WebContent page target; under Site Isolation it uses the Storage domain instead.
 CommandResult<Ref<JSON::ArrayOf<Protocol::Page::Cookie>>> ProxyingPageAgent::getCookies()
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+    return makeUnexpected("Page.getCookies is not supported for this target; use Storage.getCookies"_s);
 }
 
 CommandResult<void> ProxyingPageAgent::setCookie(Ref<JSON::Object>&&, std::optional<bool>&&)
 {
-    return { };
+    return makeUnexpected("Page.setCookie is not supported for this target; use Storage.setCookie"_s);
 }
 
 CommandResult<void> ProxyingPageAgent::deleteCookie(const String&, const String&)
 {
-    return { };
+    return makeUnexpected("Page.deleteCookie is not supported for this target; use Storage.deleteCookies"_s);
 }
 
 void ProxyingPageAgent::getResourceContent(const Protocol::Network::FrameId& frameId, const String& url, Ref<GetResourceContentCallback>&& callback)

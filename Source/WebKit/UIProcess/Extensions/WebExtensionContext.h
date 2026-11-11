@@ -39,6 +39,7 @@
 #include "WebExtensionAlarm.h"
 #include "WebExtensionCommand.h"
 #include "WebExtensionContextIdentifier.h"
+#include "WebExtensionContextParameters.h"
 #include "WebExtensionController.h"
 #include "WebExtensionDataType.h"
 #include "WebExtensionDeclarativeNetRequestSQLiteStore.h"
@@ -50,6 +51,7 @@
 #include "WebExtensionMatchPattern.h"
 #include "WebExtensionMatchedRuleParameters.h"
 #include "WebExtensionMenuItem.h"
+#include "WebExtensionMessage.h"
 #include "WebExtensionMessagePort.h"
 #include "WebExtensionMessageSenderParameters.h"
 #include "WebExtensionNotificationParameters.h"
@@ -145,6 +147,10 @@ namespace PAL {
 class SessionID;
 }
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditionsPrefix.h>)
+#include <WebKitAdditions/WebExtensionContextAdditionsPrefix.h>
+#endif
+
 namespace WebKit {
 
 #if ENABLE(2022_GLIB_API)
@@ -172,13 +178,6 @@ struct WebExtensionMessageTargetParameters;
 #if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
 struct ContentRuleListMatchedRule;
 #endif
-
-enum class WebExtensionContextInstallReason : uint8_t {
-    None,
-    ExtensionInstall,
-    ExtensionUpdate,
-    BrowserUpdate,
-};
 
 class WebExtensionContext : public API::ObjectImpl<API::Object::Type::WebExtensionContext>, public IPC::MessageReceiver, public Identified<WebExtensionContextIdentifier> {
     WTF_MAKE_NONCOPYABLE(WebExtensionContext);
@@ -213,7 +212,7 @@ public:
 
     static bool isURLForAnyExtension(const URL&);
 
-    static WebExtensionContext* LEGACY_NODELETE get(WebExtensionContextIdentifier);
+    NODELETE static WebExtensionContext* get(WebExtensionContextIdentifier);
 
 #if PLATFORM(COCOA)
     explicit WebExtensionContext(Ref<WebExtension>&&);
@@ -221,7 +220,7 @@ public:
     explicit WebExtensionContext(WebKitWebExtensionContext*);
 #endif
 
-    using PermissionsMap = HashMap<String, WallTime>;
+    using PermissionsMap = WebExtensionPermissionsMap;
     using PermissionMatchPatternsMap = HashMap<Ref<WebExtensionMatchPattern>, WallTime>;
 
     using UserScriptVector = Vector<Ref<API::UserScript>>;
@@ -261,7 +260,7 @@ public:
     using WebProcessProxySet = HashSet<Ref<WebProcessProxy>>;
 
     struct PortQueuedMessage {
-        String messageJSON;
+        WebExtensionMessage message;
         std::optional<WebPageProxyIdentifier> sendingPageProxyIdentifier;
         bool userGesture { false };
     };
@@ -274,7 +273,7 @@ public:
     using PortQueuedMessageMap = HashMap<PortWorldPair, Vector<PortQueuedMessage>>;
     using NativePortMap = HashMap<WebExtensionPortChannelIdentifier, Ref<WebExtensionMessagePort>>;
 
-    using PageIdentifierTuple = std::tuple<WebCore::PageIdentifier, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>>;
+    using PageIdentifierTuple = WebExtensionPageIdentifierTuple;
 
     using CommandsVector = Vector<Ref<WebExtensionCommand>>;
 
@@ -293,7 +292,7 @@ public:
     using ReloadFromOrigin = WebExtensionTab::ReloadFromOrigin;
 
     enum class EqualityOnly : bool { No, Yes };
-    enum class WindowIsClosing : bool { No, Yes };
+    using WindowIsClosing = WebExtensionContextWindowIsClosing;
     enum class UserTriggered : bool { No, Yes };
     enum class SuppressEvents : bool { No, Yes };
     enum class UpdateWindowOrder : bool { No, Yes };
@@ -374,7 +373,7 @@ public:
     };
 #endif
 
-    WebExtensionContextIdentifier LEGACY_NODELETE privilegedIdentifier() const;
+    NODELETE WebExtensionContextIdentifier privilegedIdentifier() const;
 
     WebExtensionContextParameters parameters(IncludePrivilegedIdentifier, WebProcessProxy& destinationProcess) const;
 
@@ -412,8 +411,9 @@ public:
     void setBaseURL(URL&&);
 
     bool isURLForThisExtension(const URL&) const;
-    bool canOpenURLInNewTabOrWindow(const URL&) const;
-    String unsupportedURLForNewTabOrWindowMessage(const URL&) const;
+    bool hasResource(const String& path) const;
+    bool canNavigateToURL(const URL&) const;
+    String unsupportedNavigationURLMessage(const URL&) const;
 
     bool hasCustomUniqueIdentifier() const { return m_customUniqueIdentifier; }
 
@@ -436,7 +436,7 @@ public:
     bool hasInjectedContent();
     bool safeToInjectContent() const { return isLoaded() && m_safeToInjectContent; }
 
-    bool LEGACY_NODELETE hasContentModificationRules();
+    NODELETE bool hasContentModificationRules();
 
     URL optionsPageURL() const;
     URL overrideNewTabPageURL() const;
@@ -515,6 +515,7 @@ public:
     RefPtr<WebExtensionTab> getTab(WebExtensionTabIdentifier, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
     RefPtr<WebExtensionTab> getTab(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier> = std::nullopt, IncludeExtensionViews = IncludeExtensionViews::No, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
     RefPtr<WebExtensionTab> getCurrentTab(WebPageProxyIdentifier, IncludeExtensionViews = IncludeExtensionViews::Yes, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
+    std::optional<WebExtensionWindowIdentifier> windowIdentifierForPage(WebPageProxyIdentifier) const;
     std::expected<Ref<WebExtensionTab>, WebExtensionError> getTabFromIdentifiers(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>) const;
     void forgetTab(WebExtensionTabIdentifier) const;
 
@@ -630,18 +631,16 @@ public:
 #endif
 
     void userGesturePerformed(WebExtensionTab&);
-    bool LEGACY_NODELETE hasActiveUserGesture(WebExtensionTab&) const;
+    NODELETE bool hasActiveUserGesture(WebExtensionTab&) const;
     void clearUserGesture(WebExtensionTab&);
 
-    bool LEGACY_NODELETE inTestingMode() const;
+    NODELETE bool inTestingMode() const;
 
-#if PLATFORM(COCOA)
-    void sendTestMessage(const String& message, id argument);
-    void sendTestStarted(id argument);
-    void sendTestFinished(id argument);
+    void sendTestMessage(const String& message, const String& argument);
+    void sendTestStarted(const String& argument);
+    void sendTestFinished(const String& argument);
     void reloadBackgroundContentForTesting();
     void unloadBackgroundContentForTesting();
-#endif
 
     URL backgroundContentURL();
     WebViewClass *backgroundWebView() const { return m_backgroundWebView.get(); }
@@ -731,7 +730,7 @@ public:
 
     HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&, NOESCAPE const Function<bool(WebProcessProxy&, WebPageProxy&, WebFrameProxy&)>& predicate = nullptr) const;
 
-    const UserContentControllerProxySet& LEGACY_NODELETE userContentControllers() const LIFETIME_BOUND;
+    NODELETE const UserContentControllerProxySet& userContentControllers() const LIFETIME_BOUND;
 
     template<typename T>
     void sendToProcesses(const WebProcessProxySet&, const T& message) const;
@@ -755,7 +754,7 @@ private:
 
     explicit WebExtensionContext();
 
-    int LEGACY_NODELETE toAPIError(WebExtensionContext::Error);
+    NODELETE int toAPIError(WebExtensionContext::Error);
 
     String stateFilePath() const;
 #if PLATFORM(COCOA)
@@ -788,7 +787,7 @@ private:
     bool isBackgroundPage(WebCore::FrameIdentifier) const;
     bool isBackgroundPage(WebPageProxyIdentifier) const;
     bool isExtensionPage(WebPageProxyIdentifier) const;
-    bool LEGACY_NODELETE backgroundContentIsLoaded() const;
+    NODELETE bool backgroundContentIsLoaded() const;
 
     bool isNotRunningInTestRunner();
 
@@ -835,7 +834,7 @@ private:
     void unloadInspectorBackgroundPage(WebInspectorUIProxy&);
 
     RefPtr<API::InspectorExtension> inspectorExtension(WebPageProxyIdentifier) const;
-    RefPtr<WebInspectorUIProxy> LEGACY_NODELETE inspector(const API::InspectorExtension&) const;
+    NODELETE RefPtr<WebInspectorUIProxy> inspector(const API::InspectorExtension&) const;
     HashSet<Ref<WebProcessProxy>> processes(const API::InspectorExtension&) const;
 #endif // ENABLE(INSPECTOR_EXTENSIONS)
 
@@ -907,12 +906,12 @@ private:
     void actionGetBadgeText(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
     void actionSetBadgeText(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, const String& text, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void actionGetEnabled(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&&);
-    void actionSetEnabled(std::optional<WebExtensionTabIdentifier>, bool enabled, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
+    void actionSetEnabled(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, bool enabled, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void fireActionClickedEventIfNeeded(WebExtensionTab*);
 
     // Alarms APIs
     bool isAlarmsMessageAllowed(IPC::Decoder&);
-    void alarmsCreate(const String& name, Seconds initialInterval, Seconds repeatInterval, CompletionHandler<void()>&&);
+    void alarmsCreate(const String& name, Seconds initialInterval, Seconds repeatInterval, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void alarmsGet(const String& name, CompletionHandler<void(std::optional<WebExtensionAlarmParameters>&&)>&&);
     void alarmsClear(const String& name, CompletionHandler<void(bool)>&&);
     void alarmsGetAll(CompletionHandler<void(Vector<WebExtensionAlarmParameters>&&)>&&);
@@ -1018,7 +1017,7 @@ private:
     void firePermissionsEventListenerIfNecessary(WebExtensionEventListenerType, const PermissionsSet&, const MatchPatternSet&);
 
     // Port APIs
-    void portPostMessage(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, std::optional<WebKit::WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const String& messageJSON, bool userGesture);
+    void portPostMessage(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, std::optional<WebKit::WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const WebExtensionMessage&, bool userGesture);
     void portRemoved(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, WebPageProxyIdentifier, WebExtensionPortChannelIdentifier);
     bool pageHasOpenPorts(WebPageProxy&);
     void disconnectPortsForPage(WebPageProxy&);
@@ -1030,7 +1029,7 @@ private:
     bool isPortConnected(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, WebExtensionPortChannelIdentifier);
     void clearQueuedPortMessages(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier);
     Vector<PortQueuedMessage> portQueuedMessages(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier);
-    void firePortMessageEventsIfNeeded(WebExtensionContentWorldType, std::optional<WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const String& messageJSON, bool userGesture);
+    void firePortMessageEventsIfNeeded(WebExtensionContentWorldType, std::optional<WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const WebExtensionMessage&, bool userGesture);
     void fireQueuedPortMessageEventsIfNeeded(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier);
     void sendQueuedNativePortMessagesIfNeeded(WebExtensionPortChannelIdentifier);
     void firePortDisconnectEventIfNeeded(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, WebExtensionPortChannelIdentifier);
@@ -1039,7 +1038,7 @@ private:
     void runtimeGetBackgroundPage(CompletionHandler<void(std::expected<std::optional<WebCore::PageIdentifier>, WebExtensionError>&&)>&&);
     void runtimeOpenOptionsPage(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void runtimeReload();
-    void runtimeSendMessage(const String& extensionID, const String& messageJSON, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
+    void runtimeSendMessage(const String& extensionID, const WebExtensionMessage&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(std::expected<WebExtensionMessage, WebExtensionError>&&)>&&);
     void runtimeConnect(const String& extensionID, WebExtensionPortChannelIdentifier, const String& name, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void runtimeSendNativeMessage(const String& applicationID, const String& messageJSON, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
     void runtimeConnectNative(const String& applicationID, WebExtensionPortChannelIdentifier, WebPageProxyIdentifier, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
@@ -1100,7 +1099,7 @@ private:
     void tabsDetectLanguage(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
     void tabsCaptureVisibleTab(WebPageProxyIdentifier, std::optional<WebExtensionWindowIdentifier>, WebExtensionTab::ImageFormat, uint8_t imageQuality, CompletionHandler<void(std::expected<URL, WebExtensionError>&&)>&&);
     void tabsToggleReaderMode(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
-    void tabsSendMessage(WebExtensionTabIdentifier, const String& messageJSON, const WebExtensionMessageTargetParameters&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
+    void tabsSendMessage(WebExtensionTabIdentifier, const WebExtensionMessage&, const WebExtensionMessageTargetParameters&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(std::expected<WebExtensionMessage, WebExtensionError>&&)>&&);
     void tabsConnect(WebExtensionTabIdentifier, WebExtensionPortChannelIdentifier, String name, const WebExtensionMessageTargetParameters&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void tabsGetZoom(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<double, WebExtensionError>&&)>&&);
     void tabsSetZoom(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier>, double, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
@@ -1144,7 +1143,7 @@ private:
 
     bool isLoaded(IPC::Decoder&) const { return isLoaded(); }
     bool isLoadedAndPrivilegedMessage(IPC::Decoder& message) const { return isLoaded() && isPrivilegedMessage(message); }
-    bool LEGACY_NODELETE isPrivilegedMessage(IPC::Decoder&) const;
+    NODELETE bool isPrivilegedMessage(IPC::Decoder&) const;
 
     mutable Markable<WebExtensionContextIdentifier> m_privilegedIdentifier;
 
@@ -1299,11 +1298,13 @@ private:
     RefPtr<WebExtensionStorageSQLiteStore> m_sessionStorageStore;
     RefPtr<WebExtensionStorageSQLiteStore> m_syncStorageStore;
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+#include <WebKitAdditions/WebExtensionContextAdditions.h>
+#endif
+
     struct TestMessage {
         String message;
-#if PLATFORM(COCOA)
-        RetainPtr<id> argument;
-#endif
+        String argument;
     };
 
     size_t m_testMessageListenersCount { 0 };
@@ -1314,11 +1315,9 @@ private:
     Deque<TestMessage> m_testStartedQueue;
     Deque<TestMessage> m_testFinishedQueue;
 
-    bool LEGACY_NODELETE hasTestEventListeners(WebExtensionEventListenerType);
+    NODELETE bool hasTestEventListeners(WebExtensionEventListenerType);
     void sendQueuedTestMessagesIfNeeded(WebExtensionEventListenerType);
-#if PLATFORM(COCOA)
-    void addTestMessageToQueue(const String& message, id argument, WebExtensionEventListenerType);
-#endif
+    void addTestMessageToQueue(const String& message, const String& argument, WebExtensionEventListenerType);
 };
 
 template<typename T>

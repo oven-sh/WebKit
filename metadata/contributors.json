@@ -785,6 +785,19 @@
    },
    {
       "emails" : [
+         "amartinez55@apple.com",
+         "amart89531@gmail.com",
+         "AndrJMart@gmail.com"
+      ],
+      "github" : "AndrewJMart",
+      "name" : "Andrew Martinez",
+      "nicks" : [
+         "andrewmartinez"
+      ],
+      "status" : "committer"
+   },
+   {
+      "emails" : [
          "scherkus@chromium.org"
       ],
       "name" : "Andrew Scherkus",
@@ -4500,7 +4513,8 @@
       "name" : "Jintian Wang",
       "nicks" : [
          "kevinw"
-      ]
+      ],
+      "status" : "committer"
    },
    {
       "emails" : [
@@ -7410,7 +7424,7 @@
       "nicks" : [
          "robertor"
       ],
-      "status" : "committer"
+      "status" : "reviewer"
    },
    {
       "emails" : [

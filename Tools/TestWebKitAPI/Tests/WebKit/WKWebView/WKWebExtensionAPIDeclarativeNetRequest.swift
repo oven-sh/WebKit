@@ -47,6 +47,68 @@ private import WebKit_Private._WKWebExtensionSidebar
 @MainActor
 struct WKWebExtensionAPIDeclarativeNetRequestTests {
     @Test
+    func resourceTypeEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.declarativeNetRequest.ResourceType, 'object', 'ResourceType should be an object')
+
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.MAIN_FRAME, 'main_frame', 'MAIN_FRAME should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.SUB_FRAME, 'sub_frame', 'SUB_FRAME should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.STYLESHEET, 'stylesheet', 'STYLESHEET should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.SCRIPT, 'script', 'SCRIPT should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.IMAGE, 'image', 'IMAGE should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.FONT, 'font', 'FONT should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.XMLHTTPREQUEST, 'xmlhttprequest', 'XMLHTTPREQUEST should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.PING, 'ping', 'PING should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.MEDIA, 'media', 'MEDIA should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.WEBSOCKET, 'websocket', 'WEBSOCKET should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.OTHER, 'other', 'OTHER should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.declarativeNetRequest.ResourceType).sort(), [ 'FONT', 'IMAGE', 'MAIN_FRAME', 'MEDIA', 'OTHER', 'PING', 'SCRIPT', 'STYLESHEET', 'SUB_FRAME', 'WEBSOCKET', 'XMLHTTPREQUEST' ], 'ResourceType should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func unsupportedRegexReasonEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.declarativeNetRequest.UnsupportedRegexReason, 'object', 'UnsupportedRegexReason should be an object')
+
+            browser.test.assertEq(browser.declarativeNetRequest.UnsupportedRegexReason.SYNTAX_ERROR, 'syntaxError', 'SYNTAX_ERROR should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.declarativeNetRequest.UnsupportedRegexReason).sort(), [ 'SYNTAX_ERROR' ], 'UnsupportedRegexReason should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
     func blockedLoadTest() async throws {
         var server = try HTTPServer(protocol: .http) {
             Route("/", headerFields: ["Content-Type": "text/html"]) {
@@ -223,6 +285,38 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         let context = try #require(manager.context)
 
         // Grant the declarativeNetRequest permission.
+        context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+
+        try await manager.run()
+    }
+
+    @Test
+    func updateRulesWithEmptyOptions() async throws {
+        let backgroundScript = """
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.updateDynamicRules({ }))
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.updateSessionRules({ }))
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.updateEnabledRulesets({ }))
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.setExtensionActionOptions({ }))
+
+            browser.test.assertEq((await browser.declarativeNetRequest.getDynamicRules()).length, 0, 'Dynamic rules should be unchanged')
+            browser.test.assertEq((await browser.declarativeNetRequest.getEnabledRulesets()).length, 0, 'Enabled rulesets should be unchanged')
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        let context = try #require(manager.context)
+
         context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
 
         try await manager.run()
@@ -726,6 +820,36 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
     }
 
     @Test
+    func removeDuplicatedSessionRuleIDs() async throws {
+        let backgroundScript = """
+            await browser.declarativeNetRequest.updateSessionRules({ addRules: [{ id: 1, priority: 1, action: {type: 'block'}, condition: { urlFilter: 'foo' } }] })
+
+            let sessionRules = await browser.declarativeNetRequest.getSessionRules()
+            browser.test.assertEq(sessionRules.length, 1)
+
+            await browser.test.assertResolves(browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [1, 1] }))
+
+            sessionRules = await browser.declarativeNetRequest.getSessionRules()
+            browser.test.assertEq(sessionRules.length, 0)
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
     func dynamicRules() async throws {
         var server = try HTTPServer(protocol: .http) {
             Route("/", headerFields: ["Content-Type": "text/html"]) {
@@ -889,6 +1013,36 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
             await browser.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1, 2, 3] })
 
             dynamicRules = await browser.declarativeNetRequest.getDynamicRules({ })
+            browser.test.assertEq(dynamicRules.length, 0)
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func removeDuplicatedDynamicRuleIDs() async throws {
+        let backgroundScript = """
+            await browser.declarativeNetRequest.updateDynamicRules({ addRules: [{ id: 1, priority: 1, action: {type: 'block'}, condition: { urlFilter: 'foo' } }] })
+
+            let dynamicRules = await browser.declarativeNetRequest.getDynamicRules()
+            browser.test.assertEq(dynamicRules.length, 1)
+
+            await browser.test.assertResolves(browser.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1, 1] }))
+
+            dynamicRules = await browser.declarativeNetRequest.getDynamicRules()
             browser.test.assertEq(dynamicRules.length, 0)
 
             browser.test.notifyPass()
@@ -1604,6 +1758,204 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
 
             try await manager.run()
         }
+    }
+
+    private func queryTransformRedirectRule(id: Int, urlFilter: String, removeParams: [String]) -> [String: Any] {
+        [
+            "id": id,
+            "priority": 1,
+
+            "action": [
+                "type": "redirect",
+                "redirect": [
+                    "transform": [
+                        "queryTransform": [
+                            "removeParams": removeParams
+                        ]
+                    ]
+                ],
+            ],
+
+            "condition": [
+                "urlFilter": urlFilter,
+                "resourceTypes": ["main_frame"],
+            ],
+        ]
+    }
+
+    private func runEqualPriorityRedirectComposition(
+        rules: [[String: Any]],
+        requestQuery: String,
+        expectedQuery: String,
+        unexpectedQuery: String = "?unexpected"
+    ) async throws {
+        let correctPageScript = """
+            <script>
+              browser.test.notifyPass()
+            </script>
+            """
+
+        let incorrectPageScript = """
+            <script>
+              browser.test.notifyFail('Equal-priority redirects should compose into ' + '\(expectedQuery)' + ', but loaded ' + location.search)
+            </script>
+            """
+
+        var server = try HTTPServer(protocol: .http) {
+            Route("/\(expectedQuery)", headerFields: ["Content-Type": "text/html"]) {
+                correctPageScript
+            }
+            Route("/\(requestQuery)", headerFields: ["Content-Type": "text/html"]) {
+                incorrectPageScript
+            }
+            Route("/\(unexpectedQuery)", headerFields: ["Content-Type": "text/html"]) {
+                incorrectPageScript
+            }
+        }
+
+        let manifest: [String: Any] = [
+            "manifest_version": 3,
+
+            "name": "Test",
+            "description": "Test",
+            "version": "1",
+
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+
+            "permissions": ["declarativeNetRequestWithHostAccess"],
+            "host_permissions": ["*://localhost/*"],
+
+            "declarative_net_request": [
+                "rule_resources": [
+                    [
+                        "id": "redirectRule",
+                        "enabled": true,
+                        "path": "rules.json",
+                    ]
+                ]
+            ],
+        ]
+
+        let backgroundScript = """
+            browser.test.sendMessage('Load Tab')
+            """
+
+        try await server.run { configuration in
+            let urlRequest = URLRequest(url: try #require(URL(string: requestQuery, relativeTo: configuration.localhostAddress)))
+
+            let resources: [String: Any] = [
+                "background.js": backgroundScript,
+                "rules.json": rules,
+            ]
+
+            let manager = try loadWebExtension(manifest: manifest, resources: resources)
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: configuration.localhostAddress)
+
+            try await manager.waitForTestMessage("Load Tab")
+
+            let webView = try #require(manager.defaultTab?.webView)
+            webView.load(urlRequest)
+
+            try await manager.run()
+        }
+    }
+
+    @Test
+    func equalPriorityQueryTransformRedirectsCompose() async throws {
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            queryTransformRedirectRule(id: 2, urlFilter: "from=", removeParams: ["from"]),
+        ]
+
+        try await runEqualPriorityRedirectComposition(rules: rules, requestQuery: "?utm_source=em&from=glia&id=1", expectedQuery: "?id=1")
+    }
+
+    @Test
+    func noOpQueryTransformRedirectDoesNotSuppressEqualPriorityRedirect() async throws {
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            queryTransformRedirectRule(id: 2, urlFilter: "af_xp=", removeParams: ["c", "pid"]),
+        ]
+
+        try await runEqualPriorityRedirectComposition(
+            rules: rules,
+            requestQuery: "?utm_source=em&af_xp=1&id=1",
+            expectedQuery: "?af_xp=1&id=1"
+        )
+    }
+
+    @Test
+    func equalPriorityRegexSubstitutionRedirectDoesNotComposeWithQueryTransform() async throws {
+        let regexSubstitutionRule: [String: Any] = [
+            "id": 2,
+            "priority": 1,
+
+            "action": [
+                "type": "redirect",
+                "redirect": [
+                    "regexSubstitution": "\\1"
+                ],
+            ],
+
+            "condition": [
+                "regexFilter": "^(.*)&debug=1$",
+                "resourceTypes": ["main_frame"],
+            ],
+        ]
+
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            regexSubstitutionRule,
+        ]
+
+        try await runEqualPriorityRedirectComposition(
+            rules: rules,
+            requestQuery: "?utm_source=em&id=1&debug=1",
+            expectedQuery: "?utm_source=em&id=1",
+            unexpectedQuery: "?id=1"
+        )
+    }
+
+    @Test
+    func equalPriorityAddOrReplaceParamsRedirectDoesNotComposeWithRemoveParams() async throws {
+        let addParamsRule: [String: Any] = [
+            "id": 2,
+            "priority": 1,
+
+            "action": [
+                "type": "redirect",
+                "redirect": [
+                    "transform": [
+                        "queryTransform": [
+                            "addOrReplaceParams": [["key": "ref", "value": "feed"]]
+                        ]
+                    ]
+                ],
+            ],
+
+            "condition": [
+                "urlFilter": "localhost",
+                "resourceTypes": ["main_frame"],
+            ],
+        ]
+
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            addParamsRule,
+        ]
+
+        try await runEqualPriorityRedirectComposition(
+            rules: rules,
+            requestQuery: "?utm_source=em&id=1",
+            expectedQuery: "?utm_source=em&id=1&ref=feed",
+            unexpectedQuery: "?id=1&ref=feed"
+        )
     }
 
     @Test
@@ -4575,6 +4927,7 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
             let correctRuleConversion = withDebugIdentifiers([
                 "action": [
                     "type": "redirect",
+                    "priority": 1,
                     "redirect": expectedRedirect,
                 ],
                 "trigger": [
@@ -4700,6 +5053,7 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         try testModifyHeaders("responseHeaders", [["header": "accept", "operation": "remove", "value": "v1"]], nil, nil)
         try testModifyHeaders("requestHeaders", [["operation": "set", "value": "v1"]], nil, nil)
         try testModifyHeaders("requestHeaders", [["header": "ellie's custom header", "operation": "set", "value": "v1"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "authorization", "operation": "append", "value": "v1"]], nil, nil)
 
         try testModifyHeaders(
             "requestHeaders",
@@ -4721,6 +5075,63 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         )
         try testModifyHeaders(
             "requestHeaders",
+            [["header": "cookie", "operation": "append", "value": "a=1"]],
+            "request-headers",
+            [["header": "cookie", "operation": "append", "value": "a=1"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "authorization", "operation": "set", "value": "v1"]],
+            "request-headers",
+            [["header": "authorization", "operation": "set", "value": "v1"]]
+        )
+        try testModifyHeaders("requestHeaders", [["header": "host", "operation": "set", "value": "example.com"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "Content-Length", "operation": "set", "value": "0"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "Proxy-Authorization", "operation": "set", "value": "v1"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "Transfer-Encoding", "operation": "append", "value": "chunked"]], nil, nil)
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "host", "operation": "remove"]],
+            "request-headers",
+            [["header": "host", "operation": "remove"]]
+        )
+        try testModifyHeaders(
+            "responseHeaders",
+            [["header": "content-length", "operation": "set", "value": "0"]],
+            "response-headers",
+            [["header": "content-length", "operation": "set", "value": "0"]]
+        )
+        try testModifyHeaders("requestHeaders", [["header": "connection", "operation": "set", "value": "upgrade"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "accept-encoding", "operation": "set", "value": "*"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "accept-encoding", "operation": "append", "value": "dcb"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "X-HTTP-Method-Override", "operation": "set", "value": "TRACE"]], nil, nil)
+        try testModifyHeaders("responseHeaders", [["header": "x-test", "operation": "set", "value": "a\r\nb: c"]], nil, nil)
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "connection", "operation": "set", "value": "close"]],
+            "request-headers",
+            [["header": "connection", "operation": "set", "value": "close"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "accept-encoding", "operation": "set", "value": "gzip, deflate"]],
+            "request-headers",
+            [["header": "accept-encoding", "operation": "set", "value": "gzip, deflate"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "X-HTTP-Method-Override", "operation": "set", "value": "PUT"]],
+            "request-headers",
+            [["header": "X-HTTP-Method-Override", "operation": "set", "value": "PUT"]]
+        )
+        try testModifyHeaders(
+            "responseHeaders",
+            [["header": "authorization", "operation": "append", "value": "v1"]],
+            "response-headers",
+            [["header": "authorization", "operation": "append", "value": "v1"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
             [["header": "accept", "operation": "append", "value": "v1"], ["header": "accept", "operation": "set", "value": "v1"]],
             "request-headers",
             [["header": "accept", "operation": "append", "value": "v1"], ["header": "accept", "operation": "set", "value": "v1"]]
@@ -4731,6 +5142,100 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
             "response-headers",
             [["header": "accept", "operation": "set", "value": "v1"]]
         )
+    }
+
+    @Test
+    func ruleConversionWithModifyHeadersWithCustomHeaderNames() throws {
+        func convertedRule(
+            headerName: String,
+            operation: String = "set",
+            value: String? = "1",
+            headerKey: String = "requestHeaders"
+        ) -> [String: Any]? {
+            var headerInfo: [String: Any] = ["header": headerName, "operation": operation]
+            if let value {
+                headerInfo["value"] = value
+            }
+
+            let rule: [String: Any] = [
+                "id": 10,
+                "priority": 2,
+                "action": [
+                    "type": "modifyHeaders",
+                    headerKey: [headerInfo],
+                ],
+                "condition": [
+                    "urlFilter": "*",
+                    "resourceTypes": ["script"],
+                ],
+            ]
+
+            return unsafe _WKWebExtensionDeclarativeNetRequestRule(
+                dictionary: rule,
+                rulesetID: "Test Ruleset",
+                errorString: nil
+            )?
+            .ruleInWebKitFormat.first
+        }
+
+        #expect(convertedRule(headerName: "X-Custom-Header") != nil)
+        #expect(convertedRule(headerName: "Foo") != nil)
+        #expect(convertedRule(headerName: "X-Custom-Header", operation: "remove", value: nil) != nil)
+        #expect(convertedRule(headerName: "X-Request-Id", operation: "append", headerKey: "responseHeaders") != nil)
+
+        #expect(convertedRule(headerName: "X-Request-Id", operation: "append") == nil)
+        #expect(convertedRule(headerName: "") == nil)
+        #expect(convertedRule(headerName: "Foo:Bar") == nil)
+        #expect(convertedRule(headerName: "X Custom Header") == nil)
+        #expect(convertedRule(headerName: "X-Custom-Header", value: nil) == nil)
+    }
+
+    @Test
+    func translatingRulesDropsOnlyRulesAppendingToUnsupportedRequestHeaders() {
+        let rules: [String: [[String: Any]]] = [
+            "Test Ruleset": [
+                [
+                    "id": 1,
+                    "priority": 1,
+                    "action": ["type": "block"],
+                    "condition": [
+                        "urlFilter": "foo",
+                        "resourceTypes": ["script"],
+                    ],
+                ],
+                [
+                    "id": 2,
+                    "priority": 1,
+                    "action": [
+                        "type": "modifyHeaders",
+                        "requestHeaders": [["header": "authorization", "operation": "append", "value": "Bearer token"]],
+                    ],
+                    "condition": [
+                        "urlFilter": "bar",
+                        "resourceTypes": ["script"],
+                    ],
+                ],
+                [
+                    "id": 3,
+                    "priority": 1,
+                    "action": [
+                        "type": "modifyHeaders",
+                        "responseHeaders": [["header": "authorization", "operation": "append", "value": "Bearer token"]],
+                    ],
+                    "condition": [
+                        "urlFilter": "baz",
+                        "resourceTypes": ["script"],
+                    ],
+                ],
+            ]
+        ]
+
+        var errorStrings: NSArray?
+        let translatedRules = unsafe _WKWebExtensionDeclarativeNetRequestTranslator.translateRules(rules, errorStrings: &errorStrings)
+
+        #expect(translatedRules.count == 2)
+        #expect(errorStrings?.count == 1)
+        #expect((errorStrings?.firstObject as? String)?.contains("Rule with id 2 is invalid") == true)
     }
 
     @Test

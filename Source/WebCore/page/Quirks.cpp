@@ -37,11 +37,13 @@
 #include "DeprecatedGlobalSettings.h"
 #include "Document.h"
 #include "DocumentLoader.h"
+#include "DocumentInlines.h"
 #include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentStorageAccess.h"
 #include "DocumentView.h"
 #include "Element.h"
+#include "ExtensionStyleSheets.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementInlines.h"
 #include "ElementTargetingTypes.h"
@@ -142,7 +144,7 @@ QuirksData resolveTopURLQuirks(const URL& url)
     return resolveSiteSpecificQuirks(context, context, IsTopDocument::Yes);
 }
 
-static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Document& document)
+NODELETE static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document& document)
 {
     auto* loader = document.loader();
     if (!loader)
@@ -151,14 +153,14 @@ static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Doc
     return loader->allowedAutoplayQuirks();
 }
 
-static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Document* document)
+NODELETE static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document* document)
 {
     if (!document)
         return { };
     return allowedAutoplayQuirks(*document);
 }
 
-static HashMap<RegistrableDomain, String>& LEGACY_NODELETE updatableStorageAccessUserAgentStringQuirks()
+NODELETE static HashMap<RegistrableDomain, String>& updatableStorageAccessUserAgentStringQuirks()
 {
     // FIXME: Make this a member of Quirks.
     static MainThreadNeverDestroyed<HashMap<RegistrableDomain, String>> map;
@@ -168,12 +170,12 @@ static HashMap<RegistrableDomain, String>& LEGACY_NODELETE updatableStorageAcces
 #if USE(APPLE_INTERNAL_SDK)
 #import <WebKitAdditions/QuirksAdditions.cpp>
 #else
-static inline bool LEGACY_NODELETE shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldDisableBlobFileAccessEnforcementInternal() { return false; }
-static inline bool LEGACY_NODELETE needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldExemptCookieFromITPDataRemovalInternal(const String&) { return false; }
+NODELETE static inline bool shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
+NODELETE static inline bool shouldDisableBlobFileAccessEnforcementInternal() { return false; }
+NODELETE static inline bool needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
+NODELETE static inline bool shouldExemptCookieFromITPDataRemovalInternal(const String&) { return false; }
 #if PLATFORM(COCOA)
-static inline String LEGACY_NODELETE standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
+NODELETE static inline String standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
 #endif
 #endif
 
@@ -436,7 +438,7 @@ bool Quirks::shouldOpenAsAboutBlank(const String& stringToOpen) const
         return false;
 
     auto openerURL = protect(m_document)->url();
-    if (!m_document->frame() || !m_document->frame()->loader().userAgent(openerURL).contains("Macintosh"_s))
+    if (!m_document->frame() || !protect(m_document->frame()->loader())->userAgent(openerURL).contains("Macintosh"_s))
         return false;
 
     URL urlToOpen { URL { }, stringToOpen };
@@ -872,6 +874,26 @@ bool Quirks::needsPartitionedCookies(const ResourceRequest& request)
     return urlHasQuirk(request.url(), QuirkBehaviorID::NeedsPartitionedCookiesQuirk);
 }
 
+Vector<String> Quirks::cnameCloakingCookieCapExemptTargetPatterns(const URL& firstPartyURL)
+{
+    Vector<String> patterns;
+    for (const auto& behavior : resolveTopURLQuirks(firstPartyURL).behaviorsMatching(QuirkBehaviorID::NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk)) {
+        for (const auto& pattern : behavior.secondaryURL)
+            patterns.append(pattern.string().isolatedCopy());
+    }
+    return patterns;
+}
+
+bool Quirks::anyPatternMatchesCNAMETarget(const Vector<String>& patterns, const String& cnameHostName)
+{
+    auto hostName = cnameHostName.endsWith('.') ? cnameHostName.left(cnameHostName.length() - 1) : cnameHostName;
+    URLMatchContext context { URL { makeString("https://"_s, hostName, '/') } };
+    return patterns.containsIf([&](const String& patternString) {
+        auto pattern = QuirkMatchPattern::parse(patternString);
+        return pattern && pattern->matches(context);
+    });
+}
+
 bool Quirks::shouldExemptCookieFromITPDataRemoval(const String& cookieName)
 {
     return shouldExemptCookieFromITPDataRemovalInternal(cookieName);
@@ -1010,6 +1032,32 @@ Vector<String, 1> Quirks::scriptsToEvaluateBeforeRunningScriptFromURL(const URL&
     return scripts;
 }
 
+Vector<String> Quirks::styleSheetsToInject()
+{
+    constexpr auto id = QuirkBehaviorID::NeedsStyleSheetInjectedQuirk;
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE({ });
+
+    if (!m_quirksData.isBehaviorEnabled(id))
+        return { };
+
+    Vector<String> styleSheets;
+    for (const auto& behavior : m_quirksData.behaviorsMatching(id)) {
+        if (!behavior.styleSheet.isEmpty())
+            styleSheets.append(behavior.styleSheet);
+    }
+
+    return styleSheets;
+}
+
+void Quirks::updateInjectedStyleSheets()
+{
+    RefPtr document = m_document;
+    if (!document || !document->frame() || !needsQuirks())
+        return;
+
+    protect(document->extensionStyleSheets())->setQuirkStyleSheets(styleSheetsToInject());
+}
+
 bool Quirks::needsChromeOSNavigatorUserAgentQuirk(const Document& document) const
 {
     constexpr auto id = QuirkBehaviorID::NeedsChromeOSNavigatorUserAgentQuirk;
@@ -1066,6 +1114,17 @@ bool Quirks::needsPointerTouchCompatibility(const Element& target) const
 }
 
 #endif
+
+// Gmail app rdar://183372156
+bool Quirks::shouldNotMoveFocusWhenMutatingSelectionRange() const
+{
+#if PLATFORM(IOS_FAMILY)
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
+    return WTF::IOSApplication::isGmail();
+#else
+    return false;
+#endif
+}
 
 // facebook.com rdar://141103350
 bool Quirks::needsFacebookStoriesCreationFormQuirk(const Element& element, const Style::ComputedStyle& computedStyle) const
@@ -1135,6 +1194,32 @@ bool Quirks::needsClaudeSidebarViewportUnitQuirk(Element& element, const Style::
     }
 
     return false;
+}
+
+std::optional<Quirks::OpenRiceAdPopupHeight> Quirks::needsOpenRiceAdPopupHeightQuirk(Element& element, const Style::ComputedStyle& style) const
+{
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(std::nullopt);
+
+    if (!m_quirksData.isBehaviorEnabled(QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk))
+        return std::nullopt;
+
+    auto fixedHeight = style.height().tryFixed();
+    if (!fixedHeight)
+        return std::nullopt;
+
+    if (!behaviorAppliesToNode(QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk, &element))
+        return std::nullopt;
+
+    CheckedPtr renderView = m_document->renderView();
+    if (!renderView)
+        return std::nullopt;
+
+    auto viewportHeight = renderView->sizeForCSSDynamicViewportUnits().height();
+    auto zoom = style.usedZoomForLength();
+    if (viewportHeight <= 0 || fixedHeight->resolveZoom(zoom) <= viewportHeight)
+        return OpenRiceAdPopupHeight { };
+
+    return OpenRiceAdPopupHeight { viewportHeight / zoom.value };
 }
 
 // amazon.design rdar://175953409
@@ -1366,6 +1451,8 @@ void Quirks::urlsDidChange()
 
     if (!m_quirksData.hasSameBehaviorFlags(previousQuirksData))
         protect(m_document)->scheduleFullStyleRebuild();
+
+    updateInjectedStyleSheets();
 }
 
 void Quirks::logQuirksToConsoleIfNecessary() const
@@ -1378,7 +1465,7 @@ void Quirks::logQuirksToConsoleIfNecessary() const
         return;
 
     // FIXME: should we log english sentences instead of the quirk enum names?
-    const auto quirks = activeQuirks();
+    const auto quirks = activeQuirkNames();
     if (quirks.isEmpty())
         return;
 
@@ -1391,8 +1478,22 @@ Vector<String> Quirks::activeQuirks() const
 {
     Vector<String> result;
 
-    for (auto quirk : m_quirksData.behaviors())
-        result.append(String { WTF::enumName(static_cast<QuirkBehaviorID>(quirk.id)) });
+    for (auto quirk : m_quirksData.behaviors()) {
+        TextStream stream;
+        stream << quirk;
+        result.append(stream.release());
+    }
+
+    std::ranges::sort(result, codePointCompareLessThan);
+    return result;
+}
+
+Vector<String> Quirks::activeQuirkNames() const
+{
+    Vector<String> result;
+
+    for (auto id : m_quirksData.behaviors() | std::views::transform(&QuirkBehavior::id))
+        result.append(WTF::enumName(id));
 
     std::ranges::sort(result, codePointCompareLessThan);
     return result;

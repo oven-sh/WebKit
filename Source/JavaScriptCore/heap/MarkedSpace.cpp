@@ -414,7 +414,7 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
-    heap().assertIsMutatorOrMutatorIsStopped();
+    heap().assertIsExclusiveAccessHolder();
     m_capacity -= MarkedBlock::blockSize;
     m_blocks.remove(&block->block());
     delete block;

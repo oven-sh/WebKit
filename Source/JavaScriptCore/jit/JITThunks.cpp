@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -100,7 +100,7 @@ JSC_FOR_EACH_VM_DEPENDENT_EAGER_COMMON_THUNK(JSC_DEFINE_COMMON_JIT_THUNK)
 #undef JSC_DEFINE_COMMON_JIT_THUNK
 }
 
-static inline NativeExecutable& LEGACY_NODELETE getMayBeDyingNativeExecutable(const Weak<NativeExecutable>& weak)
+NODELETE static inline NativeExecutable& getMayBeDyingNativeExecutable(const Weak<NativeExecutable>& weak)
 {
     // This never gets Deleted / Empty slots.
     WeakImpl* impl = weak.unsafeImpl();
@@ -255,7 +255,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::lazyCommonThunk(VM& vm, CommonJ
 {
     auto& thunk = m_lazyCommonThunks[static_cast<unsigned>(thunkID) - numberOfVMIndependentCommonThunkIDs - numberOfVMDependentEagerCommonThunkIDs];
 
-    auto state = thunk.state.load(std::memory_order_acquire);
+    auto state = thunk.state.load<MemoryOrder::Acquire>();
     if (state == LazyThunkState::NotGenerated) {
         Locker locker { thunk.lock };
         state = thunk.state.loadRelaxed();
@@ -263,7 +263,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::lazyCommonThunk(VM& vm, CommonJ
             thunk.codeRef = generatorForLazyCommonThunk(thunkID)(vm);
             ASSERT(thunk.codeRef);
             state = isCompilationThread() ? LazyThunkState::GeneratedOnCompilationThread : LazyThunkState::Generated;
-            thunk.state.store(state, std::memory_order_release);
+            thunk.state.store<MemoryOrder::Release>(state);
         }
     }
 
@@ -275,7 +275,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::lazyCommonThunk(VM& vm, CommonJ
         // conservatively say that when the main thread grabs a thunk generated
         // from a compiler thread for the first time, it issues a crossModifyingCodeFence.
         WTF::crossModifyingCodeFence();
-        thunk.state.store(LazyThunkState::Generated, std::memory_order_release);
+        thunk.state.store<MemoryOrder::Release>(LazyThunkState::Generated);
     }
 
     return thunk.codeRef;
@@ -290,20 +290,20 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiSlowPathFunctionStub(VM& vm,
 }
 
 struct JITThunks::HostKeySearcher {
-    static unsigned LEGACY_NODELETE hash(const HostFunctionKey& key) { return WeakNativeExecutableHash::hash(key); }
-    static bool LEGACY_NODELETE equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b) { return WeakNativeExecutableHash::equal(a, b); }
+    NODELETE static unsigned hash(const HostFunctionKey& key) { return WeakNativeExecutableHash::hash(key); }
+    NODELETE static bool equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b) { return WeakNativeExecutableHash::equal(a, b); }
 };
 
 struct JITThunks::NativeExecutableTranslator {
-    static unsigned LEGACY_NODELETE hash(const NativeExecutable* key) { return WeakNativeExecutableHash::hash(key); }
-    static bool LEGACY_NODELETE equal(const Weak<NativeExecutable>& a, const NativeExecutable* b) { return WeakNativeExecutableHash::equal(a, b); }
-    static void translate(Weak<NativeExecutable>& location, NativeExecutable* executable, unsigned)
+    NODELETE static unsigned hash(const NativeExecutable* key) { return WeakNativeExecutableHash::hash(key); }
+    NODELETE static bool equal(const Weak<NativeExecutable>& a, const NativeExecutable* b) { return WeakNativeExecutableHash::equal(a, b); }
+    static void translate(Weak<NativeExecutable>* location, NativeExecutable* executable, unsigned)
     {
-        location = Weak<NativeExecutable>(executable, executable->vm().jitStubs.get());
+        new (NotNull, location) Weak<NativeExecutable>(executable, executable->vm().jitStubs.get());
     }
 };
 
-void JITThunks::finalize(Handle<Unknown> handle, void*)
+WeakHandleOwner::FinalizeResult JITThunks::finalize(Handle<Unknown> handle, void*)
 {
     auto* nativeExecutable = static_cast<NativeExecutable*>(handle.get().asCell());
     auto hostFunctionKey = std::make_tuple(nativeExecutable->function(), nativeExecutable->constructor(), nativeExecutable->implementationVisibility(), nativeExecutable->length(), nativeExecutable->name());
@@ -315,6 +315,7 @@ void JITThunks::finalize(Handle<Unknown> handle, void*)
         ASSERT(iterator->unsafeImpl()->state() == WeakImpl::State::Finalized);
         m_nativeExecutableSet.remove(iterator);
     }
+    return FinalizeResult::KeepImpl;
 }
 
 NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, unsigned length, const String& name)

@@ -24,13 +24,14 @@
 import {ArchiveRouter} from '/assets/js/archiveRouter.js';
 import {DOM, REF} from '/library/js/Ref.js';
 import {CommitBank} from '/assets/js/commit.js';
-import {queryToParams, paramsToQuery, QueryModifier, percentage, elapsedTime} from '/assets/js/common.js';
+import {deepCompare, escapeHTML, queryToParams, paramsToQuery, QueryModifier, percentage, elapsedTime} from '/assets/js/common.js';
 import {Configuration} from '/assets/js/configuration.js'
 import {Expectations} from '/assets/js/expectations.js';
 import {Failures} from '/assets/js/failures.js';
 import {TypeForSuite} from '/assets/js/suites.js';
 
 function commitsForUuid(uuid) {
+    const branch = queryToParams(document.URL.split('?')[1]).branch;
     return `Commits: ${CommitBank.commitsDuring(uuid).map((commit) => {
             const params = {
                 branch: commit.branch ? [commit.branch] : branch,
@@ -56,12 +57,43 @@ function parametersForInstance(suite, data)
     return paramsToQuery(buildParams);
 }
 
+// Keep fetched links and requests here, by query, not on the run: each click copies the runs, and their fields come from the upload
+const linksForRun = new Map();
+
+// Suite runs have it in their details, test runs as a key of their own
+function numberOfLinks(run)
+{
+    return (run.details && run.details.number_of_links) || run.number_of_links;
+}
+
+function linksAllRowsAgreeOn(urlsByConfiguration)
+{
+    const linksPerRow = urlsByConfiguration.flatMap(pair => pair.urls).map(row => row.links).filter(links => links);
+    if (!linksPerRow.length || !linksPerRow.every(links => deepCompare(links, linksPerRow[0])))
+        return [];
+    return linksPerRow[0];
+}
+
+function anchorFor([name, url])
+{
+    return `<a href="${escapeHTML(url)}" target="_blank">${escapeHTML(name)}</a>`;
+}
+
 function testRunLink(suite, data)
 {
     if (!data.start_time)
         return '';
+    const startTime = new Date(data.start_time * 1000).toLocaleString();
+    const query = parametersForInstance(suite, data);
+    const links = linksForRun.get(query);
+    const [firstLink, ...otherLinks] = links || [];
+    if (firstLink)
+        return [`${anchorFor(firstLink)} @ ${startTime}`, ...otherLinks.map(anchorFor)].join('<br>');
     const typ = TypeForSuite(suite);
-    return `<a href="/urls/build?${parametersForInstance(suite, data)}" target="_blank">${typ.runDescription}</a> @ ${new Date(data.start_time * 1000).toLocaleString()}`;
+    const runLine = `<a href="/urls/build?${query}" target="_blank">${typ.runDescription}</a> @ ${startTime}`;
+    if (links === null && numberOfLinks(data) > 1)
+        return `${runLine}<br><div class="spinner tiny" style="vertical-align: text-top"></div>`;
+    return runLine;
 }
 
 function archiveLink(suite, data)
@@ -267,6 +299,13 @@ class _InvestigateDrawer {
         this.data = [];
 
         this.willFilterExpected = false;
+
+        this.closeOnEscape = (event) => {
+            if (event.key !== 'Escape' || event.defaultPrevented)
+                return;
+            event.preventDefault();
+            this.collapse();
+        };
     }
     isRendered() {
         let result = true;
@@ -321,10 +360,18 @@ class _InvestigateDrawer {
                 </div>
             </div>`;
     }
+    setDisplayed(isDisplayed) {
+        this.ref.element.classList.toggle('display', isDisplayed);
+        document.body.style.paddingBottom = isDisplayed ? 'var(--drawerHeight)' : '';
+        if (isDisplayed)
+            window.addEventListener('keydown', this.closeOnEscape);
+        else
+            window.removeEventListener('keydown', this.closeOnEscape);
+    }
     expand(suite, agregateData, allData) {
         if (!this.isRendered())
             return;
-        this.ref.element.classList.add('display');
+        this.setDisplayed(true);
         this.suite = suite;
         this.agregate = agregateData;
         this.data = allData;
@@ -386,14 +433,34 @@ class _InvestigateDrawer {
             this.select(this.selected);
         });
     }
+    fetchLinks(run) {
+        if (!run.start_time || !numberOfLinks(run))
+            return;
+        const query = parametersForInstance(this.suite, run);
+        if (linksForRun.has(query))
+            return;
+        linksForRun.set(query, null);
+        fetch(`api/urls?${query}`)
+            .then(response => response.json())
+            .then(linksAllRowsAgreeOn)
+            .then(links => linksForRun.set(query, links), () => linksForRun.delete(query))
+            .then(() => {
+                const selectedRun = this.selectedRun();
+                if (selectedRun && parametersForInstance(this.suite, selectedRun) === query)
+                    this.content.setState(contentForData(this.suite, selectedRun, this.willFilterExpected));
+            });
+    }
     collapse() {
         if (!this.isRendered())
             return;
-        this.ref.element.classList.remove('display');
+        this.setDisplayed(false);
 
         this.agregate = null;
         this.data = [];
         this.select(0);
+    }
+    selectedRun() {
+        return this.data[this.agregate && this.data.length > 1 ? this.selected - 1 : this.selected];
     }
     select(index) {
         if (!this.ref)
@@ -403,7 +470,7 @@ class _InvestigateDrawer {
         if (this.agregate && this.data.length > 1)
             candidates += 1;
         if (!candidates) {
-            this.ref.element.classList.remove('display');
+            this.setDisplayed(false);
             return;
         }
 
@@ -426,12 +493,11 @@ class _InvestigateDrawer {
 
         if (this.agregate && this.data.length > 1 && !this.selected)
             this.content.setState(contentForAgregateData(this.suite, this.agregate, this.data, this.willFilterExpected));
-        else
-            this.content.setState(contentForData(
-                this.suite,
-                this.data[this.agregate && this.data.length > 1 ? this.selected - 1 : this.selected],
-                this.willFilterExpected,
-            ));
+        else {
+            const selectedRun = this.selectedRun();
+            this.fetchLinks(selectedRun);
+            this.content.setState(contentForData(this.suite, selectedRun, this.willFilterExpected));
+        }
     }
 }
 

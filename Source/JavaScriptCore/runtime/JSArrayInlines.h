@@ -53,7 +53,7 @@ inline JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initia
         if (vectorLengthHint > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
             return nullptr;
 
-        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(structure, vectorLengthHint);
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(outOfLineStorage, vectorLengthHint);
         void* temp = vm.auxiliarySpace().allocate(
             vm,
             Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),

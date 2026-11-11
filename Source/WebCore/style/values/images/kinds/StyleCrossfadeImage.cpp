@@ -236,8 +236,9 @@ void CrossfadeImage::load(CachedResourceLoader& loader, const ResourceLoaderOpti
     m_inputImagesAreReady = true;
 }
 
-static void drawCrossfadeInput(GraphicsContext& context, const RenderElement& renderer, const Image& input, ImageDrawingOptions inputOptions, CompositeOperator operation, float opacity, ConcreteObjectSize crossfadeSize, bool isForFirstLine)
+static void drawCrossfadeInput(GraphicsContext& context, const RenderElement& renderer, const Image& input, const ImageDrawDescriptor& inputDescriptor, CompositeOperator operation, float opacity, bool isForFirstLine)
 {
+    auto crossfadeSize = inputDescriptor.concreteObjectSize;
     auto concreteSize = input.negotiate(renderer, CrossfadeInputSizing { crossfadeSize });
     auto imageSize = concreteSize.size();
 
@@ -250,19 +251,19 @@ static void drawCrossfadeInput(GraphicsContext& context, const RenderElement& re
 
     GraphicsContextStateSaver stateSaver(context);
 
-    auto options = inputOptions;
+    ImageDrawDescriptor descriptor { inputDescriptor, concreteSize };
     if (useTransparencyLayer) {
         context.setCompositeOperation(operation);
         context.beginTransparencyLayer(opacity);
     } else {
         context.setAlpha(opacity);
-        options = { options, operation };
+        descriptor = { descriptor, operation };
     }
 
     if (auto targetSize = crossfadeSize.size(); targetSize != imageSize)
         context.scale(targetSize / imageSize);
 
-    input.draw(context, renderer, concreteSize, FloatRect { { }, imageSize }, FloatRect { { }, imageSize }, options, isForFirstLine);
+    input.draw(context, renderer, descriptor, FloatRect { { }, imageSize }, FloatRect { { }, imageSize }, isForFirstLine);
 
     if (useTransparencyLayer)
         context.endTransparencyLayer();
@@ -289,11 +290,20 @@ void CrossfadeImage::drawCrossfade(GraphicsContext& context, const RenderElement
         auto operation = CompositeOperator::SourceOver;
         for (auto [input, percentage] : zippedRange(inputs, m_normalizedPercentages.percentages)) {
             Ref image = *input.image;
-            ImageDrawingOptions inputOptions;
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-            inputOptions = ImageDrawingOptions { AXCustomColorModeController::shouldInvertSVGImage(renderer, image) ? InvertContent::Yes : InvertContent::No };
+            auto invertContent = [&] {
+                if (AXCustomColorModeController::shouldForceInvertBitmapImage(renderer, image))
+                    return InvertContent::Forced;
+                return AXCustomColorModeController::shouldInvertSVGImage(renderer, image) ? InvertContent::Yes : InvertContent::No;
+            };
 #endif
-            drawCrossfadeInput(context, renderer, image, inputOptions, operation, percentage / 100, concreteObjectSize, isForFirstLine);
+            ImageDrawDescriptor inputDescriptor {
+                concreteObjectSize,
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+                invertContent(),
+#endif
+            };
+            drawCrossfadeInput(context, renderer, image, inputDescriptor, operation, percentage / 100, isForFirstLine);
             operation = CompositeOperator::PlusLighter;
         }
 
@@ -301,19 +311,20 @@ void CrossfadeImage::drawCrossfade(GraphicsContext& context, const RenderElement
     });
 }
 
-ImageDrawResult CrossfadeImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult CrossfadeImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const
 {
     if (isPending() || !canDrawAtSize(renderer, flooredIntSize(destination.size())))
         return ImageDrawResult::DidNothing;
 
-    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
-        drawCrossfade(context, renderer, concreteObjectSize, isForFirstLine);
+    return drawIntoDestination(context, descriptor, destination, source, [&](GraphicsContext& context) {
+        drawCrossfade(context, renderer, descriptor.concreteObjectSize, isForFirstLine);
         return ImageDrawResult::DidDraw;
     });
 }
 
-ImageDrawResult CrossfadeImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult CrossfadeImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const
 {
+    auto concreteObjectSize = descriptor.concreteObjectSize;
     if (!canDrawAtSize(renderer, concreteObjectSize.size()) || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
@@ -322,7 +333,7 @@ ImageDrawResult CrossfadeImage::drawAsPattern(GraphicsContext& context, const Re
         return ImageDrawResult::DidNothing;
 
     drawCrossfade(imageBuffer->context(), renderer, concreteObjectSize, isForFirstLine);
-    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
+    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, descriptor.rasterDrawingOptions());
 
     return ImageDrawResult::DidDraw;
 }
@@ -452,6 +463,14 @@ void CrossfadeImage::imageChanged(WebCore::CachedImage*, const IntRect*)
     for (auto entry : clients()) {
         CheckedRef client = entry.key;
         client->imageChanged(static_cast<WrappedImagePtr>(this));
+    }
+}
+
+void CrossfadeImage::scheduleRenderingUpdateForImage(WebCore::CachedImage& cachedImage)
+{
+    for (auto entry : clients()) {
+        CheckedRef client = entry.key;
+        client->scheduleRenderingUpdateForImage(cachedImage);
     }
 }
 

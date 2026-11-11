@@ -27,6 +27,7 @@
 
 #include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <WebCore/CachedResource.h>
+#include <WebCore/Cookie.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/InspectorResourceType.h>
 #include <WebCore/ReferrerPolicy.h>
@@ -38,6 +39,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
+#include <wtf/ListHashSet.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -176,6 +178,10 @@ namespace ResourceUtilities {
 
 WEBCORE_EXPORT bool sharedBufferContent(RefPtr<WebCore::FragmentedSharedBuffer>&&, const String& textEncodingName, bool withBase64Encode, String* result);
 WEBCORE_EXPORT Vector<WebCore::CachedResource*> cachedResourcesForFrame(WebCore::LocalFrame*);
+// Adds the cookies the frame's document would send to its own URL and to each of its cached subresources' URLs.
+// FrameSiteOnly skips URLs on a site other than the frame's, which a Site Isolation process may not look up.
+enum class SubresourceSites : bool { All, FrameSiteOnly };
+WEBCORE_EXPORT void collectRawCookiesForFrame(WebCore::LocalFrame&, ListHashSet<WebCore::Cookie>&, SubresourceSites = SubresourceSites::All);
 WEBCORE_EXPORT Ref<JSON::ArrayOf<Inspector::Protocol::Page::FrameResource>> buildResourceObjectsForFrame(WebCore::LocalFrame&);
 WEBCORE_EXPORT Vector<Inspector::FrameResource> buildResourceDataForFrame(WebCore::LocalFrame&);
 WEBCORE_EXPORT Ref<Inspector::Protocol::Page::FrameResource> buildResourceObject(const Inspector::FrameResource&);
@@ -184,10 +190,10 @@ WEBCORE_EXPORT bool mainResourceContent(WebCore::LocalFrame*, bool withBase64Enc
 
 WEBCORE_EXPORT String sourceMapURLForResource(WebCore::CachedResource*);
 RefPtr<WebCore::CachedResource> WEBCORE_EXPORT cachedResource(const WebCore::LocalFrame*, const URL&);
-Inspector::ResourceType WEBCORE_EXPORT LEGACY_NODELETE inspectorResourceType(WebCore::CachedResource::Type);
+NODELETE Inspector::ResourceType WEBCORE_EXPORT inspectorResourceType(WebCore::CachedResource::Type);
 Inspector::ResourceType WEBCORE_EXPORT inspectorResourceType(const WebCore::CachedResource&);
 
-Inspector::Protocol::Page::ResourceType LEGACY_NODELETE resourceTypeToProtocol(Inspector::ResourceType);
+NODELETE Inspector::Protocol::Page::ResourceType resourceTypeToProtocol(Inspector::ResourceType);
 Inspector::Protocol::Page::ResourceType cachedResourceTypeToProtocol(const WebCore::CachedResource&);
 WebCore::LocalFrame* findFrameWithSecurityOrigin(WebCore::Page&, const String& originRawString);
 WebCore::DocumentLoader* assertDocumentLoader(Inspector::Protocol::ErrorString&, WebCore::LocalFrame*);

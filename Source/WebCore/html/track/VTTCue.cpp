@@ -996,14 +996,6 @@ void VTTCue::obtainCSSBoxes()
         style->setTextContent(WTF::move(cssString));
         displayTree->appendChild(WTF::move(style));
     }
-
-    if (const auto& styleSheets = track()->styleSheets()) {
-        for (const auto& cssString : *styleSheets) {
-            auto style = HTMLStyleElement::create(HTMLNames::styleTag, document.get(), false);
-            style->setTextContent(String { cssString });
-            displayTree->appendChild(WTF::move(style));
-        }
-    }
 }
 
 void VTTCue::markFutureAndPastNodes(ContainerNode* root, const MediaTime& previousTimestamp, const MediaTime& movieTime)
@@ -1414,7 +1406,7 @@ void VTTCue::toJSON(JSON::Object& object) const
 }
 
 #if ENABLE(SPEECH_SYNTHESIS)
-static float LEGACY_NODELETE mapVideoRateToSpeechRate(float rate)
+NODELETE static float mapVideoRateToSpeechRate(float rate)
 {
     // WebSpeech says to go from .1 -> 10 (default 1)
     // Video rate is 0 -> 2 (default 1). [The spec has no maximum rate, but the default controls only go to 2x, so use that]

@@ -24,6 +24,7 @@
 
 #include "AudioSampleFormat.h"
 #include "GStreamerCommon.h"
+#include "GUniquePtrGStreamer.h"
 #include "MediaSampleGStreamer.h"
 #include "SharedBuffer.h"
 #include <wtf/glib/GUniquePtr.h>
@@ -177,6 +178,14 @@ int64_t PlatformRawAudioDataGStreamer::timestamp() const
     if (segment->rate < 0)
         return -timestamp;
     return timestamp;
+}
+
+// Two channels are the front left and right, and other channels are discrete.
+MediaChannelLayout PlatformRawAudioDataGStreamer::channelLayout() const
+{
+    if (numberOfChannels() == 2)
+        return { .kind = MediaChannelLayout::Kind::Positional, .mask = webAudioChannelBit(WebAudioChannel::FrontLeft) | webAudioChannelBit(WebAudioChannel::FrontRight) };
+    return { .kind = MediaChannelLayout::Kind::Discrete };
 }
 
 bool PlatformRawAudioDataGStreamer::isInterleaved() const

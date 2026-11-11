@@ -47,7 +47,7 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-static bool LEGACY_NODELETE isListOrIndentBlockquote(const Node& node)
+NODELETE static bool isListOrIndentBlockquote(const Node& node)
 {
     return node.hasTagName(ulTag) || node.hasTagName(olTag) || node.hasTagName(blockquoteTag);
 }
@@ -194,7 +194,7 @@ void IndentOutdentCommand::outdentParagraph()
         splitBlockquoteNode = splitTreeToNode(*startOfParagraphNode, *enclosingNode, true);
     else {
         // We split the blockquote at where we start outdenting.
-        RefPtr highestInlineNode = highestEnclosingNodeOfType(visibleStartOfParagraph.deepEquivalent(), isInline, CannotCrossEditingBoundary, enclosingBlockFlow.get());
+        RefPtr highestInlineNode = highestEnclosingNodeOfType(visibleStartOfParagraph.deepEquivalent(), isInline, EditingBoundaryCrossingRule::CannotCross, enclosingBlockFlow.get());
         splitElement(*enclosingNode, highestInlineNode ? *highestInlineNode : *protect(visibleStartOfParagraph.deepEquivalent().deprecatedNode()));
     }
 

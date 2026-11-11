@@ -37,119 +37,21 @@
 #include "StyleAppleColorFilter.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 namespace Style {
 
-static constexpr auto timeToKeepCachedGradients = 3_s;
-
-class GradientImage::CachedGradient {
-    WTF_MAKE_TZONE_ALLOCATED_INLINE(CachedGradient);
-public:
-    CachedGradient(GradientImage&, FloatSize, Ref<WebCore::Gradient>&&, const AppleColorFilter&);
-
-    FloatSize size() const { return m_size; }
-    WebCore::Gradient& LEGACY_NODELETE gradient() const LIFETIME_BOUND { return m_gradient; }
-    const AppleColorFilter& colorFilter() const LIFETIME_BOUND { return m_colorFilter; }
-
-    std::optional<RenderingResourceIdentifier> patternBufferIdentifierForTesting() const
-    {
-        if (!m_patternBuffer)
-            return std::nullopt;
-        return m_patternBuffer->renderingResourceIdentifier();
-    }
-
-    void puntEvictionTimer() { m_evictionTimer.restart(); }
-
-    RefPtr<ImageBuffer> LEGACY_NODELETE patternBuffer(FloatSize adjustedSize, unsigned gradientHash, FloatSize scaleFactor) const
-    {
-        if (!m_patternBuffer || m_patternGradientHash != gradientHash || m_patternAdjustedSize != adjustedSize || !areEssentiallyEqual(scaleFactor, m_patternScaleFactor))
-            return nullptr;
-        return m_patternBuffer;
-    }
-
-    void setPatternBuffer(Ref<ImageBuffer>&& buffer, FloatSize adjustedSize, unsigned gradientHash, FloatSize scaleFactor)
-    {
-        m_patternBuffer = WTF::move(buffer);
-        m_patternAdjustedSize = adjustedSize;
-        m_patternGradientHash = gradientHash;
-        m_patternScaleFactor = scaleFactor;
-    }
-
-private:
-    void evictionTimerFired();
-
-    WeakRef<GradientImage> m_owner;
-    const FloatSize m_size;
-    const Ref<WebCore::Gradient> m_gradient;
-    const AppleColorFilter m_colorFilter;
-    RefPtr<ImageBuffer> m_patternBuffer;
-    FloatSize m_patternAdjustedSize;
-    unsigned m_patternGradientHash { 0 };
-    FloatSize m_patternScaleFactor;
-    DeferrableOneShotTimer m_evictionTimer;
-};
-
-inline GradientImage::CachedGradient::CachedGradient(GradientImage& owner, FloatSize size, Ref<WebCore::Gradient>&& gradient, const AppleColorFilter& colorFilter)
-    : m_owner(owner)
-    , m_size(size)
-    , m_gradient(WTF::move(gradient))
-    , m_colorFilter(colorFilter)
-    , m_evictionTimer(*this, &GradientImage::CachedGradient::evictionTimerFired, timeToKeepCachedGradients)
-{
-    m_evictionTimer.restart();
-}
-
-void GradientImage::CachedGradient::evictionTimerFired()
-{
-    // NOTE: This is essentially a "delete this", the object is no longer valid after this line.
-    protect(m_owner.get())->evictCachedGradient(*this);
-}
-
-GradientImage::CachedGradient* GradientImage::cachedGradient(FloatSize size, const AppleColorFilter& colorFilter)
-{
-    if (size.isEmpty())
-        return nullptr;
-
-    auto it = m_gradients.find(size);
-    if (it == m_gradients.end())
-        return nullptr;
-
-    for (auto& cached : it->value) {
-        if (cached->colorFilter() == colorFilter) {
-            cached->puntEvictionTimer();
-            return cached.get();
-        }
-    }
-    return nullptr;
-}
-
-void GradientImage::evictCachedGradient(CachedGradient& cached)
-{
-    auto it = m_gradients.find(cached.size());
-    ASSERT(it != m_gradients.end());
-
-    bool removed = it->value.removeFirstMatching([&](auto& entry) {
-        return entry.get() == &cached;
-    });
-    ASSERT_UNUSED(removed, removed);
-
-    if (it->value.isEmpty())
-        m_gradients.remove(it);
-}
-
 auto GradientImage::cachedGradientsForTesting() const -> Vector<CachedGradientForTesting>
 {
     Vector<CachedGradientForTesting> result;
-    for (auto& [size, entries] : m_gradients) {
+    for (auto& [size, entries] : m_gradients.entries()) {
         for (auto& entry : entries) {
-            auto patternBufferIdentifier = entry->patternBufferIdentifierForTesting();
+            auto& patternBuffer = entry->patternBufferForTesting();
             result.append({
                 size.width(),
                 size.height(),
                 !entry->colorFilter().isNone(),
-                patternBufferIdentifier ? patternBufferIdentifier->toUInt64() : 0,
+                patternBuffer ? patternBuffer->renderingResourceIdentifier().toUInt64() : 0,
             });
         }
     }
@@ -207,38 +109,30 @@ Ref<WebCore::Gradient> GradientImage::gradientForSize(const RenderElement& rende
     if (!m_stopsAreCacheable)
         return createPlatformGradient(m_gradient, size, style);
 
-    auto& colorFilter = style->appleColorFilter();
-    auto& mutableThis = const_cast<GradientImage&>(*this);
-    if (auto* existing = mutableThis.cachedGradient(size, colorFilter)) {
-        cached = existing;
-        return existing->gradient();
-    }
-
-    auto gradient = createPlatformGradient(m_gradient, size, style);
-    auto entry = makeUnique<CachedGradient>(mutableThis, size, gradient.copyRef(), colorFilter);
-    cached = entry.get();
-    mutableThis.m_gradients.add(size, Vector<std::unique_ptr<CachedGradient>, 1> { }).iterator->value.append(WTF::move(entry));
-    return gradient;
+    cached = &m_gradients.ensure(size, style->appleColorFilter(), [&] {
+        return createPlatformGradient(m_gradient, size, style);
+    });
+    return cached->value();
 }
 
-ImageDrawResult GradientImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult GradientImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (size.isEmpty())
         return ImageDrawResult::DidNothing;
 
     CachedGradient* cached = nullptr;
     Ref gradient = gradientForSize(renderer, size, isForFirstLine, cached);
 
-    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+    return drawIntoDestination(context, descriptor, destination, source, [&](GraphicsContext& context) {
         context.fillRect(FloatRect { { }, size }, gradient);
         return ImageDrawResult::DidDraw;
     });
 }
 
-ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (size.isEmpty() || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
@@ -250,35 +144,22 @@ ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const Ren
     auto adjustedTile = tile;
     gradient->adjustParametersForTiledDrawing(adjustedSize, adjustedTile, spacing);
 
-    // Factor in the destination context's scale to generate at the best resolution.
-    auto contextCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-    double xScale = std::abs(contextCTM.xScale());
-    double yScale = std::abs(contextCTM.yScale());
-    auto adjustedPatternCTM = patternTransform;
-    adjustedPatternCTM.scale(1.0 / xScale, 1.0 / yScale);
-    adjustedTile.scale(xScale, yScale);
-
-    auto gradientHash = gradient->hash();
     auto scaleFactor = context.scaleFactor();
 
-    RefPtr buffer = cached ? cached->patternBuffer(adjustedSize, gradientHash, scaleFactor) : nullptr;
+    RefPtr buffer = cached ? cached->patternBuffer(descriptor, adjustedSize, scaleFactor) : nullptr;
     if (!buffer) {
-        auto newBuffer = context.createAlignedImageBuffer(adjustedSize);
+        RefPtr newBuffer = createPatternBuffer(context, descriptor, adjustedSize, [&](GraphicsContext& context) {
+            context.fillRect(FloatRect { { }, adjustedSize }, gradient);
+        });
         if (!newBuffer)
             return ImageDrawResult::DidDraw;
 
-        newBuffer->context().fillRect(FloatRect { { }, adjustedSize }, gradient);
-
-        if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
-            newBuffer->convertToLuminanceMask();
-
         buffer = newBuffer.copyRef();
         if (cached)
-            cached->setPatternBuffer(newBuffer.releaseNonNull(), adjustedSize, gradientHash, scaleFactor);
+            cached->setPatternBuffer(newBuffer.releaseNonNull(), descriptor, adjustedSize, scaleFactor);
     }
 
-    context.drawPattern(*buffer, destination, adjustedTile, adjustedPatternCTM, phase, spacing, options);
-    return ImageDrawResult::DidDraw;
+    return drawPatternBuffer(context, *buffer, descriptor, destination, adjustedTile, patternTransform, phase, spacing);
 }
 
 bool GradientImage::knownToBeOpaque(const RenderElement& renderer) const

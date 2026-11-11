@@ -63,6 +63,7 @@
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/CSSPropertyParserConsumer+Color.h>
 #include <WebCore/CaptionUserPreferences.h>
+#include <WebCore/ColorAppearance.h>
 #include <WebCore/CompositionHighlight.h>
 #include <WebCore/FocusController.h>
 #include <WebCore/LocalFrameInlines.h>
@@ -299,6 +300,11 @@ WKStringRef WKBundlePageCopyRenderTreeExternalRepresentationForPrinting(WKBundle
     return WebKit::toCopiedAPI(protect(WebKit::toImpl(pageRef))->renderTreeExternalRepresentationForPrinting());
 }
 
+WKImageRef WKBundlePageCreateCSSPageBoxesSnapshotForTesting(WKBundlePageRef pageRef, WKSize defaultPageBoxSize, double defaultPageMargin)
+{
+    return WebKit::toAPILeakingRef(protect(WebKit::toImpl(pageRef))->cssPageBoxesSnapshotForTesting(WebKit::toIntSize(defaultPageBoxSize), static_cast<int>(defaultPageMargin)));
+}
+
 void WKBundlePageClose(WKBundlePageRef pageRef)
 {
     protect(WebKit::toImpl(pageRef))->sendClose();
@@ -402,8 +408,7 @@ void WKBundlePageReplaceStringMatches(WKBundlePageRef pageRef, WKArrayRef matchI
 {
     RefPtr matchIndices = WebKit::toImpl(matchIndicesRef);
 
-    Vector<uint32_t> indices;
-    indices.reserveInitialCapacity(matchIndices->size());
+    Vector<uint32_t> indices(ReserveCapacityTag { }, matchIndices->size());
 
     auto numberOfMatchIndices = matchIndices->size();
     for (size_t i = 0; i < numberOfMatchIndices; ++i) {
@@ -566,7 +571,7 @@ void WKBundlePageSetUseDarkAppearance(WKBundlePageRef pageRef, bool useDarkAppea
 {
     RefPtr webPage = WebKit::toImpl(pageRef);
     if (RefPtr page = webPage ? webPage->corePage() : nullptr)
-        page->setUseColorAppearance(useDarkAppearance, page->useElevatedUserInterfaceLevel());
+        page->setUseColorAppearance(useDarkAppearance ? WebCore::UseDarkAppearance::Yes : WebCore::UseDarkAppearance::No, page->useElevatedUserInterfaceLevel() ? WebCore::UseElevatedUserInterfaceLevel::Yes : WebCore::UseElevatedUserInterfaceLevel::No);
 }
 
 bool WKBundlePageIsUsingDarkAppearance(WKBundlePageRef pageRef)

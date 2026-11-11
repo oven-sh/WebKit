@@ -1161,7 +1161,7 @@ static inline String escapePattern(const String& pattern, std::span<const Charac
             previousCharacterWasBackslash = ch == '\\';
     }
 
-    return result.toString();
+    return WTF::move(result).toString();
 }
 
 String RegExp::escapedPattern(const String& pattern)

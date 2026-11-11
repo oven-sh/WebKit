@@ -306,7 +306,7 @@ void FrameConsoleClient::timeStamp(JSC::JSGlobalObject*, Ref<ScriptArguments>&& 
     InspectorInstrumentation::consoleTimeStamp(frame.get(), WTF::move(arguments));
 }
 
-static JSC::JSObject* LEGACY_NODELETE objectArgumentAt(ScriptArguments& arguments, unsigned index)
+NODELETE static JSC::JSObject* objectArgumentAt(ScriptArguments& arguments, unsigned index)
 {
     return arguments.argumentCount() > index ? arguments.argumentAt(index).getObject() : nullptr;
 }
@@ -389,7 +389,7 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
                                 snapshot = ImageBuffer::create(concreteObjectSize.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, /* scale */ 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
                                 if (!snapshot)
                                     return;
-                                image->draw(snapshot->context(), concreteObjectSize);
+                                image->draw(snapshot->context(), ImageDrawDescriptor { concreteObjectSize });
                             }
                         }
                     };
@@ -482,8 +482,7 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
         }
     }
 
-    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments;
-    adjustedArguments.reserveInitialCapacity(arguments->argumentCount() + !target);
+    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments(ReserveCapacityTag { }, arguments->argumentCount() + !target);
     adjustedArguments.append({ vm, target ? target : JSC::jsNontrivialString(vm, "Viewport"_s) });
     for (size_t i = (!target ? 0 : 1); i < arguments->argumentCount(); ++i)
         adjustedArguments.append({ vm, arguments->argumentAt(i) });

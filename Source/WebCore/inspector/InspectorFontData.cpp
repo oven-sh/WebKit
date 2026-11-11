@@ -151,8 +151,7 @@ static Ref<Inspector::Protocol::CSS::Font> buildObjectForFont(const Font& font)
 
 static RefPtr<JSON::ArrayOf<Inspector::Protocol::CSS::CharacterRange>> buildCharacterRanges(const CharacterSet& characters)
 {
-    Vector<char32_t> sortedCharacters;
-    sortedCharacters.reserveInitialCapacity(characters.size());
+    Vector<char32_t> sortedCharacters(ReserveCapacityTag { }, characters.size());
     for (auto character : characters)
         sortedCharacters.append(character);
     std::sort(sortedCharacters.begin(), sortedCharacters.end());
@@ -249,8 +248,7 @@ private:
         if (from >= to)
             return;
 
-        Vector<unsigned> glyphIndexes;
-        glyphIndexes.reserveInitialCapacity(glyphBuffer.size());
+        Vector<unsigned> glyphIndexes(ReserveCapacityTag { }, glyphBuffer.size());
         for (unsigned i = 0; i < glyphBuffer.size(); ++i) {
             if (auto offset = glyphBuffer.checkedStringOffsetAt(i, run.length()); offset && unsignedCast(*offset) < to)
                 glyphIndexes.append(i);
@@ -329,11 +327,11 @@ private:
 
     void didUpdateState(GraphicsContextState&) final { }
 
-    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImageDrawingOptions) final { }
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, RasterDrawingOptions) final { }
 
     void drawSystemImage(SystemImage&, const FloatRect&) final { }
 
-    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, ImageDrawingOptions) final { }
+    void drawPattern(const NativeImage&, const FloatRect&, const FloatRect&, const AffineTransform&, const FloatPoint&, const FloatSize&, RasterDrawingOptions) final { }
 
     IntRect clipBounds() const final { return { }; }
 
@@ -396,7 +394,7 @@ private:
     void drawFocusRing(const Path&, float, const Color&, float) final { }
     void drawFocusRing(const Vector<FloatRect>&, float, const Color&, float) final { }
 
-    void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, ImageDrawingOptions = { }) final { }
+    void drawImageBuffer(ImageBuffer&, const FloatRect&, const FloatRect&, RasterDrawingOptions = { }) final { }
 
     void clipRoundedRect(const FloatRoundedRect&) final { }
     void clipOutRoundedRect(const FloatRoundedRect&) final { }
@@ -409,7 +407,7 @@ private:
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect&, const Color&) final { }
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, ImageDrawingOptions = { }) final { }
+    void drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, RasterDrawingOptions = { }) final { }
 #endif
 
     RenderedFonts m_renderedFonts;

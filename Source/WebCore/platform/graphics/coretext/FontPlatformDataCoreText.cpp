@@ -36,7 +36,7 @@
 
 namespace WebCore {
 
-inline int LEGACY_NODELETE mapFontWidthVariantToCTFeatureSelector(FontWidthVariant variant)
+NODELETE inline int mapFontWidthVariantToCTFeatureSelector(FontWidthVariant variant)
 {
     switch (variant) {
     case FontWidthVariant::RegularWidth:
@@ -140,7 +140,7 @@ RetainPtr<CTFontRef> createCTFont(CFDictionaryRef attributes, float size, CTFont
     return adoptCF(CTFontCreateWithFontDescriptorAndOptions(fontDescriptor.get(), size, nullptr, options));
 }
 
-FontPlatformData FontPlatformData::create(const Attributes& data, const FontCustomPlatformData* custom)
+FontPlatformData FontPlatformData::create(const Attributes& data, FontCustomPlatformData* custom)
 {
     RetainPtr<CTFontRef> ctFont;
     if (custom) {

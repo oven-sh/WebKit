@@ -124,7 +124,7 @@ public:
             if (std::holds_alternative<GraphicsLayerData>(m_data)) {
                 auto& data = std::get<GraphicsLayerData>(m_data);
                 if (data.graphicsLayer)
-                    return PlatformLayerContainer { platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer }) }.get();
+                    SUPPRESS_FORWARD_DECL_ARG return PlatformLayerContainer { platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer }) }.get();
             }
             return static_cast<ScrollingPlatformLayer*>(nullptr);
         }
@@ -279,7 +279,7 @@ public:
         ASSERT(m_scrollingStateTree);
         return *m_scrollingStateTree;
     }
-    void LEGACY_NODELETE attachAfterDeserialization(ScrollingStateTree&);
+    NODELETE void attachAfterDeserialization(ScrollingStateTree&);
 
     ScrollingNodeID scrollingNodeID() const { return m_nodeID; }
 
@@ -300,7 +300,7 @@ public:
     void removeFromParent();
     void removeChild(ScrollingStateNode&);
 
-    RefPtr<ScrollingStateNode> LEGACY_NODELETE childAtIndex(size_t) const;
+    NODELETE RefPtr<ScrollingStateNode> childAtIndex(size_t) const;
 
     String scrollingStateTreeAsText(OptionSet<ScrollingStateTreeAsTextBehavior> = { }) const;
 #if ASSERT_ENABLED

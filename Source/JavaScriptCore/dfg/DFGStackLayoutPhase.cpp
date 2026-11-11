@@ -74,6 +74,7 @@ public:
                 }
                     
                 case LoadVarargs:
+                case LoadVarargsWithSpread:
                 case ForwardVarargs: {
                     LoadVarargsData* data = node->loadVarargsData();
                     usedOperands.setOperand(data->count, true);
@@ -213,6 +214,7 @@ public:
                     Node* node = block->at(nodeIndex);
                     switch (node->op()) {
                     case LoadVarargs:
+                    case LoadVarargsWithSpread:
                     case ForwardVarargs: {
                         LoadVarargsData* data = node->loadVarargsData();
                         data->machineCount = assign(usedOperands, allocation, data->count);
@@ -233,7 +235,7 @@ public:
     }
 
 private:
-    VirtualRegister LEGACY_NODELETE assign(const Operands<bool>& usedOperands, const Vector<unsigned>& allocation, Operand operand)
+    NODELETE VirtualRegister assign(const Operands<bool>& usedOperands, const Vector<unsigned>& allocation, Operand operand)
     {
         if (operand.isArgument())
             return operand.virtualRegister();

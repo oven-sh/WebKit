@@ -296,7 +296,7 @@ private:
         }
     }
 
-    bool LEGACY_NODELETE shouldCopyPropagate(Value* value)
+    NODELETE bool shouldCopyPropagate(Value* value)
     {
         switch (value->opcode()) {
         case Trunc:
@@ -336,7 +336,7 @@ private:
         {
         }
         
-        void LEGACY_NODELETE swap(ArgPromise& other)
+        NODELETE void swap(ArgPromise& other)
         {
             std::swap(m_arg, other.m_arg);
             std::swap(m_value, other.m_value);
@@ -351,7 +351,7 @@ private:
             swap(other);
         }
         
-        ArgPromise& LEGACY_NODELETE operator=(ArgPromise&& other)
+        NODELETE ArgPromise& operator=(ArgPromise&& other)
         {
             swap(other);
             return *this;
@@ -363,7 +363,7 @@ private:
                 RELEASE_ASSERT(m_wasWrapped);
         }
         
-        void LEGACY_NODELETE setTraps(bool value)
+        NODELETE void setTraps(bool value)
         {
             m_traps = value;
         }
@@ -373,7 +373,7 @@ private:
             m_trapOrigin = value;
         }
 
-        static ArgPromise LEGACY_NODELETE tmp(Value* value)
+        NODELETE static ArgPromise tmp(Value* value)
         {
             ArgPromise result;
             result.m_value = value;
@@ -382,14 +382,14 @@ private:
 
         explicit operator bool() const { return m_arg || m_value; }
 
-        Arg::Kind LEGACY_NODELETE kind() const
+        NODELETE Arg::Kind kind() const
         {
             if (!m_arg && m_value)
                 return Arg::Tmp;
             return m_arg.kind();
         }
 
-        const Arg& LEGACY_NODELETE peek() const
+        NODELETE const Arg& peek() const
         {
             return m_arg;
         }
@@ -525,12 +525,12 @@ private:
         return tmp;
     }
 
-    ArgPromise LEGACY_NODELETE tmpPromise(Value* value)
+    NODELETE ArgPromise tmpPromise(Value* value)
     {
         return ArgPromise::tmp(value);
     }
 
-    Tmp LEGACY_NODELETE tmpForType(Type type)
+    NODELETE Tmp tmpForType(Type type)
     {
         return m_code.newTmp(bankForType(type));
     }
@@ -552,7 +552,7 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    bool LEGACY_NODELETE canBeInternal(Value* value)
+    NODELETE bool canBeInternal(Value* value)
     {
         // If one of the internal things has already been computed, then we don't want to cause
         // it to be recomputed again.
@@ -994,7 +994,7 @@ private:
         m_blockWithNextInterference = m_block;
     }
 
-    bool LEGACY_NODELETE isMergeableValue(Value* v, B3::Opcode b3Opcode)
+    NODELETE bool isMergeableValue(Value* v, B3::Opcode b3Opcode)
     { 
         if (v->opcode() != b3Opcode)
             return false;
@@ -1018,7 +1018,7 @@ private:
     }
 
     template<IsLegalOffset Int>
-    std::optional<unsigned> LEGACY_NODELETE scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
+    NODELETE std::optional<unsigned> scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
     {
         if (shl->opcode() != Shl)
             return std::nullopt;
@@ -1277,7 +1277,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE bitImm64(Value* value)
+    NODELETE Arg bitImm64(Value* value)
     {
         if (value->hasInt()) {
             int64_t intValue = value->asInt();
@@ -1297,7 +1297,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE fpImm64(Value* value)
+    NODELETE Arg fpImm64(Value* value)
     {
         if (value->hasInt()) {
             int64_t intValue = value->asInt();
@@ -1307,7 +1307,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE fpImm128(Value* value)
+    NODELETE Arg fpImm128(Value* value)
     {
         if (value->hasV128()) {
             auto v128Value = value->asV128();
@@ -1317,7 +1317,7 @@ private:
         return Arg();
     }
 
-    Arg LEGACY_NODELETE zeroReg()
+    NODELETE Arg zeroReg()
     {
         return Arg::zeroReg();
     }
@@ -1466,7 +1466,7 @@ private:
     }
 
     // By convention, we use Oops to mean "I don't know".
-    Air::Opcode LEGACY_NODELETE tryOpcodeForType(
+    NODELETE Air::Opcode tryOpcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode;
@@ -1491,12 +1491,12 @@ private:
         return opcode;
     }
 
-    Air::Opcode LEGACY_NODELETE tryOpcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
+    NODELETE Air::Opcode tryOpcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
     {
         return tryOpcodeForType(opcode32, opcode64, Air::Oops, Air::Oops, type);
     }
 
-    Air::Opcode LEGACY_NODELETE opcodeForType(
+    NODELETE Air::Opcode opcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode = tryOpcodeForType(opcode32, opcode64, opcodeDouble, opcodeFloat, type);
@@ -1504,7 +1504,7 @@ private:
         return opcode;
     }
 
-    Air::Opcode LEGACY_NODELETE opcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
+    NODELETE Air::Opcode opcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
     {
         return tryOpcodeForType(opcode32, opcode64, Air::Oops, Air::Oops, type);
     }
@@ -1537,7 +1537,7 @@ private:
         append(opcode, result);
     }
 
-    Air::Opcode LEGACY_NODELETE opcodeBasedOnShiftKind(B3::Opcode b3Opcode, 
+    NODELETE Air::Opcode opcodeBasedOnShiftKind(B3::Opcode b3Opcode, 
         Air::Opcode shl32, Air::Opcode shl64, 
         Air::Opcode sshr32, Air::Opcode sshr64, 
         Air::Opcode zshr32, Air::Opcode zshr64)
@@ -1882,7 +1882,7 @@ private:
         return Inst(move, m_value, tmp(value), dest);
     }
     
-    Air::Opcode LEGACY_NODELETE storeOpcode(Width width, Bank bank)
+    NODELETE Air::Opcode storeOpcode(Width width, Bank bank)
     {
         using namespace Air;
         switch (width) {
@@ -1945,7 +1945,7 @@ private:
     }
 
     template<Air::Opcode i8, Air::Opcode i16, Air::Opcode i32, Air::Opcode i64, Air::Opcode f32, Air::Opcode f64>
-    constexpr Air::Opcode LEGACY_NODELETE simdOpcode(SIMDLane lane)
+    NODELETE constexpr Air::Opcode simdOpcode(SIMDLane lane)
     {
         if (scalarTypeIsFloatingPoint(lane)) {
             switch (elementByteSize(lane)) {
@@ -1971,7 +1971,7 @@ private:
     }
 
     template<Air::Opcode unsignedI8, Air::Opcode signedI8, Air::Opcode unsignedI16, Air::Opcode signedI16, Air::Opcode i32, Air::Opcode i64, Air::Opcode f32, Air::Opcode f64>
-    constexpr Air::Opcode LEGACY_NODELETE simdOpcode(SIMDLane lane, SIMDSignMode signMode)
+    NODELETE constexpr Air::Opcode simdOpcode(SIMDLane lane, SIMDSignMode signMode)
     {
         if (scalarTypeIsFloatingPoint(lane)) {
             switch (elementByteSize(lane)) {
@@ -2081,6 +2081,153 @@ private:
     {
         SIMDValue* value = m_value->as<SIMDValue>();
         append(op, tmp(value->child(0)), tmp(value));
+    }
+
+    // ARM64 has no instruction for wasm i32x4.dot_i16x8_s, so VectorDotProduct is built from three.
+    // Below, pK = a[K] * b[K] with both lanes sign-extended to i32.
+    //
+    //   SMULL Vd.4S, Vn.4H, Vm.4H multiplies the low four i16 lanes into four i32 lanes:
+    //
+    //       a: [a0 a1 a2 a3 | a4 a5 a6 a7]
+    //       b: [b0 b1 b2 b3 | b4 b5 b6 b7]
+    //           \_________/
+    //                v
+    //       d: [p0 | p1 | p2 | p3]
+    //
+    //   SMULL2 Vd.4S, Vn.8H, Vm.8H does the same on the high four lanes:
+    //
+    //       a: [a0 a1 a2 a3 | a4 a5 a6 a7]
+    //       b: [b0 b1 b2 b3 | b4 b5 b6 b7]
+    //                         \_________/
+    //                              v
+    //       d: [p4 | p5 | p6 | p7]
+    //
+    //   ADDP Vd.4S, Vn.4S, Vm.4S joins n and m into one eight-lane row and adds each adjacent pair:
+    //
+    //       n: [n0 n1 n2 n3]   m: [m0 m1 m2 m3]
+    //           \_/   \_/          \_/   \_/
+    //       d: [n0+n1  n2+n3      m0+m1  m2+m3]
+    //
+    // Output lane i of a dot product is a[2i]*b[2i] + a[2i+1]*b[2i+1], which is exactly what the
+    // three produce together:
+    //
+    //   SMULL  low, a, b        low  = [p0 p1 p2 p3]
+    //   SMULL2 high, a, b       high = [p4 p5 p6 p7]
+    //   ADDP   d, low, high     d    = [p0+p1, p2+p3, p4+p5, p6+p7] = dot(a, b)
+    //
+    // Unrolled quantized matmul kernels add many dot products together:
+    //
+    //   acc + dot(a0, b0) + dot(a1, b1) + dot(a2, b2) + dot(a3, b3)
+    //
+    // Each lane of ADDP is a wrapping i32 add of two input lanes, and wrapping adds are associative and
+    // commutative, so the lane-wise sums can be taken before the pairing instead of after it:
+    //
+    //   dot(a0, b0) + dot(a1, b1) + ... = ADDP(SMULL(a0, b0) + SMULL(a1, b1) + ..., SMULL2(a0, b0) + SMULL2(a1, b1) + ...)
+    //
+    // SMLAL and SMLAL2 compute the same products as SMULL and SMULL2 but add them into the destination:
+    //
+    //   d (before): [d0       | d1       | d2       | d3      ]
+    //             + [a0*b0    | a1*b1    | a2*b2    | a3*b3   ]   (SMLAL)
+    //   d (after):  [d0+a0*b0 | d1+a1*b1 | d2+a2*b2 | d3+a3*b3]
+    //
+    // So N dot products cost SMULL + SMULL2 for the first, SMLAL + SMLAL2 for each further one, and a
+    // single ADDP, instead of three instructions each plus the adds joining them.
+    //
+    // The adds form a tree whose leaves are dot products, widening multiplies (VectorMulLow and
+    // VectorMulHigh), or any other value. Because every add in it is an i32x4 add, the leaves can be
+    // summed in any order. The tree is flattened into its leaves, the dot products are fused as above,
+    // the widening multiplies are accumulated onto the paired sum with SMLAL/SMLAL2 (or UMLAL/UMLAL2),
+    // and the remaining leaves are added with ADD. A leaf or inner add is absorbed only when this tree
+    // is its sole user; otherwise it is computed on its own and joins as an ordinary leaf.
+    bool tryEmitSumOfDotProducts()
+    {
+        ASSERT(isARM64());
+
+        // Every i32x4 add retries this on its own subtree, so bounding the walk keeps lowering linear.
+        static constexpr unsigned maxVisitedAdds = 8;
+        // A fused dot product keeps both of its inputs live until the root add instead of until the dot product.
+        static constexpr unsigned maxDotProducts = 6;
+
+        Vector<Value*, 8> dotProducts;
+        Vector<Value*, 8> multiplies;
+        Vector<Value*, 8> otherAddends;
+        Vector<Value*, 8> internalAdds;
+        unsigned visitedAdds = 0;
+
+        auto isFusableMultiply = [&](Value* value) {
+            if (value->opcode() != B3::VectorMulLow && value->opcode() != B3::VectorMulHigh)
+                return false;
+            return value->as<SIMDValue>()->simdLane() == SIMDLane::i32x4;
+        };
+
+        auto collect = [&](auto& collect, Value* addend) -> void {
+            if (!canBeInternal(addend)) {
+                otherAddends.append(addend);
+                return;
+            }
+            if (addend->opcode() == B3::VectorDotProduct && dotProducts.size() < maxDotProducts) {
+                dotProducts.append(addend);
+                return;
+            }
+            if (isFusableMultiply(addend)) {
+                multiplies.append(addend);
+                return;
+            }
+            if (addend->opcode() == B3::VectorAdd && addend->as<SIMDValue>()->simdLane() == SIMDLane::i32x4 && visitedAdds < maxVisitedAdds) {
+                ++visitedAdds;
+                size_t fusedLeaves = dotProducts.size() + multiplies.size();
+                size_t internalAddsSize = internalAdds.size();
+                size_t otherAddendsSize = otherAddends.size();
+                internalAdds.append(addend);
+                collect(collect, addend->child(0));
+                collect(collect, addend->child(1));
+                // Flattening a subtree with nothing to fuse would turn its balanced adds into a serial chain.
+                if (dotProducts.size() + multiplies.size() == fusedLeaves) {
+                    internalAdds.shrink(internalAddsSize);
+                    otherAddends.shrink(otherAddendsSize);
+                    otherAddends.append(addend);
+                }
+                return;
+            }
+            otherAddends.append(addend);
+        };
+        collect(collect, m_value->child(0));
+        collect(collect, m_value->child(1));
+
+        if (dotProducts.size() < 2)
+            return false;
+
+        for (Value* value : internalAdds)
+            commitInternal(value);
+        for (Value* value : dotProducts)
+            commitInternal(value);
+        for (Value* value : multiplies)
+            commitInternal(value);
+
+        // The dot product's inputs are i16x8 and its products are widened to i32x4.
+        Arg info = Arg::simdInfo({ SIMDLane::i32x4, SIMDSignMode::Signed });
+        Tmp low = m_code.newTmp(FP);
+        Tmp high = m_code.newTmp(FP);
+        append(Air::VectorMulLow, info, tmp(dotProducts[0]->child(0)), tmp(dotProducts[0]->child(1)), low);
+        append(Air::VectorMulHigh, info, tmp(dotProducts[0]->child(0)), tmp(dotProducts[0]->child(1)), high);
+        for (unsigned i = 1; i < dotProducts.size(); ++i) {
+            append(Air::VectorMulAddLow, info, tmp(dotProducts[i]->child(0)), tmp(dotProducts[i]->child(1)), low);
+            append(Air::VectorMulAddHigh, info, tmp(dotProducts[i]->child(0)), tmp(dotProducts[i]->child(1)), high);
+        }
+
+        // Defining the result last lets it share a register with a loop-carried accumulator addend.
+        Tmp result = tmp(m_value);
+        Tmp sum = otherAddends.isEmpty() ? result : low;
+        append(Air::VectorAddPairwise, Arg::simdInfo({ SIMDLane::i32x4, SIMDSignMode::None }), low, high, sum);
+        for (Value* multiply : multiplies) {
+            Air::Opcode opcode = multiply->opcode() == B3::VectorMulHigh ? Air::VectorMulAddHigh : Air::VectorMulAddLow;
+            append(opcode, Arg::simdInfo(multiply->as<SIMDValue>()->simdInfo()), tmp(multiply->child(0)), tmp(multiply->child(1)), sum);
+        }
+        for (unsigned i = 0; i < otherAddends.size(); ++i) {
+            Tmp destination = i + 1 == otherAddends.size() ? result : sum;
+            append(Air::VectorAdd, Arg::simdInfo(m_value->as<SIMDValue>()->simdInfo()), sum, tmp(otherAddends[i]), destination);
+        }
+        return true;
     }
 
     // i64x2 multiply has no native vector instruction on any of our targets.
@@ -2992,14 +3139,14 @@ private:
 
         CompareChainNode() = default;
 
-        bool LEGACY_NODELETE isComparison() const { return type == COMPARE; }
-        bool LEGACY_NODELETE isLogicOp() const { return type == AND || type == OR; }
-        bool LEGACY_NODELETE isLegalFirstCombine() const
+        NODELETE bool isComparison() const { return type == COMPARE; }
+        NODELETE bool isLogicOp() const { return type == AND || type == OR; }
+        NODELETE bool isLegalFirstCombine() const
         {
             return left->isComparison() && right->isComparison();
         }
 
-        void LEGACY_NODELETE setCondition(MacroAssembler::RelationalCondition cond) {
+        NODELETE void setCondition(MacroAssembler::RelationalCondition cond) {
           ASSERT(isLogicOp());
           relCond = cond;
           if (requiresNegation) {
@@ -3008,7 +3155,7 @@ private:
           }
         }
 
-        void LEGACY_NODELETE markRequiresNegation()
+        NODELETE void markRequiresNegation()
         {
             if (isComparison()) {
                 // Immediately negate the condition for leaf nodes
@@ -3038,7 +3185,7 @@ private:
 
     class CompareSequence {
     public:
-        void LEGACY_NODELETE setInitialCompare(Air::Opcode opcode, Value* left, Value* right)
+        NODELETE void setInitialCompare(Air::Opcode opcode, Value* left, Value* right)
         {
             m_initialLeft = left;
             m_initialRight = right;
@@ -3046,22 +3193,22 @@ private:
             m_hasInitialCompare = true;
         }
 
-        bool LEGACY_NODELETE hasInitialCompare() const { return m_hasInitialCompare; }
-        Value* LEGACY_NODELETE initialLeft() const { return m_initialLeft; }
-        Value* LEGACY_NODELETE initialRight() const { return m_initialRight; }
-        Air::Opcode LEGACY_NODELETE initialOpcode() const { return m_initialOpcode; }
+        NODELETE bool hasInitialCompare() const { return m_hasInitialCompare; }
+        NODELETE Value* initialLeft() const { return m_initialLeft; }
+        NODELETE Value* initialRight() const { return m_initialRight; }
+        NODELETE Air::Opcode initialOpcode() const { return m_initialOpcode; }
 
         void addConditionalCompare(Air::Opcode opcode, MacroAssembler::RelationalCondition ccmpCondition, MacroAssembler::RelationalCondition defaultFlags, Value* left, Value* right)
         {
             m_conditionalCompares.append({ ccmpCondition, defaultFlags, left, right, opcode });
         }
 
-        const Vector<ConditionalCompare, 16>& LEGACY_NODELETE conditionalCompares() const
+        NODELETE const Vector<ConditionalCompare, 16>& conditionalCompares() const
         {
             return m_conditionalCompares;
         }
 
-        size_t LEGACY_NODELETE size() const { return m_conditionalCompares.size(); }
+        NODELETE size_t size() const { return m_conditionalCompares.size(); }
 
     private:
         Value* m_initialLeft { nullptr };
@@ -3073,7 +3220,7 @@ private:
 
 #if CPU(ARM64)
 
-    static bool LEGACY_NODELETE isComparisonOpcode(B3::Opcode opcode)
+    NODELETE static bool isComparisonOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -3092,7 +3239,7 @@ private:
         }
     }
 
-    static MacroAssembler::RelationalCondition LEGACY_NODELETE relationalConditionForOpcode(B3::Opcode opcode)
+    NODELETE static MacroAssembler::RelationalCondition relationalConditionForOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -3135,7 +3282,7 @@ private:
     //     └─────────────────┴─────┴─────┴─────┴─────┘
     // B3 LessThan maps to Below (ConditionLO = C==0) not LessThan (ConditionLT = N!=V)
     // B3 LessEqual maps to BelowOrEqual (ConditionLS = C==0 || Z==1) not LessThanOrEqual (ConditionLE = N!=V || Z==1)
-    static MacroAssembler::RelationalCondition LEGACY_NODELETE floatRelationalConditionForOpcode(B3::Opcode opcode)
+    NODELETE static MacroAssembler::RelationalCondition floatRelationalConditionForOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -3156,7 +3303,7 @@ private:
         }
     }
 
-    static Air::Opcode LEGACY_NODELETE compareOnFlagsOpcodeForType(B3::Type type)
+    NODELETE static Air::Opcode compareOnFlagsOpcodeForType(B3::Type type)
     {
         switch (type.kind()) {
         case Float:
@@ -3173,7 +3320,7 @@ private:
         }
     }
 
-    static Air::Opcode LEGACY_NODELETE compareConditionallyOnFlagsOpcodeForType(B3::Type type)
+    NODELETE static Air::Opcode compareConditionallyOnFlagsOpcodeForType(B3::Type type)
     {
         switch (type.kind()) {
         case Float:
@@ -3430,7 +3577,7 @@ private:
 
     // Check if an immediate can be encoded in a ccmp instruction.
     // ccmp supports 5-bit immediates (0-31 for ccmp, -31 to -1 for ccmn).
-    static bool LEGACY_NODELETE isValidConditionalCompareImmediate(int64_t value)
+    NODELETE static bool isValidConditionalCompareImmediate(int64_t value)
     {
         return -31 <= value && value <= 31;
     }
@@ -3438,7 +3585,7 @@ private:
     // Calculate the NZCV default flags for a condition.
     // This is what the flags will be set to if the ccmp predicate is false.
     // Strategy: set the MINIMUM flags needed to make the condition evaluate to true.
-    static unsigned LEGACY_NODELETE nzcvForCondition(MacroAssembler::RelationalCondition cond)
+    NODELETE static unsigned nzcvForCondition(MacroAssembler::RelationalCondition cond)
     {
         // NZCV bits: N=8, Z=4, C=2, V=1
         enum Flag : unsigned {
@@ -4261,12 +4408,12 @@ private:
         append(Move, m_edx, tmp(m_value));
     }
     
-    Air::Opcode LEGACY_NODELETE loadLinkOpcode(Width width, bool fence)
+    NODELETE Air::Opcode loadLinkOpcode(Width width, bool fence)
     {
         return fence ? OPCODE_FOR_WIDTH(LoadLinkAcq, width) : OPCODE_FOR_WIDTH(LoadLink, width);
     }
     
-    Air::Opcode LEGACY_NODELETE storeCondOpcode(Width width, bool fence)
+    NODELETE Air::Opcode storeCondOpcode(Width width, bool fence)
     {
         return fence ? OPCODE_FOR_WIDTH(StoreCondRel, width) : OPCODE_FOR_WIDTH(StoreCond, width);
     }
@@ -5925,6 +6072,16 @@ private:
         case B3::VectorReplaceLane: {
             SIMDValue* value = m_value->as<SIMDValue>();
             auto lane = value->simdLane();
+            if (!value->immediate() && value->child(0)->isV128(vectorAllZeros()) && (lane == SIMDLane::f32x4 || lane == SIMDLane::f64x2)) {
+                Air::Opcode loadZeroOpcode = lane == SIMDLane::f32x4 ? Air::VectorLoad32Zero : Air::VectorLoad64Zero;
+                ArgPromise addr = loadPromise(value->child(1));
+                if (addr && isValidForm(loadZeroOpcode, addr.kind(), Arg::Tmp)) {
+                    if (canBeInternal(value->child(0)))
+                        commitInternal(value->child(0));
+                    append(addr.inst(loadZeroOpcode, value, addr.consume(*this), tmp(value)));
+                    return;
+                }
+            }
             auto replacementScalar = tmp(value->child(1));
             Tmp result = tmp(value);
             append(Air::MoveVector, tmp(value->child(0)), result);
@@ -6135,6 +6292,11 @@ private:
             return;
         case B3::VectorAdd:
             if (isARM64()) {
+                auto* outerValue = m_value->as<SIMDValue>();
+                SIMDLane outerLane = outerValue->simdLane();
+                if (outerLane == SIMDLane::i32x4 && tryEmitSumOfDotProducts())
+                    return;
+
                 // Try to fuse integer multiply-accumulate patterns into UMLAL/SMLAL
                 // and UMLAL2/SMLAL2. These compute `Vd = Vd + (Vn * Vm) widened` on
                 // the low (UMLAL/SMLAL) or upper (UMLAL2/SMLAL2) half of each input,
@@ -6151,8 +6313,6 @@ private:
                 // (i8x16 has no widening MLAL form). In case C the two operands can
                 // mix Low and High freely. This is the quantized-matmul pattern
                 // where a 16-byte load is consumed as extmul_low + extmul_high.
-                auto* outerValue = m_value->as<SIMDValue>();
-                SIMDLane outerLane = outerValue->simdLane();
                 if (outerLane == SIMDLane::i16x8 || outerLane == SIMDLane::i32x4 || outerLane == SIMDLane::i64x2) {
                     enum class MulKind : uint8_t { Low, High };
 

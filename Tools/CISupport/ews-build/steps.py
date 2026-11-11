@@ -1550,6 +1550,20 @@ class CheckChangeRelevance(AnalyzeChange):
         re.compile(rb'Tools/CISupport/safer-cpp-swift-version', re.IGNORECASE)
     ]
 
+    webdriver_path_regexes = [
+        re.compile(rb'Source/WebDriver/', re.IGNORECASE),
+        re.compile(rb'Source/WebKit/UIProcess/Automation/', re.IGNORECASE),
+        re.compile(rb'Source/WebKit/WebProcess/Automation/', re.IGNORECASE),
+        re.compile(rb'Source/WebKit/Shared/Automation/', re.IGNORECASE),
+        re.compile(rb'Source/WebCore/automation/', re.IGNORECASE),
+        re.compile(rb'Source/WebCore/Modules/webdriver/', re.IGNORECASE),
+        re.compile(rb'Tools/MiniBrowser/mac/', re.IGNORECASE),
+        re.compile(rb'Tools/MiniBrowser/MiniBrowser.xcodeproj', re.IGNORECASE),
+        re.compile(rb'WebDriverTests/', re.IGNORECASE),
+        re.compile(rb'Tools/Scripts/webkitpy/webdriver_tests/', re.IGNORECASE),
+        re.compile(rb'Tools/Scripts/run-webdriver-tests', re.IGNORECASE),
+    ]
+
     group_to_paths_mapping = {
         'bindings': bindings_path_regexes,
         'monterey-release-build': monterey_builder_path_regexes,
@@ -1558,6 +1572,7 @@ class CheckChangeRelevance(AnalyzeChange):
         'webkitpy': webkitpy_path_regexes,
         'wk1-tests': wk1_path_regexes,
         'safer-cpp': safer_cpp_path_regexes,
+        'webdriver': webdriver_path_regexes,
     }
 
     def _patch_is_relevant(self, patch, builderName, timeout=30):
@@ -4416,6 +4431,7 @@ class RunWebKitTestsInStressMode(RunWebKitTests):
     ENABLE_ADDITIONAL_ARGUMENTS = False
     STRESS_MODE = True
     FAILURE_MSG_IN_STRESS_MODE = 'Found test failures in stress mode'
+    BLOCK_PULL_REQUEST_ON_FAILURE = True
 
     def __init__(self, num_iterations=100, layout_test_class=RunWebKitTests):
         self.num_iterations = num_iterations
@@ -4465,6 +4481,8 @@ class RunWebKitTestsInStressMode(RunWebKitTests):
                 UploadTestResults(identifier=self.suffix),
                 ExtractTestResults(identifier=self.suffix),
             ]
+            if self.BLOCK_PULL_REQUEST_ON_FAILURE:
+                steps_to_add.append(BlockPullRequest())
         self.build.addStepsAfterCurrentStep(steps_to_add)
         return rc
 
@@ -4482,6 +4500,7 @@ class RunWebKitTestsInSiteIsolationMode(RunWebKitTestsInStressMode):
     name = 'run-layout-tests-in-site-isolation'
     suffix = 'site-isolation'
     FAILURE_MSG_IN_STRESS_MODE = 'Found test failures in site isolation mode'
+    BLOCK_PULL_REQUEST_ON_FAILURE = False
 
     def __init__(self, layout_test_class=RunWebKitTests):
         self.layout_test_class = layout_test_class
@@ -5128,7 +5147,8 @@ class RunWebKitTestsRedTree(RunWebKitTests):
             message = 'Passed layout tests'
             self.descriptionDone = message
             self.build.results = SUCCESS
-            self.setProperty('build_summary', message)
+            if RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE not in self.getProperty('build_summary', ''):
+                self.setProperty('build_summary', message)
         else:
             # We have a failure return code but not a list of failed or flaky tests, so we can't run the repeat steps.
             # If we are on the last retry then run the whole layout tests without patch.
@@ -5353,8 +5373,8 @@ class AnalyzeLayoutTestsResultsRedTree(AnalyzeLayoutTestsResults):
     def report_success(self):
         self.build.results = SUCCESS
         self.descriptionDone = 'Passed layout tests'
-        message = ''
-        self.setProperty('build_summary', message)
+        if RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE not in self.getProperty('build_summary', ''):
+            self.setProperty('build_summary', '')
         return SUCCESS
 
     def report_infrastructure_issue_and_maybe_retry_build(self, message):
@@ -5917,6 +5937,8 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
             first_results_failing_tests = set(self.getProperty('api_first_run_failures', set()))
             second_results_failing_tests = set(self.getProperty('api_second_run_failures', set()))
             list_failed_tests_with_change = sorted(first_results_failing_tests.union(second_results_failing_tests))
+            if platform in ['gtk', 'wpe']:
+                list_failed_tests_with_change = sorted({test.split(':', 1)[0] for test in list_failed_tests_with_change})
             if list_failed_tests_with_change:
                 self.command = self.command + [quote(t) for t in list_failed_tests_with_change]
         if SHOULD_FILTER_LOGS is True:
@@ -6029,9 +6051,12 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
     def analyze_failures_using_results_db(self, failures):
         if failures:
             yield self._addToLog(self.test_failures_log_name, '\n'.join(failures))
-            yield self.filter_api_test_failures_using_results_db(failures)
-            self.setProperty(f'{self.suffix}_failures_filtered', sorted(self.failing_tests_filtered))
-            self.setProperty(f'results-db_{self.suffix}_pre_existing', sorted(self.pre_existing_failures_in_results_db))
+            if self.getProperty(f'{self.suffix}_exceeded_failure_limit', False):
+                yield self._addToLog(self.results_db_log_name, 'This run exceeded --exit-after-n-failures, so results-db filtering is skipped\n')
+            else:
+                yield self.filter_api_test_failures_using_results_db(failures)
+                self.setProperty(f'{self.suffix}_failures_filtered', sorted(self.failing_tests_filtered))
+                self.setProperty(f'results-db_{self.suffix}_pre_existing', sorted(self.pre_existing_failures_in_results_db))
 
     def doOnFailure(self):
         self.steps_to_add += [
@@ -6101,11 +6126,17 @@ class ReRunAPITests(RunAPITests):
 
         # A test failing one of the two runs and passing the other flaked across the steps.
         if (first_run_failures := self.getProperty('api_first_run_failures', None)) is not None:
-            results = self.merged_results(set(first_run_failures) ^ set(failures), {
-                'first-run': 'api_first_run_results',
-                'second-run': 'api_second_run_results',
-            })
-            yield self.report_to_results_db(results, flaky_type='BetweenStepsDirtyTree')
+            unique_failures = set(first_run_failures) ^ set(failures)
+            if self.getProperty('api_first_run_exceeded_failure_limit', False) or self.getProperty('api_second_run_exceeded_failure_limit', False):
+                yield self._addToLog(self.results_db_log_name, 'A run exceeded the failure limit, so the two runs are not comparable\n')
+            elif len(unique_failures) > 10:
+                yield self._addToLog(self.results_db_log_name, f'{len(unique_failures)} tests failed in only one of the two runs, which is too many to attribute to flakiness; skipping BetweenStepsDirtyTree report\n')
+            else:
+                results = self.merged_results(unique_failures, {
+                    'first-run': 'api_first_run_results',
+                    'second-run': 'api_second_run_results',
+                })
+                yield self.report_to_results_db(results, flaky_type='BetweenStepsDirtyTree')
         defer.returnValue(failures)
 
     def failures_with_change(self, run: str) -> set[str]:
@@ -6126,7 +6157,15 @@ class ReRunAPITests(RunAPITests):
             return False
         if self.getProperty('api_first_run_exceeded_failure_limit', False) or self.getProperty('api_second_run_exceeded_failure_limit', False):
             return False
+        if len(self.flaky_across_dirty_runs()) > 10:
+            return False
         return not self.failures_in_both_dirty_runs()
+
+    def flaky_across_dirty_runs(self) -> set[str]:
+        """
+        Tests that failed one of the two dirty runs and passed the other.
+        """
+        return self.failures_with_change('first') ^ self.failures_with_change('second')
 
     @defer.inlineCallbacks
     def doOnFailure(self) -> Generator[Any, Any, None]:
@@ -6149,8 +6188,12 @@ class ReRunAPITests(RunAPITests):
             self.setProperty('build_summary', message)
             return
 
+        first_exceeded = self.getProperty('api_first_run_exceeded_failure_limit', False)
+        second_exceeded = self.getProperty('api_second_run_exceeded_failure_limit', False)
         is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
-        if is_main and (candidates := self.failures_in_both_dirty_runs()):
+        if (is_main and not first_exceeded and not second_exceeded
+                and len(self.flaky_across_dirty_runs()) <= 10
+                and (candidates := self.failures_in_both_dirty_runs())):
             # parse_and_set_failures has already reported this build's BetweenStepsDirtyTree
             # evidence, the only evidence the revert and clean-tree run would have added.
             excused = yield self.pre_existing_flakes_using_results_db(candidates)
@@ -6331,6 +6374,209 @@ class AnalyzeAPITestsResults(ResultsDBReportMixin, buildstep.BuildStep, AddToLog
             send_email_to_bot_watchers(email_subject, email_text, builder_name, 'preexisting-{}'.format(test_name))
         except Exception as e:
             print('Error in sending email for pre-existing failure: {}'.format(e))
+
+
+class RunWebDriverTests(shell.Test, AddToLogMixin, ShellMixin):
+    name = 'webdriver-tests'
+    description = ['webdriver-tests running']
+    descriptionDone = ['webdriver-tests']
+    jsonFileName = 'webdriver_tests.json'
+    logfiles = {'json': jsonFileName}
+    command = ['python3', 'Tools/Scripts/run-webdriver-tests', '--verbose', WithProperties('--%(configuration)s'), f'--json-output={jsonFileName}']
+    run_name = 'first_run'
+    FAILING_STATUSES = ('FAIL', 'ERROR', 'TIMEOUT')
+    NUM_FAILURES_TO_DISPLAY = 10
+
+    def __init__(self, **kwargs):
+        super().__init__(logEnviron=False, timeout=90 * 60, maxTime=3 * 60 * 60, sigtermTime=30, **kwargs)
+        self.failures = set()
+        self.error = None
+        self.steps_to_add = []
+
+    @staticmethod
+    def test_files(failures):
+        return sorted({failure.split('::', 1)[0] for failure in failures})
+
+    def failures_of_run(self, run_name):
+        return set(self.getProperty(f'webdriver_{run_name}_failures', []))
+
+    def tests_to_run(self):
+        return []
+
+    @defer.inlineCallbacks
+    def run(self):
+        self.log_observer_json = logobserver.BufferLogObserver()
+        self.addLogObserver('json', self.log_observer_json)
+
+        self.command = self.command + customBuildFlag(self.getProperty('platform'), self.getProperty('fullPlatform'))
+        self.command = self.command + (self.getProperty('additionalArguments') or []) + self.tests_to_run()
+        if SHOULD_FILTER_LOGS is True:
+            self.command = self.shell_command(' '.join(quote(argument) for argument in self.command) + ' 2>&1 | Tools/Scripts/filter-test-logs webdriver')
+
+        rc = yield super().run()
+
+        if SHOULD_FILTER_LOGS is True:
+            self.steps_to_add += [
+                GenerateS3URL(
+                    f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
+                    extension='txt',
+                    additions=f'{self.build.number}',
+                    content_type='text/plain',
+                ), UploadFileToS3(
+                    'logs.txt',
+                    links={self.name: 'Full logs'},
+                    content_type='text/plain',
+                )
+            ]
+
+        failures = self.parse_failures()
+        if failures is None:
+            self.error = 'run-webdriver-tests produced no results'
+        elif not failures and rc != SUCCESS:
+            self.error = 'run-webdriver-tests failed without reporting a test failure'
+        if self.error:
+            yield self._addToLog('stderr', self.error)
+            self.set_build_summary(self.error)
+            self.build.addStepsAfterCurrentStep(self.steps_to_add)
+            defer.returnValue(FAILURE)
+            return
+
+        self.failures = failures
+        self.setProperty(f'webdriver_{self.run_name}_failures', sorted(failures))
+        if failures:
+            yield self._addToLog('test-failures', '\n'.join(sorted(failures)))
+            rc = FAILURE
+        self.evaluate()
+        self.build.addStepsAfterCurrentStep(self.steps_to_add)
+        defer.returnValue(rc)
+
+    def parse_failures(self):
+        try:
+            results = json.loads(''.join(self.log_observer_json.getStdout().splitlines()))['results']
+        except (ValueError, KeyError, TypeError):
+            return None
+
+        failures = set()
+        for result in results:
+            if result.get('status') == 'ERROR':
+                failures.add(result['test'])
+            for subtest in result.get('subtests', []):
+                if subtest.get('status') in self.FAILING_STATUSES:
+                    failures.add(f"{result['test']}::{subtest['name']}")
+        return failures
+
+    @classmethod
+    def describe(cls, label, tests):
+        tests = sorted(tests)
+        message = f"{label}{'s' if len(tests) > 1 else ''}: {', '.join(tests[:cls.NUM_FAILURES_TO_DISPLAY])}"
+        if len(tests) > cls.NUM_FAILURES_TO_DISPLAY:
+            message += ' ...'
+        return message
+
+    def set_build_summary(self, message, force_success=False):
+        self.descriptionDone = message
+        self.setProperty('build_summary', message)
+        if force_success:
+            self.build.results = SUCCESS
+            self.setProperty('force_build_success', True)
+
+    def evaluate(self):
+        if not self.failures:
+            self.set_build_summary('Passed WebDriver tests')
+            return
+        self.steps_to_add += [
+            ValidateChange(verifyBugClosed=False, addURLs=False),
+            KillOldProcesses(),
+            ReRunWebDriverTests(),
+        ]
+
+    def getResultSummary(self):
+        if self.results == SUCCESS:
+            return super().getResultSummary()
+        if self.failures:
+            return {'step': self.describe(f'{len(self.failures)} WebDriver test failure', self.failures)}
+        if self.error:
+            return {'step': self.error}
+        return super().getResultSummary()
+
+
+class ReRunWebDriverTests(RunWebDriverTests):
+    name = 're-run-webdriver-tests'
+    run_name = 'second_run'
+
+    def tests_to_run(self):
+        return self.test_files(self.failures_of_run('first_run'))
+
+    def evaluate(self):
+        first_run_failures = self.failures_of_run('first_run')
+        if not first_run_failures & self.failures:
+            self.set_build_summary(self.describe('Found flaky test', first_run_failures | self.failures), force_success=True)
+            return
+
+        self.steps_to_add += [RevertAppliedChanges(), CleanWorkingDirectory(), ValidateChange(verifyBugClosed=False, addURLs=False)]
+        if self.getProperty('rebuild_without_change_on_builder', False):
+            self.steps_to_add += [DownloadBuiltProduct(suffix=SUFFIX_WITHOUT_CHANGE), ExtractBuiltProduct()]
+        else:
+            self.steps_to_add.append(CompileWebKitWithoutChange(retry_build_on_failure=True))
+        self.steps_to_add += [
+            ValidateChange(verifyBugClosed=False, addURLs=False),
+            KillOldProcesses(),
+            RunWebDriverTestsWithoutChange(),
+            AnalyzeWebDriverTestsResults(),
+        ]
+
+
+class RunWebDriverTestsWithoutChange(RunWebDriverTests):
+    name = 'run-webdriver-tests-without-change'
+    run_name = 'clean_tree_run'
+
+    def tests_to_run(self):
+        return self.test_files(self.failures_of_run('first_run') & self.failures_of_run('second_run'))
+
+    def evaluate(self):
+        pass
+
+
+class AnalyzeWebDriverTestsResults(buildstep.BuildStep, AddToLogMixin):
+    name = 'analyze-webdriver-tests-results'
+    description = ['analyze-webdriver-tests-results']
+    descriptionDone = ['analyze-webdriver-tests-results']
+
+    @defer.inlineCallbacks
+    def run(self):
+        repeated_failures = set(self.getProperty('webdriver_first_run_failures', [])) & set(self.getProperty('webdriver_second_run_failures', []))
+        clean_tree_failures = self.getProperty('webdriver_clean_tree_run_failures')
+        if clean_tree_failures is None:
+            message = 'Unable to run the WebDriver tests without the change'
+            self.descriptionDone = message
+            self.setProperty('build_summary', message)
+            self.build.results = FAILURE
+            defer.returnValue(FAILURE)
+            return
+
+        clean_tree_failures = set(clean_tree_failures)
+        new_failures = repeated_failures - clean_tree_failures
+
+        yield self._addToLog('stdio', f'Failures in both runs with the change: {sorted(repeated_failures)}\nFailures without the change: {sorted(clean_tree_failures)}\n')
+        if new_failures:
+            message = RunWebDriverTests.describe(f'Found {len(new_failures)} new WebDriver test failure', new_failures)
+            self.descriptionDone = message
+            self.setProperty('build_summary', message)
+            self.build.results = FAILURE
+            defer.returnValue(FAILURE)
+            return
+
+        message = 'Passed WebDriver tests'
+        if pre_existing_failures := repeated_failures & clean_tree_failures:
+            message += '; ' + RunWebDriverTests.describe('ignored pre-existing failure', pre_existing_failures)
+        self.descriptionDone = message
+        self.setProperty('build_summary', message)
+        self.setProperty('force_build_success', True)
+        self.build.results = SUCCESS
+        defer.returnValue(SUCCESS)
+
+    def getResultSummary(self):
+        return {'step': self.descriptionDone}
 
 
 class FindModifiedAPITests(shell.ShellCommand, AnalyzeChange):
@@ -7030,6 +7276,7 @@ class PushCommitToWebKitRepo(shell.ShellCommand):
             self.build.addStepsAfterCurrentStep(steps_to_add)
 
         else:
+            self.setProperty('build_summary', '')
             retry_count = int(self.getProperty('retry_count', 0))
             if retry_count < self.MAX_RETRY:
                 self.setProperty('retry_count', retry_count + 1)
@@ -7763,6 +8010,8 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
 
         commands = [self.shell_command('rm .git/identifiers.json || {}'.format(self.shell_exit_0()))]
         if self.rebase_enabled:
+            if head_ref:
+                commands += [['git', 'checkout', '--progress', head_ref]]
             commands += [['git', 'pull', remote, base_ref, '--rebase']]
             self.verify_commit_count_command = self.shell_command(f'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq {self.getProperty("commit_count", 1)}')
             commands.append(self.verify_commit_count_command)
@@ -7795,6 +8044,9 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         for command in commands:
             self.commands.append(util.ShellArg(command=command, logname='stdio', haltOnFailure=True))
         rc = yield super().run()
+
+        if rc == FAILURE:
+            self.setProperty('build_summary', '')
 
         if rc == FAILURE and self.verify_commit_count_command and self.last_command == self.verify_commit_count_command:
             pr_number = self.getProperty('github.number')
@@ -8041,7 +8293,7 @@ class BuildSwift(steps.ShellSequence, ShellMixin):
         ]
 
         if rc != SUCCESS:
-            if self.getProperty('current_swift_tag', '') and self.getProperty('has_swift_toolchain', False):
+            if self.getProperty('has_swift_toolchain', False):
                 return WARNINGS
             self.build.buildFinished(['Failed to set up swift, retrying update'], RETRY)
         else:

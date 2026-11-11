@@ -67,7 +67,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineContentCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineFormattingContext);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InlineLayoutResult);
 
-static std::optional<InlineItemRange> LEGACY_NODELETE partialRangeForDamage(const InlineItemList& inlineItemList, const InlineDamage& lineDamage)
+NODELETE static std::optional<InlineItemRange> partialRangeForDamage(const InlineItemList& inlineItemList, const InlineDamage& lineDamage)
 {
     auto layoutStartPosition = lineDamage.layoutStartPosition()->inlineItemPosition;
     if (layoutStartPosition.index >= inlineItemList.size()) {
@@ -82,7 +82,7 @@ static std::optional<InlineItemRange> LEGACY_NODELETE partialRangeForDamage(cons
     return InlineItemRange { layoutStartPosition, { inlineItemList.size(), 0 } };
 }
 
-static bool LEGACY_NODELETE isEmptyInlineContent(const InlineItemList& inlineItemList)
+NODELETE static bool isEmptyInlineContent(const InlineItemList& inlineItemList)
 {
     if (inlineItemList.isEmpty())
         return true;
@@ -175,9 +175,8 @@ std::unique_ptr<InlineLayoutResult> InlineFormattingContext::layout(const Constr
     auto isStableTextWrap = lineClamp && lineClamp->isStableTextWrap;
     if (!isStableTextWrap && InlineContentConstrainer::constrainsContent(root().style())) {
         auto constrainer = InlineContentConstrainer { *this, inlineItemList, constraints.horizontal() };
-        auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle());
-        if (constrainedLineWidths)
-            inlineLayoutState.setAvailableLineWidthOverride({ *constrainedLineWidths });
+        if (auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle()))
+            inlineLayoutState.setAvailableLineWidthOverride({ WTF::move(*constrainedLineWidths) });
     }
 
     if (TextOnlySimpleLineBuilder::isEligibleForSimplifiedTextOnlyInlineLayoutByContent(inlineItems, inlineLayoutState) && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(root())) {
@@ -286,7 +285,7 @@ LayoutUnit InlineFormattingContext::maximumContentSize(InlineDamage* lineDamage)
     return ceiledLayoutUnit(maximumContentSize);
 }
 
-static bool LEGACY_NODELETE mayExitFromPartialLayout(const InlineDamage& lineDamage, size_t lineIndex, const InlineDisplay::Boxes& newContent)
+NODELETE static bool mayExitFromPartialLayout(const InlineDamage& lineDamage, size_t lineIndex, const InlineDisplay::Boxes& newContent)
 {
     if (lineDamage.layoutStartPosition()->lineIndex == lineIndex) {
         // Never stop at the damaged line. Adding trailing overflowing content could easily produce the
@@ -297,7 +296,7 @@ static bool LEGACY_NODELETE mayExitFromPartialLayout(const InlineDamage& lineDam
     return trailingContentFromPreviousLayout ? (!newContent.isEmpty() && *trailingContentFromPreviousLayout == newContent.last()) : false;
 }
 
-static inline void LEGACY_NODELETE handleAfterSideMargin(BlockLayoutState::MarginState& marginState, InlineDisplay::Content& displayContent)
+NODELETE static inline void handleAfterSideMargin(BlockLayoutState::MarginState& marginState, InlineDisplay::Content& displayContent)
 {
     if (!InlineDisplayLineBuilder::hasTrailingLineWithBlockContent(displayContent.lines))
         marginState.canCollapseMarginAfterWithChildren = false;
@@ -475,7 +474,7 @@ InlineRect InlineFormattingContext::createDisplayContentForInlineContent(const L
         auto isLegacyLineClamp = lineClamp && lineClamp->isLegacy;
         CheckedRef styleForTruncation = root().isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(root()) : root().style();
         auto truncationPolicy = InlineFormattingUtils::lineEndingTruncationPolicy(styleForTruncation, numberOfLinesWithInlineContent, numberOfVisibleLinesAllowed, lineLayoutResult.hasContentfulInFlowContent());
-        ellipsis = InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(truncationPolicy, lineLayoutResult.blockEllipsis, displayLine, boxes.mutableSpan(), isLegacyLineClamp);
+        ellipsis = InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(truncationPolicy, styleForTruncation, lineLayoutResult.blockEllipsis, displayLine, boxes.mutableSpan(), isLegacyLineClamp);
         if (ellipsis) {
             displayLine.setHasEllipsis();
             auto lineHasLegacyLineClamp = isLegacyLineClamp && truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInBlockDirection;
@@ -602,6 +601,8 @@ void InlineFormattingContext::initializeInlineLayoutState(const LayoutState& glo
     inlineLayoutState.setShouldNotSynthesizeInlineBlockBaseline();
     if (globalLayoutState.inStandardsMode())
         inlineLayoutState.setInStandardsMode();
+    if (globalLayoutState.inQuirksMode())
+        inlineLayoutState.setInQuirksMode();
     if (globalLayoutState.isTextShapingAcrossInlineBoxesEnabled())
         inlineLayoutState.setShouldShapeTextAcrossInlineBoxes();
 }

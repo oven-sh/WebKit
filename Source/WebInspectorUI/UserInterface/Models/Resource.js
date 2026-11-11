@@ -450,12 +450,19 @@ WI.Resource = class Resource extends WI.SourceCode
     {
         let revision = this.currentRevision;
         let blobContent = revision.blobContent;
-        if (blobContent)
-            return URL.createObjectURL(blobContent)
+        if (blobContent) {
+            let objectURL = URL.createObjectURL(blobContent);
+
+            let url = objectURL;
+            let fragment = this.urlComponents.fragment;
+            if (fragment)
+                url += "#" + fragment;
+
+            return {url, objectURL};
+        }
 
         // If content is not available, fallback to using original URL.
-        // The client may try to revoke it, but nothing will happen.
-        return this._url;
+        return {url: this._url, objectURL: null};
     }
 
     isMainResource()
@@ -935,14 +942,8 @@ WI.Resource = class Resource extends WI.SourceCode
             // If we have the requestIdentifier we can get the actual response for this specific resource.
             // Otherwise the content will be cached resource data, which might not exist anymore.
             if (this._requestIdentifier) {
-                // Under Site Isolation the backend target's Network agent owns the response data for
-                // cross-process requestIds that the resource's own target can't resolve; route there.
-                // Gated on enabledNetworkForSiteIsolation rather than hasDomain("Network") alone, which
-                // is statically true on the backend target even when no Network agent is enabled on it.
-                let networkTarget = this._target;
-                if (WI.networkManager.enabledNetworkForSiteIsolation && WI.backendTarget && WI.backendTarget !== this._target && WI.backendTarget.hasDomain("Network"))
-                    networkTarget = WI.backendTarget;
-                return networkTarget.NetworkAgent.getResponseBody(this._requestIdentifier);
+                let target = WI.networkManager.networkTargetForCommand(this._target, "Network.getResponseBody");
+                return target.NetworkAgent.getResponseBody(this._requestIdentifier);
             }
 
             // There is no request identifier or frame to request content from.
@@ -1075,7 +1076,8 @@ WI.Resource = class Resource extends WI.SourceCode
 
         // Event handler for the image "load" event.
         function imageDidLoad() {
-            URL.revokeObjectURL(objectURL);
+            if (objectURL)
+                URL.revokeObjectURL(objectURL);
 
             // Cache the image metrics.
             this._imageSize = {
@@ -1098,8 +1100,10 @@ WI.Resource = class Resource extends WI.SourceCode
 
         // Set the image source using an object URL once we've obtained its data.
         this.requestContent().then((content) => {
-            objectURL = image.src = content.sourceCode.createObjectURL();
-            if (!objectURL)
+            let url;
+            ({url, objectURL} = content.sourceCode.createObjectURL());
+            image.src = url;
+            if (!url)
                 requestContentFailure.call(this);
         }, requestContentFailure.bind(this));
     }
@@ -1236,12 +1240,8 @@ WI.Resource = class Resource extends WI.SourceCode
         let errorString = WI.UIString("Unable to show certificate for \u201C%s\u201D").format(this.url);
 
         try {
-            // The Network domain (ProxyingNetworkAgent) lives on the backend target under Site
-            // Isolation, not the resource's own (page) target; route there like requestContentFromBackend.
-            let webPageTarget = this._target;
-            if (WI.networkManager.networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== this._target && WI.backendTarget.hasDomain("Network"))
-                webPageTarget = WI.backendTarget;
-            let {serializedCertificate} = await webPageTarget.NetworkAgent.getSerializedCertificate(this._requestIdentifier);
+            let target = WI.networkManager.networkTargetForCommand(this._target, "Network.getSerializedCertificate");
+            let {serializedCertificate} = await target.NetworkAgent.getSerializedCertificate(this._requestIdentifier);
             if (InspectorFrontendHost.showCertificate(serializedCertificate))
                 return;
         } catch (e) {

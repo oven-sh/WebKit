@@ -363,10 +363,10 @@ Modules/phonenumberpossession/PhoneNumberPossessionCoordinator.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionCredential.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionRequest.cpp
 Modules/pictureinpicture/DocumentOrShadowRootPictureInPicture.cpp
-Modules/pictureinpicture/DocumentPictureInPicture.cpp
 Modules/pictureinpicture/HTMLVideoElementPictureInPicture.cpp
 Modules/pictureinpicture/PictureInPictureEvent.cpp
 Modules/pictureinpicture/PictureInPictureWindow.cpp
+Modules/pictureinpicture/VideoPictureInPicture.cpp
 Modules/push-api/PushCrypto.cpp
 Modules/push-api/PushDatabase.cpp
 Modules/push-api/PushEvent.cpp
@@ -616,6 +616,9 @@ Modules/webxr/XRCylinderLayer.cpp
 Modules/webxr/XREquirectLayer.cpp
 Modules/webxr/WebXRHitTestResult.cpp
 Modules/webxr/WebXRHitTestSource.cpp
+Modules/webxr/WebXRPlane.cpp
+Modules/webxr/WebXRPlaneSet.cpp
+Modules/webxr/WebXRPlaneSpace.cpp
 Modules/webxr/XRInputSourceEvent.cpp
 Modules/webxr/XRInputSourcesChangeEvent.cpp
 Modules/webxr/XRLayerEvent.cpp
@@ -825,7 +828,6 @@ bindings/js/JSPopStateEventCustom.cpp
 bindings/js/JSPromiseRejectionEventCustom.cpp
 bindings/js/JSRangeCustom.cpp
 bindings/js/JSReadableStreamSourceCustom.cpp
-bindings/js/JSReportBodyCustom.cpp
 bindings/js/JSReportingObserverCustom.cpp
 bindings/js/JSResizeObserverCustom.cpp @cost:3
 bindings/js/JSResizeObserverEntryCustom.cpp
@@ -1009,6 +1011,7 @@ css/CSSMaskBorderSliceValue.cpp
 css/CSSMaskBorderSourceValue.cpp
 css/CSSMaskBorderWidthValue.cpp
 css/CSSMediaRule.cpp
+css/CSSMeshGradientValue.cpp
 css/CSSNamedImageValue.cpp
 css/CSSNamespaceRule.cpp
 css/CSSNestedDeclarations.cpp
@@ -1269,7 +1272,9 @@ css/values/grid/CSSGridSubgrid.cpp
 css/values/grid/CSSGridTemplateList.cpp
 css/values/grid/CSSGridTrackSizes.cpp
 css/values/images/CSSGradient.cpp
+css/values/images/CSSGradientColorInterpolationMethod.cpp
 css/values/images/CSSImageWrapper.cpp
+css/values/images/CSSMeshGradient.cpp
 css/values/masking/CSSClip.cpp
 css/values/masking/CSSMaskBorderOutset.cpp
 css/values/masking/CSSMaskBorderRepeat.cpp
@@ -1764,6 +1769,7 @@ html/InputType.cpp @header:RenderStyleGetters @cost:7
 html/InputTypeNames.cpp
 html/LabelsNodeList.cpp
 html/LazyLoadElementObserver.cpp
+html/LazyLoading.cpp
 html/LinkIconCollector.cpp
 html/LinkRelAttribute.cpp
 html/MediaController.cpp
@@ -2036,7 +2042,9 @@ inspector/agents/frame/FrameDOMDebuggerAgent.cpp
 inspector/agents/frame/FrameDOMStorageAgent.cpp
 inspector/agents/frame/FrameDebuggerAgent.cpp
 inspector/agents/frame/FrameIndexedDBAgent.cpp
+inspector/agents/frame/FrameTimelineAgent.cpp
 inspector/agents/frame/FrameWorkerAgent.cpp
+inspector/agents/page/PageAnimationAgent.cpp
 inspector/agents/page/PageAuditAgent.cpp
 inspector/agents/page/PageCanvasAgent.cpp
 inspector/agents/page/PageConsoleAgent.cpp
@@ -2109,7 +2117,6 @@ layout/formattingContexts/inline/text/TextBreakingPositionCache.cpp @header:Rend
 layout/formattingContexts/inline/text/TextUtil.cpp @header:RenderStyleGetters
 layout/integration/LayoutIntegrationBoxGeometryUpdater.cpp @header:RenderStyleGetters
 layout/integration/LayoutIntegrationBoxTreeUpdater.cpp @header:RenderStyleGetters
-layout/integration/LayoutIntegrationCoverage.cpp @header:RenderStyleGetters
 layout/integration/grid/LayoutIntegrationGridCoverage.cpp @header:RenderStyleGetters
 layout/integration/LayoutIntegrationFormattingContextLayout.cpp @header:RenderStyleGetters
 layout/integration/LayoutIntegrationUtils.cpp
@@ -2235,6 +2242,23 @@ loader/cache/KeepaliveRequestTracker.cpp
 loader/cache/MemoryCache.cpp
 loader/cache/TrustedFonts.cpp
 loader/icon/IconLoader.cpp
+loader/images/Image.cpp
+loader/images/ImageAdapter.cpp
+loader/images/ImageAnimationTimeline.cpp
+loader/images/ImageContentSettings.cpp
+loader/images/ImageDrawDescriptor.cpp
+loader/images/ImageRenditionOptions.cpp
+loader/images/bitmap/BitmapImage.cpp
+loader/images/bitmap/BitmapImageDescriptor.cpp
+loader/images/bitmap/BitmapImageSource.cpp
+loader/images/bitmap/ImageFrameAnimator.cpp
+loader/images/bitmap/ImageFrameWorkQueue.cpp
+loader/images/bitmap/ImageSource.cpp
+loader/images/sizing/ImageSizingContext.cpp
+loader/images/sizing/ObjectSizeNegotiation.cpp
+loader/images/svg/SVGImage.cpp @header:RenderStyleGetters
+loader/images/svg/SVGImageInstance.cpp
+loader/images/svg/SVGImageInstanceCache.cpp
 mathml/MathMLAnchorElement.cpp @header:RenderStyleGetters
 mathml/MathMLAnnotationElement.cpp @header:RenderStyleGetters
 mathml/MathMLElement.cpp @header:RenderStyleGetters
@@ -2351,6 +2375,7 @@ page/PointerCaptureController.cpp
 page/PointerLockController.cpp
 page/PrintContext.cpp @header:RenderStyleGetters @cost:7
 page/ProcessWarming.cpp
+page/QuirkBehaviors.cpp
 page/QuirkMatchPattern.cpp
 page/Quirks.cpp @header:RenderStyleGetters @cost:11
 page/RemoteDOMWindow.cpp
@@ -2493,6 +2518,7 @@ platform/PasteboardCustomData.cpp
 platform/PasteboardWriterData.cpp
 platform/PlatformKeyboardEvent.cpp
 platform/PlatformMediaError.cpp
+platform/PlatformResource.cpp
 platform/PlatformScreen.cpp
 platform/PlatformSpeechSynthesisUtterance.cpp
 platform/PlatformSpeechSynthesisVoice.cpp
@@ -2641,9 +2667,6 @@ platform/graphics/AnnexBUtilities.cpp
 platform/graphics/ArrayPixelBuffer.cpp
 platform/graphics/BezierUtilities.cpp
 platform/graphics/BifurcatedGraphicsContext.cpp
-platform/graphics/BitmapImage.cpp
-platform/graphics/BitmapImageDescriptor.cpp
-platform/graphics/BitmapImageSource.cpp
 platform/graphics/CachedSubimage.cpp
 platform/graphics/CodecUtilities.cpp
 platform/graphics/CornerShapeUtilities.cpp
@@ -2720,22 +2743,14 @@ platform/graphics/GraphicsTypes.cpp
 platform/graphics/H264Utilities.cpp
 platform/graphics/HEVCUtilities.cpp
 platform/graphics/Icon.cpp
-platform/graphics/Image.cpp
-platform/graphics/ImageAdapter.cpp
 platform/graphics/ImageBuffer.cpp
 platform/graphics/ImageBufferAllocator.cpp
 platform/graphics/ImageBufferBackend.cpp
 platform/graphics/ImageBufferContextSwitcher.cpp
 platform/graphics/ImageBufferDisplayListBackend.cpp
 platform/graphics/ImageDecoder.cpp
-platform/graphics/ImageDrawingExtras.cpp
-platform/graphics/ImageDrawingOptions.cpp
 platform/graphics/ImageFrame.cpp
-platform/graphics/ImageFrameAnimator.cpp
-platform/graphics/ImageFrameWorkQueue.cpp
 platform/graphics/ImageResolution.cpp
-platform/graphics/ImageSizingContext.cpp
-platform/graphics/ImageSource.cpp
 platform/graphics/ImageUtilities.cpp
 platform/graphics/InbandGenericCue.cpp
 platform/graphics/IntPoint.cpp
@@ -2755,12 +2770,13 @@ platform/graphics/MediaPlayerPrivateWirelessPlayback.cpp
 platform/graphics/MediaResourceSniffer.cpp
 platform/graphics/MediaSampleConverter.cpp
 platform/graphics/MediaSourcePrivate.cpp
+platform/graphics/MeshGradient.cpp
+platform/graphics/MeshGradientRenderer.cpp
+platform/graphics/MeshGradientRendererCPU.cpp
 platform/graphics/Model.cpp
 platform/graphics/ModelContext.cpp
 platform/graphics/NativeImage.cpp
-platform/graphics/NativeImageSource.cpp
 platform/graphics/NullImageBufferBackend.cpp
-platform/graphics/ObjectSizeNegotiation.cpp
 platform/graphics/Path.cpp
 platform/graphics/PathArcLengthMapper.cpp
 platform/graphics/PathImpl.cpp
@@ -2778,6 +2794,7 @@ platform/graphics/PlatformDynamicRangeLimit.cpp
 platform/graphics/PlatformTimeRanges.cpp
 platform/graphics/PlatformVideoColorSpace.cpp
 platform/graphics/Polygon4D.cpp
+platform/graphics/RasterDrawingOptions.cpp
 platform/graphics/Region.cpp
 platform/graphics/RenderingMode.cpp
 platform/graphics/RotationDirection.cpp
@@ -3057,7 +3074,6 @@ rendering/RenderBlockFlow.cpp @header:RenderStyleGetters @cost:8
 rendering/RenderBox.cpp @header:RenderStyleGetters @cost:10
 rendering/RenderBoxModelObject.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderButton.cpp @header:RenderStyleGetters @cost:7
-rendering/RenderCombineText.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderCounter.cpp @header:RenderStyleGetters @cost:6
 rendering/RenderDeprecatedFlexibleBox.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderElement.cpp @header:RenderStyleGetters @cost:12
@@ -3485,15 +3501,16 @@ style/values/images/kinds/StyleGradientImage.cpp @header:RenderStyleGetters @cos
 style/values/images/kinds/StyleImage.cpp
 style/values/images/kinds/StyleImageSet.cpp
 style/values/images/kinds/StyleInvalidImage.cpp
+style/values/images/kinds/StyleMeshGradientImage.cpp
 style/values/images/kinds/StyleMultiImage.cpp
 style/values/images/kinds/StyleColorImage.cpp
 style/values/images/kinds/StyleNamedImage.cpp
 style/values/images/kinds/StylePaintImage.cpp @header:RenderStyleGetters @cost:6
 style/values/images/StyleGradient.cpp @header:RenderStyleGetters @cost:6
-style/values/images/StyleImageDrawingExtras.cpp
 style/values/images/StyleImageOrNone.cpp
 style/values/images/StyleImageOrientation.cpp
 style/values/images/StyleImageWrapper.cpp
+style/values/images/StyleMeshGradient.cpp
 style/values/images/StyleObjectViewBox.cpp
 style/values/inline/StyleLineHeight.cpp @header:RenderStyleGetters @cost:5
 style/values/inline/StyleVerticalAlign.cpp
@@ -3746,7 +3763,6 @@ svg/SVGZoomAndPan.cpp
 svg/animation/SMILTime.cpp
 svg/animation/SMILTimeContainer.cpp
 svg/animation/SVGSMILElement.cpp
-svg/graphics/SVGImage.cpp @header:RenderStyleGetters
 svg/graphics/filters/SVGFilterPrimitiveGraph.cpp
 svg/graphics/filters/SVGFilterRenderer.cpp
 svg/properties/SVGAnimatedPropertyBase.cpp
@@ -3947,6 +3963,9 @@ JSAudioProcessingEvent.cpp
 JSAudioProcessingEventInit.cpp
 JSAudioSampleFormat.cpp
 JSAudioScheduledSourceNode.cpp
+JSAudioSinkInfo.cpp
+JSAudioSinkOptions.cpp
+JSAudioSinkType.cpp
 JSAudioTimestamp.cpp
 JSAudioTrack.cpp
 JSAudioTrackConfiguration.cpp
@@ -3999,9 +4018,7 @@ JSBroadcastChannel.cpp
 JSBufferedChangeEvent.cpp
 JSByteLengthQueuingStrategy.cpp
 JSCDATASection.cpp
-JSCOEPInheritenceViolationReportBody.cpp
-JSCORPViolationReportBody.cpp
-JSCSPViolationReportBody.cpp
+JSCallToActionLabel.cpp
 JSCSSAnimation.cpp
 JSCSSAnimationEvent.cpp
 JSCSSConditionRule.cpp
@@ -4245,7 +4262,6 @@ JSDeprecatedCSSOMRGBColor.cpp
 JSDeprecatedCSSOMRect.cpp
 JSDeprecatedCSSOMValue.cpp
 JSDeprecatedCSSOMValueList.cpp
-JSDeprecationReportBody.cpp
 JSDetectedBarcode.cpp
 JSDetectedFace.cpp
 JSDetectedText.cpp
@@ -4649,7 +4665,6 @@ JSInspectorAuditDOMObject.cpp
 JSInspectorAuditResourcesObject.cpp
 JSInspectorFrontendHost.cpp
 JSInstallEvent.cpp
-JSIntegrityPolicyViolationReportBody.cpp
 JSIntersectionObserver.cpp
 JSIntersectionObserverCallback.cpp
 JSIntersectionObserverEntry.cpp
@@ -4716,6 +4731,7 @@ JSMediaSession.cpp
 JSMediaSessionAction.cpp
 JSMediaSessionActionDetails.cpp
 JSMediaSessionActionHandler.cpp
+JSMediaSessionActionHandlerOptions.cpp
 JSMediaSessionCaptionTrack.cpp
 JSMediaSessionCoordinator.cpp
 JSMediaSessionCoordinatorState.cpp
@@ -5001,7 +5017,6 @@ JSRemotePlayback.cpp
 JSRemotePlaybackAvailabilityCallback.cpp
 JSRenderingMode.cpp
 JSReport.cpp
-JSReportBody.cpp
 JSReportingObserver.cpp
 JSReportingObserverCallback.cpp
 JSRequestAnimationFrameCallback.cpp
@@ -5206,7 +5221,6 @@ JSSubscriberCallback.cpp
 JSSubscriptionObserver.cpp
 JSSubscriptionObserverCallback.cpp
 JSSubtleCrypto.cpp
-JSTestReportBody.cpp
 JSText.cpp
 JSTextDecoder.cpp
 JSTextDecoderStream.cpp

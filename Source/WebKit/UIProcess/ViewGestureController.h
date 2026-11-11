@@ -122,7 +122,7 @@ public:
     static constexpr double defaultMaxMagnification { 3 };
 
     static Ref<ViewGestureController> create(WebPageProxy&);
-    static ViewGestureController* LEGACY_NODELETE controllerForPage(WebPageProxyIdentifier);
+    NODELETE static ViewGestureController* controllerForPage(WebPageProxyIdentifier);
     ~ViewGestureController();
 
     void ref() const final { RefCounted::ref(); }
@@ -191,12 +191,13 @@ public:
     void endSwipeGesture(WebBackForwardListItem* targetItem, _UIViewControllerTransitionContext *, bool cancelled);
     void willCommitPostSwipeTransitionLayerTree(bool);
     void setRenderTreeSize(uint64_t);
+    bool isShowingSwipeSnapshotImage() const { return m_isShowingSwipeSnapshotImage; }
 #elif PLATFORM(GTK)
     void setMagnification(double, WebCore::FloatPoint);
     void endMagnification();
 #endif
 
-    void LEGACY_NODELETE setAlternateBackForwardListSourcePage(WebPageProxy*);
+    NODELETE void setAlternateBackForwardListSourcePage(WebPageProxy*);
 
     bool canSwipeInDirection(SwipeDirection, DeferToConflictingGestures) const;
 
@@ -242,9 +243,9 @@ private:
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    static ViewGestureController* LEGACY_NODELETE controllerForGesture(WebPageProxyIdentifier, GestureID);
+    NODELETE static ViewGestureController* controllerForGesture(WebPageProxyIdentifier, GestureID);
 
-    static GestureID LEGACY_NODELETE takeNextGestureID();
+    NODELETE static GestureID takeNextGestureID();
     void willBeginGesture(ViewGestureType);
     void didEndGesture();
     void resetState();
@@ -255,7 +256,7 @@ private:
 #if ENABLE(BACK_FORWARD_LIST_SWIFT)
     std::optional<WebBackForwardList> backForwardListForNavigation() const;
 #else
-    WebBackForwardList* LEGACY_NODELETE backForwardListForNavigation() const;
+    NODELETE WebBackForwardList* backForwardListForNavigation() const;
 #endif
 #endif
 
@@ -287,7 +288,7 @@ private:
         enum class ShouldIgnoreEventIfPaused : bool { No, Yes };
         bool eventOccurred(Events, ShouldIgnoreEventIfPaused = ShouldIgnoreEventIfPaused::Yes);
         bool cancelOutstandingEvent(Events);
-        bool LEGACY_NODELETE hasOutstandingEvent(Event);
+        NODELETE bool hasOutstandingEvent(Event);
 
         void startWatchdog(Seconds);
 
@@ -325,7 +326,7 @@ private:
 
     void endMagnificationGesture();
 
-    WebCore::FloatPoint LEGACY_NODELETE scaledMagnificationOrigin(WebCore::FloatPoint origin, double scale);
+    NODELETE WebCore::FloatPoint scaledMagnificationOrigin(WebCore::FloatPoint origin, double scale);
 
     std::optional<bool> platformEventShouldCancelSwipe(PlatformScrollEvent, WebCore::FloatSize);
 
@@ -337,7 +338,7 @@ private:
 
     void willEndSwipeGesture(WebBackForwardListItem& targetItem, bool cancelled);
     void endSwipeGesture(WebBackForwardListItem* targetItem, bool cancelled);
-    bool LEGACY_NODELETE shouldUseSnapshotForSize(ViewSnapshot&, WebCore::FloatSize swipeLayerSize, WebCore::FloatBoxExtent obscuredContentInsets);
+    NODELETE bool shouldUseSnapshotForSize(ViewSnapshot&, WebCore::FloatSize swipeLayerSize, WebCore::FloatBoxExtent obscuredContentInsets);
 
 #if PLATFORM(MAC)
     static double resistanceForDelta(double deltaScale, double currentScale, double minMagnification, double maxMagnification);
@@ -357,7 +358,7 @@ private:
         bool handleEvent(PlatformScrollEvent);
         void eventWasNotHandledByWebCore(PlatformScrollEvent);
 
-        void LEGACY_NODELETE reset(ASCIILiteral resetReasonForLogging);
+        NODELETE void reset(ASCIILiteral resetReasonForLogging);
 
         bool shouldIgnorePinnedState() { return m_shouldIgnorePinnedState; }
         void setShouldIgnorePinnedState(bool ignore) { m_shouldIgnorePinnedState = ignore; }
@@ -471,6 +472,7 @@ private:
     RetainPtr<_UIViewControllerOneToOneTransitionContext> m_swipeTransitionContext;
     uint64_t m_snapshotRemovalTargetRenderTreeSize { 0 };
     bool m_didCallWillEndSwipeGesture { false };
+    bool m_isShowingSwipeSnapshotImage { false };
 #endif
 
 #if PLATFORM(GTK)

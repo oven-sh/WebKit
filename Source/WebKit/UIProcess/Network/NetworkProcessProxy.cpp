@@ -63,7 +63,7 @@
 #include "RemotePageProxy.h"
 #include "RemoteWorkerType.h"
 #include "SandboxExtension.h"
-#include "SecurityFlagsController.h"
+#include "SecurityFlags.h"
 #include "ShouldGrandfatherStatistics.h"
 #include "StorageAccessStatus.h"
 #include "ViewSnapshotStore.h"
@@ -136,7 +136,7 @@ using namespace WebCore;
 
 static constexpr Seconds networkProcessResponsivenessTimeout = 6_s;
 
-static WeakHashSet<NetworkProcessProxy>& LEGACY_NODELETE networkProcessesSet()
+NODELETE static WeakHashSet<NetworkProcessProxy>& networkProcessesSet()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<WeakHashSet<NetworkProcessProxy>> set;
@@ -207,7 +207,7 @@ void NetworkProcessProxy::sendCreationParametersToNewProcess()
 
     NetworkProcessCreationParameters parameters;
     parameters.auxiliaryProcessParameters = auxiliaryProcessParameters();
-    parameters.securityFlags.replaceWith(SecurityFlagsController::singleton().securityFlags());
+    parameters.securityFlags.replaceWith(securityFlags());
     parameters.urlSchemesRegisteredAsSecure = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsSecure());
     parameters.urlSchemesRegisteredAsBypassingContentSecurityPolicy = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsBypassingContentSecurityPolicy());
     parameters.urlSchemesRegisteredAsLocal = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsLocal());
@@ -407,7 +407,7 @@ void NetworkProcessProxy::sharedPreferencesForWebProcessDidChange(WebProcessProx
     sendWithAsyncReply(Messages::NetworkProcess::SharedPreferencesForWebProcessDidChange { webProcessProxy.coreProcessIdentifier(), WTF::move(sharedPreferencesForWebProcess) }, WTF::move(completionHandler));
 }
 
-void NetworkProcessProxy::securityFlagsDidChange(const SecurityFlags& securityFlags)
+void NetworkProcessProxy::securityFlagsDidChange(const SecurityFlags::Storage& securityFlags)
 {
     send(Messages::NetworkProcess::SecurityFlagsDidChange { securityFlags }, 0);
 }
@@ -1508,6 +1508,16 @@ void NetworkProcessProxy::isStorageSuspendedForTesting(PAL::SessionID sessionID,
     sendWithAsyncReply(Messages::NetworkProcess::IsStorageSuspendedForTesting(sessionID), WTF::move(completionHandler), 0, { }, ShouldStartProcessThrottlerActivity::No);
 }
 
+void NetworkProcessProxy::canPrefetchDNSForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::CanPrefetchDNSForTesting(sessionID), WTF::move(completionHandler), 0);
+}
+
+void NetworkProcessProxy::prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::PrefetchedDNSHostnameCountForTesting(), WTF::move(completionHandler), 0);
+}
+
 static bool s_suspensionAllowedForTesting { true };
 void NetworkProcessProxy::setSuspensionAllowedForTesting(bool allowed)
 {
@@ -1841,7 +1851,7 @@ void NetworkProcessProxy::testProcessIncomingSyncMessagesWhenWaitingForSyncReply
     reply(handled);
 }
 
-void NetworkProcessProxy::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain)
+void NetworkProcessProxy::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections)
 {
 #if PLATFORM(COCOA)
     if (!isUIThread()) {
@@ -1857,7 +1867,7 @@ void NetworkProcessProxy::preconnectTo(PAL::SessionID sessionID, WebPageProxyIde
     uint64_t cookiesVersion = 0;
     if (auto* store = websiteDataStoreFromSessionID(sessionID))
         cookiesVersion = store->cookiesVersion();
-    send(Messages::NetworkProcess::PreconnectTo(sessionID, webPageProxyID, webPageID, WTF::move(request), storedCredentialsPolicy, isNavigatingToAppBoundDomain, cookiesVersion), 0);
+    send(Messages::NetworkProcess::PreconnectTo(sessionID, webPageProxyID, webPageID, WTF::move(request), storedCredentialsPolicy, isNavigatingToAppBoundDomain, advancedPrivacyProtections, cookiesVersion), 0);
 }
 
 static bool anyProcessPoolHasForegroundWebProcesses()
@@ -2180,10 +2190,15 @@ void NetworkProcessProxy::addAllowedFirstPartyForCookies(WebProcessProxy& webPro
         madeChange = true;
         pair.first = LoadedWebArchive::Yes;
     }
-    if (madeChange)
-        sendWithAsyncReply(Messages::NetworkProcess::AddAllowedFirstPartyForCookies(webProcessProxy.coreProcessIdentifier(), firstPartyForCookies, loadedWebArchive), WTF::move(completionHandler));
-    else
+    if (!madeChange && !m_pendingAddAllowedFirstPartyForCookiesReplies)
+        return completionHandler();
+
+    ++m_pendingAddAllowedFirstPartyForCookiesReplies;
+    sendWithAsyncReply(Messages::NetworkProcess::AddAllowedFirstPartyForCookies(webProcessProxy.coreProcessIdentifier(), firstPartyForCookies, loadedWebArchive), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] mutable {
+        if (RefPtr protectedThis = weakThis)
+            --protectedThis->m_pendingAddAllowedFirstPartyForCookiesReplies;
         completionHandler();
+    });
 }
 
 void NetworkProcessProxy::addAllowedWebPageProxyIdentifier(WebProcessProxy& webProcessProxy, WebPageProxyIdentifier pageID)
@@ -2193,6 +2208,11 @@ void NetworkProcessProxy::addAllowedWebPageProxyIdentifier(WebProcessProxy& webP
     }).iterator->value;
     if (pages.add(pageID).isNewEntry)
         send(Messages::NetworkProcess::AddAllowedWebPageProxyIdentifier(webProcessProxy.coreProcessIdentifier(), pageID), 0);
+}
+
+void NetworkProcessProxy::authorizeDownloadForWebProcess(WebProcessProxy& webProcessProxy, DownloadID downloadID, CompletionHandler<void()>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::AuthorizeDownloadForWebProcess(webProcessProxy.coreProcessIdentifier(), downloadID), WTF::move(completionHandler));
 }
 
 void NetworkProcessProxy::addAllowedFilePaths(WebProcessProxy& webProcessProxy, const Vector<String>& paths)

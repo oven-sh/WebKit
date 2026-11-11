@@ -142,7 +142,7 @@ ThreadSuspendLocker::~ThreadSuspendLocker()
 }
 #endif
 
-static std::optional<size_t> LEGACY_NODELETE stackSize(ThreadType threadType)
+NODELETE static std::optional<size_t> stackSize(ThreadType threadType)
 {
     // Return the stack size for the created thread based on its type.
     // If the stack size is not specified, then use the system default. Platforms can tune the values here.
@@ -464,8 +464,7 @@ void Thread::registerGCThread(GCThreadType gcThreadType)
 
 bool Thread::mayBeGCThread()
 {
-    // TODO: FIX THIS
-    return Thread::currentSingleton().gcThreadType() != GCThreadType::None || Thread::currentSingleton().m_isCompilationThread;
+    return Thread::currentSingleton().gcThreadType() != GCThreadType::None;
 }
 
 void Thread::registerJSThread(Thread& thread)
@@ -510,7 +509,7 @@ void Thread::setCurrentThreadQOS(QOS qos)
 }
 
 #if HAVE(QOS_CLASSES)
-static Thread::QOS LEGACY_NODELETE toQOS(qos_class_t qosClass)
+NODELETE static Thread::QOS toQOS(qos_class_t qosClass)
 {
     switch (qosClass) {
     case QOS_CLASS_USER_INTERACTIVE:
@@ -529,12 +528,13 @@ static Thread::QOS LEGACY_NODELETE toQOS(qos_class_t qosClass)
 }
 #endif
 
-auto Thread::currentThreadQOS() -> QOS
+auto Thread::currentThreadQOS() -> std::optional<QOS>
 {
 #if HAVE(QOS_CLASSES)
-    qos_class_t qos = QOS_CLASS_DEFAULT;
-    int relativePriority;
-    pthread_get_qos_class_np(pthread_self(), &qos, &relativePriority);
+    qos_class_t qos = QOS_CLASS_UNSPECIFIED;
+    pthread_get_qos_class_np(pthread_self(), &qos, nullptr);
+    if (qos == QOS_CLASS_UNSPECIFIED)
+        return std::nullopt;
     return toQOS(qos);
 #else
     return currentSingleton().qos();

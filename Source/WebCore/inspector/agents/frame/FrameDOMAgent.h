@@ -145,7 +145,7 @@ public:
     void didRemoveDOMNode(Node&);
     void frameOwnerContentFrameChanged(HTMLFrameOwnerElement&);
     void willDestroyDOMNode(Node&);
-    void LEGACY_NODELETE willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
+    NODELETE void willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
     void didModifyDOMAttr(Element&, const AtomString& name, const AtomString& value);
     void didRemoveDOMAttr(Element&, const AtomString& name);
     void characterDataModified(CharacterData&);
@@ -167,6 +167,7 @@ public:
 
     // Public accessors
     Node* nodeForId(Inspector::Protocol::DOM::NodeId);
+    RefPtr<Node> assertNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     Inspector::Protocol::DOM::NodeId boundNodeId(const Node*);
     Vector<Ref<Node>> boundNodes() const;
     Inspector::Protocol::DOM::NodeId pushNodePathToFrontend(Node*);
@@ -179,7 +180,6 @@ private:
     void unbind(Node&);
     void discardBindings();
 
-    RefPtr<Node> assertNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     RefPtr<Element> assertElement(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     RefPtr<Node> assertEditableNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     RefPtr<Element> assertEditableElement(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);

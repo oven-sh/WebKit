@@ -47,7 +47,7 @@
 #include "SVGImageIntrinsicSizing.h"
 #include "SVGVisitedRendererTracking.h"
 #include "Settings.h"
-#include "StyleImageDrawingExtras.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -91,7 +91,7 @@ void RenderSVGImage::layout()
 
     setCurrentSVGLayoutRect({ SVGContainerLayout::layoutLocationRelativeToContainer(*this), enclosingLayoutRect(m_objectBoundingBox).size() });
 
-    updateLayerTransform();
+    updateTransform();
     updateCachedVisualOverflowRect();
 
     repainter.repaintAfterLayout();
@@ -153,8 +153,8 @@ ImageDrawResult RenderSVGImage::paintIntoRect(PaintInfo& paintInfo, const FloatR
     if (!styleImage || !styleImage->canDrawAtSize(*this, rect.size()))
         return ImageDrawResult::DidNothing;
 
-    auto options = calculateSVGImageDrawingOptions(*styleImage, *this, paintInfo.context(), imageRenderingSize, rect.size(), paintInfo.paintBehavior);
-    auto drawResult = styleImage->draw(paintInfo.context(), *this, ConcreteObjectSize::fixed(imageRenderingSize), rect, sourceRect, options);
+    auto descriptor = calculateSVGImageDrawDescriptor(*styleImage, *this, paintInfo.context(), imageRenderingSize, rect.size(), paintInfo.paintBehavior);
+    auto drawResult = styleImage->draw(paintInfo.context(), *this, descriptor, rect, sourceRect);
     if (drawResult == ImageDrawResult::DidRequestDecoding)
         protect(imageResource().cachedImage())->addClientWaitingForAsyncDecoding(protect(cachedImageClient()));
 
@@ -294,6 +294,13 @@ void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadM
     }
 
     RenderSVGModelObject::notifyFinished(newImage, metrics, loadWillContinueInAnotherProcess);
+}
+
+void RenderSVGImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    RenderSVGModelObject::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
 }
 
 void RenderSVGImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)

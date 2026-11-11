@@ -137,9 +137,7 @@ def parse_args(args):
         optparse.make_option("--accelerated-drawing", action="store_true", default=False,
             help="Use accelerated drawing (OS X only)"),
         optparse.make_option("--remote-layer-tree", action="store_true", default=False,
-            help="Use the remote layer tree drawing model (OS X WebKit2 only)"),
-        optparse.make_option("--no-remote-layer-tree", action="store_true", default=False,
-            help="Disable the remote layer tree drawing model (OS X WebKit2 only)"),
+                             help="Does nothing, the remote layer tree drawing model is always used"),
         optparse.make_option("--wpe-legacy-api", action="store_true", default=False,
             help="Use the WPE legacy API (WPE only), including its own expectations and result report flavor"),
         optparse.make_option("--internal-feature", type="string", action="append", default=[],
@@ -306,6 +304,9 @@ def parse_args(args):
                  "those which are device-specific (implies --skipped=ignore)"),
         optparse.make_option("--time-out-ms", "--timeout",
             help="Set the timeout for each test in milliseconds"),
+        optparse.make_option(
+            "--expected-failure-time-out-ms", type="int", default=None,
+            help="Run tests expected to fail, including tests whose baseline records a harness timeout, with this timeout first, and again with the full timeout only if it cut short an unexpected result."),
         optparse.make_option("--order", action="store", default="natural",
             choices=["none", "natural", "random"],
             help=("determine the order in which the test cases will be run. "

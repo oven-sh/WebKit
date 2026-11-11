@@ -38,6 +38,7 @@ GLsizei TypeStride(GLenum attribType)
         case GL_FLOAT:
         case GL_UNSIGNED_INT_10_10_10_2_OES:
         case GL_INT_10_10_10_2_OES:
+        case GL_INT_2_10_10_10_REV:
             return 4;
         default:
             EXPECT_TRUE(false);
@@ -140,6 +141,31 @@ DestT Pack1010102(std::array<SrcT, 4> input)
         // Need to apply bit mask to account for sign extension
         return (0xFFC00000u & rOut << 22) | (0x003FF000u & gOut << 12) | (0x00000FFCu & bOut << 2) |
                (0x00000003u & aOut);
+    }
+}
+
+template <typename DestT, typename SrcT>
+DestT Pack2101010Rev(std::array<SrcT, 4> input)
+{
+    static_assert(std::is_integral<SrcT>::value, "Integer required.");
+    static_assert(std::is_integral<DestT>::value, "Integer required.");
+    static_assert(std::is_unsigned<SrcT>::value == std::is_unsigned<DestT>::value,
+                  "Signedness should be equal.");
+    DestT rOut, gOut, bOut, aOut;
+    rOut = static_cast<DestT>(input[0]);
+    gOut = static_cast<DestT>(input[1]);
+    bOut = static_cast<DestT>(input[2]);
+    aOut = static_cast<DestT>(input[3]);
+
+    if (std::is_unsigned<SrcT>::value)
+    {
+        return aOut << 30 | bOut << 20 | gOut << 10 | rOut;
+    }
+    else
+    {
+        // Need to apply bit mask to account for sign extension
+        return (0xC0000000u & aOut << 30) | (0x3FF00000u & bOut << 20) | (0x000FFC00u & gOut << 10) |
+               (0x000003FFu & rOut);
     }
 }
 
@@ -1163,6 +1189,90 @@ void VertexAttributeTestES3::verifyLargeGridData(uint32_t gridSize,
     }
 }
 
+// Verify signed unnormalized INT_2_10_10_10_REV vertex type
+TEST_P(VertexAttributeTestES3, SignedPacked1010102RevUnnormalized)
+{
+    // RGB channels are 10-bits, alpha is 2-bits
+    std::array<std::array<GLshort, 4>, kVertexCount / 4> unpackedInput = {{{0, 1, 2, 0},
+                                                                           {254, 255, 256, 1},
+                                                                           {256, 255, 254, -2},
+                                                                           {511, 510, 509, -1},
+                                                                           {-512, -511, -500, -2},
+                                                                           {-1, -2, -3, 1}}};
+
+    std::array<GLint, kVertexCount> packedInput;
+    std::array<GLfloat, kVertexCount> expectedTypeSize4;
+
+    for (size_t i = 0; i < kVertexCount / 4; i++)
+    {
+        packedInput[i] = Pack2101010Rev<GLint, GLshort>(unpackedInput[i]);
+
+        expectedTypeSize4[i * 4 + 0] = unpackedInput[i][0];
+        expectedTypeSize4[i * 4 + 1] = unpackedInput[i][1];
+        expectedTypeSize4[i * 4 + 2] = unpackedInput[i][2];
+        expectedTypeSize4[i * 4 + 3] = unpackedInput[i][3];
+    }
+
+    TestData data4(GL_INT_2_10_10_10_REV, GL_FALSE, Source::IMMEDIATE, packedInput.data(),
+                   expectedTypeSize4.data());
+
+    // GL_INT_2_10_10_10_REV is size-4 only, unlike GL_INT_10_10_10_2_OES.
+    // TODO: a Source::BUFFER case belongs here too, but it currently fails on Metal: the buffer
+    // conversion path mis-converts the unnormalized 2-bit alpha. Pre-existing -- it reproduces
+    // identically with and without the syncDirtyAttrib fix.
+    std::array<std::pair<const TestData &, GLint>, 1> dataSet = {{{data4, 4}}};
+
+    for (auto data : dataSet)
+    {
+        setupTest(data.first, data.second);
+        drawQuad(mProgram, "position", 0.5f);
+        glDisableVertexAttribArray(mTestAttrib);
+        glDisableVertexAttribArray(mExpectedAttrib);
+        checkPixels();
+    }
+}
+
+// Verify signed normalized INT_2_10_10_10_REV vertex type
+TEST_P(VertexAttributeTestES3, SignedPacked1010102RevNormalized)
+{
+    // RGB channels are 10-bits, alpha is 2-bits
+    std::array<std::array<GLshort, 4>, kVertexCount / 4> unpackedInput = {{{0, 1, 2, 0},
+                                                                           {254, 255, 256, 1},
+                                                                           {256, 255, 254, -2},
+                                                                           {511, 510, 509, -1},
+                                                                           {-512, -511, -500, -2},
+                                                                           {-1, -2, -3, 1}}};
+    std::array<GLint, kVertexCount> packedInput;
+    std::array<GLfloat, kVertexCount> expectedNormalizedTypeSize4;
+
+    for (size_t i = 0; i < kVertexCount / 4; i++)
+    {
+        packedInput[i] = Pack2101010Rev<GLint, GLshort>(unpackedInput[i]);
+
+        expectedNormalizedTypeSize4[i * 4 + 0] = Normalize10<GLshort>(unpackedInput[i][0]);
+        expectedNormalizedTypeSize4[i * 4 + 1] = Normalize10<GLshort>(unpackedInput[i][1]);
+        expectedNormalizedTypeSize4[i * 4 + 2] = Normalize10<GLshort>(unpackedInput[i][2]);
+        expectedNormalizedTypeSize4[i * 4 + 3] = Normalize2<GLshort>(unpackedInput[i][3]);
+    }
+
+    TestData data4(GL_INT_2_10_10_10_REV, GL_TRUE, Source::IMMEDIATE, packedInput.data(),
+                   expectedNormalizedTypeSize4.data());
+    TestData bufferedData4(GL_INT_2_10_10_10_REV, GL_TRUE, Source::BUFFER, packedInput.data(),
+                           expectedNormalizedTypeSize4.data());
+
+    // GL_INT_2_10_10_10_REV is size-4 only, unlike GL_INT_10_10_10_2_OES.
+    std::array<std::pair<const TestData &, GLint>, 2> dataSet = {{{data4, 4}, {bufferedData4, 4}}};
+
+    for (auto data : dataSet)
+    {
+        setupTest(data.first, data.second);
+        drawQuad(mProgram, "position", 0.5f);
+        glDisableVertexAttribArray(mTestAttrib);
+        glDisableVertexAttribArray(mExpectedAttrib);
+        checkPixels();
+    }
+}
+
 TEST_P(VertexAttributeTestES3, IntUnnormalized)
 {
     GLint lo                                  = std::numeric_limits<GLint>::min();
@@ -1526,14 +1636,11 @@ TEST_P(VertexAttributeOORTest, ANGLEDrawArraysOutOfBoundsCases)
 // Test that glVertexAttribPointer call that changes only the format works.
 TEST_P(VertexAttributeOORTest, FormatOnlyChangeRefreshesElementLimit)
 {
-    // The front-end per-attribute cache is bypassed when the backend exposes robust buffer access.
-    ANGLE_SKIP_TEST_IF(IsGLExtensionEnabled("GL_KHR_robust_buffer_access_behavior"));
-
     constexpr char kVS[] = R"(attribute vec4 a;
 void main()
 {
     gl_Position = a;
-    gl_PointSize = 8.0;
+    gl_PointSize = 1.0;
 })";
     constexpr char kFS[] = R"(precision mediump float;
 void main()
@@ -1557,8 +1664,10 @@ void main()
     glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
     glEnableVertexAttribArray(attribLoc);
 
-    const GLint centerX = getWindowWidth() / 2;
-    const GLint centerY = getWindowHeight() / 2;
+    // Render into a 1x1 viewport so that the point, which is at (0, 0) in normalized device
+    // coordinates, lands exactly on the center of pixel (0, 0). Points are always one pixel wide
+    // here because not every backend supports a larger point size.
+    glViewport(0, 0, 1, 1);
     glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1567,7 +1676,7 @@ void main()
     glVertexAttribPointer(attribLoc, 1, GL_BYTE, GL_FALSE, 28, nullptr);
     glDrawArrays(GL_POINTS, 0, 2);
     EXPECT_GL_NO_ERROR();
-    EXPECT_PIXEL_COLOR_EQ(centerX, centerY, GLColor::green);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1576,17 +1685,28 @@ void main()
     glVertexAttribPointer(attribLoc, 4, GL_FLOAT, GL_FALSE, 28, nullptr);
     glDrawArrays(GL_POINTS, 0, 1);
     EXPECT_GL_NO_ERROR();
-    EXPECT_PIXEL_COLOR_EQ(centerX, centerY, GLColor::green);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 
     // Two vertices is out-of-bounds for the new (4xFLOAT) format.
+    glClear(GL_COLOR_BUFFER_BIT);
     glDrawArrays(GL_POINTS, 0, 2);
-    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    if (IsGLExtensionEnabled("GL_KHR_robust_buffer_access_behavior"))
+    {
+        // The front-end element limit check is bypassed when the backend exposes robust buffer
+        // access, so the draw succeeds. Vertex 0 is in bounds and still draws the point.
+        EXPECT_GL_NO_ERROR();
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+    }
+    else
+    {
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
 
     glClear(GL_COLOR_BUFFER_BIT);
     glVertexAttribPointer(attribLoc, 1, GL_BYTE, GL_FALSE, 28, nullptr);
     glDrawArrays(GL_POINTS, 0, 2);
     EXPECT_GL_NO_ERROR();
-    EXPECT_PIXEL_COLOR_EQ(centerX, centerY, GLColor::green);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
 // Test that enabling a buffer in an unused attribute doesn't crash.  There should be an active
@@ -6252,6 +6372,97 @@ void main()
     EXPECT_PIXEL_COLOR_EQ(32, 32, GLColor::red);
 }
 
+// A packed 2_10_10_10 attribute has no native Metal equivalent, so it is widened to Float4 and
+// routed through the conversion path. Counting the source vertices with that widened 16-byte
+// size instead of the 4-byte packed size made a buffer holding exactly kNoSlackVertexCount
+// vertices look empty, which skipped conversion and bound the source buffer with a 16-byte
+// stride -- misreading the packed bits as floats and fetching past the end of the buffer.
+//
+// That branch is only reachable while the whole buffer is smaller than the widened 16-byte
+// stride, which caps this at three 4-byte packed vertices. Hence a three-vertex triangle
+// covering the viewport rather than drawQuad()'s six vertices, which would need 24 bytes and
+// leave enough slack to take the ordinary conversion path.
+TEST_P(VertexAttributeTestES3, PackedIntRevBufferWithNoSlack)
+{
+    constexpr size_t kNoSlackVertexCount = 3;
+
+    // RGB channels are 10-bits, alpha is 2-bits
+    std::array<std::array<GLshort, 4>, kNoSlackVertexCount> unpackedInput = {
+        {{51, 102, 153, 1}, {17, 34, 68, 1}, {85, 119, 187, 1}}};
+
+    std::array<GLint, kNoSlackVertexCount> packedInput;
+    std::array<GLfloat, kNoSlackVertexCount * 4> expectedTypeSize4;
+
+    for (size_t i = 0; i < kNoSlackVertexCount; i++)
+    {
+        packedInput[i] = Pack2101010Rev<GLint, GLshort>(unpackedInput[i]);
+
+        expectedTypeSize4[i * 4 + 0] = unpackedInput[i][0];
+        expectedTypeSize4[i * 4 + 1] = unpackedInput[i][1];
+        expectedTypeSize4[i * 4 + 2] = unpackedInput[i][2];
+        expectedTypeSize4[i * 4 + 3] = unpackedInput[i][3];
+    }
+
+    // Same test-vs-expected comparison as initBasicProgram(), restricted to RGB. The widening
+    // that makes this bug reachable only happens for the unnormalized (SSCALED) format, and the
+    // Metal buffer-conversion path currently mis-converts its 2-bit alpha -- it yields 0 for
+    // every value. That is pre-existing and independent of the fix under test here, so this
+    // compares the 10-bit channels only rather than baking in the wrong alpha.
+    constexpr char kVS[] =
+        "attribute mediump vec4 position;\n"
+        "attribute highp vec4 test;\n"
+        "attribute highp vec4 expected;\n"
+        "varying mediump vec4 color;\n"
+        "void main(void)\n"
+        "{\n"
+        "    gl_Position = position;\n"
+        "    vec3 threshold = max(abs(expected.rgb) * 0.01, vec3(1.0 / 64.0));\n"
+        "    color = vec4(vec3(lessThanEqual(abs(test.rgb - expected.rgb), threshold)), 1.0);\n"
+        "}\n";
+
+    constexpr char kFS[] =
+        "varying mediump vec4 color;\n"
+        "void main(void)\n"
+        "{\n"
+        "    gl_FragColor = color;\n"
+        "}\n";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+
+    GLint testLoc = glGetAttribLocation(program, "test");
+    ASSERT_NE(-1, testLoc);
+    GLint expectedLoc = glGetAttribLocation(program, "expected");
+    ASSERT_NE(-1, expectedLoc);
+
+    // Sized to the last byte: exactly kNoSlackVertexCount packed vertices, no slack.
+    GLBuffer buffer;
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(packedInput), packedInput.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(testLoc, 4, GL_INT_2_10_10_10_REV, GL_FALSE, 0, nullptr);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glVertexAttribPointer(expectedLoc, 4, GL_FLOAT, GL_FALSE, 0, expectedTypeSize4.data());
+
+    glEnableVertexAttribArray(testLoc);
+    glEnableVertexAttribArray(expectedLoc);
+
+    // Covers the whole viewport with kNoSlackVertexCount vertices, so every checkPixels()
+    // sample point is inside the triangle.
+    constexpr std::array<GLfloat, 3 * kNoSlackVertexCount> kTriangle = {
+        -1.0f, -1.0f, 0.5f, 3.0f, -1.0f, 0.5f, -1.0f, 3.0f, 0.5f};
+    GLint positionLoc = glGetAttribLocation(program, "position");
+    ASSERT_NE(-1, positionLoc);
+    glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, 0, kTriangle.data());
+    glEnableVertexAttribArray(positionLoc);
+
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawArrays(GL_TRIANGLES, 0, kNoSlackVertexCount);
+    ASSERT_GL_NO_ERROR();
+
+    checkPixels();
+}
+
 // VAO emulation fails on Mac but is not used on Mac in the wild. http://anglebug.com/40096758
 #if !defined(__APPLE__)
 #    define EMULATED_VAO_CONFIGS                                          \
@@ -7599,6 +7810,70 @@ void main()
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
+// Test that redefining a vertex attribute buffer as a large buffer without initial data does not
+// result in underflow or crash.
+TEST_P(VertexAttributeTestES3, RedefineAttributeBufferAsLargeNoData)
+{
+    constexpr char kVS[] = R"(#version 300 es
+layout(location=0) in vec2 posIn;
+void main()
+{
+    gl_Position = vec4(posIn, 0.0, 1.0);
+    gl_PointSize = 1.0;
+})";
+    constexpr char kFS[] = R"(#version 300 es
+precision mediump float;
+out vec4 outColor;
+void main()
+{
+    outColor = vec4(1.0, 0.0, 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+    glViewport(0, 0, 1, 1);
+
+    // Use an RGBA framebuffer for the draw.
+    GLTexture fboTexture;
+    glBindTexture(GL_TEXTURE_2D, fboTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fboTexture, 0);
+    glViewport(0, 0, 1, 1);
+    glDisable(GL_DEPTH_TEST);
+
+    // Define small buffer for vertex attribute.
+    constexpr size_t kSmallSize = 256;
+    std::vector<uint32_t> initData(kSmallSize, 0);
+    GLBuffer buf;
+    glBindBuffer(GL_ARRAY_BUFFER, buf);
+    glBufferData(GL_ARRAY_BUFFER, initData.size() * sizeof(GLuint), initData.data(),
+                 GL_STATIC_DRAW);
+
+    // glVertexAttribPointer() would convert integer values to float for the shader.
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_UNSIGNED_INT, GL_FALSE, 0, nullptr);
+
+    glDrawArrays(GL_POINTS, 0, 1);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+    // Clear the framebuffer for the next draw.
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Expand the buffer with no input data, and redraw with a new large offset.
+    constexpr size_t kLargeSize = 16 * 1024 * 1024;
+    glBufferData(GL_ARRAY_BUFFER, kLargeSize, nullptr, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_UNSIGNED_INT, GL_FALSE, 0,
+                          reinterpret_cast<const void *>(kLargeSize / 2));
+
+    glDrawArrays(GL_POINTS, 0, 1);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+}
+
 class VertexAttributeTestES31_Basic : public ANGLETest<>
 {
   protected:
@@ -7922,6 +8197,123 @@ ANGLE_INSTANTIATE_TEST_ES3_AND(
         .disable(Feature::UseVertexInputBindingStrideDynamicState)
         .disable(Feature::SupportsGraphicsPipelineLibrary),
     ES3_VULKAN().disable(Feature::ForceSizePointerForBoundVertexBuffers));
+
+// DefaultAttribOffsetResetAfterBufferWithNonZeroRelativeOffset
+//
+// Regression test for the Vulkan default-attribute bug where a vertex attribute switches
+// from a buffer-backed binding with a non-zero relativeOffset to a disabled array with a
+// default value. The default-value buffer must be read from offset 0, so the shader should
+// see the new default value (3, 4) and not stale or out-of-bounds data.
+TEST_P(VertexAttributeTestES31, DefaultAttribOffsetResetAfterBufferWithNonZeroRelativeOffset)
+{
+    constexpr char kVS[] = R"(#version 310 es
+layout(location = 0) in vec4  vs_in_position;
+layout(location = 1) in vec2  vs_in_color_rg;
+layout(location = 2) in float vs_in_color_b;
+layout(location = 3) in uvec3 vs_in_data0;
+layout(location = 4) in ivec2 vs_in_data1;
+out vec2  color_rg;
+out float color_b;
+flat out uvec3 data0;
+flat out ivec2 data1;
+void main()
+{
+    data0       = vs_in_data0;
+    data1       = vs_in_data1;
+    color_b     = vs_in_color_b;
+    color_rg    = vs_in_color_rg;
+    gl_Position = vs_in_position;
+})";
+
+    constexpr char kFS[] = R"(#version 310 es
+precision highp float;
+precision highp int;
+in vec2  color_rg;
+in float color_b;
+flat in uvec3 data0;
+flat in ivec2 data1;
+out vec4 fs_out_color;
+uniform uvec3 g_expected_data0;
+uniform ivec2 g_expected_data1;
+void main()
+{
+    fs_out_color = vec4(color_rg, color_b, 1.0);
+    if (data0 != g_expected_data0) fs_out_color = vec4(1.0);
+    if (data1 != g_expected_data1) fs_out_color = vec4(1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+
+    GLint expectedData0Loc = glGetUniformLocation(program, "g_expected_data0");
+    GLint expectedData1Loc = glGetUniformLocation(program, "g_expected_data1");
+    ASSERT_NE(-1, expectedData0Loc);
+    ASSERT_NE(-1, expectedData1Loc);
+
+    GLVertexArray vao;
+    glBindVertexArray(vao);
+
+    constexpr GLsizei kStride = 52;
+    struct Vertex
+    {
+        float pos[2];
+        float color_rg[2];
+        float color_b;
+        uint32_t data0[3];
+        uint8_t pad[12];
+        int32_t data1[2];
+    };
+    static_assert(sizeof(Vertex) == 52, "Vertex must be 52 bytes");
+
+    const float kPositions[4][2] = {{-1.f, -1.f}, {1.f, -1.f}, {-1.f, 1.f}, {1.f, 1.f}};
+    Vertex vboData[4]            = {};
+    for (int i = 0; i < 4; ++i)
+    {
+        vboData[i].pos[0]      = kPositions[i][0];
+        vboData[i].pos[1]      = kPositions[i][1];
+        vboData[i].color_rg[0] = 0.0f;
+        vboData[i].color_rg[1] = 0.0f;
+        vboData[i].color_b     = 1.0f;
+        vboData[i].data0[0]    = 1;
+        vboData[i].data0[1]    = 2;
+        vboData[i].data0[2]    = 3;
+        vboData[i].data1[0]    = 1;
+        vboData[i].data1[1]    = 2;
+    }
+
+    GLBuffer vbo;
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vboData), vboData, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glVertexAttribFormat(0, 2, GL_FLOAT, GL_FALSE, 0);
+    glVertexAttribFormat(1, 2, GL_FLOAT, GL_FALSE, 8);
+    glVertexAttribFormat(2, 1, GL_FLOAT, GL_FALSE, 16);
+    glVertexAttribIFormat(3, 3, GL_UNSIGNED_INT, 20);
+    glVertexAttribIFormat(4, 2, GL_INT, 44);
+    for (GLuint i = 0; i < 5; ++i)
+    {
+        glVertexAttribBinding(i, 0);
+        glEnableVertexAttribArray(i);
+    }
+    glBindVertexBuffer(0, vbo, 0, kStride);
+
+    glUniform3ui(expectedData0Loc, 1, 2, 3);
+    glUniform2i(expectedData1Loc, 1, 2);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+
+    glDisableVertexAttribArray(4);
+    glVertexAttribI4i(4, 3, 4, 0, 0);
+
+    glUniform2i(expectedData1Loc, 3, 4);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+}
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(VertexAttributeTestES31);
 ANGLE_INSTANTIATE_TEST_ES31_AND(

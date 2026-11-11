@@ -27,6 +27,7 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import time
 
 
 class WebDriverSeleniumFinder(importlib.abc.MetaPathFinder):
@@ -57,8 +58,9 @@ class WebDriverSeleniumFinder(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, WebDriverSeleniumFinder())
 
 from webkitpy.common.webkit_finder import WebKitFinder
-from webkitpy.common.test_expectations import TestExpectations
+from webkitpy.results.upload import Upload  # noqa: E402
 from webkitpy.webdriver_tests.webdriver_driver import create_driver
+from webkitpy.webdriver_tests.webdriver_test_expectations import WebDriverTestExpectations  # noqa: E402
 from webkitpy.webdriver_tests.webdriver_test_runner_selenium import WebDriverTestRunnerSelenium
 from webkitpy.webdriver_tests.webdriver_test_runner_w3c import WebDriverTestRunnerW3C
 
@@ -69,10 +71,27 @@ class WebDriverTestRunner(object):
 
     RUNNER_CLASSES = (WebDriverTestRunnerSelenium, WebDriverTestRunnerW3C)
 
+    # The expected and actual results to upload for each subtest status, which already reflects the test expectations.
+    UPLOAD_RESULTS = {
+        'PASS': (None, None),
+        'FAIL': (None, Upload.Expectations.FAIL),
+        'ERROR': (None, Upload.Expectations.ERROR),
+        'TIMEOUT': (None, Upload.Expectations.TIMEOUT),
+        'XFAIL': (Upload.Expectations.FAIL, Upload.Expectations.FAIL),
+        'XPASS': (Upload.Expectations.FAIL, None),
+        'XPASS_TIMEOUT': (Upload.Expectations.TIMEOUT, None),
+    }
+    UPLOAD_HARNESS_RESULTS = {
+        'CRASH': Upload.Expectations.CRASH,
+        'TIMEOUT': Upload.Expectations.TIMEOUT,
+    }
+
     def __init__(self, port):
         self._port = port
         _log.info('Using port %s' % self._port.name())
         _log.info('Test configuration: %s' % self._port.test_configuration())
+        if self._port.get_option('site_isolation'):
+            _log.info('Site Isolation enabled')
 
         self._display_driver = self._port._driver_class()(self._port, worker_number=0, pixel_tests=False, no_timeout=True)
         if not self._display_driver.check_driver(self._port):
@@ -90,8 +109,8 @@ class WebDriverTestRunner(object):
             expectations_file = ''
         else:
             expectations_file = os.path.join(self._tests_dir, 'TestExpectations.json')
-        build_type = 'Debug' if self._port.get_option('debug') else 'Release'
-        self._expectations = TestExpectations(self._port.name(), expectations_file, build_type, self._port.architecture())
+        build_type = 'Debug' if self._port.get_option('configuration') == 'Debug' else 'Release'
+        self._expectations = WebDriverTestExpectations(self._port, expectations_file, build_type, self._port.architecture())
         for test in self._expectations._expectations.keys():
             if not os.path.isfile(os.path.join(self._tests_dir, test)):
                 _log.warning('Test %s does not exist' % test)
@@ -103,6 +122,8 @@ class WebDriverTestRunner(object):
         self._display_driver.stop()
 
     def run(self, tests=[]):
+        self._start_time = time.time()
+        self._end_time = self._start_time
         runner_tests = [runner.collect_tests(tests) for runner in self._runners]
         collected_count = sum([len(tests) for tests in runner_tests])
         if not collected_count:
@@ -113,6 +134,7 @@ class WebDriverTestRunner(object):
         for i in range(len(self._runners)):
             if runner_tests[i]:
                 self._runners[i].run(runner_tests[i])
+        self._end_time = time.time()
 
     def process_results(self):
         results = {}
@@ -177,6 +199,40 @@ class WebDriverTestRunner(object):
 
         return retval
 
+    @classmethod
+    def results_for_upload(cls, test_results):
+        results = {}
+        for result in test_results:
+            if result.status != 'OK':
+                results[result.test] = Upload.create_test_result(actual=cls.UPLOAD_HARNESS_RESULTS.get(result.status, Upload.Expectations.ERROR))
+                continue
+            for name, status, _, _ in result.subtest_results:
+                if status in cls.UPLOAD_RESULTS:
+                    expected, actual = cls.UPLOAD_RESULTS[status]
+                    results['%s/%s' % (result.test, name.split('::', 1)[1])] = Upload.create_test_result(expected=expected, actual=actual)
+        return results
+
+    def upload_results(self, options):
+        test_results = [result for runner in self._runners for result in runner.results()]
+        upload = Upload(
+            suite=options.suite or 'webdriver-tests',
+            configuration=self._port.configuration_for_upload(self._port.target_host(0)),
+            details=Upload.create_details(options=options),
+            commits=self._port.commits_for_upload(),
+            run_stats=Upload.create_run_stats(
+                start_time=self._start_time,
+                end_time=self._end_time,
+                tests_skipped=sum(1 for result in test_results for _, status, _, _ in result.subtest_results if status == 'SKIP'),
+            ),
+            results=self.results_for_upload(test_results),
+        )
+        succeeded = True
+        for url in options.report_urls:
+            _log.info('Uploading to %s ...' % url)
+            if not upload.upload(url, log_line_func=_log.info):
+                succeeded = False
+        return succeeded
+
     def dump_results_to_json_file(self, output_path):
         json_results = {}
         json_results['results'] = []
@@ -189,11 +245,13 @@ class WebDriverTestRunner(object):
             results['status'] = result.status
             results['message'] = result.message
             results['subtests'] = []
-            for name, status, message, _ in result.subtest_results:
+            for name, status, message, backtrace in result.subtest_results:
                 subtest = {}
                 subtest['name'] = name.split('::', 1)[1]
                 subtest['status'] = status
                 subtest['message'] = message
+                if backtrace:
+                    subtest['stack'] = backtrace
                 results['subtests'].append(subtest)
             json_results['results'].append(results)
 

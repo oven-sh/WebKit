@@ -27,7 +27,8 @@ fast/quirks/model-element-fallback-content-quirk.html [ Pass ]
 fast/sandbox/mac [ Pass ]
 fast/scrolling/mac [ Pass ]
 fast/speechsynthesis/mac [ Pass ]
-fast/text-extraction [ Pass ]
+[ Sonoma Sequoia Tahoe ] fast/text-extraction [ Pass ]
+[ GoldenGate ] fast/text-extraction [ Skip ]
 fast/visual-viewport/tiled-drawing [ Pass ]
 fast/web-share [ Pass ]
 imported/w3c/web-platform-tests/web-share [ Pass ]
@@ -117,8 +118,6 @@ compositing/repaint/sticky-repaint-on-scroll.html [ Pass ]
 http/tests/iframe-monitor/ [ Pass ]
 
 http/tests/ipc/write-web-archive-frame-ancestry-check.html [ Pass ]
-
-webkit.org/b/308178 [ Tahoe+ Debug arm64 ] http/tests/site-isolation/mouse-events/context-menu-event-twice.html [ Pass Timeout ]
 
 # Some of these have failing results: webkit.org/b/293983
 imported/w3c/web-platform-tests/dom/events/scrolling/iframe-chains.html [ Pass ]
@@ -719,6 +718,7 @@ http/tests/storageAccess/grant-with-prompt-under-general-third-party-cookie-bloc
 # where opt-in cookie partitioning is compiled out. Skipped by default in the generic LayoutTests/TestExpectations;
 # this cross-file override runs it (expected Pass) on Tahoe+.
 [ Tahoe+ ] http/tests/site-isolation/inspector/storage/storage-get-partitioned-cookies.https.html [ Pass ]
+[ Tahoe+ ] http/tests/site-isolation/inspector/storage/storage-cookies-partition-scoping.https.html [ Pass ]
 
 # Enable again when fixing https://bugs.webkit.org/show_bug.cgi?id=208400.
 http/tests/storageAccess/has-storage-access-true-if-third-party-has-cookies-ephemeral.https.html [ Skip ]
@@ -934,7 +934,6 @@ webkit.org/b/217193 [ Release ] inspector/console/queryHolders.html [ Pass Failu
 
 webkit.org/b/217686 inspector/page/overrideSetting-ITPDebugModeEnabled.html [ Pass Failure ]
 
-webkit.org/b/217857 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-stop.html [ Skip ]
 
 webkit.org/b/217938 http/wpt/service-workers/fetchEvent.https.html [ Pass Failure ]
 webkit.org/b/217938 http/wpt/service-workers/header-filtering.https.html [ Pass Failure ]
@@ -1128,6 +1127,7 @@ webkit.org/b/326061 [ x86_64 ] webgl/default-framebuffer-size-limits-worker-4.ht
 webkit.org/b/241265 [ Debug ] imported/w3c/web-platform-tests/html/rendering/replaced-elements/svg-embedded-sizing/svg-in-object-percentage.html [ Pass Crash ]
 
 http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
+http/tests/workers/service/shownotification-icon-from-worker.html [ Pass ]
 http/tests/workers/service/shownotification-invalid-data.html [ Pass ]
 http/wpt/push-api/pushEvent.any.serviceworker.html [ Pass ]
 imported/w3c/web-platform-tests/notifications/idlharness.https.any.html [ Pass ]
@@ -1226,6 +1226,7 @@ webkit.org/b/260113 [ arm64 ] http/wpt/webauthn/ctap-hid-failure.https.html [ Pa
 # https://bugs.webkit.org/show_bug.cgi?id=248545 — re-enable them here.
 [ Sonoma+ ] fast/images/animations-resume-from-last-displayed-frame.html [ Pass ]
 [ Sonoma+ ] fast/images/pagewide-play-pause-animateTransform-svg-animation.html [ Pass ]
+[ Sonoma+ ] fast/images/pagewide-play-pause-svg-image-sources.html [ Pass ]
 [ Sonoma+ ] fast/images/pagewide-play-pause-offscreen-animations.html [ Pass ]
 [ Sonoma+ ] fast/images/mac/animation-context-menu-items-presence.html [ Pass ]
 # This test was added in https://bugs.webkit.org/show_bug.cgi?id=250475 — re-enable it here for Sonoma.
@@ -1259,10 +1260,6 @@ webkit.org/b/320158 [ x86_64 ] fast/canvas/hdr/float16-canvas-imagedata-small-ac
 # The direct image codepath is not used with the remote layer tree.
 [ Sonoma+ ] compositing/images/direct-image-object-fit.html [ Skip ]
 [ Sonoma+ ] compositing/reflections/direct-image-object-fit-reflected.html [ Skip ]
-
-# rdar://107294589 ([UI-side compositing] fast/attachment/mac/attachment-element-gpu-process.html and fast/attachment/mac/wide-attachment-element-gpu-process.html fails)
-[ Sonoma+ ] fast/attachment/mac/attachment-element-gpu-process.html [ ImageOnlyFailure ]
-[ Sonoma+ ] fast/attachment/mac/wide-attachment-element-gpu-process.html [ ImageOnlyFailure ]
 
 # rdar://107294843 ([UI-side compositing] fast/events/wheel/wheel-events-become-non-cancelable.html fails)
 [ Sonoma+ ] fast/events/wheel/wheel-events-become-non-cancelable.html [ Failure ]
@@ -1435,7 +1432,7 @@ http/tests/webgpu/webgpu/api/validation/capability_checks/features/texture_compo
 [ Debug ] http/tests/webgpu/webgpu/api/validation/image_copy/layout_related.html [ Skip ]
 [ Debug ] http/tests/webgpu/webgpu/api/validation/render_pipeline/depth_stencil_state.html [ Skip ]
 [ Debug ] http/tests/webgpu/webgpu/api/validation/resource_usages/texture/in_render_common.html [ Skip ]
-[ Release ] http/tests/webgpu/webgpu/api/validation/error_scope.html [ Pass ]
+[ Release ] http/tests/webgpu/webgpu/api/validation/error_scope.html [ Pass Timeout ]
 [ Release ] http/tests/webgpu/webgpu/api/validation/image_copy/layout_related.html [ Pass ]
 [ Release ] http/tests/webgpu/webgpu/api/validation/render_pipeline/depth_stencil_state.html [ Pass ]
 [ Release ] http/tests/webgpu/webgpu/api/validation/resource_usages/texture/in_render_common.html [ Pass ]
@@ -1707,7 +1704,7 @@ editing/input/scroll-viewport-page-up-down.html [ Pass Failure ]
 [ Sequoia+ ] fast/speechsynthesis/mac/samantha-voice-available.html [ Pass Failure ]
 
 # webkit.org/b/280553 [ Sequoia+ iOS wk2 release ] 2x http/tests/resourceLoadStatistics/* are flaky failures.
-[ Sequoia+ arm64 Release ] http/tests/resourceLoadStatistics/prune-statistics.html [ Pass Failure ]
+[ Sequoia Tahoe arm64 Release ] http/tests/resourceLoadStatistics/prune-statistics.html [ Pass Failure ]
 [ Sequoia+ arm64 Release ] http/tests/resourceLoadStatistics/remove-website-data-for-origin-deletes-link-decoration.html [ Pass Failure ]
 
 # webkit.org/b/280989 [ Sequoia wk2 x86_64 ] webanimations/frame-rate/document-timeline-maximum-frame-rate.html is a constant failure
@@ -1814,7 +1811,28 @@ webkit.org/b/307830 [ Debug arm64 ] http/tests/site-isolation/history/add-iframe
 
 webkit.org/b/289183 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-disabled-tracks.https.html [ Pass Failure ]
 
-webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video&mimeType='' [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=audio&mimeType='' [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType='' [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=audio&mimeType=audio/webm;codecs=opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video&mimeType=video/webm;codecs=vp8 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/webm;codecs=vp8,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video&mimeType=video/webm;codecs=vp9 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/webm;codecs=vp9,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=avc1.64003E,mp4a.40.2 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=avc3.64003E,mp4a.40.2 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video&mimeType=video/mp4;codecs=vp9 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=audio&mimeType=audio/mp4;codecs=opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=vp9,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=av01,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=av01,mp4a.40.2 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=hvc1.1.6.L186.B0,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=hev1.1.6.L186.B0,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=hvc1.1.6.L186.B0,mp4a.40.2 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4;codecs=hev1.1.6.L186.B0,mp4a.40.2 [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/x-matroska;codecs=hvc1.1.6.L186.B0,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/x-matroska;codecs=hev1.1.6.L186.B0,opus [ Pass Crash Failure ]
+webkit.org/b/289199 [ Debug ] imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html?kinds=video,audio&mimeType=video/mp4 [ Pass Crash Failure ]
 
 webkit.org/b/289211 [ Sequoia Release x86_64 ] imported/w3c/web-platform-tests/mediacapture-insertable-streams/VideoTrackGenerator-with-window-tracks.https.html [ Failure ]
 
@@ -1823,11 +1841,6 @@ webkit.org/b/289211 [ Sequoia Release x86_64 ] imported/w3c/web-platform-tests/m
 [ arm64 ] imported/w3c/web-platform-tests/editing/other/delete-in-child-of-head.tentative.html?designMode=on&method=backspace [ Pass Failure ]
 
 webkit.org/b/289284 fast/canvas/image-buffer-resource-limits.html [ Pass Timeout Crash ]
-
-# webkit.org/b/289298 [ macOS wk2 Release ] 3x imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-00*.html are flaky failures.
-[ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-001.html [ Pass Failure ]
-[ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-004.html [ Pass Failure ]
-[ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-003.html [ Pass Failure ]
 
 webkit.org/b/289370 [ Debug arm64 ] media/video-webm-seek-singlekeyframe.html [ Pass Failure ]
 
@@ -1938,8 +1951,6 @@ webkit.org/b/295938 scrollingcoordinator/mac/latching/horizontal-overflow-back-s
 webkit.org/b/296017 [ Release ] imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-021.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/296066 [ Sequoia Debug arm64 ] accessibility/mac/scrolling-in-pdf-crash.html [ Pass Timeout ]
-
-webkit.org/b/295929 [ Release ] imported/w3c/web-platform-tests/css/css-conditional/container-queries/canvas-as-container-002.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/296101 [ Release ] imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-012.html [ Pass ImageOnlyFailure ]
 
@@ -2057,8 +2068,6 @@ webkit.org/b/297613 [ Debug ] fast/scrolling/mac/stateless-user-scroll-scrollend
 [ Debug ] ipc/send-gradient.html [ Skip ]
 [ Debug ] ipc/send-filter.html [ Skip ]
 [ Debug ] ipc/send-ignored-network-message.html [ Skip ]
-
-webkit.org/b/297860 http/tests/site-isolation/edge-sampling-viewport-constrained-object.html [ Skip ]
 
 webkit.org/b/297006 [ Debug ] http/tests/media/media-element-frame-destroyed-crash.html [ Skip ]
 
@@ -2178,8 +2187,6 @@ webkit.org/b/310853 imported/w3c/web-platform-tests/trusted-types/navigate-to-ja
 
 webkit.org/b/305673 [ Debug ] inspector/idl-extensions/CanvasRenderingContext2D/setPath.html [ Timeout ]
 
-webkit.org/b/305675 fast/animation/request-animation-frame-throttle-subframe-zero-size.html [ Pass Failure ]
-
 webkit.org/b/305947 compositing/visibility/frameset-visibility-hidden.html [ ImageOnlyFailure Pass ]
 
 webkit.org/b/305958 imported/w3c/web-platform-tests/media-source/mediasource-changetype-play.html [ Pass Failure ]
@@ -2199,8 +2206,6 @@ webkit.org/b/310569 imported/w3c/web-platform-tests/webrtc/transfer-datachannel.
 webkit.org/b/306301 [ x86_64 ] http/tests/webgpu/webgpu/api/validation/state/device_lost/destroy.html [ Failure ]
 
 webkit.org/b/306663 [ Debug arm64 ] webaudio/silent-audio-interrupted-in-background.html [ Pass Failure ]
-
-webkit.org/b/306670 [ Debug arm64 ] http/tests/webgpu/webgpu/api/validation/render_pipeline/resource_compatibility.html [ Pass Failure Timeout ]
 
 webkit.org/b/310823 [ Release arm64 ] imported/w3c/web-platform-tests/html/semantics/embedded-content/the-canvas-element/security.pattern.fillStyle.sub.html [ Pass Failure ]
 
@@ -2259,7 +2264,6 @@ webkit.org/b/307889 http/tests/multipart/multipart-async-image.html [ Pass Failu
 webkit.org/b/310302 imported/w3c/web-platform-tests/uievents/mouse/mouse_boundary_events_on_image_map.html [ Pass Failure ]
 
 # FIXME <https://webkit.org/b/311136>: Additional work needed to pass these tests
-http/tests/site-isolation/inspector/page/override-setting-cross-origin-iframe.html [ Pass Failure ]
 webkit.org/b/311836 http/tests/site-isolation/inspector/page/set-emulated-media-cross-origin-iframe.html [ Pass Failure ]
 
 webkit.org/b/314356 imported/w3c/web-platform-tests/websockets/constructor/013.html?default [ Pass Failure ]
@@ -2467,14 +2471,6 @@ webkit.org/b/317857 [ Debug ] http/tests/site-isolation/frame-index.html [ Skip 
 webkit.org/b/318150 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-border-area-border-shape-overflow.html [ ImageOnlyFailure ]
 webkit.org/b/318150 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-border-area-border-shape.html [ ImageOnlyFailure ]
 
-webkit.org/b/318450 [ Debug ] accessibility/mac/input-replacevalue-userinfo.html [ Timeout ]
-
-# webkit.org/b/305671 3x fast/animation/* (layout-tests) are flaky failures.
-fast/animation/css-animation-throttling.html [ Pass Failure ]
-fast/animation/request-animation-frame-throttle-inside-overflow-scroll.html [ Pass Failure ]
-fast/animation/request-animation-frame-throttle-subframe-display-none.html [ Pass Failure ]
-webkit.org/b/319501 fast/animation/request-animation-frame-throttle-subframe.html [ Pass Timeout ]
-
 # webkit.org/b/319018 2x media/media-source/* (layout-tests) are flaky timeouts.
 media/media-source/media-source-real-play-after-eos.html [ Pass ImageOnlyFailure Timeout ]
 media/media-source/media-managedmse-webvtt-track.html [ Pass Timeout ]
@@ -2521,20 +2517,6 @@ webkit.org/b/323246 [ Debug x86_64 ] accessibility/isolated-tree/canvas-fallback
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Pass Crash Timeout ]
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Crash Timeout ]
 
-# webkit.org/b/325200 REGRESSION(macOS GoldenGate)[ Debug ]: 12X http/tests/iframe-monitor/ (layout-tests) are constant timeouts
-[ GoldenGate Debug ] http/tests/iframe-monitor/blob-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/cached-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/compressed-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/dark-mode.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/data-url-resource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/eligibility.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/iframe-unload.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/just-use-eligible-subresource.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/throttler.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/workers/service-worker-not-count-twice.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/workers/service-worker.html [ Skip ] 
-[ GoldenGate Debug ] http/tests/iframe-monitor/workers/shared-worker.html [ Skip ]
-
 # webkit.org/b/325205 [ macOS Debug ] 4X http/tests/webgpu/webgpu/shader/execution/expression/ (layout-tests) are constant timeouts
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/binary/af_matrix_matrix_multiplication.html [ Skip ] 
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureDimensions.html [ Skip ] 
@@ -2543,91 +2525,121 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 
 # rdar://188334702 (☂️Batch file expectations for failures observed on the new Golden Gate Post-Commit queue)
 [ GoldenGate Debug ] displaylists/layer-dispay-list.html [ Pass Failure ]
-[ GoldenGate Debug ] fast/events/scroll-div-with-prevent-default-in-subframe.html [ Pass Failure ]
-[ GoldenGate Debug ] fast/harness/render-tree-as-text-options.html [ Pass Failure ]
-[ GoldenGate Debug ] http/tests/websocket/tests/hybi/client-close-2.html [ Pass Failure ]
-[ GoldenGate Debug ] http/wpt/webaudio/audioworklet-addModule-cors.sub.https.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/default-src.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/multiple-policies.https.sub.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-default-src.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-script-src-elem.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-script-src-none.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-script-src.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/script-src-elem.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/script-src-sha512.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/content-security-policy/report-hash/script-src.https.window.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/editing/other/exec-command-without-editable-element.tentative.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/a-click.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/forms/input-change-event-properties.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/subresource-integrity/integrity-policy/script.https.html [ Pass Failure ]
-[ GoldenGate Debug ] css3/filters/backdrop/backdrop-filter-with-reflection.html [ Pass ImageOnlyFailure ]
-[ GoldenGate Debug ] fullscreen/fullscreen-no-scrollbars-on-ancestor-root.html [ Pass ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-snap-003.html [ Pass ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.fillText.html [ Pass ImageOnlyFailure ]
-[ GoldenGate Debug ] compositing/video/video-clip-change-src.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] fast/forms/switch/zoom-approximates-transform-vertical-lr.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] fast/forms/switch/zoom-approximates-transform-vertical-rl.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] fast/mediastream/MediaStream-video-element-video-tracks-disabled.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] fast/text/international/bdi-dir-default-to-auto.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] fast/text/international/bdi-neutral-wrapped.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/css/css-content/quotes-009.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002a.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002b.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002c.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-006a.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-006b.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-006c.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-009a.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-009b.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-009c.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-auto-dir-default.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-nested.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-number.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-separate.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-another-bdi-1.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-letter-following-1.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-letter-preceding-1.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-number-following-1.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-surrounding-run.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-wrapped.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-paragraph-level-container.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/media-source/mediasource-video-is-visible.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-source/media-source-video-renders.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-source/media-source-vp8-hiddenframes.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-source/media-source-vp8-hiddenframes-decoder-in-content-process.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-sources-selection.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-vp8-hiddenframes.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-vp8-hiddenframes-decoder-in-content-process.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/media-vp9-yuv422p10.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] media/video-object-fit.html [ ImageOnlyFailure ]
-[ GoldenGate Debug ] svg/text/bidi-dir-rtl.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/events/scroll-div-with-prevent-default-in-subframe.html [ Pass Failure ]
+[ GoldenGate ] fast/harness/render-tree-as-text-options.html [ Pass Failure ]
+[ GoldenGate ] http/tests/websocket/tests/hybi/client-close-2.html [ Pass Failure ]
+[ GoldenGate ] http/wpt/webaudio/audioworklet-addModule-cors.sub.https.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/default-src.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/multiple-policies.https.sub.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-default-src.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-script-src-elem.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-script-src-none.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/reportonly-script-src.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/script-src-elem.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/script-src-sha512.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/content-security-policy/report-hash/script-src.https.window.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/editing/other/exec-command-without-editable-element.tentative.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/a-click.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/forms/input-change-event-properties.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/subresource-integrity/integrity-policy/script.https.html [ Pass Failure ]
+[ GoldenGate ] css3/filters/backdrop/backdrop-filter-with-reflection.html [ Pass ImageOnlyFailure ]
+[ GoldenGate ] fullscreen/fullscreen-no-scrollbars-on-ancestor-root.html [ Pass ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-snap-003.html [ Pass ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.fillText.html [ Pass ImageOnlyFailure ]
+[ GoldenGate ] compositing/video/video-clip-change-src.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/forms/switch/zoom-approximates-transform-vertical-lr.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/forms/switch/zoom-approximates-transform-vertical-rl.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/mediastream/MediaStream-video-element-video-tracks-disabled.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/text/international/bdi-dir-default-to-auto.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/text/international/bdi-neutral-wrapped.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/css-content/quotes-009.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002a.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002b.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002c.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-006a.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-006b.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-006c.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-009a.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-009b.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-009c.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-auto-dir-default.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-nested.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-number.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-separate.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-another-bdi-1.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-letter-following-1.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-letter-preceding-1.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-number-following-1.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-to-surrounding-run.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-neutral-wrapped.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-bdi-element/bdi-paragraph-level-container.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/media-source/mediasource-video-is-visible.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-source/media-source-video-renders.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-source/media-source-vp8-hiddenframes.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-source/media-source-vp8-hiddenframes-decoder-in-content-process.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-sources-selection.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-vp8-hiddenframes.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-vp8-hiddenframes-decoder-in-content-process.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/media-vp9-yuv422p10.html [ ImageOnlyFailure ]
+[ GoldenGate ] media/video-object-fit.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] editing/mac/attributed-string/font-weight.html [ Failure ]
 [ GoldenGate Debug ] fast/events/ime-composition-events-001.html [ Failure ]
-[ GoldenGate Debug ] fast/mediastream/video-rotation2.html [ Failure ]
-[ GoldenGate Debug ] fast/mediastream/video-srcObject-fit-fill.html [ Failure ]
-[ GoldenGate Debug ] http/tests/inspector/network/resource-sizes-network.html [ Failure ]
-[ GoldenGate Debug ] http/tests/media/media-source/media-source-video-fit-fill.html [ Failure ]
-[ GoldenGate Debug ] http/tests/xmlhttprequest/abort-should-cancel-load.html [ Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/css/css-anchor-position/transform-016.html [ Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/webrtc/RTCDataChannel-worker-GC.html [ Failure ]
-[ GoldenGate Debug ] navigation-api/navigation-api-rate-limit-history-api.html [ Failure ]
+[ GoldenGate ] fast/mediastream/video-rotation2.html [ Failure ]
+[ GoldenGate ] fast/mediastream/video-srcObject-fit-fill.html [ Failure ]
+[ GoldenGate ] http/tests/inspector/network/resource-sizes-network.html [ Failure ]
+[ GoldenGate ] http/tests/media/media-source/media-source-video-fit-fill.html [ Failure Timeout ]
+[ GoldenGate ] http/tests/xmlhttprequest/abort-should-cancel-load.html [ Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/css-anchor-position/transform-016.html [ Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/webrtc/RTCDataChannel-worker-GC.html [ Failure ]
+[ GoldenGate ] navigation-api/navigation-api-rate-limit-history-api.html [ Failure ]
 [ GoldenGate Debug ] platform/mac/fast/events/objc-event-api.html [ Failure ]
 [ GoldenGate Debug ] platform/mac/fast/objc/webScriptObject-hasWebScriptKey.html [ Failure ]
 [ GoldenGate Debug ] storage/websql/sql-error-codes.html [ Failure ]
 [ GoldenGate Debug ] storage/websql/test-authorizer.html [ Failure ]
-[ GoldenGate Debug ] http/tests/permissions/permission-status-onchange-event-service-worker.html [ Pass Crash ]
-[ GoldenGate Debug ] http/tests/site-isolation/inspector/target/target.html [ Pass Crash ]
-[ GoldenGate Debug ] http/tests/workers/service/page-caching.html [ Pass Crash ]
-[ GoldenGate Debug ] accessibility/element-reflection-ariaowns.html [ Failure ]
-[ GoldenGate Debug ] accessibility/isolated-tree/element-reflection-ariaowns.html [ Pass Failure ]
-[ GoldenGate Debug arm64 ] fast/webgpu/nocrash/fuzz-291168.html [ Pass Failure ]
-[ GoldenGate Debug ] http/tests/resourceLoadStatistics/prune-statistics.html [ Pass Timeout ]
-[ GoldenGate Debug ] http/wpt/webauthn/public-key-credential-get-success-u2f.https.html [ Pass Failure ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/css/filter-effects/crashtests/fecomponenttransfer-tablevalues-crash.html [ Pass Timeout ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/wasm/core/float_literals.wast.js.html [ Pass Timeout ]
-[ GoldenGate Debug ] imported/w3c/web-platform-tests/workers/semantics/structured-clone/shared.html [ Pass Failure ]
-[ GoldenGate Debug ] media/video-page-visibility-restriction.html [ Pass Timeout ]
-[ GoldenGate Debug ] swipe/main-frame-pinning-requirement.html [ Pass Timeout ]
+[ GoldenGate ] http/tests/permissions/permission-status-onchange-event-service-worker.html [ Pass Crash ]
+[ GoldenGate ] http/tests/site-isolation/inspector/target/target.html [ Pass Crash ]
+[ GoldenGate ] http/tests/workers/service/page-caching.html [ Pass Crash ]
+[ GoldenGate ] accessibility/element-reflection-ariaowns.html [ Failure ]
+[ GoldenGate ] accessibility/isolated-tree/element-reflection-ariaowns.html [ Pass Failure ]
+[ GoldenGate arm64 ] fast/webgpu/nocrash/fuzz-291168.html [ Pass Failure ]
+[ GoldenGate ] http/tests/resourceLoadStatistics/prune-statistics.html [ Pass Failure Timeout ]
+[ GoldenGate ] http/wpt/webauthn/public-key-credential-get-success-u2f.https.html [ Pass Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/filter-effects/crashtests/fecomponenttransfer-tablevalues-crash.html [ Pass Timeout ]
+[ GoldenGate ] imported/w3c/web-platform-tests/wasm/core/float_literals.wast.js.html [ Pass Timeout ]
+[ GoldenGate ] imported/w3c/web-platform-tests/workers/semantics/structured-clone/shared.html [ Pass Failure ]
+[ GoldenGate ] media/video-page-visibility-restriction.html [ Pass Timeout ]
+[ GoldenGate ] swipe/main-frame-pinning-requirement.html [ Pass Timeout ]
+[ GoldenGate ] inspector/dom/shadow-and-non-shadow-children.html [ Pass Failure ]
+[ GoldenGate ] css3/filters/backdrop/backdrop-inset-opacity.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/attachment/mac/attachment-element-gpu-process.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/canvas/draw-element-image/2d-drawElementImage-rotated-text.html [ ImageOnlyFailure ]
+[ GoldenGate ] fast/layers/no-clipping-overflow-hidden-added-after-transform.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/compositing/root-element-background-image-transparency-003.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-bidi-003.html [ ImageOnlyFailure ]
+[ GoldenGate Release ] imported/w3c/web-platform-tests/css/filter-effects/drop-shadow-outsets-sample-composited-child-preserve-3d.html [ ImageOnlyFailure ]
+[ GoldenGate Release ] imported/w3c/web-platform-tests/css/filter-effects/drop-shadow-outsets-sample-composited-child.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/border-rendering.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u05D0_first.html [ ImageOnlyFailure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u0628_first.html [ ImageOnlyFailure ]
+[ GoldenGate ] editing/inserting/typing-space-to-trigger-smart-link.html [ Failure ]
+[ GoldenGate ] fast/events/input-event-insert-link.html [ Failure ]
+[ GoldenGate ] fast/quirks/active-quirks-by-domain.html [ Failure ]
+[ GoldenGate ] fast/scrolling/mac/vertical-then-horizontal-scroll.html [ Failure ]
+[ GoldenGate arm64 ] fast/webgpu/nocrash/fuzz-283943.html [ Failure ]
+[ GoldenGate arm64 ] fast/webgpu/nocrash/fuzz-284326.html [ Failure ]
+[ GoldenGate ] http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-with-filtered-link-decoration-after-long-deletion.html [ Failure ]
+[ GoldenGate ] http/tests/site-isolation/accessibility/client/iframe-bounds.html [ Failure ]
+[ GoldenGate ] http/tests/site-isolation/inspector/network/resource-timing-cross-origin-page-navigation.html [ Failure ]
+[ GoldenGate ] http/tests/text-extraction/debug-text-extraction-subframes.html [ Timeout ]
+[ GoldenGate Release ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureDimensions.html [ Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/css/css-overflow/overflow-auto-scrolling-with-margin-and-transform.html [ Failure ]
+[ GoldenGate ] imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-action-mouse.html [ Failure ]
+[ GoldenGate ] inspector/timeline/timeline-event-RenderingFrame.html [ Failure Timeout ]
+[ GoldenGate arm64 ] inspector/timeline/timeline-event-TimerRemove.html [ Failure Timeout ]
+[ GoldenGate ] tiled-drawing/scrolling/scroll-snap/scroll-snap-mandatory-2d-overflow.html [ Failure ]
+[ GoldenGate ] webaudio/audioworklet-stops-on-document-stop.html [ Failure ]
+[ GoldenGate ] webgl/video-formats/upload-path-av1-420-bt709-videorange.html [ Failure ]
+[ GoldenGate ] fast/scrolling/mac/rubberband-overflow-in-wheel-region.html [ Timeout ]
 
 # webkit.org/b/318157 11x imported/w3c/web-platform-tests/IndexedDB/* (layout-tests) are constant text failures.
 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.html [ Failure ]
@@ -2641,8 +2653,6 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.serviceworker.html [ Failure ]
 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.sharedworker.html [ Failure ]
 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.worker.html [ Failure ]
-
-webkit.org/b/325574 [ Tahoe+ arm64 ] svg/compositing/filtered-container-with-composited-child.svg [ ImageOnlyFailure ]
 
 # webkit.org/b/304362 REGRESSION(Tahoe): editing/selection/select-across-readonly-input* broken by Liquid Glass
 editing/selection/select-across-readonly-input-2.html [ Failure ]
@@ -2690,3 +2700,7 @@ webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation
 webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation-flipped.html [ ImageOnlyFailure ]
 webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation-perspective.html [ ImageOnlyFailure ]
 webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation-rotate-y.html [ ImageOnlyFailure ]
+
+webkit.org/b/329900 [ Sequoia+ Debug arm64 ] http/tests/site-isolation/inspector/debugger/pause-holds-cross-process-frames-until-paused-frame-goes-away.html [ Pass Timeout ]
+
+webkit.org/b/329901 [ Sequoia+ Debug arm64 ] http/tests/security/xss-DENIED-xsl-document-securityOrigin.xml [ Pass Failure Timeout ]

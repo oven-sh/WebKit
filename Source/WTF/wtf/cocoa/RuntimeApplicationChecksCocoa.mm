@@ -66,7 +66,7 @@ static bool linkedBefore(dyld_build_version_t version, uint32_t fallbackIOSVersi
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/RuntimeApplicationChecksCocoaAdditions.cpp>)
 #import <WebKitAdditions/RuntimeApplicationChecksCocoaAdditions.cpp>
 #else
-static void LEGACY_NODELETE disableAdditionalSDKAlignedBehaviors(SDKAlignedBehaviors&)
+NODELETE static void disableAdditionalSDKAlignedBehaviors(SDKAlignedBehaviors&)
 {
 }
 #endif
@@ -264,7 +264,7 @@ static SDKAlignedBehaviors computeSDKAlignedBehaviors()
     return behaviors;
 }
 
-static std::optional<SDKAlignedBehaviors>& LEGACY_NODELETE sdkAlignedBehaviorsValue()
+NODELETE static std::optional<SDKAlignedBehaviors>& sdkAlignedBehaviorsValue()
 {
     static NeverDestroyed<std::optional<SDKAlignedBehaviors>> behaviors;
     return behaviors.get();
@@ -306,7 +306,7 @@ bool linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior behavior)
     return sdkAlignedBehaviors().get(static_cast<size_t>(behavior));
 }
 
-static bool& LEGACY_NODELETE processIsExtensionValue()
+NODELETE static bool& processIsExtensionValue()
 {
     static bool processIsExtension;
     return processIsExtension;
@@ -328,7 +328,7 @@ static bool applicationBundleIdentifierOverrideWasQueried;
 
 // The application bundle identifier gets set to the UIProcess bundle identifier by the WebProcess and
 // the Networking upon initialization. It is unset otherwise.
-static String& LEGACY_NODELETE bundleIdentifierOverride()
+NODELETE static String& bundleIdentifierOverride()
 {
     static NeverDestroyed<String> identifierOverride;
 #if !ASSERT_MSG_DISABLED
@@ -337,7 +337,7 @@ static String& LEGACY_NODELETE bundleIdentifierOverride()
     return identifierOverride;
 }
 
-static String& LEGACY_NODELETE bundleIdentifier()
+NODELETE static String& bundleIdentifier()
 {
     static NeverDestroyed<String> identifier;
     return identifier;
@@ -500,6 +500,12 @@ bool MacApplication::isAdobeInstaller()
     return isAdobeInstaller;
 }
 
+bool MacApplication::isCaptiveNetworkAssistant()
+{
+    static bool isCaptiveNetworkAssistant = applicationBundleIsEqualTo("com.apple.CaptiveNetworkAssistant"_s);
+    return isCaptiveNetworkAssistant;
+}
+
 bool MacApplication::isMiniBrowser()
 {
     static bool isMiniBrowser = applicationBundleIsEqualTo("org.webkit.MiniBrowser"_s) || applicationBundleIsEqualTo("org.webkit.SwiftBrowser"_s);
@@ -646,6 +652,12 @@ bool IOSApplication::isFeedly()
 {
     static bool isFeedly = applicationBundleIsEqualTo("com.devhd.feedly"_s);
     return isFeedly;
+}
+
+bool IOSApplication::isGmail()
+{
+    static bool isGmail = applicationBundleIsEqualTo("com.google.Gmail"_s);
+    return isGmail;
 }
 
 bool IOSApplication::isEssentialSkeleton()

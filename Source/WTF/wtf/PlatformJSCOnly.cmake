@@ -124,6 +124,8 @@ elseif (APPLE)
         ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
         ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
     )
+
+    set_source_files_properties(darwin/OSLogPrintStream.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 elseif (ANDROID)
     list(APPEND WTF_SOURCES
         linux/CurrentProcessMemoryStatus.cpp

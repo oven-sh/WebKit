@@ -224,6 +224,7 @@ template: enum class WebKit::LegacyCustomProtocolIDType
 template: struct WebKit::LibWebRTCResolverIdentifierType
 template: struct WebKit::LogStreamIdentifierType
 template: struct WebKit::RemoteGradientIdentifierType
+template: struct WebKit::RemoteMeshGradientIdentifierType
 template: struct WebKit::RemoteGraphicsContextIdentifierType
 template: struct WebKit::RemoteDisplayListIdentifierType
 template: struct WebKit::RemoteDisplayListRecorderIdentifierType
@@ -236,6 +237,7 @@ template: struct WebKit::RemoteSnapshotRecorderIdentifierType
 template: struct WebKit::RemoteVideoFrameIdentifierType
 template: struct WebKit::VideoDecoderIdentifierType
 template: struct WebKit::VideoEncoderIdentifierType
+template: enum class WebKit::RendererBufferIdentifierType
 template: enum class WebKit::WCContentBufferIdentifierType
 template: struct IPC::AsyncReplyIDType
 template: struct WebCore::FileSystemHandleIdentifierType

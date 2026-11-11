@@ -55,6 +55,7 @@
 #include "VMInlines.h"
 #include "Weak.h"
 #include <wtf/Box.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
 #include <wtf/JSONValues.h>
 #include <wtf/Stopwatch.h>
@@ -79,16 +80,11 @@ static String objectGroupForBreakpointAction(JSC::BreakpointActionID id)
     return makeString("breakpoint-action-"_s, id);
 }
 
-static bool isWebKitInjectedScript(const String& sourceURL)
-{
-    return sourceURL.startsWith("__InjectedScript_"_s) && sourceURL.endsWith(".js"_s);
-}
-
-static JSC::Debugger::BlackboxRange LEGACY_NODELETE blackboxRange(const JSC::Debugger::Script& script)
+NODELETE static JSC::Debugger::BlackboxRange blackboxRange(const JSC::Debugger::Script& script)
 {
     return {
         { OrdinalNumber::fromZeroBasedInt(script.startLine), OrdinalNumber::fromZeroBasedInt(script.startColumn) },
-        { OrdinalNumber::fromZeroBasedInt(script.endLine), OrdinalNumber::fromZeroBasedInt(script.endColumn) },
+        { OrdinalNumber::fromZeroBasedInt(script.endLine), OrdinalNumber::fromZeroBasedInt(script.endColumn + 1) },
     };
 }
 
@@ -700,17 +696,17 @@ static String functionName(JSC::InternalFunction& internalFunction)
     return internalFunction.name();
 }
 
-static String LEGACY_NODELETE functionName(JSC::NativeExecutable& nativeExecutable)
+NODELETE static String functionName(JSC::NativeExecutable& nativeExecutable)
 {
     return nativeExecutable.name();
 }
 
-static String LEGACY_NODELETE functionName(JSC::FunctionExecutable& functionExecutable)
+NODELETE static String functionName(JSC::FunctionExecutable& functionExecutable)
 {
     return functionExecutable.ecmaName().string();
 }
 
-static String LEGACY_NODELETE functionName(JSC::CodeBlock& codeBlock)
+NODELETE static String functionName(JSC::CodeBlock& codeBlock)
 {
     if (auto* functionExecutable = dynamicDowncast<JSC::FunctionExecutable>(codeBlock.ownerExecutable()))
         return functionName(*functionExecutable);
@@ -718,7 +714,7 @@ static String LEGACY_NODELETE functionName(JSC::CodeBlock& codeBlock)
     return nullString();
 }
 
-static String LEGACY_NODELETE functionName(JSC::CallFrame* callFrame)
+NODELETE static String functionName(JSC::CallFrame* callFrame)
 {
     if (callFrame->isNativeCalleeFrame())
         return nullString();
@@ -790,7 +786,7 @@ struct ReplacedNativeExecutable {
 };
 
 static Lock s_replacedNativeExecutablesLock;
-static Vector<Box<ReplacedNativeExecutable>>& LEGACY_NODELETE replacedNativeExecutables() WTF_REQUIRES_LOCK(s_replacedNativeExecutablesLock)
+NODELETE static Vector<Box<ReplacedNativeExecutable>>& replacedNativeExecutables() WTF_REQUIRES_LOCK(s_replacedNativeExecutablesLock)
 {
     ASSERT(s_replacedNativeExecutablesLock.isHeld());
     static NeverDestroyed<Vector<Box<ReplacedNativeExecutable>>> replacedNativeExecutables;
@@ -827,7 +823,7 @@ struct ReplacedInternalFunction {
 };
 
 static Lock s_replacedInternalFunctionsLock;
-static Vector<Box<ReplacedInternalFunction>>& LEGACY_NODELETE replacedInternalFunctions() WTF_REQUIRES_LOCK(s_replacedInternalFunctionsLock)
+NODELETE static Vector<Box<ReplacedInternalFunction>>& replacedInternalFunctions() WTF_REQUIRES_LOCK(s_replacedInternalFunctionsLock)
 {
     ASSERT(s_replacedInternalFunctionsLock.isHeld());
     static NeverDestroyed<Vector<Box<ReplacedInternalFunction>>> replacedInternalFunctions;
@@ -1471,7 +1467,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::setShouldBlackboxURL(const
     if (optionalIsRegex)
         blackboxedScript.isRegex = *optionalIsRegex;
 
-    if (blackboxedScript.caseSensitive && !blackboxedScript.isRegex && isWebKitInjectedScript(blackboxedScript.url))
+    if (blackboxedScript.caseSensitive && !blackboxedScript.isRegex && JSC::Debugger::isWebKitInjectedScript(blackboxedScript.url))
         return makeUnexpected("Blackboxing of internal scripts is controlled by 'Debugger.setPauseForInternalScripts'"_s);
 
     m_blackboxedScripts.removeAll(blackboxedScript);
@@ -1529,7 +1525,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::setShouldBlackboxURL(const
     }
 
     for (auto& [sourceID, script] : m_scripts) {
-        if (isWebKitInjectedScript(script.sourceURL))
+        if (JSC::Debugger::isWebKitInjectedScript(script.sourceURL))
             continue;
 
         setBlackboxConfiguration(sourceID, script);
@@ -1546,7 +1542,7 @@ void InspectorDebuggerAgent::setBlackboxConfiguration(JSC::SourceID sourceID, co
 
     JSC::Debugger::BlackboxConfiguration blackboxConfiguration;
 
-    if (!m_pauseForInternalScripts && isWebKitInjectedScript(script.sourceURL)) {
+    if (!m_pauseForInternalScripts && script.isInternalScript) {
         auto& blackboxFlags = blackboxConfiguration.ensure(blackboxRange(script), [] {
             return JSC::Debugger::BlackboxFlags();
         }).iterator->value;
@@ -1619,7 +1615,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::setPauseForInternalScripts
     m_pauseForInternalScripts = shouldPause;
 
     for (auto& [sourceID, script] : m_scripts) {
-        if (!isWebKitInjectedScript(script.sourceURL))
+        if (!script.isInternalScript)
             continue;
 
         setBlackboxConfiguration(sourceID, script);
@@ -1862,11 +1858,11 @@ void InspectorDebuggerAgent::didParseSource(JSC::JSGlobalObject* globalObject, J
     if (scriptTypeForScript(script) == Protocol::Debugger::ScriptType::WebAssembly)
         return;
 
+    setBlackboxConfiguration(sourceID, script);
+
     String scriptURLForBreakpoints = hasSourceURL ? script.sourceURL : script.url;
     if (scriptURLForBreakpoints.isEmpty())
         return;
-
-    setBlackboxConfiguration(sourceID, script);
 
     for (auto& protocolBreakpoint : m_protocolBreakpointForProtocolBreakpointID.values()) {
         if (!protocolBreakpoint.matchesScriptURL(scriptURLForBreakpoints))
@@ -2035,8 +2031,10 @@ void InspectorDebuggerAgent::didPause(JSC::JSGlobalObject* globalObject, JSC::De
         m_continueToLocationDebuggerBreakpoint = nullptr;
     }
 
-    auto& stopwatch = protect(injectedScriptManager().inspectorEnvironment())->executionStopwatch();
-    if (stopwatch.isActive()) {
+    // A shared stopwatch keeps running, because other processes do not pause together with this one.
+    CheckedRef environment = injectedScriptManager().inspectorEnvironment();
+    auto& stopwatch = environment->executionStopwatch();
+    if (stopwatch.isActive() && !environment->executionStopwatchIsSharedAcrossProcesses()) {
         stopwatch.stop();
         m_didPauseStopwatch = true;
     }
@@ -2083,7 +2081,9 @@ void InspectorDebuggerAgent::didContinue()
 {
     if (m_didPauseStopwatch) {
         m_didPauseStopwatch = false;
-        protect(injectedScriptManager().inspectorEnvironment())->executionStopwatch().start();
+        CheckedRef environment = injectedScriptManager().inspectorEnvironment();
+        ASSERT(!environment->executionStopwatchIsSharedAcrossProcesses());
+        environment->executionStopwatch().start();
     }
 
     m_pausedGlobalObject = nullptr;
@@ -2171,6 +2171,7 @@ void InspectorDebuggerAgent::clearInspectorBreakpointState()
 
     m_symbolicBreakpoints.clear();
 
+    cancelPauseAtNextOpportunity();
     clearDebuggerBreakpointState();
 }
 
@@ -2188,14 +2189,20 @@ void InspectorDebuggerAgent::clearDebuggerBreakpointState()
     m_debuggerBreakpointsForProtocolBreakpointID.clear();
     m_nextDebuggerBreakpointID = JSC::noBreakpointID + 1;
     m_continueToLocationDebuggerBreakpoint = nullptr;
-    clearPauseDetails();
-    m_javaScriptPauseScheduled = false;
     m_hasExceptionValue = false;
 
+    // JSC keeps the pause when the global object is replaced, but can drop it without telling the agent, such as at the end of a program.
+    m_javaScriptPauseScheduled = m_javaScriptPauseScheduled && m_debugger.isPauseAtNextOpportunityScheduled();
+
     if (isPaused()) {
+        // Continuing also cancels a scheduled pause.
+        m_javaScriptPauseScheduled = false;
         m_debugger.continueProgram();
         m_frontendDispatcher->resumed();
     }
+
+    if (!m_javaScriptPauseScheduled)
+        clearPauseDetails();
 }
 
 void InspectorDebuggerAgent::didClearGlobalObject()

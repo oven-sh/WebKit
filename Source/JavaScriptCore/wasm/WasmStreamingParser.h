@@ -119,7 +119,7 @@ private:
 
     State parseModuleHeader(Vector<uint8_t>&&);
     State parseSectionID(Vector<uint8_t>&&);
-    State LEGACY_NODELETE parseSectionSize(uint32_t);
+    NODELETE State parseSectionSize(uint32_t);
     State parseSectionPayload(std::span<const uint8_t>);
 
     State parseCodeSectionSize(uint32_t);

@@ -81,7 +81,7 @@ WebKit::WebContentMode webContentMode(WKContentMode contentMode)
 
 #endif // PLATFORM(IOS_FAMILY)
 
-WKWebpagePreferencesUpgradeToHTTPSPolicy LEGACY_NODELETE upgradeToHTTPSPolicy(WebCore::HTTPSByDefaultMode httpsByDefault)
+NODELETE WKWebpagePreferencesUpgradeToHTTPSPolicy upgradeToHTTPSPolicy(WebCore::HTTPSByDefaultMode httpsByDefault)
 {
     switch (httpsByDefault) {
     case WebCore::HTTPSByDefaultMode::Disabled:
@@ -97,7 +97,7 @@ WKWebpagePreferencesUpgradeToHTTPSPolicy LEGACY_NODELETE upgradeToHTTPSPolicy(We
     return WKWebpagePreferencesUpgradeToHTTPSPolicyKeepAsRequested;
 }
 
-WebCore::HTTPSByDefaultMode LEGACY_NODELETE httpsByDefaultMode(WKWebpagePreferencesUpgradeToHTTPSPolicy upgradeToHTTPSPolicy)
+NODELETE WebCore::HTTPSByDefaultMode httpsByDefaultMode(WKWebpagePreferencesUpgradeToHTTPSPolicy upgradeToHTTPSPolicy)
 {
     switch (upgradeToHTTPSPolicy) {
     case WKWebpagePreferencesUpgradeToHTTPSPolicyKeepAsRequested:
@@ -114,7 +114,7 @@ WebCore::HTTPSByDefaultMode LEGACY_NODELETE httpsByDefaultMode(WKWebpagePreferen
     return WebCore::HTTPSByDefaultMode::Disabled;
 }
 
-static _WKWebsiteMouseEventPolicy LEGACY_NODELETE mouseEventPolicy(WebCore::MouseEventPolicy policy)
+NODELETE static _WKWebsiteMouseEventPolicy mouseEventPolicy(WebCore::MouseEventPolicy policy)
 {
     switch (policy) {
     case WebCore::MouseEventPolicy::Default:
@@ -128,7 +128,7 @@ static _WKWebsiteMouseEventPolicy LEGACY_NODELETE mouseEventPolicy(WebCore::Mous
     return _WKWebsiteMouseEventPolicyDefault;
 }
 
-static WebCore::MouseEventPolicy LEGACY_NODELETE coreMouseEventPolicy(_WKWebsiteMouseEventPolicy policy)
+NODELETE static WebCore::MouseEventPolicy coreMouseEventPolicy(_WKWebsiteMouseEventPolicy policy)
 {
     switch (policy) {
     case _WKWebsiteMouseEventPolicyDefault:
@@ -142,7 +142,7 @@ static WebCore::MouseEventPolicy LEGACY_NODELETE coreMouseEventPolicy(_WKWebsite
     return WebCore::MouseEventPolicy::Default;
 }
 
-static _WKWebsiteModalContainerObservationPolicy LEGACY_NODELETE modalContainerObservationPolicy(WebCore::ModalContainerObservationPolicy policy)
+NODELETE static _WKWebsiteModalContainerObservationPolicy modalContainerObservationPolicy(WebCore::ModalContainerObservationPolicy policy)
 {
     switch (policy) {
     case WebCore::ModalContainerObservationPolicy::Disabled:
@@ -154,7 +154,7 @@ static _WKWebsiteModalContainerObservationPolicy LEGACY_NODELETE modalContainerO
     return _WKWebsiteModalContainerObservationPolicyDisabled;
 }
 
-static WebCore::ModalContainerObservationPolicy LEGACY_NODELETE coreModalContainerObservationPolicy(_WKWebsiteModalContainerObservationPolicy policy)
+NODELETE static WebCore::ModalContainerObservationPolicy coreModalContainerObservationPolicy(_WKWebsiteModalContainerObservationPolicy policy)
 {
     switch (policy) {
     case _WKWebsiteModalContainerObservationPolicyDisabled:
@@ -226,8 +226,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 {
     __block HashMap<String, Vector<String>> map;
     [patterns enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSSet<NSString *> *value, BOOL *) {
-        Vector<String> vector;
-        vector.reserveInitialCapacity(value.count);
+        Vector<String> vector(ReserveCapacityTag { }, value.count);
         // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
         for (SUPPRESS_UNRETAINED_LOCAL NSString *pattern in value)
             vector.append(pattern);
@@ -320,7 +319,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 }
 
 #if ENABLE(DEVICE_ORIENTATION)
-static WebCore::DeviceOrientationOrMotionPermissionState LEGACY_NODELETE toDeviceOrientationOrMotionPermissionState(_WKWebsiteDeviceOrientationAndMotionAccessPolicy policy)
+NODELETE static WebCore::DeviceOrientationOrMotionPermissionState toDeviceOrientationOrMotionPermissionState(_WKWebsiteDeviceOrientationAndMotionAccessPolicy policy)
 {
     switch (policy) {
     case _WKWebsiteDeviceOrientationAndMotionAccessPolicyAsk:
@@ -342,7 +341,7 @@ static WebCore::DeviceOrientationOrMotionPermissionState LEGACY_NODELETE toDevic
 }
 
 #if ENABLE(DEVICE_ORIENTATION)
-static _WKWebsiteDeviceOrientationAndMotionAccessPolicy LEGACY_NODELETE toWKWebsiteDeviceOrientationAndMotionAccessPolicy(WebCore::DeviceOrientationOrMotionPermissionState state)
+NODELETE static _WKWebsiteDeviceOrientationAndMotionAccessPolicy toWKWebsiteDeviceOrientationAndMotionAccessPolicy(WebCore::DeviceOrientationOrMotionPermissionState state)
 {
     switch (state) {
     case WebCore::DeviceOrientationOrMotionPermissionState::Prompt:
@@ -764,12 +763,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)_setVisibilityAdjustmentSelectorsIncludingShadowHosts:(NSArray<NSArray<NSSet<NSString *> *> *> *)elements
 {
-    Vector<WebCore::TargetedElementSelectors> result;
-    result.reserveInitialCapacity(elements.count);
+    Vector<WebCore::TargetedElementSelectors> result(ReserveCapacityTag { }, elements.count);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL NSArray<NSSet<NSString *> *> *nsSelectorsForElement in elements) {
-        WebCore::TargetedElementSelectors selectorsForElement;
-        selectorsForElement.reserveInitialCapacity(nsSelectorsForElement.count);
+        WebCore::TargetedElementSelectors selectorsForElement(ReserveCapacityTag { }, nsSelectorsForElement.count);
         // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
         for (SUPPRESS_UNRETAINED_LOCAL NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
             HashSet<String> selectors;
@@ -886,14 +883,16 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)setSecurityRestrictionMode:(WKSecurityRestrictionMode)mode
 {
+    if (WebKit::lockdownModeEnabledBySystem())
+        return;
+
     switch (mode) {
+    // Leaving lockdownModeEnabled unset lets it fall through to lockdownModeEnabledBySystem().
     case WKSecurityRestrictionModeNone:
         _websitePolicies->setIsEnhancedSecurityEnabled(false);
-        _websitePolicies->setLockdownModeEnabled(false);
         break;
     case WKSecurityRestrictionModeMaximizeCompatibility:
         _websitePolicies->setIsEnhancedSecurityEnabled(true);
-        _websitePolicies->setLockdownModeEnabled(false);
         break;
     case WKSecurityRestrictionModeLockdown:
         _websitePolicies->setIsEnhancedSecurityEnabled(false);
@@ -910,5 +909,19 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return WKSecurityRestrictionModeMaximizeCompatibility;
     return WKSecurityRestrictionModeNone;
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+- (BOOL)_forceDisableAXCustomColorMode
+{
+    return _websitePolicies->forceDisableAXCustomColorMode();
+}
+
+- (void)_setForceDisableAXCustomColorMode:(BOOL)disabled
+{
+    _websitePolicies->setForceDisableAXCustomColorMode(disabled);
+}
+
+#endif
 
 @end

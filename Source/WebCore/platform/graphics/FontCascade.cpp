@@ -316,14 +316,12 @@ float FontCascade::width(const TextRun& run, SingleThreadWeakHashSet<const Font>
             glyphOverflow = nullptr;
     }
 
-    auto* cacheEntry = fonts()->glyphGeometryCache().add(run, { }, TextShapingContext { *this });
+    Ref fonts = *this->fonts();
+    auto* cacheEntry = fonts->glyphGeometryCache().add(run, { }, TextShapingContext { *this });
     bool callerNeedsFallbackFonts = fallbackFonts;
-    bool canUseFallbackFontCacheEntry = !callerNeedsFallbackFonts && !run.rtl();
+    bool canUseFallbackFontCacheEntry = !callerNeedsFallbackFonts;
 
     if (cacheEntry && cacheEntry->width) {
-        // The cache key doesn't include inline direction. For primary-font-only text this
-        // is fine (same total advance regardless of direction), but fallback-font text in
-        // vertical writing mode with RTL inline direction can produce different widths.
         if (!cacheEntry->usedFallbackFonts || canUseFallbackFontCacheEntry) {
             if (!glyphOverflow)
                 return *cacheEntry->width;
@@ -378,18 +376,21 @@ float FontCascade::width(CodePath codePathToUse, const TextRun& run, SingleThrea
     return it.runWidthSoFar();
 }
 
-NEVER_INLINE float FontCascade::widthForSimpleTextSlow(StringView text, TextDirection textDirection, GlyphGeometryCacheEntry* cacheEntry) const
+NEVER_INLINE float FontCascade::widthForSimpleTextSlow(StringView text, TextDirection textDirection, DirectionalOverride directionalOverride, GlyphGeometryCacheEntry* cacheEntry) const
 {
 #if PLATFORM(GTK) || PLATFORM(WPE)
-    TextRun run { text, 0, 0, ExpansionBehavior::defaultBehavior(), textDirection, false, false };
+    TextRun run { text, 0, 0, ExpansionBehavior::defaultBehavior(), textDirection, directionalOverride == DirectionalOverride::Yes, false };
     float result = width(CodePath::Simple, run);
 #else
+    // Like WidthIterator, the simple path shapes by direction alone.
+    UNUSED_PARAM(directionalOverride);
     GlyphBuffer glyphBuffer;
     Ref font = primaryFont();
 
     auto addGlyphsFromText = [&](GlyphBuffer& glyphBuffer, const Font& font, auto characters) {
         for (size_t i = 0; i < characters.size(); ++i) {
-            auto glyph = font.glyphForCharacter(characters[i]);
+            char32_t character = characters[i];
+            auto glyph = font.glyphForCharacter(textDirection == TextDirection::RTL ? mirrorCharacterIfNeeded(character) : character);
             glyphBuffer.add(glyph, font, font.widthForGlyph(glyph), i);
         }
     };
@@ -458,13 +459,9 @@ float FontCascade::zeroWidth() const
 GlyphData FontCascade::glyphDataForCharacter(char32_t c, bool mirror, FontVariant variant, std::optional<ResolvedEmojiPolicy> resolvedEmojiPolicy) const
 {
     if (variant == FontVariant::Auto) {
-        if (m_fontDescription.variantCaps() == FontVariantCaps::Small) {
-            char32_t upperC = u_toupper(c);
-            if (upperC != c) {
-                c = upperC;
-                variant = FontVariant::SmallCaps;
-            } else
-                variant = FontVariant::Normal;
+        if (auto capital = capitalForSynthesizedSmallCaps(c)) {
+            c = *capital;
+            variant = FontVariant::SmallCaps;
         } else
             variant = FontVariant::Normal;
     }
@@ -474,9 +471,26 @@ GlyphData FontCascade::glyphDataForCharacter(char32_t c, bool mirror, FontVarian
 
     auto emojiPolicy = resolvedEmojiPolicy.value_or(resolveEmojiPolicy(m_fontDescription.variantEmoji(), c));
 
-    SUPPRESS_UNCOUNTED_ARG return fonts()->glyphDataForCharacter(c, m_fontDescription, fontSelector(), variant, emojiPolicy);
+    Ref fonts = *this->fonts();
+    SUPPRESS_UNCOUNTED_ARG return fonts->glyphDataForCharacter(c, m_fontDescription, fontSelector(), variant, emojiPolicy);
 }
 
+std::optional<char32_t> FontCascade::capitalForSynthesizedSmallCaps(char32_t character) const
+{
+    if (!isSmallCaps())
+        return std::nullopt;
+
+    char32_t capital = u_toupper(character);
+    if (capital == character)
+        return std::nullopt;
+
+    // A small-caps face already has small capitals: it draws the character itself, not its capital.
+    RefPtr font = glyphDataForCharacter(character, false, FontVariant::Normal).font;
+    if (font && font->isSmallCapsFace())
+        return std::nullopt;
+
+    return capital;
+}
 
 bool FontCascade::canUseSimplifiedTextMeasuring(char32_t character, FontVariant fontVariant, bool whitespaceIsCollapsed, const Font& primaryFont) const
 {
@@ -1558,7 +1572,7 @@ TextShapingResult FontCascade::layoutComplexText(const TextRun& run, unsigned fr
     return result;
 }
 
-inline bool LEGACY_NODELETE shouldDrawIfLoading(const Font& font, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
+NODELETE inline bool shouldDrawIfLoading(const Font& font, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
 {
     // Don't draw anything while we are using custom fonts that are in the process of loading,
     // except if the 'customFontNotReadyAction' argument is set to UseFallbackIfFontNotReady
@@ -1777,14 +1791,14 @@ struct GlyphIterationState {
     float maxX;
 };
 
-static std::optional<float> LEGACY_NODELETE findIntersectionPoint(float y, FloatPoint p1, FloatPoint p2)
+NODELETE static std::optional<float> findIntersectionPoint(float y, FloatPoint p1, FloatPoint p2)
 {
     if ((p1.y() < y && p2.y() > y) || (p1.y() > y && p2.y() < y))
         return p1.x() + (y - p1.y()) * (p2.x() - p1.x()) / (p2.y() - p1.y());
     return std::nullopt;
 }
 
-static void LEGACY_NODELETE updateX(GlyphIterationState& state, float x)
+NODELETE static void updateX(GlyphIterationState& state, float x)
 {
     state.minX = std::min(state.minX, x);
     state.maxX = std::max(state.maxX, x);
@@ -1797,7 +1811,7 @@ static void LEGACY_NODELETE updateX(GlyphIterationState& state, float x)
 // GlyphIterationState::y1 and GlyphIterationState::y2. It keeps track of the
 // leftmost and rightmost intersection in GlyphIterationState::minX and
 // GlyphIterationState::maxX.
-static void LEGACY_NODELETE findPathIntersections(GlyphIterationState& state, const PathElement& element)
+NODELETE static void findPathIntersections(GlyphIterationState& state, const PathElement& element)
 {
     bool doIntersection = false;
     FloatPoint point = FloatPoint();
@@ -1848,7 +1862,7 @@ public:
 #endif
     }
 
-    bool LEGACY_NODELETE containsMorePaths() { return m_index != m_glyphBuffer.size(); }
+    NODELETE bool containsMorePaths() { return m_index != m_glyphBuffer.size(); }
     Path path();
     std::pair<float, float> extents();
     GlyphUnderlineType underlineType();
@@ -1939,6 +1953,8 @@ bool shouldSynthesizeSmallCaps(bool dontSynthesizeSmallCaps, const Font* nextFon
     if (dontSynthesizeSmallCaps)
         return false;
     if (!nextFont || nextFont->isSystemFontFallbackPlaceholder())
+        return false;
+    if (fontVariantCaps == FontVariantCaps::Small && nextFont->isSmallCapsFace())
         return false;
     if (engageAllSmallCapsProcessing && isUnicodeCompatibleASCIIWhitespace(baseCharacter))
         return false;

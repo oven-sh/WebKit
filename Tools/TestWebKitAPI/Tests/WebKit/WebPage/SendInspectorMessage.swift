@@ -154,6 +154,7 @@ private func findReceiveEvent(withInnerId innerId: Int, in captured: [String]) -
     return nil
 }
 
+@concurrent
 private func waitForCaptured(
     maxIterations: Int = 200,
     predicate: @MainActor () -> Bool
@@ -180,6 +181,9 @@ private final class SessionFixture {
 
     var captured: [String] { capturedStorage.strings }
 
+    #if hasAttribute(diagnose)
+    @diagnose(DeprecatedDeclaration, as: ignored, reason: "Intentionally uses process pool SPI")
+    #endif
     init(allowInspectorTesting: Bool) async throws {
         let page = WebPage()
         self.page = page

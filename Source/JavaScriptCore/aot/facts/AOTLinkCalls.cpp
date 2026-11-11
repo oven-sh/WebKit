@@ -6339,17 +6339,17 @@ ALWAYS_INLINE const StateOfLinkCalls::WhatTableSaysOfParameter& CallInLinkCalls:
     size_t numberOfRow = static_cast<size_t>(&row - &m_builtins.at(BuiltinOverloadID(0)));
     RELEASE_ASSERT(numberOfRow < m_builtins.overloadCount());
     const StateOfLinkCalls::WhatTableSaysOfParameter** said = &m_state.whatTableSaysAtPlacesOfRows[numberOfRow * m_state.placesOfRow + place];
-    if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad(said, std::memory_order_acquire)) [[likely]]
+    if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad<MemoryOrder::Acquire>(said)) [[likely]]
         return *known;
     LinkFlow::LockerOfWhatIsShared locker(m_flow);
-    if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad(said, std::memory_order_relaxed))
+    if (const StateOfLinkCalls::WhatTableSaysOfParameter* known = WTF::atomicLoad<MemoryOrder::Relaxed>(said))
         return *known;
     auto made = makeUnique<StateOfLinkCalls::WhatTableSaysOfParameter>();
     made->questions = questionsOf(parameter);
     made->recordsSpellOutEveryUse = recordsSpellOutEveryUseForLinkCalls(m_builtins, row, parameter);
     const StateOfLinkCalls::WhatTableSaysOfParameter* known = made.get();
     m_state.whatTableSaysOfParameters.append(WTF::move(made));
-    WTF::atomicStore(said, known, std::memory_order_release);
+    WTF::atomicStore<MemoryOrder::Release>(said, known);
     return *known;
 }
 

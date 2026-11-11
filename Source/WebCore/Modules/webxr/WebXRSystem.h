@@ -62,7 +62,7 @@ public:
     using RequestSessionPromise = DOMPromiseDeferred<IDLInterface<WebXRSession>>;
 
     static Ref<WebXRSystem> create(Navigator&);
-    ~WebXRSystem();
+    WEBCORE_EXPORT ~WebXRSystem();
 
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
@@ -85,7 +85,7 @@ public:
     WEBCORE_EXPORT void registerSimulatedXRDeviceForTesting(PlatformXR::Device&);
     WEBCORE_EXPORT void unregisterSimulatedXRDeviceForTesting(PlatformXR::Device&);
 
-    Navigator* LEGACY_NODELETE navigator();
+    NODELETE Navigator* navigator();
 
 protected:
     // EventTarget

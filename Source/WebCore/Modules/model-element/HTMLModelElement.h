@@ -52,6 +52,10 @@
 #include <WebCore/ModelPresentationMode.h>
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+#include <WebCore/ImmersiveElement.h>
+#endif
+
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)
 #include <WebCore/StageModeOperations.h>
 #endif
@@ -88,7 +92,11 @@ template<typename IDLType> class DOMPromiseProxyWithResolveCallback;
 template<typename> class ExceptionOr;
 
 class HTMLModelElementEventListener;
-class HTMLModelElement final : public HTMLElement, private CachedRawResourceClient, public ModelPlayerClient, public ActiveDOMObject, public VisibilityChangeClient {
+class HTMLModelElement final : public HTMLElement, private CachedRawResourceClient, public ModelPlayerClient, public ActiveDOMObject, public VisibilityChangeClient
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    , public ImmersiveElement
+#endif
+{
     WTF_MAKE_TZONE_ALLOCATED(HTMLModelElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLModelElement);
 #if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
@@ -128,7 +136,7 @@ public:
     using ReadyPromise = DOMPromiseProxyWithResolveCallback<IDLInterface<HTMLModelElement>>;
     ReadyPromise& ready() { return m_readyPromise.get(); }
 
-    WEBCORE_EXPORT RefPtr<Model> LEGACY_NODELETE model() const;
+    NODELETE WEBCORE_EXPORT RefPtr<Model> model() const;
 
 #if ENABLE(MODEL_ELEMENT_ENTITY_TRANSFORM)
     const DOMMatrixReadOnly& entityTransform() const;
@@ -173,16 +181,13 @@ public:
     void setAnimationCurrentTime(double, DOMPromiseDeferred<void>&&);
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    bool immersive() const;
     void requestImmersive(DOMPromiseDeferred<void>&&);
-    void ensureImmersivePresentation(CompletionHandler<void(ExceptionOr<LayerHostingContextIdentifier>)>&&);
-    void exitImmersivePresentation(CompletionHandler<void()>&&);
 #endif
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE supportsDragging() const;
+    NODELETE WEBCORE_EXPORT bool supportsDragging() const;
     bool isDraggableIgnoringAttributes() const final;
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE isInteractive() const;
+    NODELETE WEBCORE_EXPORT bool isInteractive() const;
 
 #if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
     double playbackRate() const { return m_playbackRate; }
@@ -229,9 +234,9 @@ public:
 
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&);
 
-    size_t LEGACY_NODELETE memoryCost() const;
+    NODELETE size_t memoryCost() const;
 #if ENABLE(RESOURCE_USAGE)
-    size_t LEGACY_NODELETE externalMemoryCost() const;
+    NODELETE size_t externalMemoryCost() const;
 #endif
 
     bool isIntersectingViewport() const { return m_isIntersectingViewport; }
@@ -257,26 +262,37 @@ private:
     void modelDidChange();
     void createModelPlayer();
     void deleteModelPlayer();
-    void LEGACY_NODELETE deletePendingModelPlayer();
+    NODELETE void deletePendingModelPlayer();
     void unloadModelPlayer(bool onSuspend);
     void reloadModelPlayer();
     void updatePlayerVisibility();
     void startLoadModelTimer();
     void loadModelTimerFired();
 
-    HTMLModelElement& LEGACY_NODELETE readyPromiseResolve();
+    NODELETE HTMLModelElement& readyPromiseResolve();
 
     CachedResourceRequest createResourceRequest(const URL&, FetchOptions::Destination);
 
     // ActiveDOMObject.
-    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
+    NODELETE bool virtualHasPendingActivity() const final;
     void resume() final;
     void suspend(ReasonForSuspension) final;
     void stop() final;
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    void refImmersiveElement() const final { HTMLElement::ref(); }
+    void derefImmersiveElement() const final { HTMLElement::deref(); }
+
+    HTMLElement& asHTMLElement() final { return *this; }
+    bool isImmersiveEnabled() const final;
+    void prepareImmersivePresentation(CompletionHandler<void(ExceptionOr<void>)>&&) final;
+    void presentImmersivePresentation(ChromeClient&, CompletionHandler<void(bool)>&&) final;
+    void exitImmersivePresentation(CompletionHandler<void()>&&) final;
+#endif
+
     // DOM overrides.
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
-    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const final;
+    NODELETE bool isURLAttribute(const Attribute&) const final;
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
 
     // StyledElement
@@ -286,7 +302,7 @@ private:
     // Rendering overrides.
     RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
-    bool LEGACY_NODELETE rendersFallbackContent() const;
+    NODELETE bool rendersFallbackContent() const;
     bool rendererIsNeeded(const Style::ComputedStyle&) final;
     void didAttachRenderers() final;
     void willDetachRenderers() final;
@@ -341,7 +357,7 @@ private:
     void updateSpatialPortalController();
 #endif
 
-    ModelPlayer* LEGACY_NODELETE effectiveModelPlayer() const;
+    NODELETE ModelPlayer* effectiveModelPlayer() const;
 
     void reportExtraMemoryCost();
 
@@ -378,7 +394,7 @@ private:
     void modelResourceFinished();
     void sourceRequestResource();
     bool shouldDeferLoading() const;
-    bool LEGACY_NODELETE isModelDeferred() const;
+    NODELETE bool isModelDeferred() const;
     bool hasLiveModelPlayer() const;
     bool isModelLoading() const;
     bool isModelLoaded() const;
@@ -449,6 +465,7 @@ private:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     unsigned m_immersiveDetachGeneration { 0 };
+    std::optional<LayerHostingContextIdentifier> m_immersiveContextID;
 
     Vector<CompletionHandler<void(ExceptionOr<RefPtr<ModelPlayer>>)>> m_modelPlayerCreationCallbacks;
     void ensureModelPlayer(CompletionHandler<void(ExceptionOr<RefPtr<ModelPlayer>>)>&&);
@@ -462,7 +479,7 @@ private:
     bool m_suppressEDR { false };
 #endif
 
-    void LEGACY_NODELETE triggerModelPlayerCreationCallbacksIfNeeded(ExceptionOr<RefPtr<ModelPlayer>>&&);
+    NODELETE void triggerModelPlayerCreationCallbacksIfNeeded(ExceptionOr<RefPtr<ModelPlayer>>&&);
 };
 
 } // namespace WebCore

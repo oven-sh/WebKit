@@ -33,7 +33,6 @@
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(COCOA)
-#include "WebProcess.h"
 #include <WebCore/CVUtilities.h>
 #include <WebCore/RealtimeIncomingVideoSourceCocoa.h>
 #include <WebCore/VideoFrameCV.h>
@@ -45,10 +44,9 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteVideoFrameProxy);
 
-RemoteVideoFrameProxy::Properties RemoteVideoFrameProxy::properties(WebKit::RemoteVideoFrameReference reference, const WebCore::VideoFrame& videoFrame)
+RemoteVideoFrameProxy::Properties RemoteVideoFrameProxy::properties(const WebCore::VideoFrame& videoFrame)
 {
     return {
-        WTF::move(reference),
         videoFrame.presentationTime(),
         videoFrame.isMirrored(),
         videoFrame.rotation(),
@@ -59,9 +57,9 @@ RemoteVideoFrameProxy::Properties RemoteVideoFrameProxy::properties(WebKit::Remo
     };
 }
 
-Ref<RemoteVideoFrameProxy> RemoteVideoFrameProxy::create(IPC::Connection& connection, RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy, Properties&& properties)
+Ref<RemoteVideoFrameProxy> RemoteVideoFrameProxy::create(IPC::Connection& connection, RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy, RemoteVideoFrameReference reference, Properties&& properties)
 {
-    return adoptRef(*new RemoteVideoFrameProxy(connection, videoFrameObjectHeapProxy, WTF::move(properties)));
+    return adoptRef(*new RemoteVideoFrameProxy(connection, videoFrameObjectHeapProxy, WTF::move(reference), WTF::move(properties)));
 }
 
 static void releaseRemoteVideoFrameProxy(IPC::Connection& connection, const RemoteVideoFrameWriteReference& reference)
@@ -69,15 +67,10 @@ static void releaseRemoteVideoFrameProxy(IPC::Connection& connection, const Remo
     connection.send(Messages::RemoteVideoFrameObjectHeap::ReleaseVideoFrame(reference), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 }
 
-void RemoteVideoFrameProxy::releaseUnused(IPC::Connection& connection, Properties&& properties)
-{
-    releaseRemoteVideoFrameProxy(connection, { { properties.reference.identifier(), properties.reference.version() }, 0 });
-}
-
-RemoteVideoFrameProxy::RemoteVideoFrameProxy(IPC::Connection& connection, RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy, Properties&& properties)
+RemoteVideoFrameProxy::RemoteVideoFrameProxy(IPC::Connection& connection, RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy, RemoteVideoFrameReference reference, Properties&& properties)
     : VideoFrame(properties.presentationTime, properties.isMirrored, properties.rotation, WTF::move(properties.colorSpace))
     , m_connection(&connection)
-    , m_referenceTracker(properties.reference)
+    , m_referenceTracker(reference)
     , m_size(properties.size)
     , m_pixelFormat(properties.pixelFormat)
     , m_shouldIgnoreAlpha(properties.shouldIgnoreAlpha)
@@ -87,7 +80,7 @@ RemoteVideoFrameProxy::RemoteVideoFrameProxy(IPC::Connection& connection, Remote
 
 RemoteVideoFrameProxy::RemoteVideoFrameProxy(CloneConstructor, RemoteVideoFrameProxy& baseVideoFrame)
     : VideoFrame(baseVideoFrame.presentationTime(), baseVideoFrame.isMirrored(), baseVideoFrame.rotation(), WebCore::PlatformVideoColorSpace { baseVideoFrame.colorSpace() })
-    , m_baseVideoFrame(&baseVideoFrame)
+    , m_baseVideoFrame(baseVideoFrame.m_baseVideoFrame ? baseVideoFrame.m_baseVideoFrame.get() : &baseVideoFrame)
     , m_size(baseVideoFrame.m_size)
     , m_pixelFormat(baseVideoFrame.m_pixelFormat)
     , m_shouldIgnoreAlpha(baseVideoFrame.m_shouldIgnoreAlpha)
@@ -102,12 +95,16 @@ RemoteVideoFrameProxy::~RemoteVideoFrameProxy()
 
 RemoteVideoFrameIdentifier RemoteVideoFrameProxy::identifier() const
 {
-    return m_baseVideoFrame ? m_baseVideoFrame->m_referenceTracker->identifier() : m_referenceTracker->identifier();
+    return m_baseVideoFrame ? m_baseVideoFrame->identifier() : m_referenceTracker->identifier();
 }
 
-RemoteVideoFrameReadReference RemoteVideoFrameProxy::newReadReference() const
+std::optional<RemoteVideoFrameReadReference> RemoteVideoFrameProxy::newReadReference(const IPC::Connection& connection) const
 {
-    return m_baseVideoFrame ? m_baseVideoFrame->m_referenceTracker->read() : m_referenceTracker->read();
+    if (m_baseVideoFrame)
+        return m_baseVideoFrame->newReadReference(connection);
+    if (m_connection.get() != &connection)
+        return std::nullopt;
+    return m_referenceTracker->read();
 }
 
 uint32_t RemoteVideoFrameProxy::pixelFormat() const
@@ -125,21 +122,13 @@ CVPixelBufferRef RemoteVideoFrameProxy::pixelBuffer() const
     if (!m_pixelBuffer && m_videoFrameObjectHeapProxy) {
         auto videoFrameObjectHeapProxy = std::exchange(m_videoFrameObjectHeapProxy, nullptr);
 
-        bool canSendSync = isMainRunLoop(); // FIXME: we should be able to sendSync from other threads too.
-        bool canUseIOSurface = !WebProcess::singleton().shouldUseRemoteRenderingForWebGL();
-        if (!canUseIOSurface || !canSendSync) {
-            Ref protectedThis { *this };
-            BinarySemaphore semaphore;
-            videoFrameObjectHeapProxy->getVideoFrameBuffer(*this, canUseIOSurface, [&protectedThis, &semaphore](auto pixelBuffer) {
-                protectedThis->m_pixelBuffer = WTF::move(pixelBuffer);
-                semaphore.signal();
-            });
-            semaphore.wait();
-        } else {
-            auto sendResult = m_connection->sendSync(Messages::RemoteVideoFrameObjectHeap::PixelBuffer(newReadReference()), 0, defaultTimeout);
-            if (sendResult.succeeded())
-                std::tie(m_pixelBuffer) = sendResult.takeReply();
-        }
+        Ref protectedThis { *this };
+        BinarySemaphore semaphore;
+        videoFrameObjectHeapProxy->getVideoFrameBuffer(*this, [&protectedThis, &semaphore](auto pixelBuffer) {
+            protectedThis->m_pixelBuffer = WTF::move(pixelBuffer);
+            semaphore.signal();
+        });
+        semaphore.wait();
     }
     // FIXME: Some code paths do not like empty pixel buffers.
     if (!m_pixelBuffer)
@@ -155,8 +144,7 @@ Ref<WebCore::VideoFrame> RemoteVideoFrameProxy::clone()
 
 TextStream& operator<<(TextStream& ts, const RemoteVideoFrameProxy::Properties& properties)
 {
-    ts << "{ reference="_s << properties.reference
-        << ", presentationTime=" << properties.presentationTime
+    ts << "{ presentationTime="_s << properties.presentationTime
         << ", isMirrored=" << properties.isMirrored
         << ", rotation=" << static_cast<int>(properties.rotation)
         << ", size=" << properties.size

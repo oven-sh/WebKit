@@ -174,8 +174,8 @@ void AssemblyHelpers::jitAssertIsJSDouble(GPRReg gpr)
     if (!Options::useJITAsserts())
         return;
     JIT_COMMENT(*this, "ASSERT is JS boxed double (non-int32 number)");
-    Jump checkJSInt32 = branchIfInt32(gpr);
-    Jump checkJSNumber = branchIfNumber(gpr);
+    Jump checkJSInt32 = branchIfInt32(gpr, DoNotHaveTagRegisters);
+    Jump checkJSNumber = branchIfNumber(gpr, DoNotHaveTagRegisters);
     checkJSInt32.link(this);
     abortWithReason(AHIsNotJSDouble);
     checkJSNumber.link(this);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2024, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,7 +53,7 @@ public:
     }
 
     // Deleting ThreadSafeWeakPtrControlBlock does not delete a user object.
-    SUPPRESS_NODELETE void LEGACY_NODELETE weakDeref()
+    NODELETE SUPPRESS_NODELETE void weakDeref()
     {
         bool shouldDeleteControlBlock { false };
         {
@@ -69,7 +69,7 @@ public:
     void strongRef() const
     {
         Locker locker { m_lock };
-        ASSERT_WITH_SECURITY_IMPLICATION(m_object);
+        ASSERT_WITH_SECURITY_IMPLICATION(m_strongReferenceCount);
         ++m_strongReferenceCount;
     }
 
@@ -79,10 +79,13 @@ public:
         SUPPRESS_UNCOUNTED_LOCAL T* object;
         {
             Locker locker { m_lock };
-            ASSERT_WITH_SECURITY_IMPLICATION(m_object);
+            ASSERT_WITH_SECURITY_IMPLICATION(m_strongReferenceCount);
             if (--m_strongReferenceCount) [[likely]]
                 return;
+            ASSERT_WITH_SECURITY_IMPLICATION(m_object);
             object = static_cast<T*>(std::exchange(m_object, nullptr));
+            // Keep the count at 1 during destruction so that ref() / deref() calls from the destructor are balanced.
+            m_strongReferenceCount = 1;
             // We need to take a weak ref so `this` survives until the `delete object` below.
             // This comes up when destructors try to eagerly remove themselves from WeakHashSets.
             // e.g.
@@ -100,6 +103,7 @@ public:
             {
                 // We retained ourselves above.
                 Locker locker { m_lock };
+                m_strongReferenceCount = 0;
                 hasOtherWeakRefs = --m_weakReferenceCount;
                 // release the lock here so we don't do it in Locker's destructor after we've already called delete.
             }
@@ -323,14 +327,12 @@ public:
 
     void ref() const
     {
-        bool didRefStrongOnly = m_bits.transaction([&](uintptr_t& bits) {
+        bool didRefStrongOnly = m_bits.transaction<MemoryOrder::Relaxed>([&](uintptr_t& bits) {
             if (!isStrongOnly(bits))
                 return false;
-            // FIXME: Add support for ref()/deref() during destruction like we support for other RefCounted types.
-            ASSERT(!(bits & destructionStartedFlag));
             bits += refIncrement;
             return true;
-        }, std::memory_order_relaxed);
+        });
         if (didRefStrongOnly)
             return;
 
@@ -339,20 +341,23 @@ public:
 
     void deref() const
     {
-        uintptr_t newStrongOnlyRefCount = 0;
-        bool didDerefStrongOnly = m_bits.transaction([&](uintptr_t& bits) {
+        bool shouldDelete = false;
+        bool didDerefStrongOnly = m_bits.transaction<MemoryOrder::Release>([&](uintptr_t& bits) {
+            shouldDelete = false;
             if (!isStrongOnly(bits))
                 return false;
-            // FIXME: Add support for ref()/deref() during destruction like we support for other RefCounted types.
-            ASSERT(!(bits & destructionStartedFlag));
+            ASSERT_WITH_SECURITY_IMPLICATION(refCountFromStrongOnlyBits(bits));
             bits -= refIncrement;
-            newStrongOnlyRefCount = bits;
+            if (bits == strongOnlyFlag) {
+                // Keep the count at 1 during destruction so that ref() / deref() calls from the destructor are balanced.
+                bits = strongOnlyFlag | refIncrement | destructionStartedFlag;
+                shouldDelete = true;
+            }
             return true;
-        }, std::memory_order_release);
+        });
         if (didDerefStrongOnly) {
-            if (newStrongOnlyRefCount == strongOnlyFlag) {
+            if (shouldDelete) {
                 std::atomic_thread_fence(std::memory_order_acquire);
-                ASSERT(m_bits.exchangeOr(destructionStartedFlag) == newStrongOnlyRefCount);
                 SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE auto deleteObject = [this] {
                     delete static_cast<const T*>(this);
                 };
@@ -377,12 +382,8 @@ public:
     uint32_t refCount() const
     {
         uintptr_t bits = this->bits();
-        if (isStrongOnly(bits)) {
-            // FIXME: Add support for ref()/deref() during destruction like we support for other RefCounted types.
-            ASSERT(!(bits & destructionStartedFlag));
-            // Technically, this bit-and isn't needed but it's included for clarity since the compiler will elide it anyway.
-            return (bits & ~strongOnlyFlag) / refIncrement;
-        }
+        if (isStrongOnly(bits))
+            return refCountFromStrongOnlyBits(bits);
 
         return std::bit_cast<ThreadSafeWeakPtrControlBlock*>(bits)->refCount();
     }
@@ -395,8 +396,15 @@ public:
 
 protected:
     ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr() = default;
+
+    ~ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr()
+    {
+        // References taken during destruction must be released before destruction completes.
+        ASSERT_WITH_SECURITY_IMPLICATION(refCount() == 1);
+    }
+
     // Creating & destroying ThreadSafeWeakPtrControlBlock does not delete an user object.
-    SUPPRESS_NODELETE ThreadSafeWeakPtrControlBlock& LEGACY_NODELETE controlBlock() const
+    NODELETE SUPPRESS_NODELETE ThreadSafeWeakPtrControlBlock& controlBlock() const
     {
         // If we ever decided there was a lot of contention here we could have some lock bits in m_bits but
         // that seems unlikely since this is a one-way street. Once we add a controlBlock we don't go back
@@ -407,7 +415,7 @@ protected:
 
         auto* controlBlock = new ThreadSafeWeakPtrControlBlock(this);
 
-        bool didSetControlBlock = m_bits.transaction([&](uintptr_t& bits) {
+        bool didSetControlBlock = m_bits.transaction<MemoryOrder::Release>([&](uintptr_t& bits) {
             if (!isStrongOnly(bits))
                 return false;
 
@@ -415,12 +423,11 @@ protected:
             // view the object as dead. Otherwise a ThreadSafeWeakPtrFactory on an unrelated thread could vend out a partially
             // destroyed object.
             ASSERT(!(bits & destructionStartedFlag));
-            // Technically, this bit-and isn't needed but it's included for clarity since the compiler will elide it anyway.
-            controlBlock->setStrongReferenceCountDuringInitialization((bits & ~strongOnlyFlag) / refIncrement);
+            controlBlock->setStrongReferenceCountDuringInitialization(refCountFromStrongOnlyBits(bits));
             bits = std::bit_cast<uintptr_t>(controlBlock);
             ASSERT(!isStrongOnly(bits));
             return true;
-        }, std::memory_order_release); // We want memory_order_release here to make sure other threads see the right ref count / object.
+        });
         if (didSetControlBlock)
             return *controlBlock;
 
@@ -430,21 +437,13 @@ protected:
 
 private:
     static bool isStrongOnly(uintptr_t bits) { return bits & strongOnlyFlag; }
+    static uint32_t refCountFromStrongOnlyBits(uintptr_t bits) { return static_cast<uint32_t>((bits & ~(strongOnlyFlag | destructionStartedFlag)) / refIncrement); }
 
-    // Use memory_order_acquire under TSan to pair with the memory_order_release
-    // in controlBlock(). Without this, TSan reports a race between the
-    // non-atomic initialization of the control block's members and subsequent
-    // atomic operations on them (e.g., WordLock::lock()). ARM64 dependency
-    // ordering and x86 total store ordering make this benign in practice, but
-    // the C++ memory model requires acquire to formally synchronize with the
-    // release store.
     ALWAYS_INLINE uintptr_t bits() const
     {
-#if TSAN_ENABLED
-        return m_bits.load(std::memory_order_acquire);
-#else
-        return m_bits.loadRelaxed();
-#endif
+        uintptr_t bits;
+        Dependency dependency = m_bits.loadAndFence(bits);
+        return std::bit_cast<uintptr_t>(dependency.consume(std::bit_cast<char*>(bits)));
     }
 
     template<typename> friend class ThreadSafeWeakPtr;

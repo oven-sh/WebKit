@@ -70,6 +70,8 @@ enum class GammaAndColorProfileOption {
 
 enum class ImageAnimatingState : bool { No, Yes };
 
+enum class ImageAnimationOverride : uint8_t { None, Play, Pause };
+
 enum class EncodedDataStatus {
     Error,
     Unknown,
@@ -96,7 +98,8 @@ enum class ImageDrawResult {
 enum class InvertContent : uint8_t {
     FromResource,
     No,
-    Yes
+    Yes,
+    Forced
 };
 
 enum class ImagePaintTimeTransformation : uint8_t {
@@ -106,33 +109,7 @@ enum class ImagePaintTimeTransformation : uint8_t {
 };
 #endif
 
-enum class ShowDebugBackground : bool {
-    No,
-    Yes
-};
-
-// Treats an SVG root's preserveAspectRatio as none for an <svg:image>.
-enum class IgnoreRootPreserveAspectRatio : bool {
-    No,
-    Yes
-};
-
-enum class DrawLuminanceMask : bool {
-    No,
-    Yes
-};
-
-enum class AllowImageSubsampling : bool {
-    No,
-    Yes
-};
-
 enum class DrawsHDRContent : uint8_t {
-    No,
-    Yes
-};
-
-enum class AllowAcceleratedApplyGainMap : bool {
     No,
     Yes
 };

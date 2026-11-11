@@ -77,8 +77,8 @@
 #include <pal/text/TextEncoding.h>
 #include "UserGestureIndicator.h"
 #include <JavaScriptCore/ContentSearchUtilities.h>
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/RegularExpression.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Stopwatch.h>
@@ -139,9 +139,12 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::enable()
 
     agents->setEnabledPageAgent(this);
 
-    Ref stopwatch = protect(environment())->executionStopwatch();
-    stopwatch->reset();
-    stopwatch->start();
+    CheckedRef environment = this->environment();
+    if (!environment->executionStopwatchIsSharedAcrossProcesses()) {
+        Ref stopwatch = environment->executionStopwatch();
+        stopwatch->reset();
+        stopwatch->start();
+    }
 
     defaultUserPreferencesDidChange();
 
@@ -218,92 +221,112 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::overrideUserAgent(c
     return { };
 }
 
+static std::optional<InspectorBackendClient::DeveloperPreference> developerPreferenceForSetting(Inspector::Protocol::Page::Setting setting)
+{
+    switch (setting) {
+    case Inspector::Protocol::Page::Setting::PrivateClickMeasurementDebugModeEnabled:
+        return InspectorBackendClient::DeveloperPreference::PrivateClickMeasurementDebugModeEnabled;
+    case Inspector::Protocol::Page::Setting::ITPDebugModeEnabled:
+        return InspectorBackendClient::DeveloperPreference::ITPDebugModeEnabled;
+    case Inspector::Protocol::Page::Setting::MockCaptureDevicesEnabled:
+        return InspectorBackendClient::DeveloperPreference::MockCaptureDevicesEnabled;
+    case Inspector::Protocol::Page::Setting::NeedsSiteSpecificQuirks:
+        return InspectorBackendClient::DeveloperPreference::NeedsSiteSpecificQuirks;
+    default:
+        return std::nullopt;
+    }
+}
+
 Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::overrideSetting(Inspector::Protocol::Page::Setting setting, std::optional<bool>&& value)
 {
-    auto& inspectedPageSettings = m_inspectedPage->settings();
+    if (auto developerPreference = developerPreferenceForSetting(setting))
+        m_client->setDeveloperPreferenceOverride(*developerPreference, value);
+
+    applySettingOverride(protect(m_inspectedPage).get(), setting, value);
+
+    return { };
+}
+
+bool InspectorPageAgent::applySettingOverride(Page& page, Inspector::Protocol::Page::Setting setting, std::optional<bool> value)
+{
+    auto& settings = page.settings();
 
     switch (setting) {
     case Inspector::Protocol::Page::Setting::PrivateClickMeasurementDebugModeEnabled:
-        m_client->setDeveloperPreferenceOverride(InspectorBackendClient::DeveloperPreference::PrivateClickMeasurementDebugModeEnabled, value);
-        return { };
+    case Inspector::Protocol::Page::Setting::ITPDebugModeEnabled:
+        return false;
 
     case Inspector::Protocol::Page::Setting::AuthorAndUserStylesEnabled:
-        inspectedPageSettings.setAuthorAndUserStylesEnabledInspectorOverride(value);
-        return { };
+        settings.setAuthorAndUserStylesEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::FixedBackgroundsPaintRelativeToDocument:
-        inspectedPageSettings.setFixedBackgroundsPaintRelativeToDocumentInspectorOverride(value);
-        return { };
+        settings.setFixedBackgroundsPaintRelativeToDocumentInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::FullScreenEnabled:
-        inspectedPageSettings.setFullScreenEnabledInspectorOverride(value);
-        return { };
+        settings.setFullScreenEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::ICECandidateFilteringEnabled:
-        inspectedPageSettings.setICECandidateFilteringEnabledInspectorOverride(value);
-        return { };
-
-    case Inspector::Protocol::Page::Setting::ITPDebugModeEnabled:
-        m_client->setDeveloperPreferenceOverride(InspectorBackendClient::DeveloperPreference::ITPDebugModeEnabled, value);
-        return { };
+        settings.setICECandidateFilteringEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::ImagesEnabled:
-        inspectedPageSettings.setImagesEnabledInspectorOverride(value);
-        return { };
+        settings.setImagesEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::InputTypeMonthEnabled:
-        inspectedPageSettings.setInputTypeMonthEnabledInspectorOverride(value);
-        return { };
+        settings.setInputTypeMonthEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::InputTypeWeekEnabled:
-        inspectedPageSettings.setInputTypeWeekEnabledInspectorOverride(value);
-        return { };
+        settings.setInputTypeWeekEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::MediaCaptureRequiresSecureConnection:
-        inspectedPageSettings.setMediaCaptureRequiresSecureConnectionInspectorOverride(value);
-        return { };
+        settings.setMediaCaptureRequiresSecureConnectionInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::MockCaptureDevicesEnabled:
-        inspectedPageSettings.setMockCaptureDevicesEnabledInspectorOverride(value);
-        m_client->setDeveloperPreferenceOverride(InspectorBackendClient::DeveloperPreference::MockCaptureDevicesEnabled, value);
-        return { };
+        settings.setMockCaptureDevicesEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::NeedsSiteSpecificQuirks:
-        inspectedPageSettings.setNeedsSiteSpecificQuirksInspectorOverride(value);
-        m_client->setDeveloperPreferenceOverride(InspectorBackendClient::DeveloperPreference::NeedsSiteSpecificQuirks, value);
-        return { };
+        settings.setNeedsSiteSpecificQuirksInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::NotificationsEnabled:
-        inspectedPageSettings.setNotificationsEnabledInspectorOverride(value);
-        return { };
+        settings.setNotificationsEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::PointerLockEnabled:
-        inspectedPageSettings.setPointerLockEnabledInspectorOverride(value);
-        return { };
+        settings.setPointerLockEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::PushAPIEnabled:
-        inspectedPageSettings.setPushAPIEnabledInspectorOverride(value);
-        return { };
+        settings.setPushAPIEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::ScriptEnabled:
-        inspectedPageSettings.setScriptEnabledInspectorOverride(value);
-        return { };
+        settings.setScriptEnabledInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::ShowDebugBorders:
-        inspectedPageSettings.setShowDebugBordersInspectorOverride(value);
-        return { };
+        settings.setShowDebugBordersInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::ShowRepaintCounter:
-        inspectedPageSettings.setShowRepaintCounterInspectorOverride(value);
-        return { };
+        settings.setShowRepaintCounterInspectorOverride(value);
+        return true;
 
     case Inspector::Protocol::Page::Setting::WebSecurityEnabled:
-        inspectedPageSettings.setWebSecurityEnabledInspectorOverride(value);
-        return { };
+        settings.setWebSecurityEnabledInspectorOverride(value);
+        return true;
     }
 
     ASSERT_NOT_REACHED();
-    return { };
+    return false;
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::overrideUserPreference(Inspector::Protocol::Page::UserPreferenceName preference, std::optional<Inspector::Protocol::Page::UserPreferenceValue>&& value)
@@ -367,7 +390,7 @@ void InspectorPageAgent::overridePrefersColorScheme(std::optional<Inspector::Pro
 #endif
 }
 
-static Inspector::Protocol::Page::CookieSameSitePolicy LEGACY_NODELETE cookieSameSitePolicyJSON(Cookie::SameSitePolicy policy)
+NODELETE static Inspector::Protocol::Page::CookieSameSitePolicy cookieSameSitePolicyJSON(Cookie::SameSitePolicy policy)
 {
     switch (policy) {
     case Cookie::SameSitePolicy::None:
@@ -410,38 +433,13 @@ static Ref<JSON::ArrayOf<Inspector::Protocol::Page::Cookie>> buildArrayForCookie
     return cookies;
 }
 
-static Vector<URL> allResourcesURLsForFrame(LocalFrame* frame)
-{
-    Vector<URL> result;
-
-    result.append(protect(frame->loader().documentLoader())->url());
-
-    for (RefPtr cachedResource : ResourceUtilities::cachedResourcesForFrame(frame))
-        result.append(cachedResource->url());
-
-    return result;
-}
-
 Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Page::Cookie>>> InspectorPageAgent::getCookies()
 {
     ListHashSet<Cookie> allRawCookies;
 
     for (RefPtr frame = &m_inspectedPage->mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
-        if (!localFrame)
-            continue;
-        RefPtr document = localFrame->document();
-        if (!document || !document->page())
-            continue;
-
-        for (auto& url : allResourcesURLsForFrame(localFrame)) {
-            Vector<Cookie> rawCookiesForURLInDocument;
-            if (!protect(document->page()->cookieJar())->getRawCookies(*document, url, rawCookiesForURLInDocument))
-                continue;
-
-            for (auto& rawCookieForURLInDocument : rawCookiesForURLInDocument)
-                allRawCookies.add(rawCookieForURLInDocument);
-        }
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
+            ResourceUtilities::collectRawCookiesForFrame(*localFrame, allRawCookies);
     }
 
     return buildArrayForCookies(allRawCookies);
@@ -862,8 +860,8 @@ void InspectorPageAgent::didPaint(RenderObject& renderer, const LayoutRect& rect
     LayoutRect rootRect = absoluteRect;
     Ref localFrame = view->frame();
     if (!localFrame->isMainFrame()) {
-        IntRect rootViewRect = view->contentsToRootView(snappedIntRect(absoluteRect));
-        rootRect = protect(protect(localFrame->mainFrame())->virtualView())->rootViewToContents(rootViewRect);
+        IntRect mainFrameViewRect = view->contentsToMainFrameView(snappedIntRect(absoluteRect));
+        rootRect = protect(protect(localFrame->mainFrame())->virtualView())->rootViewToContents(mainFrameViewRect);
     }
 
     if (m_client->overridesShowPaintRects()) {

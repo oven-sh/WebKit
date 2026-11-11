@@ -38,11 +38,16 @@
 namespace WebCore {
 
 class ScriptExecutionContext;
+class StyleSheetContents;
 class TextTrack;
 class TextTrackList;
 class TextTrackClient;
 class TextTrackCueList;
 class VTTRegionList;
+
+namespace Style {
+class RuleSet;
+}
 
 class TextTrack : public TrackBase, public EventTarget, public ActiveDOMObject, public CanMakeCheckedPtr<TextTrack> {
     WTF_MAKE_TZONE_ALLOCATED(TextTrack);
@@ -66,7 +71,7 @@ public:
 
     static bool isValidKindKeyword(const AtomString&);
 
-    TextTrackList* LEGACY_NODELETE textTrackList() const;
+    NODELETE TextTrackList* textTrackList() const;
 
     enum class Kind { Subtitles, Captions, Descriptions, Chapters, Metadata, Forced };
     Kind kind() const;
@@ -122,9 +127,9 @@ public:
         m_renderedTrackIndex = std::nullopt;
     }
 
-    bool LEGACY_NODELETE isRendered();
-    bool LEGACY_NODELETE isSpoken();
-    int LEGACY_NODELETE trackIndexRelativeToRenderedTracks();
+    NODELETE bool isRendered();
+    NODELETE bool isSpoken();
+    NODELETE int trackIndexRelativeToRenderedTracks();
 
     enum class ConfigurationState { Unconfigured, ConfiguredByJavascript, ConfiguredAutomatically };
     ConfigurationState configurationState() const { return m_configurationState; }
@@ -143,7 +148,8 @@ public:
 
     virtual MediaTime startTimeVariance() const { return MediaTime::zeroTime(); }
 
-    const std::optional<Vector<String>>& styleSheets() const LIFETIME_BOUND { return m_styleSheets; }
+    // The rules of the STYLE blocks of a WebVTT file, which only apply to the cues of this track.
+    const Style::RuleSet* embeddedStyleRuleSet();
 
     virtual bool shouldPurgeCuesFromUnbufferedRanges() const { return false; }
     virtual void removeCuesNotInTimeRanges(const PlatformTimeRanges&);
@@ -159,9 +165,11 @@ protected:
     void setKind(Kind);
 
     void newCuesAvailable(const TextTrackCueList&);
+    void addStyleSheets(Vector<Ref<StyleSheetContents>>&&);
 
     const RefPtr<TextTrackCueList> m_cues;
-    std::optional<Vector<String>> m_styleSheets;
+    Vector<Ref<StyleSheetContents>> m_styleSheets;
+    RefPtr<Style::RuleSet> m_embeddedStyleRuleSet;
     WeakHashSet<TextTrackClient> m_clients;
 
 private:

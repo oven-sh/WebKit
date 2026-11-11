@@ -36,6 +36,7 @@
 #include <WebCore/FontSelector.h>
 #include <WebCore/FontTaggedSettings.h>
 #include <WebCore/SystemFallbackFontCache.h>
+#include <WebCore/SystemFontDatabase.h>
 #include <WebCore/Timer.h>
 #include <array>
 #include <limits.h>
@@ -137,7 +138,7 @@ public:
     Vector<String> systemFontFamilies();
     void platformInit();
 
-    static bool LEGACY_NODELETE isSystemFontForbiddenForEditing(const String&);
+    NODELETE static bool isSystemFontForbiddenForEditing(const String&);
 
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT static void setFontAllowlist(const Vector<String>&);
@@ -174,7 +175,7 @@ public:
     enum class ShouldRunInvalidationCallback : bool { No, Yes };
     WEBCORE_EXPORT static void invalidateAllFontCaches(ShouldRunInvalidationCallback = ShouldRunInvalidationCallback::Yes);
 
-    WEBCORE_EXPORT size_t LEGACY_NODELETE fontCount();
+    NODELETE WEBCORE_EXPORT size_t fontCount();
     WEBCORE_EXPORT size_t inactiveFontCount();
     WEBCORE_EXPORT void purgeInactiveFontData(unsigned count = UINT_MAX);
     void platformPurgeInactiveFontData();
@@ -205,6 +206,8 @@ public:
 #if PLATFORM(COCOA)
     FontFamilySpecificationCoreTextCache& fontFamilySpecificationCoreTextCache() LIFETIME_BOUND { return m_fontFamilySpecificationCoreTextCache; }
     SystemFontDatabaseCoreText& systemFontDatabaseCoreText() LIFETIME_BOUND { return m_systemFontDatabaseCoreText; }
+#else
+    SystemFontDatabase& systemFontDatabase() LIFETIME_BOUND { return m_systemFontDatabase; }
 #endif
 
     bool useBackslashAsYenSignForFamily(const AtomString& family);
@@ -240,7 +243,7 @@ private:
 #endif
 
 #if PLATFORM(COCOA)
-    FontDatabase& LEGACY_NODELETE database(AllowUserInstalledFonts);
+    NODELETE FontDatabase& database(AllowUserInstalledFonts);
 #endif
 
     Timer m_purgeTimer;
@@ -277,6 +280,8 @@ private:
     SystemFontDatabaseCoreText m_systemFontDatabaseCoreText;
 
     friend class ComplexTextController;
+#else
+    SystemFontDatabase m_systemFontDatabase;
 #endif
 
 #if USE(FREETYPE)

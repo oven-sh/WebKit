@@ -58,12 +58,12 @@ public:
     ContentFilterUnblockHandler() = default;
     WEBCORE_EXPORT ContentFilterUnblockHandler(String unblockURLHost, UnblockRequesterFunction&&);
 #if HAVE(WEBCONTENTRESTRICTIONS)
-    ContentFilterUnblockHandler(const URL& evaluatedURL);
+    NODELETE ContentFilterUnblockHandler(const URL& evaluatedURL);
 #elif HAVE(PARENTAL_CONTROLS_WITH_UNBLOCK_HANDLER)
     ContentFilterUnblockHandler(String unblockURLHost, RetainPtr<WebFilterEvaluator>);
 #endif
 
-    WEBCORE_EXPORT ContentFilterUnblockHandler(
+    NODELETE WEBCORE_EXPORT ContentFilterUnblockHandler(
         String&& unblockURLHost,
         URL&& unreachableURL,
 #if HAVE(WEBCONTENTRESTRICTIONS)
@@ -74,7 +74,7 @@ public:
         bool unblockedAfterRequest
     );
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE needsUIProcess() const;
+    NODELETE WEBCORE_EXPORT bool needsUIProcess() const;
     WEBCORE_EXPORT bool canHandleRequest(const ResourceRequest&) const;
     WEBCORE_EXPORT void requestUnblockAsync(DecisionHandlerFunction&&, std::optional<URL> requestURL = std::nullopt
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO) && HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
@@ -83,7 +83,7 @@ public:
     );
     void wrapWithDecisionHandler(const DecisionHandlerFunction&);
 #if HAVE(WEBCONTENTRESTRICTIONS)
-    WEBCORE_EXPORT bool LEGACY_NODELETE needsNetworkProcess() const;
+    NODELETE WEBCORE_EXPORT bool needsNetworkProcess() const;
 #endif
 
     const String& unblockURLHost() const LIFETIME_BOUND { return m_unblockURLHost; }
@@ -100,7 +100,7 @@ public:
     RetainPtr<WebFilterEvaluator> webFilterEvaluator() const { return m_webFilterEvaluator; }
 #endif
 
-    WEBCORE_EXPORT void LEGACY_NODELETE setUnblockedAfterRequest(bool);
+    NODELETE WEBCORE_EXPORT void setUnblockedAfterRequest(bool);
     bool unblockedAfterRequest() const { return m_unblockedAfterRequest; }
 
 private:

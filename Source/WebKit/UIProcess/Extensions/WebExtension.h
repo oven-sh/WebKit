@@ -106,6 +106,7 @@ public:
         InvalidDescription,
         InvalidExternallyConnectable,
         InvalidIcon,
+        InvalidMessageSerialization,
         InvalidName,
         InvalidOptionsPage,
         InvalidURLOverrides,
@@ -244,6 +245,7 @@ public:
 
     bool isWebAccessibleResource(const URL& resourceURL, const URL& pageURL);
 
+    bool hasResourceForPath(const String&);
     String resourceMIMETypeForPath(const String&);
 
     std::expected<String, RefPtr<API::Error>> resourceStringForPath(const String&, CacheResult = CacheResult::No, SuppressNotFoundErrors = SuppressNotFoundErrors::No);
@@ -262,6 +264,7 @@ public:
     const String& version();
 
     const String& contentSecurityPolicy();
+    bool usesStructuredCloneMessageSerialization();
 
     RefPtr<WebCore::Icon> icon(WebCore::FloatSize idealSize);
 
@@ -361,6 +364,7 @@ public:
 private:
     static DataResources toDataResources(const Resources&);
     static StringResources toStringResources(const Resources&);
+    static String resourceKeyForPath(const String&);
 
     static String processFileAndExtractZipArchive(const String&);
 
@@ -377,6 +381,7 @@ private:
     void populatePermissionsPropertiesIfNeeded();
     void populatePagePropertiesIfNeeded();
     void populateContentSecurityPolicyStringsIfNeeded();
+    void populateMessageSerializationIfNeeded();
     void populateWebAccessibleResourcesIfNeeded();
     void populateCommandsIfNeeded();
     void populateDeclarativeNetRequestPropertiesIfNeeded();
@@ -462,6 +467,8 @@ private:
     bool m_parsedManifest : 1 { false };
     bool m_parsedManifestDisplayStrings : 1 { false };
     bool m_parsedManifestContentSecurityPolicyStrings : 1 { false };
+    bool m_parsedManifestMessageSerialization : 1 { false };
+    bool m_usesStructuredCloneMessageSerialization : 1 { false };
     bool m_parsedManifestActionProperties : 1 { false };
     bool m_parsedManifestBackgroundProperties : 1 { false };
     bool m_parsedManifestInspectorProperties : 1 { false };

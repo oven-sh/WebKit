@@ -38,6 +38,7 @@
 #include "SecurityFlags.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/HostingContext.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/IntDegrees.h>
 #include <WebCore/MediaPlayerIdentifier.h>
@@ -49,6 +50,7 @@
 #include <pal/SessionID.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
+#include <wtf/Markable.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/NativePromise.h>
@@ -89,6 +91,7 @@ enum class VideoFrameRotation : uint16_t;
 
 namespace WebKit {
 
+class CapturePreviewManager;
 class GPUConnectionToWebProcess;
 class RemoteAudioSessionProxyManager;
 class RemoteSnapshot;
@@ -115,18 +118,15 @@ public:
 
     void prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&&);
     void processDidResume();
-    void LEGACY_NODELETE resume();
+    NODELETE void resume();
 
-    void LEGACY_NODELETE connectionToWebProcessClosed(IPC::Connection&);
+    NODELETE void connectionToWebProcessClosed(IPC::Connection&);
 
     GPUConnectionToWebProcess* webProcessConnection(WebCore::ProcessIdentifier) const;
 
-    // Never sent to the WebContent process.
-    const SecurityFlags& securityFlags() const LIFETIME_BOUND { return m_securityFlags; }
-
-    const String& LEGACY_NODELETE mediaCacheDirectory(PAL::SessionID) const LIFETIME_BOUND;
+    NODELETE const String& mediaCacheDirectory(PAL::SessionID) const LIFETIME_BOUND;
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA) || ENABLE(ENCRYPTED_MEDIA)
-    const String& LEGACY_NODELETE mediaKeysStorageDirectory(PAL::SessionID) const LIFETIME_BOUND;
+    NODELETE const String& mediaKeysStorageDirectory(PAL::SessionID) const LIFETIME_BOUND;
 #endif
 
 #if ENABLE(GPU_PROCESS) && USE(AUDIO_SESSION)
@@ -149,6 +149,11 @@ public:
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
     WorkQueue& videoMediaStreamTrackRendererQueue();
     void ensureAVCaptureServerConnection();
+    void didApplyCaptureEnvironment(WebCore::ProcessIdentifier, WebCore::PageIdentifier);
+    bool setCaptureAttributionString(const WebCore::SecurityOriginData&);
+#if ENABLE(APP_PRIVACY_REPORT) && !PLATFORM(MACCATALYST)
+    bool setCaptureTCCIdentity(const String& fallbackBundleIdentifier);
+#endif
 #endif
 
 #if USE(LIBWEBRTC) && PLATFORM(COCOA)
@@ -164,7 +169,10 @@ public:
     const String& applicationVisibleName() const LIFETIME_BOUND { return m_applicationVisibleName; }
 
     void webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&&);
-    void runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&&);
+    void runDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>>&& webFonts, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
+#if PLATFORM(COCOA)
+    void printProcessDrawingCountsForTesting(CompletionHandler<void(uint64_t drawnInPrintProcess, uint64_t drawnAfterPrintProcessFailed)>&&);
+#endif
 
 #if USE(EXTENSIONKIT)
     void resolveBookmarkDataForCacheDirectory(std::span<const uint8_t> bookmarkData);
@@ -175,7 +183,7 @@ public:
 #endif
 
 #if ENABLE(WEBXR)
-    std::optional<WebCore::ProcessIdentity> LEGACY_NODELETE immersiveModeProcessIdentity() const;
+    std::optional<WebCore::ProcessIdentity> immersiveModeProcessIdentity() const;
 #endif
 
 #if HAVE(AUDIT_TOKEN)
@@ -223,6 +231,11 @@ public:
     void releaseTransferredImageBuffers(Vector<WebCore::ImageBufferTransferIdentifier>&&);
 
 private:
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+    bool setUpCapturePreviewEnvironment(WebCore::PageIdentifier, const WebCore::SecurityOriginData&, bool hasCamera);
+    void stopCapturePreviewManager();
+#endif
+
     GPUProcess();
 
     void lowMemoryHandler(Critical, Synchronous);
@@ -250,12 +263,12 @@ private:
     void updateGPUProcessPreferences(GPUProcessPreferences&&);
     void createGPUConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&, CompletionHandler<void()>&&);
     void sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
-    void securityFlagsDidChange(SecurityFlags&&);
+    void securityFlagsDidChange(SecurityFlags::Storage&&);
     void addSession(PAL::SessionID, GPUProcessSessionParameters&&);
     void removeSession(PAL::SessionID);
     void updateSandboxAccess(const Vector<SandboxExtension::Handle>&);
 
-    bool LEGACY_NODELETE updatePreference(std::optional<bool>& oldPreference, std::optional<bool>& newPreference);
+    NODELETE bool updatePreference(std::optional<bool>& oldPreference, std::optional<bool>& newPreference);
     void userPreferredLanguagesChanged(Vector<String>&&);
 
 #if ENABLE(MEDIA_STREAM)
@@ -265,6 +278,10 @@ private:
     void rotationAngleForCaptureDeviceChanged(const String&, WebCore::VideoFrameRotation);
     void updateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, bool willUseEchoCancellation, WebCore::ProcessIdentifier, CompletionHandler<void()>&&);
     void updateCaptureOrigin(const WebCore::SecurityOriginData&, WebCore::ProcessIdentifier);
+#if PLATFORM(COCOA)
+    void startCapturePreview(std::optional<WebCore::CaptureDevice>&& videoDevice, std::optional<WebCore::CaptureDevice>&& audioDevice, WebCore::PageIdentifier, WebCore::IntSize previewSize, WebCore::IntDegrees orientation, Vector<SandboxExtension::Handle>&&, String&& applicationBundleIdentifier, WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::HostingContext)>&&);
+    void stopCapturePreview(WebCore::PageIdentifier, CompletionHandler<void()>&&);
+#endif
     void addMockMediaDevice(const WebCore::MockMediaDevice&);
     void clearMockMediaDevices();
     void removeMockMediaDevice(const String&);
@@ -279,11 +296,11 @@ private:
     void cancelGetDisplayMediaPrompt();
 #endif
 #if PLATFORM(MAC)
-    void LEGACY_NODELETE setScreenProperties(const WebCore::ScreenProperties&);
+    NODELETE void setScreenProperties(const WebCore::ScreenProperties&);
     void updateProcessName();
 #endif
 #if PLATFORM(COCOA)
-    void sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+    void sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, std::optional<WebCore::ProcessIdentifier> printProcessIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
 #endif
     void sinkCompletedSnapshotToBitmap(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
 #if HAVE(IOSURFACE)
@@ -333,6 +350,10 @@ private:
     };
     HashMap<WebCore::ProcessIdentifier, MediaCaptureAccess> m_mediaCaptureAccessMap;
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+    RefPtr<CapturePreviewManager> m_capturePreviewManager;
+    Markable<WebCore::PageIdentifier> m_capturePreviewPage;
+    std::optional<std::pair<WebCore::ProcessIdentifier, WebCore::PageIdentifier>> m_lastCaptureEnvironment;
+    Vector<Ref<SandboxExtension>> m_capturePreviewSandboxExtensions;
     const RefPtr<WorkQueue> m_videoMediaStreamTrackRendererQueue;
 #endif
     WebCore::IntDegrees m_orientation { 0 };
@@ -366,7 +387,6 @@ private:
     HashMap<PAL::SessionID, GPUSession> m_sessions;
     WebCore::Timer m_idleExitTimer;
     const std::unique_ptr<WebCore::NowPlayingManager> m_nowPlayingManager;
-    SecurityFlags m_securityFlags;
     struct NowPlayingOwner {
         WebCore::ProcessIdentifier process;
         WebCore::PageIdentifier page;

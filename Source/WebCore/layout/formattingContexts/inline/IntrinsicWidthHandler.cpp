@@ -37,7 +37,7 @@
 namespace WebCore {
 namespace Layout {
 
-static bool LEGACY_NODELETE isBoxEligibleForNonLineBuilderMinimumWidth(const ElementBox& box)
+NODELETE static bool isBoxEligibleForNonLineBuilderMinimumWidth(const ElementBox& box)
 {
     // Note that hanging trailing content needs line builder (combination of wrapping is allowed but whitespace is preserved).
     auto& style = box.style();
@@ -56,7 +56,7 @@ static bool isContentEligibleForNonLineBuilderMaximumWidth(const ElementBox& roo
     return inlineTextItem && !inlineTextItem->isWhitespace();
 }
 
-static bool LEGACY_NODELETE isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& root)
+NODELETE static bool isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& root)
 {
     auto isSimpleBreakableContent = isBoxEligibleForNonLineBuilderMinimumWidth(root);
     for (auto* child = root.firstChild(); child && isSimpleBreakableContent; child = child->nextSibling()) {
@@ -71,7 +71,7 @@ static bool LEGACY_NODELETE isSubtreeEligibleForNonLineBuilderMinimumWidth(const
     return isSimpleBreakableContent;
 }
 
-static bool LEGACY_NODELETE isContentEligibleForNonLineBuilderMinimumWidth(const ElementBox& rootBox, const InlineContentCache::InlineItems& inlineItems, bool mayUseSimplifiedTextOnlyInlineLayout)
+NODELETE static bool isContentEligibleForNonLineBuilderMinimumWidth(const ElementBox& rootBox, const InlineContentCache::InlineItems& inlineItems, bool mayUseSimplifiedTextOnlyInlineLayout)
 {
     auto isEligible = (mayUseSimplifiedTextOnlyInlineLayout && isBoxEligibleForNonLineBuilderMinimumWidth(rootBox)) || (!mayUseSimplifiedTextOnlyInlineLayout && isSubtreeEligibleForNonLineBuilderMinimumWidth(rootBox));
     if (!isEligible || !mayUseSimplifiedTextOnlyInlineLayout || !inlineItems.hasInlineBoxes())
@@ -97,7 +97,7 @@ static bool LEGACY_NODELETE isContentEligibleForNonLineBuilderMinimumWidth(const
     return false;
 }
 
-static bool LEGACY_NODELETE mayUseContentWidthBetweenLineBreaksAsMaximumSize(const ElementBox& rootBox, const InlineItemList& inlineItemList)
+NODELETE static bool mayUseContentWidthBetweenLineBreaksAsMaximumSize(const ElementBox& rootBox, const InlineItemList& inlineItemList)
 {
     if (!TextUtil::shouldPreserveSpacesAndTabs(rootBox))
         return false;
@@ -120,7 +120,8 @@ IntrinsicWidthHandler::IntrinsicWidthHandler(InlineFormattingContext& inlineForm
         if (!m_mayUseSimplifiedTextOnlyInlineLayoutInRange)
             return;
 
-        m_mayUseSimplifiedTextOnlyInlineLayoutInRange = inlineItems.hasTextAndLineBreakOnlyContent() && !inlineItems.requiresVisualReordering();
+        // The text style is taken from the root and the inline boxes.
+        m_mayUseSimplifiedTextOnlyInlineLayoutInRange = inlineItems.hasTextAndLineBreakOnlyContent() && !inlineItems.hasTextWithStyleOfItsOwn() && !inlineItems.requiresVisualReordering();
         if (!m_mayUseSimplifiedTextOnlyInlineLayoutInRange)
             return;
         // Non-bidi text only content maybe nested inside inline boxes e.g. <div>simple text</div>, <div><span>simple text inside inline box</span></div> or
@@ -233,7 +234,9 @@ InlineLayoutUnit IntrinsicWidthHandler::lineBuilderMinimumContentSize()
 
 InlineLayoutUnit IntrinsicWidthHandler::minimumContentSize()
 {
-    if (isContentEligibleForNonLineBuilderMinimumWidth(formattingContextRoot(), m_inlineItems, m_mayUseSimplifiedTextOnlyInlineLayoutInRange))
+    // The simplified minimum width takes each image by itself, which does not work where images stick to the content next to them.
+    auto mayUseSimplifiedMinimumWidth = formattingContext().quirks().hasSoftWrapOpportunityAroundImages(IntrinsicWidthMode::Minimum) && isContentEligibleForNonLineBuilderMinimumWidth(formattingContextRoot(), m_inlineItems, m_mayUseSimplifiedTextOnlyInlineLayoutInRange);
+    if (mayUseSimplifiedMinimumWidth)
         return simplifiedMinimumWidth(formattingContextRoot());
 
     if (auto minimumContentSize = minimumContentSizeForBreakSpaces()) {

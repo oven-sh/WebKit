@@ -133,7 +133,7 @@ static NSString * const storageAccessLevelsKey = @"StorageAccessLevels";
 static constexpr NSInteger currentBackgroundContentListenerStateVersion = 5;
 
 // Update this value when any changes are made to the rule translation logic in _WKWebExtensionDeclarativeNetRequestRule.
-static constexpr NSInteger currentDeclarativeNetRequestRuleTranslatorVersion = 7;
+static constexpr NSInteger currentDeclarativeNetRequestRuleTranslatorVersion = 8;
 
 @interface _WKWebExtensionContextDelegate : NSObject <WKNavigationDelegate, WKUIDelegate> {
     WeakPtr<WebKit::WebExtensionContext> _webExtensionContext;
@@ -359,6 +359,10 @@ std::expected<bool, RefPtr<API::Error>> WebExtensionContext::unload()
     unloadDeclarativeNetRequestState();
 
     m_privilegedIdentifier = std::nullopt;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+    additionsDidUnload();
+#endif
 
     m_actionsToPerformAfterBackgroundContentLoads.clear();
     m_backgroundContentEventListeners.clear();
@@ -1029,6 +1033,50 @@ RefPtr<WebExtensionTab> WebExtensionContext::getTab(WebPageProxyIdentifier webPa
     return getCurrentTab(webPageProxyIdentifier, includeExtensionViews, ignoreExtensionAccess);
 }
 
+std::optional<WebExtensionWindowIdentifier> WebExtensionContext::windowIdentifierForPage(WebPageProxyIdentifier webPageProxyIdentifier) const
+{
+    // A page in a tab uses the window of that tab, and has no window when the tab has none.
+    if (RefPtr tab = getTab(webPageProxyIdentifier)) {
+        RefPtr window = tab->window();
+        return window ? std::optional(window->identifier()) : std::nullopt;
+    }
+
+    // Action popups are bound to the window of their tab, or of the action when it has no tab.
+    for (auto entry : m_popupPageActionMap) {
+        if (entry.key.identifier() != webPageProxyIdentifier)
+            continue;
+
+        Ref action = entry.value;
+        RefPtr tab = action->tab();
+        RefPtr window = tab ? tab->window() : action->window();
+        return window ? std::optional(window->identifier()) : std::nullopt;
+    }
+
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+    // Sidebars are bound to the window of their tab, or of the sidebar when it has no tab.
+    for (auto entry : m_sidebarPageMap) {
+        if (entry.key.identifier() != webPageProxyIdentifier)
+            continue;
+
+        RefPtr sidebar = entry.value.get();
+        if (!sidebar)
+            continue;
+
+        if (auto tab = sidebar->tab()) {
+            RefPtr window = tab.value()->window();
+            return window ? std::optional(window->identifier()) : std::nullopt;
+        }
+
+        if (auto window = sidebar->window())
+            return window.value()->identifier();
+
+        return std::nullopt;
+    }
+#endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+
+    return std::nullopt;
+}
+
 RefPtr<WebExtensionTab> WebExtensionContext::getCurrentTab(WebPageProxyIdentifier webPageProxyIdentifier, IncludeExtensionViews includeExtensionViews, IgnoreExtensionAccess ignoreExtensionAccess) const
 {
     RefPtr<WebExtensionTab> result;
@@ -1424,6 +1472,10 @@ void WebExtensionContext::didCloseTab(WebExtensionTab& tab, WindowIsClosing wind
     tab.didClose();
     forgetTab(tab.identifier());
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+    additionsDidCloseTab(tab);
+#endif
+
     if (!isLoaded() || !tab.extensionHasAccess() || suppressEvents == SuppressEvents::Yes)
         return;
 
@@ -1683,6 +1735,10 @@ void WebExtensionContext::didCommitLoadForFrame(WebPageProxyIdentifier pageID, c
         // Clear tab action customizations.
         if (RefPtr tabAction = m_actionTabMap.get(*tab))
             tabAction->clearCustomizations();
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+        additionsDidCommitLoad(*tab);
+#endif
 
         // Clear activeTab permissions and user gesture if the site changed.
         auto temporaryPattern = tab->temporaryPermissionMatchPattern();
@@ -3722,163 +3778,6 @@ void WebExtensionContext::saveStorageAccessLevelsToStorage()
 
     [m_state setObject:savedLevels forKey:storageAccessLevelsKey];
     writeStateToStorage();
-}
-
-void WebExtensionContext::reloadBackgroundContentForTesting()
-{
-    ASSERT(isLoaded() && inTestingMode());
-    if (!isLoaded() || !inTestingMode())
-        return;
-
-    unloadBackgroundWebView();
-    loadBackgroundWebViewIfNeeded();
-}
-
-void WebExtensionContext::unloadBackgroundContentForTesting()
-{
-    ASSERT(isLoaded() && inTestingMode());
-    if (!isLoaded() || !inTestingMode())
-        return;
-
-    unloadBackgroundWebView();
-}
-
-void WebExtensionContext::sendTestMessage(const String& message, id argument)
-{
-    ASSERT(isLoaded() && inTestingMode());
-    if (!isLoaded() || !inTestingMode())
-        return;
-
-    constexpr auto eventType = WebExtensionEventListenerType::TestOnMessage;
-
-    if (!hasTestEventListeners(eventType)) {
-        addTestMessageToQueue(message, argument, eventType);
-        return;
-    }
-
-    String argumentJSON = encodeJSONString(argument, JSONOptions::FragmentsAllowed);
-
-    sendToProcesses(processes(eventType, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argumentJSON, WebExtensionContentWorldType::WebPage));
-
-    sendToContentScriptProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argumentJSON, WebExtensionContentWorldType::ContentScript));
-
-    wakeUpBackgroundContentIfNecessaryToFireEvents({ eventType }, [=, this, protectedThis = Ref { *this }] {
-        sendToProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argumentJSON, WebExtensionContentWorldType::Main));
-    });
-}
-
-void WebExtensionContext::sendTestStarted(id argument)
-{
-    ASSERT(isLoaded() && inTestingMode());
-    if (!isLoaded() || !inTestingMode())
-        return;
-
-    constexpr auto type = WebExtensionEventListenerType::TestOnTestStarted;
-
-    if (!hasTestEventListeners(type)) {
-        addTestMessageToQueue(nullString(), argument, type);
-        return;
-    }
-
-    String argumentJSON = encodeJSONString(argument, JSONOptions::FragmentsAllowed);
-
-    sendToProcesses(processes(type, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argumentJSON, WebExtensionContentWorldType::WebPage));
-
-    sendToContentScriptProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argumentJSON, WebExtensionContentWorldType::ContentScript));
-
-    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
-        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argumentJSON, WebExtensionContentWorldType::Main));
-    });
-}
-
-void WebExtensionContext::sendTestFinished(id argument)
-{
-    ASSERT(isLoaded() && inTestingMode());
-    if (!isLoaded() || !inTestingMode())
-        return;
-
-    constexpr auto type = WebExtensionEventListenerType::TestOnTestFinished;
-
-    if (!hasTestEventListeners(type)) {
-        addTestMessageToQueue(nullString(), argument, type);
-        return;
-    }
-
-    String argumentJSON = encodeJSONString(argument, JSONOptions::FragmentsAllowed);
-
-    sendToProcesses(processes(type, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argumentJSON, WebExtensionContentWorldType::WebPage));
-
-    sendToContentScriptProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argumentJSON, WebExtensionContentWorldType::ContentScript));
-
-    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
-        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argumentJSON, WebExtensionContentWorldType::Main));
-    });
-}
-
-void WebExtensionContext::addTestMessageToQueue(const String& message, id argument, WebExtensionEventListenerType type)
-{
-    switch (type) {
-    case WebExtensionEventListenerType::TestOnMessage:
-        m_testMessageQueue.append({ message, argument });
-        break;
-
-    case WebExtensionEventListenerType::TestOnTestStarted:
-        m_testStartedQueue.append({ message, argument });
-        break;
-
-    case WebExtensionEventListenerType::TestOnTestFinished:
-        m_testFinishedQueue.append({ message, argument });
-        break;
-
-    default:
-        ASSERT_NOT_REACHED();
-        return;
-    }
-}
-
-void WebExtensionContext::sendQueuedTestMessagesIfNeeded(WebExtensionEventListenerType type)
-{
-    switch (type) {
-    case WebExtensionEventListenerType::TestOnMessage:
-        while (!m_testMessageQueue.isEmpty()) {
-            const auto& testMessage = m_testMessageQueue.takeFirst();
-            sendTestMessage(testMessage.message, testMessage.argument.get());
-        }
-        break;
-
-    case WebExtensionEventListenerType::TestOnTestStarted:
-        while (!m_testStartedQueue.isEmpty()) {
-            const auto& testMessage = m_testStartedQueue.takeFirst();
-            sendTestStarted(testMessage.argument.get());
-        }
-        break;
-
-    case WebExtensionEventListenerType::TestOnTestFinished:
-        while (!m_testFinishedQueue.isEmpty()) {
-            const auto& testMessage = m_testFinishedQueue.takeFirst();
-            sendTestFinished(testMessage.argument.get());
-        }
-        break;
-
-    default:
-        ASSERT_NOT_REACHED();
-        return;
-    }
-}
-
-bool WebExtensionContext::hasTestEventListeners(WebExtensionEventListenerType type)
-{
-    switch (type) {
-    case WebExtensionEventListenerType::TestOnMessage:
-        return m_testMessageListenersCount;
-    case WebExtensionEventListenerType::TestOnTestStarted:
-        return m_testStartedListenersCount;
-    case WebExtensionEventListenerType::TestOnTestFinished:
-        return m_testFinishedListenersCount;
-
-    default:
-        return false;
-    }
 }
 
 } // namespace WebKit

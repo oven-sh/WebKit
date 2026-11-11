@@ -260,10 +260,11 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
 
     ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
     bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+    size_t cellSize = freeList.cellSize();
     freeList.forEachInterval(
         [&](char* intervalStart, char* intervalEnd) {
             if (needsZapping || MarkedBlockInternal::verbose) {
-                for (char* cell = intervalStart; cell < intervalEnd; cell += freeList.cellSize()) {
+                for (char* cell = intervalStart; cell < intervalEnd; cell += cellSize) {
                     if constexpr (MarkedBlockInternal::verbose)
                         dataLog("Free cell: ", RawPointer(cell), "\n");
                     if (needsZapping)
@@ -279,7 +280,7 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
 
 void MarkedBlock::Handle::lastChanceToFinalize()
 {
-    m_directory->assertIsMutatorOrMutatorIsStopped();
+    m_directory->assertMayAccessBitsUnlocked();
     // Nothing else can be holding this block at shutdown.
     m_directory->claimInUseOrCrash(index());
 #if ASAN_ENABLED
@@ -300,7 +301,7 @@ void MarkedBlock::Handle::lastChanceToFinalize()
 void MarkedBlock::Handle::resumeAllocating(FreeList& freeList)
 {
     BlockDirectory* directory = this->directory();
-    directory->assertIsMutatorOrMutatorIsStopped();
+    directory->assertMayAccessBitsUnlocked();
     {
         Locker locker { blockHeader().m_lock };
         
@@ -629,7 +630,7 @@ void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollecti
     // sweeper's timer slice that reaches the block, and the block is no younger for it.
     if (!isFirstSweepSinceFullCollection && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections())
         return;
-    m_directory->assertIsMutatorOrMutatorIsStopped();
+    m_directory->assertMayAccessBitsUnlocked();
     if (m_directory->isMarkingRetired(this))
         return;
     unsigned pageCount = blockSize / pageSize;
@@ -871,7 +872,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     if (!marksArePending)
         m_markingVersionAtLastSweep = space()->markingVersion();
 
-    heap()->assertIsMutatorOrMutatorIsStopped();
+    heap()->assertIsExclusiveAccessHolderOrConductorWithWorldStopped();
     SweepingScope sweepingScope(*heap());
 
 #if ASAN_ENABLED

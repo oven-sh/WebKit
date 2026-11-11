@@ -105,6 +105,11 @@ inline void ComputedStyleBase::setHasExplicitlyInheritedProperties()
     m_nonInheritedFlags.hasExplicitlyInheritedProperties = true;
 }
 
+inline void ComputedStyleBase::setHasAuthorHighlightColors()
+{
+    m_nonInheritedFlags.hasAuthorHighlightColors = true;
+}
+
 inline void ComputedStyleBase::setDisallowsFastPathInheritance()
 {
     m_nonInheritedFlags.disallowsFastPathInheritance = true;
@@ -119,6 +124,13 @@ inline void ComputedStyleBase::setEffectiveInert(bool effectiveInert)
 inline void ComputedStyleBase::setIsAffectedBySmartImageResizer(bool isAffectedBySmartImageResizer)
 {
     SET(m_inheritedRareData, isAffectedBySmartImageResizer, isAffectedBySmartImageResizer);
+}
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+inline void ComputedStyleBase::setAppleColorFilterOverride(AppleColorFilterOverride colorFilterOverride)
+{
+    SET(m_inheritedRareData, appleColorFilterOverride, static_cast<unsigned>(colorFilterOverride));
 }
 #endif
 

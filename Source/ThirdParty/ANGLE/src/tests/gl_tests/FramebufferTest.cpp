@@ -1370,7 +1370,186 @@ TEST_P(FramebufferTest_ES3, AttachmentWith3DLayers)
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texA, 0);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texB, 0, 0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    EXPECT_GL_NO_ERROR();
+}
+
+// Check that attachments with the same width and height but different 3D texture depth (layer
+// counts) are complete.
+TEST_P(FramebufferTest_ES3, AttachmentsWithDifferentDepths)
+{
+    GLTexture tex2D;
+    glBindTexture(GL_TEXTURE_2D, tex2D);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLTexture tex2DArray;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, tex2DArray);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, 4, 4, /*depth=*/2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLTexture tex3DA;
+    glBindTexture(GL_TEXTURE_3D, tex3DA);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, 4, 4, /*depth=*/1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLTexture tex3DB;
+    glBindTexture(GL_TEXTURE_3D, tex3DB);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, 4, 4, /*depth=*/2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+
+    // Two 3D textures with different z-depths (1 vs. 2) have matching 2D slice dimensions (4x4).
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex3DA, 0, 0);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, tex3DB, 0, 0);
     ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // A 2D texture (depth 1) and a 2D array texture (depth 2) also have matching 2D dimensions.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex2D, 0);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, tex2DArray, 0, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    EXPECT_GL_NO_ERROR();
+}
+
+// Verify that attempting to render to a framebuffer with mixed 2D and 3D color attachments (which
+// is unsupported on D3D11 because OMSetRenderTargets requires all bound views to have the same
+// resource dimension) does not corrupt the previously bound framebuffer's render target.
+TEST_P(FramebufferTest_ES3, Mixed2DAnd3DColorAttachmentsDoNotCorruptPreviousFramebuffer)
+{
+    constexpr GLsizei kSize = 4;
+
+    // Bind firstFbo first and clear it to green so its render target is active on the GPU.
+    GLTexture firstTex;
+    glBindTexture(GL_TEXTURE_2D, firstTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer firstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, firstFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, firstTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glViewport(0, 0, kSize, kSize);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    // Switch to a different framebuffer (mixedColorFbo) with a 2D color attachment and a 3D color
+    // attachment, and draw red to it.
+    GLTexture tex2D;
+    glBindTexture(GL_TEXTURE_2D, tex2D);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLTexture tex3D;
+    glBindTexture(GL_TEXTURE_3D, tex3D);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kSize, kSize, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLFramebuffer mixedColorFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, mixedColorFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex2D, 0);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, tex3D, 0, 0);
+    const GLenum drawBuffers[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, drawBuffers);
+
+    constexpr char kFS[] = R"(#version 300 es
+precision mediump float;
+layout(location = 0) out vec4 out0;
+layout(location = 1) out vec4 out1;
+void main()
+{
+    out0 = vec4(1.0, 0.0, 0.0, 1.0);
+    out1 = vec4(1.0, 0.0, 0.0, 1.0);
+})";
+    ANGLE_GL_PROGRAM(mrtRedProgram, essl3_shaders::vs::Simple(), kFS);
+
+    const GLenum mixedColorStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    EXPECT_TRUE(mixedColorStatus == GL_FRAMEBUFFER_COMPLETE ||
+                mixedColorStatus == GL_FRAMEBUFFER_UNSUPPORTED);
+    drawQuad(mrtRedProgram, essl3_shaders::PositionAttrib(), 0.5f);
+    if (mixedColorStatus == GL_FRAMEBUFFER_COMPLETE)
+    {
+        // On backends that support mixed 2D/3D attachments, mixedColorFbo should now be red.
+        EXPECT_GL_NO_ERROR();
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    }
+    else
+    {
+        // On backends where mixed 2D/3D attachments are unsupported (D3D11), the draw must be
+        // rejected with GL_INVALID_FRAMEBUFFER_OPERATION.
+        EXPECT_GL_ERROR(GL_INVALID_FRAMEBUFFER_OPERATION);
+    }
+
+    // In either case, drawing while mixedColorFbo was bound must not have overwritten firstFbo,
+    // which must still be green.
+    glBindFramebuffer(GL_FRAMEBUFFER, firstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+    EXPECT_GL_NO_ERROR();
+}
+
+// Verify that attempting to render to a framebuffer with a 3D color attachment and a 2D depth
+// renderbuffer attachment (which is unsupported on D3D11 because OMSetRenderTargets requires the
+// depth/stencil view to have the same resource dimension as the render target views) does not
+// corrupt the previously bound framebuffer's render target.
+TEST_P(FramebufferTest_ES3, Mixed3DColorAndDepthAttachmentsDoNotCorruptPreviousFramebuffer)
+{
+    constexpr GLsizei kSize = 4;
+
+    // Bind firstFbo first and clear it to green so its render target is active on the GPU.
+    GLTexture firstTex;
+    glBindTexture(GL_TEXTURE_2D, firstTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer firstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, firstFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, firstTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glViewport(0, 0, kSize, kSize);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    // Switch to a different framebuffer (mixedDepthFbo) with a 3D color attachment and a 2D depth
+    // renderbuffer attachment, and draw red to it.
+    GLTexture tex3D;
+    glBindTexture(GL_TEXTURE_3D, tex3D);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kSize, kSize, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLRenderbuffer depthRbo;
+    glBindRenderbuffer(GL_RENDERBUFFER, depthRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, kSize, kSize);
+
+    GLFramebuffer mixedDepthFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, mixedDepthFbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex3D, 0, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRbo);
+
+    ANGLE_GL_PROGRAM(redProgram, essl3_shaders::vs::Simple(), essl3_shaders::fs::Red());
+
+    const GLenum mixedDepthStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    EXPECT_TRUE(mixedDepthStatus == GL_FRAMEBUFFER_COMPLETE ||
+                mixedDepthStatus == GL_FRAMEBUFFER_UNSUPPORTED);
+    drawQuad(redProgram, essl3_shaders::PositionAttrib(), 0.5f);
+    if (mixedDepthStatus == GL_FRAMEBUFFER_COMPLETE)
+    {
+        // On backends that support 3D color + 2D depth attachments, mixedDepthFbo should now be
+        // red.
+        EXPECT_GL_NO_ERROR();
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    }
+    else
+    {
+        // On backends where 3D color + 2D depth attachments are unsupported (D3D11), the draw must
+        // be rejected with GL_INVALID_FRAMEBUFFER_OPERATION.
+        EXPECT_GL_ERROR(GL_INVALID_FRAMEBUFFER_OPERATION);
+    }
+
+    // In either case, drawing while mixedDepthFbo was bound must not have overwritten firstFbo,
+    // which must still be green.
+    glBindFramebuffer(GL_FRAMEBUFFER, firstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
     EXPECT_GL_NO_ERROR();
 }
 
@@ -11048,3 +11227,194 @@ ANGLE_INSTANTIATE_TEST_ES31_AND(FramebufferTest_ES31_MSAA,
                                 ES31_VULKAN().enable(Feature::EmulatedPrerotation90),
                                 ES31_VULKAN().enable(Feature::EmulatedPrerotation180),
                                 ES31_VULKAN().enable(Feature::EmulatedPrerotation270));
+
+class FramebufferTest_RecreateFboOnAttachmentRespecification : public ANGLETest<>
+{
+  protected:
+    FramebufferTest_RecreateFboOnAttachmentRespecification()
+    {
+        setWindowWidth(128);
+        setWindowHeight(128);
+        setConfigRedBits(8);
+        setConfigGreenBits(8);
+        setConfigBlueBits(8);
+        setConfigAlphaBits(8);
+    }
+};
+
+// Verify that respecifying attachments on an already-synced FBO recreates the native FBO and
+// renders cleanly with recreateFboOnAttachmentRespecification enabled. Crashes on
+// PowerVR devices without the recreateFboOnAttachmentRespecification workaround enabled.
+TEST_P(FramebufferTest_RecreateFboOnAttachmentRespecification, RespecifyCollidingAttachments)
+{
+    GLint maxColorAttachments = 0;
+    GLint maxDrawBuffers      = 0;
+    glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+    ANGLE_SKIP_TEST_IF(maxColorAttachments < 8 || maxDrawBuffers < 8);
+
+    constexpr char kVS[]      = R"(#version 300 es
+void main() {
+    vec2 p[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    gl_Position = vec4(p[gl_VertexID], 0.0, 1.0);
+})";
+    constexpr char kFSFloat[] = R"(#version 300 es
+precision highp float;
+uniform vec4 uc;
+layout(location = 0) out vec4 o0;
+void main() {
+    o0 = uc;
+})";
+    constexpr char kFSUint[]  = R"(#version 300 es
+precision highp int;
+uniform uvec4 uc;
+layout(location = 0) out uvec4 o0;
+void main() {
+    o0 = uc;
+})";
+
+    ANGLE_GL_PROGRAM(progFloat, kVS, kFSFloat);
+    ANGLE_GL_PROGRAM(progUint, kVS, kFSUint);
+
+    auto attachStorageTex = [](GLenum internalFormat, GLenum attachmentPoint, GLTexture &tex) {
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, 16, 16);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentPoint, GL_TEXTURE_2D, tex, 0);
+    };
+
+    // Same-FBO respecification with colliding layouts CA -> CB (Carrier 1 ch=C).
+    const GLenum layoutCA[6] = {GL_RG32UI, GL_RG32UI, GL_RGBA16UI, GL_R8UI, GL_R32UI, GL_RG8UI};
+    const GLenum layoutCB[7] = {GL_R32UI, GL_RGBA16UI, GL_RG32UI, GL_R16UI,
+                                GL_RGBA8, GL_RGBA32UI, GL_R16UI};
+
+    GLFramebuffer fboRespec;
+    GLTexture texC0Float;
+    std::array<GLTexture, 6> texCADisabled;
+    glBindFramebuffer(GL_FRAMEBUFFER, fboRespec);
+    attachStorageTex(GL_RGBA8, GL_COLOR_ATTACHMENT0, texC0Float);
+    for (size_t i = 0; i < 6; ++i)
+    {
+        attachStorageTex(layoutCA[i], static_cast<GLenum>(GL_COLOR_ATTACHMENT1 + i),
+                         texCADisabled[i]);
+    }
+    const GLenum drawBuf0 = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, &drawBuf0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glViewport(0, 0, 16, 16);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glUseProgram(progFloat);
+    glUniform4f(glGetUniformLocation(progFloat, "uc"), 1.0f, 0.0f, 0.0f, 1.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDisable(GL_BLEND);
+
+    GLTexture texC0Uint;
+    std::array<GLTexture, 7> texCBDisabled;
+    attachStorageTex(GL_RGBA32UI, GL_COLOR_ATTACHMENT0, texC0Uint);
+    for (size_t i = 0; i < 7; ++i)
+    {
+        attachStorageTex(layoutCB[i], static_cast<GLenum>(GL_COLOR_ATTACHMENT1 + i),
+                         texCBDisabled[i]);
+    }
+    glDrawBuffers(1, &drawBuf0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    const GLuint clearVals[4] = {7u, 7u, 7u, 7u};
+    glClearBufferuiv(GL_COLOR, 0, clearVals);
+    glUseProgram(progUint);
+    glUniform4ui(glGetUniformLocation(progUint, "uc"), 0x11u, 0x22u, 0x33u, 0x44u);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    EXPECT_PIXEL_RECT32UI_EQ(0, 0, 1, 1, GLColor32UI(0x11u, 0x22u, 0x33u, 0x44u));
+    ASSERT_GL_NO_ERROR();
+}
+
+// Verify drawing across FBOs with colliding MRT hashes caused by disabled draw buffers (and reading
+// back disabled attachments via glReadBuffer) renders cleanly with
+// recreateFboOnAttachmentRespecification enabled. Crashes on PowerVR devices without the
+// recreateFboOnAttachmentRespecification workaround enabled.
+TEST_P(FramebufferTest_RecreateFboOnAttachmentRespecification,
+       DisabledDrawBufferCollidingAttachments)
+{
+    GLint maxColorAttachments = 0;
+    GLint maxDrawBuffers      = 0;
+    glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+    ANGLE_SKIP_TEST_IF(maxColorAttachments < 8 || maxDrawBuffers < 8);
+
+    constexpr char kVS[]      = R"(#version 300 es
+void main() {
+    vec2 p[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    gl_Position = vec4(p[gl_VertexID], 0.0, 1.0);
+})";
+    constexpr char kFSFloat[] = R"(#version 300 es
+precision highp float;
+uniform vec4 uc;
+layout(location = 0) out vec4 o0;
+void main() {
+    o0 = uc;
+})";
+
+    ANGLE_GL_PROGRAM(progFloat1, kVS, kFSFloat);
+    ANGLE_GL_PROGRAM(progFloat2, kVS, kFSFloat);
+
+    auto attachStorageTex = [](GLenum internalFormat, GLenum attachmentPoint, GLTexture &tex) {
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, 16, 16);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentPoint, GL_TEXTURE_2D, tex, 0);
+    };
+
+    // Colliding disabled draw-buffer layouts A and B (Carrier 1 ch=A, hash = 0xbcc863eb).
+    const GLenum layoutA[6] = {GL_R32UI, GL_RG32UI, GL_RG32UI, GL_RGBA32UI, GL_RGBA16UI, GL_RG32UI};
+    const GLenum layoutB[7] = {GL_R8,      GL_R32UI, GL_RG8UI,  GL_R32UI,
+                               GL_RGBA8UI, GL_R32UI, GL_RGBA8UI};
+
+    GLFramebuffer fboA;
+    GLTexture texA0;
+    std::array<GLTexture, 6> texADisabled;
+    glBindFramebuffer(GL_FRAMEBUFFER, fboA);
+    attachStorageTex(GL_RGBA8, GL_COLOR_ATTACHMENT0, texA0);
+    for (size_t i = 0; i < 6; ++i)
+    {
+        attachStorageTex(layoutA[i], static_cast<GLenum>(GL_COLOR_ATTACHMENT1 + i),
+                         texADisabled[i]);
+    }
+    const GLenum drawBuf0 = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, &drawBuf0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glViewport(0, 0, 16, 16);
+    glUseProgram(progFloat1);
+    glUniform4f(glGetUniformLocation(progFloat1, "uc"), 0.0f, 1.0f, 0.0f, 1.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    GLFramebuffer fboB;
+    GLTexture texB0;
+    std::array<GLTexture, 7> texBDisabled;
+    glBindFramebuffer(GL_FRAMEBUFFER, fboB);
+    attachStorageTex(GL_RGBA8, GL_COLOR_ATTACHMENT0, texB0);
+    for (size_t i = 0; i < 7; ++i)
+    {
+        attachStorageTex(layoutB[i], static_cast<GLenum>(GL_COLOR_ATTACHMENT1 + i),
+                         texBDisabled[i]);
+    }
+    glDrawBuffers(1, &drawBuf0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glUseProgram(progFloat2);
+    glUniform4f(glGetUniformLocation(progFloat2, "uc"), 0.0f, 0.0f, 1.0f, 1.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+    ASSERT_GL_NO_ERROR();
+}
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(
+    FramebufferTest_RecreateFboOnAttachmentRespecification);
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    FramebufferTest_RecreateFboOnAttachmentRespecification,
+    ES3_OPENGL().enable(Feature::RecreateFboOnAttachmentRespecification),
+    ES3_OPENGLES().enable(Feature::RecreateFboOnAttachmentRespecification));
