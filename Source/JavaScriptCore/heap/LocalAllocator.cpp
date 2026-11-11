@@ -262,7 +262,7 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
             return result;
     }
     
-    // A block that the list of this directory has no room for is not taken from another directory.
+    // Where the cage is required, a block that the list of this directory has no room for is not taken from another directory.
     if (Options::stealEmptyBlocksFromOtherAllocators() && (!MarkedBlockCage::isRequired() || MarkedBlockCage::willStealBlock(*m_directory))) {
         AlignedMemoryAllocator* allocator = m_directory->m_subspace->alignedMemoryAllocator();
         if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {

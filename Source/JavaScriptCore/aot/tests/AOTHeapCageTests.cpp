@@ -1053,13 +1053,14 @@ static void checkSetOfBlocksWithoutMemoryToGrowTakesWhatItHasRoomFor()
     DeferGC deferGC(vm);
     BlocksOfNoHeap blocks(vm, realm);
 
-    // With memory the set grows before a block needs the room: add() never grows it.
+    // With memory the set grows in willAddBlock(), for the block that add() would grow it for, and not before: add() never grows it.
     blocks.addUntilCapacityIs(capacityOfSetWithLargeTable);
+    AOT_TEST_CHECK(set.size() == capacityOfSetWithLargeTable / 4);
 
     LargePiecesOfMalloc pieces;
     blocks.addUntilSetHasNoRoom();
-    // It is as full as a table gets, and not only as full as where growth is tried first.
-    AOT_TEST_CHECK(set.size() > capacityOfSetWithLargeTable / 2 - capacityOfSetWithLargeTable / 16);
+    // It is as full as a table gets.
+    AOT_TEST_CHECK(set.size() == capacityOfSetWithLargeTable / 2 - 1);
     AOT_TEST_CHECK(!blocks.tryAdd() && set.capacity() == capacityOfSetWithLargeTable);
     // No error is owed for it: a program that goes on with what it has is not told again for each block.
     AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError());
