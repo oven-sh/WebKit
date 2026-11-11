@@ -198,7 +198,6 @@ protected:
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_stackStringIsFramesOnly : 1;
-    JSValue stackWithHeader(VM&, String&& frames);
 #endif
 };
 

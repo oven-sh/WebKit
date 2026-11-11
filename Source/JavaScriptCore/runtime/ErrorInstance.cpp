@@ -513,7 +513,8 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
         WTF::String stackString;
         if (fn) {
             if (!m_stackPropertyProvidedByCapturedStackTrace) {
-                // Possibly the end of a collection: the hook formats the frames, and stackWithHeader() prepends the header.
+                // Possibly the end of a collection: the hook formats the frames, and the host heads them when the stack is read
+                // (VM::onComputeCollectedErrorInfoJSValue).
                 stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL);
                 m_stackStringIsFramesOnly = true;
             }
@@ -534,29 +535,6 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
 
     }
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-// "name: message" in front of the frames a collection formatted, as a stack materialized on access
-// begins. undefined if reading the name or the message throws, which is what the hook that
-// materializes a stack on access leaves.
-JSValue ErrorInstance::stackWithHeader(VM& vm, String&& frames)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSGlobalObject* globalObject = this->globalObject();
-    String name = sanitizedNameString(globalObject);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
-    String message = sanitizedMessageString(globalObject);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
-    // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
-    ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
-    String stack = tryMakeString(name, separator, message, frames);
-    if (stack.isNull())
-        stack = tryMakeString(name, separator, message);
-    if (stack.isNull())
-        stack = WTF::move(message);
-    return jsString(vm, WTF::move(stack));
-}
-#endif
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
@@ -603,6 +581,9 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     computeErrorInfo(vm, true);
 
     if (m_hasErrorInfo) {
+        // The host reads this error's name and message to head a stack that a collection formatted. That can run script,
+        // which can read this stack again or capture another: this is set first, as it is before onComputeErrorInfoJSValue().
+        m_errorInfoMaterialized = true;
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
         {
@@ -620,18 +601,17 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
             }
-            // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
+            // The value is made before the scope opens: the host's hook can run script.
             JSValue stackValue;
 #if USE(BUN_JSC_ADDITIONS)
-            if (m_stackStringIsFramesOnly)
-                stackValue = stackWithHeader(vm, WTF::move(stackString));
+            if (auto& headStack = vm.onComputeCollectedErrorInfoJSValue(); headStack && m_stackStringIsFramesOnly)
+                stackValue = headStack(vm, stackString, this);
             else
 #endif
                 stackValue = jsString(vm, WTF::move(stackString));
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
             putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
-        m_errorInfoMaterialized = true;
     }
 
     return true;
@@ -742,9 +722,14 @@ bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    if (materializedProperties)
-        slot.disableCaching();
+    // Only materializing can throw, as in getOwnPropertySlot().
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (materializedProperties)
+            slot.disableCaching();
+    }
     return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
