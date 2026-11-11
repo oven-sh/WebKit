@@ -767,6 +767,8 @@ static OptionSet<ObjectMutation> mutationsRuledOutForShapeTest(const Program& pr
         if (!layout.possibleChanges.contains(change))
             ruledOut.add(mutation);
     }
+    if (!layout.hasDirectInstances)
+        ruledOut.add(ObjectMutation::ConstructDirectly);
     uint32_t numberDeclared = static_cast<uint32_t>(program.at(id).fields.size());
     for (uint32_t field = 0; field < numberDeclared; ++field) {
         if (!fieldAt(program, declarationOf(program, { id, field })).form.isEmpty())

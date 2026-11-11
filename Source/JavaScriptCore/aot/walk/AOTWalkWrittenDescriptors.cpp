@@ -154,6 +154,8 @@ static std::optional<Vector<PropertyOfFreshObject, 8>> propertiesDefinedBehindAl
     auto addPropertyIn = [&](FieldIndex field) {
         FieldReference reference { made.layout(), field };
         Reference value = walker.state().slot(root, reference);
+        if (value && value.isRecord() && code.at(value.id()).opcode == Opcode::Absent)
+            return false;
         if (value && !properties.containsIf([&](const PropertyOfFreshObject& property) { return property.field == reference; }))
             properties.append({ reference, value });
         return !!value;

@@ -30,7 +30,7 @@ struct HoistedArrayGuard {
 
 inline bool isConvertedInPreheader(const HoistedArrayGuard& list)
 {
-    return (list.storage == ArrayStorage::Double || !hasArrayStorageForm(list.storage)) && list.isWritable && !list.admitsInt32Storage;
+    return (list.storage == ArrayStorage::Double || !hasArrayStorageForm(list.storage)) && list.isWritable && !list.admitsInt32Storage && !list.hasAlternateStorage;
 }
 
 BuiltinClassID classOfViewBesideInstancesBelowIt(const Walker&, TypeID);
@@ -40,6 +40,7 @@ Reference buildTestOfViewOrInstanceBelow(Walker&, Reference view, Origin);
 void noteThatLengthOfViewIsFoundAbove(Walker&, Reference view);
 void askAgainWhetherLengthOfViewIsFoundAbove(Walker&, Reference view, Origin);
 std::optional<HoistedArrayGuard> findHoistedArrayGuard(Walker&, const BodyValue& read);
+bool isExpectedToBeView(Walker&, ValueID unbuiltList);
 std::optional<HoistedArrayGuard> findHoistedArrayGuard(Walker&, Reference list);
 std::optional<HoistedArrayGuard> findListTestedForStoresInFrontOfLoop(Walker&, Reference list);
 std::optional<HoistedArrayGuard> tryGuardNumericArrayInIteration(Walker&, const BodyValue& read, Reference list);
@@ -62,7 +63,9 @@ struct WhatReadsFromInFrontOfLoopFind {
 };
 bool readsListFoundByReadFromInFront(const Program&, const BodyIndex&, const BodyValue& operation, uint32_t firstValueOfLoop, WhatReadsFromInFrontOfLoopFind&);
 void readListsOfStableBindingsInFrontOfLoop(Walker&, BlockID inputHead);
+void readListsOfFieldsInFrontOfLoop(Walker&, BlockID inputHead);
 Reference nameOfListThatEntersLoopAround(Walker&, const BodyIndex&, const BodyValue& access);
+void forEachElementAccessInInlinedCallee(Walker&, const BodyValue& call, NOESCAPE const ScopedLambda<void(ValueID argument, ValueID key)>&);
 bool copyOfCalleeReadsUnderKeyWhatNobodyKnows(Walker&, const BodyValue& call, uint32_t firstValueOfLoop);
 ValueID readOfVariableThatFindsReceiverInLoop(const BodyIndex&, const BodyValue& access, uint32_t firstValueOfLoop);
 bool storesIntoListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& store, uint32_t firstValueOfLoop, std::span<const HoistedArrayGuard>);
@@ -72,14 +75,40 @@ bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position)
 Reference storageOfListFromInFrontOfLoop(Walker&, const HoistedArrayGuard&, Origin);
 
 bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const HoistedArrayGuard&);
+bool guardElementPresenceInIteration(Walker&, Draft& read, Reference list, Reference position, const HoistedArrayGuard&);
+bool turnTakesElementForKeyInListReadsInLoops(Walker&, ValueID element);
 bool hasOnlyOtherArrayReads(Walker&, BlockID inputHead, ValueID made);
+bool isResultUnused(const BodyIndex&, ValueID result);
 enum class WhatStandsBesideRead : uint8_t { Number, NumberOrNothing };
 bool onlyUserTakesUndefinedForNaNInTypedElements(Walker&, const BodyValue& read, WhatStandsBesideRead = WhatStandsBesideRead::Number);
 bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
 bool preservesHoistedArrayGuards(const Walker&, const Effects&);
 bool preservesHoistedArrayGuards(const Walker&, const Effects&, std::span<const HoistedArrayGuard>, const Walker::AllocationsUsedInLoop&);
 bool preservesHoistedArrayGuards(Walker&, const Effects&, std::span<const HoistedArrayGuard>, BlockID inputHead);
-Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker&, const BodyIndex&, LoopID, uint32_t firstValueOfLoop, Reference value);
+
+class NamesBeforeLoop {
+public:
+    NamesBeforeLoop(const Walker& walker, BlockID inputHead)
+        : m_walker(walker)
+        , m_inputHead(inputHead)
+    {
+    }
+
+    Vector<ValueID, 2> findNamesOf(Reference value);
+
+private:
+    struct Name {
+        uint32_t value;
+        ValueID id;
+    };
+    void collectNames();
+
+    const Walker& m_walker;
+    BlockID m_inputHead;
+    bool m_areNamesCollected { false };
+    Vector<Name, 8> m_names;
+};
+
 bool readsLengthOfViewTestedInFrontOfLoop(Walker&, const BodyValue& read);
 
 struct ListsReadInLoop {

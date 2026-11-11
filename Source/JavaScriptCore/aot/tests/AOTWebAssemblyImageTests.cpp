@@ -384,6 +384,7 @@ static void testPointerTableSlots()
     slots.append(Wasm::ImagePointerTable::wasmToJSCallee);
     slots.append(Wasm::ImagePointerTable::restoreFrameCallee);
     slots.append(Wasm::ImagePointerTable::restoreFrameReturnAddress);
+    slots.append(Wasm::ImagePointerTable::throwFromFaultHandler);
     slots.append(Wasm::ImagePointerTable::structureIDBase);
 #if GIGACAGE_ENABLED
     slots.append(Wasm::ImagePointerTable::primitiveGigacageDisableRequest);

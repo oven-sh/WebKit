@@ -192,7 +192,8 @@ static void testUnderscoreProtoAndIndex(LoadedProgram& program)
     Identifier index = Identifier::from(vm, 0u);
     JSObject* object = constructEmptyObject(realm);
 
-    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, object, underscoreProto)));
+    AOT_TEST_CHECK(isInheritedFrom(program, readAndClassify(program, object, underscoreProto), PropertyAnswerKind::Accessor, realm->objectPrototype(), underscoreProto));
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()), underscoreProto)));
     AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, object, index)));
     AOT_TEST_CHECK(presenceAfterRead(program, object, index) == Presence::Unknown);
 

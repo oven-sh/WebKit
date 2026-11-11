@@ -28,6 +28,7 @@ runtime MoveBytes : void (uint8_t* target, const uint8_t* source, uint64_t count
 runtime NewArrayWithIndexingType : JSCell* (uint32_t count, const EncodedJSValue* values, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, double, double, double) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates
+runtime SortNumbers : size_t (JSCell* array, int32_t direction) ; reads(all) writes(Elements)
 runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords)
 runtime NewArrayWithHoles : JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayWithHolesAtSite : JSCell* (void* profile, JSCell* source, uint64_t length, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
@@ -92,6 +93,7 @@ runtime StringUTF8Length8 : size_t (const Latin1Character* characters, uint32_t 
 runtime StringUTF8Length16 : size_t (const char16_t* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
 runtime StringImplsAreEqual : size_t (void* first, void* second) ; reads(StringStorage) ; leaf preserveMost
 runtime CompareStringImpls : int64_t (void* first, void* second) ; reads(StringStorage) ; leaf preserveMost
+runtime CompareStringsInPlace : int64_t (JSCell* first, JSCell* second) ; reads(StringStorage) ; leaf preserveMost
 runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; reads(StringStorage) ; leaf preserveMost
 runtime CharactersEqualImageString : size_t (const Latin1Character* characters, uint32_t length, uint32_t string) ; reads(StringStorage) ; leaf preserveMost
 runtime HashStringImpl : size_t (void* impl) ; reads(StringStorage) writes(StringStorage) ; leaf preserveMost
@@ -99,6 +101,8 @@ runtime FindKeptStringOfTwoCharacters : size_t (void* vm, uint32_t units) ; read
 
 runtime StringFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) ; reads(all)
 runtime StringReverseFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) ; reads(all)
+runtime StringFindLiteral16 : size_t (const char16_t* characters, uint32_t length, uint32_t text, uint32_t start) ; reads(all)
+runtime StringReverseFindLiteral16 : size_t (const char16_t* characters, uint32_t length, uint32_t text, int32_t position) ; reads(all)
 runtime StringEqualsLiteral : size_t (JSCell* string, uint32_t text) ; reads(all)
 runtime StringEqualsLiteralInRegister : size_t (JSCell* string, uint64_t text) ; reads(all)
 runtime StringIndexOfLiteral, StringLastIndexOfLiteral : size_t (JSCell* string, uint32_t text, int32_t position) ; RuntimeCreatesString
@@ -112,6 +116,7 @@ runtime StringToLowerCase, StringToUpperCase : JSCell* (JSCell* string) ; Runtim
 runtime StringRepeat : JSCell* (JSCell* string, uint32_t count) ; RuntimeCreatesString
 runtime StringPad : JSCell* (JSCell* string, uint32_t length, JSCell* filler, uint32_t isAtStart) ; RuntimeCreatesString
 runtime NarrowCharactersOfString : size_t (JSCell* string) ; reads(all)
+runtime StringCodeUnitAt : size_t (JSCell* string, uint32_t index) ; reads(all) writes(StringStorage, AllocatorState)
 
 effects RuntimeMatchesRegExp = reads(all) writes(RegExpState, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime RegExpExec : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode

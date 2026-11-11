@@ -209,6 +209,12 @@ BitVector Walker::blocksThatSomeQuietTurnPassesThrough(BlockID inputHead, std::s
     return reachesBackEdge;
 }
 
+bool Walker::callIsQuietGivenArguments(FunctionID callee) const
+{
+    const LinkedEffectsGivenArguments* given = facts().linked().known.findEffectsGivenArguments(callee);
+    return given && !given->parametersCalled && !given->onReturn.mayRunOtherCode() && !given->onThrow.mayRunOtherCode();
+}
+
 void Walker::noteCallOnUsualWayInTries(const Effects& heard)
 {
     if (!heard.mayRunOtherCode() || m_numberOfClosedArms || m_numberOfFormsHeardAsArms || m_code.at(m_block).frequency != BlockFrequency::Normal)

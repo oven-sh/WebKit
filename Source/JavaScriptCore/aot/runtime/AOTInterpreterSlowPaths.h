@@ -168,6 +168,7 @@ private:
 
 void didLinkNewObject(ObjectAllocationProfile&);
 void planObjectLiteral(JSGlobalObject*, CodeBlock*, const JSInstruction*, ObjectAllocationProfile&);
+JSArray* createEmptyArray(JSGlobalObject*, JSC::ArrayAllocationProfile&);
 
 struct SymbolTableOffsets {
     static constexpr ptrdiff_t offsetOfMaxScopeOffset = OBJECT_OFFSETOF(SymbolTable, m_lock) - sizeof(ScopeOffset);

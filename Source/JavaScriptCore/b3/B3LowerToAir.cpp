@@ -1055,6 +1055,12 @@ private:
         if (address->opcode() == SlotBase && m_procedure.policy().selection.extendsInstructionSelection)
             return Arg::stack(address->as<SlotBaseValue>()->slot(), offset);
 
+        if (address->opcode() == WasmAddress && address->child(0)->hasInt64() && m_procedure.policy().selection.extendsInstructionSelection) {
+            CheckedInt32 displacement = CheckedInt32 { offset } + address->child(0)->asInt64();
+            if (!displacement.hasOverflowed() && Arg::isValidAddrForm(Air::Move, displacement.value(), width))
+                return Arg::addr(Tmp(address->as<WasmAddressValue>()->pinnedGPR()), displacement.value());
+        }
+
         static constexpr unsigned lotsOfUses = 10; // This is arbitrary and we should tune it eventually.
 
         // Only match if the address value isn't used in some large number of places.
@@ -1233,10 +1239,15 @@ private:
     // An instruction that reads fewer bytes than the load does not trap where only the other bytes are out of bounds.
     bool canReadInPlace(Value* value, Width width)
     {
-        if (!m_procedure.policy().selection.extendsInstructionSelection || !value->traps())
+        if (!value->traps())
             return true;
         auto* memory = value->as<MemoryValue>();
         return !memory || memory->accessWidth() <= width;
+    }
+
+    static bool isWithinOneByte(uint32_t mask)
+    {
+        return !(mask & ~0xffu) || !(mask & ~0xff00u) || !(mask & ~0xff0000u) || !(mask & ~0xff000000u);
     }
 
     static Width maxWidthRead(Air::Opcode opcode)
@@ -2612,6 +2623,13 @@ private:
         // Chew through any inversions. This loop isn't necessary for comparisons and branches, but
         // we do need at least one iteration of it for Check.
         for (;;) {
+            // ZExt32(x) and SExt32(x) are zero exactly when x is.
+            if (m_procedure.policy().selection.extendsInstructionSelection && (value->opcode() == ZExt32 || value->opcode() == SExt32) && value != m_value && canCommitInternal && canBeInternal(value)) {
+                commitInternal(value);
+                value = value->child(0);
+                continue;
+            }
+
             bool shouldInvert =
                 (value->opcode() == BitXor && value->child(1)->hasInt() && (value->child(1)->asInt() == 1) && value->child(0)->returnsBool())
                 || (value->opcode() == Equal && value->child(1)->isInt(0));
@@ -2625,12 +2643,6 @@ private:
             
             value = value->child(0);
             inverted = !inverted;
-        }
-
-        // ZExt32(x) and SExt32(x) are zero exactly when x is.
-        if (m_procedure.policy().selection.extendsInstructionSelection && (value->opcode() == ZExt32 || value->opcode() == SExt32) && value != m_value && canCommitInternal && canBeInternal(value)) {
-            commitInternal(value);
-            value = value->child(0);
         }
 
         auto createRelCond = [&] (
@@ -2819,6 +2831,9 @@ private:
                 
                 auto tryTestLoadImm = [&] (Width width, Arg::Signedness signedness, B3::Opcode loadOpcode) -> Inst {
                     if (!hasRightConst || left->opcode() != loadOpcode || !canReadInPlace(left, width))
+                        return Inst();
+                    // MacroAssemblerX86_64::generateTest32(Address, ..) reads the one byte that the mask has bits in.
+                    if (isX86() && width == Width32 && left->traps() && loadPromise(left, loadOpcode).kind() == Arg::Addr && isWithinOneByte(static_cast<uint32_t>(rightConst)))
                         return Inst();
                     // Signed loads will create high bits, so if the immediate has high bits
                     // then we cannot proceed. Consider BitAnd(Load8S(ptr), 0x101). This cannot
@@ -6706,7 +6721,17 @@ private:
         }
 
         case ZExt32: {
-            appendUnOp<Move32, Air::Oops>(m_value->child(0));
+            Value* lowWord = m_value->child(0);
+            // A load that traps has to read all of its bytes.
+            if (m_procedure.policy().selection.extendsInstructionSelection && lowWord->opcode() == Trunc && lowWord->child(0)->type() == Int64 && !lowWord->child(0)->traps() && canBeInternal(lowWord)) {
+                ArgPromise address = loadPromise(lowWord->child(0));
+                if (isValidForm(Move32, address.kind(), Arg::Tmp) && address.peek().isValidForm(Move32, Width32)) {
+                    commitInternal(lowWord);
+                    append(address.inst(Move32, m_value, address.consume(*this), tmp(m_value)));
+                    return;
+                }
+            }
+            appendUnOp<Move32, Air::Oops>(lowWord);
             return;
         }
 
@@ -6728,10 +6753,9 @@ private:
         case ArgumentReg: {
             if (m_valueToTmp[m_value].isReg())
                 return;
-            m_prologue.append(Inst(
-                moveForType(m_value->type()), m_value,
-                Tmp(m_value->as<ArgumentRegValue>()->argumentReg()),
-                tmp(m_value)));
+            Reg reg = m_value->as<ArgumentRegValue>()->argumentReg();
+            bool isZeroExtended = m_procedure.policy().air.registers.zeroExtended.contains(reg, IgnoreVectors);
+            m_prologue.append(Inst(isZeroExtended ? Move32 : moveForType(m_value->type()), m_value, Tmp(reg), tmp(m_value)));
             return;
         }
 
@@ -7104,7 +7128,8 @@ private:
                 case ValueRep::Register: {
                     Tmp reg = Tmp(rep.reg());
                     args.append(reg);
-                    after.append(Inst(relaxedMoveForType(type), m_value, reg, tmp));
+                    bool isZeroExtended = type == Int32 && m_procedure.policy().air.registers.zeroExtended.contains(rep.reg(), IgnoreVectors);
+                    after.append(Inst(isZeroExtended ? Move32 : relaxedMoveForType(type), m_value, reg, tmp));
                     return;
                 }
                 case ValueRep::StackArgument: {

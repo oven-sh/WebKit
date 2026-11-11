@@ -309,7 +309,9 @@ static void testBodyEntries()
     StubCatalog catalog(StubOptions { });
     checkEntries(catalog, getByVal(false), { getByVal(false), getByVal(true) });
     checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces() });
-    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters() });
+    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters(), getByValAtConstantIndex() });
+    for (ECMAMode mode : { ECMAMode::strict(), ECMAMode::sloppy() })
+        checkEntries(catalog, putByVal(false, mode), { putByVal(false, mode), putByVal(true, mode), putByValAtConstantIndex(mode) });
     checkEntries(catalog, getByValCached(RegistersOfCaller::AreKept), { getByValCached(RegistersOfCaller::AreKept), getByValCachedCells(RegistersOfCaller::AreKept), getByValCachedAtPlace(RegistersOfCaller::AreKept), getByValCachedBehindPlaces(RegistersOfCaller::AreKept) });
     for (BaseOfKeyedRead base : { BaseOfKeyedRead::IsCell, BaseOfKeyedRead::IsAnyValue }) {
         RegisterSet keptByRead = registersClobberedByOperations();
@@ -530,6 +532,13 @@ static void checkSubstringSummary(const StubCatalog& catalog)
         AOT_TEST_CHECK(!containsRegister(summary.clobbered, reg));
 }
 
+static void checkTextSearchSummary(const StubCatalog& catalog)
+{
+    const StubSummary& summary = catalog.summaryOf(findText8());
+    for (GPRReg reg : { A2, A3, gprOf(StubRegister::A4) })
+        AOT_TEST_CHECK(containsRegister(summary.clobbered, reg));
+}
+
 static void checkArrayCreationSummary(const StubCatalog& catalog, StubKey key, const StubSignature& largestLiteral)
 {
     const StubSummary& summary = catalog.summaryOf(key);
@@ -638,6 +647,7 @@ static void testSummaries()
     checkCoroutineSummaries(catalog);
     checkNumberConversionSummary(catalog);
     checkSubstringSummary(catalog);
+    checkTextSearchSummary(catalog);
     checkArraySummaries(catalog);
     checkEqualitySummaries(catalog);
 }

@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCallSiteTable.h"
+#include "AOTCodedTexts.h"
 #include "AOTCodeTemplates.h"
 #include "AOTFacts.h"
 #include "AOTFaultTable.h"
@@ -286,10 +287,15 @@ struct StringHeaderNumbers {
     bool hasRecords() const { return form == ImageForm::PositionIndependent; }
     uint64_t sizeOfHeaders() const { return static_cast<uint64_t>(count) * (hasRecords() ? sizeof(ImageStringRecord) : sizeof(ImageStringHeader)); }
     uint64_t sizeOfList() const { return static_cast<uint64_t>(numberOfListedWords) * sizeof(uint32_t); }
+    uint32_t numberOfStringWords() const { return ofStrings->numberOfWords() - endOfIdentifiers; }
 
     ImageForm form { ImageForm::Absolute };
+    const StringNumbers* ofStrings { nullptr };
     Vector<uint32_t> byString;
     Vector<uint32_t> listedWordIndexes;
+    Vector<uint8_t> codedTexts;
+    Vector<ImageOtherIdentifier> otherIdentifiers;
+    uint32_t endOfIdentifiers { 0 };
     uint32_t count { 0 };
     uint32_t numberOfListedWords { 0 };
     uint64_t largestNumberNeeded { 0 };
@@ -390,33 +396,23 @@ static size_t countFunctionsWithCode(const Typed::Program& program, const Linked
     return count;
 }
 
-static Vector<uint32_t> measureSideTablesOfFunctions(const SideTables& sideTables, std::span<const Vector<uint8_t>> callSites, bool hasPositions, const ParallelLoops& loops)
+static Vector<uint32_t> measureSideTablesOfFunctions(const SideTables& sideTables, bool hasPositions, const ParallelLoops& loops)
 {
-    size_t numberOfFunctions = callSites.size();
-    RELEASE_ASSERT(sideTables.offsets.size() == numberOfFunctions && sideTables.flags.size() == numberOfFunctions);
-    Vector<uint32_t> sizes(FillWith { }, numberOfFunctions, 0);
-    const uint8_t* streams = sideTables.bytes.span().data();
+    size_t numberOfFunctions = sideTables.sizes.size();
+    Vector<uint32_t> sizes = sideTables.sizes;
+    if (!hasPositions)
+        return sizes;
     const uint8_t* positions = sideTables.positions.span().data();
     size_t numberOfGroups = PositionIndex::numberOfEntriesFor(numberOfFunctions);
     forEachIndexInParallel(loops, static_cast<unsigned>(numberOfGroups), [&](unsigned group) {
-        const uint8_t* cursor = nullptr;
-        if (hasPositions) {
-            uint32_t placeOfFirstEntry;
-            memcpy(&placeOfFirstEntry, positions + group * sizeof(uint32_t), sizeof(uint32_t));
-            cursor = positions + numberOfGroups * sizeof(uint32_t) + placeOfFirstEntry;
-        }
+        const uint8_t* cursor = PositionIndex::firstEntry(positions, group, numberOfFunctions);
         size_t first = static_cast<size_t>(group) * PositionIndex::functionsBetween;
         size_t end = std::min(numberOfFunctions, first + PositionIndex::functionsBetween);
         for (size_t position = first; position < end; ++position) {
-            SideTableParts parts = SideTableParts::read(ImageFunction::create(sideTables.offsets[position], 0, sideTables.flags[position]), streams);
-            uint64_t size = parts.frameRanges.size() + parts.handlers.size() + callSites[position].size();
-            if (cursor) {
-                const uint8_t* entry = cursor;
-                PositionsHead head = PositionsHead::read(cursor);
-                cursor += head.size;
-                size += cursor - entry;
-            }
-            sizes[position] = clampTo<uint32_t>(size);
+            const uint8_t* entry = cursor;
+            PositionsHead head = PositionsHead::read(cursor);
+            cursor += head.size;
+            sizes[position] += static_cast<uint32_t>(cursor - entry);
         }
     });
     return sizes;
@@ -447,16 +443,26 @@ static TextRecords textRecordsIn(const Vector<uint8_t>& strings, const Vector<ui
     };
 }
 
-static StringHeaderNumbers numberStringHeaders(const TextRecords& text, std::span<const StringID> stringsInOrderOfText, ImageForm form)
+static StringHeaderNumbers numberStringHeaders(const TextRecords& text, const ImageNumbers& imageNumbers, ImageForm form)
 {
     StringHeaderNumbers numbers;
     numbers.form = form;
+    numbers.ofStrings = &imageNumbers.stringNumbers();
     numbers.byString.fill(0, text.strings.size());
     if (numbers.hasRecords())
         numbers.listedWordIndexes.fill(0, text.strings.size());
     uint64_t count = text.identifiers.size();
+    numbers.endOfIdentifiers = static_cast<uint32_t>(text.identifiers.size());
+    RELEASE_ASSERT(numbers.endOfIdentifiers <= numbers.ofStrings->numberOfWords());
+    for (uint32_t number = 0; number < text.identifiers.size(); ++number) {
+        StringID textOfIdentifier = text.identifiers[number].text();
+        bool isOther = text.identifiers[number].kind() != PropertyKeyKind::Text;
+        if (textOfIdentifier && isOther)
+            numbers.otherIdentifiers.append({ number, numbers.ofStrings->requiredNumberOf(textOfIdentifier) + 1 });
+        RELEASE_ASSERT(isOther || !number || numbers.ofStrings->requiredNumberOf(textOfIdentifier) == number);
+    }
     uint64_t numberOfListedWords = 0;
-    for (size_t index : listStringsInOrderOfText(text.strings.size(), stringsInOrderOfText)) {
+    for (size_t index : listStringsInOrderOfText(text.strings.size(), imageNumbers.stringsInOrderOfText())) {
         const ImageString& string = text.strings[index];
         bool needsRecord = numbers.hasRecords() && string.hasHeader() && string.range(text.longStrings).length;
         if (needsRecord && !ImageListedString::fitsOneWord(string.range(text.longStrings))) {
@@ -474,8 +480,22 @@ static StringHeaderNumbers numberStringHeaders(const TextRecords& text, std::spa
     }
     numbers.count = static_cast<uint32_t>(count);
     numbers.numberOfListedWords = static_cast<uint32_t>(numberOfListedWords);
-    numbers.largestNumberNeeded = std::max(count, numberOfListedWords);
+    numbers.largestNumberNeeded = std::max<uint64_t>({ count, numberOfListedWords, imageNumbers.stringNumbers().coded().size() });
     return numbers;
+}
+
+static Vector<uint8_t> encodeCodedTexts(const Typed::StringTable& strings, const StringNumbers& numbers, BuildContext& context)
+{
+    Vector<std::span<const uint8_t>> texts(numbers.coded().size(), [&](size_t index) {
+        return strings[numbers.coded()[index]];
+    });
+    Vector<uint8_t> bytes = CodedTexts::encode(texts.span(), context.parallelLoops());
+    if (checksImageWhileBuilding(context)) {
+        CodedTexts coded(bytes.span(), static_cast<uint32_t>(texts.size()));
+        for (uint32_t number = 0; number < texts.size(); ++number)
+            RELEASE_ASSERT(equalSpans(std::span<const uint8_t>(coded.at(number).span()), texts[number]));
+    }
+    return bytes;
 }
 
 [[nodiscard]] static bool checkStringHeaderNumbers(const StringHeaderNumbers& numbers, BuildContext& context)
@@ -497,11 +517,11 @@ static std::optional<ImageExtent> computeImageExtent(const ImageSections& sectio
         if (static_cast<ImageSection>(index) == ImageSection::StringHeaders)
             size = stringHeaders.sizeOfHeaders();
         else if (static_cast<ImageSection>(index) == ImageSection::Strings)
-            size = size / sizeof(ImageString) * sizeof(ImageStringWord);
+            size = static_cast<uint64_t>(stringHeaders.numberOfStringWords()) * sizeof(ImageStringWord) + stringHeaders.codedTexts.size();
         else if (static_cast<ImageSection>(index) == ImageSection::LongStrings)
             size = stringHeaders.sizeOfList();
         else if (static_cast<ImageSection>(index) == ImageSection::Identifiers)
-            size = size / sizeof(ImageIdentifier) * sizeof(ImageIdentifierWord);
+            size = ImageOtherIdentifier::offsetFor(size / sizeof(ImageIdentifier)) + stringHeaders.otherIdentifiers.sizeInBytes();
         bool isClonedByPages = static_cast<ImageSection>(index) == ImageSection::MethodTable && sections.programTables().instanceSizes.sizeOfMethodTable;
         tablesEnd = isClonedByPages ? WTF::roundUpToMultipleOf<imagePageSize>(tablesEnd) : WTF::roundUpToMultipleOf<imageSectionAlignment>(tablesEnd);
         extent.sections[index] = { static_cast<uint32_t>(tablesEnd), static_cast<uint32_t>(size) };
@@ -583,6 +603,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         .endOfClosureNumbers = functionNumbers.endOfClosureFunctions().index() - functionNumbers.firstClosureFunction().index(),
         .endOfIdentifiers = endOfIdentifiers,
         .endOfStringHeaders = stringHeaders.count,
+        .numberOfStringWords = stringHeaders.numberOfStringWords(),
+        .numberOfCodedTexts = static_cast<uint32_t>(stringHeaders.ofStrings->coded().size()),
     };
     if (Typed::reachesModuleObjects(parts.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
@@ -637,6 +659,15 @@ static std::span<T> sectionIn(std::span<uint8_t> image, const ImageExtent& exten
     return spanReinterpretCast<T>(image.subspan(extent[section].offset, extent[section].size));
 }
 
+static ImageStringWord wordOfString(const TextRecords& text, const StringHeaderNumbers& numbers, size_t index)
+{
+    const ImageString& string = text.strings[index];
+    ImageStringWord word = string.inImage(numbers.byString[index]);
+    if (string.hasText() && string.range(text.longStrings).length < 2)
+        word.bits |= ImageString::isShorterThanTwoFlag;
+    return word;
+}
+
 static void writeStrings(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent, const ParallelLoops& loops)
 {
     std::span<ImageStringRecord> records;
@@ -645,20 +676,26 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
         records = sectionIn<ImageStringRecord>(image, extent, ImageSection::StringHeaders);
     else
         headers = sectionIn<ImageStringHeader>(image, extent, ImageSection::StringHeaders);
-    std::span stringsInImage = sectionIn<ImageStringWord>(image, extent, ImageSection::Strings);
+    std::span stringsInImage = sectionIn<ImageStringWord>(image, extent, ImageSection::Strings).first(numbers.numberOfStringWords());
+    memcpySpan(image.subspan(extent[ImageSection::Strings].offset + stringsInImage.size_bytes()), numbers.codedTexts.span());
     std::span listedStrings = sectionIn<uint32_t>(image, extent, ImageSection::LongStrings);
-    std::span identifiersInImage = sectionIn<ImageIdentifierWord>(image, extent, ImageSection::Identifiers);
+    std::span identifiersInImage = sectionIn<uint8_t>(image, extent, ImageSection::Identifiers);
     for (size_t number = 0; number < text.identifiers.size(); ++number)
-        identifiersInImage[number] = text.identifiers[number].inImage();
+        identifiersInImage[number] = text.identifiers[number].word(0).byteInImage();
+    memcpySpan(identifiersInImage.subspan(ImageOtherIdentifier::offsetFor(text.identifiers.size())), asBytes(numbers.otherIdentifiers.span()));
     forEachRangeOfIndicesInParallel(loops, text.strings.size(), [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
             const ImageString& string = text.strings[index];
-            stringsInImage[index] = string.inImage(numbers.byString[index]);
+            if (std::optional<uint32_t> number = numbers.ofStrings->numberOf(StringID(static_cast<uint32_t>(index))); number && *number < numbers.ofStrings->numberOfWords()) {
+                ImageStringWord word = wordOfString(text, numbers, index);
+                if (*number >= numbers.endOfIdentifiers)
+                    stringsInImage[*number - numbers.endOfIdentifiers] = word;
+                else
+                    RELEASE_ASSERT((word.bits & ~(ImageString::is16BitFlag | ImageString::isShorterThanTwoFlag)) == ImageStringWord::ofIdentifier(*number).bits);
+            }
             if (!string.hasText())
                 continue;
             ImageLongString range = string.range(text.longStrings);
-            if (range.length < 2)
-                stringsInImage[index].bits |= ImageString::isShorterThanTwoFlag;
             if (!string.hasHeader()) {
                 ImageListedString::write(listedStrings.subspan(numbers.byString[index]), range);
                 if (string.hasListedHash())
@@ -689,11 +726,10 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
     });
 }
 
-static void writeWordsOfStringConstants(std::span<uint8_t> image, const ImageExtent& extent)
+static void writeWordsOfStringConstants(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent)
 {
-    std::span stringsInImage = sectionIn<ImageStringWord>(image, extent, ImageSection::Strings);
     for (uint32_t& constant : sectionIn<uint32_t>(image, extent, ImageSection::StringConstants))
-        constant = stringsInImage[constant].bits;
+        constant = wordOfString(text, numbers, constant).bits;
 }
 
 static void writeRangeOfShapeSets(std::span<uint8_t> image, const CodeLinkerInputs& linker, const ImageExtent& extent)
@@ -742,7 +778,7 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
     times.didFinish("copy sections"_s);
 
     writeStrings(image.mutableSpan(), text, stringHeaders, *extent, loops);
-    writeWordsOfStringConstants(image.mutableSpan(), *extent);
+    writeWordsOfStringConstants(image.mutableSpan(), text, stringHeaders, *extent);
     writeRangeOfShapeSets(image.mutableSpan(), parts.linker, *extent);
     times.didFinish("write strings"_s);
 
@@ -816,7 +852,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     EncodedText text;
     StringHeaderNumbers stringHeaders;
     Vector<uint8_t> namesOfSites;
-    Vector<Vector<uint8_t>> callSites;
+    Vector<Vector<PrefixSymbol>> callSites;
     SideTables sideTables;
     const bool hasPositions = !context.options().obfuscates();
 
@@ -825,14 +861,13 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         compiledRegExps = compileRegExps(program, numbers.regExpRequests(), context);
         steps.didFinish("compile regular expressions"_s);
     };
-    auto layOutAndDescribeRegExps = [&] {
+    auto layOutRegExps = [&] {
         StepTimes steps(context, nameOfLaneSteps);
         std::optional<RegExpSection> section = layOutRegExpSection(compiledRegExps.results.span(), context.assemblerPolicy(), templates, &context);
         if (!section)
             return;
         regExpSection = WTF::move(*section);
-        regExps = encodeRegExpRecords({ numbers.regExpRequests(), compiledRegExps, regExpSection }, context);
-        steps.didFinish("lay out and describe regular expressions"_s);
+        steps.didFinish("lay out regular expressions"_s);
     };
 
     std::optional<GatheredMentions> mentions;
@@ -864,7 +899,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("encode side tables"_s);
             if (diagnostics.hasErrors())
                 return;
-            result.sideTableBytes = measureSideTablesOfFunctions(sideTables, callSites.span(), hasPositions, context.parallelLoops());
+            result.sideTableBytes = measureSideTablesOfFunctions(sideTables, hasPositions, context.parallelLoops());
             steps.didFinish("measure side tables"_s);
         },
         [&] {
@@ -964,16 +999,22 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("encode text"_s);
             if (diagnostics.hasErrors())
                 return;
-            stringHeaders = numberStringHeaders(textRecordsIn(text.strings, text.longStrings, text.identifiers), numbers.stringsInOrderOfText(), context.recordedOptions().form());
+            stringHeaders = numberStringHeaders(textRecordsIn(text.strings, text.longStrings, text.identifiers), numbers, context.recordedOptions().form());
+            stringHeaders.codedTexts = encodeCodedTexts(program.strings, numbers.stringNumbers(), context);
             steps.didFinish("number string headers"_s);
         },
         [&] {
             compileRegExpsOfImage();
             if (!diagnostics.hasErrors())
-                layOutAndDescribeRegExps();
+                layOutRegExps();
         },
     });
     times.didFinish("lanes in front of the layout of code"_s);
+    if (diagnostics.hasErrors())
+        return result;
+
+    regExps = encodeRegExpRecords({ numbers.regExpRequests(), compiledRegExps, regExpSection, numbers.stringNumbers() }, context);
+    times.didFinish("describe regular expressions"_s);
     if (diagnostics.hasErrors())
         return result;
 
@@ -1020,7 +1061,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
                 .layout = result.layout,
                 .sharedCode = result.sharedCode,
                 .index = *index,
-                .sideTableFlags = sideTables.flags.span(),
                 .sideTableOffsets = sideTables.offsets.span(),
                 .programTables = sections.programTables(),
                 .hasPositions = hasPositions,

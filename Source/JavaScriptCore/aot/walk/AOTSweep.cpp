@@ -707,6 +707,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
             if (hasOwnerBarrier || !m_storesThatAwaitBirth.isEmpty())
                 lookForBirthOfOwner(value, operation);
         }
+        if (opcode == Opcode::CreateUnmappedArguments && m_looksForBirthsToMove)
+            noteIfBirthMayMove(value, operation);
         if (looksForCoveredFences && (m_laterFenceCovers || (row & isAllocationWithFenceInRowOfSweep)))
             lookForCoveredFence(value, operation);
     }

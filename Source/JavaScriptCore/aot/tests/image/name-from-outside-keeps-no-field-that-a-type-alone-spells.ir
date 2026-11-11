@@ -6,6 +6,7 @@
 # KEPT: 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a
 # RUN(GONE): image Text
 # GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 # RUN: run-in-shell globalThis.nameFromOutside = () => "q".repeat(32); globalThis.hold = o => { const all = Object.keys(o); let text = ""; for (let i = 0; i < all.length; i++) text += all[i][0]; print(text, o["q".repeat(32)]); };
 # CHECK: zq 2
 # CHECK-NEXT: exited with 0

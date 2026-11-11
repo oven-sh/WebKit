@@ -26,7 +26,7 @@ namespace JSC { namespace AOT {
 using Saves = OperationCall::Saves;
 
 static constexpr int32_t maxLengthComparedWithoutCall = 32;
-static constexpr int32_t maxLengthSearchedByBytes = 32;
+static constexpr int32_t maxLengthSearchedByBytes = 15;
 
 static StubSignature signatureOfCharactersInPlace()
 {
@@ -36,9 +36,18 @@ static StubSignature signatureOfCharactersInPlace()
 }
 
 StubSignature signatureOfRopeCharacters(StubKey) { return signatureOfCharactersInPlace(); }
+StubSignature signatureOfSubstringCharacters(StubKey)
+{
+    StubSignature signature = signatureOfCharactersInPlace();
+    signature.result = StubResult::TwoGPRs;
+    signature.secondResult = gprOf(StubRegister::T9);
+    return signature;
+}
 StubSignature signatureOfFlattenString(StubKey) { return signatureOfCharactersInPlace(); }
+StubSignature signatureOfStringCodeUnitAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T12), gprOf(StubRegister::T11) }); }
 StubSignature signatureOfStringsAreEqual(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfDistinctStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
+StubSignature signatureOfStringEqualsValue(StubKey key) { return signatureOfStringsAreEqual(key); }
 StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 StubSignature signatureOfFindText8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::A4) }); }
@@ -303,6 +312,23 @@ void generateRopeCharacters(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber }, loadImplCharacters);
 }
 
+void generateSubstringCharacters(StubAssembler& jit)
+{
+    const GPRReg string = jit.clobberOperand(0);
+    const GPRReg characters = jit.result();
+    const GPRReg impl = jit.secondResult();
+    const GPRReg offset = jit.allocateScratch(StubRegister::T13);
+    RELEASE_ASSERT(string == characters && noOverlap(characters, impl, offset));
+    loadSubstringBaseAndOffset(jit, string, impl, offset);
+    jit.loadPtr(Address(impl, JSString::offsetOfValue()), impl);
+    jit.loadPtr(Address(impl, StringImpl::dataOffset()), characters);
+    Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.lshift64(TrustedImm32(1), offset);
+    is8Bit.link(&jit);
+    jit.addPtr(offset, characters);
+    jit.returnToCaller();
+}
+
 void generateFlattenString(StubAssembler& jit)
 {
     const GPRReg string = jit.operand(0);
@@ -315,6 +341,31 @@ void generateFlattenString(StubAssembler& jit)
 
     isRope.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber });
+}
+
+void generateStringCodeUnitAt(StubAssembler& jit)
+{
+    const GPRReg string = jit.operand(0);
+    const GPRReg index = jit.operand(1);
+    const GPRReg unit = jit.result();
+    const GPRReg fiber = jit.allocateScratch(StubRegister::T9);
+    RELEASE_ASSERT(noOverlap(string, index, unit, fiber));
+
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);
+    Jump isRope = jit.branchIfRopeStringImpl(fiber);
+    jit.zeroExtend32ToWord(index, unit);
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    jit.load8(BaseIndex(fiber, unit, CCallHelpers::TimesOne), unit);
+    jit.returnToCaller();
+
+    is16Bit.link(&jit);
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    jit.load16(BaseIndex(fiber, unit, CCallHelpers::TimesTwo), unit);
+    jit.returnToCaller();
+
+    isRope.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTStringCodeUnitAt, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = string, .thirdArgumentIn = index });
 }
 
 static void findCodeUnitAndReturn(StubAssembler& jit, GPRReg characters, GPRReg length, GPRReg codeUnit, GPRReg position, GPRReg index, GPRReg unit)
@@ -361,6 +412,8 @@ void generateFindText8(StubAssembler& jit)
 {
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2));
     static_assert(leafArgumentGPR(3) == gprOf(StubRegister::A3) && leafArgumentGPR(4) == gprOf(StubRegister::A4));
+    for (unsigned index : { 2, 3, 4 })
+        jit.clobberOperand(index);
     const GPRReg characters = jit.operand(0);
     const GPRReg length = jit.operand(1);
     const GPRReg sought = jit.operand(2);
@@ -586,6 +639,7 @@ void generateStringsAreEqual(StubAssembler& jit)
     JumpList needsLeaf;
     areEqual.append(jit.branchPtr(CCallHelpers::Equal, first, second));
     jit.bindEntry(distinctStringsAreEqual());
+    Label areDistinct = jit.label();
     jit.loadPtr(Address(first, JSString::offsetOfValue()), firstFiber);
     jit.loadPtr(Address(second, JSString::offsetOfValue()), secondFiber);
     jit.or64(firstFiber, secondFiber, scratch);
@@ -599,6 +653,7 @@ void generateStringsAreEqual(StubAssembler& jit)
     branchIfCharactersDiffer(jit, { firstFiber, secondFiber, length, scratch, word }, areNotEqual, needsLeaf);
 
     areEqual.link(&jit);
+    Label returnTrue = jit.label();
     returnResult(jit, TrustedImm32(1));
 
     areNotEqual.link(&jit);
@@ -620,6 +675,12 @@ void generateStringsAreEqual(StubAssembler& jit)
     differ.linkTo(returnFalse, &jit);
     needsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringsAreEqual, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = first, .thirdArgumentIn = second });
+
+    jit.bindEntry(stringEqualsValue());
+    jit.branchPtr(CCallHelpers::Equal, first, second).linkTo(returnTrue, &jit);
+    jit.branchIfNotCell(second).linkTo(returnFalse, &jit);
+    jit.branchIfNotString(second).linkTo(returnFalse, &jit);
+    jit.jump().linkTo(areDistinct, &jit);
 }
 
 void branchOnOrderOfFlatStrings(StubAssembler& jit, const OrderedFlatStrings& strings, JumpList& needsLeaf, JumpList& isLess, JumpList& isEqual)

@@ -164,6 +164,14 @@ CodePtr<WasmEntryPtrTag> CalleeGroup::javaScriptImportStubInImage(FunctionSpaceI
     return nullptr;
 }
 
+void CalleeGroup::didFault([[maybe_unused]] CallFrame* callFrame, [[maybe_unused]] const void* pc)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_codeInImage && CodeInImage::framelessFaultStub(pc))
+        callFrame->setCallee(m_codeInImage->calleeWithoutSavedRegisters(pc).ptr());
+#endif
+}
+
 void* const* CalleeGroup::imageCodePointers() const
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)

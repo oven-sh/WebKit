@@ -228,6 +228,16 @@ static Vector<uint32_t, 2> countsAtWhichMakersStopInCopiesOwnKeys(const Walker& 
     return counts;
 }
 
+static bool listsEveryRequiredFieldInCopiesOwnKeys(const Walker& walker, LayoutID layout, std::span<const FieldIndex> created)
+{
+    const PlannedLayout& planned = walker.plan().layout(layout);
+    for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
+        if (planned.slots[field].hasStorage() && isRequiredInCopiesOwnKeys(walker, layout, field) && !std::ranges::contains(created, field))
+            return false;
+    }
+    return true;
+}
+
 static bool findArmsOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout, unsigned mostArms, size_t mostFields, OwnKeyPlan& plan)
 {
     if (!canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
@@ -256,6 +266,7 @@ static bool findArmsOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout, uns
 
     uint32_t numberOfOrders = keyOrders.numberOfOrdersOf(layout);
     if (walker.isInLoop()) {
+        Vector<std::span<const FieldIndex>, 8> beginnings;
         Vector<uint32_t, 16> lastStopTakenOfOrders;
         for (bool someOrderHasStop = true; someOrderHasStop;) {
             someOrderHasStop = false;
@@ -268,9 +279,16 @@ static bool findArmsOfLayoutInCopiesOwnKeys(Walker& walker, LayoutID layout, uns
                     --count;
                 lastStopTakenOfOrders[number] = count;
                 someOrderHasStop |= !!count;
-                if (count && !addArmWhereThereIsRoom(keyOrders.order(layout, number).first(count)))
-                    return false;
+                if (count)
+                    beginnings.append(keyOrders.order(layout, number).first(count));
             }
+        }
+        std::ranges::stable_partition(beginnings, [&](std::span<const FieldIndex> created) {
+            return listsEveryRequiredFieldInCopiesOwnKeys(walker, layout, created);
+        });
+        for (std::span<const FieldIndex> created : beginnings) {
+            if (!addArmWhereThereIsRoom(created))
+                return false;
         }
     }
     std::optional<bool> everyStopOfMakersHasArm = hasList ? std::optional<bool>(everyListHasArm) : std::nullopt;

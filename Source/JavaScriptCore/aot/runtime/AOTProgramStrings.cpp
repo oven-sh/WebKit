@@ -10,6 +10,7 @@
 
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTPrefixCode.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -78,6 +79,8 @@ JSString* ProgramStrings::string(VM& vm, ImageStringWord word, Made made) const
 {
     DeferGCForAWhile deferGC(vm);
     const ImageText& text = m_image.text();
+    if (word.isCoded())
+        return jsString(vm, text.createString(word));
     if (StringImpl* header = text.tryGetHeader(word))
         return jsOwnedString(vm, String { *header });
     StringView characters = text.view(word);
@@ -222,7 +225,7 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
             ensureName(field.name, field.slot);
     }
     if (!m_hasNamedVariablesForHeapSnapshots) {
-        bool endsWhereClosureNumberEnds = forEachNamedCapture(m_tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+        bool endsWhereClosureNumberEnds = forEachNamedCapture(decodeVarintBytes(m_tables.namedCaptures()).span(), [&](const NamedCaptureData& capture) {
             identifiers.nameForHeapSnapshots(capture.closureNumber, capture.slot, AtomString(text(m_tables, StringID(capture.name))), capture.isVariableOfModule);
         });
         RELEASE_ASSERT(endsWhereClosureNumberEnds);

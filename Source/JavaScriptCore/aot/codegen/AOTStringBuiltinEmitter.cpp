@@ -282,10 +282,8 @@ void StringBuiltinEmitter::generateTrim(const InlineCall& call, TrimmedEnds ends
     LBasicBlock byCall = newBlock();
     Join<CellPointer> join(m_out);
 
-    Condition stringIsFlat = logicalNot(isRopeString(string));
     ScopeFork fork = m_out.forkScope();
-    continueIf(stringIsFlat, byCall);
-    CharacterView view = strings().viewOfFlatString(string);
+    CharacterView view = strings().viewWithoutResolving(call.context(), string, unlikelyEdge(byCall));
     continueIf(view.is8Bit, byCall);
     continueIf(isNotZero(view.length), byCall);
     CharacterView narrowView { view.characters, view.length, boolean(true), view.owner };
@@ -312,7 +310,7 @@ void StringBuiltinEmitter::generateStringLocaleCompare(const InlineCall& call)
 
 void StringBuiltinEmitter::generateStringConcat(const InlineCall& call)
 {
-    Vector<CellPointer, 3> parts;
+    Vector<StringEmitter::StringPart, 3> parts;
     parts.append(stringOperand(call.receiver()));
     for (ValueID argument : call.arguments())
         parts.append(stringOperand(argument));
@@ -358,9 +356,8 @@ Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPoin
         return loadBytes(m_out, width, TypedPointer(characters, pointer.value()));
     };
 
-    continueIf(logicalNot(isRopeString(string)), generic);
     continueIf(logicalNot(isRopeString(other)), generic);
-    CharacterView subject = strings().viewOfFlatString(string);
+    CharacterView subject = strings().viewWithoutResolving(call.context(), string, unlikelyEdge(generic));
     CharacterView sought = strings().viewOfFlatString(other);
     continueIf(logicalAnd(subject.is8Bit, sought.is8Bit), generic);
     continueIf(belowOrEqual(sought.length, word32(maxLengthComparedInLine)), generic);
@@ -431,11 +428,9 @@ void StringBuiltinEmitter::generateSearch(const InlineCall& call, SearchDirectio
     LBasicBlock generic = newBlock();
     Join<Word32> join(m_out);
 
-    Condition stringIsFlat = logicalNot(isRopeString(string));
     ScopeFork fork = m_out.forkScope();
-    continueIf(stringIsFlat, generic);
     continueIf(logicalNot(isRopeString(other)), generic);
-    CharacterView subject = strings().viewOfFlatString(string);
+    CharacterView subject = strings().viewWithoutResolving(call.context(), string, unlikelyEdge(generic));
     CharacterView sought = strings().viewOfFlatString(other);
     continueIf(equal(subject.is8Bit, sought.is8Bit), generic);
     join.add(strings().find(subject, sought, position, direction));

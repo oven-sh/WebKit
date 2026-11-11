@@ -42,6 +42,11 @@ static ALWAYS_INLINE void withOperandOfLoadOrStore(const AddressForm& form, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool onlyFaultsOnEmptyPointer(const Encoder& encoder, const Operation* load, const AddressForm& form)
+{
+    return load->opcode() == Load8Z && load->traps() && encoder.factsOf(load).lastUse == noPosition && form.kind == AddressForm::BaseOffset && form.offset >= 0 && form.offset < static_cast<int32_t>(sizeof(uint64_t));
+}
+
 static ALWAYS_INLINE void emitX86Load(Encoder& encoder, const Operation* load, const AddressForm& form, Reg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
@@ -50,6 +55,10 @@ static ALWAYS_INLINE void emitX86Load(Encoder& encoder, const Operation* load, c
     bool isNumber = type.isFloat();
     Width width = accessWidthOf(load->opcode(), type);
     ASSERT(destination.isFPR() == isNumber);
+    if (onlyFaultsOnEmptyPointer(encoder, load, form)) {
+        jit.load32(MacroAssembler::Address(form.base), destination.gpr());
+        return;
+    }
     withOperandOfLoadOrStore(form, [&](auto address) ALWAYS_INLINE_LAMBDA {
         switch (width) {
         case Width8:

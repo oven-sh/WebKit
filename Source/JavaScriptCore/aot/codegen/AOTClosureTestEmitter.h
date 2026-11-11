@@ -21,11 +21,21 @@ public:
     Condition hasFunctionCellType(CellPointer);
     Condition isSlimClosureAsCreated(CellPointer);
     CellPointer closureIfCreated(FunctionID);
+    Word32 closureTableEntry(FunctionID);
+    CellPointer closureInTableEntry(Word32);
     std::optional<uint32_t> mentionOfUpperHalfThatNames(FunctionID);
+
+    bool closureWordNames(FunctionID) const;
+    Word32 upperHalfOfWordAtSlimClosureWord(CellPointer);
+    Word32 upperHalfOfClosureWordOf(FunctionID);
+    struct ClosureCase {
+        FunctionID function;
+        BlockEdge target;
+    };
+    void branchOnChangedClosure(CellPointer, std::span<const ClosureCase>, BlockEdge otherwise);
 
 private:
     FunctionKindData closureKindOf(FunctionID) const;
-    bool closureWordNames(FunctionID) const;
     void branchOnClosureTest(CellPointer, FunctionID, BranchTargets);
     struct ClosureNumberRun {
         FunctionID first;
@@ -35,15 +45,12 @@ private:
     void branchOnClosureNumberInRuns(Word32, std::span<const ClosureNumberRun> ascendingRuns, int32_t addend, bool mayLieBelowFirstRun, BranchTargets);
     void branchOnIsChangedClosureWithNumber(CellPointer, bool isSlim, uint32_t mentionOfClosureNumber, BranchTargets);
     Word32 numberOfChangedClosure(CellPointer);
-    Word32 upperHalfOfWordAtSlimClosureWord(CellPointer);
     ptrdiff_t offsetOfClosureHeader(FunctionKindData) const;
-    Word32 closureTableEntry(FunctionID);
     TypedPointer closureCellOf(FunctionID);
     Condition hasClosureStructure(CellPointer, FunctionID);
     Condition hasClosureWordOf(CellPointer, bool isSlim, FunctionID);
     Word32 closureNumberOf(FunctionID, int32_t addend = 0);
     uint32_t mentionOfUpperHalfOfClosureWordOf(FunctionID);
-    Word32 upperHalfOfClosureWordOf(FunctionID);
 
 };
 

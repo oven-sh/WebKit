@@ -184,7 +184,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendNumber(const ValueCont
         return;
     }
     Number appended = in<Number>(value->valueOperand());
-    Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
+    Integer truncated = emitter<ConversionEmitter>().truncateUnchecked(appended);
     Condition isWhole = equal(toNumber(truncated), appended);
     Condition hasFewDigits = logicalAnd(isWhole, below(truncated, StringBuilderEmitter::firstIntegerWrittenByCall));
     emitArmsOfStringBuilderPart(m_out, hasFewDigits, Machine::EdgeClass::Normal, [&] {
@@ -387,7 +387,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendNumber(const Valu
         return;
     }
     Number appended = in<Number>(value->valueOperand());
-    Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
+    Integer truncated = emitter<ConversionEmitter>().truncateUnchecked(appended);
     Condition isWhole = equal(toNumber(truncated), appended);
     Condition hasFewDigits = logicalAnd(isWhole, below(truncated, StringBuilderEmitter::firstIntegerWrittenByCall));
     builders().defineCursorBehindPart(value, place.record, emitArmsOfStackStringBuilderPart(m_out, hasFewDigits, Machine::EdgeClass::Normal, [&] {
@@ -448,7 +448,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendCodeUnit(const Va
         m_out.store32As8(codeUnit.value(), builders().bytesAt(place.cursor));
         return builders().advance(value, place.record, offsetBy(place.cursor, 1));
     }, [&] {
-        return appendString(value, place, callOperation<CellPointer>(value, RuntimeOperation::CharToString, { codeUnit }));
+        return callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendCodeUnit, { place.record, place.cursor, codeUnit }, { .isOnRarePath = true });
     }));
 }
 

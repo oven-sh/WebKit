@@ -29,6 +29,8 @@ public:
     void generateRemainderOfIntegers(const ValueContext&);
     void generateReciprocalOfDivisor(const ValueContext&);
     void generateRemainderByReciprocal(const ValueContext&);
+    void generateWholeDivisor(const ValueContext&);
+    void generateRemainderByWholeDivisor(const ValueContext&);
     void generateToInt32(const ValueContext&);
     void generateToUint32(const ValueContext&);
     void generateToIntegerOrInfinity(const ValueContext&);

@@ -1,13 +1,14 @@
 # If every class had a record, the name of a class that stands in a branch which the build has cut away, or in a file that nobody imports, could be read out of the executable
 # if (false) { class qqq.. { x = 1 } }  class zzz.. { constructor(x) { this.x = x; } }  print(new zzz..(3).constructor.name.length);
 # The record of a class holds its name. A class has a record where reached code evaluates it. No NewClass of the first is left in the program.
-# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else.
+# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else. A text that is only shown is coded and printed as it reads.
 # LIBRARY: own
 # RUN(KEPT): image Text mechanisms=all
-# KEPT: 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a
+# KEPT: coded zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
 # Link says that nothing allocates an object of the first. With Link withheld any layout may be allocated, and the record of its objects holds the name.
 # RUN(GONE): image Text mechanisms=all
 # GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 # RUN(PLAN): plan classes mechanisms=all
 # PLAN-NOT: class L0
 # PLAN: class L1

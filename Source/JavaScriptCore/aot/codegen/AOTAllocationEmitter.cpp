@@ -153,7 +153,9 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
     }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), value->storage());
     if (ValueID prototype = value->prototypeOperand())
-        storePrototype(value, cell, prototype);
+        storePrototype(value, cell, in<CellPointer>(prototype));
+    else if (value->storage() == AllocationStorage::Heap && m_program.at(layout).kind == LayoutKind::Instance && !m_plan.slots().hasDirectInstances(layout))
+        storePrototype(value, cell, unboxCell(loadField<Boxed>(loadStructure(cell), m_heaps.Structure_prototype)));
     else
         define(value, cell);
 }
@@ -684,9 +686,8 @@ CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, const
     return cell;
 }
 
-void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer cell, ValueID prototype)
+void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer cell, CellPointer requested)
 {
-    CellPointer requested = in<CellPointer>(prototype);
     Boxed sitePrototype = loadField<Boxed>(loadStructure(cell), m_heaps.Structure_prototype);
     Condition hasSitePrototype = equal(boxCell(requested), sitePrototype);
     auto useCell = [&] {
@@ -696,6 +697,10 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
         MentionedAllocation allocation = emitter<CellAllocationEmitter>().allocationOf(value, value->layout(), value->fields());
         return callOperation<CellPointer>(value, RuntimeOperation::SetConstructPrototype, { cell, requested, numberOf(allocation.mention), word32(value->fields().empty()) }, { .isOnRarePath = true });
     };
+    if (!m_plan.slots().hasDirectInstances(value->layout())) {
+        define(value, setByOperation());
+        return;
+    }
     if (newObjectMayHaveOtherLayout(m_program, value.value()) || !generator().isInLoop(value.block())) {
         define(value, either<CellPointer>(hasSitePrototype, useCell, setByOperation));
         return;

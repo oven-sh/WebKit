@@ -308,7 +308,7 @@ static void testOpenProgramBuiltWithoutForeignCallsHasNone()
     AOT_TEST_CHECK(!header.code.ffiCodeSize);
     AOT_TEST_CHECK(header.flags == headerOf(*withStubs).flags && header.has(ImageFlag::AdmitsUnknownJavaScript));
     AOT_TEST_CHECK(header.executableSize + headerOf(*withStubs).code.ffiCodeSize <= headerOf(*withStubs).executableSize);
-    AOT_TEST_CHECK(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize == header.codeSize);
+    AOT_TEST_CHECK(std::max<uint64_t>(header.executableSize, static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize) == header.codeSize);
 }
 
 static void testUnseenCodeWithoutForeignCalls()
@@ -332,7 +332,7 @@ static void testDirectoryIsNotExecutable()
 
     std::unique_ptr<CompileOutput> closedOutput = compileClosedProgram();
     const ImageHeader& closed = headerOf(*closedOutput);
-    AOT_TEST_CHECK(static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize == closed.codeSize);
+    AOT_TEST_CHECK(std::max<uint64_t>(closed.executableSize, static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize) == closed.codeSize);
 }
 
 static String runInShell(const CompileOutput& output, ASCIILiteral statements)

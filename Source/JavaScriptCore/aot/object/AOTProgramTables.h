@@ -15,6 +15,7 @@
 #include "AOTPagedBitSet.h"
 #include "AOTRuntimeType.h"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <compare>
 #include <iterator>
@@ -52,14 +53,6 @@ struct TableRange {
     uint32_t count;
 };
 static_assert(sizeof(TableRange) == 8 && isImageRecord<TableRange>);
-
-struct ParsedRecordFieldData {
-    Number24 name;
-    Number24 shape;
-
-    uint32_t nameNumber() const { return name; }
-};
-static_assert(sizeof(ParsedRecordFieldData) == 6 && isImageRecord<ParsedRecordFieldData>);
 
 struct MethodTableDependentData {
     uint32_t guardBit;
@@ -109,7 +102,9 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(classesBelowWithGuardsOfNames, ClassBelowWithGuardOfNameData) \
     v(closurePropertyNames, ClosurePropertyNameData) \
     v(addedPrototypeNames, AddedPrototypeNameData) \
-    v(parsedRecordFields, ParsedRecordFieldData)
+    v(parsedRecordNames, uint32_t) \
+    v(parsedRecordStarts, uint32_t) \
+    v(parsedRecordShapes, Number24)
 
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \
     FOR_EACH_AOT_OBJECT_PROGRAM_TABLE(v) \
@@ -306,6 +301,22 @@ struct ProgramTables {
         uint8_t number = functionRecordNumbers()[function];
         if (number != unsharedFunctionRecord) [[likely]]
             return functionRecords()[number];
+        return unsharedRecordOfFunction(function);
+    }
+    bool areUnsharedRecordsConsistent() const
+    {
+        std::span<const uint8_t> numbers = functionRecordNumbers();
+        return std::ranges::all_of(unsharedFunctionRecords(), [&](const UnsharedFunctionRecordData& entry) {
+            return entry.function < numbers.size() && numbers[entry.function] == unsharedFunctionRecord;
+        });
+    }
+    NEVER_INLINE const FunctionRecordData& unsharedRecordOfFunction(uint32_t function) const
+    {
+        static constinit std::atomic<const ProgramTables*> checkedTables { nullptr };
+        if (checkedTables.load(std::memory_order_relaxed) != this) [[unlikely]] {
+            RELEASE_ASSERT(areUnsharedRecordsConsistent());
+            checkedTables.store(this, std::memory_order_relaxed);
+        }
         return findRequiredEntry(unsharedFunctionRecords(), function, &UnsharedFunctionRecordData::function).record;
     }
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
@@ -319,9 +330,21 @@ struct ProgramTables {
     }
     uint32_t sourceFunctionOf(uint32_t function) const
     {
-        std::span<const Number24> sources = sourceFunctions();
-        size_t firstListed = numberOfFunctions() - sources.size();
-        return function < firstListed ? function : sources[function - firstListed];
+        std::span<const uint32_t> sources = sourceFunctions();
+        return sources.empty() || function < closureFunctions.first ? function : AscendingNumberTable(sources).at(function - closureFunctions.first);
+    }
+    std::span<const Number24> parsedRecordShapesWithName(uint32_t name) const
+    {
+        uint32_t place = parsedRecordNames().empty() ? 0 : SparseNumberTable(parsedRecordNames()).at(name);
+        if (!place)
+            return { };
+        AscendingNumberTable starts(parsedRecordStarts());
+        uint32_t first = starts.at(place - 1);
+        return parsedRecordShapes().subspan(first, starts.at(place) - first);
+    }
+    uint32_t cellOfClosureFunction(uint32_t function) const
+    {
+        return function >= closureFunctions.first && function < closureFunctions.end ? SparseNumberTable(closureCells()).at(function - closureFunctions.first) : 0;
     }
     static constexpr uint32_t numberOfFunctionNameGroupWords(size_t numberOfFunctions) { return static_cast<uint32_t>((numberOfFunctions + 31) / 32 * 2); }
     std::optional<uint32_t> nameOfFunction(uint32_t function) const

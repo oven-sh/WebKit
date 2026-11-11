@@ -1000,6 +1000,7 @@ public:
     bool listsOwnPropertiesOfNewInstances(BuiltinClassID) const;
     bool mayDefineOnNewInstances(BuiltinClassID, BuiltinName) const;
     JS_EXPORT_PRIVATE bool ignoresReceiver(BuiltinID) const;
+    bool ignoresArgument(BuiltinID, unsigned argument) const;
     bool definesCharactersOnNewInstances(BuiltinClassID) const;
     std::span<const BuiltinClassID> classesWithInstanceMember(BuiltinName) const;
 

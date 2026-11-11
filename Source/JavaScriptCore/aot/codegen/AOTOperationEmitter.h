@@ -48,6 +48,7 @@ struct CallOptions {
     bool followsThrow { false };
     bool convertsNoCells { false };
     bool callerSuspendsAtReturn { false };
+    bool rejectsOnThrow { false };
     bool returnsWord32 { false };
 };
 

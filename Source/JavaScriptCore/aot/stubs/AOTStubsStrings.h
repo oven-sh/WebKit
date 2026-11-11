@@ -16,12 +16,15 @@
 namespace JSC { namespace AOT {
 
 constexpr StubKey ropeCharacters() { return StubKey(StubFamily::RopeCharacters); }
+constexpr StubKey substringCharacters() { return StubKey(StubFamily::SubstringCharacters); }
 constexpr StubKey flattenString() { return StubKey(StubFamily::FlattenString); }
+constexpr StubKey stringCodeUnitAt() { return StubKey(StubFamily::StringCodeUnitAt); }
 constexpr StubKey stringsAreEqual() { return StubKey(StubFamily::StringsAreEqual); }
 constexpr StubKey stringBuilderAppendString() { return StubKey(StubFamily::StringBuilderAppendString); }
 constexpr StubKey stringBuilderDiscard() { return StubKey(StubFamily::StringBuilderDiscard); }
 constexpr StubKey stackStringBuilderAppendString() { return StubKey(StubFamily::StackStringBuilderAppendString); }
 constexpr StubKey distinctStringsAreEqual() { return StubKey(StubFamily::DistinctStringsAreEqual); }
+constexpr StubKey stringEqualsValue() { return StubKey(StubFamily::StringEqualsValue); }
 constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings); }
 constexpr StubKey integerToString() { return StubKey(StubFamily::IntegerToString); }
 enum class ConcatenatedKeyForm : uint8_t { Key, Name };
@@ -36,12 +39,40 @@ constexpr StubKey concatenate(unsigned count)
     return StubKey(StubFamily::Concatenate).withCount(count);
 }
 
-static_assert(exists(ropeCharacters()) && exists(flattenString()));
+enum class ConstantsOfConcatenation : uint8_t { FirstOfTwo, SecondOfTwo, FirstOfThree, SecondOfThree, ThirdOfThree, FirstAndThirdOfThree };
+
+constexpr unsigned numberOfOperands(ConstantsOfConcatenation constants)
+{
+    return constants == ConstantsOfConcatenation::FirstOfTwo || constants == ConstantsOfConcatenation::SecondOfTwo ? 2 : 3;
+}
+
+constexpr bool isConstantOperand(ConstantsOfConcatenation constants, unsigned operand)
+{
+    switch (constants) {
+    case ConstantsOfConcatenation::FirstOfTwo:
+    case ConstantsOfConcatenation::FirstOfThree:
+        return !operand;
+    case ConstantsOfConcatenation::SecondOfTwo:
+    case ConstantsOfConcatenation::SecondOfThree:
+        return operand == 1;
+    case ConstantsOfConcatenation::ThirdOfThree:
+        return operand == 2;
+    case ConstantsOfConcatenation::FirstAndThirdOfThree:
+        return operand != 1;
+    }
+    return false;
+}
+
+constexpr StubKey concatenateWithConstants(ConstantsOfConcatenation constants) { return StubKey(StubFamily::ConcatenateWithConstants).withForm(static_cast<uint8_t>(constants)); }
+
+static_assert(exists(ropeCharacters()) && exists(substringCharacters()) && exists(flattenString()));
 static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()));
 static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
-static_assert(exists(findCharacter8()));
+static_assert(exists(stringEqualsValue()) && bodyOf(stringEqualsValue()) == stringsAreEqual());
+static_assert(exists(findCharacter8()) && exists(stringCodeUnitAt()));
 static_assert(exists(concatenateKeyOfPair(ConcatenatedKeyForm::Key)) && exists(concatenateKeyOfPair(ConcatenatedKeyForm::Name)));
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
+static_assert(exists(concatenateWithConstants(ConstantsOfConcatenation::FirstAndThirdOfThree)) && !exists(concatenateWithConstants(static_cast<ConstantsOfConcatenation>(6))));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
 
 void returnResult(StubAssembler& jit, auto value)

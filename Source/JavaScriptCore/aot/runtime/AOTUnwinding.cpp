@@ -136,6 +136,15 @@ static void finishInRejectingStub(CompiledUnwindResult& result, Instance& instan
     finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
 }
 
+static void finishInAwaitedCall(CompiledUnwindResult& result, Instance& instance, CallFrame* callFrame, const CallSiteCache::Entry& site)
+{
+    void* code = Image::current()->frequentStub(Image::FrequentStub::RejectAwaitedCall, [&] {
+        return addressOfStubInCurrentImage(rejectAwaitedCall());
+    });
+    instance.runtime.exceptions.returnAddressOfAwaitedCall = site.address;
+    finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, site.frame.frameSizeInBytes());
+}
+
 static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entryFrame)
 {
     EntryFrame* entryFrameOfRun = entryFrame;
@@ -207,6 +216,10 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
             if (!isTermination) [[likely]] {
                 if (asyncGeneratorBodyFrameLeft) [[unlikely]] {
                     finishInRejectingStub(result, *instance, asyncGeneratorBodyFrameLeft, asyncGeneratorBodyFrameLeft == leftFrame ? leftImageFrame : ImageFrame { });
+                    return result;
+                }
+                if (site->site.isAwaited() && leftFrame) [[unlikely]] {
+                    finishInAwaitedCall(result, *instance, callFrame, *site);
                     return result;
                 }
                 if (const HandlerRecord* handler = site->exceptionHandler()) {
@@ -358,7 +371,7 @@ static bool findCatchInRun(CompiledFrameIterator& frames)
         const HandlerRecord* handler = site.exceptionHandler();
         if (handler && kindOf(handler->type) == CompiledHandlerKind::Catch)
             return true;
-        if (site.rejectsOnThrow)
+        if (site.rejectsOnThrow || site.site.isAwaited())
             return true;
         instance = frames.instance();
         lastFrame = frames.machineFrame();
@@ -399,6 +412,8 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
             if (search == HandlerSearch::Nearest && site->stubFrameKind == StubFrameKind::ModuleStart && abandonsModuleOnThrow(static_cast<CallFrame*>(framePointer)))
                 return HandlerType::Finally;
         } else {
+            if (site->site.isAwaited())
+                return HandlerType::Catch;
             const HandlerRecord* handler = site->exceptionHandler();
             if (handler && (search == HandlerSearch::Nearest || handler->type != HandlerType::Finally))
                 return handler->type;

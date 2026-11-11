@@ -50,9 +50,16 @@ struct ModuleRetainedRanges {
     uint32_t end;
 };
 
-struct HashedSourceRun {
-    uint64_t hashAndSize;
-    uint32_t run;
+class HashedSourceRun {
+public:
+    static uint64_t create(std::span<const uint8_t> bytes, uint32_t run)
+    {
+        constexpr unsigned bitsOfSize = 8;
+        uint64_t hash = StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes));
+        return (hash << bitsOfSize | (bytes.size() & ((1u << bitsOfSize) - 1))) << 32 | run;
+    }
+    static uint32_t group(uint64_t hashedRun) { return static_cast<uint32_t>(hashedRun >> 32); }
+    static uint32_t run(uint64_t hashedRun) { return static_cast<uint32_t>(hashedRun); }
 };
 
 struct SourceRunLayout {
@@ -70,24 +77,29 @@ static SourceRunLayout computeSourceRunLayout(const ParallelLoops& loops, std::s
     SourceRunLayout runLayout;
     runLayout.offsets.grow(runs.size());
     runLayout.firstEqualRun.grow(runs.size());
-    Vector<HashedSourceRun> hashed;
+    Vector<uint64_t> hashed;
     hashed.grow(runs.size());
     forEachIndexInParallel(loops, static_cast<unsigned>(runs.size()), [&](unsigned run) {
-        std::span<const uint8_t> bytes = runs[run];
-        hashed[run] = { static_cast<uint64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes))) << 32 | bytes.size(), run };
+        hashed[run] = HashedSourceRun::create(runs[run], run);
         runLayout.firstEqualRun[run] = run;
     });
-    parallelSort(loops, hashed.mutableSpan(), [](const HashedSourceRun& a, const HashedSourceRun& b) {
-        return a.hashAndSize != b.hashAndSize ? a.hashAndSize < b.hashAndSize : a.run < b.run;
-    });
+    parallelSort(loops, hashed.mutableSpan(), std::ranges::less { });
     forEachRangeOfIndicesInParallel(loops, hashed.size(), [&](size_t at, size_t end) {
-        while (at && at < end && hashed[at].hashAndSize == hashed[at - 1].hashAndSize)
+        while (at && at < end && HashedSourceRun::group(hashed[at]) == HashedSourceRun::group(hashed[at - 1]))
             ++at;
+        Vector<uint32_t, 4> differentRuns;
         while (at < end) {
-            HashedSourceRun first = hashed[at];
-            for (++at; at < hashed.size() && hashed[at].hashAndSize == first.hashAndSize; ++at) {
-                if (equalSpans(runs[first.run], runs[hashed[at].run]))
-                    runLayout.firstEqualRun[hashed[at].run] = first.run;
+            uint32_t group = HashedSourceRun::group(hashed[at]);
+            differentRuns.shrink(0);
+            for (; at < hashed.size() && HashedSourceRun::group(hashed[at]) == group; ++at) {
+                uint32_t run = HashedSourceRun::run(hashed[at]);
+                size_t equal = differentRuns.findIf([&](uint32_t earlier) {
+                    return equalSpans(runs[earlier], runs[run]);
+                });
+                if (equal != notFound)
+                    runLayout.firstEqualRun[run] = differentRuns[equal];
+                else
+                    differentRuns.append(run);
             }
         }
     });
@@ -324,6 +336,32 @@ static std::optional<QuotedSourceLocations> findQuotedSourceLocations(const Tabl
     return result;
 }
 
+static size_t findFirstLocation(std::span<const uint64_t> locations, uint64_t location, size_t nearby)
+{
+    size_t first = 0;
+    size_t end = locations.size();
+    if (nearby < end && locations[nearby] < location) {
+        first = nearby + 1;
+        for (size_t step = 1; end - first > step; step *= 2) {
+            if (locations[first + step] >= location) {
+                end = first + step;
+                break;
+            }
+            first += step + 1;
+        }
+    } else if (nearby < end) {
+        end = nearby;
+        for (size_t step = 1; end > step; step *= 2) {
+            if (locations[end - step] < location) {
+                first = end - step + 1;
+                break;
+            }
+            end -= step;
+        }
+    }
+    return std::ranges::lower_bound(locations.subspan(first, end - first), location) - locations.begin();
+}
+
 static bool markReportableQuotedSources(const TableEncoder& encoder, QuotedSourceLocations& sources)
 {
     const LinkedFunctions& functions = encoder.inputs.functions;
@@ -332,13 +370,15 @@ static bool markReportableQuotedSources(const TableEncoder& encoder, QuotedSourc
     forEachIndexInParallel(encoder.build.parallelLoops(), static_cast<unsigned>(functions.size()), [&](unsigned position) {
         size_t lastModule = numberOfModules;
         uint64_t lastLocation = 0;
+        size_t lastPlace = 0;
         auto report = [&](size_t module, uint64_t location) {
             if (module >= numberOfModules || (module == lastModule && location == lastLocation))
                 return;
+            std::span<const uint64_t> locations = sources.locationsOf(module);
+            lastPlace = findFirstLocation(locations, location, module == lastModule ? lastPlace : locations.size());
             lastModule = module;
             lastLocation = location;
-            std::span<const uint64_t> locations = sources.locationsOf(module);
-            for (size_t at = std::ranges::lower_bound(locations, location) - locations.begin(); at < locations.size() && locations[at] == location; ++at) {
+            for (size_t at = lastPlace; at < locations.size() && locations[at] == location; ++at) {
                 AtomicRef isReportable(sources.isReportable[sources.firstOfModule[module] + at]);
                 if (!isReportable.load(std::memory_order_relaxed))
                     isReportable.store(1, std::memory_order_relaxed);

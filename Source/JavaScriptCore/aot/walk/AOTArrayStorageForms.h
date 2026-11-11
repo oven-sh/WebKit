@@ -67,10 +67,10 @@ constexpr bool hasArrayStorageForm(ArrayStorage kind) { return findArrayStorageF
 constexpr bool accessToElementsHasCode(Opcode opcode, ArrayStorage kind, bool admitsInt32Storage, bool isWritable)
 {
     if (opcode != Opcode::HasArrayStorage)
-        return !isWritable && (!admitsInt32Storage || kind == ArrayStorage::Double);
+        return !isWritable && (!admitsInt32Storage || kind == ArrayStorage::Double || kind == ArrayStorage::Contiguous);
     if (!hasArrayStorageForm(kind))
         return isWritable;
-    return !admitsInt32Storage || (kind != ArrayStorage::Int32 && !isWritable);
+    return !admitsInt32Storage || kind == ArrayStorage::Double || kind == ArrayStorage::Contiguous || (kind != ArrayStorage::Int32 && !isWritable);
 }
 
 constexpr bool isNumericStorage(ArrayStorage kind)

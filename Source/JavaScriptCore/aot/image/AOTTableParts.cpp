@@ -431,9 +431,10 @@ TableEncoder::TableEncoder(const TableInputs& inputs, const ImageNumbers& number
 uint32_t TableEncoder::stringNumber(StringID id) const
 {
     StringID string = id ? id : program.strings.emptyString();
-    if (!numbers.namedStrings().get(string.index()))
+    std::optional<uint32_t> number = numbers.stringNumbers().numberOf(string);
+    if (!number)
         fail("StringWithoutRecord"_s, { }, makeString('\'', program.strings.toWTFString(string), '\''));
-    return string.index();
+    return number.value_or(0);
 }
 
 uint32_t TableEncoder::stringConstantNumber(StringID id) const

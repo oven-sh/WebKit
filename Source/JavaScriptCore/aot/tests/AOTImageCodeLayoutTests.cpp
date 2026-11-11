@@ -463,6 +463,21 @@ static void testRegExpAndWebAssembly()
     AOT_TEST_CHECK(layout.codeSize == layout.constantsOffset);
 }
 
+static void testConstantsInLastExecutablePage()
+{
+    for (bool constantsFit : { true, false }) {
+        Steps steps(framedBodies(5));
+        steps.findJumps();
+        steps.constants.bytes.fill(1, constantsFit ? 24 : 2 * imagePageSize);
+        steps.layOut();
+        const CodeLayout& layout = steps.layout;
+        size_t sizeOfConstants = WTF::roundUpToMultipleOf<imageConstantsAlignment>(steps.constants.bytes.size());
+        AOT_TEST_CHECK(constantsFit == (sizeOfConstants <= layout.executableSize - layout.functionsEnd));
+        AOT_TEST_CHECK(layout.constantsOffset == (constantsFit ? layout.executableSize - sizeOfConstants : layout.executableSize));
+        AOT_TEST_CHECK(layout.codeSize == (constantsFit ? layout.executableSize : layout.executableSize + steps.constants.bytes.size()));
+    }
+}
+
 static void testNeitherRegExpNorWebAssembly()
 {
     Steps steps(framedBodies(5));
@@ -645,6 +660,7 @@ std::span<const NativeTest> codeLayoutTests()
         { "image/layout/far-regexp-entries"_s, testFarRegExpEntries },
 #endif
         { "image/layout/regexp-and-wasm"_s, testRegExpAndWebAssembly },
+        { "image/layout/constants-in-last-executable-page"_s, testConstantsInLastExecutablePage },
         { "image/layout/neither"_s, testNeitherRegExpNorWebAssembly },
         { "image/layout/no-body"_s, testNoBody },
         { "image/fall-through/jump-to-next"_s, testJumpToNext },

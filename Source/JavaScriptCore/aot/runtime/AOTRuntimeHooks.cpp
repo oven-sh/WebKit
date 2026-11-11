@@ -16,6 +16,7 @@
 #include "AOTGenerator.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeCheckFailure.h"
+#include "AOTState.h"
 #include "BuiltinExecutables.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
@@ -70,6 +71,28 @@ Structure* structureForHostFunctions(JSGlobalObject* realm, Structure* structure
 bool rejectsNativeConstructorProperty(JSGlobalObject* realm, PropertyName name)
 {
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
+}
+
+static bool isBinaryDataClass(JSGlobalObject* realm, JSObject* constructor)
+{
+    if (realm->arrayBufferConstructor(ArrayBufferSharingMode::Default) == constructor)
+        return true;
+#define RETURN_IF_CONSTRUCTOR(name) \
+    if (realm->typedArrayConstructorConcurrently(Type##name) == constructor) \
+        return true;
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(RETURN_IF_CONSTRUCTOR)
+#undef RETURN_IF_CONSTRUCTOR
+    return false;
+}
+
+bool acceptsHasInstanceOfHost(InternalFunction* constructor, PropertyName name, JSValue method)
+{
+    JSGlobalObject* realm = constructor->globalObject();
+    Instance* instance = realm->aotInstance();
+    if (name != realm->vm().propertyNames->hasInstanceSymbol || !method || !instance || !instance->state || !instance->state->acceptsForeignBinaryData)
+        return false;
+    auto* function = dynamicDowncast<JSFunction>(method);
+    return function && function->isBuiltinFunction() && isBinaryDataClass(realm, constructor);
 }
 
 void crashOnHavingABadTime()

@@ -1,11 +1,12 @@
 # The variable of a function that nobody stores into has no word: it is the cell of the function in the closure table, wherever Link reaches the function
 # function qqq..() { }  function zzz..() { }  function keep(value: number) { if (typeof value === "string") qqq..(); return value; }  hold(zzz.., keep(1));
 # Link reaches the first, and the walk rules the call out: no code mentions its closure, so it has no cell, a heap snapshot has no row for its variable, and no table holds the name
-# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else.
+# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else. A text that is only shown is coded and printed as it reads.
 # RUN(KEPT): image Text mechanisms=all
-# KEPT: 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a
+# KEPT: coded zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
 # RUN(GONE): image Text mechanisms=all
 # GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 # RUN(LINK): link functions
 # LINK-NOT: function f1 unreached
 # RUN(PLAN): plan variables mechanisms=all

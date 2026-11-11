@@ -794,11 +794,10 @@ static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& reg
 
     isRope.link(&jit);
     hasNoName.append(jit.branchTestPtr(CCallHelpers::Zero, uid, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    constexpr int32_t oneVisitOfPiece = 1 << 3;
-    constexpr int32_t twoVisitsOfPiece = 2 * oneVisitOfPiece;
-    static_assert(!(~JSRopeString::stringMask & (oneVisitOfPiece | twoVisitsOfPiece)) && (~JSRopeString::stringMask | oneVisitOfPiece | twoVisitsOfPiece) <= UINT8_MAX);
-    hasNoName.append(jit.branchTestPtr(CCallHelpers::NonZero, uid, TrustedImm32(twoVisitsOfPiece)));
-    jit.add8(TrustedImm32(oneVisitOfPiece), Address(key, JSString::offsetOfValue()));
+    using Uses = UsesOfSubstringAsKey;
+    static_assert(!(~JSRopeString::stringMask & (Uses::one | Uses::two)) && (~JSRopeString::stringMask | Uses::one | Uses::two) <= UINT8_MAX);
+    hasNoName.append(jit.branchTestPtr(CCallHelpers::NonZero, uid, TrustedImm32(Uses::two)));
+    jit.add8(TrustedImm32(Uses::one), Address(key, JSString::offsetOfValue()));
     jit.load32(Address(key, JSRopeString::offsetOfLength()), length);
     loadSubstringBaseAndOffset(jit, key, uid, characters);
     jit.loadPtr(Address(uid, JSString::offsetOfValue()), uid);

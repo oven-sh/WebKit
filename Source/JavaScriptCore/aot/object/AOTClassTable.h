@@ -176,6 +176,8 @@ public:
     bool countsGuardsOfNamesBehindArming(const LayoutData& classLayout) const { return m_classesThatCountGuardsOfNamesBehindArming.get(m_tables.rankOfClass(classLayout.index)); }
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void disarmMemberGuards(const LayoutData&);
+    bool addsStaticUnobserved(VM&, const Closure& classObject, const LayoutData&, Structure* before, UniquedStringImpl*) const;
+    bool sharesStructureOfRootClasses(Structure*) const;
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);
     void holdDefinitionToNameInRecord(const LayoutData&, ClassSide, uint32_t index, UniquedStringImpl*, const JSObject* function) const;
     void didDefineMember(VM&, const LayoutData&, ClassSide, uint32_t index, JSObject* holder, UniquedStringImpl*, JSObject* function);

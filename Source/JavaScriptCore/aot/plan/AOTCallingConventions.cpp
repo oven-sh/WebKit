@@ -767,7 +767,27 @@ static void boxResultsOfMethodsWhoseNamesakesReturnOtherwise(const Program& prog
     });
 }
 
-static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTables& linked, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
+static BitVector collectDirectlyCalledClosures(const Program& program, const LinkTables& linked, const LinkTables& held)
+{
+    BitVector closures(program.functions.size());
+    auto addCallees = [&](std::span<const LinkedCall> calls) {
+        for (const LinkedCall& call : calls) {
+            FunctionKind kind = program.at(call.callee).kind;
+            if (!call.isInTailPosition && (kind == FunctionKind::Plain || kind == FunctionKind::Arrow))
+                closures.quickSet(call.callee.index());
+        }
+    };
+    addCallees(linked.calls);
+    addCallees(held.calls);
+    return closures;
+}
+
+static bool isUnboxedDouble(Representation form)
+{
+    return form == Representation::Double || form == Representation::OptionalDouble;
+}
+
+static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTables& linked, const BitVector& directlyCalledClosures, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
 {
     auto returnsRawValue = [&](FunctionID id) {
         return functionsThatReturnRawValues.get(id.index());
@@ -785,7 +805,7 @@ static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTable
     Vector<FunctionID> functionsWithoutTakers;
     for (size_t index : functionsThatReturnRawValues) {
         FunctionID id(static_cast<uint32_t>(index));
-        if (!numberOfTakers[index] && !hasTakersThatLinkDoesNotList(id))
+        if (!numberOfTakers[index] && !hasTakersThatLinkDoesNotList(id) && !directlyCalledClosures.get(index))
             functionsWithoutTakers.append(id);
     }
     while (!functionsWithoutTakers.isEmpty()) {
@@ -793,7 +813,7 @@ static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTable
         functionsThatReturnRawValues.clear(boxed.index());
         parts.formsOfResults[parts.conventions[boxed.index()].firstResult] = Representation::JSValue;
         for (const LinkedCall& call : std::ranges::equal_range(linked.calls, boxed, { }, &LinkedCall::caller)) {
-            if (call.isInTailPosition && returnsRawValue(call.callee) && !--numberOfTakers[call.callee.index()])
+            if (call.isInTailPosition && returnsRawValue(call.callee) && !--numberOfTakers[call.callee.index()] && !directlyCalledClosures.get(call.callee.index()))
                 functionsWithoutTakers.append(call.callee);
         }
     }
@@ -827,6 +847,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
     parts.formsOfEntryParameters.fill(Representation::JSValue, numberOfEntryParameters);
 
     BitVector functionsThatReturnRawValues(numberOfFunctions);
+    BitVector directlyCalledClosures = returnsRawValues ? collectDirectlyCalledClosures(program, linked, facts.held()) : BitVector();
     forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t firstFunction, size_t endOfFunctions) {
         for (size_t index = firstFunction; index < endOfFunctions; ++index) {
             FunctionID id(static_cast<uint32_t>(index));
@@ -840,8 +861,11 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
                 formsOfResults[result] = boxedFormOfDeclaredPosition(program, function.results[result]);
             if (returnsRawValues && convention.has(CodeRole::Body) && mayReturnInFormOfItsOwn(function) && formsOfResults.back() == Representation::JSValue) {
                 const LinkedFunction& proven = linked.function(id);
-                if (proven.everyTakerOfResultKnowsCallee && proven.ringsOfTailCallsAreListed)
-                    formsOfResults.back() = formOfResultProvenToBe(program, proven.result);
+                if (proven.ringsOfTailCallsAreListed && (proven.everyTakerOfResultKnowsCallee || directlyCalledClosures.get(index))) {
+                    Representation form = formOfResultProvenToBe(program, proven.result);
+                    if (proven.everyTakerOfResultKnowsCallee || isUnboxedDouble(form))
+                        formsOfResults.back() = form;
+                }
                 if (formsOfResults.back() != Representation::JSValue)
                     functionsThatReturnRawValues.quickSet(index);
             }
@@ -852,7 +876,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
         }
     });
     boxResultsOfMethodsWhoseNamesakesReturnOtherwise(program, linked, functionsThatReturnRawValues, parts);
-    boxResultsThatNobodyTakesRaw(program, linked, functionsThatReturnRawValues, parts);
+    boxResultsThatNobodyTakesRaw(program, linked, directlyCalledClosures, functionsThatReturnRawValues, parts);
     return CallingConventions(WTF::move(parts));
 }
 

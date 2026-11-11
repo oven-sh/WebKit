@@ -11,13 +11,16 @@
 #include "AOTCodeSites.h"
 #include "AOTImageForward.h"
 #include "AOTLimits.h"
+#include "AOTPrefixCode.h"
 #include "AOTSchemaPackedRecords.h"
+#include "AOTSideTableCodes.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
 #include "HandlerInfo.h"
 #include "LineColumn.h"
 #include <optional>
 #include <span>
+#include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
 
@@ -38,6 +41,7 @@ struct CallSiteRecord {
     bool isConstruct() const { return isConstructOf(kind); }
     bool isTailCall() const { return isTailCallOf(kind); }
     bool isInsideCallee() const { return isInsideCalleeOf(kind); }
+    bool isAwaited() const { return isAwaitedOf(kind); }
 
     CallSiteKind kind { CallSiteKind::Plain };
     BuiltinID calledBuiltin { };
@@ -55,7 +59,8 @@ struct InlineFrameRecord : InlineFrameRow {
 };
 
 struct UndecodedInlineFrames {
-    const uint8_t* rows { nullptr };
+    std::optional<SideTableReader> parents;
+    std::optional<SideTableReader> functions;
     uint64_t count { 0 };
 };
 
@@ -104,15 +109,22 @@ private:
 };
 
 class SiteFrames {
+    WTF_MAKE_NONCOPYABLE(SiteFrames);
 public:
     SiteFrames(const Image&, uint32_t function);
-    explicit SiteFrames(const uint8_t* callSites);
     unsigned next();
     void skip(uint64_t numberOfSites);
 
 private:
-    const uint8_t* m_inlineFrames { nullptr };
-    const uint8_t* m_sites { nullptr };
+    void startBlock(const uint8_t* begin);
+
+    std::optional<SideTableReader> m_inlineFrameParents;
+    std::optional<SideTableReader> m_sites;
+    std::optional<SiteDetailsReader> m_details;
+    const uint8_t* m_checkpoints { nullptr };
+    const uint8_t* m_firstBlock { nullptr };
+    uint64_t m_nextBlock { 0 };
+    unsigned m_siteInBlock { 0 };
     uint64_t m_remainingSuspensionSites { 0 };
     uint64_t m_remainingInlineFrames { 0 };
     uint64_t m_remainingSitesWithCode { 0 };
@@ -120,7 +132,22 @@ private:
 };
 
 inline FunctionID functionInFramesOf(BuiltinID builtin, size_t numberOfFunctions) { return FunctionID(numberOfFunctions + builtin.index()); }
-Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, const FunctionNumbers&, const Typed::CallingConventions&, BuildContext&);
+
+struct CallSiteStreamHead {
+    struct Block {
+        uint32_t numberOfSymbols;
+        uint32_t offset;
+        uint32_t frame;
+    };
+
+    uint32_t numberOfHeadSymbols;
+    uint32_t numberOfParentSymbols;
+    uint32_t numberOfFunctionSymbols;
+    uint32_t numberOfBlocks;
+    uint32_t hasInlineFrames;
+};
+
+Vector<Vector<PrefixSymbol>> encodeCallSites(const LinkedFunctions&, const FunctionNumbers&, const Typed::CallingConventions&, BuildContext&);
 std::optional<uint32_t> endOfLastReturnSite(const CompiledCode&);
 
 void* resumeAddressAfterStackCheck(const void* returnAddress);
@@ -151,7 +178,7 @@ struct SourcePosition {
     bool startIsWhereWritten { false };
 };
 
-static constexpr unsigned sitesBetweenPositionCheckpoints = 512;
+static constexpr unsigned sitesBetweenPositionCheckpoints = 128;
 
 struct OwnPosition {
     static OwnPosition of(const SiteDescription&);
@@ -160,9 +187,7 @@ struct OwnPosition {
     uint32_t source { 0 };
 };
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, const uint8_t* callSites, OwnPosition ofFunctionInFront);
-void encodePositions(Vector<uint8_t>& stream, Vector<uint8_t>& roomForPositions, const SiteDescription&, OwnPosition ofFunctionInFront);
-std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
+std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* section, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
 void forgetRememberedPositions();
 
 } } // namespace JSC::AOT

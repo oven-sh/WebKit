@@ -1,4 +1,4 @@
-# `label` only names what it is handed. Five functions that take numbers have met at `few`, five that take texts at `more`; one has met nobody. All eleven are handed to `label`.
+# `label` only names what it is handed. Nine functions that take numbers have met at `few`, nine that take texts at `more`; one has met nobody. All nineteen are handed to `label`.
 # Being named loses nobody and unites nobody: what is passed on only to be named arrives as "some function", without the name of a family. If a value that is lost already kept its name there, the two families would be united at the parameter of `label`, or not, by whether the one that has met nobody came first: one program, two answers.
 # function label(f, text) { Object.defineProperty(f, "name", { value: text }); }  label(few(..), "few");  label(more(..), "more");  label(pass(pass(pass(pass(alone)))), "alone");  few(..)(1);  more(..)("t");
 # RUN(HELD): link held functions mechanisms=all
@@ -36,32 +36,48 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = NewClosure function=f13
     v13 = NewClosure function=f14
     v14 = NewClosure function=f15
-    v15 = Call v1, -, v3 calleeName="few"
-    v16 = Call v1, -, v4 calleeName="few"
-    v17 = Call v1, -, v5 calleeName="few"
-    v18 = Call v1, -, v6 calleeName="few"
-    v19 = Call v1, -, v7 calleeName="few"
-    v20 = Call v2, -, v8 calleeName="more"
-    v21 = Call v2, -, v9 calleeName="more"
-    v22 = Call v2, -, v10 calleeName="more"
-    v23 = Call v2, -, v11 calleeName="more"
-    v24 = Call v2, -, v12 calleeName="more"
-    v25 = String string="few"
-    v26 = String string="more"
-    v27 = String string="alone"
-    v28 = Call v0, -, v15, v25 calleeName="label"
-    v29 = Call v0, -, v20, v26 calleeName="label"
-    v30 = Call v14, -, v13 calleeName="pass"
-    v31 = Call v14, -, v30 calleeName="pass"
-    v32 = Call v14, -, v31 calleeName="pass"
-    v33 = Call v14, -, v32 calleeName="pass"
-    v34 = Call v0, -, v33, v27 calleeName="label"
-    v35 = Integer integer=1
-    v36 = String string="t"
-    v37 = Call v15, -, v35
-    v38 = Call v20, -, v36
-    v39 = Undefined
-    Return v39
+    v15 = NewClosure function=f16
+    v16 = NewClosure function=f17
+    v17 = NewClosure function=f18
+    v18 = NewClosure function=f19
+    v19 = NewClosure function=f20
+    v20 = NewClosure function=f21
+    v21 = NewClosure function=f22
+    v22 = NewClosure function=f23
+    v23 = Call v1, -, v3 calleeName="few"
+    v24 = Call v1, -, v4 calleeName="few"
+    v25 = Call v1, -, v5 calleeName="few"
+    v26 = Call v1, -, v6 calleeName="few"
+    v27 = Call v1, -, v7 calleeName="few"
+    v28 = Call v1, -, v15 calleeName="few"
+    v29 = Call v1, -, v16 calleeName="few"
+    v30 = Call v1, -, v17 calleeName="few"
+    v31 = Call v1, -, v18 calleeName="few"
+    v32 = Call v2, -, v8 calleeName="more"
+    v33 = Call v2, -, v9 calleeName="more"
+    v34 = Call v2, -, v10 calleeName="more"
+    v35 = Call v2, -, v11 calleeName="more"
+    v36 = Call v2, -, v12 calleeName="more"
+    v37 = Call v2, -, v19 calleeName="more"
+    v38 = Call v2, -, v20 calleeName="more"
+    v39 = Call v2, -, v21 calleeName="more"
+    v40 = Call v2, -, v22 calleeName="more"
+    v41 = String string="few"
+    v42 = String string="more"
+    v43 = String string="alone"
+    v44 = Call v0, -, v23, v41 calleeName="label"
+    v45 = Call v0, -, v32, v42 calleeName="label"
+    v46 = Call v14, -, v13 calleeName="pass"
+    v47 = Call v14, -, v46 calleeName="pass"
+    v48 = Call v14, -, v47 calleeName="pass"
+    v49 = Call v14, -, v48 calleeName="pass"
+    v50 = Call v0, -, v49, v43 calleeName="label"
+    v51 = Integer integer=1
+    v52 = String string="t"
+    v53 = Call v23, -, v51
+    v54 = Call v32, -, v52
+    v55 = Undefined
+    Return v55
 }
 function f1 name="label" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -128,6 +144,38 @@ function f14 module=m0 thisType={type=anything} results=[{type=anything}] {
     Return v0
 }
 function f15 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f16 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f17 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f18 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f19 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f20 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f21 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f22 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f23 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     Return v0
 }
