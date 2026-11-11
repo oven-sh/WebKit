@@ -32,12 +32,14 @@
 
 namespace JSC {
 
+class JSArray;
 class JSCellButterfly;
 class JSModuleLoader;
 class ModuleLoadingContext;
 class ModuleRegistryEntry;
 class ScriptFetchParameters;
 class ThrowScope;
+enum class ExportOverrideEnd : uint8_t;
 
 namespace AOT {
 
@@ -177,6 +179,14 @@ public:
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    // The owners that override a variable of the program, and what each of them found in it: see ExportOverrideLayers. The mock of a file owns what
+    // it lays, by the table of the variables that it has laid over, so the mocks of two files that export one variable end in any order.
+    void layVariableOverride(SlotData, JSCell* owner, JSValue);
+    ExportOverrideEnd endVariableOverride(SlotData, JSCell* owner, JSCell** ownerAbove = nullptr);
+    bool foundByVariableOverride(SlotData, JSCell* owner, JSValue& found);
+    // The variable that tryReplaceExport() would store in, unless the export is kept elsewhere: in a table of captured exports, or behind a star.
+    std::optional<SlotData> replaceableVariableOf(ModuleID, UniquedStringImpl* name);
+    JSArray* takeOwnersHandedByMocks() { return std::exchange(m_ownersHandedByMocks, nullptr); }
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
     bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
@@ -1690,6 +1700,10 @@ private:
     Vector<uint8_t> m_marksOfEvaluationsUnderOthers;
     Box<MockedModules> m_mocks;
     std::optional<ModuleID> m_moduleBeingPatched;
+    // The table of ExportOverrideLayers for the variables of the program. The offset of a variable is its number there.
+    JSObject* m_ownersOfVariables { nullptr };
+    // An owner, and what the end of a mock handed to it, in turn: see takeOwnersHandedByMocks().
+    JSArray* m_ownersHandedByMocks { nullptr };
     OptionSet<RequireOverride> m_storedLoaderFunctions;
     std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOut;

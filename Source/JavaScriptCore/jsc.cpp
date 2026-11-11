@@ -61,6 +61,7 @@
 #include "JSFunctionInlines.h"
 #include "JSLock.h"
 #include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSNativeStdFunction.h"
 #include "JSONObject.h"
 #include "JSObjectInlines.h"
@@ -545,6 +546,11 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallMasquerader);
 static JSC_DECLARE_HOST_FUNCTION(functionHasCustomProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpTypesForAllVariables);
 static JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionLayExportOverride);
+static JSC_DECLARE_HOST_FUNCTION(functionEndExportOverride);
+static JSC_DECLARE_HOST_FUNCTION(functionExportFoundByOverride);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeProfile);
 static JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
 static JSC_DECLARE_HOST_FUNCTION(functionReleaseWeakRefs);
@@ -937,6 +943,11 @@ private:
         addFunction(vm, "dumpTypesForAllVariables"_s, functionDumpTypesForAllVariables , 0);
 
         addFunction(vm, "drainMicrotasks"_s, functionDrainMicrotasks, 0);
+#if USE(BUN_JSC_ADDITIONS)
+        addFunction(vm, "layExportOverride"_s, functionLayExportOverride, 4);
+        addFunction(vm, "endExportOverride"_s, functionEndExportOverride, 4);
+        addFunction(vm, "exportFoundByOverride"_s, functionExportFoundByOverride, 3);
+#endif
         addFunction(vm, "setTimeout"_s, functionSetTimeout, 2);
         addFunction(vm, "dumpBytecodeProfile"_s, functionDumpBytecodeProfile, 1);
 
@@ -3607,6 +3618,80 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject* globalObject,
     vm.drainMicrotasks();
     return JSValue::encode(jsUndefined());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// What an embedder does with the owned overrides of JSModuleNamespaceObject. The arguments are a namespace object, the name of an export and an owner: any object.
+static JSModuleNamespaceObject* exportOverrideArguments(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned ownerIndex, Identifier& name, JSCell*& owner)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* moduleNamespace = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    if (!moduleNamespace || !callFrame->argument(ownerIndex).isCell()) {
+        throwTypeError(globalObject, scope, "An export override takes a namespace object, the name of an export and an owner"_s);
+        return nullptr;
+    }
+    name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    owner = callFrame->argument(ownerIndex).asCell();
+    return moduleNamespace;
+}
+
+// layExportOverride(namespace, name, value, owner): false if the export has no binding to store in.
+JSC_DEFINE_HOST_FUNCTION(functionLayExportOverride, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Identifier name;
+    JSCell* owner = nullptr;
+    auto* moduleNamespace = exportOverrideArguments(globalObject, callFrame, 3, name, owner);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(moduleNamespace->layExportOverride(globalObject, name, callFrame->argument(2), owner))));
+}
+
+// endExportOverride(namespace, name, owner, staysAside): removeExportOverride(), or setExportOverrideAside() if staysAside. Returns how the override ended.
+JSC_DEFINE_HOST_FUNCTION(functionEndExportOverride, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name;
+    JSCell* owner = nullptr;
+    auto* moduleNamespace = exportOverrideArguments(globalObject, callFrame, 2, name, owner);
+    RETURN_IF_EXCEPTION(scope, { });
+    ExportOverrideEnd end = callFrame->argument(3).toBoolean(globalObject) ? moduleNamespace->setExportOverrideAside(globalObject, name, owner) : moduleNamespace->removeExportOverride(globalObject, name, owner);
+    RETURN_IF_EXCEPTION(scope, { });
+    switch (end) {
+    case ExportOverrideEnd::NotOverridden:
+        return JSValue::encode(jsNontrivialString(vm, "not overridden"_s));
+    case ExportOverrideEnd::HandedOver:
+        return JSValue::encode(jsNontrivialString(vm, "handed over"_s));
+    case ExportOverrideEnd::Restored:
+        return JSValue::encode(jsNontrivialString(vm, "restored"_s));
+    case ExportOverrideEnd::HadNoValue:
+        return JSValue::encode(jsNontrivialString(vm, "had no value"_s));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// exportFoundByOverride(namespace, name, owner): undefined if the owner shows no value in the binding. Otherwise an array that holds what the owner found,
+// and that is empty if the binding had no value yet.
+JSC_DEFINE_HOST_FUNCTION(functionExportFoundByOverride, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Identifier name;
+    JSCell* owner = nullptr;
+    auto* moduleNamespace = exportOverrideArguments(globalObject, callFrame, 2, name, owner);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue found;
+    bool shows = moduleNamespace->exportFoundByOverride(globalObject, name, owner, found);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!shows)
+        return JSValue::encode(jsUndefined());
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (found)
+        result->putDirectIndex(globalObject, 0, found);
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionDumpBytecodeProfile, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

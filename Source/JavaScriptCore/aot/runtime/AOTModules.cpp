@@ -128,6 +128,8 @@ void Modules::visitRoots(Visitor& visitor)
         visitor.appendUnbarriered(m_namespaceStructure);
         visitor.appendUnbarriered(m_prototypeOfModuleObjects);
         visitor.appendUnbarriered(m_errorsOfExportsThatBuildFoundAbsent);
+        visitor.appendUnbarriered(m_ownersOfVariables);
+        visitor.appendUnbarriered(m_ownersHandedByMocks);
         visitor.appendUnbarriered(m_extensibleNamespaceStructure);
         visitor.appendUnbarriered(m_hostRequestRequirerObject);
     });
@@ -1320,13 +1322,14 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
             if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
                 return tryReplaceCapturedExport(origin->module, identifier(origin->name).impl(), value);
             if (m_moduleBeingPatched) {
+                auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+                // variablesBeforeMock names the variables that the mock of this file has laid a value over, and is the owner of those values.
+                // What the mock found in a variable is with the owners of the variable.
                 LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
                 if (!mocked.variablesBeforeMock)
                     mocked.variablesBeforeMock.set(*this, createTableOfExports());
-                Identifier place = Identifier::from(*m_instance.vm, moduleExport.variable.encoded());
-                JSValue replaced = ProgramStatics::readVariable(m_instance, moduleExport.variable);
-                if (!storedValue(m_instance.globalObject, mocked.variablesBeforeMock, place))
-                    storeValue(m_instance.globalObject, mocked.variablesBeforeMock.get(), moduleExport.variable.encoded(), replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
+                storeValue(m_instance.globalObject, mocked.variablesBeforeMock.get(), moduleExport.variable.encoded(), jsBoolean(true));
+                RELEASE_AND_RETURN(scope, (layVariableOverride(moduleExport.variable, mocked.variablesBeforeMock.get(), value), true));
             }
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
             return true;
@@ -1341,6 +1344,67 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         }
     }
     return false;
+}
+
+template<typename Functor>
+static auto withOwnersOfVariable(Instance& instance, JSObject* table, SlotData variable, const Functor& functor)
+{
+    auto readVariable = [&] {
+        return ProgramStatics::readVariable(instance, variable);
+    };
+    auto writeVariable = [&](JSValue value) {
+        ProgramStatics::writeVariable(instance, variable, value);
+    };
+    ScopedLambda<JSValue()> read = readVariable;
+    ScopedLambda<void(JSValue)> store = writeVariable;
+    ExportOverrideLayers layers(instance.globalObject, table, variable.offset, read, store);
+    return functor(layers);
+}
+
+void Modules::layVariableOverride(SlotData variable, JSCell* owner, JSValue value)
+{
+    if (!m_ownersOfVariables) {
+        m_ownersOfVariables = createTableOfExports();
+        m_storedReferences.recordAll();
+    }
+    withOwnersOfVariable(m_instance, m_ownersOfVariables, variable, [&](ExportOverrideLayers& layers) { layers.lay(owner, value); });
+}
+
+ExportOverrideEnd Modules::endVariableOverride(SlotData variable, JSCell* owner, JSCell** ownerAbove)
+{
+    if (!m_ownersOfVariables)
+        return ExportOverrideEnd::NotOverridden;
+    return withOwnersOfVariable(m_instance, m_ownersOfVariables, variable, [&](ExportOverrideLayers& layers) { return layers.end(owner, false, ownerAbove); });
+}
+
+bool Modules::foundByVariableOverride(SlotData variable, JSCell* owner, JSValue& found)
+{
+    return m_ownersOfVariables && withOwnersOfVariable(m_instance, m_ownersOfVariables, variable, [&](ExportOverrideLayers& layers) { return layers.found(owner, found); });
+}
+
+std::optional<SlotData> Modules::replaceableVariableOf(ModuleID module, UniquedStringImpl* name)
+{
+    for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
+        std::optional<unsigned> index = m_table.findExport(module, name);
+        if (!index)
+            return std::nullopt;
+        const ModuleExportData& moduleExport = m_table.exports(module)[*index];
+        switch (moduleExport.kind()) {
+        case ModuleExportKind::Variable:
+            if (!moduleExport.isReplaceable || syntheticExportKeptIn(moduleExport.variable))
+                return std::nullopt;
+            return moduleExport.variable;
+        case ModuleExportKind::Namespace:
+            return std::nullopt;
+        case ModuleExportKind::Indirect: {
+            const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
+            module = moduleLoadedUnder(indirectExport.targetModule());
+            name = identifier(indirectExport.importName).impl();
+            break;
+        }
+        }
+    }
+    return std::nullopt;
 }
 
 bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
@@ -7334,6 +7398,46 @@ bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue 
 {
     auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
     return modulesOf(object->realm())->tryReplaceExport(object->module(), name, value);
+}
+
+bool layExportOverride(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue value, JSCell* owner)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    Modules* modules = modulesOf(object->realm());
+    auto scope = DECLARE_THROW_SCOPE(object->realm()->vm());
+    std::optional<SlotData> variable = modules->replaceableVariableOf(object->module(), name);
+    if (!variable)
+        return false;
+    RELEASE_AND_RETURN(scope, (modules->layVariableOverride(*variable, owner, value), true));
+}
+
+ExportOverrideEnd removeExportOverride(JSCell* moduleNamespace, UniquedStringImpl* name, JSCell* owner, JSCell** ownerAbove)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    Modules* modules = modulesOf(object->realm());
+    auto scope = DECLARE_THROW_SCOPE(object->realm()->vm());
+    std::optional<SlotData> variable = modules->replaceableVariableOf(object->module(), name);
+    if (!variable)
+        return ExportOverrideEnd::NotOverridden;
+    RELEASE_AND_RETURN(scope, modules->endVariableOverride(*variable, owner, ownerAbove));
+}
+
+bool exportFoundByOverride(JSCell* moduleNamespace, UniquedStringImpl* name, JSCell* owner, JSValue& found)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    Modules* modules = modulesOf(object->realm());
+    std::optional<SlotData> variable = modules->replaceableVariableOf(object->module(), name);
+    return variable && modules->foundByVariableOverride(*variable, owner, found);
+}
+
+void takeOwnersHandedByMocks(JSGlobalObject* realm, const ScopedLambda<void(JSCell* owner, JSValue found)>& functor)
+{
+    Modules* modules = modulesOf(realm);
+    JSArray* handed = modules ? modules->takeOwnersHandedByMocks() : nullptr;
+    if (!handed)
+        return;
+    for (unsigned index = 0; index + 1 < handed->length(); index += 2)
+        functor(handed->getDirectIndex(realm, index).asCell(), handed->getDirectIndex(realm, index + 1));
 }
 
 bool mayBeMocked(JSGlobalObject* realm, ModuleID module)

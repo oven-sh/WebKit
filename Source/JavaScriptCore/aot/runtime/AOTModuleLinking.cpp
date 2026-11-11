@@ -28,6 +28,7 @@
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
 #include "SyntheticModuleRecord.h"
@@ -1296,10 +1297,28 @@ void Modules::endMockLaidOverFile(ModuleID file)
         JSObject::getOwnPropertyNames(variables, realm, places, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, void());
         for (const Identifier& place : places) {
-            JSValue kept = storedValue(realm, variables, place);
-            loaded.holdsValueOfMockThatEnded |= kept == JSValue(variables);
-            if (std::optional<uint32_t> encoded = parseIndex(place); encoded && kept != JSValue(variables))
-                ProgramStatics::writeVariable(m_instance, SlotData::decode(*encoded), kept);
+            std::optional<uint32_t> encoded = parseIndex(place);
+            if (!encoded)
+                continue;
+            // Where another owner lies over the variable, that one keeps showing, and has found what this mock had found.
+            SlotData variable = SlotData::decode(*encoded);
+            JSCell* above = nullptr;
+            ExportOverrideEnd end = endVariableOverride(variable, variables, &above);
+            RETURN_IF_EXCEPTION(scope, void());
+            loaded.holdsValueOfMockThatEnded |= end == ExportOverrideEnd::HadNoValue;
+            JSValue found;
+            if (above && foundByVariableOverride(variable, above, found) && found) {
+                if (!m_ownersHandedByMocks) {
+                    m_ownersHandedByMocks = constructEmptyArray(realm, nullptr);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    m_storedReferences.recordAll();
+                }
+                unsigned length = m_ownersHandedByMocks->length();
+                m_ownersHandedByMocks->putDirectIndex(realm, length, above);
+                RETURN_IF_EXCEPTION(scope, void());
+                m_ownersHandedByMocks->putDirectIndex(realm, length + 1, found);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
     }
     if (JSValue value = loaded.valueBeforeMock) {
@@ -1449,10 +1468,15 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
             }
             const ModuleExportData& moduleExport = m_table.exports(module)[*index];
             switch (moduleExport.kind()) {
-            case ModuleExportKind::Variable:
+            case ModuleExportKind::Variable: {
                 if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
                     return keptBy(origin->module, identifier(origin->name));
-                return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
+                JSValue found;
+                if (!variables || !foundByVariableOverride(moduleExport.variable, variables, found))
+                    return JSValue();
+                // `variables` itself stands for a variable that had no value yet, as below.
+                return found ? found : JSValue(variables);
+            }
             case ModuleExportKind::Namespace:
                 return { };
             case ModuleExportKind::Indirect: {
