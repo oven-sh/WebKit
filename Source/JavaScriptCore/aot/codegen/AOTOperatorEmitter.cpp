@@ -199,9 +199,7 @@ bool OperatorEmitter::sumsInt32sInPlace(const ValueContext& value, ArithmeticOpe
 
 Boxed OperatorEmitter::sumOfAnyValues(const ValueContext& value, ArithmeticOperator op, Boxed left, Boxed right)
 {
-    bool isLeftInt32 = typeOf(value->leftOperand()).isInt32();
-    bool isRightInt32 = typeOf(value->rightOperand()).isInt32();
-    Boxed tested = isLeftInt32 ? right : isRightInt32 ? left : Boxed(m_out.bitAnd(left.value(), right.value()));
+    Boxed tested(m_out.bitAnd(left.value(), right.value()));
     LBasicBlock int32Case = newBlock();
     LBasicBlock otherCase = newBlock();
     Join<Boxed> join(m_out);
