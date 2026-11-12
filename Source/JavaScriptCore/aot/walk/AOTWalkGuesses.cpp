@@ -797,6 +797,7 @@ struct BodySpeculationCache final : KeptWithBodyIndex {
         return membersOfGroupsThatHandNamesOn.span().subspan(firstMembersOfGroupsThatHandNamesOn[group], firstMembersOfGroupsThatHandNamesOn[group + 1] - firstMembersOfGroupsThatHandNamesOn[group]);
     }
     Vector<uint32_t> readersOfCharactersNotOnlyCalled;
+    Lock lockOfObjectsExpected;
     Vector<std::unique_ptr<ObjectsExpectedOfLooks>> listsOfObjectsExpected;
     Vector<uint32_t> rootsHandedFunctionsWrittenInPlace;
     Vector<uint64_t> castsOfRoots;
@@ -7363,9 +7364,11 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                         else if (std::optional<TestOfGuess> expected = objectExpectedInSlotReadForAccesses(walker, block, operation, limit)) {
                             foundInFilledSlot = expected->tested;
                             if (!stretch.objectsExpected) {
-                                auto& kept = bodySpeculationCache(index).listsOfObjectsExpected;
-                                kept.append(makeUniqueWithoutFastMallocCheck<ObjectsExpectedOfLooks>());
-                                stretch.objectsExpected = kept.last().get();
+                                auto made = makeUniqueWithoutFastMallocCheck<ObjectsExpectedOfLooks>();
+                                stretch.objectsExpected = made.get();
+                                BodySpeculationCache& kept = bodySpeculationCache(index);
+                                Locker locker { kept.lockOfObjectsExpected };
+                                kept.listsOfObjectsExpected.append(WTF::move(made));
                             }
                             stretch.objectsExpected->append({ lookOfObject, *expected });
                         }
