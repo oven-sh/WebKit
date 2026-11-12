@@ -103,7 +103,7 @@ public:
     void readGroupOffOneValue(const ValueContext&, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst);
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
     ValueID readBehindStore(const ValueContext& store);
-    LValue newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub);
+    LValue newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub, LBasicBlock hasOtherKey = nullptr);
     std::optional<NumberedImmediate> answersOfReadInLine(const ValueContext&);
     Boxed readAskingSiteInLine(const ValueContext&, Boxed receiver, ValueID receiverID, NumberedImmediate answers);
     StubKey stubOfReadRunningNoCode(const Operation&);

@@ -450,7 +450,12 @@ static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
 
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, const String& source, Yarr::ErrorCode& errorCode)
 {
-    return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock, source);
+    auto bytecode = Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock, source);
+#if ENABLE(AOT)
+    if (bytecode && bytecode->m_flatProgram && bytecode->m_flatProgram->precedingUnits)
+        AOT::countEvent(*vm, AOT::RuntimeCounterID::RegExpsSearchedByPrecedingUnit);
+#endif
+    return bytecode;
 }
 
 #if ENABLE(AOT)

@@ -251,6 +251,11 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     if (tryGenerateRemainderTest(value))
         return;
     ValueID tested = value->valueOperand();
+    if (tested == m_remainderKnownByTruth) {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+        defineTest(value, m_truthOfRemainder);
+        return;
+    }
     if (const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(tested)) [[unlikely]] {
         defineTest(value, isNotZero(Word32(carried->length)));
         return;

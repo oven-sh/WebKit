@@ -19,6 +19,7 @@ v(AwaitWithSavedFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice
 v(SuspendGenerator, CalledByCode, (Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuspendGenerator)
 
 v(StepGenerator, CalledByCode, (IsUnmodifiedGenerator, IsGenerator, IsUnmodified, None), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepGenerator)
+v(ResumeSteppedGenerator, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ResumeSteppedGenerator)
 v(EnterSavedFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(ResumeNextJob, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(HandlerOfJobReturn, InternalEntry, (), NoAxis, 0, 0, X86_64Only, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)

@@ -8495,6 +8495,9 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
         bool isTruthTakenAsNumber = givenByRow == TypeTable::boolean && m_types.isSubset(recorded, TypeTable::number) && hasOperatorForm(draft.opcode) && draft.form() != OperatorForm::Generic && draft.form() != OperatorForm::Unselected;
         if (isTruthTakenAsNumber)
             continue;
+        bool isNumberSpelledByKey = givenByRow == TypeTable::string && m_types.isSubset(recorded, TypeTable::number) && written.opcode() == Opcode::ElemGet && operandWritten == written.propertyOperand();
+        if (isNumberSpelledByKey)
+            continue;
         dataLogLn("AOT: f", currentFunction().index(), " v", draft.inputValueGiven.index(), ": ", nameOf(draft.opcode), " takes ", TypeInText { m_types, recorded }, " as operand ", operandIndex, ", which the input makes by ", nameOf(maker), ": its row gives ", TypeInText { m_types, givenByRow });
         return true;
     }

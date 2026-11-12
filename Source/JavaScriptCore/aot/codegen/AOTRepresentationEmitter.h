@@ -28,6 +28,7 @@ public:
 
 private:
     void generate(const ValueContext&);
+    std::optional<Integer> integerOfStep(const ValueContext&);
     Integer heldToWhatConversionGives(const OperationContext&, Number, Integer);
 };
 

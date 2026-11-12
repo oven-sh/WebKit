@@ -25,7 +25,7 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
-#include "JSPropertyNameEnumerator.h"
+#include "JSPropertyNameEnumeratorInlines.h"
 #include "PropertyTable.h"
 #include "StructureChain.h"
 #include "VMInlines.h"
@@ -1052,10 +1052,16 @@ static void cacheEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& obj
     list->prototypeChain = prototypeChain;
 }
 
+static ALWAYS_INLINE JSObject* prototypeOrNull(const JSObject* object)
+{
+    JSValue prototype = object->getPrototypeDirect();
+    return prototype.isCell() ? asObject(prototype.asCell()) : nullptr;
+}
+
 static bool describePrototypes(VM& vm, JSObject* base, EnumeratorBelowCompiledObjects& described)
 {
     bool isBelowCompiledObject = false;
-    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject()) {
+    for (JSObject* prototype = prototypeOrNull(base); prototype; prototype = prototypeOrNull(prototype)) {
         Object* compiled = compiledObjectOrNull(prototype);
         Structure* structure = prototype->structure();
         bool namesAreFixed = compiled ? enumerableNamesFollowFromStructureAndOrderWord(vm, *compiled) : structure->canCacheOwnPropertyNames() && !structure->hasPolyProto();
@@ -1067,10 +1073,10 @@ static bool describePrototypes(VM& vm, JSObject* base, EnumeratorBelowCompiledOb
     return isBelowCompiledObject;
 }
 
-static bool hasDescribedPrototypes(VM& vm, JSObject* base, const EnumeratorBelowCompiledObjects& described)
+static ALWAYS_INLINE bool hasDescribedPrototypes(VM& vm, JSObject* base, const EnumeratorBelowCompiledObjects& described)
 {
     uint32_t place = 0;
-    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject(), ++place) {
+    for (JSObject* prototype = prototypeOrNull(base); prototype; prototype = prototypeOrNull(prototype), ++place) {
         Object* compiled = compiledObjectOrNull(prototype);
         if (place == described.numberOfPrototypes || described.prototypes[place] != EnumeratorBelowCompiledObjects::Prototype { prototype->structureID().bits(), compiled ? compiled->orderWord() : 0 })
             return false;
@@ -1108,7 +1114,7 @@ static bool isEveryNameEnumerable(JSGlobalObject* globalObject, JSObject* base, 
     return true;
 }
 
-static bool hasDescribedNames(JSObject* object, uint32_t structureID, uint32_t orderWord)
+static ALWAYS_INLINE bool hasDescribedNames(JSObject* object, uint32_t structureID, uint32_t orderWord)
 {
     if (object->structureID().bits() != structureID)
         return false;
@@ -1128,7 +1134,7 @@ bool Object::areEnumeratedNamesFixed(JSGlobalObject* globalObject, JSObject* bas
     if (described.enumerator != enumerator || !described.everyNameIsEnumerable || !hasDescribedNames(base, described.structureID, described.orderWord))
         return false;
     uint32_t place = 0;
-    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject(), ++place) {
+    for (JSObject* prototype = prototypeOrNull(base); prototype; prototype = prototypeOrNull(prototype), ++place) {
         if (place == described.numberOfPrototypes || !hasDescribedNames(prototype, described.prototypes[place].structureID, described.prototypes[place].orderWord))
             return false;
     }

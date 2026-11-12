@@ -5361,7 +5361,7 @@ struct FilledSlot {
     LayoutSetID receivers;
 };
 std::optional<FilledSlot> findFilledSlot(Walker&, TypeID typeOfObject, PropertyKeyID);
-std::optional<FilledSlot> findSlotThatStaysFilled(Walker&, TypeID typeOfObject, PropertyKeyID);
+std::optional<FilledSlot> findSlotThatStaysFilled(Walker&, TypeID typeOfObject, PropertyKeyID, bool everyStoreFits = false);
 bool storeMaySetMarkOfCell(const Walker&, std::span<const LayoutID> receivers, PropertyKeyID, TypeID typeOfStored);
 bool typedStoreAheadMaySetMarkOfCell(Walker&, TypeID typeOfObject, PropertyKeyID, TypeID typeOfStored);
 bool buildStoreThatTestsForItself(Walker&, const BodyValue& store, Reference object, TypeID guessed);

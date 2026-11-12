@@ -1343,7 +1343,7 @@ void Walker::requestCarriedField(Reference object, PropertyKeyID key, Reference 
     if (!staticField) {
         std::optional<FilledSlot> filled = findFilledSlot(*this, typeOf(object), key);
         if (!filled && isSlotTestedBeforeLoop(*place, object, key))
-            filled = findSlotThatStaysFilled(*this, typeOf(object), key);
+            filled = findSlotThatStaysFilled(*this, typeOf(object), key, true);
         if (!filled)
             return;
         wanted.field = filled->place;
@@ -1376,7 +1376,7 @@ bool Walker::canTestStoredSlotBeforeLoop(Reference object, PropertyKeyID key, It
     bool isPrivate = kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::ModulePrivateName;
     if (!isPrivate && ofIterations.writes.overlaps(LocationMasks(ownKeysHeaps)))
         return false;
-    return !!findSlotThatStaysFilled(*this, typeOf(object), key);
+    return !!findSlotThatStaysFilled(*this, typeOf(object), key, true);
 }
 
 bool Walker::isSlotTestedBeforeLoop(uint32_t indexOfLoop, Reference object, PropertyKeyID key) const

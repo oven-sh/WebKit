@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTIRProgram.h"
@@ -3831,6 +3832,34 @@ static Reference mirroredVectorOfView(Walker& walker, Reference view, VariableID
     return built;
 }
 
+static void hoistViewMemoryTest(Walker& walker, Reference view, Origin origin)
+{
+    constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
+    if (!walker.isInLoop() || !walker.canRestartIteration() || !view.isValue() || !viewMayFollowSharedMemoryThatGrows(walker, view) || !walker.isInvariantInSpecializedVersion(view, purity) || !walker.iterationsPreserveTypedArrays(purity) || walker.leavesOutQuestionThatEveryTurnWouldAsk(Walker::QuestionIsAsked::Anywhere))
+        return;
+    const BuiltinTable& builtins = walker.program().builtins();
+    Type type = walker.types().at(walker.typeOf(view));
+    const ClassPart* part = type.isObject() ? singleBuiltinClassOf(walker.types(), type) : nullptr;
+    if (!part || !isTypedView(builtins.typedArrayTypeOf(part->builtinClass)) || pristineTestOf(builtins, part->builtinClass) != PristineTest::MayPass)
+        return;
+    origin.isTailCall = false;
+    Reference test;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
+        Draft draft(Opcode::IsPristine, origin);
+        walker.chooseConservativeFields(draft);
+        draft.setValueOperand(view);
+        draft.setBuiltinClass(part->builtinClass);
+        draft.setAspects({ PristineAspects::Storage });
+        test = walker.build(WTF::move(draft));
+    }
+    if (!test || !test.isValue() || walker.hasFailed() || walker.code().isConstant(test.id()) || !walker.tryBranchInPreheader(test, true, purity))
+        return;
+    walker.recordSpeculation();
+    walker.count(StatisticID::ViewMemoryTestsHoisted);
+    noteThatViewKeepsItsLength(walker, view, test);
+}
+
 static Reference lengthOfViewInTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType, Origin origin)
 {
     Walker& walker = access.walker;
@@ -3840,6 +3869,9 @@ static Reference lengthOfViewInTypedElements(const AccessOfTypedElements& access
         return Reference::fromBits(static_cast<uint32_t>(*noted));
     bool isAccessedAgain = walker.opensGuesses() && accessesViewOfVariableAgain(walker.currentBodyIndex(), access.value);
     if ((!walker.isInLoop() && !isAccessedAgain) || !walker.opensGuesses())
+        return { };
+    hoistViewMemoryTest(walker, access.base, origin);
+    if (walker.hasFailed() || walker.isUnreachable())
         return { };
     Draft length(Opcode::GetTypedArrayLength, origin);
     walker.chooseConservativeFields(length);

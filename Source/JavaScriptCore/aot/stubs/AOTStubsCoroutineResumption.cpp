@@ -92,13 +92,14 @@ void generateStepGenerator(StubAssembler& jit)
     const GPRReg generator = jit.clobberOperand(0);
     const GPRReg result = jit.result();
     const GPRReg status = jit.secondResult();
-    const GPRReg saved = jit.allocateScratch(StubRegister::T10);
+    const GPRReg saved = jit.allocateScratch(frameRegisterOfLeafStep);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg generatorOfLeafStep = isARM64() ? jit.allocateScratch(generatorRegisterOfLeafStep) : generator;
     static_assert(static_cast<int32_t>(Generator::State::Running) < 0 && static_cast<int32_t>(Generator::State::Completed) < 0);
     static_assert(static_cast<int32_t>(Generator::State::SuspendedAtStart) >= 0 && static_cast<int32_t>(Generator::State::SuspendedAtYield) >= 0);
     RELEASE_ASSERT(noOverlap(generator, jit.operand(1), jit.operand(2), status, saved, scratch, instanceGPR));
-    RELEASE_ASSERT(noOverlap(result, status, scratch));
-    checkStubOperands(enterGeneratorFrame(), { generator, jit.operand(1), jit.operand(2) });
+    RELEASE_ASSERT(noOverlap(result, status, scratch) && generatorOfLeafStep == gprOf(generatorRegisterOfLeafStep));
+    checkStubOperands(resumeSteppedGenerator(), { generator, jit.operand(1), jit.operand(2), saved });
 
     JumpList isNotStepped;
     emitStepCheck(jit, check, generator, status, scratch, isNotStepped);
@@ -116,25 +117,31 @@ void generateStepGenerator(StubAssembler& jit)
     hasNoLeafStep.append(jit.branchTest32(CCallHelpers::NonZero, jit.operand(1)));
     jit.zeroExtend32ToWord(scratch, scratch);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), scratch);
-#if CPU(X86_64)
-    jit.call(scratch, JSEntryPtrTag);
-    hasNoLeafStep.append(jit.branchTest64(CCallHelpers::Zero, result));
-#else
-    jit.emitFunctionPrologue();
-    jit.subPtr(TrustedImm32(stackAlignmentBytes()), sp);
-    jit.storePtr(generator, Address(fp, generatorSlotOffset));
-    jit.call(scratch, JSEntryPtrTag);
-    Jump hasStepped = jit.branchTest64(CCallHelpers::NonZero, result);
-    jit.loadPtr(Address(fp, generatorSlotOffset), generator);
-    jit.emitFunctionEpilogue();
-    hasNoLeafStep.append(jit.jump());
-    hasStepped.link(&jit);
-    jit.emitFunctionEpilogue();
-#endif
-    jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Yielded)), status);
-    jit.returnToCaller();
+    jit.move(generator, generatorOfLeafStep);
+    jit.farJump(scratch, JSEntryPtrTag);
 
     hasNoLeafStep.link(&jit);
+    jit.jumpToStub(resumeSteppedGenerator());
+
+    isNotStepped.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::NotStepped)), status);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), result);
+    jit.returnToCaller();
+}
+
+StubSignature signatureOfResumeSteppedGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(frameRegisterOfLeafStep) }); }
+
+void generateResumeSteppedGenerator(StubAssembler& jit)
+{
+    const GPRReg generator = jit.clobberOperand(0);
+    const GPRReg saved = jit.clobberOperand(3);
+    const GPRReg result = jit.result();
+    const GPRReg status = jit.secondResult();
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    RELEASE_ASSERT(noOverlap(generator, jit.operand(1), jit.operand(2), status, saved, scratch, instanceGPR));
+    RELEASE_ASSERT(noOverlap(result, status, scratch));
+    checkStubOperands(enterGeneratorFrame(), { generator, jit.operand(1), jit.operand(2) });
+
     jit.store32(TrustedImm32(static_cast<int32_t>(Generator::State::Running)), Address(generator, Generator::offsetOfState()));
 
     jit.emitFunctionPrologue();
@@ -157,11 +164,6 @@ void generateStepGenerator(StubAssembler& jit)
 
     didYield.link(&jit);
     jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Yielded)), status);
-    jit.returnToCaller();
-
-    isNotStepped.link(&jit);
-    jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::NotStepped)), status);
-    jit.move(TrustedImm64(JSValue::ValueUndefined), result);
     jit.returnToCaller();
 }
 

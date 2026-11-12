@@ -1480,7 +1480,7 @@ std::optional<FilledSlot> findFilledSlot(Walker& walker, TypeID typeOfObject, Pr
     return FilledSlot { field.place, receivers->set };
 }
 
-std::optional<FilledSlot> findSlotThatStaysFilled(Walker& walker, TypeID typeOfObject, PropertyKeyID key)
+std::optional<FilledSlot> findSlotThatStaysFilled(Walker& walker, TypeID typeOfObject, PropertyKeyID key, bool everyStoreFits)
 {
     if (!walker.has(Mechanism::TypedOperations) || !typeOfObject || walker.types().at(typeOfObject).primitives || !walker.types().at(typeOfObject).isJavaScriptValue())
         return std::nullopt;
@@ -1488,7 +1488,7 @@ std::optional<FilledSlot> findSlotThatStaysFilled(Walker& walker, TypeID typeOfO
     if (!receivers)
         return std::nullopt;
     FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, *receivers, key, { }, true);
-    if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.liesInOneSlot || !field.isMovedOutByNoStore || slotHoldsMarkForTypedAccess(walker, *receivers, key) || possibleChangesForbid(receivers->possibleChanges, TypedAccess::ReadsFilledSlot))
+    if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.liesInOneSlot || (!field.isMovedOutByNoStore && !everyStoreFits) || slotHoldsMarkForTypedAccess(walker, *receivers, key) || possibleChangesForbid(receivers->possibleChanges, TypedAccess::ReadsFilledSlot))
         return std::nullopt;
     return FilledSlot { field.place, receivers->set };
 }

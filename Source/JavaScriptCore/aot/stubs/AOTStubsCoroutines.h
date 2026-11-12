@@ -40,6 +40,9 @@ constexpr StubKey awaitCallBySavingFrame() { return awaitBySavingFrame(AwaitedOp
 constexpr StubKey awaitWithSavedFrame() { return StubKey(StubFamily::AwaitWithSavedFrame); }
 constexpr StubKey suspendGenerator(GeneratorSuspension suspension) { return StubKey(StubFamily::SuspendGenerator).withForm(static_cast<uint8_t>(suspension)); }
 constexpr StubKey stepGenerator(GeneratorStepCheck check) { return StubKey(StubFamily::StepGenerator).withForm(static_cast<uint8_t>(check)); }
+constexpr StubKey resumeSteppedGenerator() { return StubKey(StubFamily::ResumeSteppedGenerator); }
+inline constexpr StubRegister frameRegisterOfLeafStep = StubRegister::T10;
+inline constexpr StubRegister generatorRegisterOfLeafStep = StubRegister::T12;
 constexpr StubKey enterSavedFrame() { return StubKey(StubFamily::EnterSavedFrame); }
 constexpr StubKey resumeNextJob() { return StubKey(StubFamily::ResumeNextJob); }
 #if CPU(X86_64)

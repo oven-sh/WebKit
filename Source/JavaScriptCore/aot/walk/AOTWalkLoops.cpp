@@ -1760,13 +1760,42 @@ bool Walker::narrowSumsToNumbers(BlockID inputHead, LoopSummary& summary, const 
         }
         return all;
     };
+    auto isSum = [&](uint32_t headPosition) {
+        if (headPosition >= index.block(inputHead).numberOfParameters())
+            return false;
+        Vector<ValueID, mostJoins> names { index.block(inputHead).parameter(headPosition) };
+        Vector<ValueID, mostJoins> sums;
+        for (size_t next = 0; next < names.size(); ++next) {
+            BlockID join = index.blockOf(names[next]);
+            uint32_t position = names[next].index() - index.block(join).firstParameter().index();
+            for (const BodyIncomingEdge& edge : incomingEdgesOf(index, join)) {
+                std::span<const ValueID> arguments = edge.target.arguments();
+                ValueID passed = position < arguments.size() ? arguments[position] : index.valueNarrowedInto(names[next]);
+                if (!index.isInLoop(edge.from, loop) || !passed)
+                    continue;
+                ValueID value = index.stripCasts(passed);
+                if (!index.isInLoop(index.blockOf(value), loop) || names.contains(value))
+                    continue;
+                if (!index.isParameter(value)) {
+                    if (index.opcodeOf(value) == Opcode::Add)
+                        sums.append(value);
+                } else if (names.size() == mostJoins)
+                    return true;
+                else
+                    names.append(value);
+            }
+        }
+        return std::ranges::any_of(sums, [&](ValueID sum) {
+            return names.contains(index.stripCasts(index.value(sum).operand(0))) || names.contains(index.stripCasts(index.value(sum).operand(1)));
+        });
+    };
     bool narrows = false;
     for (uint32_t position = 0; position < summary.types.size() && position < trialVisit.entered.size(); ++position) {
         TypeID assumed = summary.types[position];
         TypeID entered = trialVisit.entered[position];
         if (!assumed || !entered || !m_types.at(assumed).isJavaScriptValue() || !m_types.at(entered).isJavaScriptValue() || m_types.at(assumed).isNumber() || !m_types.at(entered).isNumber() || !m_types.at(assumed).hasOnlyPrimitives(Primitive::Number | Primitive::AnyString | Primitive::Undefined | Primitive::Null))
             continue;
-        if (TypeID besideItself = typeBroughtRoundBesideItself(position); besideItself && m_types.at(besideItself).isJavaScriptValue() && m_types.at(besideItself).isNumber()) {
+        if (TypeID besideItself = typeBroughtRoundBesideItself(position); besideItself && m_types.at(besideItself).isJavaScriptValue() && m_types.at(besideItself).isNumber() && !isSum(position)) {
             summary.types[position] = m_types.unionOf(entered, besideItself);
             narrows = true;
             continue;

@@ -298,7 +298,7 @@ static void testTwoPrefixesAreSearchedForAtOnce()
 {
     OptionSet<Yarr::Flags> ignoreCase { Yarr::Flags::IgnoreCase };
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcdefgh|hgfedcba"_s) == 8);
-    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("[abc]bcdefgh|hgfed[c-e]ba"_s, ignoreCase) == 8);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("[acg]bcdefgh|hgfed[c-e]ba"_s, ignoreCase) == 8);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s) == 4);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efghijklm"_s) == 4);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { }, 1) == 0);

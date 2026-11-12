@@ -1111,6 +1111,19 @@ static bool isCounted(const BodyIndex& index, const BodyBlock& block, const Body
     return false;
 }
 
+static bool isStoredOffSameHolder(const BodyIndex& index, const BodyValue& read)
+{
+    if (!index.holdsAnyOf(OpcodeSet { Opcode::PropSet }))
+        return false;
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        for (BodyValue operation : index.block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::PropSet && !operation.isFreeName() && operation.key() == read.key() && namesSameHolderInKeyOrdersAccessors(index, operation.objectOperand(), read.objectOperand()))
+                return true;
+        }
+    }
+    return false;
+}
+
 bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
 {
     Opcode opcode = access.opcode();
@@ -1134,6 +1147,10 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         return false;
 
     const BodyIndex& index = walker.currentBodyIndex();
+    if (heir && isStoredOffSameHolder(index, access)) {
+        walker.count(StatisticID::InheritedStaticsReadAtSites);
+        return false;
+    }
     BodyBlock block = index.block(index.blockOf(access.id()));
     uint32_t place = access.id().index() - block.firstValue().index();
     Origin origin = walker.originOf(access);

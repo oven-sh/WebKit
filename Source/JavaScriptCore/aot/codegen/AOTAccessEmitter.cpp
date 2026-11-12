@@ -145,7 +145,7 @@ void AccessEmitter::verifyFastPathAnswer(const OperationContext& context, Boxed 
     callVoidOperation(context, RuntimeOperation::StopAtStaleAnswer, { receiver, answer, identifierNumber(key), kindAndStubWithSlowPathBit });
 }
 
-LValue AccessEmitter::newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub)
+LValue AccessEmitter::newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub, LBasicBlock hasOtherKey)
 {
     static_assert(SiteAnswers::mostCommonForm(SiteUse::Read) == SiteAnswers::Form::OwnValueInStorage && !SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::OwnValueInStorage));
     static_assert(!OBJECT_OFFSETOF(SiteAnswers::Answer, key) && OBJECT_OFFSETOF(SiteAnswers::Answer, operand) == sizeof(uint32_t) && InstanceLayout::sizeOfIndexOfSiteAnswers == sizeof(uint16_t));
@@ -163,7 +163,14 @@ LValue AccessEmitter::newestAnswerOfSite(Boxed receiver, ValueID receiverID, Num
     }
     LValue index = m_out.zeroExtPtr(m_out.load16ZeroExt32(instanceWord(m_heaps.AOTInstance_siteCaches, answers.mention)));
     LValue answer = m_out.load64(m_out.baseIndex(m_heaps.AOTInstance_siteCaches, m_instance, index, ScaleEight, InstanceLayout::offsetOfSiteAnswers + OBJECT_OFFSETOF(SiteAnswers, second)));
-    goOnIf(equal(Word32(m_out.castToInt32(answer)), loadStructureID(unboxCell(receiver))));
+    Condition isAnswered = equal(Word32(m_out.castToInt32(answer)), loadStructureID(unboxCell(receiver)));
+    if (!hasOtherKey) {
+        goOnIf(isAnswered);
+        return answer;
+    }
+    LBasicBlock next = newBlock();
+    m_out.branch(isAnswered.value(), normalEdge(next), normalEdge(hasOtherKey));
+    m_out.appendToContinuation(next);
     return answer;
 }
 
@@ -464,8 +471,21 @@ Condition AccessEmitter::findsName(const OperationContext& context, Boxed receiv
     Join<Condition> join(m_out);
     {
         Machine::DeclaredAccessesSuspension suspension(m_out);
-        newestAnswerOfSite(receiver, asked->objectOperand(), *answers, asksStub);
+        LBasicBlock hasOtherKey = newBlock();
+        LBasicBlock isFoundAbove = newBlock();
+        LBasicBlock isFoundNowhere = newBlock();
+        LValue answer = newestAnswerOfSite(receiver, asked->objectOperand(), *answers, asksStub, hasOtherKey);
         join.add(boolean(true));
+
+        build().statistics().count(StatisticID::AbsencesAnsweredInline);
+        m_out.appendTo(hasOtherKey);
+        Word32 keyOfValueInCage = add(loadStructureID(unboxCell(receiver)), word32(SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::ValueInWordOfCage)));
+        branch(equal(Word32(m_out.castToInt32(answer)), keyOfValueInCage), { normalEdge(isFoundAbove), unlikelyEdge(asksStub) });
+        m_out.appendTo(isFoundAbove);
+        Word32 word(m_out.castToInt32(m_out.lShr(answer, 32)));
+        branch(equal(word, loadFilledOnce32(AOT_INSTANCE_OFFSET(propertyCaches.wordOfCageThatHoldsUndefined))), { normalEdge(isFoundNowhere), unlikelyEdge(asksStub) });
+        m_out.appendTo(isFoundNowhere);
+        join.add(boolean(false));
     }
 
     m_out.appendTo(asksStub);

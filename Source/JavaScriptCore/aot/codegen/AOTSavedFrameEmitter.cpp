@@ -389,12 +389,14 @@ struct LeafStepOfGenerator {
 static constexpr std::array leafGPRs { gprOf(StubRegister::T9), gprOf(StubRegister::T11), gprOf(StubRegister::T13) };
 static constexpr GPRReg scratchOfLeafStep = gprOf(StubRegister::T14);
 static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
+static_assert(areDistinctOnEveryISA(generatorRegisterOfLeafStep, StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
 static constexpr uint8_t numberOfLeafFPRs = 7;
-static constexpr GPRReg frameOfLeafStep = gprOf(StubRegister::T10);
+static constexpr GPRReg frameOfLeafStep = gprOf(frameRegisterOfLeafStep);
+static constexpr GPRReg statusOfLeafStep = gprOf(resumeModeRegister);
 static constexpr GPRReg sentValueOfLeafStep = gprOf(StubRegister::A2);
 static FPRReg leafFPR(uint8_t place) { return FPRInfo::toArgumentRegister(place); }
 
-static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
+static void emitLeafStep(CCallHelpers& jit, StubCalls& stubCalls, const LeafStepOfGenerator& step)
 {
     using Kind = InstructionOfLeafStep::Kind;
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -408,17 +410,21 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
         return CCallHelpers::Address(frameOfLeafStep, static_cast<int32_t>(instruction.bits));
     };
     auto numberTag = CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(numberTag));
+    auto returnYielded = [&] {
+        jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Yielded)), statusOfLeafStep);
+        jit.ret();
+    };
     auto returnInt32 = [&] {
         jit.zeroExtend32ToWord(result, result);
         jit.load64(numberTag, scratchOfLeafStep);
         jit.or64(scratchOfLeafStep, result);
-        jit.ret();
+        returnYielded();
     };
     auto returnDouble = [&](FPRReg number) {
         jit.load64(numberTag, scratchOfLeafStep);
         jit.moveDoubleTo64(number, result);
         jit.sub64(scratchOfLeafStep, result);
-        jit.ret();
+        returnYielded();
     };
     auto giveWayUnlessNumber = [&](GPRReg value) {
         jit.load64(numberTag, scratchOfLeafStep);
@@ -561,7 +567,7 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
             isNotInt32.link(&jit);
             MacroAssembler::Jump isNumber = jit.branchDouble(MacroAssembler::DoubleEqualAndOrdered, number, number);
             jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), result);
-            jit.ret();
+            returnYielded();
             isNumber.link(&jit);
             returnDouble(number);
             break;
@@ -578,7 +584,7 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
         }
         case Kind::Return:
             jit.load64(frameWord(instruction), result);
-            jit.ret();
+            returnYielded();
             break;
         case Kind::LoadNumber:
             jit.load64(frameWord(instruction), leafGPRs[instruction.result]);
@@ -595,13 +601,13 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
             break;
         case Kind::ReturnNumber:
             jit.move(leafGPRs[instruction.left], result);
-            jit.ret();
+            returnYielded();
             break;
         }
     }
     givesWay.link(&jit);
-    jit.move(CCallHelpers::TrustedImm64(0), result);
-    jit.ret();
+    jit.move(gprOf(generatorRegisterOfLeafStep), gprOf(StubRegister::A0));
+    stubCalls.tailCall(jit, resumeSteppedGenerator());
     for (auto [jump, label] : jumps)
         jump.linkTo(labels[label], &jit);
 }
@@ -628,7 +634,7 @@ public:
             return nullptr;
         Vector<InstructionOfLeafStep, 32> all;
         all.appendVector(m_loads);
-        all.appendVector(m_instructions);
+        appendInOrderOfLikelyWay(all);
         std::span<InstructionOfLeafStep> kept = m_emitter.m_proc.arena().createSpan<InstructionOfLeafStep>(all.size());
         std::ranges::copy(all, kept.begin());
         auto* step = m_emitter.m_proc.arena().create<LeafStepOfGenerator>();
@@ -909,6 +915,58 @@ private:
     {
         m_places.set(id.index(), place);
         m_isMadeOnWay.set(id.index());
+    }
+
+    static bool endsWay(Kind kind) { return kind == Kind::Jump || kind == Kind::GiveWay || kind == Kind::BoxDouble || kind == Kind::BoxInt64 || kind == Kind::Return || kind == Kind::ReturnNumber; }
+
+    void appendInOrderOfLikelyWay(Vector<InstructionOfLeafStep, 32>& all)
+    {
+        const uint32_t numberOfBlocks = m_blocks.size();
+        Vector<std::span<const InstructionOfLeafStep>, 13> parts(numberOfBlocks + 1);
+        for (size_t first = 0; first < m_instructions.size();) {
+            RELEASE_ASSERT(m_instructions[first].kind == Kind::Label);
+            size_t end = first + 1;
+            while (end < m_instructions.size() && m_instructions[end].kind != Kind::Label)
+                ++end;
+            parts[m_instructions[first].label] = m_instructions.span().subspan(first, end - first);
+            first = end;
+        }
+        BitVector isPlaced;
+        auto mayFollow = [&](uint32_t label) { return label < numberOfBlocks && !isPlaced.get(label); };
+        for (uint32_t start = 0; start < numberOfBlocks; ++start) {
+            for (std::optional<uint32_t> next = isPlaced.get(start) ? std::nullopt : std::optional(start); next;) {
+                std::span<const InstructionOfLeafStep> part = parts[*next];
+                isPlaced.set(*next);
+                const InstructionOfLeafStep last = part.back();
+                const uint32_t behind = *next + 1;
+                next = std::nullopt;
+                const bool isBranch = last.kind == Kind::BranchDouble || last.kind == Kind::BranchInt64;
+                const bool isBranchAheadOfEnd = part.size() > 1 && (last.kind == Kind::Jump || last.kind == Kind::GiveWay) && (part[part.size() - 2].kind == Kind::BranchDouble || part[part.size() - 2].kind == Kind::BranchInt64);
+                const InstructionOfLeafStep branch = isBranch ? last : isBranchAheadOfEnd ? part[part.size() - 2] : InstructionOfLeafStep { };
+                if ((isBranch || isBranchAheadOfEnd) && mayFollow(branch.label)) {
+                    InstructionOfLeafStep inverted = branch;
+                    inverted.condition = branch.kind == Kind::BranchDouble ? static_cast<uint8_t>(MacroAssembler::invert(static_cast<MacroAssembler::DoubleCondition>(branch.condition))) : static_cast<uint8_t>(MacroAssembler::invert(static_cast<MacroAssembler::RelationalCondition>(branch.condition)));
+                    inverted.label = isBranch ? behind : last.kind == Kind::Jump ? last.label : numberOfBlocks;
+                    all.append(part.first(part.size() - (isBranch ? 1 : 2)));
+                    all.append(inverted);
+                    next = branch.label;
+                    continue;
+                }
+                if (last.kind == Kind::Jump && mayFollow(last.label)) {
+                    all.append(part.first(part.size() - 1));
+                    next = last.label;
+                    continue;
+                }
+                all.append(part);
+                if (endsWay(last.kind))
+                    continue;
+                if (mayFollow(behind))
+                    next = behind;
+                else
+                    all.append({ .kind = behind < numberOfBlocks ? Kind::Jump : Kind::GiveWay, .label = behind });
+            }
+        }
+        all.append(parts[numberOfBlocks]);
     }
 
     void enterAlong(const Edge& edge)
@@ -1196,10 +1254,10 @@ LValue SavedFrameEmitter::addressOfLeafStep(const LeafStepOfGenerator* step)
 {
     Machine::PatchOperation* patch = m_out.patchpoint(Machine::pointerType());
     patch->effects = Machine::Effects::none();
-    patch->setGenerator([step](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    patch->setGenerator([step, stubCalls = &m_records.stubCalls](CCallHelpers& jit, const Machine::PatchParameters& params) {
         MacroAssembler::Label site = jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Far);
-        params.addLatePath([step](CCallHelpers& jit) {
-            emitLeafStep(jit, *step);
+        params.addLatePath([step, stubCalls](CCallHelpers& jit) {
+            emitLeafStep(jit, *stubCalls, *step);
         });
         jit.addLinkTask([site, step](LinkBuffer& linkBuffer) {
             RELEASE_ASSERT(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), *step->start));

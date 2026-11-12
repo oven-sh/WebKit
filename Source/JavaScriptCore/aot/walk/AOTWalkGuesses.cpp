@@ -8241,7 +8241,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         bool asksForFilledSlot = index.opcodeOf(look.access) != Opcode::PrivateDefine;
         Reference loaded = holder && asksForFilledSlot ? valueHeldOfFilledSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
         bool markAnswers = !loaded && numberOfTests && holder && walker.state().cellFacts(holder).contains(CellFact::BearsNoMark) && markOfCellAnswersForRead(walker, walker.asWalked(index.value(look.access)), walker.typeOf(holder));
-        bool isStoredInLoop = holder && !loaded && !markAnswers && asksForFilledSlot && failureRestartsIteration && walker.canTestStoredSlotBeforeLoop(holder, keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(look.access))), hoistingPurity);
+        bool isStoredInLoop = holder && !loaded && !markAnswers && asksForFilledSlot && (failureRestartsIteration || asksInFrontBehindStores) && walker.canTestStoredSlotBeforeLoop(holder, keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(look.access))), hoistingPurity);
         Reference test;
         if (holder && !loaded && !markAnswers) {
             Walker::SpecializedPreheaderScope preheaderScope(walker, isStoredInLoop, hoistingPurity);

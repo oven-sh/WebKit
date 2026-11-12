@@ -1659,7 +1659,9 @@ public:
     {
         Reference list = iteration.list;
         if (iteration.hasProtocolFallback) {
-            BlockID byProtocol = addBlock(iteration.isStringOrArray && iteration.contents == ContentsStepped::Text ? BlockFrequency::Normal : BlockFrequency::Unlikely);
+            const bool passesGeneratorsOn = iteration.wayToStep && m_walker.fileHoldsGenerators() && m_walker.program().at(m_walker.unit().function).isCoroutine();
+            const BlockFrequency frequencyOfProtocol = passesGeneratorsOn ? BlockFrequency::Normal : BlockFrequency::Unlikely;
+            BlockID byProtocol = addBlock(iteration.isStringOrArray && iteration.contents == ContentsStepped::Text ? BlockFrequency::Normal : frequencyOfProtocol);
             if (iteration.isStringOrArray && !m_walker.opensGuesses()) {
                 m_whereNeitherTextNorListIsStepped = addBlock();
                 BlockID holdsOneOfThem = addBlock(BlockFrequency::Unlikely);
@@ -1670,7 +1672,7 @@ public:
             BlockID byIndex = m_walker.isUnreachable() ? BlockID() : m_walker.currentBlock();
             continueIn(byProtocol);
             {
-                SetForScope unlikely(m_frequencyOfBlocksAdded, BlockFrequency::Unlikely);
+                SetForScope frequency(m_frequencyOfBlocksAdded, frequencyOfProtocol);
                 stepByProtocolBesideIndex(iteration, after);
             }
             if (byIndex)
@@ -3318,7 +3320,7 @@ private:
         if (m_walker.isUnreachable())
             return;
         BlockID isGenerator = addBlock();
-        BlockID isNoGenerator = addBlock();
+        BlockID isNoGenerator = addBlock(BlockFrequency::Unlikely);
         branch(testType(iteration.wayToStep, TypeArena::fromPrimitives(Primitive::False)), isGenerator, isNoGenerator);
         continueIn(isGenerator);
         Draft step = draft(Opcode::StepGenerator);
@@ -3330,7 +3332,7 @@ private:
         Reference value = resultOfGeneratorStep(steppedGenerator, StepGeneratorResult::Value);
         Reference status = resultOfGeneratorStep(steppedGenerator, StepGeneratorResult::Status);
         BlockID hasYielded = addBlock();
-        BlockID hasNotYielded = addBlock();
+        BlockID hasNotYielded = addBlock(BlockFrequency::Unlikely);
         BlockID isLast = addBlock();
         BlockID isNotStepped = addBlock(BlockFrequency::Rare);
         branch(hasStatus(status, GeneratorStepStatus::Yielded), hasYielded, hasNotYielded);
@@ -3355,8 +3357,11 @@ private:
         Reference stepValue = m_walker.addParameter(stepped, { }, Representation::JSValue);
         m_walker.recordSpeculation();
         m_walker.count(StatisticID::IteratorsSteppedWithoutCall);
-        if (m_walker.fileHoldsGenerators())
+        SetForScope<BlockFrequency> frequency(m_frequencyOfBlocksAdded, m_frequencyOfBlocksAdded);
+        if (m_walker.fileHoldsGenerators()) {
             stepGeneratorInWay(iteration, after, byHelper);
+            m_frequencyOfBlocksAdded = BlockFrequency::Unlikely;
+        }
         branch(testType(iteration.wayToStep, TypeArena::fromPrimitives(Primitive::True)), throughTable, notThroughTable);
         continueIn(notThroughTable);
         branch(testType(iteration.wayToStep, TypeTable::undefined), byCall, byHelper);

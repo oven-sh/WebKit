@@ -1239,7 +1239,26 @@ void OperatorEmitter::generateMod(const ValueContext& value)
         define(value, number(0));
         return;
     }
+    if (isTestedForTruthAtOnce(value)) {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+        m_truthOfRemainder = Condition(m_out.castToInt32(callStub(value, remainderTruth(), { in<Boxed>(value->leftOperand()).value(), in<Boxed>(value->rightOperand()).value() }).first));
+        m_remainderKnownByTruth = value.id();
+        define(value, undefined());
+        return;
+    }
     defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Mod));
+}
+
+bool OperatorEmitter::isTestedForTruthAtOnce(const ValueContext& remainder)
+{
+    if (remainder->form() != OperatorForm::Generic || remainder.representation() != Representation::JSValue || m_code.useCountOf(remainder.id()) != 1 || !mayBothBeInt32(remainder) || isArithmeticOnLikelyBigInts(remainder) || generator().isProductLeftToRemainder(remainder->leftOperand()))
+        return false;
+    ValueID test = m_code.onlyUserOf(remainder.id());
+    if (!test || operationAt(test).opcode != Opcode::ToBoolean || operationAt(test).form() != OperatorForm::Generic || m_code.blockOf(test) != remainder.block())
+        return false;
+    std::span<const ValueID> values = m_code.valuesOf(remainder.block());
+    auto found = std::ranges::find(values, remainder.id());
+    return found != values.end() && found + 1 != values.end() && *(found + 1) == test;
 }
 
 bool OperatorEmitter::tryGenerateRemainderTest(const ValueContext& value)

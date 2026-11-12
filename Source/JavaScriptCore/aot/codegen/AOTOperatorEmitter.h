@@ -98,6 +98,9 @@ private:
     };
     std::optional<RemainderTest> findRemainderTest(ValueID test);
     bool tryGenerateRemainderTest(const ValueContext& test);
+    bool isTestedForTruthAtOnce(const ValueContext& remainder);
+    ValueID m_remainderKnownByTruth;
+    Condition m_truthOfRemainder;
 
     Number asNumericOperand(ValueID, const OperationContext* user = nullptr);
     Number numericOperandAsItComes(ValueID);

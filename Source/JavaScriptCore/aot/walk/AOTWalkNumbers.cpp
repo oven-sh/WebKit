@@ -333,6 +333,33 @@ static Reference buildStepOfExactInteger(Walker& walker, const BodyValue& value,
     return met;
 }
 
+static bool stepsLoopCounter(Walker& walker, const BodyValue& step, Reference result)
+{
+    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement };
+    if (!steps.contains(step.opcode()) || !walker.isInLoop() || !result.isValue() || walker.representationOf(result) != Representation::Double)
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID stepped = index.stripCasts(step.operand(0));
+    if (!index.isParameter(stepped) && index.opcodeOf(stepped) == Opcode::ToNumeric)
+        stepped = index.stripCasts(index.value(stepped).operand(0));
+    if (!index.isParameter(stepped) || !index.isLoopHead(index.blockOf(stepped)))
+        return false;
+    Reference arriving = walker.referenceBoundTo(stepped);
+    if (!arriving || !arriving.isValue() || walker.representationOf(arriving) != Representation::Int64)
+        return false;
+    Type type = walker.types().at(walker.typeOf(result));
+    return type.isInteger() && type.integers.isSubsetOf(Range::exact());
+}
+
+static Reference integerOfSteppedCounter(Walker& walker, Reference stepped, Origin origin)
+{
+    origin.isTailCall = false;
+    Draft conversion(Opcode::NumberToInteger, origin);
+    conversion.setOperand(0, stepped);
+    conversion.representation = Representation::Int64;
+    return walker.build(WTF::move(conversion));
+}
+
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     OperatorForm form = operatorFormFor(walker, value.opcode(), value, inputs);
@@ -371,7 +398,10 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
         remainder = buildRemainderByReciprocalMadeInFrontOfLoop(walker, draft);
     else if (value.opcode() == Opcode::Mod && form == OperatorForm::Numbers)
         remainder = buildRemainderByWholeDivisor(walker, draft);
-    walker.bind(value.id(), boxNumberIfNeeded(walker, remainder ? remainder : walker.build(WTF::move(draft)), origin));
+    Reference result = remainder ? remainder : walker.build(WTF::move(draft));
+    if (result && form == OperatorForm::CheckedIntegers && stepsLoopCounter(walker, value, result))
+        result = integerOfSteppedCounter(walker, result, origin);
+    walker.bind(value.id(), boxNumberIfNeeded(walker, result, origin));
     return true;
 }
 
