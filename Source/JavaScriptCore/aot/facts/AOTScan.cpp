@@ -5096,6 +5096,10 @@ void ScanOfBody::retainContents(const BodyValue& value, ListInScan held)
 void ScanOfBody::storeInspectedValueIntoList(const BodyValue& value, ListInScan list)
 {
     Opcode opcode = value.opcode();
+    if (opcode == Opcode::AppendHole) {
+        storeIntoContents(value.id(), list, SlotOfContents::mayHaveHoles(), listOfNode(constant(TypeTable::undefined)));
+        return;
+    }
     std::optional<unsigned> position = OperandPosition::value(opcode);
     if (!position || operandUsesOf(opcode, *position).contains(OperandUse::Retains))
         return;
