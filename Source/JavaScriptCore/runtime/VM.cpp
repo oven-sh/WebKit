@@ -1089,6 +1089,8 @@ static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
         return llint_aot_is_integer_thunk;
     case ArrayIsArrayIntrinsic:
         return llint_aot_is_array_thunk;
+    case ArrayPushIntrinsic:
+        return llint_aot_array_push_thunk;
     default:
         return nullptr;
     }
@@ -1392,6 +1394,9 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 
 void VM::pruneUnusedSourceProviderCaches()
 {
+#if ENABLE(AOT)
+    aotState().identifiersOfLastSource = nullptr;
+#endif
     sourceProviderCacheMap.removeIf([](auto& entry) {
         return !entry.value->takeUsedSinceLastPrune();
     });

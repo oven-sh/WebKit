@@ -192,7 +192,7 @@ Word32 SlotEmitter::narrowOptionalInt32(OptionalInteger value)
     Word32 absent = word32(absentInt32);
     Word32 marker = select(isAbsent, absent, select<Word32>(is(undefinedInteger), undefinedInt32, nullInt32));
     Condition isMarker = greaterThan(bits, maxSlotInteger);
-    return select(isMarker, marker, low32(bits));
+    return select(isMarker, marker, emitter<ConversionEmitter>().lowHalfOfOptionalInteger(value));
 }
 
 void SlotEmitter::store(TypedPointer pointer, SlotRepresentation slot, Operand operand)
@@ -516,7 +516,7 @@ Operand SlotEmitter::loadSlot(CellPointer cell, const PlacedSlot& slot, const Me
     bool holdsNoMarker = loadedRepresentationOf(slot.representation, loadedType) != Typed::representationOf(slot.representation);
     if (holdsNoMarker && !slot.isOutOfLine())
         return loadWithoutMarkers(addressOf(cell, slot, location), slot.representation);
-    if (slot.isOutOfLine() && !slot.mayExistWithoutStorage) {
+    if (slot.isOutOfLine() && (!slot.mayExistWithoutStorage || !(loadedType.primitives & Primitive::Undefined))) {
         RELEASE_ASSERT(extensionWord);
         return loadOutOfLine(cell, slot, location, *extensionWord);
     }
@@ -706,7 +706,7 @@ void SlotEmitter::storeSlot(CellPointer cell, const PlacedSlot& slot, const Memo
 void SlotEmitter::store(TypedPointer pointer, SlotRepresentation slot, Operand operand, const Type& storedType)
 {
     if (storeLooksAtType(slot) && storedType.isInteger()) {
-        m_out.store32(m_out.castToInt32(operand.as<OptionalInteger>().value()), pointer);
+        m_out.store32(emitter<ConversionEmitter>().lowHalfOfIntegerToldInsideInt32(Integer(operand.as<OptionalInteger>().value())).value(), pointer);
         return;
     }
     store(pointer, slot, operand);

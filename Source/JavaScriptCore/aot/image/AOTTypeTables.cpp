@@ -355,8 +355,20 @@ static void writeLayoutSetsOfTypeRecords(TableEncoder& encoder, TypeRecordsBeing
         records.words[operand.word] = offsetOfTable + records.sets[operand.set].row * static_cast<uint32_t>(sizeof(LayoutSetData));
 }
 
-static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeingEncoded& records)
+static uint32_t findShiftOfTypeNumbers(const TablePart& part, const TypeRecordsBeingEncoded& records)
 {
+    for (uint32_t shift = ProgramTables::shiftOfNearTypeNumbers;; ++shift) {
+        uint64_t end = FirstTableParts::startOfTypes + part.size();
+        for (size_t place = 0; place + 1 < records.firstWord.size(); ++place)
+            end += roundUpToMultipleOf(uint64_t { 1 } << shift, (records.firstWord[place + 1] - records.firstWord[place]) * sizeof(uint32_t));
+        if (end + (uint64_t { 1 } << shift) <= uint64_t { UINT16_MAX } << shift)
+            return shift;
+    }
+}
+
+static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeingEncoded& records, uint32_t shiftOfTypeNumbers)
+{
+    static_assert(!(FirstTableParts::startOfTypes % 8));
     size_t numberOfTypes = records.firstWord.size() - 1;
     std::span<const OperandOfShapeTestInTypeRecords> operands = records.operandsOfShapeTests.span();
     Vector<uint32_t> offsets;
@@ -370,7 +382,7 @@ static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeing
             continue;
         }
         std::span<const uint32_t> record = records.words.span().subspan(first, end - first);
-        uint32_t offset = part.append(record);
+        uint32_t offset = part.append(asBytes(record), size_t { 1 } << shiftOfTypeNumbers);
         for (; nextOperand < operands.size() && operands[nextOperand].word < end; ++nextOperand)
             part.link(offset + static_cast<uint32_t>((operands[nextOperand].word - first) * sizeof(uint32_t)));
         offsets.append(offset);
@@ -419,7 +431,8 @@ void encodeTypeTables(TableEncoder& encoder, FirstTableParts& firstParts)
 
     firstParts.shapeSetWords = placeShapeSetsOfTypeRecords(encoder, records);
     writeLayoutSetsOfTypeRecords(encoder, records);
-    firstParts.typeOffsets = writeTypeRecords(encoder.part, records);
+    firstParts.shiftOfTypeNumbers = findShiftOfTypeNumbers(encoder.part, records);
+    firstParts.typeOffsets = writeTypeRecords(encoder.part, records, firstParts.shiftOfTypeNumbers);
     writeIndexOfTypeRecords(encoder.part, firstParts.typeOffsets.span());
 
     encoder.part.setTable(ProgramTableIndex::typeSites, Vector<TypeSiteData>());

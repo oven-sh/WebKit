@@ -142,7 +142,7 @@ Pointer CellAllocationEmitter::allocationSiteRecord(const MentionedAllocation& a
 ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, const MentionedAllocation& allocation, unsigned storesOfZero, unsigned storesOfOtherPatterns) const
 {
     size_t size = allocation.placed.size;
-    if (!m_generator.isInLoop(context.block())) {
+    if (!m_generator.usesLoopForms(context.block()) && !m_generator.isInRecursion(context.block())) {
         if (storesOfOtherPatterns && size > copyChunkBytes && size <= maxCellSizeFromTemplate)
             return ZeroedBy::StubFromTemplate;
         return storesOfZero ? ZeroedBy::Stub : ZeroedBy::Nobody;
@@ -205,7 +205,7 @@ CellPointer CellAllocationEmitter::allocateFromTemplate(const OperationContext& 
     CellInitialization form = isObjectLayout(m_program.at(allocation.placed.layout).kind) ? CellInitialization::HeaderAndWords : CellInitialization::Header;
     RELEASE_ASSERT(bodyOfEmptyCell.size() == sizeOfCellTemplate(form, allocation.placed.size));
     LValue addressOfTemplate = m_out.relocatable(SymbolSpace::Constant, m_out.addConstantData(bodyOfEmptyCell, ConstantKind::CellTemplate));
-    return CellPointer(callStub(context, allocateCellFromTemplate(form, allocation.placed.size), { rowOf(allocation).value(), addressOfTemplate }).first);
+    return CellPointer(callStub(context, allocateCellFromTemplate(form, allocation.placed.size), { m_out.wideNumber(allocation.mention), addressOfTemplate }).first);
 }
 
 CellPointer CellAllocationEmitter::allocate(const OperationContext& context, const MentionedAllocation& allocation, ZeroedBy zeroedBy)
@@ -215,7 +215,7 @@ CellPointer CellAllocationEmitter::allocate(const OperationContext& context, con
     CellInitialization form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWords : CellInitialization::Header;
     if (zeroedBy == ZeroedBy::Stub)
         form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
-    CellPointer cell(callStub(context, allocateCell(form, knownCellSizeFor(allocation.placed.size)), { rowOf(allocation).value() }).first);
+    CellPointer cell(callStub(context, allocateCell(form, knownCellSizeFor(allocation.placed.size)), { m_out.wideNumber(allocation.mention) }).first);
     if (zeroedBy == ZeroedBy::CodeInLine) {
         CodeGenerator::InitializationScope scope(generator());
         zeroBody(cell, allocation);
@@ -225,7 +225,7 @@ CellPointer CellAllocationEmitter::allocate(const OperationContext& context, con
 
 std::pair<CellPointer, Condition> CellAllocationEmitter::allocateInstance(const OperationContext& context, const MentionedAllocation& allocation, CellPointer prototype)
 {
-    StubCallResult result = callStub(context, AOT::allocateInstance(knownCellSizeFor(allocation.placed.size)), { rowOf(allocation).value(), prototype.value() });
+    StubCallResult result = callStub(context, AOT::allocateInstance(knownCellSizeFor(allocation.placed.size)), { m_out.wideNumber(allocation.mention), prototype.value() });
     return { CellPointer(result.first), Condition(m_out.notZero64(result.second)) };
 }
 
@@ -322,7 +322,7 @@ void CellAllocationEmitter::copyWords(CellPointer source, unsigned offsetInSourc
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, const MentionedAllocation& allocation, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(isObjectLayout(m_program.at(allocation.placed.layout).kind) && offsetOfFirstField + fieldBytes <= WTF::roundUpToMultipleOf<copyChunkBytes>(allocation.placed.size));
-    CellPointer cell(callStub(context, allocateCell(CellInitialization::Header, knownCellSizeFor(allocation.placed.size)), { rowOf(allocation).value() }).first);
+    CellPointer cell(callStub(context, allocateCell(CellInitialization::Header, knownCellSizeFor(allocation.placed.size)), { m_out.wideNumber(allocation.mention) }).first);
     {
         CodeGenerator::InitializationScope scope(generator());
         storeField(cell, m_heaps.AOTObject_orderWord, bitAnd(loadField<Word32>(source, m_heaps.AOTObject_orderWord), static_cast<int32_t>(orderAndCountMask)));
@@ -403,14 +403,22 @@ void CellAllocationEmitter::finishArrayOfLength(const OperationContext& context,
     m_out.appendTo(continuation);
 }
 
-CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements)
+CellPointer CellAllocationEmitter::newArrayOfNumbers(const OperationContext& context, std::span<const Boxed> elements)
+{
+    Vector<LValue, maxArrayElementsInRegisters> operands;
+    for (Boxed element : elements)
+        operands.append(element.value());
+    return CellPointer(callStub(context, arrayLiteralOfNumbers(elements.size()), operands.span()).first);
+}
+
+CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements, bool hasPropertyRoom)
 {
     unsigned length = static_cast<unsigned>(elements.size());
     if (length <= maxArrayElementsInRegisters) {
         Vector<LValue, maxArrayElementsInRegisters> operands;
         for (Boxed element : elements)
             operands.append(element.value());
-        return CellPointer(callStub(context, arrayLiteral(length), operands.span()).first);
+        return CellPointer(callStub(context, hasPropertyRoom && length ? arrayLiteralWithRoom(length, false) : arrayLiteral(length), operands.span()).first);
     }
     if (length <= maxArrayLengthInStubKey) {
         CellPointer array = allocateArrayOfLength(context, ArrayWithContiguous, length);

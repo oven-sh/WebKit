@@ -14,6 +14,7 @@
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "JSCInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 
@@ -280,7 +281,7 @@ uint32_t Modules::momentLinkedAsOf(ModuleID importer, ModuleID reader) const
     if (!ofReader || last <= ofReader)
         return last;
     if (!m_momentsLoadedAnew.contains(importer))
-        return last;
+        return m_hasReleasedInstances && hasInstances(importer) ? ofReader : last;
     uint32_t first = m_momentsOfLoads[importer.index()];
     auto found = m_earlierMomentsLoadedAnew.find(importer);
     if (found == m_earlierMomentsLoadedAnew.end())
@@ -357,6 +358,14 @@ bool Modules::isNamedByEndedMockBelow(ModuleID root, const Identifier& name)
     return false;
 }
 
+WTF::Vector<Identifier> Modules::namesOfRecord(AbstractModuleRecord& record) const
+{
+    WTF::Vector<Identifier> names;
+    for (auto& entry : record.exportEntries())
+        names.append(Identifier::fromUid(*m_instance.vm, entry.key.get()));
+    return names;
+}
+
 void Modules::appendNamesBehindStarsOf(ModuleID module, WTF::Vector<Identifier>& names)
 {
     VM& vm = *m_instance.vm;
@@ -395,6 +404,10 @@ void Modules::appendNamesBehindStarsOf(ModuleID module, WTF::Vector<Identifier>&
             } else if (sourceData.isUncompiledCode()) {
                 JSObject* namespaceObject = uncompiledNamespace(source, ModulePhase::Evaluation, NamespaceUse::CarriesBindings);
                 RETURN_IF_EXCEPTION(scope, void());
+                if (auto* shown = dynamicDowncast<JSModuleNamespaceObject>(namespaceObject); shown && shown->moduleRecord()->hasLiveExports()) {
+                    names.appendVector(namesOfRecord(*shown->moduleRecord()));
+                    continue;
+                }
                 PropertyNameArrayBuilder listed(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                 namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, listed, DontEnumPropertiesMode::Include);
                 RETURN_IF_EXCEPTION(scope, void());
@@ -469,7 +482,7 @@ JSObject* Modules::mockSeenBy(ModuleID mocked, ModuleID importer, ModuleID reade
     return standing && seesMockOf(fileOrModule, importer) ? standing : nullptr;
 }
 
-bool Modules::seesMockThatKeepsNamesOfOriginal(ModuleID mocked, ModuleID importer, ModuleID reader) const
+bool Modules::seesMockKeepingOriginalNames(ModuleID mocked, ModuleID importer, ModuleID reader) const
 {
     return isMockedByFactoryThatTakesOriginal(m_table.moduleBehindFacade(mocked).value_or(mocked)) && mockSeenBy(mocked, importer, reader);
 }
@@ -492,6 +505,8 @@ JSObject* Modules::namespaceSeenBy(ModuleID module, ModuleID importer, ModuleID 
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     ModuleID fileOrModule = fileOf(module);
+    if (isLibraryOriginalDisplaced(fileOrModule) && !seesMockOf(fileOrModule, importer)) [[unlikely]]
+        return originalNamespace(fileOrModule);
     std::optional<unsigned> ended = indexOfEndedMockSeenBy(fileOrModule, importer, reader);
     JSObject* seen = endedMock(fileOrModule, ended);
     if (!seen || (seen == activeMock(fileOrModule) && !m_removedMocksInUse.find(fileOrModule)->value[*ended].isRetainedForLinkedImporters))
@@ -541,9 +556,7 @@ void Modules::bringBackLinks(const LinksBeforeLoad& before, LinksOfLoad links)
         } else
             m_momentsLoadedAnew.remove(module);
     }
-    BitVector released = before.modulesReleasedByLoader;
-    released.exclude(m_refetchedFailures);
-    m_modulesReleasedByLoader.merge(released);
+    m_modulesReleasedByLoader.merge(before.modulesReleasedByLoader);
     m_importersOfMockThatEnded.merge(before.importersOfMockThatEnded);
 }
 
@@ -752,6 +765,10 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 {
     if (importsOriginalDespiteMock(mocked, importer) || keepsOriginalAfterReplacement(mocked, importer)) [[unlikely]]
         return false;
+    if (isLibraryOriginalDisplaced(mocked)) [[unlikely]] {
+        uint32_t linked = momentLinked(importer);
+        return !linked || linked > loadedIfExists(mocked)->momentOfDisplacement;
+    }
     if (m_mocksWithIntactOriginal.isEmpty()) [[likely]]
         return true;
     auto mock = m_mocksWithIntactOriginal.find(m_table.moduleBehindFacade(mocked).value_or(mocked));
@@ -813,6 +830,22 @@ bool Modules::isImportedByModuleLinkedInThisTestFile(ModuleID fileOrModule, Modu
     return false;
 }
 
+bool Modules::hasImporterLinkedSince(ModuleID fileOrModule, uint32_t moment) const
+{
+    if (moment == m_instance.vm->aotState().momentOfLoads)
+        return false;
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (momentLinked(importer) <= moment || hasInstances(importer))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(importer)) {
+            if (fileOf(request.targetModule()) == fileOrModule)
+                return true;
+        }
+    }
+    return false;
+}
+
 bool Modules::isPreloadMockDisplaced(ModuleID fileOrModule)
 {
     JSObject* standing = activeMock(fileOrModule);
@@ -837,11 +870,13 @@ bool Modules::tryRestorePreloadMock(ModuleID fileOrModule)
     held.returnsPreloadMockNamespace |= data(fileOrModule).kind == ModuleKind::CommonJs && held.wasImportedUnderPreloadMock && !held.wasRequiredUnderPreloadMock;
     if (standing != ofPreload) {
         ModuleID module = moduleWithExportsOf(fileOrModule);
+        releaseImportersOf(fileOrModule, ReleasedImporters::WithInstances);
         keepMockThatStoodInPlace(fileOrModule, module, standing, exportsLeftOutOf(module));
         discardNamespace(module);
+        didReplaceActiveMock(fileOrModule, standing, nullptr, false);
         setActiveMock(fileOrModule, ofPreload, held.preloadMockRequireValue.get());
-    } else
-        m_mocksOfPreloadThatCameBackBeforeAnyImport.set(fileOrModule.index(), !ensureLoaded(moduleWithExportsOf(fileOrModule)).wasImportedUnderActiveMock);
+    } else if (!ensureLoaded(moduleWithExportsOf(fileOrModule)).wasImportedUnderActiveMock)
+        m_mocksOfPreloadThatCameBackBeforeAnyImport.set(fileOrModule.index());
     forgetCallOfMock(fileOrModule);
     m_modulesWithPendingMock.clear(fileOrModule.index());
     m_modulesWithDeferredMock.clear(fileOrModule.index());
@@ -888,7 +923,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
         std::optional<unsigned> ended = laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, exportsLeftOutOf(module)) : std::nullopt;
         if (ended)
             m_removedMocksInUse.find(fileOrModule)->value[*ended].isRetainedForLinkedImporters = isKeptByImportersOfThisTestFile;
-        if (waiting && waiting->hadNamespace && (isKeptByImportersOfThisTestFile || waiting->moment == m_instance.vm->aotState().momentOfLoads)) {
+        if (waiting && waiting->hadNamespace && (isKeptByImportersOfThisTestFile || !hasImporterLinkedSince(fileOrModule, waiting->moment))) {
             keepNamespacesMadeUnder(fileOrModule, module, earlier, ended);
             discardNamespace(module);
         }

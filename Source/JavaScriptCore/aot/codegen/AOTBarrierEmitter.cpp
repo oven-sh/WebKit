@@ -211,6 +211,17 @@ void BarrierEmitter::fenceAfterInitialization(const OperationContext& allocation
     mutatorFence();
 }
 
+void BarrierEmitter::deferFenceToLastFirstStore()
+{
+    m_owesFenceBehindStores = false;
+}
+
+void BarrierEmitter::fenceAfterFirstStores(ValueID allocation)
+{
+    if (!m_generator.laterFenceCovers(allocation))
+        mutatorFence();
+}
+
 void BarrierEmitter::fenceAfterLateStores()
 {
     if (AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::SkipFencesAfterLateStores)) [[unlikely]]

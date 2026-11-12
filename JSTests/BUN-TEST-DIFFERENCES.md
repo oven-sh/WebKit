@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 130 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 131 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -160,7 +160,7 @@ Rules for an edit to an upstream test:
 
 | file(s) | directive | reason |
 |---|---|---|
-| 32 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
+| 35 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
 | `stress/sampling-profiler-bound-function-name.js` | `requireOptions("--useExecutableAllocationFuzz=false")` | with the DFG enabled it waits for the stack `foo < baz`, which exists only once the DFG has inlined the bound function. In the same mode, a process in which the compilations of `baz` and its caller fail sees `foo < bound foo < baz` for the 50 s the test allows itself |
 | `stress/sampling-profiler-line-column.js` | `$skipModes` for `ftl-eager`; the lines it waits for are 13 to 18 (upstream: 11 to 16), because the two lines added at the top move `test()` down by two | it waits for a sample of `test()` with a line inside `test()`. A frame of FTL code is sampled with no line (4294967295), so a sample has to fall into the few milliseconds before `test()` is compiled by the FTL; a process that misses them waits its 50 s in vain. 35 of 600 runs on a busy machine with `main`'s own shell (87ee10da), each over in under 5 s or never |
 | `stress/intl-datetimeformat-language-change-mid-construction.js` | `serial!` | a worker changes the language every millisecond, and the test fails when the formatter that comes out of the cache names one old language for 25 turns of the event loop (1 ms) while a formatter built afresh names the new one. `WTF::overrideUserPreferredLanguages()` stores the new language, lets `languagesLock` go, and only then, in `languageDidChange()`, bumps the epoch by which a VM entry resets the cache. A worker that loses its processor in between leaves the main thread up to 360 such turns (10 ms, a time slice): the reset is late, not dropped, and no larger number of turns would do. 1,000 runs a cell with `main`'s own shell (b83d8a12, `linux-arm64-lto-hardened`): 0 alone, and 0 pinned to 4, to 2 and to 1 processor with nothing beside it; beside one busy loop a processor 2 on 4, 4 on 2 and 23 on 1; 7 with eight of it at once on 4. `serial!`, the runner's own directive, runs it behind the parallel tests |
@@ -171,6 +171,7 @@ Rules for an edit to an upstream test:
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
+| `stress/new-largeish-contiguous-array-with-size.js` | `--smallHeapRAMFraction=0.25`, `--mediumHeapRAMFraction=0.5` added to `runWithRAMSize` | it allocates 1,000 arrays of 50,000 elements and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. With `USE(MEMORY_FOOTPRINT_API)`, which Bun's builds have, the two fractions are 0.8 and 0.9, so the heap may pass the bound before a full collection; more often, the more processes share the processors. The bound holds for the values of a build without it, which the test names |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
 
@@ -190,9 +191,7 @@ Rules for an edit to an upstream test:
 
 Upstream's tests as upstream has them. A failure with the message given here is not a regression.
 
-| file | message | what it depends on |
-|---|---|---|
-| `stress/new-largeish-contiguous-array-with-size.js` | `Error: heap too big before forced GC: <bytes>` | with `--forceRAMSize=10000000` it allocates 1,000 arrays of 50,000 elements in a loop and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. The bound holds if the concurrent collector gets processor time before the loop ends. Run alone it passes; the more processes share the processors, the more often it fails |
+None at present.
 
 ---
 

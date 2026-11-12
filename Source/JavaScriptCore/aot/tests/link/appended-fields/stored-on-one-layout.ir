@@ -12,13 +12,12 @@
 # CHECK-NOT: field L1.1
 # CHECK: layout L0 {{*}}changes=[]
 # CHECK: layout L1 {{*}}changes=[]
-# Each has a slot out of line, which costs an object nothing until it gets the property. The word of the Extension lies where the stubs look for it.
+# Both lie in the cell, which grows by one size class.
 # RUN(PLAN): plan layouts mechanisms=all
-# PLAN: layout L0 CompiledObject size=32 extension=24
-# PLAN: slot 1 "b" appended JSValue OutOfLine offset=8 record=1
-# PLAN-NEXT: slot 2 "c" appended JSValue OutOfLine offset=16 record=2
-# PLAN-NEXT: extension Cell32 Inline offset=16
-# PLAN-NEXT: extra-properties Cell32 Inline offset=20
+# PLAN: layout L0 CompiledObject size=48
+# PLAN: slot 1 "b" appended JSValue Inline offset=32 record=1
+# PLAN-NEXT: slot 2 "c" appended OptionalInt64 Inline offset=40 record=2
+# PLAN-NEXT: extra-properties Cell32 Inline offset=16
 # PLAN-NEXT: layout L1 CompiledObject size=32 shapes
 # PLAN-NEXT: slot 0 "a"
 # PLAN-NEXT: extra-properties Cell32 Inline offset=16

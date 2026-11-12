@@ -24,6 +24,7 @@
 #include <span>
 #include <wtf/ASCIICType.h>
 #include <wtf/HexNumber.h>
+#include <wtf/JSONValues.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Threading.h>
@@ -470,6 +471,50 @@ static void testStoredStringsOfAnotherFormatAreRefusedByName()
     AOT_TEST_CHECK(ofNoImage.verdict == VerdictOnStoredStrings::CannotBeRead && reportOf(ofNoImage) == "the file holds no image\n"_s);
 }
 
+static void testStoredStringsAsJSONLines()
+{
+    Vector<uint8_t> file = fileThatHoldsTextImage(1);
+    StoredStrings stored = readStoredStrings(file.span(), nullptr, StoredStringsForm::JSONLines);
+    AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::NothingLiesBesideStrings);
+
+    enum class Coverage : uint8_t { None, Strings, UncoveredRun };
+    Vector<Coverage> coverage(FillWith { }, file.size(), Coverage::None);
+    Vector<uint8_t> strings;
+    size_t sizeOfSections = 0;
+    for (String line : String::fromUTF8(byteCast<char8_t>(stored.strings.span())).split('\n')) {
+        RefPtr object = JSON::Value::parseJSON(line)->asObject();
+        size_t offset = *object->getInteger("offset"_s);
+        size_t length = *object->getInteger("length"_s);
+        String type = object->getString("type"_s);
+        if (type == "section"_s)
+            sizeOfSections += length;
+        std::span bytes = file.span().subspan(offset, length);
+        if (type == "string"_s) {
+            String text = object->getString("text"_s);
+            String encoding = object->getString("encoding"_s);
+            strings.append(byteCast<uint8_t>(text.utf8().span()));
+            strings.append(0);
+            if (encoding == "latin1"_s)
+                AOT_TEST_CHECK(text == StringView(byteCast<Latin1Character>(bytes)));
+            else if (encoding == "utf16le"_s) {
+                Vector<char16_t> units(length / sizeof(char16_t));
+                memcpySpan(asMutableByteSpan(units.mutableSpan()), bytes);
+                AOT_TEST_CHECK(text == StringView(units.span()));
+            } else
+                AOT_TEST_CHECK(encoding == "coded"_s && object->getString("section"_s) == "coded text"_s);
+        }
+        if (type != "string"_s && type != "uncovered"_s)
+            continue;
+        Coverage wanted = type == "string"_s ? Coverage::Strings : Coverage::UncoveredRun;
+        for (Coverage& covered : coverage.mutableSpan().subspan(offset, length)) {
+            AOT_TEST_CHECK(covered == Coverage::None || (covered == Coverage::Strings && wanted == Coverage::Strings));
+            covered = wanted;
+        }
+    }
+    AOT_TEST_CHECK(equalSpans(strings.span(), stringsByReaderOfRuntime().span()));
+    AOT_TEST_CHECK(sizeOfSections == static_cast<size_t>(std::ranges::count_if(coverage, [](Coverage covered) { return covered != Coverage::None; })));
+}
+
 static void checkCodedTexts(Vector<String>&& texts)
 {
     std::ranges::sort(texts, [](const String& a, const String& b) {
@@ -484,6 +529,14 @@ static void checkCodedTexts(Vector<String>&& texts)
     AOT_TEST_CHECK(coded.count() == texts.size());
     for (uint32_t number = texts.size(); number--;)
         AOT_TEST_CHECK(equalSpans(std::span<const uint8_t>(coded.at(number).span()), bytes[number]));
+    for (unsigned step : { 1u, 2u, 3u, 7u, 9u }) {
+        CodedTexts::Cursor cursor(coded);
+        for (uint32_t number = 0; number < texts.size(); number += step) {
+            AOT_TEST_CHECK(equalSpans(cursor.at(number), bytes[number]));
+            AOT_TEST_CHECK(equalSpans(cursor.at(number), bytes[number]));
+            AOT_TEST_CHECK(equalSpans(cursor.at(number / 2), bytes[number / 2]));
+        }
+    }
 }
 
 static void testCodedTexts()
@@ -646,6 +699,7 @@ std::span<const NativeTest> imageTextTests()
         { "image/text/stored-strings-are-read-out-of-a-file"_s, testStoredStringsAreReadOutOfFile },
         { "image/text/stored-strings-of-another-format-are-refused-by-name"_s, testStoredStringsOfAnotherFormatAreRefusedByName },
         { "image/text/stored-strings-of-each-image-in-a-file"_s, testStoredStringsOfEachImageInFile },
+        { "image/text/stored-strings-as-json-lines"_s, testStoredStringsAsJSONLines },
         { "image/text/string-only-shown-has-no-header"_s, testStringOnlyShownHasNoHeader },
         { "image/text/texts-that-add-to-one-another-lie-at-the-front-of-the-longest"_s, testTextsThatAddToOneAnotherLieAtFrontOfLongest },
     };

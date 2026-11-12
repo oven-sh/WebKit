@@ -313,8 +313,19 @@ static void testFunctionStartsInGroups()
             Vector<uint8_t> bytes = FunctionStarts::encode(starts.span());
             AOT_TEST_CHECK(!(bytes.size() % sizeof(uint32_t)) && bytes.size() / sizeof(uint32_t) >= FunctionStarts::numberOfWordsWithoutLists(count));
             FunctionStarts decoded(reinterpret_cast<const uint32_t*>(bytes.span().data()), count);
-            for (size_t index = 0; index < count; ++index)
+            uint32_t lastGroup = static_cast<uint32_t>(FunctionStarts::numberOfGroupsFor(count) - 1);
+            for (uint32_t index = 0; index < count; ++index) {
                 AOT_TEST_CHECK(decoded[index] == starts[index]);
+                uint32_t end = index + 1 < count ? starts[index + 1] : starts[index] + distance;
+                for (uint32_t offset : { starts[index], end - 1 }) {
+                    if (offset < starts[index])
+                        continue;
+                    for (uint32_t firstGroup : { 0u, index >> FunctionStarts::groupShift }) {
+                        for (uint32_t last : { index >> FunctionStarts::groupShift, lastGroup })
+                            AOT_TEST_CHECK(decoded.find(offset, firstGroup, last) == index);
+                    }
+                }
+            }
             AOT_TEST_CHECK(decoded[count] == std::numeric_limits<uint32_t>::max());
         }
     }

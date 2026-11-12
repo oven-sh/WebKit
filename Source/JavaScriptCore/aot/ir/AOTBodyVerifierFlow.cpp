@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTTypeNarrowing.h"
@@ -16,7 +17,6 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/MakeString.h>
 

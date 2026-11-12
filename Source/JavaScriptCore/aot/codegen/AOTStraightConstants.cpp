@@ -54,6 +54,7 @@ static void generateStringConstant(StraightEmitter& emitter, const BodyValue& va
     if (text.empty())
         jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), cell);
     else if (std::optional<uint8_t> character = singleLatin1CharacterInStraightForm(text)) {
+        emitter.recordInlined(text);
         jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(singleCharacterStrings)), cell);
         jit.loadPtr(CCallHelpers::Address(cell, *character * sizeof(JSString*)), cell);
     } else

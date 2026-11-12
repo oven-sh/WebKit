@@ -38,6 +38,7 @@
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
+#include "ErrorInstance.h"
 #include "FunctionPrototype.h"
 #include "GetterSetter.h"
 #include "JSCConfig.h"
@@ -979,7 +980,19 @@ size_t VMPropertyCaches::removeDeadEntries(VM& vm, CollectionScope)
         filter = { };
         ++numberRemoved;
     }
+    forgetCreations();
     return numberRemoved;
+}
+
+void VMPropertyCaches::forgetCreations()
+{
+    bool hasWrapped = !++m_creationGeneration;
+    m_creationGeneration += hasWrapped;
+    for (Instance* instance : m_vm.aotState().instances) {
+        instance->propertyCaches.creationGeneration = m_creationGeneration;
+        if (hasWrapped && instance->objects.keyOrderRuns) [[unlikely]]
+            zeroSpan(std::span { instance->objects.keyOrderRuns, sizeOfKeyOrderRunTable });
+    }
 }
 
 VMPropertyCaches::~VMPropertyCaches()
@@ -1056,21 +1069,32 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
 {
     Structure* structure = prototype->structure();
     const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, structure->realm());
+    forgetCreations();
     if (!identifiers || !listsEveryNameInItsTable(structure) || !structure->storedPrototype().isNull()) {
         m_namesOfObjectPrototypes.fill(UINT64_MAX);
+        m_objectPrototypeStoreStoppers.fill(UINT64_MAX);
         return;
     }
-    auto add = [&](UniquedStringImpl* uid) {
+    auto add = [&](UniquedStringImpl* uid, bool stopsStores) {
+        if (stopsStores && uid != m_vm.propertyNames->underscoreProto.impl())
+            setBitOfName(m_objectPrototypeStoreStoppers, FieldTableEntry::noName);
         std::optional<uint32_t> number = identifiers->numberOf(uid);
-        if (number && FieldTableEntry::hasColumn(*number))
-            setBitOfName(m_namesOfObjectPrototypes, *number);
+        if (!number || !FieldTableEntry::hasColumn(*number))
+            return;
+        setBitOfName(m_namesOfObjectPrototypes, *number);
+        if (stopsStores)
+            setBitOfName(m_objectPrototypeStoreStoppers, *number);
+    };
+    auto stopsStores = [&](unsigned attributes) {
+        return structure->typeInfo().overridesPut() || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue;
     };
     if (uidOrNull) {
-        add(uidOrNull);
+        unsigned attributes = 0;
+        add(uidOrNull, isValidOffset(structure->get(m_vm, uidOrNull, attributes)) && stopsStores(attributes));
         return;
     }
     structure->forEachProperty(m_vm, [&](const auto& entry) {
-        add(entry.key());
+        add(entry.key(), stopsStores(entry.attributes()));
         return true;
     });
 }
@@ -1095,8 +1119,10 @@ void VMPropertyCaches::publishWords(Instance& instance) const
     words.absenceFilters = const_cast<AbsenceFilter*>(m_absenceFilters.data());
     words.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
     words.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
+    words.creationGeneration = m_creationGeneration;
     words.namesChangedOnChains = m_namesChangedOnChains.data();
     words.namesOfObjectPrototypes = m_namesOfObjectPrototypes.data();
+    words.objectPrototypeStoreStoppers = m_objectPrototypeStoreStoppers.data();
     words.missesOfPairs = const_cast<uint8_t*>(m_missesOfPairs.data());
     words.namesOfTexts = m_namesOfTexts.data();
     words.infoOfClassPrototypes = ClassPrototype::info();
@@ -1185,7 +1211,7 @@ bool VMPropertyCaches::storeCreatesOwnField(const Object& object, uint32_t name)
     if (!FieldTableEntry::hasColumn(name))
         return false;
     if (object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
-        return !mayBeNameOfObjectPrototype(name);
+        return !mayObjectPrototypeStopStore(name);
     const AbsenceFilter& filter = absenceFilterFor(object.structureID());
     return filter.structureID == object.structureID().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.letsStoresPass(name)
         && (filter.changesUnderNames == m_changesUnderNamesOnChains || !wasChangedOnSomeChain(name));
@@ -1249,6 +1275,7 @@ void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringI
         instance->propertyCaches.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
         instance->propertyCaches.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
     }
+    forgetCreations();
 }
 
 void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
@@ -1487,6 +1514,7 @@ PropertyCaches::PropertyCaches(State& state)
     , m_siteCaches(state, m_tables.customAccessors())
     , m_answersAtSites(state, m_siteCaches)
     , m_structuresBelowBuiltinClasses(state)
+    , m_errorsWithMessage(state)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
@@ -1600,7 +1628,7 @@ static bool belongsToOneObject(Structure* structure)
     if (structure->isDictionary() || structure->typeInfo().type() == GlobalProxyType)
         return true;
     const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
-    return compiled && ((compiled->extraPropertiesStructure() && !compiled->listsEveryExtraProperty()) || compiled->hasKeyOrderOfOneObject());
+    return compiled && ((compiled->extraPropertiesStructure() && !compiled->listsEveryExtraProperty()) || compiled->hasKeyOrderOfOneObject() || compiled->heldExtraProperties());
 }
 
 void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& answer)
@@ -1624,6 +1652,8 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
         m_state.chainDependents->add(answer.changeableObjects.span(), { access.name.uid, structure->id().bits(), m_tablesOwnerID });
     if (answer.newStructure)
         didAddProperty(structure, answer.newStructure);
+    if (access.access == SlotAccess::Read)
+        m_errorsWithMessage.keepIfRead(structure, access.name.uid);
     if (access.access == SlotAccess::Read)
         keepIfBelowBuiltinClass(structure);
 }
@@ -1755,22 +1785,67 @@ bool hasFewEnoughNamesToBeFilled(Structure* structure)
     return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()) <= maxNamesCopiedIntoTable;
 }
 
-static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
+static bool isBeingFilled(JSObject* object)
 {
-    if (!object)
-        return;
     Structure* structure = object->structure();
-    if (!structure->isDictionary() || structure->isUncacheableDictionary() || structure->hasBeenFlattenedBefore())
+    return structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore();
+}
+
+bool FirstAdditions::adoptSharedStructure(VM& vm, ObjectBeingFilled& filled)
+{
+    Structure* structure = filled.object->structure();
+    if (!filled.sharedStructure || filled.object->type() != FinalObjectType || structure->mayBePrototype() || !structure->isStructureExtensible())
+        return false;
+    Structure* shared = filled.sharedStructure.decode();
+    bool isShared = true;
+    structure->forEachProperty(vm, [&](const auto& entry) {
+        if (entry.offset() > shared->maxOffset()) {
+            PropertyOffset offset = invalidOffset;
+            Structure* next = Structure::addPropertyTransitionToExistingStructure(shared, entry.key(), entry.attributes(), offset);
+            isShared = next && !next->isDictionary() && offset == entry.offset();
+            if (isShared)
+                shared = next;
+        }
+        return isShared;
+    });
+    filled.sharedStructure = shared->id();
+    if (!isShared || shared->maxOffset() != structure->maxOffset() || shared->inlineCapacity() != structure->inlineCapacity() || shared->indexingModeIncludingHistory() != structure->indexingModeIncludingHistory() || shared->realm() != structure->realm() || shared->hasMonoProto() != structure->hasMonoProto() || shared->hasPolyProto() || shared->storedPrototype() != structure->storedPrototype() || shared->mayBePrototype() || shared->isWatchingReplacement() || !shared->isStructureExtensible() || shared->hasImmutableProperties() != structure->hasImmutableProperties())
+        return false;
+    uint32_t numberOfNames = 0;
+    structure->forEachProperty(vm, [&](const auto& entry) {
+        ++numberOfNames;
+        unsigned attributes;
+        isShared = !entry.attributes() && shared->getWithoutMaterializing(entry.key(), attributes) == entry.offset() && !attributes;
+        return isShared;
+    });
+    if (!isShared || numberOfNames != numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()))
+        return false;
+    filled.object->setStructure(vm, shared);
+    return true;
+}
+
+void FirstAdditions::adoptSharedStructure(VM& vm, JSObject* object)
+{
+    for (ObjectBeingFilled& filled : m_objectsBeingFilled) {
+        if (filled.object == object && isBeingFilled(object) && adoptSharedStructure(vm, filled))
+            filled = { };
+    }
+}
+
+void FirstAdditions::finishFilling(VM& vm, ObjectBeingFilled filled)
+{
+    if (!filled.object || !isBeingFilled(filled.object) || adoptSharedStructure(vm, filled))
         return;
-    structure->flattenDictionaryStructure(vm, object);
+    Structure* structure = filled.object->structure();
+    structure->flattenDictionaryStructure(vm, filled.object);
     didFinishFilling(structure);
 }
 
 bool FirstAdditions::forget(JSObject* object)
 {
-    for (JSObject*& filled : m_objectsBeingFilled) {
-        if (filled == object) {
-            filled = nullptr;
+    for (ObjectBeingFilled& filled : m_objectsBeingFilled) {
+        if (filled.object == object) {
+            filled = { };
             return true;
         }
     }
@@ -1785,29 +1860,31 @@ bool FirstAdditions::mayBeginToFill(JSObject* object) const
     return times > timesMask || times < maxTimesOneObjectIsFilled;
 }
 
-void FirstAdditions::didBeginToFill(VM& vm, JSObject* object)
+void FirstAdditions::didBeginToFill(VM& vm, JSObject* object, Structure* structureBefore)
 {
     uintptr_t& times = m_timesObjectsBeganToFill[placeOfTimes(object)];
     times = (times ^ std::bit_cast<uintptr_t>(object)) > timesMask ? std::bit_cast<uintptr_t>(object) | 1 : times + 1;
-    makeFlatWhatWasFilled(vm, std::exchange(m_objectsBeingFilled[m_numberOfObjectsFilled++ % numberOfObjectsBeingFilled], object));
+    finishFilling(vm, std::exchange(m_objectsBeingFilled[m_numberOfObjectsFilled++ % numberOfObjectsBeingFilled], ObjectBeingFilled { object, structureBefore->id() }));
     vm.aotState().hasObjectsBeingFilled = true;
 }
 
 void FirstAdditions::finishFilling(VM& vm)
 {
-    for (JSObject*& object : m_objectsBeingFilled)
-        makeFlatWhatWasFilled(vm, std::exchange(object, nullptr));
+    for (ObjectBeingFilled& filled : m_objectsBeingFilled)
+        finishFilling(vm, std::exchange(filled, ObjectBeingFilled { }));
 }
 
 size_t FirstAdditions::removeDeadEntries(VM& vm, CollectionScope)
 {
     m_timesObjectsBeganToFill.fill(0);
     size_t numberOfDeadObjects = 0;
-    for (JSObject*& object : m_objectsBeingFilled) {
-        if (object && !vm.heap.isMarked(object)) {
-            object = nullptr;
+    for (ObjectBeingFilled& filled : m_objectsBeingFilled) {
+        if (filled.object && !vm.heap.isMarked(filled.object)) {
+            filled = { };
             ++numberOfDeadObjects;
         }
+        if (filled.sharedStructure && !vm.heap.isMarked(filled.sharedStructure.decode()))
+            filled.sharedStructure = { };
     }
     return numberOfDeadObjects;
 }
@@ -2674,7 +2751,7 @@ static std::optional<AnswersAtSites::WhatStandsAbove> findWhatStandsAboveFieldLe
     }
     case Slot::Kind::FieldOrInherited: {
         JSCell* holder = MarkedBlockCage::decode(cageBase, slot.fieldAndHolder.holder);
-        if (walk.result != ChainWalkResult::Found || walk.holder != holder || slot.has(Slot::inheritsGetter) || slot.has(Slot::emptySlotMayBeUndefined) || holder->structure()->isDictionary())
+        if (walk.result != ChainWalkResult::Found || walk.holder != holder || slot.has(Slot::inheritsGetter) || slot.has(Slot::emptySlotMayBeUndefined))
             return std::nullopt;
         int32_t wordIndex = slot.wordIndex();
         if (slot.has(Slot::inheritedIsOutOfLine))
@@ -2706,6 +2783,38 @@ bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, SiteUse use, Object& 
     ensureChangesAreReported(walk.changeableObjects.span());
     m_answersAtSites.fillAboveFieldLeftOut(place, structure->id(), *above, name.uid, walk.changeableObjects.span());
     return true;
+}
+
+ErrorsWithMessage::ErrorsWithMessage(State& state)
+    : m_state(state)
+{
+    state.caches->add(CacheKind::WeakByKey, "errors with a message"_s, *this);
+}
+
+size_t ErrorsWithMessage::removeDeadEntries(VM& vm, CollectionScope)
+{
+    size_t numberCleared = 0;
+    for (uint32_t& place : m_state.instance.propertyCaches.errorsWithMessage) {
+        if (!place || vm.heap.isMarked(std::bit_cast<StructureID>(place).decode()))
+            continue;
+        place = 0;
+        ++numberCleared;
+    }
+    return numberCleared;
+}
+
+void ErrorsWithMessage::keepIfRead(Structure* structure, UniquedStringImpl* uid)
+{
+    VM& vm = *m_state.instance.vm;
+    if (uid != vm.propertyNames->message.impl() || structure->classInfoForCells() != ErrorInstance::info() || structure->isDictionary())
+        return;
+    uint32_t& place = m_state.instance.propertyCaches.placeOfErrorWithMessage(structure->id().bits());
+    if (place)
+        return;
+    unsigned attributes = 0;
+    std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
+    if (offset && *offset == firstOutOfLineOffset && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        place = structure->id().bits();
 }
 
 StructuresBelowBuiltinClasses::StructuresBelowBuiltinClasses(State& state)
@@ -2820,16 +2929,16 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
             if (group.rows[index].structure)
                 continue;
             hidden = &group.rows[index];
-            hidden->structure = id | ReadGroupCache::markOfHiddenRow;
-            std::ranges::fill(hidden->places, ReadGroupCache::placeIsNotKnown);
+            hidden->claim(id);
+            hidden->hide();
             ++group.cameInLastSample[index];
         }
         group.samplesThatHadRow += !!hidden;
         if (!--group.samplesLeft) {
-            for (unsigned index = 0; index < ReadGroupCache::numberOfRows; ++index)
-                group.rows[index].structure &= ~ReadGroupCache::markOfHiddenRow;
+            for (ReadGroupCache::Row& row : group.rows)
+                row.show();
             if (group.samplesThatHadRow * 3 < ReadGroupCache::numberOfSamples)
-                group.hasGivenUp = 1;
+                group.giveUp();
             group.missesLeft = ReadGroupCache::firstWait << group.doublings;
             if (group.doublings < ReadGroupCache::maxDoublings)
                 ++group.doublings;
@@ -2840,7 +2949,7 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
     static constexpr uint8_t waitsWhileNothingIsClaimed = 3;
     if (!id && std::ranges::none_of(group.rows, [](const ReadGroupCache::Row& row) { return !!row.structure; })) {
         if (group.doublings >= waitsWhileNothingIsClaimed)
-            group.hasGivenUp = 1;
+            group.giveUp();
         else
             group.missesLeft = ReadGroupCache::firstWait << group.doublings++;
         return nullptr;
@@ -2864,14 +2973,12 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
         }
         claimed = &group.rows[fewest];
     }
-    if (claimed) {
-        claimed->structure = id;
-        std::ranges::fill(claimed->places, ReadGroupCache::placeIsNotKnown);
-    }
+    if (claimed)
+        claimed->claim(id);
     if (!id || putsOutRow) {
         for (ReadGroupCache::Row& row : group.rows) {
             if (row.structure)
-                row.structure |= ReadGroupCache::markOfHiddenRow;
+                row.hide();
         }
         group.samplesLeft = ReadGroupCache::numberOfSamples;
         group.samplesThatHadRow = 0;
@@ -2880,23 +2987,28 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
     return claimed;
 }
 
-void PropertyCaches::fillReadGroupOffset(JSCell* base, uint32_t identifierNumber, ReadGroupCache::Row& row, uint32_t index)
+JSValue PropertyCaches::fillReadGroupOffset(JSCell* base, uint32_t identifierNumber, ReadGroupCache::Row& row, uint32_t indexAndNumberOfReads)
 {
+    uint32_t index = indexAndNumberOfReads % (ReadGroupCache::numberOfPlaces + 1);
+    uint32_t numberOfReads = indexAndNumberOfReads / (ReadGroupCache::numberOfPlaces + 1);
     Structure* structure = WTF::opaque(base->structure());
-    RELEASE_ASSERT(index < ReadGroupCache::numberOfPlaces);
+    RELEASE_ASSERT(index < numberOfReads && numberOfReads <= ReadGroupCache::numberOfPlaces);
+    row.numberOfReads = numberOfReads;
     if ((row.structure & ~ReadGroupCache::markOfHiddenRow) != structure->id().bits())
-        return;
+        return { };
     int16_t& place = row.places[index];
     place = ReadGroupCache::placeIsAskedOfStub;
     unsigned attributes;
     std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(nameOf(identifierNumber).uid, attributes);
     if (!offset || !isValidOffset(*offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
-        return;
+        return { };
     static_assert(!(JSObject::offsetOfInlineStorage() % sizeof(EncodedJSValue)));
     ptrdiff_t wordIndex = isInlineOffset(*offset) ? static_cast<ptrdiff_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offsetInInlineStorage(*offset)) : static_cast<ptrdiff_t>(offsetInButterfly(*offset));
-    if (wordIndex <= INT16_MIN || wordIndex > INT16_MAX || (wordIndex > 0) != isInlineOffset(*offset) || !wordIndex)
-        return;
-    place = static_cast<int16_t>(wordIndex);
+    if (wordIndex > INT16_MIN && wordIndex <= INT16_MAX && (wordIndex > 0) == isInlineOffset(*offset) && wordIndex)
+        place = static_cast<int16_t>(wordIndex);
+    if (!(row.structure & ReadGroupCache::markOfHiddenRow))
+        row.show();
+    return valueAtOffset(asObject(base), *offset);
 }
 
 void PropertyCaches::fileOwnPlainValueUnlessFiled(JSObject* base, uint32_t identifierNumber)
@@ -2924,6 +3036,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
     CachedName name = nameOf(identifierNumber);
+    if (isRead(use))
+        m_errorsWithMessage.keepIfRead(structure, name.uid);
     if (compiledObjectStructureOrNull(structure))
         holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base), "caching a lookup at a site"_s);
     if (use == SiteUse::AbsenceAmongExtraProperties) {
@@ -3072,6 +3186,43 @@ static void addPropertyByTransition(VM& vm, JSObject* target, Structure* newStru
         target->growOutOfLineStorageForTransition(vm, newStructure);
     target->putDirectOffset(vm, offset, value);
     target->setStructure(vm, newStructure);
+}
+
+static bool isOrdinaryFunction(Instance& instance, JSFunction* function)
+{
+    if (function->rareData())
+        return false;
+    JSCell* executable = function->executable();
+    auto isOfKind = [&](FunctionTables::ExecutableKind kind) {
+        return executable == instance.closures.executables[static_cast<unsigned>(kind)];
+    };
+    return isOfKind(FunctionTables::ExecutableKind::Constructible) || isOfKind(FunctionTables::ExecutableKind::NotConstructible) || executable == instance.realm.boundFunctionExecutable;
+}
+
+bool tryStoreBySlot(Instance& instance, JSObject* target, UniquedStringImpl* uid, JSValue value)
+{
+    VM& vm = *instance.vm;
+    Structure* structure = target->structure();
+    if (structure->isDictionary())
+        return false;
+    const Slot* filed = instance.state->propertyCaches->findByKey(structure, uid, SlotAccess::Store);
+    if (!filed)
+        return false;
+    Slot slot = *filed;
+    switch (slot.kind) {
+    case Slot::Kind::Value:
+    case Slot::Kind::FarValue:
+        target->putDirectOffset(vm, slot.offsetInStorage(), value);
+        return true;
+    case Slot::Kind::Transition:
+        if (slot.transition.newStorageCapacity && !structure->outOfLineCapacity() && isJSFunctionType(target->type()) && !isOrdinaryFunction(instance, uncheckedDowncast<JSFunction>(target)))
+            return false;
+        addPropertyByTransition(vm, target, WTF::opaque(slot.transition.newStructureID.decode()), slot.offsetInStorage(), value);
+        holdClosureToLackingName(vm, target, uid);
+        return true;
+    default:
+        return false;
+    }
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance* instance, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t))

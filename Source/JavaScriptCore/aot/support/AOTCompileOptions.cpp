@@ -190,7 +190,8 @@ private:
         bool drawsBySeed = hasFlag(m_wire.testing, TestingSwitch::ShuffleBlockFrequencies) || hasFlag(m_wire.testing, TestingSwitch::ShuffleExpectedTypes)
             || hasFlag(m_wire.testing, TestingSwitch::WidenFlowNodes) || hasFlag(m_wire.testing, TestingSwitch::ShuffleChoices);
         bool forcesWay = hasFlag(m_wire.testing, TestingSwitch::ForceWalkMode);
-        if (drawsBySeed ? !m_wire.shuffleSeed : m_wire.shuffleSeed && !shouldFailSpeculations && !forcesWay)
+        bool misstatesFact = hasFlag(m_wire.injectedFaults, FaultInjection::MisstateFact);
+        if (drawsBySeed ? !m_wire.shuffleSeed : m_wire.shuffleSeed && !shouldFailSpeculations && !forcesWay && !misstatesFact)
             reportInvalid(m_wire.shuffleSeed);
         if (forcesWay != !!m_wire.forcedWalkModePeriod)
             reportInvalid(m_wire.forcedWalkModePeriod);
@@ -206,6 +207,9 @@ private:
         options.loopVisitAbortPhase = m_wire.loopVisitAbortPhase;
         if (shouldFailSpeculations != !!m_wire.speculationFailurePeriod)
             reportInvalid(m_wire.speculationFailurePeriod);
+        if (misstatesFact != !!m_wire.misstatedFact)
+            reportInvalid(m_wire.misstatedFact);
+        options.misstatedFact = m_wire.misstatedFact;
         options.shuffleSeed = m_wire.shuffleSeed;
         options.speculationFailurePeriod = m_wire.speculationFailurePeriod;
     }

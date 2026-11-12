@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTLinkFlow.h"
 
 namespace JSC { namespace AOT { namespace Typed {

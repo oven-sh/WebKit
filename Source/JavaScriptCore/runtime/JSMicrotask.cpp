@@ -1207,7 +1207,8 @@ static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSM
 static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleRegistryEntry>(argument2)->takeAsyncContext());
+    JSValue asyncContext = uncheckedDowncast<ModuleRegistryEntry>(argument2)->takeAsyncContext();
+    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
 #endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1225,6 +1226,21 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
 #endif
     if (status == JSPromise::Status::Fulfilled) {
         auto moduleData = argument1;
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleData)) {
+            JSPromise* source = compiled->sourceAfterRelease(globalObject);
+            if (scope.exception()) [[unlikely]] {
+                modulePromise->rejectWithCaughtException(vm, scope);
+                return;
+            }
+            if (source) [[unlikely]] {
+                // This job runs again behind the source, and takes the async context again.
+                entry->giveBackAsyncContext(vm, asyncContext);
+                source->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, entry);
+                return;
+            }
+        }
+#endif
         JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
         if (scope.exception()) {
             modulePromise->rejectWithCaughtException(vm, scope);
@@ -2209,7 +2225,16 @@ IGNORE_WARNINGS_END
 
 static void runPromiseResolveThenableJobFast(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if ENABLE(AOT)
+    // Compiled code queues the value of a fulfilled promise that nothing else refers to in place of the promise.
+    auto* promise = dynamicDowncast<JSPromise>(argument0);
+    if (!promise) {
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->fulfillPromise(vm, argument0);
+    }
+#else
     auto* promise = uncheckedDowncast<JSPromise>(argument0);
+#endif
     auto* promiseToResolve = uncheckedDowncast<JSPromise>(argument1);
 
     if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]

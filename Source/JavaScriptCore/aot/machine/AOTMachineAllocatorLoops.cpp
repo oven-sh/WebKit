@@ -24,24 +24,24 @@ struct ValueLiveThroughLoop {
 
 static Position firstReadAtOrBehindStartOfLoop(const Allocator& allocator, const Operation* value, const Loop& loop)
 {
-    const Liveness& liveness = allocator.m_liveness;
-    for (uint32_t index = allocator.m_values[value->index()].nextUse; index; index = liveness.use(index).next) {
-        Position position = liveness.use(index).position;
-        if (position >= loop.begin)
-            return position;
-    }
-    return noPosition;
+    uint32_t read = allocator.findReadFrom(value, loop.begin);
+    return read ? allocator.m_liveness.use(read).position : noPosition;
 }
 
 static bool isReadInsideLoopOutsideRareRegions(const Allocator& allocator, const Operation* value, const Loop& loop, bool loopIsRare)
 {
     const Liveness& liveness = allocator.m_liveness;
-    for (uint32_t index = allocator.m_values[value->index()].nextUse; index; index = liveness.use(index).next) {
+    unsigned stepsLeft = 64;
+    for (uint32_t index = allocator.findReadFrom(value, loop.begin); index; index = liveness.use(index).next) {
         Position position = liveness.use(index).position;
         if (position >= loop.end)
             return false;
-        if (position >= loop.begin && (loopIsRare || !liveness.isUseInRareRegion(index)))
+        if (loopIsRare || !liveness.isUseInRareRegion(index))
             return true;
+        if (!--stepsLeft) [[unlikely]] {
+            uint32_t read = allocator.findReadOutsideUnlikelyRegions(value, position);
+            return read && liveness.use(read).position < loop.end;
+        }
     }
     return false;
 }

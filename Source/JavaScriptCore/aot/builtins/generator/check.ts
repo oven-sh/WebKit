@@ -30,6 +30,7 @@ import type {
   ModelTypePart,
   TableModel,
 } from "./model.ts";
+import { resultFieldLayouts } from "./model.ts";
 import { globalThisPath } from "./paths.ts";
 import { cap } from "./support.ts";
 import {
@@ -491,7 +492,7 @@ export function checkFieldsHoldingOnlyWhatIsStored(overload: ModelOverload, prob
         overload,
         `field ${place.index} of the result is said to hold only what is stored there by a record that stores nothing into it`,
       );
-    else if (stored.some(other => other.index === place.index && !other.holdsOnlyWhatIsStored))
+    else if (stored.some(other => other.index === place.index && other.isOfElements === place.isOfElements && !other.holdsOnlyWhatIsStored))
       report(
         problems,
         overload,
@@ -534,14 +535,14 @@ function checkResultPlaces(overload: ModelOverload, problems: Problems): void {
   checkPlacesHoldingWhatIsThrown(overload, problems);
   checkResultAdmitsWhatRecordsBring(overload, problems);
   const classes = resultClassesOf(overload);
-  const layouts = overload.result.type.parts.flatMap(part => (part.part === "Layout" ? [part.layout] : []));
   for (const place of placesOf(overload)) {
     if (place.place === "ResultSlot") {
       const { slot } = place;
       if (classes.length > 0 && classes.every(resultClass => resultClass.slots.includes(slot))) continue;
       report(problems, overload, `${slot.name.text} is not a slot of every class of the result`);
     } else if (place.place === "ResultField") {
-      const { index } = place;
+      const { index, isOfElements } = place;
+      const layouts = resultFieldLayouts(overload.result.type, isOfElements);
       if (layouts.length > 0 && layouts.every(layout => index < layout.fields.length)) continue;
       report(problems, overload, `${index} is not a field of every layout of the result`);
     }

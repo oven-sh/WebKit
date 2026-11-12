@@ -208,6 +208,10 @@ public:
     void load64(CodeSymbol, GPRReg dest);
 #if CPU(X86_64)
     void loadDouble(CodeSymbol, FPRReg dest);
+    void addDouble(CodeSymbol, FPRReg dest);
+    void subDouble(CodeSymbol, FPRReg dest);
+    void mulDouble(CodeSymbol, FPRReg dest);
+    void divDouble(CodeSymbol, FPRReg dest);
     void compare64(GPRReg left, CodeSymbol);
 #endif
     ALWAYS_INLINE uint32_t call(CodeSymbol symbol)

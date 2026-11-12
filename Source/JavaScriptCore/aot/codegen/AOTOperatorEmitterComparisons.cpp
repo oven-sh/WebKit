@@ -10,6 +10,7 @@
 
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentationRules.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTThrowEmitter.h"
 
@@ -91,10 +92,10 @@ static Condition compareNonNegative(Output& out, Relation relation, LValue left,
 Condition OperatorEmitter::relationOnBigInts(const ValueContext& value, Relation relation, CellPointer left, CellPointer right)
 {
     auto callRelation = [&] {
-        return callOperation<Condition>(value, traitsOfRelation(relation).operation, { boxCell(left), boxCell(right) });
+        return asBoolean([&](BranchTargets targets) {
+            branchOnRelationByStub(value, relation, boxCell(left), boxCell(right), targets);
+        });
     };
-    if (!generator().isInLoop(value.block()))
-        return callRelation();
     Word32 leftLength = loadField<Word32>(left, m_heaps.JSBigInt_length);
     Word32 rightLength = loadField<Word32>(right, m_heaps.JSBigInt_length);
     Word32 signs = bitAnd(bitOr(loadByte(left, m_heaps.JSBigInt_sign), loadByte(right, m_heaps.JSBigInt_sign)), TypeInfoPerCellBit);
@@ -139,11 +140,34 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
         return operand.is<Word32>() || (operand.is<Boxed>() && type.primitives & Primitive::Integer);
     };
     auto int32Of = [&](Operand operand) {
-        return operand.is<Boxed>() ? low32(operand.as<Boxed>()) : operand.as<Word32>();
+        return operand.is<Boxed>() ? int32InBox(operand.as<Boxed>()) : operand.as<Word32>();
     };
 
     if (left.is<Word32>() && right.is<Word32>()) {
         defineTest(value, compare(relation, left.as<Word32>(), right.as<Word32>()));
+        return;
+    }
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    std::optional<ConversionEmitter::ComparedInteger> leftInteger = relation ? conversions.findComparedInteger(left) : std::nullopt;
+    std::optional<ConversionEmitter::ComparedInteger> rightInteger = leftInteger ? conversions.findComparedInteger(right) : std::nullopt;
+    if (rightInteger && (leftInteger->mayBeMarker || rightInteger->mayBeMarker)) {
+        bool leftIsGreater = *relation == Relation::Greater || *relation == Relation::GreaterOrEqual;
+        const ConversionEmitter::ComparedInteger& greater = leftIsGreater ? *leftInteger : *rightInteger;
+        Condition holds = compare(relation, leftInteger->value, rightInteger->value);
+        if (emittersCheckProofs()) {
+            Condition holdsOfIntegers = greater.mayBeMarker ? logicalAnd(holds, logicalNot(conversions.isMarker(Operand(Representation::OptionalInt64, greater.value.value())))) : holds;
+            emitter<ThrowEmitter>().requireOrCrash(value, equal(holdsOfIntegers, compare(relation, Number(left.value), Number(right.value))), std::nullopt, ProofSource::OtherOperation);
+        }
+        if (!greater.mayBeMarker) {
+            defineTest(value, holds);
+            return;
+        }
+        defineTestByBranching(value, [&](BranchTargets targets) {
+            LBasicBlock integersHold = newBlock();
+            branch(holds, { normalEdge(integersHold), targets.notTaken });
+            m_out.appendTo(integersHold);
+            branch(conversions.isMarker(Operand(Representation::OptionalInt64, greater.value.value())), { targets.notTaken, targets.taken });
+        });
         return;
     }
     if (left.is<Integer>() || right.is<Integer>()) {
@@ -156,7 +180,7 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
             LBasicBlock numberCase = newBlock();
             m_out.branch(isInt32(boxed).value(), normalEdge(int32Case), unlikelyEdge(numberCase));
             m_out.appendTo(int32Case);
-            Integer wide = signExtended(low32(boxed));
+            Integer wide = signExtended(int32InBox(boxed));
             branch(compare(relation, integerIsOnRight ? wide : integer, integerIsOnRight ? integer : wide), targets);
             m_out.appendTo(numberCase);
             Number unboxed = asNumber(boxed, integerIsOnRight ? leftType : rightType, PayloadOfNaN::Stays);
@@ -194,11 +218,11 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
     Condition result;
     switch (value->form()) {
     case OperatorForm::NumberAndValue:
-        if (generateRelationOfIntegerAndValue(value, relation) || generateRelationOfBoxedNumberAndValue(value, relation) || generateRelationOfDoubleAndValue(value, relation))
+        if (generateRelationOfIntegerAndValue(value, relation) || generateRelationOfBoxedNumberAndValue(value, relation) || generateMixedDoubleRelation(value, relation))
             return;
         [[fallthrough]];
     case OperatorForm::Generic:
-        if (value->form() == OperatorForm::Generic && generateRelationOfValuesThatAreLikelyInt32s(value, relation))
+        if (value->form() == OperatorForm::Generic && (generateRelationWithLikelyZero(value, relation) || generateRelationOfValuesThatAreLikelyInt32s(value, relation)))
             return;
         result = relationOnValues(value, relation);
         break;
@@ -221,10 +245,19 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
         m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
         generateComparisonOfNumbers(value, relation);
         return;
-    case OperatorForm::BigInts:
-        m_out.noteForm(Form::Runtime, StateOfKnowledge::BigInts);
-        result = relationOnBigInts(value, relation, in<CellPointer>(left), in<CellPointer>(right));
+    case OperatorForm::BigInts: {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::BigInts);
+        CellPointer leftBigInt = in<CellPointer>(left);
+        CellPointer rightBigInt = in<CellPointer>(right);
+        if (!generator().runsRepeatedly(value.block())) {
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                branchOnRelationByStub(value, relation, boxCell(leftBigInt), boxCell(rightBigInt), targets);
+            });
+            return;
+        }
+        result = relationOnBigInts(value, relation, leftBigInt, rightBigInt);
         break;
+    }
     case OperatorForm::Strings: {
         m_out.noteForm(Form::Closed, StateOfKnowledge::Strings);
         CellPointer leftString = in<CellPointer>(left);
@@ -332,7 +365,7 @@ bool OperatorEmitter::generateRelationOfIntegerAndValue(const ValueContext& valu
         bool asksStub = width == Representation::Int32;
         m_out.branch(isInt32(other).value(), normalEdge(int32Case), asksStub ? rareEdge(otherCase) : unlikelyEdge(otherCase));
         m_out.appendTo(int32Case);
-        Word32 otherInt32 = low32(other);
+        Word32 otherInt32 = int32InBox(other);
         Operand otherInteger = width == Representation::Int32 ? Operand(otherInt32) : Operand(signExtended(otherInt32));
         branch(withIntegerOperands(numberIsOnRight ? otherInteger : integer, numberIsOnRight ? integer : otherInteger, [&](auto x, auto y) {
             return compare(relation, x, y);
@@ -342,7 +375,7 @@ bool OperatorEmitter::generateRelationOfIntegerAndValue(const ValueContext& valu
             Boxed boxedInteger = boxInt32(integer.as<Word32>());
             Boxed x = numberIsOnRight ? other : boxedInteger;
             Boxed y = numberIsOnRight ? boxedInteger : other;
-            branch(Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { x.value(), y.value() }).first)), targets);
+            branchOnRelationByStub(value, relation, x, y, targets);
             return;
         }
         branch(relationOnValues(value, relation, ValueInRelation::IsNoInt32), targets);
@@ -364,15 +397,15 @@ bool OperatorEmitter::generateRelationOfBoxedNumberAndValue(const ValueContext& 
         LBasicBlock otherCase = newBlock();
         m_out.branch(isInt32(Boxed(m_out.bitAnd(left.value(), right.value()))).value(), normalEdge(int32Case), rareEdge(otherCase));
         m_out.appendTo(int32Case);
-        Word32 leftInt32 = low32(left);
-        branch(compare(relation, leftInt32, low32(right)), targets);
+        Word32 leftInt32 = int32InBox(left);
+        branch(compare(relation, leftInt32, int32InBox(right)), targets);
         m_out.appendTo(otherCase);
-        branch(Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { left.value(), right.value() }).first)), targets);
+        branchOnRelationByStub(value, relation, left, right, targets);
     });
     return true;
 }
 
-bool OperatorEmitter::generateRelationOfDoubleAndValue(const ValueContext& value, Relation relation)
+bool OperatorEmitter::generateMixedDoubleRelation(const ValueContext& value, Relation relation)
 {
     bool numberIsOnRight = !typeOf(value->leftOperand()).isNumber();
     ValueID numberID = numberIsOnRight ? value->rightOperand() : value->leftOperand();
@@ -387,10 +420,54 @@ bool OperatorEmitter::generateRelationOfDoubleAndValue(const ValueContext& value
         LBasicBlock otherCase = newBlock();
         m_out.branch(isInt32(other).value(), normalEdge(int32Case), unlikelyEdge(otherCase));
         m_out.appendTo(int32Case);
-        Number otherNumber = toNumber(low32(other));
+        Number otherNumber = toNumber(int32InBox(other));
         branch(numberIsOnRight ? compare(relation, otherNumber, number) : compare(relation, number, otherNumber), targets);
         m_out.appendTo(otherCase);
         branch(relationOnValues(value, relation, ValueInRelation::IsNoInt32), targets);
+    });
+    return true;
+}
+
+bool OperatorEmitter::generateRelationWithLikelyZero(const ValueContext& value, Relation relation)
+{
+    ValueID leftID = value->leftOperand();
+    if (!isBigInt(value->rightOperand()) || isBigInt(leftID) || !expectsBigInts(value.block(), leftID))
+        return false;
+    m_out.noteForm(Form::Open, StateOfKnowledge::BigInts);
+    Boxed left = in<Boxed>(leftID);
+    Boxed right = boxedOperand(value->rightOperand());
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        LBasicBlock isLeftCell = newBlock();
+        LBasicBlock areBigInts = newBlock();
+        LBasicBlock isRightZero = newBlock();
+        LBasicBlock otherCase = newBlock();
+        branch(isCell(left), { normalEdge(isLeftCell), rareEdge(otherCase) });
+        m_out.appendTo(isLeftCell);
+        CellPointer leftCell = unboxCell(left);
+        branch(equal(loadByte(leftCell, m_heaps.JSCell_typeInfoType), static_cast<int32_t>(HeapBigIntType)), { normalEdge(areBigInts), rareEdge(otherCase) });
+        m_out.appendTo(areBigInts);
+        branch(isZero(loadField<Word32>(unboxCell(right), m_heaps.JSBigInt_length)), { normalEdge(isRightZero), rareEdge(otherCase) });
+        m_out.appendTo(isRightZero);
+        Condition isNegative = notEqual(bitAnd(loadByte(leftCell, m_heaps.JSBigInt_sign), TypeInfoPerCellBit), 0);
+        switch (relation) {
+        case Relation::Less:
+            branch(isNegative, targets);
+            break;
+        case Relation::GreaterOrEqual:
+            branch(isNegative, targets.swapped());
+            break;
+        case Relation::LessOrEqual:
+        case Relation::Greater: {
+            bool isGreater = relation == Relation::Greater;
+            LBasicBlock isNotNegative = newBlock();
+            branch(isNegative, { isGreater ? targets.notTaken : targets.taken, normalEdge(isNotNegative) });
+            m_out.appendTo(isNotNegative);
+            branch(isZero(loadField<Word32>(leftCell, m_heaps.JSBigInt_length)), isGreater ? targets.swapped() : targets);
+            break;
+        }
+        }
+        m_out.appendTo(otherCase);
+        branchOnRelationByStub(value, relation, left, right, targets);
     });
     return true;
 }
@@ -402,17 +479,29 @@ bool OperatorEmitter::generateRelationOfValuesThatAreLikelyInt32s(const ValueCon
     m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
     Boxed left = in<Boxed>(value->leftOperand());
     Boxed right = in<Boxed>(value->rightOperand());
+    if (!mayBothBeInt32(value)) {
+        defineTestByBranching(value, [&](BranchTargets targets) {
+            branchOnRelationByStub(value, relation, left, right, targets);
+        });
+        return true;
+    }
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock int32Case = newBlock();
         LBasicBlock otherCase = newBlock();
         m_out.branch(isInt32(Boxed(m_out.bitAnd(left.value(), right.value()))).value(), normalEdge(int32Case), rareEdge(otherCase));
         m_out.appendTo(int32Case);
-        Word32 leftInt32 = low32(left);
-        branch(compare(relation, leftInt32, low32(right)), targets);
+        Word32 leftInt32 = int32InBox(left);
+        branch(compare(relation, leftInt32, int32InBox(right)), targets);
         m_out.appendTo(otherCase);
-        branch(Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { left.value(), right.value() }).first)), targets);
+        branchOnRelationByStub(value, relation, left, right, targets);
     });
     return true;
+}
+
+void OperatorEmitter::branchOnRelationByStub(const ValueContext& value, Relation relation, Boxed left, Boxed right, BranchTargets targets)
+{
+    LValue operands[] = { left.value(), right.value() };
+    emitter<RuntimeCallEmitter>().callStubAndBranch(value, binaryOperation(traitsOfRelation(relation).stub, true), operands, { }, targets);
 }
 
 Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation relation, ValueInRelation valueInRelation)
@@ -423,7 +512,11 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
         m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         Boxed x = in<Boxed>(left);
         Boxed y = in<Boxed>(right);
-        return Condition(m_out.castToInt32(callBinaryStub(value, traitsOfRelation(relation).stub, x, y)));
+        if (mayBothBeInt32(value))
+            return Condition(m_out.castToInt32(callBinaryStub(value, traitsOfRelation(relation).stub, x, y)));
+        return asBoolean([&](BranchTargets targets) {
+            branchOnRelationByStub(value, relation, x, y, targets);
+        });
     }
 
     bool numberIsOnRight = !typeOf(left).isNumber();
@@ -441,7 +534,9 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
         Boxed boxedNumber = emitter<ConversionEmitter>().boxDouble(numberOperand);
         Boxed x = numberIsOnRight ? otherOperand : boxedNumber;
         Boxed y = numberIsOnRight ? boxedNumber : otherOperand;
-        return Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { x.value(), y.value() }).first));
+        return asBoolean([&](BranchTargets targets) {
+            branchOnRelationByStub(value, relation, x, y, targets);
+        });
     };
     if (!(typeOf(otherID).primitives & Primitive::Number)) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndOtherValue);

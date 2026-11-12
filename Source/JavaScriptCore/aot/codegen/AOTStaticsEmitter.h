@@ -17,12 +17,12 @@ public:
 
     TypedPointer addressOf(VariableID);
     Operand loadVariable(VariableID);
-    void storeVariable(VariableID, Operand, bool isUndoneAtRestart);
+    void storeVariable(VariableID, Operand, const Type& storedType, bool isUndoneAtRestart);
     TypedPointer addressOfStaticField(VariableID);
     bool holdsStaticField(VariableID) const;
     void storeStaticField(VariableID, Boxed);
     Operand loadFieldOfEnvironment(VariableID, LayoutID, uint32_t field);
-    void storeFieldOfEnvironment(VariableID, LayoutID, uint32_t field, Operand, const Type& storedType);
+    void storeFieldOfEnvironment(VariableID, LayoutID, uint32_t field, Operand, const Type& storedType, bool isUndoneAtRestart);
     ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide);
     ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide, PropertyKeyID name, AskerOfClassGuardOfName = AskerOfClassGuardOfName::Reads);
     ClassGuardKey keyOfGuardOfNames(LayoutID classLayout, ClassSide, std::span<const PropertyKeyID> names);

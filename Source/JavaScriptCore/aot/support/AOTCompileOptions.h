@@ -40,7 +40,7 @@ constexpr bool hasFlag(Flags set, Flags flag)
 
 static_assert(hasFlag(allMembersOf<TestingSwitch>.back(), allMembersOf<TestingSwitch>.back()));
 
-enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops, WalkMode, ResultInParts };
+enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops, WalkMode, ResultInParts, MisstatedFactPosition };
 
 constexpr uint32_t drawBySeed(uint32_t seed, DrawnFor question, uint32_t first, uint32_t second)
 {
@@ -122,6 +122,7 @@ struct CompileOptions {
     uint32_t forcedWalkModePeriod { 0 };
     uint32_t loopVisitAbortPeriod { 0 };
     uint32_t loopVisitAbortPhase { 0 };
+    uint32_t misstatedFact { 0 };
     ExcludedCode excludedCode { };
     OutputOptions output { };
     LoggingOptions logging;

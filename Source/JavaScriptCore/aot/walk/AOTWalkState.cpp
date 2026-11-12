@@ -30,7 +30,7 @@ OptionSet<CellFact> cellFactsInvalidatedBy(const LocationMasks& writes)
 {
     OptionSet<CellFact> ended;
     if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ CellFact::NotFrozen, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark });
+        ended.add({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark });
     if (writes.contains(AbstractHeap::NamedProperties))
         ended.add({ CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark });
     if (writes.contains(AbstractHeap::OrderWords))
@@ -301,6 +301,7 @@ WalkState::Held::Held(const Held& other)
     , m_holdersReachedByEffects(other.m_holdersReachedByEffects)
     , m_holders(other.m_holders)
     , m_places(other.m_places)
+    , m_newestStoreIntoUnmadeRecord(other.m_newestStoreIntoUnmadeRecord)
 {
 }
 
@@ -1002,7 +1003,7 @@ void WalkState::Held::noteOrderWord(Reference object, std::optional<uint32_t> or
             invalidateCellFacts(holder, CellFact::OrderWordIsKnown);
         return;
     }
-    recordCellFacts(object, { CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown });
+    recordCellFacts(object, { CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown });
     uint32_t holder = findHolder(object);
     if (m_holders[holder].orderWord != *orderWord)
         m_holders.mutableAt(holder).orderWord = *orderWord;
@@ -1753,9 +1754,14 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     const Variable& variable = program.at(id);
     if (variable.initialization != VariableInitialization::Uninitialized || variable.owner || !variable.module)
         return false;
-    if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
+    if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
         return false;
     return loaderEntersBodyAtMostOnce(program.at(variable.module));
+}
+
+bool leavesDeadZoneForGood(const Program& program, FieldReference field)
+{
+    return program.isInstanceVariable(field) && !fieldAt(program, field).flags.contains(FieldFlags::IsReplaceable);
 }
 
 void SharedSetOfNumbers::keepMembersOfSlowCase(const SharedSetOfNumbers& other)

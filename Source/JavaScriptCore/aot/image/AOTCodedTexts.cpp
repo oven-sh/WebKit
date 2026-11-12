@@ -66,26 +66,50 @@ CodedTexts::CodedTexts(std::span<const uint8_t> bytes, uint32_t count)
 
 Vector<uint8_t, 64> CodedTexts::at(uint32_t number) const
 {
-    RELEASE_ASSERT(number < m_count);
-    const uint8_t* codes = m_bytes.data();
-    const uint8_t* index = TextCodes::endOfCodes(codes);
-    uint32_t place;
-    memcpy(&place, index + number / textsInGroup * sizeof(place), sizeof(place));
-    PrefixCodeReader reader(index + sizeOfIndexFor(m_count) + place, codes + m_bytes.size());
-    Vector<uint8_t, 64> text;
-    for (unsigned entry = 0;; ++entry) {
-        text.shrink(entry ? std::min<size_t>(reader.read(TextCodes::code(codes, prefixLengthCode)), text.size()) : 0);
-        uint8_t previousByte = text.isEmpty() ? 0 : text.last();
+    Cursor cursor(*this);
+    cursor.at(number);
+    return WTF::move(cursor.m_text);
+}
+
+std::span<const uint8_t> CodedTexts::Cursor::at(uint32_t number)
+{
+    RELEASE_ASSERT(number < m_texts.m_count);
+    const uint8_t* codes = m_texts.m_bytes.data();
+    if (!m_reader || number + 1 < m_next || number / textsInGroup != (m_next - 1) / textsInGroup) {
+        const uint8_t* index = TextCodes::endOfCodes(codes);
+        uint32_t place;
+        memcpy(&place, index + number / textsInGroup * sizeof(place), sizeof(place));
+        m_reader.emplace(index + sizeOfIndexFor(m_texts.m_count) + place, codes + m_texts.m_bytes.size());
+        m_next = number - number % textsInGroup;
+    }
+    for (; m_next <= number; ++m_next) {
+        m_text.shrink(m_next % textsInGroup ? std::min<size_t>(m_reader->read(TextCodes::code(codes, prefixLengthCode)), m_text.size()) : 0);
+        uint8_t previousByte = m_text.isEmpty() ? 0 : m_text.last();
         for (;;) {
-            unsigned byte = reader.read(TextCodes::code(codes, codeByPreviousByte[previousByte]));
+            unsigned byte = m_reader->read(TextCodes::code(codes, codeByPreviousByte[previousByte]));
             if (!byte || byte == PrefixCode::endOfStream)
                 break;
             previousByte = static_cast<uint8_t>(byte);
-            text.append(previousByte);
+            m_text.append(previousByte);
         }
-        if (entry == number % textsInGroup)
-            return text;
     }
+    return m_text.span();
+}
+
+std::span<const uint8_t> CodedTexts::bytesOfGroup(uint32_t group) const
+{
+    RELEASE_ASSERT(group * textsInGroup < m_count);
+    const uint8_t* index = TextCodes::endOfCodes(m_bytes.data());
+    size_t firstGroup = index - m_bytes.data() + sizeOfIndexFor(m_count);
+    auto beginOf = [&](uint32_t number) {
+        uint32_t place;
+        memcpy(&place, index + number * sizeof(place), sizeof(place));
+        return firstGroup + place;
+    };
+    size_t begin = beginOf(group);
+    size_t end = (group + 1) * textsInGroup < m_count ? beginOf(group + 1) : m_bytes.size();
+    RELEASE_ASSERT(begin <= end && end <= m_bytes.size());
+    return m_bytes.subspan(begin, end - begin);
 }
 
 Vector<uint8_t> CodedTexts::encode(std::span<const std::span<const uint8_t>> ascendingTexts, const ParallelLoops& loops)

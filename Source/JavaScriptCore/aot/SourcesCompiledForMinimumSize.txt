@@ -1,3 +1,4 @@
+aot/facts/AOTFactFaults.cpp
 aot/image/AOTFFIStubs.cpp
 aot/image/AOTImageSymbols.cpp
 aot/image/AOTObfuscatedSites.cpp

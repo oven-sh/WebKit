@@ -20,6 +20,8 @@ struct HostFunctionSources {
     void (*copy)(void* owner, uint32_t module, uint8_t* destination) { nullptr };
     size_t (*maxCompressedSize)(size_t sourceSize) { nullptr };
     size_t (*compress)(std::span<uint8_t> compressed, std::span<const uint8_t> text) { nullptr };
+    const uint8_t* (*view)(void* owner, uint32_t module) { nullptr };
+    void (*release)(void* owner) { nullptr };
 };
 
 struct HostStringEncoders {

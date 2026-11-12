@@ -236,7 +236,7 @@ static BuiltinClassID builtinClassOfCells(const Layout& layout)
 {
     if (layout.holdsOrdinaryObjects)
         return BuiltinClasses::Object;
-    return layout.writtenBuiltinBase;
+    return builtinClassOfInstances(layout);
 }
 
 BuiltinClassID builtinClassWrittenAbove(TypeReader reader, LayoutID layout)

@@ -7,7 +7,7 @@
 # INTEGER-LABEL: code f1:Body
 # INTEGER: [[holds]]: boolean @Boolean = IsSlotFilled {{*}}key="count" {{*}}[holdsDeclaredType]
 # INTEGER-NEXT: CheckProof [[holds]] checkedType=true {{*}}source=Field
-# INTEGER-NEXT: : i32 @Int64 = GetSlot {{*}}key="count"
+# INTEGER-NEXT: : int[0, 2147483647] @Int64 = GetSlot {{*}}key="count"
 # RUN(DOUBLE): walk f2 mechanisms=all-Inlining
 # DOUBLE-LABEL: code f2:Body
 # DOUBLE: [[holds]]: boolean @Boolean = IsSlotFilled {{*}}key="ratio" {{*}}[holdsDeclaredType]

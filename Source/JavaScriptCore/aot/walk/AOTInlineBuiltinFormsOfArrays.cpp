@@ -116,7 +116,7 @@ bool ArrayFormChooser::areValuesFrom(unsigned firstArgument) const
 bool ArrayFormChooser::canSearchInline() const
 {
     constexpr uint16_t comparedByValue = Primitive::Number | Primitive::AnyString | Primitive::BigInt;
-    if (numberOfArguments() != 1 || !isValue(argument(0)))
+    if (!numberOfArguments() || numberOfArguments() > 2 || !isValue(argument(0)) || (numberOfArguments() == 2 && !isNumber(argument(1))))
         return false;
     Type searched = m_types.at(argument(0));
     if (searched.isNumber() || !(searched.primitives & comparedByValue))
@@ -199,9 +199,9 @@ bool ArrayFormChooser::isPristineArrayWithStorageForm(TypeID) const
 
 InlineForm ArrayFormChooser::formOfPush() const
 {
-    if (numberOfArguments() != 1 || !isArray(receiver()) || !isValue(argument(0)))
+    if (!numberOfArguments() || numberOfArguments() > maxInlinePushedValues || !isArray(receiver()) || !areValuesFrom(0))
         return InlineForm::Call;
-    return isPristineArrayWithStorageForm(receiver()) ? InlineForm::Whole : twoWayIf(true);
+    return numberOfArguments() == 1 && isPristineArrayWithStorageForm(receiver()) ? InlineForm::Whole : twoWayIf(true);
 }
 
 InlineForm ArrayFormChooser::formOfIsArray() const
@@ -280,6 +280,9 @@ InlineForm ArrayFormChooser::formOfArrayBufferViewBuiltin() const
     case InlineBuiltin::TypedArrayLength:
     case InlineBuiltin::TypedArrayByteOffset:
         return twoWayIf(isInstanceOfReceiverClass(receiver()));
+    case InlineBuiltin::ViewLength:
+    case InlineBuiltin::ViewIsOutOfBounds:
+        return twoWayIf(numberOfArguments() == 1 && m_types.at(argument(0)).hasObjects());
     case InlineBuiltin::TypedArrayByteLength:
         return twoWayIf(elementTypeOfView(receiver()) != NotTypedArray);
     case InlineBuiltin::TypedArrayWithLength:

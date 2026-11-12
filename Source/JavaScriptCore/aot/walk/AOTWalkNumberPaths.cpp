@@ -224,12 +224,77 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
     return path;
 }
 
+static constexpr OpcodeSet binarySumsInNumberPaths { Opcode::Add, Opcode::Sub };
+
+static std::optional<uint32_t> truncatedSumsEnd(Walker& walker, const BodyValue& firstOperator)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(firstOperator.id()));
+    uint32_t firstValue = block.firstValue().index();
+    uint32_t limit = limitOfStretchOfNumbers(walker, block);
+    Vector<ValueID, 16> sums { firstOperator.id() };
+    uint32_t mentionsLeft = index.useCount(firstOperator.id());
+    for (uint32_t place = firstOperator.id().index() - firstValue + 1; place < limit && mentionsLeft && mentionsLeft < BodyIndex::maxCountedUses; ++place) {
+        BodyValue operation = index.value(ValueID(firstValue + place));
+        uint32_t mentions = 0;
+        operation.forEachOperand([&](ValueID operand, uint32_t) {
+            mentions += sums.contains(operand);
+        });
+        if (!mentions)
+            continue;
+        mentionsLeft -= mentions;
+        if (binarySumsInNumberPaths.contains(operation.opcode()) || opcodesThatStateTypes.contains(operation.opcode())) {
+            bool takesLaterElement = false;
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                ValueID made = index.stripCasts(operand);
+                takesLaterElement |= !sums.contains(operand) && made.index() > firstOperator.id().index() && !index.isParameter(made) && index.opcodeOf(made) == Opcode::ElemGet;
+            });
+            if (takesLaterElement)
+                return std::nullopt;
+            sums.append(operation.id());
+            mentionsLeft += index.useCount(operation.id());
+        } else if (!allBitwiseOperators.contains(operation.opcode()))
+            return std::nullopt;
+        if (!mentionsLeft)
+            return place + 1;
+    }
+    return std::nullopt;
+}
+
+static bool buildTruncatedSums(Walker& walker, const BodyValue& firstOperator)
+{
+    if (!binarySumsInNumberPaths.contains(firstOperator.opcode()) || !walker.isInLoop() || !walker.opensGuesses())
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    TypeArena& types = walker.types();
+    for (uint32_t place : { 0u, 1u }) {
+        ValueID written = firstOperator.operand(place);
+        ValueID read = index.stripCasts(written);
+        Reference term = walker.referenceOf(written);
+        Reference other = walker.referenceOf(firstOperator.operand(1 - place));
+        if (!term || !term.isValue() || !other || !other.isRecord() || walker.representationOf(term) != Representation::Double || !types.at(walker.typeOf(other)).isInteger())
+            continue;
+        Type type = types.at(walker.typeOf(term));
+        if (!type.isNumber() || !(type.primitives & Primitive::FractionalNumber) || index.isParameter(read) || index.opcodeOf(read) != Opcode::ElemGet || findTruncatedUse(walker, read) != TruncatedUse::TermOfSums)
+            continue;
+        std::optional<uint32_t> end = truncatedSumsEnd(walker, firstOperator);
+        if (!end)
+            return false;
+        BlockID block = index.blockOf(firstOperator.id());
+        TestOfNumber test { written, types.integer(integersAddedWithoutRounding) };
+        return walkStretchBehindTestsOfNumbers(walker, std::span<const TestOfNumber>(&test, 1), block, firstOperator.id().index() - index.block(block).firstValue().index(), *end, BlockFrequency::Rare);
+    }
+    return false;
+}
+
 static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
 {
     if (!operatorsOfNumberPaths.contains(firstOperator.opcode()))
         return false;
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || walker.isUnreachable())
         return false;
+    if (buildTruncatedSums(walker, firstOperator))
+        return true;
     bool takesTaggedNumber = false;
     firstOperator.forEachOperand([&](ValueID operand, uint32_t) {
         takesTaggedNumber |= isTaggedNumber(walker, walker.referenceOf(operand));
@@ -259,11 +324,50 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
     return walkStretchBehindTestsOfNumbers(walker, path->tests.span(), block, path->begin, path->end, BlockFrequency::Unlikely);
 }
 
+static bool buildComparisonAfterUndefinedTests(Walker& walker, const BodyValue& comparison)
+{
+    bool takesOptionalInteger = false;
+    comparison.forEachOperand([&](ValueID operand, uint32_t) {
+        Reference value = walker.referenceOf(operand);
+        takesOptionalInteger |= value && value.isValue() && walker.representationOf(value) == Representation::OptionalInt64;
+    });
+    if (!takesOptionalInteger || !walker.isInLoop() || !walker.opensGuesses() || !walker.has(Mechanism::UnboxedNumbers) || walker.isUnreachable())
+        return false;
+    TypeArena& types = walker.types();
+    Vector<TestOfNumber, 2> tests;
+    bool takesOtherValue = false;
+    comparison.forEachOperand([&](ValueID operand, uint32_t) {
+        Reference value = walker.referenceOf(operand);
+        TypeID type = value && value.isRecord() ? walker.typeOf(value) : TypeID();
+        if (!type || takesOtherValue) {
+            takesOtherValue = true;
+            return;
+        }
+        if (types.isSubset(type, TypeTable::int32))
+            return;
+        TypeID integers = types.withoutPrimitives(type, Primitive::Undefined);
+        takesOtherValue = !value.isValue() || walker.representationOf(value) != Representation::OptionalInt64 || !types.isSubset(integers, TypeTable::int32) || isNeverType(integers);
+        ValueID read = takesOtherValue ? ValueID() : value.id();
+        while (read && valuePreservingOpcodes.contains(walker.code().at(read).opcode))
+            read = walker.code().at(read).operand(0);
+        takesOtherValue |= !read || walker.code().isConstant(read) || walker.code().at(read).opcode != Opcode::GetTypedArrayElement;
+        if (!takesOtherValue)
+            tests.append(TestOfNumber { operand, integers });
+    });
+    if (takesOtherValue || tests.isEmpty())
+        return false;
+    walker.noteComparisonOfElementsOfViews();
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(comparison.id()));
+    uint32_t begin = comparison.id().index() - block.firstValue().index();
+    return walkStretchBehindTestsOfNumbers(walker, tests.span(), block.id(), begin, begin + 1, BlockFrequency::Rare, EndOfNumberArms::MayTakeBranch);
+}
+
 static_assert(opcodesThatBuildArmsInFrontOfTypedFormsTakes == (operatorsOfNumberPaths));
 
 bool buildArmsInFrontOfTypedFormsOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
-    return buildNumberPath(walker, value);
+    return buildNumberPath(walker, value) || (allRelations.contains(value.opcode()) && buildComparisonAfterUndefinedTests(walker, value));
 }
 
 static bool takerWantsBoxInNumberPaths(Walker& walker, const BodyValue& taker, ValueID taken, Reference standIn, TypeID typeOfSum)

@@ -1,0 +1,472 @@
+Each line names a source of aot/machine, a condition in it and the value that replaced the condition. Every one of these changes made the execution fuzzer fail within 8,000 programs (the sources of ARM64 on ARM64, the others on x86-64).
+
+AOTMachine.cpp	heaps.empty()	true
+AOTMachine.cpp	std::ranges::equal(record.bytes, bytes)	true
+AOTMachineAllocator.cpp	!allocator.m_valueFacts[reference->index()].has(ValueFlag::NeedsPointerBesideIt)	false
+AOTMachineAllocator.cpp	allocation.hasFramedPart()	true
+AOTMachineAllocator.cpp	asksForNoMoreThanItsRegister	true
+AOTMachineAllocator.cpp	destination && facts.has(ValueFlag::NeedsPointerBesideIt)	false
+AOTMachineAllocator.cpp	facts.flags & flagsOfAllocatedValueThatAsksForMoreThanRegister	false
+AOTMachineAllocator.cpp	facts.lastUse == noPosition	true
+AOTMachineAllocator.cpp	factsOfValues[operation->index()].has(ValueFlag::NeedsPointerBesideIt)	true
+AOTMachineAllocator.cpp	failure	true
+AOTMachineAllocator.cpp	isImmediate	false
+AOTMachineAllocator.cpp	opcode == ArgumentReg	true
+AOTMachineAllocator.cpp	overwritesFirstChild && !maySwapChildren	false
+AOTMachineAllocator.cpp	standsInFramedPart && allocation.headOfFramedPartAbove(block).block == block	false
+AOTMachineAllocator.cpp	steps[index].destination == Location::spill(spill)	true
+AOTMachineAllocator.cpp	type == Void	true
+AOTMachineAllocatorJoins.cpp	!end.isSet() && !(edgeIsServedWithHead && successorIndex + 1 == numberOfSuccessors)	false
+AOTMachineAllocatorJoins.cpp	!reg	true
+AOTMachineAllocatorJoins.cpp	block->isEntry()	false
+AOTMachineAllocatorJoins.cpp	bringsEverything	true
+AOTMachineAllocatorJoins.cpp	dominator > other	false
+AOTMachineAllocatorJoins.cpp	facts.has(ValueFlag::IsRematerialized)	false
+AOTMachineAllocatorJoins.cpp	isHeld	false
+AOTMachineAllocatorJoins.cpp	isLiveAtEdgePosition(m_liveness, value, positionOfEdges)	false
+AOTMachineAllocatorJoins.cpp	lastUse == noPosition || lastUse >= m_headOfBlock	false
+AOTMachineAllocatorJoins.cpp	liveness.of(value).lastUse > head	false
+AOTMachineAllocatorJoins.cpp	numberAbove	false
+AOTMachineAllocatorJoins.cpp	numberOfOnlyPredecessor < number	true
+AOTMachineAllocatorJoins.cpp	numberOfPhis > mostPhisListedInLine	false
+AOTMachineAllocatorJoins.cpp	position < head.head	true
+AOTMachineAllocatorJoins.cpp	registersAreAsTaken	true
+AOTMachineAllocatorLoops.cpp	!candidates	false
+AOTMachineAllocatorLoops.cpp	!candidates || room <= numberStillAskedFor[index]	false
+AOTMachineAllocatorLoops.cpp	(!use || liveness.use(use).position >= end)	true
+AOTMachineAllocatorLoops.cpp	block->numSuccessors() != 1	false
+AOTMachineAllocatorLoops.cpp	facts.has(ValueFlag::IsRematerialized)	true
+AOTMachineAllocatorLoops.cpp	head >= liveness.of(loop, order).endOfLastExitingBlock	true
+AOTMachineAllocatorLoops.cpp	known	true
+AOTMachineAllocatorLoops.cpp	known == UINT32_MAX	true
+AOTMachineAllocatorLoops.cpp	leftAlone	true
+AOTMachineAllocatorLoops.cpp	read.headOfBlockPassedOnEveryPath >= head	false
+AOTMachineAllocatorLoops.cpp	read.position >= startOfReadsBehindLoop	true
+AOTMachineAllocatorLoops.cpp	spillHoldsValueAtHeadOf(head, value)	true
+AOTMachineAllocatorLoops.cpp	startOfReadsBehindLoop == noPosition	true
+AOTMachineAllocatorLoops.cpp	use && liveness.use(use).position < head + 2 * (block->size() + 1)	false
+AOTMachineAllocatorLoops.cpp	use && startOfReadsBehindLoop == noPosition && liveness.use(use).greatestHeadOfBlockPassedOnEveryPath >= head	false
+AOTMachineAllocatorPatches.cpp	!value && extract->extractedIndex() == index	false
+AOTMachineAllocatorPatches.cpp	(held & ~registers)	false
+AOTMachineAllocatorPatches.cpp	(registersMatterBehindPatch(patch) && allocator.isLiveBehind(value, late))	false
+AOTMachineAllocatorPatches.cpp	bits & PatchOperation::NeedsFrameRecord	false
+AOTMachineAllocatorPatches.cpp	hasEarlyResults	false
+AOTMachineAllocatorPatches.cpp	kind != ValueRep::LateColdAny	true
+AOTMachineAllocatorPatches.cpp	kind == ValueRep::LateColdAny	false
+AOTMachineAllocatorPatches.cpp	kindOfResult == ValueRep::Register	false
+AOTMachineAllocatorPatches.cpp	locationsOfResults[index].isRegister()	false
+AOTMachineAllocatorPatches.cpp	numberOfRegistersToFill	false
+AOTMachineAllocatorPatches.cpp	patchEndsBlock	true
+AOTMachineAllocatorPatches.cpp	registersToClear	false
+AOTMachineAllocatorPatches.cpp	value->hasNoPosition()	true
+AOTMachineAllocatorPatches.cpp	value->opcode() == ArgumentReg	true
+AOTMachineAllocatorPatches.cpp	wanted & mask	true
+AOTMachineAllocatorRareRegions.cpp	!isInRareRegion() || value->hasNoPosition() || m_liveness.isSunk(value)	false
+AOTMachineAllocatorRareRegions.cpp	!m_endOfRareRegion	false
+AOTMachineAllocatorRareRegions.cpp	assignment != UINT32_MAX	false
+AOTMachineAllocatorRareRegions.cpp	dying & ~written	true
+AOTMachineAllocatorRareRegions.cpp	isSuspension	true
+AOTMachineAllocatorRareRegions.cpp	kind != StepKind::Move && kind != StepKind::Materialize && kind != StepKind::Swap	false
+AOTMachineAllocatorRareRegions.cpp	kind == StepKind::Execute	true
+AOTMachineAllocatorRareRegions.cpp	location.isSpill()	false
+AOTMachineAllocatorRareRegions.cpp	m_liveness.isSunk(value)	false
+AOTMachineAllocatorRareRegions.cpp	m_numberOfAccesses == m_capacityOfAccesses	false
+AOTMachineAllocatorRareRegions.cpp	m_numberOfAccesses > 1	false
+AOTMachineAllocatorRareRegions.cpp	step.destination.isSpill()	true
+AOTMachineAllocatorRareRegions.cpp	step.sources[0].isSpill()	false
+AOTMachineAllocatorRareRegions.cpp	stepsOfBlock.beginOfEdgeMoves < stepsOfBlock.endOfEdgeMoves	false
+AOTMachineAllocatorRareRegions.cpp	suspension != end && *suspension <= endOfReach	false
+AOTMachineAllocatorRegisters.cpp	!chosen	false
+AOTMachineAllocatorRegisters.cpp	(allocator.isInRareRegion() && state.saveInRareRegion != noSpill)	false
+AOTMachineAllocatorRegisters.cpp	allocator.m_valueFacts[value->index()].has(ValueFlag::IsRematerialized)	true
+AOTMachineAllocatorRegisters.cpp	allocator.spillHoldsValueIn(allocator.m_block, value)	true
+AOTMachineAllocatorRegisters.cpp	classOfCandidate == RegisterFileVictim::IsDead	true
+AOTMachineAllocatorRegisters.cpp	freeRegisters && (!search.victim || search.classOfVictim < RegisterFileVictim::IsMadeAgain)	false
+AOTMachineAllocatorRegisters.cpp	memoryCopyOfRegisterFileVictimIsValid(*this, value)	true
+AOTMachineAllocatorRegisters.cpp	nextUse == noPosition	true
+AOTMachineAllocatorRegisters.cpp	spill != noSpill	false
+AOTMachineAllocatorRegisters.cpp	state.registers & ~maskOf(reg)	true
+AOTMachineBuilder.cpp	!simplified.isInverted || failsWhenPredicateIsZero	false
+AOTMachineBuilder.cpp	amount	false
+AOTMachineBuilder.cpp	denominator->isInt(-1)	true
+AOTMachineBuilder.cpp	left->hasNoPosition()	true
+AOTMachineBuilder.cpp	opcode == Div	true
+AOTMachineBuilder.cpp	opcode == Sub	true
+AOTMachineBuilder.cpp	phi	false
+AOTMachineBuilder.cpp	predicate->isInt(0)	true
+AOTMachineBuilder.cpp	previous->extractedIndex() == index	true
+AOTMachineBuilder.cpp	readsChildrenAtOnce	false
+AOTMachineBuilder.cpp	simplified.isInverted	false
+AOTMachineBuilder.cpp	traps	false
+AOTMachineBuilder.cpp	type.isInt()	true
+AOTMachineBuilder.cpp	value->gainUseLeavingChildrenUncounted()	false
+AOTMachineEncoder.cpp	!next->destination.isRegister() || next->destination.reg() == filled || next->destination.reg() == result	false
+AOTMachineEncoder.cpp	!setupHasPushed(m_allocation.step(index).destination.spillIndex())	false
+AOTMachineEncoder.cpp	allocation.isSpilled(phi) && !encoder.m_liveness.isDropped(phi)	false
+AOTMachineEncoder.cpp	beginOfSteps < endOfSteps	false
+AOTMachineEncoder.cpp	blockThatJumpsOnlyJumpsOn(*this, block)	true
+AOTMachineEncoder.cpp	frame.isSetUpAtHead	true
+AOTMachineEncoder.cpp	frame.isSetUpAtHead || frame.isTornDownAtEnd || frame.returnsInPlaceOfJump	false
+AOTMachineEncoder.cpp	frame.isTornDownAtEnd	false
+AOTMachineEncoder.cpp	m_blocksThatStoreResultOfPatchAtHead.get(block->index())	false
+AOTMachineEncoder.cpp	opcode == Patch	false
+AOTMachineEncoder.cpp	plannedBlockOnlyReturns(m_proc, block)	true
+AOTMachineEncoder.cpp	pushed < m_spillsPushedAtSetup.size()	true
+AOTMachineEncoder.cpp	source == destination	true
+AOTMachineEncoder.cpp	source.isGPR()	true
+AOTMachineEncoder.cpp	steps.beginOfEdgeMoves != steps.endOfEdgeMoves	false
+AOTMachineEncoderAddresses.cpp	!indexChildIndex	false
+AOTMachineEncoderAddresses.cpp	indexChildIndex	false
+AOTMachineEncoderAddresses.cpp	shift	false
+AOTMachineEncoderComparisonsARM64.cpp	!test.right.isImmediate()	false
+AOTMachineEncoderComparisonsARM64.cpp	!test.rightConstant	true
+AOTMachineEncoderComparisonsARM64.cpp	comparison.kind != ConstantComparison::HighBits	true
+AOTMachineEncoderComparisonsARM64.cpp	comparison.kind == ConstantComparison::Overflow	false
+AOTMachineEncoderComparisonsARM64.cpp	is32	true
+AOTMachineEncoderComparisonsARM64.cpp	numbers.areFloats	false
+AOTMachineEncoderComparisonsARM64.cpp	numbers.comparesWithZero()	true
+AOTMachineEncoderComparisonsARM64.cpp	testsBits	true
+AOTMachineEncoderComparisonsX86_64.cpp	address.kind == AddressForm::InstanceSymbol	true
+AOTMachineEncoderComparisonsX86_64.cpp	destination.isFPR()	false
+AOTMachineEncoderComparisonsX86_64.cpp	form.kind == AddressForm::BaseIndex	false
+AOTMachineEncoderComparisonsX86_64.cpp	is32	false
+AOTMachineEncoderComparisonsX86_64.cpp	kind == Test::CompareIntegers	false
+AOTMachineEncoderComparisonsX86_64.cpp	numberOfBytes < 8	false
+AOTMachineEncoderComparisonsX86_64.cpp	operand.index == InvalidGPRReg	true
+AOTMachineEncoderComparisonsX86_64.cpp	operand.isInMemory()	false
+AOTMachineEncoderComparisonsX86_64.cpp	otherwise.location == inDestination	true
+AOTMachineEncoderComparisonsX86_64.cpp	right.isConstant() && width == Width64 && !isRepresentableAs<int32_t>(right.constant)	false
+AOTMachineEncoderComparisonsX86_64.cpp	right.isInRegister()	false
+AOTMachineEncoderComparisonsX86_64.cpp	test.loadOnLeft || test.rightIsNumberOfBit || test.linkedNumberOnRight || !test.left.isRegister()	false
+AOTMachineEncoderComparisonsX86_64.cpp	testsBits	true
+AOTMachineEncoderComparisonsX86_64.cpp	width == Width32	true
+AOTMachineEncoderConstantStoresX86_64.cpp	!isRepresentableAs<int32_t>(whole)	false
+AOTMachineEncoderConstantStoresX86_64.cpp	address.offset % 8 || !isRepresentableAs<int32_t>(whole)	false
+AOTMachineEncoderConstantStoresX86_64.cpp	distance != size && distance != -size	false
+AOTMachineEncoderConstantStoresX86_64.cpp	lower	false
+AOTMachineEncoderConstantStoresX86_64.cpp	lower || upper	false
+AOTMachineEncoderConstantStoresX86_64.cpp	m_blockWithClearedScratchFPR != m_block || m_offsetBehindClearedScratchFPR != m_jit.debugOffset()	false
+AOTMachineEncoderConstantStoresX86_64.cpp	upper	false
+AOTMachineEncoderConstantStoresX86_64.cpp	width == Width32	true
+AOTMachineEncoderControl.cpp	!fallsThroughTo(block, passes)	false
+AOTMachineEncoderControl.cpp	!step.other	true
+AOTMachineEncoderControl.cpp	!widensWhereItOverflowed	true
+AOTMachineEncoderControl.cpp	fallsThroughTo(block, passes)	true
+AOTMachineEncoderControl.cpp	operandTakenBack != InvalidGPRReg	false
+AOTMachineEncoderControl.cpp	otherOperand.isImmediate()	true
+AOTMachineEncoderControl.cpp	step.other	false
+AOTMachineEncoderControl.cpp	storesSumAnew	true
+AOTMachineEncoderControl.cpp	subtracts	false
+AOTMachineEncoderControl.cpp	test.branchReadsSum()	false
+AOTMachineEncoderControl.cpp	test.leastResult	false
+AOTMachineEncoderControl.cpp	widensWhereItOverflowed	false
+AOTMachineEncoderIntegersARM64.cpp	!namesWord(child)	true
+AOTMachineEncoderIntegersARM64.cpp	constant < 0	false
+AOTMachineEncoderIntegersARM64.cpp	field.extendsSign	true
+AOTMachineEncoderIntegersARM64.cpp	is32	false
+AOTMachineEncoderIntegersARM64.cpp	source.isRegister()	true
+AOTMachineEncoderIntegersARM64.cpp	sources.constant	false
+AOTMachineEncoderIntegersARM64.cpp	sum->type() == Int32	false
+AOTMachineEncoderIntegersARM64.cpp	tryEncodeFusedOperandARM64(*this, step)	false
+AOTMachineEncoderIntegersX86_64.cpp	child->isConstant() || (m_liveness.isFused(child) && child->opcode() != Trunc)	false
+AOTMachineEncoderIntegersX86_64.cpp	index == reg	false
+AOTMachineEncoderIntegersX86_64.cpp	is32	false
+AOTMachineEncoderIntegersX86_64.cpp	right.isConstant()	true
+AOTMachineEncoderIntegersX86_64.cpp	source.isInRegister()	true
+AOTMachineEncoderIntegersX86_64.cpp	width == Width32	true
+AOTMachineEncoderMemoryARM64.cpp	access->traps()	false
+AOTMachineEncoderMemoryARM64.cpp	ARM64Assembler::canEncodeSImmOffset(offset)	true
+AOTMachineEncoderMemoryARM64.cpp	encodable.kind == AddressForm::BaseOffset	false
+AOTMachineEncoderMemoryARM64.cpp	isNumber	false
+AOTMachineEncoderMemoryARM64.cpp	load->opcode() == Load16S	false
+AOTMachineEncoderMemoryARM64.cpp	load->opcode() == Load8S	false
+AOTMachineEncoderMemoryARM64.cpp	mayFault	false
+AOTMachineEncoderMemoryARM64.cpp	source.isNumber()	false
+AOTMachineEncoderMemoryARM64.cpp	value->type().isFloat()	false
+AOTMachineEncoderMemoryX86_64.cpp	access->traps()	false
+AOTMachineEncoderMemoryX86_64.cpp	is32	true
+AOTMachineEncoderMemoryX86_64.cpp	isNumber	true
+AOTMachineEncoderMemoryX86_64.cpp	isRepresentableAs<int32_t>(constant)	true
+AOTMachineEncoderMemoryX86_64.cpp	load->opcode() == Load16S	false
+AOTMachineEncoderMemoryX86_64.cpp	loadOrStoreMayFault(*this, store)	false
+AOTMachineEncoderMemoryX86_64.cpp	loadOrStoreMovesNumber(load)	false
+AOTMachineEncoderMemoryX86_64.cpp	opcode == Add	true
+AOTMachineEncoderMemoryX86_64.cpp	operand.isImmediate()	true
+AOTMachineEncoderMemoryX86_64.cpp	relation == LessEqual	true
+AOTMachineEncoderMemoryX86_64.cpp	update.comparesWord	true
+AOTMachineEncoderMemoryX86_64.cpp	width != Width64	false
+AOTMachineEncoderMoves.cpp	destination.isGPR()	true
+AOTMachineEncoderMoves.cpp	first == second	true
+AOTMachineEncoderMoves.cpp	first.isGPR()	false
+AOTMachineEncoderMoves.cpp	hasOnlyLowHalf	true
+AOTMachineEncoderMoves.cpp	operation->isConstant()	true
+AOTMachineEncoderMoves.cpp	operation->opcode() == FramePointer	true
+AOTMachineEncoderMoves.cpp	pinned->offset	false
+AOTMachineEncoderMoves.cpp	tryMaterializeBitsBesidePinnedRegister(jit, bits, destination)	true
+AOTMachineEncoderMoves.cpp	tryMoveSmallConstant(jit, static_cast<int32_t>(static_cast<uint32_t>(bits)), destination)	true
+AOTMachineEncoderMoves.cpp	width == Width32	true
+AOTMachineEncoderNumbersARM64.cpp	isDouble	false
+AOTMachineEncoderNumbersARM64.cpp	isWide	false
+AOTMachineEncoderNumbersX86_64.cpp	!isRegister()	true
+AOTMachineEncoderNumbersX86_64.cpp	isDouble	false
+AOTMachineEncoderNumbersX86_64.cpp	isMin	false
+AOTMachineEncoderNumbersX86_64.cpp	negates	false
+AOTMachineEncoderNumbersX86_64.cpp	number->opcode() == IToD	true
+AOTMachineEncoderNumbersX86_64.cpp	opcode == Ceil	false
+AOTMachineEncoderNumbersX86_64.cpp	opcode == Div	true
+AOTMachineEncoderNumbersX86_64.cpp	opcode == Floor	true
+AOTMachineEncoderNumbersX86_64.cpp	opcode == FMin	true
+AOTMachineEncoderNumbersX86_64.cpp	right.isRegister()	false
+AOTMachineEncoderNumbersX86_64.cpp	source.isRegister()	false
+AOTMachineEncoderPairsOfLoads.cpp	firstAddress.base != secondAddress.base	false
+AOTMachineEncoderPairsOfLoads.cpp	loadsNumbers	false
+AOTMachineEncoderPairsOfLoads.cpp	width == Width32	true
+AOTMachineEncoderPatches.cpp	m_frameIsSetUp	true
+AOTMachineEncoderPatches.cpp	reg != InvalidFPRReg	true
+AOTMachineEncoderPatches.cpp	std::ranges::equal(candidate.reps, reps)	true
+AOTMachineEncoderPushes.cpp	!argument || argument->opcode() != ArgumentReg	false
+AOTMachineEncoderPushes.cpp	!step.destination.reg().isGPR()	false
+AOTMachineEncoderPushes.cpp	argument->opcode() != ArgumentReg	false
+AOTMachineEncoderPushes.cpp	facts.width == Width64	true
+AOTMachineEncoderPushes.cpp	source.isGPR()	true
+AOTMachineFixedRegistersX86_64.cpp	patch->type() == Int32	false
+AOTMachineFoldingBits.cpp	!(left->child(1)->asInt() & mask)	true
+AOTMachineFoldingBits.cpp	(mask & bitFoldLowWord) == bitFoldLowWord	true
+AOTMachineFoldingBits.cpp	inner->opcode() == opcode	true
+AOTMachineFoldingBits.cpp	innerAmount != amount	false
+AOTMachineFoldingBits.cpp	innerAmount + amount < width	true
+AOTMachineFoldingBits.cpp	isBoolean(value)	true
+AOTMachineFoldingBits.cpp	leftOpcode == SExt16	true
+AOTMachineFoldingBits.cpp	leftOpcode == SExt8	true
+AOTMachineFoldingBits.cpp	mask == bitFoldLowWord	true
+AOTMachineFoldingBits.cpp	opcode == Shl	false
+AOTMachineFoldingBits.cpp	opcode == ZShr	false
+AOTMachineFoldingBits.cpp	type == Int32	false
+AOTMachineFoldingBits.cpp	value->isInt(-1)	true
+AOTMachineFoldingComparisons.cpp	(opcode == Equal) == isOne	false
+AOTMachineFoldingComparisons.cpp	comparisonFoldIsUnsignedOrder(opcode)	true
+AOTMachineFoldingComparisons.cpp	isOne	true
+AOTMachineFoldingComparisons.cpp	isZero	true
+AOTMachineFoldingComparisons.cpp	left < right	false
+AOTMachineFoldingComparisons.cpp	left > right	true
+AOTMachineFoldingComparisons.cpp	leftMax > rightMin	false
+AOTMachineFoldingComparisons.cpp	opcode == AboveEqual	true
+AOTMachineFoldingComparisons.cpp	opcode == GreaterEqual	false
+AOTMachineFoldingComparisons.cpp	opcode == LessThan	true
+AOTMachineFoldingComparisons.cpp	range.min < 0 && range.max >= 0	false
+AOTMachineFoldingComparisons.cpp	rangeOf(operand->child(0)).min >= 0	true
+AOTMachineFoldingComparisons.cpp	rightExtension != ComparisonFoldExtension::Either && rightExtension != extension	false
+AOTMachineFoldingComparisons.cpp	std::isnan(rightNumber)	true
+AOTMachineFoldingComparisons.cpp	whenNotZero->isInt(1)	true
+AOTMachineFoldingIntegers.cpp	!left->hasInt()	false
+AOTMachineFoldingIntegers.cpp	(min >> amount) != value.min || (max >> amount) != value.max	false
+AOTMachineFoldingIntegers.cpp	left->child(1) == right	true
+AOTMachineFoldingIntegers.cpp	left->isInt(0)	true
+AOTMachineFoldingIntegers.cpp	left->opcode() == Neg	true
+AOTMachineFoldingIntegers.cpp	left.min >= 0	true
+AOTMachineFoldingIntegers.cpp	opcode == MulHigh	true
+AOTMachineFoldingIntegers.cpp	right->isInt(1)	true
+AOTMachineFoldingIntegers.cpp	right->opcode() == Neg	true
+AOTMachineFoldingIntegers.cpp	right->opcode() == Sub	true
+AOTMachineFoldingIntegers.cpp	right.min < 0	false
+AOTMachineFoldingIntegers.cpp	right.min >= 0	true
+AOTMachineFoldingIntegers.cpp	sum->child(1)->hasInt()	true
+AOTMachineFoldingIntegers.cpp	value.min >= 0	true
+AOTMachineFoldingNumbers.cpp	!*rightConstant	true
+AOTMachineFoldingNumbers.cpp	!std::isnan(result)	false
+AOTMachineFoldingNumbers.cpp	*rightConstant == 1	true
+AOTMachineFoldingNumbers.cpp	left == right	true
+AOTMachineFoldingNumbers.cpp	left->opcode() == Abs	true
+AOTMachineFoldingNumbers.cpp	std::abs(std::frexp(divisor, &exponent)) != static_cast<T>(0.5)	false
+AOTMachineFoldingNumbers.cpp	std::isnan(left)	false
+AOTMachineFoldingNumbers.cpp	std::isnan(left) || std::isnan(right)	false
+AOTMachineFoldingNumbers.cpp	std::signbit(*rightConstant)	true
+AOTMachineFrame.cpp	!runsInFrame	false
+AOTMachineFrame.cpp	(facts.holdsPatchThatNeedsFrame || facts.namesFrame)	true
+AOTMachineFrame.cpp	allocation.headOfFramedPartAbove(block).block == block	true
+AOTMachineFrame.cpp	block->last()->opcode() != Return	false
+AOTMachineFrame.cpp	dominator && liesInFramedPart(dominator)	false
+AOTMachineFrame.cpp	isEnteredInFrame(successor) == runsInFrame	true
+AOTMachineFrame.cpp	liveness.standsInItsBlock(operation)	false
+AOTMachineFrame.cpp	m_proc.entrypoints().size() != 1	false
+AOTMachineFrame.cpp	opcode != Nop && opcode != Phi && opcode != Upsilon	false
+AOTMachineFrame.cpp	place.isRare() || standsInLoopThatMayTurn(place)	false
+AOTMachineFrame.cpp	plannedBlockOnlyReturns(proc, block)	true
+AOTMachineFrame.cpp	standsInLoopThatMayTurn(place)	false
+AOTMachineFrame.cpp	standsInLoopThatMayTurn(placeOf(above))	false
+AOTMachineFrame.cpp	step.kind != StepKind::Execute	false
+AOTMachineFrame.cpp	step.kind != StepKind::Execute || allocation.isSpilled(step.operation)	false
+AOTMachineFrameEmissionARM64.cpp	!save.reg().isGPR()	false
+AOTMachineFrameEmissionARM64.cpp	allocatesBeforeCheck	false
+AOTMachineFrameEmissionARM64.cpp	bytesBelowFrameRecord	false
+AOTMachineFrameEmissionARM64.cpp	calleeSavesFormPair(save, saves.at(index + 1))	true
+AOTMachineFrameEmissionARM64.cpp	frame.bytesBelowFrameRecord() != (count + count % 2) * wordSize	false
+AOTMachineFrameEmissionARM64.cpp	lower.isGPR()	false
+AOTMachineFrameEmissionARM64.cpp	lower.reg().isGPR() == upper.reg().isGPR()	true
+AOTMachineFrameEmissionARM64.cpp	offset < end	true
+AOTMachineFrameEmissionARM64.cpp	pushesSaves	false
+AOTMachineFrameEmissionARM64.cpp	reg.isGPR()	false
+AOTMachineFrameEmissionX86_64.cpp	!allocatesBeforeCheck	false
+AOTMachineFrameEmissionX86_64.cpp	!save.reg().isGPR()	false
+AOTMachineFrameEmissionX86_64.cpp	allocatesBeforeCheck	false
+AOTMachineFrameEmissionX86_64.cpp	bytesBelowFrameRecord - bytesPushed == wordSize	true
+AOTMachineFrameEmissionX86_64.cpp	bytesBelowFrameRecord != bytesPushed	false
+AOTMachineFrameEmissionX86_64.cpp	frame.bytesBelowFrameRecord() == (count + count % 2) * wordSize	true
+AOTMachineFrameEmissionX86_64.cpp	pushesSaves	false
+AOTMachineFrameEmissionX86_64.cpp	save.reg().isGPR()	false
+AOTMachineFrameEmissionX86_64.cpp	x86FrameHoldsNothingButPushedSaves(frame)	true
+AOTMachineFrameEmissionX86_64.cpp	x86FrameSavesCanBePushed(saves)	true
+AOTMachineFrameForms.cpp	!isX86_64() || !traits.mayOmitFrameRecord || traits.setsUpFrameAtEntry() || traits.savesRegistersOfCallers	false
+AOTMachineFrameForms.cpp	!proc.slots().bytesInAll() || proc.callArgAreaSizeInBytes()	false
+AOTMachineFrameForms.cpp	!proc.stackSlots().empty()	false
+AOTMachineFrameForms.cpp	!traits.mayOmitFrameRecord	false
+AOTMachineFrameForms.cpp	proc.allocation().holdsPatchThatCountsOnFrameRecord()	false
+AOTMachineFrameForms.cpp	proc.callArgAreaSizeInBytes()	false
+AOTMachineFrameForms.cpp	proc.namesFramePointer()	false
+AOTMachineFrameForms.cpp	traits.savesFrameOnSuspend	false
+AOTMachineFrameForms.cpp	traits.setsUpFrameAtEntry()	false
+AOTMachineFrameFormsX86_64.cpp	!frame.savesLieAtBottom()	false
+AOTMachineFrameFormsX86_64.cpp	!registersPushedIntoFirstSlots.empty()	false
+AOTMachineFrameFormsX86_64.cpp	frame.hasFrameRecord()	false
+AOTMachineFrameFormsX86_64.cpp	frame.savesLieAtBottom()	false
+AOTMachineFrameFormsX86_64.cpp	numberOfWords	false
+AOTMachineFrameFormsX86_64.cpp	numberOfWords == 1	true
+AOTMachineFrameFormsX86_64.cpp	numberOfWordsThatNobodyWants == 1	true
+AOTMachineFrameFormsX86_64.cpp	reg == InvalidGPRReg	true
+AOTMachineFrameFormsX86_64.cpp	registersPushedIntoFirstSlots.empty()	true
+AOTMachineFrameFormsX86_64.cpp	wordsBelowSaves	false
+AOTMachineFrameFormsX86_64.cpp	wordsBelowSaves == 1	true
+AOTMachineFusion.cpp	!comparesWithOwnLowHalf	false
+AOTMachineFusion.cpp	!fusedLoadCanMoveBehind(block->at(index))	false
+AOTMachineFusion.cpp	!fusedLoadCanMoveTo(load, user) || !acceptsMemoryOperand(*user, childIndex)	false
+AOTMachineFusion.cpp	!memoryUpdateIsSignedOrder(relation)	false
+AOTMachineFusion.cpp	(!isStoreBehind && !fusionIsLoad(opcode)) || fusionChildrenOf(candidate)[isStoreBehind ? 1 : 0] != base	false
+AOTMachineFusion.cpp	fusionCanAbsorb(values, block, bits)	true
+AOTMachineFusion.cpp	fusionCanAbsorb(values, block, index)	true
+AOTMachineFusion.cpp	fusionCanAbsorb(values, block, predicate)	true
+AOTMachineFusion.cpp	fusionTestCanReadLoad(values, branch, tested, 1, operands[1], operands[0])	true
+AOTMachineFusion.cpp	hasTrait(opcode, OpcodeTrait::HasEffects)	false
+AOTMachineFusion.cpp	passing.min && *passing.min > memoryUpdateMinInt32 && minSum < *passing.min	false
+AOTMachineFusion.cpp	relation != Equal || !truncation || test.extensionOfLowHalf->useCount() != 1	false
+AOTMachineFusion.cpp	relation == GreaterEqual	true
+AOTMachineFusion.cpp	relation == LessThan	true
+AOTMachineFusion.cpp	update.successorThatStores	true
+AOTMachineMergeBlocks.cpp	!areEqualButForOrigin(operationOfA, operationOfB)	false
+AOTMachineMergeBlocks.cpp	!areEqualLists(a->operations(), b->operations())	false
+AOTMachineMergeBlocks.cpp	!areEqualLists(a->operations(), b->operations()) || !areEqualLists(a->upsilons(), b->upsilons())	false
+AOTMachineMergeBlocks.cpp	!areEqualLists(a->upsilons(), b->upsilons())	false
+AOTMachineMergeBlocks.cpp	!hasReplacements	false
+AOTMachineMergeBlocks.cpp	!previousInPlace[previous - 1]	true
+AOTMachineMergeBlocks.cpp	areIdentical(kept, other)	true
+AOTMachineMergeBlocks.cpp	child->owner() != block	false
+AOTMachineMergeBlocks.cpp	edge != end || block->isEntry() || !block->phis().empty()	false
+AOTMachineMergeBlocks.cpp	edge == end	true
+AOTMachineMergeBlocks.cpp	identityOfChild(a, childrenOfA.data()[index]) != identityOfChild(b, childrenOfB.data()[index])	false
+AOTMachineMergeBlocks.cpp	replacement != none	false
+AOTMachineMergeBlocks.cpp	replacements[edge->block()->index()] == none	true
+AOTMachineMergeBlocks.cpp	replacements[from->index()] != none	true
+AOTMachineNumbering.h	!load->has(OperationFlag::ReadsImmutableHeap)	false
+AOTMachineNumbering.h	!m_timesOfWrites.empty()	false
+AOTMachineNumbering.h	entry.hash != hash || !matches(key, entry)	false
+AOTMachineNumbering.h	heaps.isTop()	false
+AOTMachineNumbering.h	m_numberOfEntriesThatWritesEnd == m_numberOfEntriesEndedByWriteToAllHeaps	true
+AOTMachineNumbering.h	m_timesOfWrites.empty()	true
+AOTMachineOrder.cpp	above != header	false
+AOTMachineOrder.cpp	goesDown	true
+AOTMachineOrder.cpp	headerOfBlockAbove != header	false
+AOTMachineOrder.cpp	headerOfCurrent == none	true
+AOTMachineOrder.cpp	leavingSuccessorOfFirst	false
+AOTMachineOrder.cpp	m_waysDownFromRareBlocksStayAmongThem && (stateOfCurrent->flags & IsRare)	false
+AOTMachineOrder.cpp	other.block() == formerTarget	false
+AOTMachineOrder.cpp	phi	false
+AOTMachineOrder.cpp	phi->owner() != formerTarget	false
+AOTMachineOrder.cpp	placeOfTarget.orderIndex <= orderIndex	false
+AOTMachineOrder.cpp	placeOfTarget.predecessors.size() == 1	true
+AOTMachineOrder.cpp	plan.firstEntry != entry	false
+AOTMachineOrder.cpp	region == places[edge.landingPad].rareRegion	true
+AOTMachineOrder.cpp	successor->isLandingPad()	true
+AOTMachineOrder.cpp	wayOfSecondWhereBitIsSet	true
+AOTMachineParallelMoves.cpp	!isNamedForFirstTime(destination)	false
+AOTMachineParallelMoves.cpp	!isNamedForFirstTime(parallelMoveSourceKey(move))	false
+AOTMachineParallelMoves.cpp	!secondWritesWhatFirstReads	true
+AOTMachineParallelMoves.cpp	destinationIsRegister	true
+AOTMachineParallelMoves.cpp	destinations[index - 1] <= destination	false
+AOTMachineParallelMoves.cpp	destinations[writer] != key	true
+AOTMachineParallelMoves.cpp	keysOutsideRegisters[earlier] == key	false
+AOTMachineParallelMoves.cpp	keysOutsideRegisters[known] != key	true
+AOTMachineParallelMoves.cpp	move.destination.isRegister()	true
+AOTMachineParallelMoves.cpp	move.source.isImmediate()	true
+AOTMachineParallelMoves.cpp	parallelMoveLocationKey(m_moves[writer].destination) == reader.key	true
+AOTMachineParallelMoves.cpp	registersRead & mask	false
+AOTMachineParallelMoves.cpp	sourceInScratch != sourceIndex	false
+AOTMachineParallelMoves.cpp	sourceIsRegister	true
+AOTMachineParallelMoves.cpp	tryResolveIndependentParallelMoves(arena, moves, output)	true
+AOTMachineReferences.cpp	!operation->has(OperationFlag::NamesPermanentCell)	false
+AOTMachineReferences.cpp	!operation->isNarrowReference()	false
+AOTMachineReferences.cpp	operation->has(OperationFlag::IsInnerPointer)	true
+AOTMachineScan.cpp	(flags & static_cast<uint16_t>(ValueFlag::LivesAcrossSafepoint))	false
+AOTMachineScan.cpp	behind	false
+AOTMachineScan.cpp	block->isLandingPad()	false
+AOTMachineScan.cpp	edge.block() == target	false
+AOTMachineScan.cpp	factsBelow.flags & scanBitOf(ValueFlag::IsFused)	false
+AOTMachineScan.cpp	firstOfUses[behind].position < position	true
+AOTMachineScan.cpp	flagsOfLeaf & scanBitOf(ValueFlag::IsFused)	false
+AOTMachineScan.cpp	lastUse == noPosition	true
+AOTMachineScan.cpp	loop != noLoop	false
+AOTMachineScan.cpp	opcode != Check	true
+AOTMachineScan.cpp	opcode == Patch	true
+AOTMachineScan.cpp	own.flags & flagsOfScannedOperationWithLeavesOfItsOwn	false
+AOTMachineScan.cpp	revives	false
+AOTMachineScan.cpp	scan.tryUpdateInMemory(operation)	true
+AOTMachineScan.cpp	target < loops[innermost].endBlock	true
+AOTMachineSinking.cpp	!canSinkIntoRareRegion(operation)	false
+AOTMachineSinking.cpp	operation->has(OperationFlag::ReadsImmutableHeap)	true
+AOTMachineSlots.cpp	!keysRise	false
+AOTMachineSlots.cpp	!numberOfHolders[word]++	false
+AOTMachineSlots.cpp	holder.end < early	true
+AOTMachineSlots.cpp	m_partOfSpill[spill] != KeptAtSuspensions	true
+AOTMachineSlots.cpp	m_partOfSpill[spill] == DeadAtSuspensions	false
+AOTMachineSlots.cpp	m_partOfStackSlot[slot->index()] != KeptAtSuspensions	true
+AOTMachineSlots.cpp	numberOfCalleeSaves % 2	true
+AOTMachineSlots.cpp	positionInPlaceSortKey(keys[endOfEquals]) == endOfHold	true
+AOTMachineSlots.cpp	positionInPlaceSortKey(keys[next]) < position	true
+AOTMachineSlots.cpp	range.begin >= position	true
+AOTMachineSlots.cpp	range.end < early	true
+AOTMachineSlots.cpp	topOfSecondPart	false
+AOTMachineTargetARM64.cpp	!std::has_single_bit(bound)	false
+AOTMachineTargetARM64.cpp	constant.bits == bits	true
+AOTMachineTargetARM64.cpp	shift <= (extension == IndexExtension::None ? 63u : 4u)	true
+AOTMachineTargetARM64.cpp	std::has_single_bit(static_cast<uint64_t>(constant))	true
+AOTMachineTargetX86_64.cpp	constant.bits == bits	true
+AOTMachineTargetX86_64.cpp	extension == IndexExtension::None	true
+AOTMachineTargetX86_64.cpp	shift <= 3	true
+AOTMachineTestsOfPhis.cpp	isShift	true
+AOTMachineTestsOfPhis.cpp	opcode == Add	true
+AOTMachineTestsOfPhis.cpp	opcode == BitAnd	true
+AOTMachineTestsOfPhis.cpp	opcode == BitOr	true
+AOTMachineTestsOfPhis.cpp	opcode == BitXor	true
+AOTMachineTestsOfPhis.cpp	opcode == Equal	true
+AOTMachineTestsOfPhis.cpp	opcode == GreaterThan	true
+AOTMachineTestsOfPhis.cpp	opcode == LessEqual	true
+AOTMachineTestsOfPhis.cpp	opcode == LessThan	true
+AOTMachineTestsOfPhis.cpp	opcode == NotEqual	true
+AOTMachineTestsOfPhis.cpp	opcode == SExt32	true
+AOTMachineTestsOfPhis.cpp	opcode == Sub	true
+AOTMachineTestsOfPhis.cpp	opcode == Trunc	true
+AOTMachineTestsOfPhis.cpp	opcode == ZExt32	true
+AOTMachineTestsOfPhis.cpp	operation == phi	true
+AOTMachineThreadJumps.cpp	!block->numberOfIncomingEdges()	true
+AOTMachineThreadJumps.cpp	!isAskedByBranchOfItsBlockAlone(bitsOfFirst, first)	false
+AOTMachineThreadJumps.cpp	!lower.isSigned	false
+AOTMachineThreadJumps.cpp	!operation->mustStay()	true
+AOTMachineThreadJumps.cpp	(operation != testOfSecond && operation != wordOfSecond)	false
+AOTMachineThreadJumps.cpp	answer == Answer::Unknown	false
+AOTMachineThreadJumps.cpp	block->phis().empty()	true
+AOTMachineThreadJumps.cpp	block->size() != 1	false
+AOTMachineThreadJumps.cpp	holdsNothingButItsTest(block)	true
+AOTMachineThreadJumps.cpp	join->last()->opcode() == Switch	false
+AOTMachineThreadJumps.cpp	low > high	false
+AOTMachineThreadJumps.cpp	lower != opcode	true
+AOTMachineThreadJumps.cpp	match == MatchOfJoin::IsNotLookedAt	false
+AOTMachineThreadJumps.cpp	operation != branch	false
+AOTMachineThreadJumps.cpp	useCount != 1	false

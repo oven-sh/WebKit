@@ -15,6 +15,7 @@
 #include "JSCell.h"
 #include "JSScope.h"
 #include "VM.h"
+#include <wtf/Atomics.h>
 #include <wtf/Noncopyable.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -30,7 +31,7 @@ struct EnvironmentShapes {
     const ProgramTables* tables { nullptr };
     Vector<CompiledStructure*, 2> structuresByPage;
 
-    const EnvironmentData& at(uint16_t page, const JSCell*) const;
+    const EnvironmentData& at(uint16_t page, uint64_t header) const;
     CompiledStructure* structureFor(VM&, Instance&, uint32_t shape);
 };
 
@@ -55,9 +56,18 @@ public:
     void markEscaped() { at<uint8_t>(offsetOfEnvironmentShapeHighByte) |= environmentIsEscapedBit; }
 
     template<typename Visitor>
-    ALWAYS_INLINE static void visitFields(Environment* environment, Visitor& visitor)
+    ALWAYS_INLINE static void visitFields(Environment* environment, const EnvironmentData& layout, Visitor& visitor)
     {
-        visitReferences(environment, environment->layout(), false, visitor);
+        visitReferences(environment, layout, false, visitor);
+    }
+    template<typename Visitor>
+    ALWAYS_INLINE static bool tryVisitFields(Environment* environment, const CompiledStructure& structure, Visitor& visitor)
+    {
+        uint64_t header = environment->header();
+        if (static_cast<uint32_t>(header) != structure.id().bits())
+            return false;
+        visitFields(environment, structure.environmentShapes().at(structure.environmentShapePage(), header), visitor);
+        return true;
     }
 
     DECLARE_INFO;
@@ -66,6 +76,8 @@ public:
     static void analyzeHeap(JSCell*, HeapAnalyzer&);
 
 private:
+    uint64_t header() const { return WTF::atomicLoad<MemoryOrder::Relaxed>(&at<uint64_t>(0)); }
+
     Environment(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
@@ -73,16 +85,18 @@ private:
 };
 static_assert(sizeof(Environment) == offsetOfFirstEnvironmentVariable);
 
-ALWAYS_INLINE const EnvironmentData& EnvironmentShapes::at(uint16_t page, const JSCell* cell) const
+ALWAYS_INLINE const EnvironmentData& EnvironmentShapes::at(uint16_t page, uint64_t header) const
 {
-    auto* header = reinterpret_cast<const uint8_t*>(cell);
-    return tables->environmentForShape((static_cast<uint32_t>(page) << environmentShapesPerPageShift) + environmentShapeInPage(header[offsetOfEnvironmentShapeLowByte], header[offsetOfEnvironmentShapeHighByte]));
+    auto byteOfHeader = [&](uint32_t offset) ALWAYS_INLINE_LAMBDA {
+        return static_cast<uint8_t>(header >> 8 * offset);
+    };
+    return tables->environmentForShape((static_cast<uint32_t>(page) << environmentShapesPerPageShift) + environmentShapeInPage(byteOfHeader(offsetOfEnvironmentShapeLowByte), byteOfHeader(offsetOfEnvironmentShapeHighByte)));
 }
 
 ALWAYS_INLINE const EnvironmentData& Environment::layout() const
 {
     const CompiledStructure& compiled = *uncheckedDowncast<CompiledStructure>(structure());
-    return compiled.environmentShapes().at(compiled.environmentShapePage(), this);
+    return compiled.environmentShapes().at(compiled.environmentShapePage(), header());
 }
 
 class EvalScope final : public JSScope {
@@ -103,12 +117,17 @@ public:
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
+    JSObject* bindings() const { return m_bindings.get(); }
+
 private:
     EvalScope(VM&, Structure*, JSScope* next, JSObject* bindings, JSValue newTarget);
 
     WriteBarrier<JSObject> m_bindings;
     WriteBarrier<Unknown> m_newTarget;
 };
+
+enum class NameInEvalScope : uint8_t { NotEvalScope, Absent, Present };
+NameInEvalScope findNameInEvalScope(JSGlobalObject*, JSScope*, PropertyName);
 
 } } // namespace JSC::AOT
 

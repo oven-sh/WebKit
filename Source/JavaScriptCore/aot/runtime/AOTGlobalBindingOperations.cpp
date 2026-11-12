@@ -47,7 +47,7 @@ static ChainWalk walkAboveGlobalObject(JSGlobalObject* globalObject, UniquedStri
     return walkChain({ globalObject, globalObject->structure(), globalObject, mode }, uid);
 }
 
-static ALWAYS_INLINE bool putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot)
+static ALWAYS_INLINE void putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -55,27 +55,24 @@ static ALWAYS_INLINE bool putGlobalName(JSGlobalObject* globalObject, const Iden
     if (SymbolTableEntry::Fast entry = lexical->symbolTable()->get(identifier.impl()); !entry.isNull()) {
         if (!lexical->variableAt(entry.scopeOffset()).get()) {
             throwException(globalObject, scope, createTDZError(globalObject, identifier));
-            return false;
+            return;
         }
         PutPropertySlot lexicalSlot(lexical, true);
         scope.release();
         JSGlobalLexicalEnvironment::put(lexical, globalObject, identifier, value, lexicalSlot);
-        return false;
+        return;
     }
     if (slot.isStrictMode()) {
         bool exists = globalObject->hasProperty(globalObject, identifier);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, void());
         if (!exists) {
             throwException(globalObject, scope, createUndefinedVariableError(globalObject, identifier));
-            return false;
+            return;
         }
     }
 
-    Structure* structureBefore = globalObject->structure();
-    unsigned lexicalBindingEpochBefore = globalObject->globalLexicalBindingEpoch();
+    scope.release();
     globalObject->methodTable()->put(globalObject, globalObject, identifier, value, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-    return globalObject->structure() == structureBefore && globalObject->globalLexicalBindingEpoch() == lexicalBindingEpochBefore;
 }
 
 static PropertyAnswer answerInStorage(PropertyAnswerKind kind, SlotAccess access, JSObject* holder, PropertyOffset offset)
@@ -308,6 +305,12 @@ static bool tryFileAbsence(const BindingAccess& access)
     return true;
 }
 
+static bool forwardsToGlobalObject(JSGlobalObject* globalObject)
+{
+    JSObject* globalThis = globalObject->globalThis();
+    return globalThis == globalObject || (globalThis->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(globalThis)->target() == globalObject);
+}
+
 static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t number, bool seesScriptBindings)
 {
     if (EncodedJSValue* location = filedLocationOrNull(instance, number, seesScriptBindings)) {
@@ -336,8 +339,7 @@ static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t numbe
         }
     } else {
         receiver = globalObject->globalThis();
-        bool forwardsToGlobalObject = receiver == globalObject || (receiver->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(receiver)->target() == globalObject);
-        if (!forwardsToGlobalObject) [[unlikely]]
+        if (!forwardsToGlobalObject(globalObject)) [[unlikely]]
             RELEASE_AND_RETURN(scope, JSValue(receiver).get(globalObject, identifier));
     }
 
@@ -373,21 +375,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetGlobalObjectBinding, EncodedJSValue, (In
     OPERATION_RETURN(scope, JSValue::encode(getGlobalBinding(instance, binding, false)));
 }
 
-static bool tryFileStore(const BindingAccess& access, const PutPropertySlot& slot)
+static bool tryReplaceAndFileLocation(const BindingAccess& access, JSValue value)
 {
     VM& vm = access.vm;
     JSGlobalObject* globalObject = access.globalObject;
-    if (!canCachePropertiesOf(globalObject) || globalObject->structure()->isImmutableProperty(access.uid()) || isWriteJudgedByWriter(globalObject->structure(), access.uid()) || !structureSaysWherePropertiesAre(access))
+    if (globalObject->methodTable()->put != JSGlobalObject::info()->methodTable.put || !canCachePropertiesOf(globalObject))
+        return false;
+    unsigned attributes = 0;
+    if (!isValidOffset(globalObject->structure()->get(vm, access.uid(), attributes)) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+        return false;
+    if (globalObject->structure()->isImmutableProperty(access.uid()) || isWriteJudgedByWriter(globalObject->structure(), access.uid()) || !structureSaysWherePropertiesAre(access))
         return false;
     Structure* structure = globalObject->structure();
-    unsigned attributes = 0;
-    PropertyOffset offset = structure->get(vm, access.uid(), attributes);
-    bool isWritableDataProperty = isValidOffset(offset) && !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
-    if (!isWritableDataProperty || !slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != globalObject || slot.cachedOffset() != offset)
-        return false;
+    PropertyOffset offset = structure->get(vm, access.uid());
     structure->didCachePropertyReplacement(vm, offset);
     access.bindings.didFileStore(access.number);
     access.bindings.fileLocation(access.number, structure, locationOfProperty(globalObject, offset));
+    globalObject->putDirectOffset(vm, offset, value);
     return true;
 }
 
@@ -397,12 +401,10 @@ static ALWAYS_INLINE void setGlobalBinding(Instance* instance, uint32_t number, 
         return;
     BindingAccess access = bindingAccess(instance, number);
     ASSERT(access.bindings.seesScriptBindings(number));
-    auto scope = DECLARE_THROW_SCOPE(access.vm);
+    if (!access.globalObject->globalLexicalEnvironment()->symbolTable()->contains(access.uid()) && tryReplaceAndFileLocation(access, value))
+        return;
     PutPropertySlot slot(access.globalObject, isStrict);
-    bool mayBeFiled = putGlobalName(access.globalObject, access.name, value, slot);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (mayBeFiled)
-        tryFileStore(access, slot);
+    putGlobalName(access.globalObject, access.name, value, slot);
 }
 
 static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
@@ -412,15 +414,11 @@ static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t nu
     BindingAccess access = bindingAccess(instance, number);
     ASSERT(!access.bindings.seesScriptBindings(number));
     JSGlobalObject* globalObject = access.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(access.vm);
-
-    Structure* structureBefore = globalObject->structure();
+    if (forwardsToGlobalObject(globalObject) && tryReplaceAndFileLocation(access, value))
+        return;
     JSObject* receiver = globalObject->globalThis();
     PutPropertySlot slot(receiver, isStrict);
     receiver->methodTable()->put(receiver, globalObject, access.name, value, slot);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (globalObject->structure() == structureBefore)
-        tryFileStore(access, slot);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetGlobalBinding, void, (Instance* instance, uint32_t binding, EncodedJSValue value))

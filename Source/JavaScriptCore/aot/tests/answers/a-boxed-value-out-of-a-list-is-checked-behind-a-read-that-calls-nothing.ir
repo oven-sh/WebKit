@@ -12,7 +12,7 @@
 # Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
 # OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f2 mechanisms=all
-# FORM: [[read]]: undefined|string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds] traits=[mayTouchMemory]
+# FORM: [[read]]: undefined|string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds{{*}}] traits=[mayTouchMemory]
 # FORM: = CheckProof [[read]] checkedType=undefined|string
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 3

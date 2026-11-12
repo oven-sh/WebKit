@@ -282,11 +282,11 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
             meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(walker, behindCasts, found);
     }
     if (isDeclared) {
-        if (definition.isParameter() && index.blockOf(input) == entryBlock)
+        if (definition.isParameter() && index.isInBlock(input, entryBlock))
             meetWithWhatWasSeenToArriveInNarrowingOfGuesses(walker, input.index(), found);
         return;
     }
-    bool arrivesAtJoin = definition.isParameter() && index.blockOf(input) != entryBlock && !restsOnNamesUsedAlone;
+    bool arrivesAtJoin = definition.isParameter() && !index.isInBlock(input, entryBlock) && !restsOnNamesUsedAlone;
     if (!arrivesAtJoin && restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(walker, input, definition, found))
         found = { };
 }

@@ -34,7 +34,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static_assert(numberOfEnumerators<ErrorKind> <= ThrowSiteWord::numberOfRegistersPerBank);
+static_assert(numberOfEnumerators<ErrorKind> <= ThrowSiteWord::numberOfRegistersPerBank && numberOfEnumerators<RuntimeErrorKind> <= ThrowSiteWord::numberOfRegistersPerBank);
 static_assert(JSValue::ValueNull < JSValue::ValueUndefined && static_cast<uintptr_t>(JSValue::ValueUndefined + JSCell::typeInfoTypeOffset()) < FaultSite::reach);
 static_assert(nullCell32 < undefinedCell32 && (static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + JSCell::typeInfoTypeOffset() < FaultSite::reach);
 static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined);
@@ -100,7 +100,7 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
     bool valueIsInThrowWordRegister = false;
     if (code.representation == Representation::Double || code.representation == Representation::OptionalDouble)
         number = static_cast<unsigned>(params[0].fpr());
-    else if (code.representation != Representation::Void) {
+    else if (code.representation != Representation::Void && code.representation != ThrowSiteWord::runtimeErrorRepresentation) {
         number = static_cast<unsigned>(params[0].gpr());
         valueIsInThrowWordRegister = params[0].gpr() == throwWordGPR;
     }
@@ -235,7 +235,7 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
     LBasicBlock siteBlock = m_out.m_block;
     if (operand)
         patchpoint->appendSomeRegister(operand->value);
-    ThrowSiteCode code { checkedThrowSite(site), representationInThrowWords(operand), newError ? static_cast<unsigned>(newError->kind) : 0, 0 };
+    ThrowSiteCode code { checkedThrowSite(site), newError ? newError->representation : representationInThrowWords(operand), newError ? newError->kind : 0, 0 };
     if (newError && newError->throwPosition) {
         Origin throwOrigin = context.origin();
         throwOrigin.position = *newError->throwPosition;
@@ -298,7 +298,12 @@ Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const Operati
 
 void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message, std::optional<uint32_t> throwPosition)
 {
-    throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, message), std::nullopt, NewError { kind, throwPosition });
+    throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, message), std::nullopt, NewError { .kind = static_cast<unsigned>(kind), .throwPosition = throwPosition });
+}
+
+void ThrowEmitter::throwRuntimeError(const OperationContext& context, RuntimeErrorKind kind, StringID name)
+{
+    throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, name), std::nullopt, NewError { .kind = static_cast<unsigned>(kind), .representation = ThrowSiteWord::runtimeErrorRepresentation });
 }
 
 static ThrowSite siteOfFalseProof(ProofSource source, uint32_t expectedType)
@@ -325,6 +330,29 @@ void ThrowEmitter::checkOrCrash(const OperationContext& context, Condition holds
         requireOrCrash(context, holds, std::nullopt, source, expectedType);
     else
         requireOrThrow(context, holds, siteOfFalseProof(source, expectedType), std::nullopt);
+}
+
+bool ThrowEmitter::trapUnlessCell(const OperationContext& context, Boxed found, ProofSource source, uint32_t expectedType)
+{
+    if (generator().isInitializingCell() || found.value()->hasInt64() || !canTrapAt(context) || valueOfOrigin(m_out.origin()) != context.valueID())
+        return false;
+    trapThrough(context, found.value(), Representation::JSValue, siteOfFalseProof(source, expectedType));
+    return true;
+}
+
+bool ThrowEmitter::trapIfNullish(const OperationContext& context, Boxed value, NullishAccess access, StringID name)
+{
+    if (generator().isInitializingCell() || value.value()->hasInt64() || ExceptionEmitter::unwindsWithinFunction(context) || valueOfOrigin(m_out.origin()) != context.valueID())
+        return false;
+    const Vector<TrapSite>& trapSites = m_records.traps.trapSites;
+    if (!trapSites.isEmpty() && trapSites.last().value == context.valueID()) {
+        m_out.load8ZeroExt32Trapping(m_out.address(value.value(), m_heaps.JSCell_typeInfoType));
+        return true;
+    }
+    if (!canTrapAt(context))
+        return false;
+    trapThrough(context, value.value(), Representation::JSValue, throwSiteWithName(m_mentions, throwKindOfNullishAccess[static_cast<size_t>(access)], name));
+    return true;
 }
 
 void ThrowEmitter::crashOnFalseProof(const OperationContext& context, std::optional<Boxed> found, ProofSource source, uint32_t expectedType)

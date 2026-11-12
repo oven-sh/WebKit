@@ -910,7 +910,6 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
 
     JSObject* createdBefore = realms.object(locked, "var createdBefore = Object.create(new Uint8Array(4)); createdBefore[0] = 1; createdBefore"_s);
     JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
-    // Upstream's typed arrays say from the start that they intercept indexed stores (WebKit/WebKit@890b90dce3). The realm's own word for it comes later.
     AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; !(9 in early)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!locked->typedArraysInterceptIndexedStores());
     AOT_TEST_CHECK(hasSlowPutArrayStorage(createdBefore->indexingType()));

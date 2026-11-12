@@ -204,8 +204,9 @@ static constexpr Step steps[] = {
     { "splitBranchConditions"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.policy().optimization.splitsBranchConditions; },
         runPass<splitBranchConditions> },
+    // The edges of WebAssembly get their classes with the frequencies. Classes estimated before the phases that copy code change none of it.
     { "estimateFrequencies"_s,
-        [](Procedure& procedure, const PipelineState&) { return procedure.policy().optimization.estimatesFrequencies; },
+        [](Procedure& procedure, const PipelineState&) { return procedure.policy().optimization.estimatesFrequencies && !procedure.isWasm(); },
         runNothing, NeededEstimate::EdgeClasses },
     { "clientPhasesBeforeOptimization"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::BeforeOptimization); },

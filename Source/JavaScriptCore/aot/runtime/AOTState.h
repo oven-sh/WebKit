@@ -182,7 +182,7 @@ enum class CountInEffectsNet : uint8_t;
 struct GrowingFlatText {
     JSString* buffer;
     const StringImpl* lastResolved;
-    uint32_t resolvesInTurn;
+    uint32_t consecutiveResolves;
 };
 
 struct WideCharacterStrings {

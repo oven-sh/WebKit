@@ -208,6 +208,7 @@ static void forEachRequestForData(const NumberedKeys& requests, NOESCAPE const I
         case RequestKind::TemplateObject:
         case RequestKind::DirectEval:
         case RequestKind::FormatPattern:
+        case RequestKind::ImportChecks:
             break;
         }
     }

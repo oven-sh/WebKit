@@ -92,6 +92,8 @@ void CoroutineTable::initializeCoroutineWords(VM& vm)
     words.reactionJobWords[3] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Rejected, promiseReactionJobAsyncContextFlag);
     words.performMicrotaskJobWord = jobWord(m_instance.globalObject, InternalMicrotask::BunPerformMicrotaskJob, JSPromise::Status::Pending);
     words.promiseAllResolveJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllResolveJob, JSPromise::Status::Fulfilled);
+    words.resolveThenableJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseResolveThenableJobFast, JSPromise::Status::Pending);
+    words.resolveWithoutHandlerJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseResolveWithoutHandlerJob, JSPromise::Status::Fulfilled);
     words.asyncGeneratorAllocator = subspaceFor<JSAsyncGenerator>(vm)->allocatorFor(sizeof(JSAsyncGenerator), AllocatorForMode::EnsureAllocator).localAllocator();
     words.asyncGeneratorSentinel = vm.fastAsyncGeneratorSentinel();
 }
@@ -151,6 +153,7 @@ SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numbe
     saved->m_resumeAddress = resumeAddress;
     saved->m_numberOfSavedRegisterPairs = liesOnHeapBit;
     saved->m_flags = isSuspendedAtYieldFlag;
+    saved->m_preservedRegister = numberOfWords;
     vm.mutatorFence();
     return saved;
 }
@@ -201,18 +204,16 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
-    const Image* image = Image::current();
-    CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
-    if (where.kind != CodeKind::Function)
-        return std::nullopt;
-    return SavedFrameMap::tryCreate(image->frameMapWords(where.function), offsetPlusOne - 1);
+    return SavedFrameMap::tryCreate(Image::current()->frameMapWordsAt(m_resumeAddress), offsetPlusOne - 1);
 }
 
 template<typename Visitor>
 void SavedFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    Base::visitChildren(cell, visitor);
-    visitFields(uncheckedDowncast<SavedFrame>(cell), visitor);
+    auto* saved = uncheckedDowncast<SavedFrame>(cell);
+    ASSERT(!saved->butterfly());
+    JSCell::visitChildren(saved, visitor);
+    visitFields(saved, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(SavedFrame);

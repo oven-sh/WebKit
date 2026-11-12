@@ -82,10 +82,15 @@ Boxed HashTableBuiltinEmitter::normalizedKey(const OperationContext& context, Va
     if (calleeNormalizes || !(type.primitives & Primitive::Number))
         return key;
 
+    static constexpr RepresentationSet integers { Representation::Int32, Representation::Int64, Representation::OptionalInt64 };
+    bool numbersFitInt32 = !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
+    ValueID number = opcodeOf(id) == Opcode::Box ? operationAt(id).operand(0) : id;
+    if (numbersFitInt32 && integers.contains(representationOf(number)))
+        return key;
+
     Condition isBoxedDouble = logicalNot(isInt32(key));
     if (!type.isNumber())
         isBoxedDouble = logicalAnd(isNumber(key), isBoxedDouble);
-    bool numbersFitInt32 = !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
     LBasicBlock needsNormalization = newBlock();
     LBasicBlock isNormalized = newBlock();
     Join<Boxed> join(m_out);

@@ -253,6 +253,15 @@ constexpr bool countsChildrenAtFirstUse(Opcode opcode)
 static_assert(countsChildrenAtFirstUse(Add) && countsChildrenAtFirstUse(Div) && countsChildrenAtFirstUse(BitAnd) && countsChildrenAtFirstUse(FMax) && countsChildrenAtFirstUse(BitwiseCast) && countsChildrenAtFirstUse(EqualOrUnordered) && countsChildrenAtFirstUse(Select));
 static_assert(!countsChildrenAtFirstUse(Load) && !countsChildrenAtFirstUse(Opaque) && !countsChildrenAtFirstUse(Extract) && !countsChildrenAtFirstUse(Phi) && !countsChildrenAtFirstUse(ArgumentReg) && !countsChildrenAtFirstUse(Patch) && !countsChildrenAtFirstUse(Check) && !countsChildrenAtFirstUse(Upsilon));
 
+constexpr bool readsZeroExtendedWord(Opcode opcode, unsigned childIndex)
+{
+    if (isStore(opcode))
+        return !childIndex;
+    if (opcode == Select)
+        return childIndex;
+    return opcode == Add || opcode == Sub || opcode == Mul || opcode == BitAnd || opcode == BitOr || opcode == BitXor || opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR || opcode == Neg || opcode == Clz || opcode == SExt8 || opcode == SExt16 || opcode == SExt32 || opcode == ZExt32 || opcode == IToD || isComparison(opcode);
+}
+
 JS_EXPORT_PRIVATE Opcode invertedComparison(Opcode);
 JS_EXPORT_PRIVATE Opcode flippedComparison(Opcode);
 

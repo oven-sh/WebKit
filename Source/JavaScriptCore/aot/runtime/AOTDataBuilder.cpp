@@ -185,7 +185,7 @@ ALWAYS_INLINE static uint64_t* allocateObjectCell(Builder& builder, uint32_t all
     StructureTable& structures = builder.state.objects->structures;
     const AllocationSiteRecord* record = builder.state.instance.objects.allocationSite(allocation);
     if (!record || !record->header) [[unlikely]]
-        record = &structures.fillAllocationSite(builder.vm, allocation);
+        return reinterpret_cast<uint64_t*>(structures.allocateAsCompiledCodeDoes(builder.vm, allocation));
     uint64_t header = record->header;
     uint64_t orderAndShapeWords = record->orderAndShapeWords;
     FreeList& freeList = *reinterpret_cast<FreeList*>(static_cast<uint8_t*>(record->allocator) + LocalAllocator::offsetOfFreeList());

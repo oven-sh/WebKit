@@ -401,12 +401,12 @@ void generateCallValue(StubAssembler& jit)
     jit.setCallPosition(static_cast<CallPosition>(jit.key().form()));
     const CallRegisters registers = CallRegisters::allocate(jit);
     const unsigned count = jit.key().count();
-    constexpr unsigned sizeOfMove = isX86_64() ? 5 : 4;
-    while ((jit.m_assembler.codeSize() + sizeOfMove) % 16)
+    constexpr unsigned sizeOfMove = 4;
+    while (isARM64() && (jit.m_assembler.codeSize() + sizeOfMove) % 16)
         jit.nop();
     jit.bindEntry(callValueCellWithoutThis(count, jit.callPosition()));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    RELEASE_ASSERT(!(jit.m_assembler.codeSize() % 16));
+    RELEASE_ASSERT(!isARM64() || !(jit.m_assembler.codeSize() % 16));
     jit.bindEntry(callValueCell(count, jit.callPosition()));
     Label isCell = jit.label();
 
@@ -501,14 +501,13 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
     ASSERT(noOverlap(closure, cell, allocator, scratch, instanceGPR));
 
     const GPRReg function = cell;
-    const GPRReg tables = allocator;
+    const GPRReg held = allocator;
     jit.load32(Address(closure, offsetOfSlimClosureWord + sizeof(uint32_t)), function);
     jit.and32(TrustedImm32(ClosureWord::functionMask), function);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    loadProgramTable(jit, tables, ProgramTableIndex::closureCaptureCounts, scratch);
-    jit.load8(BaseIndex(scratch, function, CCallHelpers::TimesOne), function);
+    loadAddressOfClosureFacts(jit, function, scratch);
+    jit.load8(Address(scratch, OBJECT_OFFSETOF(ClosureFacts, captureCounts)), function);
     slow.append(jit.branch32(CCallHelpers::Equal, function, TrustedImm32(countsAreListed)));
-    emitMarkEnvironmentsThatLentClosureHolds(jit, closure, function, scratch, tables, slow);
+    emitMarkEnvironmentsThatLentClosureHolds(jit, closure, function, scratch, held, slow);
     jit.add32(TrustedImm32(1 << 4), function);
     jit.urshift32(TrustedImm32(5), function);
     jit.getEffectiveAddress(BaseIndex(instanceGPR, function, CCallHelpers::TimesEight), allocator);

@@ -254,7 +254,9 @@ static bool machineBuilderMayBeFusedIntoItsUser(const Operation* operation)
             return false;
         return operation->child(0)->hasNoPosition() || (isX86_64() && operation->type() != Int64 && operation->useCount() < 2);
     }
-    if (opcode == ZExt32 || opcode == SExt32)
+    if (opcode == ZExt32)
+        return isARM64() && !clearsUpperHalf(operation->child(0));
+    if (opcode == SExt32)
         return !isLoad(operation->child(0)->opcode());
     if (opcode == BitOr)
         return isComparison(operation->child(0)->opcode()) && isComparison(operation->child(1)->opcode());
@@ -338,7 +340,7 @@ static ALWAYS_INLINE MachineBuilderAddress machineBuilderAddressOf(Builder& buil
     return { base, static_cast<int32_t>(distance) };
 }
 
-static bool machineBuilderAccessTakesSharedSum(const MachineBuilderAddress& address)
+static bool accessUsesSharedSum(const MachineBuilderAddress& address)
 {
     if (!isARM64() || !address.offset || address.base->opcode() != Add || address.base->hasNoPosition())
         return false;
@@ -500,7 +502,9 @@ ALWAYS_INLINE Operation* Builder::appendNewWithChildren(Opcode opcode, Type type
         readsChildrenAtOnce = !countsChildrenAtFirstUse(opcode);
     }
     if (readsChildrenAtOnce) {
-        if constexpr (numberOfChildren > 0)
+        if constexpr (kind == KindOfAppendedOperation::MemoryAccess && numberOfChildren > 1)
+            first->gainUse(static_cast<uint16_t>(OperationFlag::UpperHalfIsRead));
+        else if constexpr (numberOfChildren > 0)
             first->gainUse();
         if constexpr (numberOfChildren > 1)
             second->gainUse();
@@ -689,6 +693,8 @@ Operation* Builder::unary(Opcode opcode, Operation* value)
     if (Operation* ownValue = duplicateIfFusable(value); ownValue != value)
         return unary(opcode, ownValue);
     Operation* result = appendNewComputation(opcode, type, value);
+    if (opcode == ZExt32 || opcode == Trunc)
+        m_proc.noteWordName(result);
     m_numbering.add(key, hash, result);
     return result;
 }
@@ -711,6 +717,7 @@ Operation* Builder::extendWordThatIsNotNegative(Operation* word)
         return extendWordThatIsNotNegative(ownWord);
     Operation* result = appendNewComputation(ZExt32, Int64, word);
     result->m_flags |= static_cast<uint16_t>(OperationFlag::ExtendsWordThatIsNotNegative);
+    m_proc.noteWordName(result);
     m_numbering.add(key, hash, result);
     return result;
 }
@@ -767,7 +774,10 @@ Operation* Builder::binary(Opcode opcode, Operation* left, Operation* right)
             return lowered;
     }
 
+    Operation* ownShift = opcode == Add && right->opcode() == Shl ? makeOwnShiftOfSum(right) : nullptr;
     Operation* result = appendNewComputation(opcode, type, left, right);
+    if (ownShift)
+        m_proc.noteOwnShiftOfSum(result, ownShift);
     if ((opcode == Add || opcode == Sub) && left->has(OperationFlag::IsInnerPointer))
         result->m_flags |= static_cast<uint16_t>(OperationFlag::IsInnerPointer);
     m_numbering.add(key, hash, result);
@@ -913,6 +923,7 @@ Operation* Builder::select(Operation* predicate, Operation* whenNotZero, Operati
     if (Operation* ownPredicate = duplicateIfFusable(simplified.predicate); ownPredicate != simplified.predicate)
         return select(ownPredicate, whenNotZero, whenZero);
     Operation* result = appendNewComputation(Select, type, simplified.predicate, whenNotZero, whenZero);
+    simplified.predicate->m_flags |= static_cast<uint16_t>(OperationFlag::HasOpaqueReader);
     m_numbering.add(key, hash, result);
     return result;
 }
@@ -981,10 +992,11 @@ Operation* Builder::addressOf(CodeSymbol symbol)
     return result;
 }
 
-Operation* Builder::numberOf(CodeSymbol symbol)
+Operation* Builder::numberOf(CodeSymbol symbol, Type type)
 {
     ASSERT(symbol.space == SymbolSpace::Number);
-    Operation* result = createWithoutPosition(NumberOf, Int32, machineBuilderPayloadOfSymbol(symbol));
+    constexpr uint64_t isWide = uint64_t { 1 } << 63;
+    Operation* result = createWithoutPosition(NumberOf, type, machineBuilderPayloadOfSymbol(symbol) | (type == Int64 ? isWide : 0));
     result->m_auxiliary = static_cast<uint8_t>(symbol.space);
     return result;
 }
@@ -1012,8 +1024,8 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     }
 
     MachineBuilderAddress address = machineBuilderAddressOf(*this, base, offset, !traps);
-    bool takesSharedSum = !traps && machineBuilderAccessTakesSharedSum(address);
-    if (takesSharedSum)
+    bool usesSharedSum = !traps && accessUsesSharedSum(address);
+    if (usesSharedSum)
         address.base = sharedSumFor(address.base);
     NumberingKey key = machineBuilderKeyOf(opcode, type, address.base, nullptr, nullptr, machineBuilderPayloadOfAccess(address.offset, heap.index()));
     uint32_t hash = 0;
@@ -1025,7 +1037,7 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
             return existing;
         }
     }
-    if (!takesSharedSum) {
+    if (!usesSharedSum) {
         if (Operation* ownBase = duplicateIfFusable(address.base); ownBase != address.base)
             return load(opcode, type, ownBase, address.offset, heap, trapping);
     }
@@ -1044,7 +1056,32 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     return result;
 }
 
-Operation* Builder::makeSumOfStore(Operation* sum)
+static bool machineBuilderUpdatesLoadedWord(const Operation* stored, const Operation* address)
+{
+    const Operation* computation = stored->opcode() == Trunc ? stored->child(0) : stored;
+    Opcode opcode = computation->opcode();
+    if (opcode != Add && opcode != Sub && opcode != BitAnd && opcode != BitOr && opcode != BitXor)
+        return false;
+    return std::ranges::any_of(computation->children(), [&](const Operation* operand) {
+        if (operand->opcode() == SExt32)
+            operand = operand->child(0);
+        return operand->opcode() == Load && operand->lastChild() == address;
+    });
+}
+
+Operation* Builder::makeOwnShiftOfSum(Operation* shift)
+{
+    if (shift->type() != Int64 || shift->isNarrowReference() || !shift->child(1)->hasInt32() || shift->child(0)->hasNoPosition() || shift->child(0)->isNarrowReference()
+        || !isEncodableIndexedAddress(Width64, static_cast<unsigned>(shift->child(1)->asInt32()) & 63, IndexExtension::None, 0))
+        return nullptr;
+    if (!shift->has(OperationFlag::ScalesIndexOfSum)) {
+        shift->m_flags |= static_cast<uint16_t>(OperationFlag::ScalesIndexOfSum);
+        return nullptr;
+    }
+    return appendNewComputation(Shl, Int64, shift->child(0), shift->child(1));
+}
+
+Operation* Builder::makeSumOfStore(Operation* sum, const Operation* stored)
 {
     if (!isX86_64() || sum->opcode() != Add || sum->hasNoPosition() || sum->isNarrowReference())
         return duplicateIfFusable(sum);
@@ -1052,13 +1089,10 @@ Operation* Builder::makeSumOfStore(Operation* sum)
     Operation* index = sum->child(1);
     Operation* amount = index->opcode() == Shl && index->child(1)->hasInt32() ? index->child(1) : nullptr;
     Operation* scaled = amount ? index->child(0) : index;
+    if (!wasFoundInInheritedScope(sum) && machineBuilderUpdatesLoadedWord(stored, sum))
+        return sum;
     if (base->hasNoPosition() || scaled->hasNoPosition() || scaled->isNarrowReference() || !isEncodableIndexedAddress(Width64, amount ? static_cast<unsigned>(amount->asInt32()) & 63 : 0, IndexExtension::None, 0))
         return duplicateIfFusable(sum);
-    if (scaled->opcode() == ZExt32 && !scaled->child(0)->hasNoPosition() && clearsUpperHalf(scaled->child(0))) {
-        Operation* extension = appendNewComputation(ZExt32, Int64, scaled->child(0));
-        extension->m_flags |= scaled->m_flags & static_cast<uint16_t>(OperationFlag::ExtendsWordThatIsNotNegative);
-        scaled = extension;
-    }
     Operation* own = appendNewComputation(Add, Int64, base, amount ? appendNewComputation(Shl, Int64, scaled, amount) : scaled);
     own->m_flags |= sum->m_flags & static_cast<uint16_t>(OperationFlag::IsInnerPointer);
     return own;
@@ -1079,7 +1113,7 @@ Operation* Builder::store(Opcode opcode, Operation* value, Operation* base, ptrd
 
     MachineBuilderAddress address = machineBuilderAddressOf(*this, base, offset, true);
     Operation* ownValue = duplicateIfFusable(value);
-    Operation* ownBase = machineBuilderAccessTakesSharedSum(address) ? sharedSumFor(address.base) : value->type().isFloat() ? makeSumOfStore(address.base) : duplicateIfFusable(address.base);
+    Operation* ownBase = accessUsesSharedSum(address) ? sharedSumFor(address.base) : makeSumOfStore(address.base, value);
     Operation* result = appendNewMemoryAccess(opcode, Void, ownValue, ownBase);
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
@@ -1109,6 +1143,12 @@ Operation* Builder::reload(Operation* load)
     if (m_verifierOfReusedLoads) [[unlikely]]
         noteNumberedLoadForStores(result);
     return result;
+}
+
+void Builder::forgetLoadsFrom(const AbstractHeap& heap)
+{
+    sealPendingPatch();
+    m_numbering.didWrite(heap.index());
 }
 
 Operation* Builder::appendLoadLike(const Operation* load, Operation* base)
@@ -1279,8 +1319,7 @@ ALWAYS_INLINE Operation* Builder::appendUpsilon(Operation* value, Operation* phi
     if (phi) {
         RELEASE_ASSERT(phi->opcode() == Phi && value->type() == phi->type());
         result->m_payload.phi = phi;
-        if (!handsOnClearUpperHalf(value, phi))
-            phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+        procedure.noteUpperHalfHandedOn(result);
     }
     if (value->gainUseLeavingChildrenUncounted()) [[unlikely]]
         return countChildrenOfValueHandedOn(value, result);
@@ -1307,23 +1346,6 @@ Operation* Builder::upsilon(Operation* value, Operation* phi)
     return appendUpsilon<true>(value, phi);
 }
 
-Operation* Builder::upsilonOfCompletePhi(Operation* value, Operation* phi)
-{
-    RELEASE_ASSERT(value->opcode() == Phi && phi->opcode() == Phi && value->type() == phi->type());
-    Operation* result = upsilon(value);
-    result->m_payload.phi = phi;
-    handOnUpperHalf(value, phi);
-    return result;
-}
-
-bool Builder::handOnUpperHalf(const Operation* value, Operation* phi)
-{
-    if (clearsUpperHalf(value) || phi->has(OperationFlag::UpperHalfMayBeSet))
-        return false;
-    phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
-    return true;
-}
-
 void Builder::setPhi(Operation* upsilon, Operation* phi)
 {
     RELEASE_ASSERT(upsilon->opcode() == Upsilon && phi->opcode() == Phi);
@@ -1335,8 +1357,7 @@ void Builder::setPhi(Operation* upsilon, Operation* phi)
         ASSERT(hasEdgeBetween(block, phi->owner()));
 #endif
     upsilon->m_payload.phi = phi;
-    if (!handsOnClearUpperHalf(upsilon->child(0), phi))
-        phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+    m_proc.noteUpperHalfHandedOn(upsilon);
 }
 
 template<bool hasRoom>

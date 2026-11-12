@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFoldingOfConstants.h"
 #include "AOTSchemaInlineBuiltins.h"
@@ -73,9 +74,12 @@ bool isRangeOfPieceInOrder(Walker&, const PieceOfString&);
 Reference buildLengthOfPiece(Walker&, const PieceOfString&, Origin);
 std::optional<PieceOfString> pieceReadInLoop(Walker&, Reference text, Origin);
 Reference codePointOfCharacterInSight(Walker&, Reference character);
+Reference buildOnlyCharacter(Walker&, Reference string, Origin);
 void noteCodePointBesideCharacter(Walker&, Reference character, Reference codePoint);
+Reference buildLengthOfCharacterInSight(Walker&, Reference character, Origin);
 Reference codeUnitOfCharCodeInSight(Walker&, Reference number);
 Reference stringBehindFlatString(const Walker&, Reference);
+Reference flatLiteralBeforeLoop(Walker&, Reference literal, Origin);
 Reference buildComparisonOfRangeWithText(Walker&, const PieceOfString&, StringID, Origin);
 Reference buildNumberOfRange(Walker&, const PieceOfString&, Origin);
 Reference buildParsedIntegerOfRange(Walker&, const PieceOfString&, Reference radixOrNull, Origin);
@@ -148,12 +152,15 @@ Reference buildTypeTestForStrings(Walker&, Reference value, TypeID tested, Origi
 Reference buildResultOfRangeForStrings(Walker&, Reference range, uint32_t index, Origin);
 Reference buildNegationForStrings(Walker&, Reference boolean, Origin);
 void bindForStrings(Walker&, ValueID input, Reference built, Origin);
-Opcode relationWithSidesSwappedForStrings(Opcode);
+Opcode relationWithOperandsSwappedForStrings(Opcode);
 Reference clampedPositionForStrings(Walker&, Reference position, Reference limit, bool countsFromEnd, Origin);
 bool nameProvesPositionBelowLengthForStrings(const Walker&, Reference position, Reference string);
+bool readsCharacterBeforeTestedNumber(Walker&, const BodyValue& read);
+bool readsCharacterUnderLoweredCounter(Walker&, const BodyValue& read);
 
 
-Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin);
+Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin, bool readsCodeUnitsAlone = false);
+void flattenStringsReadByLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, Origin);
 Reference flatStringInSight(Walker&, Reference string);
 bool isOrCanBeFlattenedBeforeLoop(Walker&, Reference string);
 Reference flatStringMadeWhereWalkStands(Walker&, Reference string, Origin);

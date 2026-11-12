@@ -17,7 +17,10 @@ namespace JSC { namespace AOT {
 
 JS_EXPORT_PRIVATE Ref<Thread> startBuildThread(ASCIILiteral name, Function<void()>&&);
 
-void exitIfBuildIsOutOfMemory();
+JS_EXPORT_PRIVATE void exitIfBuildIsOutOfMemory();
+
+JS_EXPORT_PRIVATE void* tryReserveAddresses(size_t bytes);
+JS_EXPORT_PRIVATE void releaseAddresses(void*, size_t bytes);
 
 } } // namespace JSC::AOT
 

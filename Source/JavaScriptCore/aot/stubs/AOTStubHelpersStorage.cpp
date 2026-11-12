@@ -81,6 +81,15 @@ static void emitDoubledStorageInitialization(StubAssembler& jit, const StorageGr
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), copiedValues, growth.storage);
 }
 
+static void installStorage(StubAssembler& jit, GPRReg object, GPRReg storage, GPRReg newStructureID)
+{
+    jit.or32(TrustedImm32(StructureID::nukedStructureIDBit), Address(object, JSCell::structureIDOffset()));
+    jit.storeFence();
+    jit.storePtr(storage, Address(object, JSObject::butterflyOffset()));
+    jit.storeFence();
+    jit.store32(newStructureID, Address(object, JSCell::structureIDOffset()));
+}
+
 void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpList& slowPath)
 {
     const GPRReg object = growth.object;
@@ -106,11 +115,22 @@ void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpL
     emitDoubledStorageInitialization(jit, growth);
 
     hasNewStorage.link(&jit);
-    jit.or32(TrustedImm32(StructureID::nukedStructureIDBit), Address(object, JSCell::structureIDOffset()));
-    jit.storeFence();
-    jit.storePtr(storage, Address(object, JSObject::butterflyOffset()));
-    jit.storeFence();
-    jit.store32(growth.newStructureID, Address(object, JSCell::structureIDOffset()));
+    installStorage(jit, object, storage, growth.newStructureID);
+}
+
+AssemblyHelpers::FreeListRefill createOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpList& slowPath)
+{
+    constexpr size_t storageSize = initialOutOfLineCapacity * sizeof(EncodedJSValue);
+    const GPRReg allocator = growth.scratch;
+    RELEASE_ASSERT(noOverlap(growth.object, growth.newStructureID, growth.oldCapacity, growth.storage, allocator, growth.addedValue.value_or(InvalidGPRReg), instanceGPR));
+
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
+    jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(storageSize) * sizeof(Allocator)), allocator);
+    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, growth.storage, allocator, growth.oldCapacity, slowPath, storageSize);
+    emitFirstStorageInitialization(jit, growth);
+    installStorage(jit, growth.object, growth.storage, growth.newStructureID);
+    return refill;
 }
 
 void widenStorageOfIntegersForAnyValue(StubAssembler& jit, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers)
@@ -306,6 +326,74 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
     fillAndCopyByPairs(jit, growth, vectorLength);
     jit.storePtr(storage, Address(array, JSObject::butterflyOffset()));
+}
+
+void growStorageWithElements(StubAssembler& jit, const StorageGrowthWithElements& growth, JumpList& slowPath)
+{
+    constexpr int32_t wordSize = sizeof(EncodedJSValue);
+    constexpr unsigned maxVectorLength = maxLengthForElementwiseCopy;
+    static_assert(sizeof(IndexingHeader) == wordSize && MarkedSpace::sizeStep == 2 * wordSize && !(initialOutOfLineCapacity % 2));
+    const GPRReg butterfly = growth.butterfly;
+    const GPRReg newCapacity = growth.newCapacity;
+    const GPRReg storage = growth.storage;
+    const GPRReg allocator = growth.allocator;
+    const GPRReg vectorLength = growth.scratch;
+    RELEASE_ASSERT(noOverlap(growth.object, growth.newStructureID, butterfly, newCapacity, storage, allocator, growth.scratch, growth.addedValue, instanceGPR));
+
+    jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), vectorLength);
+    slowPath.append(jit.branch32(CCallHelpers::Above, vectorLength, TrustedImm32(maxVectorLength)));
+    const GPRReg sizeStep = storage;
+    jit.add32(newCapacity, vectorLength, sizeStep);
+    jit.add32(TrustedImm32(2), sizeStep);
+    jit.urshift32(TrustedImm32(1), sizeStep);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, sizeStep, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, storage, allocator, growth.scratch, slowPath);
+
+    const GPRReg index = growth.scratch;
+    const GPRReg indexOfLastProperty = allocator;
+    Jump isDoubled = jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity));
+    constexpr int32_t firstStorageSize = (initialOutOfLineCapacity + 1) * wordSize;
+    jit.addPtr(TrustedImm32(firstStorageSize), storage);
+    for (unsigned i = 0; i + 1 < initialOutOfLineCapacity; ++i)
+        jit.store64(TrustedImm32(0), Address(storage, static_cast<int32_t>(i) * wordSize - firstStorageSize));
+    jit.store64(growth.addedValue, Address(storage, -2 * wordSize));
+    jit.move(TrustedImm64(-1), indexOfLastProperty);
+
+    Label copyWords = jit.label();
+    jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), index);
+    jit.or32(TrustedImm32(1), index);
+    Label copyPrevious = jit.label();
+    jit.sub64(TrustedImm32(2), index);
+#if CPU(X86_64)
+    loadPair(jit, BaseIndex(butterfly, index, CCallHelpers::TimesEight));
+    storePair(jit, BaseIndex(storage, index, CCallHelpers::TimesEight));
+#else
+    for (int32_t offset : { 0, wordSize })
+        jit.transfer64(BaseIndex(butterfly, index, CCallHelpers::TimesEight, offset), BaseIndex(storage, index, CCallHelpers::TimesEight, offset));
+#endif
+    jit.branch64(CCallHelpers::NotEqual, index, indexOfLastProperty).linkTo(copyPrevious, &jit);
+    installStorage(jit, growth.object, storage, growth.newStructureID);
+    Jump done = jit.jump();
+
+    isDoubled.link(&jit);
+    jit.lshift32(newCapacity, TrustedImm32(3), index);
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), index);
+    jit.addPtr(index, storage);
+    jit.urshift32(newCapacity, TrustedImm32(1), indexOfLastProperty);
+    jit.neg64(indexOfLastProperty);
+    jit.sub64(TrustedImm32(1), indexOfLastProperty);
+    jit.zeroExtend32ToWord(newCapacity, index);
+    jit.neg64(index);
+    jit.sub64(TrustedImm32(1), index);
+    Label clearNext = jit.label();
+    jit.store64(TrustedImm32(0), BaseIndex(storage, index, CCallHelpers::TimesEight));
+    jit.add64(TrustedImm32(1), index);
+    jit.branch64(CCallHelpers::NotEqual, index, indexOfLastProperty).linkTo(clearNext, &jit);
+    jit.store64(growth.addedValue, BaseIndex(storage, indexOfLastProperty, CCallHelpers::TimesEight, -wordSize));
+    jit.jump().linkTo(copyWords, &jit);
+    done.link(&jit);
 }
 
 void growFullVector(StubAssembler& jit, const VectorGrowth& growth, JumpList& slowPath)

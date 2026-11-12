@@ -70,6 +70,7 @@ private:
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
     ElementAccessEmitter::FirstForm firstCandidateFormOf(const InlineCall&);
     void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    void forEachReadForm(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
 
     void removeElementAtEnd(const InlineCall&, bool removesFirst);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
@@ -102,7 +103,8 @@ private:
     Integer indexOfString(const InlineCall&, CellPointer array, CellPointer searched);
     bool handlesSearch(const InlineCall&);
     Integer indexOfSearched(const InlineCall&, HoleIs);
-    void scanShortVector(const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, Join<Integer>& found);
+    std::optional<Integer> firstIndexOfSearch(const InlineCall&);
+    void scanShortVector(const InlineCall&, const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, std::optional<Integer> first, Join<Integer>& found);
 };
 
 static_assert(sizeof(ArrayBuiltinEmitter) == sizeof(OperationEmitter));

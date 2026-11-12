@@ -411,7 +411,7 @@ private:
             RELEASE_ASSERT(key.size() >= 2 && !(key.size() % 2));
             AskerOfClassGuardOfName asker = askerOfClassGuardKey(key);
             ClassSide side = sideOfClassGuardKey(key);
-            RELEASE_ASSERT(asker == AskerOfClassGuardOfName::Reads || (key.size() == 4 && side == ClassSide::Prototype && asker <= AskerOfClassGuardOfName::ReadsBehindLookAtObject));
+            RELEASE_ASSERT(asker == AskerOfClassGuardOfName::Reads || (key.size() == 4 && side == ClassSide::Prototype && asker <= AskerOfClassGuardOfName::AssignedMember));
             LayoutID classLayout(key[0]);
             if (!m_plan.hasClassRecord(classLayout)) {
                 m_context.diagnostics().add(InternalError {
@@ -420,13 +420,13 @@ private:
                     .detail = "code tests a guard of a class that has no record, so nothing would ever end the guard"_s,
                 });
             }
-            uint32_t bit = allocate(1, 1) * bitsPerByte;
+            uint32_t bit = (asker == AskerOfClassGuardOfName::AssignedMember ? allocateRoot() : allocate(1, 1)) * bitsPerByte;
             m_statics.bitsOfClassGuards.append(bit);
             if (key.size() == 2) {
                 m_statics.classGuardBits[classLayout.index() * numberOfClassSides + key[1]] = bit;
                 continue;
             }
-            Vector<PlacedClassGuardOfName>& list = key.size() == 4 ? m_statics.classGuardsOfNames : m_statics.namesOfClassGuardsOfSeveralNames;
+            Vector<PlacedClassGuardOfName>& list = asker == AskerOfClassGuardOfName::AssignedMember ? m_statics.guardsOfAssignedMembers : key.size() == 4 ? m_statics.classGuardsOfNames : m_statics.namesOfClassGuardsOfSeveralNames;
             for (std::span<const uint32_t> names = key.subspan(2); !names.empty(); names = names.subspan(2)) {
                 RELEASE_ASSERT(names[0] == static_cast<uint32_t>(NumberSpace::Name) || names[0] == static_cast<uint32_t>(NumberSpace::NameOfText));
                 list.append(PlacedClassGuardOfName { classLayout, side, static_cast<NumberSpace>(names[0]), names[1], bit, asker });
@@ -621,7 +621,7 @@ void ImageNumbersBuilder::numberSites()
     numbers.m_siteCaches = mentions.takeKeys(NumberSpace::SiteCache);
     const NumberedKeys& sites = numbers.m_siteCaches;
     numbers.m_numbersOfSites.resize(sites.size() + 1);
-    const BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
+    const Typed::BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
     uint64_t numberOfNumbersOfSites = 0;
     for (uint32_t place = 0; place < sites.size(); ++place) {
         std::span<const uint32_t> key = sites.keyAt(place);

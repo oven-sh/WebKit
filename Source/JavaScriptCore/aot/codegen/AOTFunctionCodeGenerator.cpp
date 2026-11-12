@@ -48,6 +48,8 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
     const CallingConventions& conventions = inputs.plan.conventions();
     bool isBodyThatMaySuspend = isBodyOfCoroutine(unit.role, conventions.isCoroutine(unit.function)) && !conventions.of(unit.function).coroutineNeverSuspends;
     bool savesFrameOnSuspend = code.hasSuspensions() || isBodyThatMaySuspend;
+    const Function& function = inputs.program.at(unit.function);
+    bool isBodyOfAsyncFunction = unit.role == CodeRole::CoroutineBody && function.has(FunctionFlags::IsAsync) && !function.has(FunctionFlags::IsGenerator);
     RELEASE_ASSERT(!savesFrameOnSuspend || !conventions.spillsArgumentRegisters(unit));
     RELEASE_ASSERT(!savesFrameOnSuspend || !conventions.savesRegistersOfCallers(unit));
     return {
@@ -59,6 +61,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .fallsIntoWhatLiesBehind = unit.role == CodeRole::ParameterGuard,
         .chargesForCalleeSaves = isX86_64(),
         .mayOmitFrameRecord = isX86_64(),
+        .mayJumpOverUnlikelySides = isBodyOfAsyncFunction || function.isModuleBody(),
         .checksAllocation = runsMachineChecks(build),
         .shouldUseFallbackBlockOrder = hasFlag(build.options().testing, Wire::TestingSwitch::ForceFallbackBlockOrder),
         .shouldDropPatchOnlySaves = hasFlag(build.options().testing, Wire::TestingSwitch::DropPatchOnlySaves),
@@ -162,6 +165,8 @@ FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker,
     , m_records(inputs.stubCatalog, m_relocations, totals, &worker.arena.objectKeptAcrossResets<RememberedStubKeys>())
     , m_procedure(worker.arena, inputs.heaps.tree(), machineTraitsOf(worker.build, inputs, code))
 {
+    if (hasFlag(worker.build.options().reports, ReportSet::InlinedStrings))
+        m_records.inlinedStrings.beginRecording();
 }
 
 CompiledCode FunctionCodeGenerator::run()

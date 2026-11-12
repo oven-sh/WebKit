@@ -1,6 +1,6 @@
 # an object that was made here is neither frozen nor closed, holds every property in its slot and lists the keys that its allocation lists, whatever may happen to other objects of its layout.
 # So a definition and a store into it are typed without a test, and each is told the order word that it leaves: no search for the place of the key
-# function make(v) { const o = { x: v }; o.y = v; o.x = v; return o; }
+# function make(v) { const o = { x: v }; o.y = v; o.x = v; kept = o; }
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject
@@ -19,6 +19,7 @@
 # NOSLOT-NOT: = PutSlot
 
 layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
+variable g0 name="kept" module=m0 declared={type=anything}
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -37,7 +38,8 @@ function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[
     v2 = FinishObject v1
     PropSet v2, v0 key="y" mode=Strict
     PropSet v2, v0 key="x" mode=Strict
-    Return v2
+    PutModuleVariable v2 variable=g0
+    Return v0
 }
 function f2 name="frozen" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

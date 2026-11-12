@@ -290,8 +290,8 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { thisObject->cellLock() };
     auto moduleMapValues = thisObject->m_moduleMap.values();
     visitor.append(moduleMapValues.begin(), moduleMapValues.end());
-    auto resolutionFailuresValues = thisObject->m_resolutionFailures.values();
-    visitor.append(resolutionFailuresValues.begin(), resolutionFailuresValues.end());
+    for (auto& failure : thisObject->m_resolutionFailures.values())
+        visitor.append(failure.error);
     for (auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
 #if USE(BUN_JSC_ADDITIONS)
@@ -862,7 +862,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
 
-#if ENABLE(AOT)
+#if USE(BUN_JSC_ADDITIONS)
     // See loadModuleSync().
     bool isReloadingRoot = m_rootBeingReloaded && m_rootBeingReloaded == specifier.impl() && referrer.isRealm() && payload->inherits<ModuleGraphLoadingState>();
     if (isReloadingRoot)
@@ -876,7 +876,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     // Consult it now so we can skip the host resolve() hook for repeat imports.
     {
         auto& loadedModules = record ? record->loadedModules() : m_loadedModules;
-#if ENABLE(AOT)
+#if USE(BUN_JSC_ADDITIONS)
         if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end() && !isReloadingRoot) {
 #else
         if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end()) {
@@ -906,8 +906,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ResolutionMapKey resolutionKey { referrerKey.impl(), specifier.impl() };
 
-    if (auto error = m_resolutionFailures.get(resolutionKey)) {
-        JSValue errorValue = error.get();
+    if (auto iter = m_resolutionFailures.find(resolutionKey); iter != m_resolutionFailures.end()) {
+        JSValue errorValue = iter->value.error.get();
         ASSERT(errorValue);
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->reject(vm, errorValue);
@@ -1069,10 +1069,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 #endif
 
-#if ENABLE(AOT)
+#if USE(BUN_JSC_ADDITIONS)
         JSPromise* promise = isReloadingRoot ? nullptr : mapEntry->loadedPromise(globalObject);
-#elif USE(BUN_JSC_ADDITIONS)
-        JSPromise* promise = mapEntry->loadedPromise(globalObject);
 #else
         JSPromise* promise = mapEntry->loadPromise();
 #endif
@@ -1719,7 +1717,7 @@ void JSModuleLoader::addResolutionFailure(VM& vm, const ResolutionMapKey& key, J
     Locker locker { cellLock() };
     if (m_resolutionFailures.size() >= JSModuleLoaderInternal::maximumResolutionFailures)
         m_resolutionFailures.remove(m_resolutionFailures.begin());
-    m_resolutionFailures.add(key, WriteBarrier<Unknown>(vm, this, error));
+    m_resolutionFailures.add(key, ResolutionFailure { WriteBarrier<Unknown>(vm, this, error), key.first, key.second });
 }
 
 ProgramExecutable* JSModuleLoader::ModuleReferrer::getScript() const
@@ -1809,14 +1807,17 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
 
     VM::SynchronousModuleQueueScope queue(vm);
 
-#if ENABLE(AOT)
     // The root is linked once the load promise in its entry settles. If another load created that promise and has already made the
     // record, the ModuleLoadStep that settles it is on the normal microtask queue or in the queue of an outer synchronous load.
     // This load drains neither.
     auto isBlockedOnAnotherLoad = [&, type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript] {
-        ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
+        ModuleRegistryEntry* entry = getRegisteredMayBeNull(moduleName, type);
         if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
             return false;
+        // An outer synchronous load that started the root's load also finishes it. Below a CommonJS module that the loader is running, the load may lead back to that module.
+        if (!vm.hasCompiledCode())
+            return !entry->wasLoadStartedSynchronously() && !m_modulesBeingMade;
+#if ENABLE(AOT)
         // A graph that imports a CommonJS module that is still evaluating finishes loading when that module finishes.
         if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->importsEvaluatingCommonJSModule())
             return false;
@@ -1830,9 +1831,10 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
                     return false;
             }
         }
+#endif
         return true;
     };
-    ModuleRegistryEntry* existingEntry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript) : nullptr;
+    ModuleRegistryEntry* existingEntry = getRegisteredMayBeNull(moduleName, parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript);
     bool wasLoadAlreadyPending = existingEntry && existingEntry->loadPromise() && existingEntry->loadPromise()->status() == JSPromise::Status::Pending;
     JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
     RETURN_IF_EXCEPTION(scope, result);
@@ -1841,12 +1843,9 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     if (result->status() != JSPromise::Status::Pending || !wasLoadAlreadyPending || !isBlockedOnAnotherLoad())
         return result;
     // Load the root again. This time the load queues its own steps, starting from the module promise.
-    // Otherwise a require() that runs between a mock factory and the loader steps of the import() that called the factory throws. See Bun's test/aot/parallel-test-runs/a-require-of-a-module-whose-load-an-import-has-begun.
+    // Otherwise require() throws where it runs between the loader steps of an import() of the same module, or between a mock factory and the loader steps of the import() that called the factory. See Bun's test/aot/parallel-test-runs/a-require-of-a-module-whose-load-an-import-has-begun.
     SetForScope rootBeingReloaded(m_rootBeingReloaded, moduleName.impl());
     result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
-#else
-    JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
-#endif
     RETURN_IF_EXCEPTION(scope, result);
 
     scope.release();
@@ -1869,13 +1868,19 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    // Making the record of a CommonJS module runs the module.
+    SetForScope modulesBeingMade(m_modulesBeingMade, m_modulesBeingMade + 1);
+#endif
 
     if (auto* record = dynamicDowncast<AbstractModuleRecord>(moduleData)) {
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->markAsHandled();
 #if ENABLE(AOT)
         if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(record)) {
-            compiled->didLoad();
+            record = compiled->recordToLoad(globalObject);
+            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+            uncheckedDowncast<AOT::ModuleRecord>(record)->didLoad();
             RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
         }
 #endif

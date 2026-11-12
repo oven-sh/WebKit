@@ -246,6 +246,9 @@ static uint64_t sizeInBytesOfRequestKey(const Typed::Program& program, std::span
         return sizeof(CollectionDataRequest);
     case RequestKind::FormatPattern:
         return words.size_bytes();
+    case RequestKind::ImportChecks:
+        RELEASE_ASSERT(!(words.size() % 2));
+        return sizeof(ImportChecksRequest) + sizeof(ImportChecksRequest::Check) * (words.size() / 2);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

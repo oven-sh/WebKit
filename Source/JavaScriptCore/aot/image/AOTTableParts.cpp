@@ -461,6 +461,16 @@ uint32_t TableEncoder::identifierNumberOfText(StringID text, ASCIILiteral use, R
     return number.value_or(0);
 }
 
+uint32_t TableEncoder::identifierOrStringNumber(StringID text) const
+{
+    if (std::optional<uint32_t> number = numbers.identifiers().numberOfText(text))
+        return *number;
+    uint32_t number = stringNumber(text);
+    if (number > Number24::max)
+        build.reportLimitExceeded(LimitID::MaxIdentifiers, number);
+    return number;
+}
+
 uint32_t TableEncoder::typeOffset(TypeID id) const
 {
     TypeID type = id ? id : Typed::TypeTable::anything;
@@ -471,6 +481,12 @@ uint32_t TableEncoder::typeOffset(TypeID id) const
     }
     fail("TypeNotEncoded"_s, { }, describeTypeWithoutRecord(program, type));
     return 0;
+}
+
+uint16_t TableEncoder::typeNumber(TypeID id) const
+{
+    uint32_t offset = typeOffset(id);
+    return offset ? safeCast<uint16_t>((FirstTableParts::startOfTypes + offset) >> firstParts->shiftOfTypeNumbers) : 0;
 }
 
 uint32_t TableEncoder::dataNodeOf(DataID id) const

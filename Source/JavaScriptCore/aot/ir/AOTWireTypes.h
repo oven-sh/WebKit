@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTDiagnostics.h"
 #include "AOTTaggedLayouts.h"
 #include "AOTTypeArena.h"
@@ -14,7 +15,6 @@
 #include "AOTWireSections.h"
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {

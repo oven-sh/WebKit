@@ -3,8 +3,8 @@
 # function Q(a) { if (a) return; this.x = a; }  new Q(1);  function R(a) { hand(this); this.x = a; }  new R(1);
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee
-# CHECK: field L0.0 "x" proven=i32 writers-known filled
-# CHECK: field L0.1 "y" proven=i32 writers-known filled
+# CHECK: field L0.0 "x" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L0.1 "y" proven=int[0, 2147483647] writers-known filled
 # CHECK: layout L0 {{*}}changes=[]
 # RUN(EARLY): link fields mechanisms=all
 # EARLY-NOT: field L1.0 "x" {{*}}filled

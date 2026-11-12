@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
@@ -24,7 +25,6 @@
 #include <initializer_list>
 #include <memory>
 #include <numbers>
-#include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>

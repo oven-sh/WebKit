@@ -6,6 +6,7 @@
 late store | builtins/AOTBuiltinArrayAllocationOperations.cpp | operationAOTNewArrayFromDoubles | 1 | numbers into a list of doubles
 late store | builtins/AOTEngineIntrinsicOperations.cpp | resumeBytecodeGenerator | 1 | a number
 late store | builtins/AOTEngineIntrinsicOperations.cpp | resumeIteratorHelperOfEitherKind | 1 | a number
+late store | builtins/AOTMapSetBuiltinOperations.cpp | tryAppendKeysOfArray | 1 | integers into a list of integers
 late store | builtins/AOTMapSetBuiltinOperations.cpp | tryAppendMembersInPlace | 3 | an old list, not a new object; the arm for a list of any values has the list's barrier; the elements of a list of int32 or of doubles are not looked at, and what is no int32 is taken out again before the function returns
 late store | object/AOTClassTable.cpp | ClassTable::forgetStructuresOfHeirs | 1 | the numbers of six structures in a table of the instance, not an object
 late store | object/AOTFieldMoves.cpp | acceptInSlot | 1 | a word of the stack
@@ -26,7 +27,7 @@ late store | runtime/AOTCompactTable.cpp | CompactTable::copyWithAbsentKey | 1 |
 late store | runtime/AOTInstance.cpp | State::State | 1 | undefined
 late store | runtime/AOTInstance.cpp | VMState::attachImage | 2 | two structures that are whole, into fields of the VM's state
 late store | runtime/AOTModuleEvaluation.cpp | Modules::forgetTemplateObjects | 1 | a zero
-late store | runtime/AOTPoisonedCell.cpp | PoisonedCell::tryPoison | 1 | a zero, into a cell that is given up
+late store | runtime/AOTPoisonedCell.cpp | PoisonedCell::tryPoison | 2 | zeros, into a cell that is given up
 late store | runtime/AOTStraightIterationOperations.cpp | closeStraightIterationUnlessDone | 1 | a boolean
 late store | runtime/AOTStraightIterationOperations.cpp | operationAOTStepEnumeration | 1 | a number
 late store | runtime/AOTStraightIterationOperations.cpp | operationAOTStepIteration | 2 | booleans

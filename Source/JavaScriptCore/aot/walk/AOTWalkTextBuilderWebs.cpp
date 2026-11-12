@@ -29,7 +29,7 @@ static constexpr uint32_t frontOperandInTextBuilderWebs = 0;
 static_assert(OperandIndex::Add::left == frontOperandInTextBuilderWebs);
 static_assert(OperandIndex::Strcat::parts == frontOperandInTextBuilderWebs);
 
-static constexpr OpcodeSet readersOfCharactersInTextBuilderWebs { Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::ElemGet, Opcode::ElemHas, Opcode::IteratorOpen };
+static constexpr OpcodeSet characterReaders { Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::ElemGet, Opcode::ElemHas, Opcode::IteratorOpen };
 static constexpr OpcodeSet castsInTextBuilderWebs = opcodesThatStateTypes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible };
 
 static bool passesOperandThroughInTextBuilderWebs(const BodyValue& operation, uint32_t operandIndex)
@@ -86,7 +86,7 @@ struct CandidateInTextBuilderWeb {
     bool isOnlyConcatenated { true };
     bool beginsAnewOnSomeEdge { false };
     Vector<ValueID, 2> parametersThatReadText;
-    bool hasReadersOfCharacters { false };
+    bool hasCharacterReaders { false };
     Vector<LoopID, 4> loopsOfAppends;
     Vector<BlockID, 2> blocksOfStores;
 };
@@ -410,7 +410,7 @@ bool TextBuilderWebScan::coverEveryIteration(std::span<const BlockID> blocks, Lo
 bool TextBuilderWebScan::isCheaperAsRope(const CandidateInTextBuilderWeb& candidate) const
 {
     static constexpr unsigned maxRopesPerStore = 4;
-    return !candidate.hasReadersOfCharacters && std::ranges::any_of(candidate.blocksOfStores, [&](BlockID block) {
+    return !candidate.hasCharacterReaders && std::ranges::any_of(candidate.blocksOfStores, [&](BlockID block) {
         LoopID loop = m_index.loopOf(block);
         unsigned appends = 0;
         for (LoopID loopOfAppend : candidate.loopsOfAppends) {
@@ -472,7 +472,7 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
             noteThatStateIsSeen(*name);
             CandidateInTextBuilderWeb& candidate = m_candidates[name->text];
             if (!storesOrPassesOperand(operation, operand))
-                candidate.hasReadersOfCharacters |= readersOfCharactersInTextBuilderWebs.contains(opcode);
+                candidate.hasCharacterReaders |= characterReaders.contains(opcode);
             else
                 candidate.blocksOfStores.append(m_index.blockOf(operation.id()));
         }

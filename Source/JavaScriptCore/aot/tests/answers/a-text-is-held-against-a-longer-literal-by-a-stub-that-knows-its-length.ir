@@ -1,14 +1,14 @@
 # function kind(w) { if (w === "content_block_start") return 1; if (w === "123456789") return 2; if (w === "sixteen_letters_") return 3; if (w === "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddd") return 4; if (w === "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddde") return 5; if (w === "\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416") return 6; return 0; }      sink(kind);
 # Outside loops a text is held against a literal of more than eight characters by a stub. The stub is told the literal's length by its key:
-# another length is answered in front of the walk through the table for the literal's header (it was: ten instructions later); two atoms of other words are other texts;
-# narrow characters are compared word by word, the last word from the end, where a leaf was called. Ropes, pieces of other texts, wide texts and literals of more than 63 characters go the old way.
+# its immediate is the place of the characters in the text of the image. Narrow characters are compared word by word, the last word from the end.
+# Wide literals and literals of more than 63 characters are named by their number.
 # RUN: bytes f1:Body mechanisms=all
-# CHECK: Call Stub ValueEqualsLiteral count 19
-# CHECK: Call Stub ValueEqualsLiteral count 9
-# CHECK: Call Stub ValueEqualsLiteral count 16
-# CHECK: Call Stub ValueEqualsLiteral count 63
-# CHECK: Call Stub ValueEqualsLiteral count 0
-# CHECK: Call Stub ValueEqualsLiteral count 10
+# CHECK: Call Stub ValueEqualsCharacters count 19
+# CHECK: Call Stub ValueEqualsCharacters count 9
+# CHECK: Call Stub ValueEqualsCharacters count 16
+# CHECK: Call Stub ValueEqualsCharacters count 63
+# CHECK: Call Stub ValueEqualsLiteral
+# CHECK: Call Stub ValueEqualsLiteral
 # RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = kind => { const joined = (base, length) => { const pieces = []; for (let i = 0; i < length; i += 2) pieces.push(base.slice(i, i + 2 < length ? i + 2 : length)); return pieces.join(""); }; const flat = text => joined(text, text.length); const wide = text => { const base = text + "\u0416"; base.toLowerCase(); return joined(base, text.length); }; const rope = text => flat(text.slice(0, 5)) + flat(text.slice(5)); const piece = text => flat("__" + text + "__").slice(2, -2); const texts = ["content_block_start", "123456789", "sixteen_letters_", "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddd", "aaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbccccccccccccccccccccddde", "\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416"]; for (const text of texts) print(kind(text), kind(flat(text)), kind(wide(text)), kind(rope(text)), kind(piece(text))); for (const text of texts) { const other = at => flat(text.slice(0, at) + "~" + text.slice(at + 1)); print(kind(other(0)), kind(other(text.length >> 1)), kind(other(text.length - 1)), kind(wide(other(text.length - 1))), kind(text + "x"), kind(text.slice(1))); } const keys = {}; for (const text of texts) { const other = flat(text.slice(0, -1) + "~"); keys[other] = 1; const same = flat(text); keys[same] = 1; print(kind(other), kind(same)); } print(kind(5), kind(undefined), kind(null), kind({}), kind(Symbol.iterator), kind("")); };
 # ANSWER: 1 1 1 1 1
 # ANSWER-NEXT: 2 2 2 2 2

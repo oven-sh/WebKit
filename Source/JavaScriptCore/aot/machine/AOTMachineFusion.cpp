@@ -134,6 +134,8 @@ static IndexExtension fusionExtensionOf(const Operation* extensionOrNull)
 static ALWAYS_INLINE bool fusionCanAbsorbExtension(const ValueFacts* values, const Block* block, const Operation* extension)
 {
     ASSERT(extension->opcode() == ZExt32 || extension->opcode() == SExt32);
+    if (values[extension->index()].has(ValueFlag::IsFused))
+        return isFreeZeroExtension(extension);
     if (!isARM64() || extension->owner() == block || extension->isNarrowReference() || fusionChildrenOf(extension)[0]->isNarrowReference())
         return fusionCanAbsorb(values, block, extension);
     return extension->useCount() == 1 && values[extension->index()].lastUse == noPosition;
@@ -149,7 +151,7 @@ static unsigned fuseAddressBelow(ValueFacts* values, unsigned numberOfLeaves, co
     Operation* const* operandsOfSum = fusionChildrenOf(sum);
     const Operation* base = operandsOfSum[0];
     Operation* index = operandsOfSum[1];
-    if (base->hasNoPosition() && base->opcode() != ArgumentReg && base->opcode() != AddressOf)
+    if ((base->hasNoPosition() && base->opcode() != ArgumentReg && base->opcode() != AddressOf) || values[base->index()].has(ValueFlag::IsFused))
         return 0;
 
     Operation* shift = nullptr;
@@ -195,11 +197,12 @@ static unsigned fuseAddressBelow(ValueFacts* values, unsigned numberOfLeaves, co
             return numberOfLeavesAdded;
         }
 
-        if (fusedExtension)
+        if (fusedExtension && !values[fusedExtension->index()].has(ValueFlag::IsFused))
             fusedExtension = nullptr;
-        else if (fusedShift)
+        else if (fusedShift) {
             fusedShift = nullptr;
-        else
+            fusedExtension = nullptr;
+        } else
             return 0;
     }
 }
@@ -381,39 +384,14 @@ static bool fusionOperandIsInRegister(const Operation* user, unsigned index, con
     return !operand->hasNoPosition() || (operand->isConstant() && !acceptsImmediate(*user, index, *operand));
 }
 
-static ALWAYS_INLINE bool fusionReadsWordsByName(Opcode opcode)
-{
-    return isARM64() && (opcode == Add || opcode == Sub || opcode == Mul || opcode == BitAnd || opcode == BitOr || opcode == BitXor || opcode == Shl || opcode == SShr || opcode == ZShr || isComparison(opcode));
-}
-
-static bool fuseNamesOfWordsBelow(ValueFacts* values, const Operation* user)
-{
-    if (!fusionReadsWordsByName(user->opcode()))
-        return false;
-    bool hasFused = false;
-    Operation* const* operands = fusionChildrenOf(user);
-    for (unsigned index : { 0u, 1u }) {
-        const Operation* name = operands[index];
-        if (!namesWord(name) || name->isNarrowReference() || user->has(OperationFlag::IsInnerPointer))
-            continue;
-        const Operation* word = fusionChildrenOf(name)[0];
-        if (word->hasNoPosition() || word->isNarrowReference() || values[name->index()].has(ValueFlag::IsFused) || !fusionCanAbsorbExtension(values, user->owner(), name))
-            continue;
-        fusionMark(values, name, ValueFlag::IsFused);
-        hasFused = true;
-    }
-    return hasFused;
-}
-
 static bool fuseExtendedOperandBelow(ValueFacts* values, const Operation* user)
 {
-    bool hasFused = fuseNamesOfWordsBelow(values, user);
     Opcode opcode = user->opcode();
     if (!acceptsExtendedOperand(opcode))
-        return hasFused;
+        return false;
     Operation* const* operands = fusionChildrenOf(user);
     if (operands[0]->type() != Int64)
-        return hasFused;
+        return false;
     for (unsigned index : { 1u, 0u }) {
         const Operation* extension = operands[index];
         if ((extension->opcode() != SExt32 && extension->opcode() != ZExt32) || namesWord(extension) || (!index && (opcode == Sub || user->has(OperationFlag::IsInnerPointer))))
@@ -424,7 +402,7 @@ static bool fuseExtendedOperandBelow(ValueFacts* values, const Operation* user)
         fuseOperandAndTruncation(values, extension);
         return true;
     }
-    return hasFused;
+    return false;
 }
 
 static ALWAYS_INLINE bool fuseShiftBelowBitTest(ValueFacts* values, const Block* block, Operation* const* operands, unsigned numberOfLeaves)
@@ -717,7 +695,8 @@ static ALWAYS_INLINE bool fuseScaledIndexBelow(ValueFacts* values, const Operati
         unsigned amount = static_cast<unsigned>(operandsOfShift[1]->asInt32()) & 63;
         const Operation* shifted = operandsOfShift[0];
         bool isExtension = shifted->opcode() == ZExt32 || shifted->opcode() == SExt32;
-        const Operation* extension = isExtension && !shifted->isNarrowReference() && canAbsorb(shifted) ? shifted : nullptr;
+        bool isFree = isExtension && values[shifted->index()].has(ValueFlag::IsFused);
+        const Operation* extension = isExtension && !shifted->isNarrowReference() && (isFree || canAbsorb(shifted)) ? shifted : nullptr;
 
         auto tryForm = [&](const Operation* fusedExtension) ALWAYS_INLINE_LAMBDA {
             const Operation* leaf = fusedExtension ? fusionChildrenOf(fusedExtension)[0] : shifted;
@@ -731,7 +710,7 @@ static ALWAYS_INLINE bool fuseScaledIndexBelow(ValueFacts* values, const Operati
                 fusionMark(values, fusedExtension, ValueFlag::IsFused);
             return true;
         };
-        if ((extension && tryForm(extension)) || tryForm(nullptr))
+        if ((extension && tryForm(extension)) || (!isFree && tryForm(nullptr)))
             return true;
     }
     return false;
@@ -857,7 +836,6 @@ static NEVER_INLINE bool fuseIntoComputation(ValueFacts* values, const Operation
         return true;
     if (isARM64()) {
         if (((kinds & FusibleShift) && (fuseShiftBelowBitField(values, user) || fuseShiftedOperandBelow(values, user))) || ((kinds & FusibleProduct) && fuseProductBelowSum(values, user))) {
-            fuseNamesOfWordsBelow(values, user);
             return true;
         }
         if ((kinds & FusibleExtension) && !fusionIsComparison(user->opcode()) && fuseExtendedOperandBelow(values, user))
@@ -981,6 +959,29 @@ bool BackwardScan::tryFuseScaledIndex(Operation* sum)
     return fuseScaledIndexBelow(m_liveness.m_values.begin(), sum);
 }
 
+static bool branchComparesLoadWithConstant(const ValueFacts* values, const Block* block, const Operation* load, unsigned indexOfLoad)
+{
+    const Operation* branch = block->last();
+    if (!isX86_64() || branch->opcode() != Branch || block->size() - indexOfLoad > maxOperationsBetweenLoadAndUser + 2)
+        return false;
+    if (values[branch->index()].has(ValueFlag::WorksInMemory) || values[branch->index()].has(ValueFlag::UsesOverflowFlag))
+        return false;
+    const Operation* predicate = branch->child(0);
+    if (!values[predicate->index()].has(ValueFlag::IsFused) || (!fusionIsComparison(predicate->opcode()) && predicate->opcode() != BitAnd))
+        return false;
+    const Operation* constant = predicate->child(1);
+    if (predicate->child(0) != load || !load->type().isInt() || !constant->hasInt() || !isRepresentableAs<int32_t>(constant->asInt()))
+        return false;
+    for (unsigned index = indexOfLoad + 1; index + 1 < block->size(); ++index) {
+        const Operation* between = block->at(index);
+        const ValueFacts& facts = values[between->index()];
+        bool hasNoCode = facts.has(ValueFlag::IsDropped) || facts.has(ValueFlag::IsSunk) || (facts.has(ValueFlag::IsFused) && !fusionIsLoad(between->opcode()));
+        if (!hasNoCode && !fusionCanRunAheadOfTrap(between))
+            return false;
+    }
+    return true;
+}
+
 bool BackwardScan::tryHandOverTrap(Operation* trappingLoad)
 {
     ASSERT(isLoad(trappingLoad->opcode()) && trappingLoad->traps() && facts(trappingLoad).lastUse == noPosition);
@@ -1005,7 +1006,9 @@ bool BackwardScan::tryHandOverTrap(Operation* trappingLoad)
             continue;
         }
 
-        if (scanned.has(ValueFlag::IsFused) || scanned.has(ValueFlag::TakesOverTrap) || candidate->traps() || !fusionAccessLiesWithinTrapReach(candidate))
+        if (scanned.has(ValueFlag::TakesOverTrap) || candidate->traps() || !fusionAccessLiesWithinTrapReach(candidate))
+            return false;
+        if (scanned.has(ValueFlag::IsFused) && !branchComparesLoadWithConstant(values, block, candidate, index))
             return false;
         scanned.flags |= static_cast<uint16_t>(ValueFlag::TakesOverTrap);
         scanned.distanceToTrappingLoad = static_cast<uint8_t>(index + 1 - begin);
@@ -1112,7 +1115,7 @@ static bool parseMemoryUpdate(const Operation* store, MemoryUpdate& update)
     const Operation* operand = update.operand();
     if (operand->hasInt())
         update.constant = operand->asInt();
-    if (load->type() == Int32 && operand->type() == Int64 && memoryUpdateIsExtension(operand)) {
+    if ((load->type() == Int32 && operand->type() == Int64 && memoryUpdateIsExtension(operand)) || isFreeZeroExtension(operand)) {
         update.userOfOperand = operand;
         update.indexOfOperand = 0;
     }

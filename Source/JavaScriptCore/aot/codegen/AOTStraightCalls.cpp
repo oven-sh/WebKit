@@ -153,6 +153,7 @@ static bool crossesStraightCall(const ArgumentLocation& location)
     case Representation::JSValue:
     case Representation::Cell:
     case Representation::Int32:
+    case Representation::Int64:
     case Representation::Boolean:
     case Representation::Double:
         return true;

@@ -49,9 +49,11 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
         if (from == OptionalInt64 && to == Int32) {
             if (std::optional<Word32> narrow = narrowWordBehind(source.as<OptionalInteger>()))
                 return *narrow;
-            return conversions.narrow(Integer(source.value));
+            return conversions.lowHalfOfIntegerToldInsideInt32(Integer(source.value));
         }
-        if ((from == OptionalInt64 && to == Int64) || (from == OptionalDouble && to == Double))
+        if (from == OptionalInt64 && to == Int64)
+            return conversions.integerKnownNotMarker(source.as<OptionalInteger>());
+        if (from == OptionalDouble && to == Double)
             return conversions.withoutMarkers(source);
         if (from == OptionalDouble && to == OptionalInt64)
             return conversions.toOptional(source, type, to);
@@ -64,9 +66,9 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
         break;
     case Opcode::NumberToInteger:
         if (from == Double && to == Int32)
-            return conversions.narrow(heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().isInLoop(context.block()))));
+            return conversions.narrow(heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().usesLoopForms(context.block()))));
         if (from == Double && to == Int64)
-            return heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().isInLoop(context.block())));
+            return heldToWhatConversionGives(context, source.as<Number>(), conversions.toInteger(source.as<Number>(), type.integers, context.block() && generator().usesLoopForms(context.block())));
         break;
     case Opcode::WidenInteger:
         if (from == Int32 && to == Int64)
@@ -133,13 +135,24 @@ void RepresentationEmitter::generate(const ValueContext& value)
         define(value, emitter<ConversionEmitter>().boxInteger(in<Integer>(converted), Range { 0, IndexingHeader::maximumLength - 1 }));
         return;
     }
-    if (value.opcode() == Opcode::Unbox && generator().isOnlyTakenAsPosition(value.id())) {
+    if (value.opcode() == Opcode::Unbox && generator().isOnlyUsedAsIndex(value.id())) {
         generator().defineBoxed(value, in<Boxed>(converted));
         return;
     }
-    if (value.opcode() == Opcode::Unbox) {
+    if (value.opcode() == Opcode::Unbox || value.opcode() == Opcode::NumberToInteger) {
         if (std::optional<Operand> handedOn = emitter<CastEmitter>().takeIntegerHandedOnTo(value.id())) {
-            define(value, *handedOn);
+            bool isWidened = value.representation() == Representation::Int64 && handedOn->is<Word32>();
+            define(value, isWidened ? Operand(signExtended(handedOn->as<Word32>())) : *handedOn);
+            return;
+        }
+    }
+    if (value.opcode() == Opcode::IntegerToNumber) {
+        if (LValue carried = generator().loopCarriedNumberOf(value.id())) [[unlikely]] {
+            define(value, Number(carried));
+            return;
+        }
+        if (isARM64() && generator().rotatesUnrolledIterationNumbers() && value.representation() == Representation::Double && generator().representationOf(converted) == Representation::Int32) [[unlikely]] {
+            define(value, Number(generator().numberOfInteger(get(converted).as<Word32>().value())));
             return;
         }
     }

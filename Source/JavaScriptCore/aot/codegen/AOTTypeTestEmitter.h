@@ -44,6 +44,7 @@ public:
     Condition isCallable(CellPointer);
     Condition inheritsClassInfo(CellPointer, BuiltinClassID);
     Condition isPristine(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
+    void branchOnPristineView(CellPointer, BuiltinClassID, OptionSet<PristineAspects>, BranchTargets);
     Condition nothingWasWrittenAbove(BuiltinClassID);
     Condition isAsItsClassMadeIt(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition hasSharingMode(CellPointer, ArrayBufferSharingMode);
@@ -85,6 +86,8 @@ private:
     Condition cellPasses(CellPointer, const TypeTestPlan&);
     Condition stringPasses(CellPointer, const TypeTestPlan&);
     Condition isCallableByCallData(CellPointer);
+    Condition isCallableByStub(CellPointer);
+    bool asksStubForCallable();
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
 
     TypeTestPlansKeptAcrossUnits& whatIsKeptAcrossUnits();

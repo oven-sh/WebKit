@@ -255,7 +255,7 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
             const Layout& layout = program->at(member);
             if (layout.kind == LayoutKind::ModuleNamespace)
                 kinds.holdsNamespace = true;
-            else if (!layout.writtenBuiltinBase || layout.mayBeOrdinaryObject)
+            else if (!builtinClassOfInstances(layout) || layout.mayBeOrdinaryObject)
                 kinds.mayHaveShapes = true;
         }
         return kinds;

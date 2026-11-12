@@ -205,6 +205,9 @@ void ModuleRegistryEntry::setRecord(VM& vm, AbstractModuleRecord* record)
 void ModuleRegistryEntry::setLoadPromise(VM& vm, JSPromise* promise)
 {
     m_loadPromise.set(vm, this, promise);
+#if USE(BUN_JSC_ADDITIONS)
+    m_wasLoadStartedSynchronously = !!vm.synchronousModuleQueue();
+#endif
 }
 
 void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue error)
@@ -246,6 +249,14 @@ void ModuleRegistryEntry::setStatus(Status status)
         m_asyncContext.clear();
 #endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void ModuleRegistryEntry::giveBackAsyncContext(VM& vm, JSValue asyncContext)
+{
+    if (asyncContext && m_status <= Status::Fetching)
+        m_asyncContext.set(vm, this, asyncContext);
+}
+#endif
 
 void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, SourceCode&& sourceCode)
 {

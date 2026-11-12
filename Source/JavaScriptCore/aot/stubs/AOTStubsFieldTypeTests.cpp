@@ -164,8 +164,7 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         loadShapeTest(indexFromLast);
         jit.load32(Address(indexFromLast, ShapeTestData::offsetOfLast()), indexFromLast);
         jit.add32(Address(r.value, offsetOfShapeWord), indexFromLast);
-        jit.urshift64(indexFromLast, bits);
-        isAccepted.append(jit.branchTest32(CCallHelpers::NonZero, bits, TrustedImm32(1)));
+        isAccepted.append(branchTestBitAt(jit, CCallHelpers::NonZero, bits, indexFromLast));
         testFailed.append(jit.jump());
     };
     auto emitCellTest = [&](CellTestKind kind) {

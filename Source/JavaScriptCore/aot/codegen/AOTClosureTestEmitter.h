@@ -20,6 +20,7 @@ public:
     Condition isClosureOfAny(CellPointer, std::span<const FunctionID>);
     Condition hasFunctionCellType(CellPointer);
     Condition isSlimClosureAsCreated(CellPointer);
+    Condition hasClosureStructure(CellPointer, FunctionID);
     CellPointer closureIfCreated(FunctionID);
     Word32 closureTableEntry(FunctionID);
     CellPointer closureInTableEntry(Word32);
@@ -47,7 +48,6 @@ private:
     Word32 numberOfChangedClosure(CellPointer);
     ptrdiff_t offsetOfClosureHeader(FunctionKindData) const;
     TypedPointer closureCellOf(FunctionID);
-    Condition hasClosureStructure(CellPointer, FunctionID);
     Condition hasClosureWordOf(CellPointer, bool isSlim, FunctionID);
     Word32 closureNumberOf(FunctionID, int32_t addend = 0);
     uint32_t mentionOfUpperHalfOfClosureWordOf(FunctionID);

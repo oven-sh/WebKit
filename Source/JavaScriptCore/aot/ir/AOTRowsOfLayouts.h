@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTID.h"
 #include "AOTVector.h"
 #include <optional>
-#include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {

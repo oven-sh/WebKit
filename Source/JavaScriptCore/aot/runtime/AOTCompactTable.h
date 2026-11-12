@@ -16,6 +16,7 @@
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <wtf/Int128.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/UnalignedAccess.h>
 
@@ -82,6 +83,12 @@ public:
     static constexpr unsigned sizeStepShiftOfGrowthPlan = 56;
     static constexpr unsigned hashBits = 24;
     static constexpr unsigned hashMask = (1u << hashBits) - 1;
+    static constexpr uint64_t keyMultiplier = 0x9e3779b97f4a7c15;
+    static ALWAYS_INLINE unsigned hashOfKeyBits(uint64_t bits)
+    {
+        UInt128 product = static_cast<UInt128>(bits) * static_cast<UInt128>(keyMultiplier);
+        return static_cast<unsigned>(static_cast<uint64_t>(product) ^ static_cast<uint64_t>(product >> 64)) & hashMask;
+    }
     static constexpr unsigned tagShiftOfTags = 16;
 
     static constexpr unsigned slotsPerGroup = 8;
@@ -233,6 +240,13 @@ public:
     std::optional<uint32_t> find(std::span<const Latin1Character>) const;
     std::optional<uint32_t> findInline(std::span<const Latin1Character>) const;
 
+    enum class KeyPresence : bool { Absent, Present };
+    static bool canCompareKeys(JSSet*, JSSet* other);
+    static bool hasAllKeys(JSSet*, JSSet* other, KeyPresence);
+    static JSSet* trySelectKeys(JSGlobalObject*, JSSet*, JSSet* other, KeyPresence);
+    static JSSet* tryUnite(JSGlobalObject*, JSSet*, JSSet* other);
+    static JSSet* trySubtractBothWays(JSGlobalObject*, JSSet*, JSSet* other);
+
     template<typename CharacterType>
     static ALWAYS_INLINE bool hasCharacters(const StringImpl& impl, std::span<const CharacterType> characters)
     {
@@ -321,6 +335,7 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
+    QuickLookup tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, JSValue& value) const;
     template<typename CharacterType>
     ALWAYS_INLINE Lookup tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash) const
     {
@@ -464,6 +479,8 @@ public:
     static void clear(JSGlobalObject*, JSObject* owner);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);
     static CompactStorage::Position nextBehindDeletedEntry(VM&, JSCell* storage, uint32_t entry);
+    enum class KeysCopied : uint8_t { None, Values, Int32s };
+    static KeysCopied tryCopyKeys(JSCell* storage, std::span<EncodedJSValue> copies);
     template<typename Functor>
     static void forEachInColumn(VM& vm, JSCell* storage, uint32_t entry, bool wantsKeys, NOESCAPE const Functor& functor)
     {
@@ -599,6 +616,9 @@ private:
     template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
     std::optional<uint32_t> findString(JSGlobalObject*, JSString*) const;
     std::optional<uint32_t> findOtherKey(JSGlobalObject*, JSValue normalizedKey) const;
+    bool hasStoredKey(JSValue) const;
+    Vector<uint32_t, 64> selectEntries(const CompactTable& other, KeyPresence) const;
+    static JSSet* tryCreateSetOfEntries(JSGlobalObject*, const CompactTable&, std::span<const uint32_t>, const CompactTable& second, std::span<const uint32_t> entriesOfSecond);
     std::optional<uint32_t> findInImage(JSGlobalObject*, JSString*) const;
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
@@ -611,6 +631,7 @@ private:
     void append(VM&, JSValue key, unsigned hash, JSValue value);
     void resolveSubstringKey(JSRopeString*) const;
     bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
+    bool tryAddNumberQuickly(VM&, JSValue key, JSValue value);
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
     CompactTable* copyWithAbsentKey(VM&, JSValue key, unsigned hash, JSValue) const;
@@ -619,6 +640,7 @@ private:
     static void shrink(JSGlobalObject*, JSObject* owner);
     void skipObsoleteSuccessors();
     void removeAllEntries();
+    bool tryCompactInPlace(VM&, JSObject* owner);
 
     JSCell*& successor()
     {

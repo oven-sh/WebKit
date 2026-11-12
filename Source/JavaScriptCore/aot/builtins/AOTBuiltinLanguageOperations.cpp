@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBigIntArithmetic.h"
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
@@ -18,7 +19,28 @@
 
 namespace JSC { namespace AOT {
 
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES incrementAnyValue(Instance*, EncodedJSValue);
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES decrementAnyValue(Instance*, EncodedJSValue);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTIncrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    if (JSValue value = JSValue::decode(encodedValue); value.isHeapBigInt()) {
+        if (JSBigInt* result = BigIntArithmetic::tryIncrement(BigIntArithmetic::HeapPlace(*instance->vm), value.asHeapBigInt()))
+            return { JSValue::encode(result), nullptr };
+    }
+    AOT_MUST_TAIL_CALL return incrementAnyValue(instance, encodedValue);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDecrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    if (JSValue value = JSValue::decode(encodedValue); value.isHeapBigInt()) {
+        if (JSBigInt* result = BigIntArithmetic::tryDecrement(BigIntArithmetic::HeapPlace(*instance->vm), value.asHeapBigInt()))
+            return { JSValue::encode(result), nullptr };
+    }
+    AOT_MUST_TAIL_CALL return decrementAnyValue(instance, encodedValue);
+}
+
+OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES incrementAnyValue(Instance* instance, EncodedJSValue encodedValue)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTIncrement);
     JSValue numeric = JSValue::decode(encodedValue).toNumeric(globalObject);
@@ -28,7 +50,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIncrement, EncodedJSValue, (Instance* insta
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() + 1)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTDecrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES decrementAnyValue(Instance* instance, EncodedJSValue encodedValue)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDecrement);
     JSValue numeric = JSValue::decode(encodedValue).toNumeric(globalObject);

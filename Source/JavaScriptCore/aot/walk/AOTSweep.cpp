@@ -450,7 +450,7 @@ static ALWAYS_INLINE bool staysInSweptCodeByItselfByRow(const Operation& operati
     if ((row & writesOnlyItsAnswerInRowOfSweep) && !traits.mayThrowByRule() && traits.alwaysCompletes())
         return false;
     if (!neitherThrowsNorRunsCode(traits))
-        return true;
+        return operation.opcode != Opcode::CallDirect || !operation.isRemovableWhenUnused();
     return row & hasNoResultInRowOfSweep;
 }
 

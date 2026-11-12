@@ -41,7 +41,75 @@ void ArrayStorageBuiltinEmitter::generateArrayPush(const InlineCall& call)
         finishInlineCall(call, emitter<ConstantEmitter>().zeroOf(resultRepresentationOf(call)));
         return;
     }
+    if (call.numberOfArguments()) {
+        pushSeveral(call, in<CellPointer>(call.receiver()));
+        return;
+    }
     m_out.jump(missBlockOf(call));
+}
+
+void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer array)
+{
+    LBasicBlock miss = missBlockOf(call);
+    auto values = call.arguments();
+    ArrayStorage expected = elements().expectedFormOf(call.receiver()).kind;
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(call.receiver())).predicted();
+    ArrayStorageFormList forms = elements().candidateFormsFor(values.front(), expected);
+    for (ValueID value : values.subspan(1)) {
+        ArrayStorageFormList formsOfValue = elements().candidateFormsFor(value, expected);
+        forms.removeAllMatching([&](const ArrayStorageForm* form) {
+            return !formsOfValue.contains(form);
+        });
+    }
+    if (forms.isEmpty()) {
+        m_out.jump(miss);
+        return;
+    }
+    if (hasArrayStorageForm(declared) && forms.first()->kind == declared)
+        forms.shrink(1);
+
+    build().statistics().count(StatisticID::ArrayPushesInlined);
+    Representation representation = resultIsRead(call) ? resultRepresentationOf(call) : Representation::Void;
+    LBasicBlock isStored = newBlock();
+    LBasicBlock hasOtherKind = newBlock();
+    LBasicBlock oneByOne = newBlock();
+    OperandJoin join(m_out, representation);
+    bool mayPushCell = std::ranges::any_of(values, [&](ValueID value) {
+        return typeOf(value).hasCells();
+    });
+    ArrayElements storage = elements().elementsOf(array);
+    Word32 length = elements().publicLengthAsWord(storage);
+    Word32 newLength = add(length, word32(static_cast<int32_t>(values.size())));
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, hasOtherKind, [&](const ArrayStorageForm& form) {
+        branchUnless(belowOrEqual(newLength, elements().vectorLengthAsWord(storage)), oneByOne);
+        Vector<Operand, maxInlinePushedValues> rawElements;
+        for (ValueID value : values)
+            rawElements.append(*elements().rawElementToStore(form, value, oneByOne));
+        if (form.holdsCells && mayPushCell)
+            branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), oneByOne);
+        Integer start = zeroExtended(length);
+        for (size_t i = 0; i < rawElements.size(); ++i) {
+            elements().stopWhereHoleWouldBeStored(call.context(), form, rawElements[i]);
+            elements().storeRawElement(form, storage, i ? add(start, integer(i)) : start, rawElements[i]);
+        }
+        m_out.jump(isStored);
+    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
+
+    m_out.appendTo(isStored);
+    elements().setPublicLength(storage, newLength);
+    join.add(representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength)));
+
+    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape && CopyOnWrite > ContiguousShape);
+    m_out.appendTo(hasOtherKind);
+    branchUnless(belowOrEqual(mode, word32(ContiguousShape)), miss);
+    m_out.jump(oneByOne);
+
+    m_out.appendTo(oneByOne);
+    for (ValueID value : values.first(values.size() - 1))
+        elements().appendOutOfLine(call.context(), array, value);
+    join.add(pushOutOfLine(call, array, values.back(), representation));
+    finishInlineCall(call, join.finish());
 }
 
 void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer array)
@@ -76,7 +144,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
         forms.shrink(1);
     bool goesByKindOfNumbers = !hasArrayStorageForm(declared) && elements().goesByKindOfListOfNumbers(call.receiver(), pushed);
     if (goesByKindOfNumbers)
-        forms = elements().formsOfListOfNumbersFor(pushed, false);
+        forms = elements().formsOfListOfNumbersFor(pushed, generator().usesLoopForms(block));
     bool mayPushCell = typeOf(pushed).hasCells();
     LBasicBlock isStored = newBlock();
     LBasicBlock slowPath = newBlock();

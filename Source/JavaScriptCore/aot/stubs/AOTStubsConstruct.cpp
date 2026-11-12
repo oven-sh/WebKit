@@ -62,7 +62,11 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
         break;
     case ConstructSyntax::SuperCall:
         loadConstructorClassInfo(jit, callee, scratch);
-        jit.loadRuntimePointer(Entry::ErrorConstructorClassInfo, function);
+        for (Entry classInfo : { Entry::ErrorConstructorClassInfo, Entry::ArrayConstructorClassInfo }) {
+            jit.loadRuntimePointer(classInfo, function);
+            genericPath.append(jit.branchPtr(CCallHelpers::Equal, scratch, function));
+        }
+        jit.loadRuntimePointer(Entry::ObjectConstructorClassInfo, function);
         genericPath.append(jit.branchPtr(CCallHelpers::Equal, scratch, function));
         break;
     }

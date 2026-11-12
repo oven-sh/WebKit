@@ -299,6 +299,12 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
             // everything in any case, which no search can profit from.
             if (candidates.isAllSet())
                 break;
+#if defined(YARR_FOR_IMAGE)
+            if (!sampler.canResolveCandidateFrequency()) {
+                map.merge(candidates.map());
+                frequency = map.count();
+            } else
+#endif
             candidates.map().forEachSetBit([&](unsigned character) {
                 if (!map.testAndSet(character))
                     frequency += sampler.canResolveCandidateFrequency() ? sampler.frequency(character) : 1;
@@ -10301,7 +10307,27 @@ class YarrGenerator final : public YarrJITInfo {
             info->chains.append(WTF::move(chain));
             return chainId;
         };
+#if defined(YARR_FOR_IMAGE)
+        constexpr size_t maxAlternativesInMask = 64;
+        std::array<uint64_t, 256> alternativesByCharacter { };
+        for (unsigned i = 0; i < alternatives.size() && alternatives.size() <= maxAlternativesInMask; ++i) {
+            if (sets[i].any) {
+                for (uint64_t& members : alternativesByCharacter)
+                    members |= 1ull << i;
+            } else {
+                sets[i].latin1.forEachSetBit([&](size_t ch) {
+                    alternativesByCharacter[ch] |= 1ull << i;
+                });
+            }
+        }
+#endif
         for (unsigned ch = 0; ch < 256; ++ch) {
+#if defined(YARR_FOR_IMAGE)
+            if (ch && alternatives.size() <= maxAlternativesInMask && alternativesByCharacter[ch] == alternativesByCharacter[ch - 1]) {
+                info->chainForCharacter[ch] = info->chainForCharacter[ch - 1];
+                continue;
+            }
+#endif
             Vector<unsigned, 4> members;
             for (unsigned i = 0; i < alternatives.size(); ++i) {
                 if (sets[i].matches(ch))

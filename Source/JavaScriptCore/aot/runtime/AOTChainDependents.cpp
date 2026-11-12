@@ -246,7 +246,7 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         return;
     if (uidOrNull) {
         classes.holdMemberToProof(vm, *layout, side, changed, uidOrNull);
-        if (seesAccessesUnderName(vm, changed, uidOrNull) && !classes.holdsMemberOfRecordUnder(vm, *layout, side, changed, uidOrNull))
+        if (!classes.hasNoGuardLeft(*layout, side) && seesAccessesUnderName(vm, changed, uidOrNull) && !classes.holdsMemberOfRecordUnder(vm, *layout, side, changed, uidOrNull))
             classes.didLayWhatSeesAccesses(vm, *layout, side);
         classes.didChangeMember(*layout, side, uidOrNull);
         return;
@@ -341,7 +341,7 @@ bool RuntimeHooks::shouldUseDictionaryForAddition(VM& vm, JSObject* object, Stru
     FirstAdditions& additions = firstAdditionsOf(*state);
     if (additions.shouldMakeStructure(structure, uid) || !hasFewEnoughNamesToBeFilled(structure) || !additions.mayBeginToFill(object))
         return false;
-    additions.didBeginToFill(vm, object);
+    additions.didBeginToFill(vm, object, structure);
     return true;
 }
 
@@ -392,6 +392,17 @@ static PropertyWalk::Presence ownPresenceForStructure(Structure* structure, Uniq
     return isValidOffset(*offset) ? Presence::Present : Presence::Absent;
 }
 
+static bool lazyPrototypeDeclaresMember(Structure* structure, UniquedStringImpl* uid)
+{
+    if (!structure->hasMonoProto())
+        return false;
+    for (JSObject* object = structure->storedPrototypeObject(); object && object->classInfo() == ClassPrototype::info() && !object->butterfly(); object = object->getPrototypeDirect().getObject()) {
+        if (ClassPrototype::hasMember(object, uid))
+            return true;
+    }
+    return false;
+}
+
 PropertyWalk::Presence presenceForStructure(VM&, Structure* structure, UniquedStringImpl* uid)
 {
     using Presence = PropertyWalk::Presence;
@@ -404,7 +415,7 @@ PropertyWalk::Presence presenceForStructure(VM&, Structure* structure, UniquedSt
 
     ChainWalk walk = walkChain({ structure->realm(), structure, nullptr, ChainWalkMode::AllocatesNothing }, uid);
     if (walk.result == ChainWalkResult::Unknown)
-        return Presence::Unknown;
+        return lazyPrototypeDeclaresMember(structure, uid) ? Presence::Present : Presence::Unknown;
     state->chainDependents->addStateOfStructure(walk.changeableObjects.span(), structure, uid);
     return walk.result == ChainWalkResult::Found ? Presence::Present : Presence::Absent;
 }
@@ -417,7 +428,9 @@ enum class StepResult : uint8_t { Continue, Stop };
 
 static bool canWalkThrough(Structure* structure)
 {
-    return !isProxyType(structure->typeInfo().type()) && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary() && (structure->isCompiledStructure() || structure->propertyAccessesAreCacheable());
+    if (isProxyType(structure->typeInfo().type()))
+        return false;
+    return structure->isCompiledStructure() || (structure->prototypeQueriesAreCacheable() && !structure->typeInfo().getOwnPropertySlotIsImpure());
 }
 
 static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverStructure, UniquedStringImpl* uid, StoredName name)
@@ -564,7 +577,7 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
     if (JSObject* extra = object.extraProperties()) {
         Structure* structure = extra->structure();
         unsigned attributes = 0;
-        if (structure->isDictionary() && start.use != ChainWalkUse::UsedAtOnce)
+        if (structure->isUncacheableDictionary() && start.use != ChainWalkUse::UsedAtOnce)
             return stopAt(&object, walk);
         std::optional<PropertyOffset> offset = findOffset(start.globalObject->vm(), structure, uid, start.mode, attributes);
         if (!offset || attributes & PropertyAttribute::CustomAccessorOrValue)
@@ -601,15 +614,8 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
 {
     VM& vm = start.globalObject->vm();
     Structure* structure = object->structure();
-    if (!canWalkThrough(structure)) {
-        bool staysInPlace = structure->isDictionary() && !structure->isUncacheableDictionary();
-        if (staysInPlace)
-            flattenOnce(vm, object);
-        else if (structure->isDictionary() && start.mode == ChainWalkMode::MayAllocate)
-            walk.didFlatten = flattenOnce(vm, object);
-        if (!staysInPlace || !canWalkThrough(structure))
-            return stopAt(object, walk);
-    }
+    if (!canWalkThrough(structure))
+        return stopAt(object, walk);
     if (structure->isCompiledStructure())
         return isCompiledObject(object) ? lookUpInCompiledObject(start, uid, *uncheckedDowncast<Object>(object), walk) : stopAt(object, walk);
     if (!hasOrdinaryLookupForName(start, object, structure, uid))

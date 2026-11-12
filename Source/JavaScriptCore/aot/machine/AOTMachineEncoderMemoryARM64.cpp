@@ -330,7 +330,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeStore(const Step& step)
     const Operation* store = step.operation;
     ASSERT(isStore(store->opcode()));
     ASSERT(store->opcode() == Store || store->child(0)->type() == Int32);
-    ASSERT(!m_liveness.isFused(store->child(0)));
+    ASSERT(!m_liveness.isFused(store->child(0)) || store->child(0)->opcode() == Trunc || namesWord(store->child(0)));
     Width width = store->accessWidth();
 
     LeafCursor leaves(step);

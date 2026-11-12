@@ -64,11 +64,18 @@
 # RELINKED-NEXT: 5 2
 # RELINKED-NEXT: exited with 0
 # RUN(HOLDER): run-in-shell early = function () { }; change = function (made, Above, Middle) { Object.setPrototypeOf(Middle.prototype, Object.create(Above.prototype, { size: { value: 4 } })); };
+# `third` is declared by Lowest itself. Lookups come to Lowest.prototype before they come to what is above it.
 # HOLDER: size count first second third -
-# HOLDER-NEXT: - - - - - -
-# HOLDER-NEXT: - - - - - -
+# HOLDER-NEXT: - - - - third -
+# HOLDER-NEXT: - - - - third -
 # HOLDER-NEXT: 4 2
 # HOLDER-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell early = function () { }; change = function (made, Above, Middle, Lowest) { Object.setPrototypeOf(Middle.prototype, Object.create(Above.prototype)); Lowest.prototype.third = function () { return 0; }; };
+# REPLACED: size count first second third -
+# REPLACED-NEXT: - - - - - -
+# REPLACED-NEXT: - - - - - -
+# REPLACED-NEXT: 5 2
+# REPLACED-NEXT: exited with 0
 # RUN(PROXY): run-in-shell early = function () { }; change = function (made, Above, Middle, Lowest) { Object.setPrototypeOf(Lowest.prototype, new Proxy(Middle.prototype, { get(target, key) { return key === "size" ? 3 : target[key]; } })); };
 # PROXY: size count first second third -
 # PROXY-NEXT: - - - - - -
@@ -82,9 +89,9 @@
 # AGAIN-NEXT: 5 2
 # AGAIN-NEXT: exited with 0
 # RUN(HERITAGE): run-in-shell early = function (Above, Middle, holders) { holders.Parent = Above; }; change = function () { };
-# HERITAGE: - - - - - -
-# HERITAGE-NEXT: - - - - - -
-# HERITAGE-NEXT: - - - - - -
+# HERITAGE: - - - - third -
+# HERITAGE-NEXT: - - - - third -
+# HERITAGE-NEXT: - - - - third -
 # HERITAGE-NEXT: 5 2
 # HERITAGE-NEXT: exited with 0
 # RUN(EARLY): run-in-shell early = function (Above) { Object.defineProperty(Above.prototype, "size", { configurable: true, get() { return 1; } }); }; change = function () { };

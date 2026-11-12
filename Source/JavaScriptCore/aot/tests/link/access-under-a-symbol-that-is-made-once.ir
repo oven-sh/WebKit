@@ -10,7 +10,7 @@
 # LINK-NEXT: access f2 v3 under symbol("depth")@m0:0
 # LINK: function f1 callers-known one-callee {{*}}result=undefined|int[0, 2147483647] returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
 # LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone filled
-# LINK: field L0.1 symbol("depth")@m0:0 proven=i32 writers-known
+# LINK: field L0.1 symbol("depth")@m0:0 proven=int[0, 2147483647] writers-known
 # LINK: variable g0 proven=symbol("depth")@m0:0 writers-known written-at-construction-alone
 # LINK: layout L0 changes=[]
 # That chooses the name and proves nothing. The type of the variable names the symbol, each store into it is held to that, and so the walk derives the key by itself: no test stands in front of the access.

@@ -43,6 +43,7 @@ public:
     void generateGetArrayStorage(const ValueContext&);
     void generateGetArrayCapacity(const ValueContext&);
     void generateExtendArrayLength(const ValueContext&);
+    void generateRestoreArrayStore(const ValueContext&);
     void generateSetArrayLength(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
     void generatePutArrayElement(const ValueContext&);
@@ -60,8 +61,8 @@ public:
     void generateIsElementInStorage(const ValueContext&);
     void generateGetElementInStorageOrAbsent(const ValueContext&);
     bool asksTruthOfRawElement(ValueID read);
-    bool asksTruthOfNumberInList(ValueID read);
-    void branchOnTruthOfNumberInList(const ValueContext&);
+    bool testsArrayNumberTruth(ValueID read);
+    void branchOnArrayNumberTruth(const ValueContext&);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 
@@ -87,6 +88,8 @@ public:
     Condition hasShape(Word32 maskedMode, const ArrayStorageForm& form) { return equal(maskedMode, word32(form.shape)); }
     Condition holdsBoxedElements(Word32 maskedMode);
     Condition holdsBoxedElements(CellPointer array);
+    Condition objectHoldsBoxedElements(CellPointer object);
+    Boxed loadArrayStorageElement(CellPointer object, Integer index, LBasicBlock notFound);
     Condition holdsWritableBoxedElements(CellPointer array);
     Condition takesNumbersByKindOfStorage(CellPointer array, bool admitsInt32Storage);
     Condition hasWritableNumericStorage(CellPointer array);
@@ -114,11 +117,14 @@ public:
     Boxed boxRawElement(const ArrayStorageForm&, Operand rawElement);
     Operand convertRawElement(const OperationContext&, const ArrayStorageForm&, Operand rawElement, Representation, TypeID result);
     void stopUnlessElementIsOf(const OperationContext&, Boxed element, TypeID proven);
+    bool isTruncatedAlone(ValueID number) const;
     void stopUnlessDoubleIsOf(const OperationContext&, Operand element, TypeID proven);
     Operand convertElementThatHasBeenAsked(const OperationContext&, const ArrayStorageForm&, Operand rawElement, Representation, TypeID result);
+    std::optional<Operand> tryUnboxNumberOrCrash(const OperationContext&, Boxed element, Representation, TypeID result);
     Operand convertInt32Element(Word32, Representation);
     Operand absentElement(const OperationContext&, Representation);
     Operand whatReadGivesWhereNothingIsFound(const ValueContext& read, Representation);
+    bool updateInt32InPlace(const ValueContext& store, const ArrayElements&, Integer index, Boxed word);
     void storeRawElement(const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement);
     std::optional<Operand> rawElementToStore(const ArrayStorageForm&, ValueID stored, LBasicBlock doesNotFit);
     ArrayStorageFormList candidateFormsFor(ValueID stored, ArrayStorage expected);
@@ -137,10 +143,11 @@ public:
     enum class NaNIndexMode : bool { TakeSlowPath, ProduceOutOfBoundsIndex };
     Integer indexOrElse(ValueID position, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
     std::optional<Boxed> wordOfPosition(ValueID position);
-    Integer indexOfWordOrElse(Boxed, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode);
+    Integer wordToIndexOrElse(Boxed, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode);
     Integer indexOfAccessOrElse(const ValueContext& access, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
     Integer indexInsideLength(ValueID position);
-    bool addsConstantToIndex(ValueID position, LValue sum);
+    enum class IndexBesideConstant : bool { IsNotNegative, IsSigned };
+    std::optional<IndexBesideConstant> indexBesideConstant(ValueID position, LValue sum);
     Integer indexFoundBelowLength(Integer index);
     Condition isBelowLengthOfView(Integer index, Integer length, TypedArrayType);
     std::optional<Integer> indexBesideWholeNumber(ValueID position, Number, LBasicBlock isNotAnIndex);
@@ -148,9 +155,11 @@ public:
     LengthTest testLength(const ValueContext&, Integer index, const ArrayElements&);
     Boxed boxedPosition(ValueID position);
 
-    Operand readElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isAbsent);
+    Operand readElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isAbsent, std::optional<Representation> = std::nullopt);
+    bool readsElementBoxed(const ValueContext&, const ArrayStorageForm&);
+    void defineElement(const ValueContext&, Operand, bool isBoxed);
     const PlacedSlot* extraPropertiesWordOfReadByPosition(const ValueContext& read);
-    Boxed readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound);
+    Boxed readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound, bool readsArrayStorage);
     void overwriteElementOfExtraProperties(const ValueContext& store, CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, Boxed stored, LBasicBlock notFound);
     Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole, std::optional<Representation> = std::nullopt);
     void branchOnPresentElement(const ValueContext& test, const ArrayStorageForm&, BranchTargets);
@@ -178,24 +187,34 @@ private:
     bool hasOneArmInLine(const ValueContext& read);
     void readWithOneArmInLine(const ValueContext&, const ArrayStorageForm* knownForm);
     void readFromDoubleOrInt32Storage(const ValueContext&);
+    bool isReckonedWithFraction(ValueID read) const;
+    void readTruncatedNumber(const ValueContext&, const ArrayElements&, std::optional<Integer> index);
     Operand numberOfInt32Element(const ValueContext&, Boxed element);
     Operand readNumberInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole, std::optional<Representation> = std::nullopt);
     Boxed readOutOfLine(const ValueContext&, CellPointer array);
     bool findsElement(const ValueContext& read);
+    bool leavesIterationAtHole(const ValueContext& read, std::optional<Representation>);
     Boxed readBoxedElement(const ValueContext&, const ArrayElements&, Integer index, LBasicBlock isAbsent);
 
     void storeInsideLength(const ValueContext&, const ArrayStorageForm&);
     void replaceElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement);
+    bool readsInt32Of(const ValueContext& store);
     enum class NumberBoxing : bool { InLine, ByStub };
     Boxed boxForStub(const OperationContext&, Operand, const Type&, NumberBoxing);
     void storeOutOfLine(const ValueContext&, CellPointer array, NumberBoxing);
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element, NumberBoxing);
     void storeInVector(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement, LBasicBlock isBeyondVector);
+    void appendInVector(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement, LBasicBlock isBeyondVector);
 
     void holdPositionInsideList(const ValueContext& access);
     void holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements&);
     Integer indexOfPresenceTest(const ValueContext& test, LBasicBlock isNotAnIndex);
-    void branchOnElementPresence(const ValueContext&, const ArrayStorageForm*, const ArrayElements&, Integer index, BranchTargets);
+    struct TestedElement {
+        Integer index;
+        std::optional<Operand> raw;
+    };
+    TestedElement branchOnElementPresence(const ValueContext&, const ArrayStorageForm*, const ArrayElements&, Integer index, BranchTargets);
+    ValueID findReadAfterPresenceTest(const ValueContext& test);
     TypedArrayElements typedArrayElementsInsideView(const ValueContext&, CellPointer view);
     std::optional<TypedArrayElements> typedArrayElementsNamedBy(const ValueContext&, CellPointer view);
     void askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork&, CellPointer view, LBasicBlock outside, LBasicBlock otherwise);

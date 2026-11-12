@@ -66,6 +66,120 @@ export function reduceOfList(callback /*, initialValue */)
     return accumulator;
 }
 
+// Chains of callbacks over one list, in one loop: the walk copies them where it has seen that no callback can tell (AOTWalkFusedChains.cpp, KindOfFusedChain). Nobody calls them.
+// What stands behind the two loops is for a list that is of neither kind throughout: there the copy is left.
+$linkTimeConstant;
+export function chainToValue(array, links, first, second, step, accumulator)
+{
+    "use strict";
+
+    var length = $toLength(array.length);
+    var i = 0;
+    for (; i < length && $hasContiguousIndex(array, i); i++) {
+        var element = $getOwnContiguousIndex(array, i);
+        if (links & 1) {
+            if (!first.$call($undefined, element))
+                continue;
+        } else
+            element = first.$call($undefined, element);
+        if (links & 2) {
+            if (links & 4) {
+                if (!second.$call($undefined, element))
+                    continue;
+            } else
+                element = second.$call($undefined, element);
+        }
+        accumulator = step.$call($undefined, accumulator, element);
+    }
+    for (; i < length; i++) {
+        var element = $getDoubleIndex(array, i);
+        if (element !== element)
+            break;
+        if (links & 1) {
+            if (!first.$call($undefined, element))
+                continue;
+        } else
+            element = first.$call($undefined, element);
+        if (links & 2) {
+            if (links & 4) {
+                if (!second.$call($undefined, element))
+                    continue;
+            } else
+                element = second.$call($undefined, element);
+        }
+        accumulator = step.$call($undefined, accumulator, element);
+    }
+    if (i < length)
+        $throwTypeError("Array.prototype.reduce callback must be a function");
+    return accumulator;
+}
+
+$linkTimeConstant;
+export function chainToList(array, links, first, second)
+{
+    "use strict";
+
+    var length = $toLength(array.length);
+    var i = 0;
+    var result = [];
+    var nextIndex = 0;
+    for (; i < length && $hasContiguousIndex(array, i); i++) {
+        var element = $getOwnContiguousIndex(array, i);
+        if (links & 1) {
+            if (!first.$call($undefined, element))
+                continue;
+        } else
+            element = first.$call($undefined, element);
+        if (links & 2) {
+            if (links & 4) {
+                if (!second.$call($undefined, element))
+                    continue;
+            } else
+                element = second.$call($undefined, element);
+        }
+        if (links & 8) {
+            if (!element)
+                continue;
+        }
+        if (!(links & 16)) {
+            if (!$tryPutIndex(result, nextIndex, element))
+                $putByValDirect(result, nextIndex, element);
+        }
+        ++nextIndex;
+    }
+    for (; i < length; i++) {
+        var element = $getDoubleIndex(array, i);
+        if (element !== element)
+            break;
+        if (links & 1) {
+            if (!first.$call($undefined, element))
+                continue;
+        } else
+            element = first.$call($undefined, element);
+        if (links & 2) {
+            if (links & 4) {
+                if (!second.$call($undefined, element))
+                    continue;
+            } else
+                element = second.$call($undefined, element);
+        }
+        if (links & 8) {
+            if (!element)
+                continue;
+        }
+        if (!(links & 16)) {
+            if (!$tryPutIndex(result, nextIndex, element))
+                $putByValDirect(result, nextIndex, element);
+        }
+        ++nextIndex;
+    }
+    if (i < length)
+        $throwTypeError("Array.prototype.filter callback must be a function");
+    if (links & 16)
+        return nextIndex;
+    return result;
+}
+
 $linkTimeConstant;
 export function reduceFrom(array, length, callback, accumulator, k)
 {
@@ -73,11 +187,18 @@ export function reduceFrom(array, length, callback, accumulator, k)
 
     if ($isJSArray(array)) {
         for (k >>>= 0; k < length; k += 1) {
-            var number = $getDoubleIndex(array, k);
-            if (number !== number)
-                break;
-            accumulator = callback.$call($undefined, accumulator, number, k, array);
+            for (; k < length && $hasContiguousIndex(array, k); k += 1)
+                accumulator = callback.$call($undefined, accumulator, $getOwnContiguousIndex(array, k), k, array);
+            for (; k < length; k += 1) {
+                var number = $getDoubleIndex(array, k);
+                if (number !== number)
+                    break;
+                accumulator = callback.$call($undefined, accumulator, number, k, array);
+            }
+            if (k < length && k in array)
+                accumulator = callback.$call($undefined, accumulator, array[k], k, array);
         }
+        return accumulator;
     }
 
     while (k < length) {
@@ -186,12 +307,21 @@ export function everyFrom(array, length, callback, thisArg, i)
 
     if ($isJSArray(array)) {
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            if (!callback.$call(thisArg, number, i, array))
+            for (; i < length && $hasContiguousIndex(array, i); i++) {
+                if (!callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array))
+                    return false;
+            }
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                if (!callback.$call(thisArg, number, i, array))
+                    return false;
+            }
+            if (i < length && i in array && !callback.$call(thisArg, array[i], i, array))
                 return false;
         }
+        return true;
     }
 
     for (; i < length; i++) {
@@ -261,11 +391,18 @@ export function forEachFrom(array, length, callback, thisArg, i)
 
     if ($isJSArray(array)) {
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            callback.$call(thisArg, number, i, array);
+            for (; i < length && $hasContiguousIndex(array, i); i++)
+                callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array);
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                callback.$call(thisArg, number, i, array);
+            }
+            if (i < length && i in array)
+                callback.$call(thisArg, array[i], i, array);
         }
+        return;
     }
 
     for (; i < length; i++) {
@@ -338,15 +475,34 @@ export function filterFrom(array, length, callback, thisArg, result, i, nextInde
     if ($isJSArray(array) && $isJSArray(result)) {
         nextIndex >>>= 0;
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            if (callback.$call(thisArg, number, i, array)) {
-                if (!$tryPutIndex(result, nextIndex, number))
-                    $putByValDirect(result, nextIndex, number);
-                ++nextIndex;
+            for (; i < length && $hasContiguousIndex(array, i); i++) {
+                var kept = $getOwnContiguousIndex(array, i);
+                if (callback.$call(thisArg, kept, i, array)) {
+                    if (!$tryPutIndex(result, nextIndex, kept))
+                        $putByValDirect(result, nextIndex, kept);
+                    ++nextIndex;
+                }
+            }
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                if (callback === $Boolean ? number !== 0 : callback.$call(thisArg, number, i, array)) {
+                    if (!$tryPutIndex(result, nextIndex, number))
+                        $putByValDirect(result, nextIndex, number);
+                    ++nextIndex;
+                }
+            }
+            if (i < length && i in array) {
+                var element = array[i];
+                if (callback.$call(thisArg, element, i, array)) {
+                    if (!$tryPutIndex(result, nextIndex, element))
+                        $putByValDirect(result, nextIndex, element);
+                    ++nextIndex;
+                }
             }
         }
+        return result;
     }
 
     for (; i < length; i++) {
@@ -459,13 +615,26 @@ export function mapFrom(array, length, callback, thisArg, result, i)
 
     if ($isJSArray(array) && $isJSArray(result)) {
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            var made = callback.$call(thisArg, number, i, array);
-            if (!$tryPutIndex(result, i, made))
-                $putByValDirect(result, i, made);
+            for (; i < length && $hasContiguousIndex(array, i); i++) {
+                var mapped = callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array);
+                if (!$tryPutIndex(result, i, mapped))
+                    $putByValDirect(result, i, mapped);
+            }
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                var made = callback.$call(thisArg, number, i, array);
+                if (!$tryPutIndex(result, i, made))
+                    $putByValDirect(result, i, made);
+            }
+            if (i < length && i in array) {
+                var element = callback.$call(thisArg, array[i], i, array);
+                if (!$tryPutIndex(result, i, element))
+                    $putByValDirect(result, i, element);
+            }
         }
+        return result;
     }
 
     for (; i < length; i++) {
@@ -532,12 +701,21 @@ export function someFrom(array, length, callback, thisArg, i)
 
     if ($isJSArray(array)) {
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            if (callback.$call(thisArg, number, i, array))
+            for (; i < length && $hasContiguousIndex(array, i); i++) {
+                if (callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array))
+                    return true;
+            }
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                if (callback.$call(thisArg, number, i, array))
+                    return true;
+            }
+            if (i < length && i in array && callback.$call(thisArg, array[i], i, array))
                 return true;
         }
+        return false;
     }
 
     for (; i < length; i++) {
@@ -606,12 +784,25 @@ export function findFrom(array, length, callback, thisArg, i)
 
     if ($isJSArray(array)) {
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            if (callback.$call(thisArg, number, i, array))
-                return number;
+            for (; i < length && $hasContiguousIndex(array, i); i++) {
+                var own = $getOwnContiguousIndex(array, i);
+                if (callback.$call(thisArg, own, i, array))
+                    return own;
+            }
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                if (callback.$call(thisArg, number, i, array))
+                    return number;
+            }
+            if (i < length) {
+                var element = array[i];
+                if (callback.$call(thisArg, element, i, array))
+                    return element;
+            }
         }
+        return $undefined;
     }
 
     for (; i < length; i++) {
@@ -704,12 +895,21 @@ export function findIndexFrom(array, length, callback, thisArg, i)
 
     if ($isJSArray(array)) {
         for (i >>>= 0; i < length; i++) {
-            var number = $getDoubleIndex(array, i);
-            if (number !== number)
-                break;
-            if (callback.$call(thisArg, number, i, array))
+            for (; i < length && $hasContiguousIndex(array, i); i++) {
+                if (callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array))
+                    return i;
+            }
+            for (; i < length; i++) {
+                var number = $getDoubleIndex(array, i);
+                if (number !== number)
+                    break;
+                if (callback.$call(thisArg, number, i, array))
+                    return i;
+            }
+            if (i < length && callback.$call(thisArg, array[i], i, array))
                 return i;
         }
+        return -1;
     }
 
     for (; i < length; i++) {
@@ -774,12 +974,11 @@ export function findLastIndex(callback /*, thisArg */)
 }
 
 $linkTimeConstant;
-export function flatIntoArray(target, source, sourceLength, targetIndex, depth)
+export function flatIntoArray(target, source, sourceLength, sourceIndex, targetIndex, depth)
 {
     "use strict";
 
     targetIndex = $toLength(targetIndex);
-    var sourceIndex = 0;
     if (depth <= 0 && sourceLength > 0 && $isJSArray(source) && $isJSArray(target)) {
         for (; sourceIndex < sourceLength && $hasContiguousIndex(source, sourceIndex); ++sourceIndex) {
             var taken = $getOwnContiguousIndex(source, sourceIndex);
@@ -795,7 +994,7 @@ export function flatIntoArray(target, source, sourceLength, targetIndex, depth)
         if (sourceIndex in source) {
             var element = source[sourceIndex];
             if (depth > 0 && $isArray(element))
-                targetIndex = $flatIntoArray(target, element, $toLength(element.length), targetIndex, depth - 1);
+                targetIndex = $flatIntoArray(target, element, $toLength(element.length), 0, targetIndex, depth - 1);
             else {
                 if (targetIndex >= $MAX_SAFE_INTEGER)
                     $throwTypeError("flatten array exceeds 2**53 - 1");
@@ -808,16 +1007,15 @@ export function flatIntoArray(target, source, sourceLength, targetIndex, depth)
 }
 
 $linkTimeConstant;
-export function flatIntoArrayWithCallback(target, source, sourceLength, targetIndex, callback, thisArg)
+export function flatIntoArrayWithCallback(target, source, sourceLength, sourceIndex, targetIndex, callback, thisArg)
 {
     "use strict";
 
-    var sourceIndex = 0;
     if (sourceLength > 0 && $isJSArray(source) && $isJSArray(target)) {
         for (; sourceIndex < sourceLength && $hasContiguousIndex(source, sourceIndex); ++sourceIndex) {
             var made = callback.$call(thisArg, $getOwnContiguousIndex(source, sourceIndex), sourceIndex, source);
             if ($isArray(made))
-                targetIndex = $toLength($flatIntoArray(target, made, $toLength(made.length), targetIndex, 0));
+                targetIndex = $toLength($flatIntoArray(target, made, $toLength(made.length), 0, targetIndex, 0));
             else {
                 if (!$tryPutIndex(target, targetIndex, made)) {
                     if (targetIndex >= $MAX_SAFE_INTEGER)
@@ -832,7 +1030,7 @@ export function flatIntoArrayWithCallback(target, source, sourceLength, targetIn
         if (sourceIndex in source) {
             var element = callback.$call(thisArg, source[sourceIndex], sourceIndex, source);
             if ($isArray(element))
-                targetIndex = $flatIntoArray(target, element, $toLength(element.length), targetIndex, 0);
+                targetIndex = $flatIntoArray(target, element, $toLength(element.length), 0, targetIndex, 0);
             else {
                 if (targetIndex >= $MAX_SAFE_INTEGER)
                     $throwTypeError("flatten array exceeds 2**53 - 1");
@@ -844,18 +1042,51 @@ export function flatIntoArrayWithCallback(target, source, sourceLength, targetIn
     return target;
 }
 
+$linkTimeConstant;
+export function flatMapOfPristineArray(array, callback, thisArg)
+{
+    "use strict";
+
+    var length = array.length;
+    var result = [];
+    var targetIndex = 0;
+    var i = 0;
+    for (; i < length && $hasContiguousIndex(array, i); ++i) {
+        var made = callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array);
+        if ($isJSArray(made)) {
+            var count = made.length;
+            var k = 0;
+            for (; k < count && $hasContiguousIndex(made, k); ++k) {
+                var inner = $getOwnContiguousIndex(made, k);
+                if (!$tryPutIndex(result, targetIndex, inner))
+                    $putByValDirect(result, targetIndex, inner);
+                ++targetIndex;
+            }
+            if (k < count)
+                targetIndex = $toLength($flatIntoArray(result, made, count, k, targetIndex, 0));
+        } else if ($isArray(made))
+            targetIndex = $toLength($flatIntoArray(result, made, $toLength(made.length), 0, targetIndex, 0));
+        else {
+            if (!$tryPutIndex(result, targetIndex, made))
+                $putByValDirect(result, targetIndex, made);
+            ++targetIndex;
+        }
+    }
+    if (i < length)
+        $flatIntoArrayWithCallback(result, array, length, i, targetIndex, callback, thisArg);
+    return result;
+}
+
+// Both ends are calls of hidden functions in tail position, as upstream's one: a stack trace that a callback takes lists no frame of flatMap, and the errors of flatMap itself do.
 export function flatMap(callback)
 {
     "use strict";
 
-    var array = this;
-    var length;
-    if ($isJSArray(array))
-        length = $toLength(array.length);
-    else {
-        array = $toObject(this, "Array.prototype.flatMap requires that |this| not be null or undefined");
-        length = $toLength(array.length);
-    }
+    if ($isPristineArray(this) && $isCallable(callback))
+        return $flatMapOfPristineArray(this, callback, $argument(1));
+
+    var array = $toObject(this, "Array.prototype.flatMap requires that |this| not be null or undefined");
+    var length = $toLength(array.length);
 
     if (!$isCallable(callback))
         $throwTypeError("Array.prototype.flatMap callback must be a function");
@@ -864,7 +1095,7 @@ export function flatMap(callback)
 
     var result = $newArrayWithSpecies(0, array);
 
-    return $flatIntoArrayWithCallback(result, array, length, 0, callback, thisArg);
+    return $flatIntoArrayWithCallback(result, array, length, 0, 0, callback, thisArg);
 }
 
 export function at(index)
@@ -873,14 +1104,29 @@ export function at(index)
 
     var array = this;
     var length;
-    if ($isJSArray(array))
+    if ($isJSArray(array)) {
+        if (typeof index === "number" && (index | 0) === index) {
+            var place = index | 0;
+            var count = array.length;
+            if (place < 0)
+                place = (place + count) | 0;
+            if (place >= count)
+                return $undefined;
+            if (place >= 0) {
+                if ($hasContiguousIndex(array, place))
+                    return $getOwnContiguousIndex(array, place);
+                var number = $getDoubleIndex(array, place);
+                if (number === number)
+                    return number;
+            }
+        }
         length = $toLength(array.length);
-    else {
+    } else {
         array = $toObject(this, "Array.prototype.at requires that |this| not be null or undefined");
         length = $toLength(array.length);
     }
 
-    var k = $toIntegerOrInfinity(index);
+    var k = typeof index === "number" && (index | 0) === index ? index | 0 : $toIntegerOrInfinity(index);
     if (k < 0)
         k += length;
 

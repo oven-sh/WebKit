@@ -121,7 +121,7 @@ void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
     VariableID variable = value->variable();
     switch (m_plan.variable(variable).storage) {
     case VariableStorage::Statics:
-        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), m_code.writesWhatTurnHasMade(value.id()));
+        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), typeOf(value->valueOperand()), m_code.writesWhatTurnHasMade(value.id()));
         return;
     case VariableStorage::ClosureTable:
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
@@ -191,7 +191,7 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
         return;
     }
     if (VariableID variable = m_plan.promotedEnvironments().variableOf(layout, field)) {
-        emitter<StaticsEmitter>().storeFieldOfEnvironment(variable, layout, field, get(value->valueOperand()), typeOf(value->valueOperand()));
+        emitter<StaticsEmitter>().storeFieldOfEnvironment(variable, layout, field, get(value->valueOperand()), typeOf(value->valueOperand()), m_code.writesWhatTurnHasMade(value.id()));
         m_generator.noteThatOwnerIsRememberedBehind(value.id());
         return;
     }

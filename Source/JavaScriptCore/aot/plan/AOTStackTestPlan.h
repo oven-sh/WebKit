@@ -7,13 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTCodeRole.h"
 #include "AOTID.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <algorithm>
 #include <utility>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 

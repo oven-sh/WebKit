@@ -494,7 +494,8 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
     for (const Typed::ModuleStart& start : evaluation.starts()) {
         if (!encoder.plan.conventions().exists({ start.body, Typed::CodeRole::ModuleStart }))
             continue;
-        result.firstSteps[evaluation.numberOf(start)] = static_cast<uint32_t>(result.steps.size());
+        size_t firstStep = result.steps.size();
+        result.firstSteps[evaluation.numberOf(start)] = static_cast<uint32_t>(firstStep);
         bool returns = true;
         for (const Typed::ModuleStartOperation& operation : evaluation.operationsOf(start)) {
             switch (operation.kind) {
@@ -504,7 +505,16 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
                     encoder.fail("StartOfModuleCallsStartThatNothingReaches"_s, start.module, makeString("the body is f"_s, operation.callee.index()));
                     break;
                 }
-                result.steps.append(ModuleStartStepData::create(Operation::CallStart, evaluation.numberOf(*called)));
+                Operation call = Operation::CallStart;
+                if (std::span<const ModuleStartStepData> row = result.steps.span().subspan(firstStep); row.size() > 1) {
+                    ModuleStartStepData last = row.back();
+                    ModuleStartStepData callInFront = row[row.size() - 2];
+                    if (last.operation() == Operation::ReturnIfLoadingStops && callInFront.callsStart() && callInFront.operand() == last.operand()) {
+                        result.steps.removeLast();
+                        call = Operation::CallStartUnlessStopped;
+                    }
+                }
+                result.steps.append(ModuleStartStepData::create(call, evaluation.numberOf(*called)));
                 break;
             }
             case Kind::CallBody:
@@ -531,7 +541,10 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
                 break;
             }
         }
-        result.steps.append(ModuleStartStepData::create(returns ? Operation::Return : Operation::Trap));
+        if (ModuleStartStepData last = result.steps.last(); returns && result.steps.size() > firstStep && last.operation() == Operation::Finish)
+            result.steps.last() = ModuleStartStepData::create(Operation::FinishAndReturn, last.operand(), last.hasFlag());
+        else
+            result.steps.append(ModuleStartStepData::create(returns ? Operation::Return : Operation::Trap));
     }
     return result;
 }

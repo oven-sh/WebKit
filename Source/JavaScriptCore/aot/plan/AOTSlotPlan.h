@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTID.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
@@ -23,7 +24,6 @@
 #include <optional>
 #include <span>
 #include <mutex>
-#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -351,6 +351,7 @@ struct SlotPlanParts {
     BitVector layoutsWithoutDirectInstances;
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
+    BitVector keysOfAccessors;
     Vector<uint32_t> firstModuleThatWritesFieldUnder;
     Vector<uint32_t> modulesThatWriteFields;
 };
@@ -396,6 +397,7 @@ bool constantListsFieldsHeldFilledInSlots(const Program&, const LinkTables&, con
 
 class SlotPlan {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SlotPlan);
+    friend class FactMisstater;
 public:
     SlotPlan() = default;
     explicit SlotPlan(SlotPlanParts&& parts)
@@ -456,6 +458,7 @@ public:
     const ClassCreationPlan& classCreation(LayoutID id) const { return id.index() < m_parts.classCreation.size() ? m_parts.classCreation[id.index()] : m_unplannedClass; }
 
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
+    bool someLayoutHasAccessor(PropertyKeyID key) const { return m_parts.keysOfAccessors.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
     bool someLayoutHasField(PropertyKeyID key) const
     {

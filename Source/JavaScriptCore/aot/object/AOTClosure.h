@@ -110,9 +110,11 @@ bool hasScopeInHeapSnapshots(JSCell*);
 template<typename Visitor>
 ALWAYS_INLINE void Closure::visitFields(Closure* closure, Visitor& visitor)
 {
-    if (!closure->m_entry)
+    uint64_t entry = closure->m_entry;
+    if (!entry)
         return;
-    for (uint64_t reference : closure->captures().first(closure->numberOfReferences()))
+    unsigned numberOfReferences = captureCountsOfClosureNumber(ClosureWord::closureNumberOf(entry)).references;
+    for (uint64_t reference : std::span { reinterpret_cast<const uint64_t*>(closure + 1), numberOfReferences })
         visitor.appendUnbarriered(JSValue::decode(reference));
 }
 

@@ -30,6 +30,7 @@ public:
 
     void generateGetSlot(const ValueContext&);
     void generateGetSlotOrUndefined(const ValueContext&);
+    void generateReadAboveEmptySlot(const ValueContext&);
     void generateGetSlotGetter(const ValueContext&);
     void generateGetSlotSetter(const ValueContext&);
     void generateGetDeferredClosureSlot(const ValueContext& value) { readDeferringSlot(value, false); }
@@ -49,12 +50,15 @@ public:
     CreationByDefinition tryCreateFieldByDefinition(const ValueContext& definition, CellPointer);
 
     void didCreateField(const ValueContext&, CellPointer, const FieldAccess&, bool isOnRarePath = false);
+    void noteComputedKey(ValueID object);
     BlockEdge edgeToCreation(LBasicBlock creates, bool isExpectedToCreate);
 
     bool mayCreateListedField(const FieldAccess&) const;
     bool nextStoreWritesOrderWordAtOnce(const ValueContext&) const;
+    bool mayBeFirstStore(const Operation&) const;
     bool tryPutSlotOrAddByStub(const ValueContext&, CellPointer, const FieldAccess&, Operand stored);
     uint64_t granuleBitsWithFieldsBehind(const FieldAccess&) const;
+    uint64_t granuleBitsWithLaterStores(const ValueContext&, const FieldAccess&) const;
     void markCellIfMarkerReplacesRawValue(CellPointer, const FieldAccess&, ValueID stored);
     void askObjectWhatStandsInWayOfStore(const ValueContext&, CellPointer);
     std::optional<KeyOrderStep> testLikeliestKeyOrderStep(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys);
@@ -63,6 +67,11 @@ public:
 
 private:
     std::optional<FieldAccess> fieldCreatedByDefinition(const Operation& definition) const;
+    std::optional<uint64_t> wordsAfterComputedKeys(const ValueContext&, const FieldAccess&);
+    void listFieldAfterComputedKeys(const ValueContext&, CellPointer, uint32_t slotKey, uint64_t wordsBefore);
+
+    ValueID m_objectWithComputedKeys;
+    uint32_t m_numberOfComputedKeys { 0 };
     CellPointer newGetterSetter(const ValueContext&, ValueID getter, ValueID setter);
 
     FieldAccess fieldAccessOf(const ValueContext&, bool isStore) const;

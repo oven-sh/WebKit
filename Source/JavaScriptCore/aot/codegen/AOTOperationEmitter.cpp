@@ -124,6 +124,13 @@ const TypeTestPlan& OperationEmitter::typeTestPlanFor(TypeID from, Representatio
     return emitter<TypeTestEmitter>().planFor(from, representation, to);
 }
 
+Word32 OperationEmitter::int32InBox(Boxed value)
+{
+    if (const OperationContext* context = emittersCheckProofs() ? generator().contextBeingGenerated() : nullptr)
+        emitter<ThrowEmitter>().requireOrCrash(*context, isInt32(value), value, ProofSource::OtherOperation);
+    return unboxInt32(value);
+}
+
 Condition OperationEmitter::hasType(Operand operand, const TypeTestPlan& plan)
 {
     return emitter<TypeTestEmitter>().emitBoolean(operand, plan);

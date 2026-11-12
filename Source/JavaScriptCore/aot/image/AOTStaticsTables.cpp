@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClassGuards.h"
 #include "AOTGlobalBindings.h"
 #include "AOTIRProgram.h"
 #include "AOTPlan.h"
@@ -148,6 +149,8 @@ public:
             recordVariable(VariableID(index), m_statics.variables[index]);
         for (const PlacedClassGuardCount& count : m_statics.classGuardCounts)
             recordClassGuardCount(count);
+        for (const PlacedClassGuardOfName& guard : m_statics.guardsOfAssignedMembers)
+            m_initialWords[byteOffsetOfClassGuardBit(guard.bit) / sizeOfStaticsWord] = JSValue::ValueUndefined;
 
         TablePart& part = m_encoder.part;
         part.setTable(ProgramTableIndex::staticsRuns, collectRuns());
@@ -323,7 +326,7 @@ static Vector<uint32_t> collectBitsOfNamesOfClassGuards(const TableEncoder& enco
 {
     const PlacedStatics& statics = encoder.numbers.statics();
     Vector<uint32_t> names;
-    for (const Vector<PlacedClassGuardOfName>* guards : { &statics.classGuardsOfNames, &statics.namesOfClassGuardsOfSeveralNames }) {
+    for (const Vector<PlacedClassGuardOfName>* guards : { &statics.classGuardsOfNames, &statics.namesOfClassGuardsOfSeveralNames, &statics.guardsOfAssignedMembers }) {
         for (const PlacedClassGuardOfName& guard : *guards) {
             if (std::optional<uint32_t> name = encoder.numbers.numberOf(guard.spaceOfName, std::span<const uint32_t>(&guard.name, 1)))
                 names.append(*name);
@@ -349,6 +352,7 @@ void encodeStaticsTables(TableEncoder& encoder)
     }));
     encoder.part.setTable(ProgramTableIndex::namesOfClassGuards, collectBitsOfNamesOfClassGuards(encoder));
     encoder.part.setTable(ProgramTableIndex::classesBelowWithGuardsOfNames, collectClassesBelowWithGuardsOfNames(encoder));
+    encoder.part.setTable(ProgramTableIndex::assignedMembers, collectAssignedMembers(encoder));
     encodeTableOfGlobalBindings(encoder);
 }
 

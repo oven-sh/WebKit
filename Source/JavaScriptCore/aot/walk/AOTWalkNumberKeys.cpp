@@ -226,17 +226,41 @@ static bool buildViewAccessUnderUnknownKeyInNumberKeys(Walker& walker, const Bod
     return true;
 }
 
+static bool isWideCounterOfInnerLoopInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID counter = walker.isInLoopOfIteration() ? index.stripCasts(value.propertyOperand()) : ValueID();
+    if (!counter || !index.isParameter(counter) || !index.isLoopHead(index.blockOf(counter)))
+        return false;
+    TypeID list = inputs.typeOf(value.objectOperand());
+    TypeID key = inputs.typeOf(value.propertyOperand());
+    return list && key && isProvenToBeList(walker.types(), list) && walker.types().at(key).isInteger() && !walker.types().at(key).integers.isSubsetOf(Range::int32());
+}
+
+static bool keyMayStoreInNumberKeys(Walker& walker, ValueID key)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = index.stripCasts(key);
+    return written && index.opcodes().contains(Opcode::ElemSet) && index.useCount(written) > 1;
+}
+
 static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
-    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses() || !walker.isInLoop() || !walker.canBuildIterationGuard())
+    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses() || !walker.isInLoop() || !walker.canBuildIterationGuardAfterStores())
         return false;
-    if (!keyOfProvenListMayBeAskedForInt32(walker.types(), inputs.typeOf(value.objectOperand()), inputs.typeOf(value.propertyOperand())))
+    bool isWideCounter = isWideCounterOfInnerLoopInNumberKeys(walker, value, inputs);
+    bool mayBeUndefined = !walker.types().at(inputs.typeOf(value.propertyOperand())).isNumber();
+    if (!isWideCounter && !mayBeUndefined && value.opcode() == Opcode::ElemGet && !keyMayStoreInNumberKeys(walker, value.propertyOperand()))
+        return false;
+    if (!isWideCounter && !keyOfProvenListMayBeAskedForInt32(walker.types(), inputs.typeOf(value.objectOperand()), inputs.typeOf(value.propertyOperand())))
         return false;
     Reference writtenKey = walker.referenceOf(value.propertyOperand());
-    if (!writtenKey || !writtenKey.isValue() || walker.state().checkedNameOf(writtenKey) || walker.code().at(writtenKey.id()).representation != Representation::Double)
+    if (!writtenKey || !writtenKey.isValue() || walker.state().checkedNameOf(writtenKey) || (!isWideCounter && !mayBeUndefined && walker.code().at(writtenKey.id()).representation != Representation::Double))
         return false;
     std::optional<HoistedArrayGuard> tested = findHoistedArrayGuard(walker, value);
-    if (!tested || !tested->turnsStoreIntoLists || !hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, TypeTable::int32))
+    if (!tested && value.opcode() == Opcode::ElemGet)
+        tested = tryHoistArrayGuardForAccess(walker, value, walker.referenceOf(value.objectOperand()));
+    if (!tested || !hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, TypeTable::int32))
         return false;
 
     Origin origin = originInFrontOfAccessInNumberKeys(walker, value);
@@ -275,8 +299,10 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
     if (buildViewAccessUnderUnknownKeyInNumberKeys(walker, value, inputs))
         return true;
     TypeID key = inputs.typeOf(value.propertyOperand());
-    if (!key || !walker.types().at(key).isNumber() || !inputs.typeOf(value.objectOperand()))
+    if (!key || !inputs.typeOf(value.objectOperand()))
         return false;
+    if (!walker.types().at(key).isNumber())
+        return buildListAccessUnderNumberAskedForInt32InNumberKeys(walker, value, inputs);
     if (buildAccessUnderWholeRemainderInNumberKeys(walker, value, inputs))
         return true;
     if (buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs))

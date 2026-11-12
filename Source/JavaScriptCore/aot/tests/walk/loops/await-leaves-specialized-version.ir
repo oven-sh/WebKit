@@ -1,0 +1,53 @@
+# async function sum(list) { let s = 0; for (const x of list) { s += x; if (x === 60) await null; } return s; }  sink(sum);
+# Some iterations await. The loop gets a version that sums doubles; it is left for the generic version before the await.
+# RUN: walk f1:CoroutineBody mechanisms=all
+# CHECK: : number @Double, {{*}}: int[0, 34359738368] @Int64) isInLoop=true isLoopHead=true:
+# RUN(AWAIT): walk f1:CoroutineBody mechanisms=all
+# AWAIT: = AwaitBySavingFrame
+# RUN(WITHHELD): walk f1:CoroutineBody mechanisms=all-Guesses
+# WITHHELD-NOT: : number @Double, {{*}}isLoopHead=true
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="sum" module=m0 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|Array<number>):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = IteratorOpen v1
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3():
+    Jump -> next b4()
+  b4() handler=b7():
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Add v5, v10
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Integer integer=60
+    v14 = StrictEq v10, v13
+    Branch v14 -> taken b5(), notTaken b6()
+  b5() handler=b7():
+    v15 = Null
+    v16 = Await v15, v1, v0
+    Jump -> next b6()
+  b6() handler=b7():
+    Jump -> next b1(v12)
+  b7() role=IterationCleanup subject=v4:
+    v17 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v17
+}

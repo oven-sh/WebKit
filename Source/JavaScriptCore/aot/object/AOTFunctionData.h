@@ -240,6 +240,15 @@ struct CaptureCounts {
 };
 static_assert(CaptureCounts { 14, 14 }.encoded() != countsAreListed && CaptureCounts::decode(CaptureCounts { 3, 14 }.encoded()).captures == 14 && CaptureCounts { 0, 15 }.encoded() == countsAreListed);
 
+struct ClosureFacts {
+    FunctionKindData kind;
+    uint8_t length;
+    uint8_t captureCounts;
+
+    constexpr bool hasListedCounts() const { return length == countsAreListed || captureCounts == countsAreListed; }
+};
+static_assert(sizeof(ClosureFacts) == 4 && isImageRecord<ClosureFacts>);
+
 struct FunctionWithLargeCountsData {
     Number24 function;
     CaptureCounts captureCounts;
@@ -417,9 +426,8 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
     v(unsharedFunctionRecords, UnsharedFunctionRecordData) \
     v(sourceFunctions, uint32_t) \
     v(implementedBuiltins, ImplementedBuiltinData) \
-    v(closureFunctionKinds, FunctionKindData) \
-    v(functionLengths, uint8_t) \
-    v(closureCaptureCounts, uint8_t) \
+    v(closureFactNumbers, uint16_t) \
+    v(closureFacts, ClosureFacts) \
     v(functionsWithLargeCounts, FunctionWithLargeCountsData) \
     v(closureCells, uint32_t) \
     v(namedCaptures, uint8_t) \

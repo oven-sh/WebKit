@@ -53,7 +53,6 @@ struct ChainWalk {
     bool dependsOnChain() const { return !changeableObjects.isEmpty(); }
 
     ChainWalkResult result { ChainWalkResult::Unknown };
-    bool didFlatten { false };
     bool passedSlotFilledWithoutReport { false };
     bool passedEmptySlot { false };
     JSObject* firstObjectWithEmptySlot { nullptr };

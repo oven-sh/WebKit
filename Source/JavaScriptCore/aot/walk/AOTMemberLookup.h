@@ -46,6 +46,7 @@ constexpr PropertyKeyID nameOfGuardAnsweringFor(MemberConditionKind kind, Proper
     case MemberConditionKind::MemberNotHidden:
     case MemberConditionKind::MemberPassedByStores:
     case MemberConditionKind::MemberUnchangedAbove:
+    case MemberConditionKind::MemberAssigned:
         return key;
     case MemberConditionKind::PrototypeLinkUnchanged:
     case MemberConditionKind::ClassEvaluatedOnce:

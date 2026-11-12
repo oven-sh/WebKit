@@ -6,8 +6,8 @@
 # CHECK-NEXT: unit f1:GenericCallEntry -> f1:Body
 # CHECK: unit f2:Body ({{*}}) -> (Int32)
 # CHECK: unit f3:Body ({{*}}) -> (Boolean)
-# An integer past int32 is returned as the double that it is
-# CHECK: unit f4:Body ({{*}}) -> (Double)
+# An unsigned 32-bit integer is returned as the integer that it is
+# CHECK: unit f4:Body ({{*}}) -> (Int64)
 # Undefined on one path: raw too, in the form that holds a number or undefined
 # CHECK: unit f5:Body ({{*}}) -> (OptionalDouble)
 # What a coroutine returns goes into its promise

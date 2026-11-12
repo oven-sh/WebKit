@@ -113,6 +113,9 @@ public:
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
     static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
+    static void leaveTestToNext(Block* first, unsigned leavingSuccessor);
+    static void readWordWhereRequested(Block* asked, Operation* word);
+    static void compareEarlierReadWord(Operation* comparison, Operation* word);
     static void askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high);
     struct CaseOfEquality {
         int64_t value;

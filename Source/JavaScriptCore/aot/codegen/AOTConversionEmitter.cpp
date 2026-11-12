@@ -94,6 +94,7 @@ static LValue conversionInRegisters(Output& out, LType result, Number operand, c
     patch->effects = Machine::Effects::none();
     patch->pureFunction = function;
     patch->setRunsWithoutFrame(true);
+    patch->setClearsUpperHalf(result == Machine::Int32);
     patch->setGenerator(generator);
     out.recordPurePatch(patch);
     return patch;
@@ -149,7 +150,7 @@ Number ConversionEmitter::numberPartOf(Operand operand, const Type& type)
     case Representation::Int64:
         return toNumber(Integer(operand.value), type.integers);
     case Representation::OptionalInt64:
-        return isWithinInt32(type.integers) ? toNumber(low32(Integer(operand.value))) : toNumber(Integer(operand.value));
+        return isWithinInt32(type.integers) ? toNumber(lowHalfOfOptionalInteger(operand.as<OptionalInteger>())) : toNumber(Integer(operand.value));
     case Representation::Double:
         return operand.as<Number>();
     case Representation::OptionalDouble:
@@ -175,7 +176,9 @@ Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, c
     if (operand.representation == Representation::Cell)
         return boxCell(operand.as<CellPointer>());
     BlockFrequency frequency = context.block() ? generator().code().at(context.block()).frequency : BlockFrequency::Normal;
-    SetForScope boxesByStub(m_boxesNumbersByStub, frequency != BlockFrequency::Normal);
+    bool isOutsideLoops = context.block() && !generator().runsRepeatedly(context.block());
+    SetForScope boxesByStub(m_boxesNumbersByStub, frequency != BlockFrequency::Normal || isOutsideLoops);
+    SetForScope stateThatBoxesByStub(m_stateThatBoxesByStub, frequency != BlockFrequency::Normal ? StateOfKnowledge::Always : StateOfKnowledge::Number);
     SetForScope placeThatBoxesByStub(m_placeThatBoxesByStub, frequency == BlockFrequency::Rare ? Place::RareBlock : frequency == BlockFrequency::Unlikely ? Place::UnlikelyBlock : Place::Anywhere);
     switch (operand.representation) {
     case Representation::Void:
@@ -261,6 +264,22 @@ Word32 ConversionEmitter::lowHalfOfIntegerToldInsideInt32(Integer wide)
     return low;
 }
 
+Word32 ConversionEmitter::lowHalfOfOptionalInteger(OptionalInteger optional)
+{
+    Integer wide(optional.value());
+    Word32 low = low32(wide);
+    if (emittersCheckProofs())
+        stopUnlessToldRangeHolds(logicalOr(isMarker(Operand(Representation::OptionalInt64, optional.value())), equal(signExtended(low), wide)));
+    return low;
+}
+
+Integer ConversionEmitter::integerKnownNotMarker(OptionalInteger optional)
+{
+    if (emittersCheckProofs())
+        stopUnlessToldRangeHolds(logicalNot(isMarker(Operand(Representation::OptionalInt64, optional.value()))));
+    return withoutMarkers(Operand(Representation::OptionalInt64, optional.value())).as<Integer>();
+}
+
 Number ConversionEmitter::unboxDoubleThatIsAsked(Boxed value)
 {
     stopUnlessBoxHolds(value, TypeTable::number);
@@ -289,10 +308,10 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
     case Representation::Double:
         if (!(type.primitives & Primitive::Integer))
             return unboxDoubleThatIsAsked(value);
-        return selectByBranch<Number>(isInt32(value), [&] {
-            return toNumber(unboxInt32(value));
-        }, [&] {
+        return selectByBranch<Number>(isNotInt32(value), [&] {
             return unboxDoubleThatIsAsked(value);
+        }, [&] {
+            return toNumber(unboxInt32(value));
         });
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
@@ -329,7 +348,7 @@ Operand ConversionEmitter::unboxOptional(Boxed value, const Type& type, Represen
         LBasicBlock otherCase = newBlock();
         OperandJoin join(m_out, to);
         ScopeFork fork = m_out.forkScope();
-        m_out.branch(isInt32(value).value(), normalEdge(int32Case), type.primitives & Primitive::Double ? normalEdge(otherCase) : unlikelyEdge(otherCase));
+        m_out.branch(isNotInt32(value).value(), type.primitives & Primitive::Double ? normalEdge(otherCase) : unlikelyEdge(otherCase), normalEdge(int32Case));
         m_out.appendToArm(int32Case, fork);
         join.add(Operand(to, to == Representation::OptionalInt64 ? signExtended(unboxInt32(value)).value() : toNumber(unboxInt32(value)).value()));
         m_out.appendToArm(otherCase, fork);
@@ -364,7 +383,12 @@ Operand ConversionEmitter::toOptional(Operand operand, const Type& type, Represe
     std::optional<Operand> number;
     if (type.primitives & Primitive::Number)
         number = Operand(to, to == Representation::OptionalInt64 ? integerPartOf(operand, type).value() : numberPartOf(operand, type).value());
-    return convertMarkers(operand, type, to, number);
+    Operand optional = convertMarkers(operand, type, to, number);
+    if (operand.is<OptionalInteger>() && type.hasOnlyPrimitives(Primitive::Integer | Primitive::Undefined) && optional.value->opcode() == Machine::Select)
+        m_optionalIntegersOfNumbers.add(optional.value, OptionalIntegerOfNumber { operand.value, type.integers });
+    else if (operand.is<OptionalInteger>() && type.hasOnlyPrimitives(Primitive::Integer | Primitive::Null) && optional.value->opcode() == Machine::Select)
+        m_integersOrNullOfNumbers.add(optional.value, OptionalIntegerOfNumber { operand.value, type.integers });
+    return optional;
 }
 
 Operand ConversionEmitter::inRepresentation(const OperationContext& context, Operand produced, const Type& producedType, Representation wanted)
@@ -394,7 +418,7 @@ Operand ConversionEmitter::inRepresentation(const OperationContext& context, Ope
         return box(context, produced, producedType);
     case Representation::Int32:
         if (isNumber)
-            return narrow(producedInteger());
+            return producedType.isInt32() ? lowHalfOfIntegerToldInsideInt32(producedInteger()) : narrow(producedInteger());
         break;
     case Representation::Int64:
         if (isNumber)
@@ -432,8 +456,10 @@ Boxed ConversionEmitter::boxNumber(Operand number)
         return boxedConstant(jsNumber(AOT::withoutPayload(value.value()->asDouble())));
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return boxInt32(*converted);
+    if (value.value()->opcode() == Machine::IToD && value.value()->child(0)->type() == Machine::Int64)
+        return boxInteger(Integer(value.value()->child(0)), Range::exact());
     if (m_boxesNumbersByStub) {
-        m_out.noteFormOf(boxings, Form::Closed, StateOfKnowledge::Always, m_placeThatBoxesByStub);
+        m_out.noteFormOf(boxings, Form::Closed, m_stateThatBoxesByStub, m_placeThatBoxesByStub);
         return boxNumberByStub(value);
     }
 
@@ -450,10 +476,10 @@ Boxed ConversionEmitter::boxNumber(Operand number)
 
     Word32 low = truncateToWord(value);
     Integer bitsOfLow = bitsOf(toNumber(low));
-    return selectByBranch<Boxed>(equal(bitsOfLow, bitsOf(value)), [&] {
-        return boxInt32(low);
-    }, [&] {
+    return selectByBranch<Boxed>(notEqual(bitsOfLow, bitsOf(value)), [&] {
         return boxDouble(value);
+    }, [&] {
+        return boxInt32(low);
     });
 }
 
@@ -482,13 +508,22 @@ Word32 ConversionEmitter::int32OrElse(Integer value, Range range, LBasicBlock is
     return low;
 }
 
+static bool isSumThatMayOverflowInt32(Integer value)
+{
+    LValue sum = value.value();
+    auto isWidened = [](LValue operand) {
+        return operand->opcode() == Machine::SExt32 || operand->hasInt64();
+    };
+    return (sum->opcode() == Machine::Add || sum->opcode() == Machine::Sub) && isWidened(sum->child(0)) && isWidened(sum->child(1));
+}
+
 Boxed ConversionEmitter::boxInteger(Integer value, Range range)
 {
     if (isWithinInt32(range))
         return boxInt32(lowHalfOfIntegerToldInsideInt32(value));
     Word32 low = low32(value);
-    if (m_boxesNumbersByStub) {
-        m_out.noteFormOf(boxings, Form::Closed, StateOfKnowledge::Always, m_placeThatBoxesByStub);
+    if (m_boxesNumbersByStub && (m_stateThatBoxesByStub == StateOfKnowledge::Always || !isSumThatMayOverflowInt32(value))) {
+        m_out.noteFormOf(boxings, Form::Closed, m_stateThatBoxesByStub, m_placeThatBoxesByStub);
         return boxByStub(BoxedNumberForm::Integer, value.value());
     }
 
@@ -516,11 +551,15 @@ Integer ConversionEmitter::toInteger(Number value, Range range, bool standsInLoo
 {
     LValue number = value.value();
     static_assert(maxTrackedInteger < 1ll << 62, "a tracked integer is within int64");
+    if (std::optional<Integer> int32 = range.isSubsetOf(Range::int32()) ? int32Behind(value) : std::nullopt)
+        return *int32;
     if (number->opcode() != Machine::IToD || number->child(0)->type() != Machine::Int64 || range.isEmpty() || !range.isSubsetOf(Range::exact()))
         return truncateUnchecked(value);
-    if (!standsInLoop && (range.maximum == maxExactInteger || range.minimum == -maxExactInteger))
-        return truncateUnchecked(value);
     Integer converted(number->child(0));
+    if (!standsInLoop && (range.maximum == maxExactInteger || range.minimum == -maxExactInteger)) {
+        static_assert(maxExactInteger == 1ll << 53);
+        return range.minimum >= 1 ? sub(converted, Integer(m_out.lShr(sub(converted, 1).value(), m_out.constInt32(53)))) : truncateUnchecked(value);
+    }
     if (range.maximum == maxExactInteger)
         converted = select(greaterThan(converted, maxExactInteger), maxExactInteger, converted);
     if (range.minimum == -maxExactInteger)
@@ -564,6 +603,18 @@ Integer ConversionEmitter::exactInt32OrAllOnes(Number value)
     }));
 }
 #endif
+
+Word32 ConversionEmitter::truncateToWord(Number value)
+{
+    if (std::optional<Integer> found = findTruncation(value))
+        return low32(*found);
+    LValue number = value.value();
+    if (LValue whole = m_out.findPurePatch(truncationToInt64(isARM64() ? 1 : 0), Machine::Int64, singleElementSpan(number)))
+        return low32(Integer(whole));
+    return Word32(conversionInRegisters(m_out, Machine::Int32, value, pureFunction(PureOperation::TruncateToInt32, 0, true), [](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        jit.truncateDoubleToInt32(params[1].fpr(), params[0].gpr());
+    }));
+}
 
 Integer ConversionEmitter::truncateUnchecked(Number value)
 {
@@ -707,6 +758,9 @@ std::optional<ConversionEmitter::IntegerBehindNumber> ConversionEmitter::describ
         return IntegerBehindNumber { .range = Range::int32(), .isTested = true, .asksWhetherWideIntegerIsInt32 = true };
     };
 
+    if (auto optional = m_optionalIntegersOfNumbers.getOptional(number))
+        return optional->range.isSubsetOf(integersNeverRounded) ? std::optional(IntegerBehindNumber { .range = optional->range, .isTested = true }) : std::nullopt;
+
     switch (number->opcode()) {
     case Machine::ConstDouble: {
         double constant = number->asDouble();
@@ -754,7 +808,7 @@ std::optional<ConversionEmitter::IntegerBehindNumber> ConversionEmitter::describ
         if (!left && !right)
             return std::nullopt;
         std::optional<IntegerBehindNumber>& missing = left ? right : left;
-        if (!missing && mayTestWhatWasRead && !(left ? left : right)->holdsElementOfList && isNumberReadFromStorage(number->child(left ? 1 : 0)))
+        if (!missing && mayTestWhatWasRead && !(left ? left : right)->holdsElementOfList && isNumberReadFromStorage(number->child(left ? 1 : 0)) && !m_doubleElements.contains(number->child(left ? 1 : 0)))
             missing = IntegerBehindNumber { .range = Range::int32(), .isTested = true };
         if (!left || !right || (left->mayBeRounded && right->mayBeRounded))
             return std::nullopt;
@@ -799,6 +853,11 @@ ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue n
     auto whileBoth = [&](Condition first, Condition second) {
         return first && second ? logicalAnd(first, second) : first ? first : second;
     };
+
+    if (auto optional = m_optionalIntegersOfNumbers.getOptional(number)) {
+        build().statistics().count(StatisticID::TruncatedOptionalIntegers);
+        return ExactInteger { .value = ofInteger(Integer(optional->integer)), .holdsWhile = logicalNot(isMarker(Operand(Representation::OptionalInt64, optional->integer))) };
+    }
 
     switch (number->opcode()) {
     case Machine::ConstDouble:
@@ -878,6 +937,15 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
     return computed.get(number);
 }
 
+void ConversionEmitter::noteIndexOfKey(Number key)
+{
+    if (indexBehind(key) || findExactIntegerBehind(key.value(), ExactIntegerUse::Whole))
+        return;
+    Integer truncated = truncateUnchecked(key);
+    Condition isExact = isX86_64() ? equalOrUnordered(toNumber(truncated), key) : equal(toNumber(truncated), key);
+    noteIndexOfNumber(key, select(isExact, truncated, integer(-1)));
+}
+
 std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 {
     std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), ExactIntegerUse::Whole);
@@ -889,6 +957,8 @@ std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 
 Integer ConversionEmitter::widen(Word32 value, Range range)
 {
+    if (std::optional<Integer> extended = signExtendedIntegerOf(value))
+        return *extended;
     if (!isNonNegative(range))
         return signExtended(value);
     if (emittersCheckProofs())
@@ -900,9 +970,22 @@ Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
+    if (LValue truncation = m_truncationsOfNumbers.get(value.value()))
+        return Word32(truncation);
+    static_assert(!static_cast<uint32_t>(JSValue::ValueEmpty));
+    if (LValue element = m_int32ElementsBehindNumbersOrNaN.get(value.value()))
+        return unboxInt32(Boxed(element));
+    if (value.value()->opcode() == Machine::Neg)
+        return neg(toInt32(Number(value.value()->child(0)), bits));
+    if (bits == BitsOfInt32::All && m_lastTruncation.number == value.value() && m_lastTruncation.block == m_out.m_block)
+        return Word32(m_lastTruncation.word);
     std::optional<ExactInteger> exact = findExactIntegerBehind(value.value(), ExactIntegerUse::Truncated);
-    if (!exact)
-        return toInt32OfAnyNumber(value, bits);
+    if (!exact) {
+        Word32 word = toInt32OfAnyNumber(value, bits);
+        if (bits == BitsOfInt32::All)
+            m_lastTruncation = { value.value(), word.value(), m_out.m_block };
+        return word;
+    }
 
     build().statistics().count(StatisticID::DoublesRecomputedAsIntegers);
     Word32 word = exact->mayBeRounded ? low32(Integer(exact->value)) : Word32(exact->value);
@@ -958,8 +1041,7 @@ Word32 ConversionEmitter::toInt32OfAnyNumber(Number value, BitsOfInt32 bits)
     if (isX86_64())
         fits = notEqual(truncated, std::numeric_limits<int64_t>::min());
     else {
-        Integer one = integer(1);
-        fits = below(one, add(truncated, std::numeric_limits<int64_t>::min() + 1));
+        fits = greaterThanOrEqual(bitXor(truncated, Integer(m_out.shl(truncated.value(), 1))), 0);
     }
     return either<Word32>(fits, [&] {
         return low32(truncated);
@@ -977,8 +1059,31 @@ Number ConversionEmitter::purified(Number value)
     });
 }
 
+std::optional<Number> ConversionEmitter::convertOptionalInteger(LValue optional)
+{
+    auto behind = m_optionalIntegersOfNumbers.getOptional(optional);
+    if (!behind)
+        return std::nullopt;
+    Integer whole(behind->integer);
+    Number made = select(isMarker(Operand(Representation::OptionalInt64, behind->integer)), number(PNaN), toNumber(whole));
+    if (made.value()->opcode() == Machine::Select)
+        m_optionalIntegersOfNumbers.add(made.value(), OptionalIntegerOfNumber { behind->integer, behind->range, true });
+    return made;
+}
+
+std::optional<Number> ConversionEmitter::convertIntegerOrNull(LValue optional)
+{
+    auto behind = m_integersOrNullOfNumbers.getOptional(optional);
+    if (!behind)
+        return std::nullopt;
+    Integer whole = select(isMarker(Operand(Representation::OptionalInt64, behind->integer)), integer(0), Integer(behind->integer));
+    return toNumber(whole, Range { std::min<int64_t>(behind->range.minimum, 0), std::max<int64_t>(behind->range.maximum, 0) });
+}
+
 Number ConversionEmitter::withoutPayload(Number value)
 {
+    if (value.value()->opcode() == Machine::IToD || m_doubleElements.contains(value.value()))
+        return value;
     return either<Number>(equal(value, value), [&] {
         return value;
     }, [&] {
@@ -1030,7 +1135,7 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
         Boxed value = operand.as<Boxed>();
         if (!(type.primitives & markerPrimitives))
             return compress(unboxCell(value));
-        NarrowReference marker(low32(value).value());
+        NarrowReference marker(m_out.castToInt32(value.value()));
         if (!type.hasCells())
             return marker;
         Condition isCell = above(value, undefined());
@@ -1047,6 +1152,12 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+Number ConversionEmitter::numberAsIndex(Number word)
+{
+    Integer index = *indexBehind(word);
+    return select(greaterThanOrEqual(index, integer(0)), toNumber(index), word);
 }
 
 Integer ConversionEmitter::bitsOf(Operand operand)
@@ -1115,7 +1226,24 @@ Condition ConversionEmitter::isMarker(Operand operand)
     RELEASE_ASSERT(operand.is<OptionalInteger>() || operand.is<OptionalNumber>());
     if (std::optional<Word32> narrow = operand.is<OptionalInteger>() ? narrowWordBehind(operand.as<OptionalInteger>()) : std::nullopt)
         return lessThan(*narrow, minInlineInt32);
+    if (operand.is<OptionalNumber>() && (operand.value->opcode() == Machine::IToD || m_doubleElements.contains(operand.value)))
+        return boolean(false);
     return greaterThanOrEqual(bitsOf(operand), static_cast<int64_t>(markerBits(Primitive::Undefined, operand.representation)));
+}
+
+std::optional<ConversionEmitter::ComparedInteger> ConversionEmitter::findComparedInteger(Operand operand)
+{
+    LValue number = operand.value;
+    if (!operand.is<Number>() && !operand.is<OptionalNumber>())
+        return std::nullopt;
+    if (auto behind = m_optionalIntegersOfNumbers.getOptional(number))
+        return ComparedInteger { Integer(behind->integer), true, behind->markerIsNaN || operand.is<Number>() };
+    if (number->opcode() == Machine::IToD && number->child(0)->type() == Machine::Int32)
+        return ComparedInteger { signExtended(Word32(number->child(0))), false };
+    static constexpr double largestComparedConstant = 0x1p52;
+    if (number->hasDouble() && std::abs(number->asDouble()) <= largestComparedConstant && std::trunc(number->asDouble()) == number->asDouble())
+        return ComparedInteger { integer(static_cast<int64_t>(number->asDouble())), false };
+    return std::nullopt;
 }
 
 Condition ConversionEmitter::isNullOrAbsent(OptionalNumber operand)

@@ -62,6 +62,7 @@ struct ModuleData {
         IsLinkedWithEntryPoint = 1 << 11,
         EvaluatesItself = 1 << 12,
         IsLibraryCodeWithFilePath = 1 << 13,
+        MayRunAsOriginal = 1 << 13,
         IsOfLibrary = 1 << 14,
         CapturesOnDemand = 1 << 15,
         OnlyPassesLinkOn = 1 << 15,
@@ -94,11 +95,13 @@ struct ModuleData {
     uint8_t importedWhileItRunsOrAsNamespace : 1;
     uint8_t wrappedByFacade : 1;
     uint8_t evictableOrRejectsOverride : 1;
-    uint8_t bodyThrowsAtLoad : 1 { 0 };
+    uint8_t throwsAtLoadOrIsReloadable : 1 { 0 };
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
     bool hasTopLevelAwait() const { return kind != ModuleKind::CommonJs && has(Flag::HasTopLevelAwait); }
+    bool bodyThrowsAtLoad() const { return kind != ModuleKind::CommonJs && throwsAtLoadOrIsReloadable; }
+    bool isReloadable() const { return kind == ModuleKind::CommonJs && throwsAtLoadOrIsReloadable; }
     bool runsAgainAfterThrow() const { return kind == ModuleKind::CommonJs && has(Flag::RunsAgainAfterThrow); }
     bool isSynchronous() const { return has(Flag::IsSynchronous); }
     bool isSimple() const { return has(Flag::IsSimple); }
@@ -128,7 +131,8 @@ struct ModuleData {
     bool loaderReturnsNamespace() const { return kind == ModuleKind::Data && importedWhileItRunsOrAsNamespace; }
     bool hasRequireCacheValue() const { return (kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime) && importedWhileItRunsOrAsNamespace; }
     SlotData requireCacheValue() const { return SlotData::create(value.offset + sizeof(EncodedJSValue), SlotRepresentation::JSValue); }
-    bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
+    bool isLibraryCodeWithFilePath() const { return kind != ModuleKind::CommonJs && has(Flag::IsLibraryCodeWithFilePath); }
+    bool mayRunAsOriginal() const { return kind == ModuleKind::CommonJs && has(Flag::MayRunAsOriginal); }
     bool isOfLibrary() const { return has(Flag::IsOfLibrary); }
     bool hasLinkPlan() const { return isEntryPoint() && isLinkedWithEntryPoint(); }
 
@@ -287,7 +291,7 @@ public:
         }
         return false;
     }
-    size_t findFirstOutside(std::span<const uint64_t> set, size_t start, size_t end) const
+    ALWAYS_INLINE size_t findFirstOutside(std::span<const uint64_t> set, size_t start, size_t end) const
     {
         auto isOutside = [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
             return !(set[number / 64] >> (number % 64) & 1);
@@ -331,10 +335,23 @@ struct ModuleExportData {
         SlotData variable;
         uint32_t module;
         uint32_t indirectExport;
+        uint32_t exportedField;
     };
 
-    static constexpr uint32_t kindBitsOfWordOfMock = 3;
+    static constexpr uint32_t instanceAllocatorKindBits = 4;
+    static constexpr uint32_t instanceGuardKindBits = 5;
+    static constexpr uint32_t kindBitsOfWordOfMock = 6;
+    static constexpr uint32_t instanceVariableKindBits = 7;
+    static constexpr uint32_t severalInstancesKindBits = instanceAllocatorKindBits | 8;
+    static_assert(numberOfEnumerators<ModuleExportKind> <= instanceAllocatorKindBits);
 
+    bool isHidden() const { return kindBits >= instanceAllocatorKindBits; }
+    uint32_t hiddenKindBits() const { return kindBits | isFromStarExport << 3; }
+    void setHiddenKindBits(uint32_t bits)
+    {
+        kindBits = bits & 7;
+        isFromStarExport = bits >> 3;
+    }
     ModuleExportKind kind() const { return static_cast<ModuleExportKind>(kindBits); }
     ModuleID targetModule() const { return ModuleID(module); }
 };
@@ -344,6 +361,53 @@ struct IndirectExportData {
     uint32_t importName;
 
     ModuleID targetModule() const { return ModuleID(module); }
+};
+
+struct ExportedFieldData {
+    uint32_t module;
+    SlotData slot;
+
+    ModuleID declaringModule() const { return ModuleID(module); }
+};
+
+static constexpr IndirectExportData endOfModuleInstances { std::numeric_limits<uint32_t>::max(), 0 };
+
+struct ModuleInstanceData {
+    uint32_t numberOfLinks;
+    uint32_t reexportCount;
+    SlotData namespaceField;
+    SlotData deferredNamespaceField;
+};
+
+struct ModuleLinkData {
+    uint32_t target : 29;
+    uint32_t hasLink : 1;
+    uint32_t hasMock : 1;
+    uint32_t isResolved : 1;
+    SlotData link;
+    SlotData mock;
+    uint32_t firstStep;
+
+    ModuleID targetModule() const { return ModuleID(static_cast<uint32_t>(target)); }
+};
+
+struct LinkPathStepData {
+    uint32_t module;
+    uint32_t nextStep;
+
+    static constexpr uint32_t noStep = std::numeric_limits<uint32_t>::max();
+
+    ModuleID moduleOfStep() const { return ModuleID(module); }
+};
+
+struct ReexportedFieldData {
+    uint32_t exportIndex;
+    SlotData link;
+    uint32_t module : 31;
+    uint32_t hasLink : 1;
+    uint32_t importName;
+
+    ModuleID namedModule() const { return ModuleID(static_cast<uint32_t>(module)); }
 };
 
 struct SyntheticExportData {
@@ -488,6 +552,8 @@ struct ModuleStartStepData {
         ReturnIfLoadingStops,
         AbandonOnThrow,
         Return,
+        FinishAndReturn,
+        CallStartUnlessStopped,
     };
 
     static constexpr unsigned numberOfOperationBits = 4;
@@ -504,11 +570,13 @@ struct ModuleStartStepData {
     constexpr Operation operation() const { return static_cast<Operation>(bits & operationMask); }
     constexpr bool hasFlag() const { return bits & flagBit; }
     constexpr uint32_t operand() const { return bits >> operandShift; }
+    constexpr bool callsStart() const { return operation() == Operation::CallStart || operation() == Operation::CallStartUnlessStopped; }
+    constexpr bool endsRow() const { return operation() == Operation::Trap || operation() == Operation::Return || operation() == Operation::FinishAndReturn; }
 
     uint32_t bits;
 };
 static_assert(sizeof(ModuleStartStepData) == 4 && isImageRecord<ModuleStartStepData>);
-static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::Return) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
+static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::CallStartUnlessStopped) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
 static_assert(!ModuleStartStepData::create(ModuleStartStepData::Operation::Trap).bits);
 static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).operand() == 0xabcdef && ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).hasFlag());
 static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).operation() == ModuleStartStepData::Operation::CallBody && !ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).hasFlag());
@@ -521,6 +589,10 @@ static_assert(ModuleRequestData::create(0xbcdef, true, false, true).target() == 
 static_assert(sizeof(LinkPlanStepData) == 4 && isImageRecord<LinkPlanStepData>);
 static_assert(sizeof(ModuleExportData) == 8 && isImageRecord<ModuleExportData>);
 static_assert(sizeof(IndirectExportData) == 8 && isImageRecord<IndirectExportData>);
+static_assert(sizeof(ModuleInstanceData) == 2 * sizeof(IndirectExportData) && sizeof(ModuleLinkData) == sizeof(ModuleInstanceData) && sizeof(ReexportedFieldData) == sizeof(ModuleInstanceData) && alignof(ModuleInstanceData) == alignof(IndirectExportData)
+    && alignof(ModuleLinkData) == alignof(IndirectExportData) && alignof(ReexportedFieldData) == alignof(IndirectExportData) && isImageRecord<ModuleInstanceData> && isImageRecord<ModuleLinkData> && isImageRecord<ReexportedFieldData>);
+static_assert(sizeof(LinkPathStepData) == sizeof(IndirectExportData) && alignof(LinkPathStepData) == alignof(IndirectExportData) && isImageRecord<LinkPathStepData>);
+static_assert(sizeof(ExportedFieldData) == sizeof(IndirectExportData) && alignof(ExportedFieldData) == alignof(IndirectExportData) && isImageRecord<ExportedFieldData>);
 static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportData>);
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);

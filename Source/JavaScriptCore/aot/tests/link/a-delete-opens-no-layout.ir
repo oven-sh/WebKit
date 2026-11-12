@@ -4,7 +4,7 @@
 # RUN: link calls functions fields layouts mechanisms=all
 # CHECK: call f0 v7 -> f2
 # CHECK: function f2 callers-known
-# CHECK: field L0.0 "x" proven=undefined|i32 writers-known
+# CHECK: field L0.0 "x" proven=undefined|int[0, 2147483647] writers-known
 # CHECK: layout L0 changes=[LosesProperty] stays-with-compiled-code
 
 layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]

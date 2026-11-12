@@ -145,6 +145,7 @@ private:
     NEVER_INLINE void findLoopHeads();
     ALWAYS_INLINE bool isLoopHead(const Block*);
     static ALWAYS_INLINE bool hasFormOfThreadableJoin(const Block* join);
+    static bool isSecondTest(const Block*, const Block* join, const Operation* phi);
     MatchOfJoin lookAtJoin(Block* join);
     std::optional<ThreadableJoin> matchThreadableJoin(Block* join);
 
@@ -178,7 +179,9 @@ private:
     static std::optional<LeavingTest> describeTestLeavingBy(const Block*, unsigned leavingSuccessor);
     static bool leavesFor(const LeavingTest&, int64_t value);
     static bool secondLeavesForAllThatFirstLeavesFor(const LeavingTest& first, const LeavingTest& second);
-    static bool mayRunForAnyValue(const Block*);
+    static bool mayRunForAnyValue(const Block*, const Operation* loadThatMayRun = nullptr);
+    static bool readsNarrowReference(const Operation* word);
+    static bool bothExitToSameBlock(const Block* first, unsigned leavingSuccessor, const Block* second);
     static ALWAYS_INLINE bool mayAskTestBehindNext(const Block* first);
     static NEVER_INLINE void askTestBehindNextThatImpliesIt(Block* first);
     static ALWAYS_INLINE Operation* findBitsThatBranchAsks(const Block*, unsigned& wayWhereBitIsSet);
@@ -331,7 +334,17 @@ ALWAYS_INLINE bool JumpThreader::hasFormOfThreadableJoin(const Block* join)
     if (join->phis().size() != 1 || !join->upsilons().empty() || join->isEmpty() || join->isLandingPad())
         return false;
     Opcode opcode = join->last()->opcode();
-    return (opcode == Branch || opcode == Switch) && join->phis().data()[0]->useCount() == 1;
+    const Operation* phi = join->phis().data()[0];
+    if (phi->useCount() == 2 && opcode == Branch && join->numSuccessors() == 2) [[unlikely]]
+        return isSecondTest(join->successor(0).block(), join, phi) || isSecondTest(join->successor(1).block(), join, phi);
+    return (opcode == Branch || opcode == Switch) && phi->useCount() == 1;
+}
+
+bool JumpThreader::isSecondTest(const Block* block, const Block* join, const Operation* phi)
+{
+    if (block == join || block->numberOfIncomingEdges() != 1 || block->isEntry() || block->isLandingPad() || !block->phis().empty() || !block->upsilons().empty())
+        return false;
+    return !block->isEmpty() && block->last()->opcode() == Branch && block->numSuccessors() == 2 && testsOnlyPhi(block, phi);
 }
 
 JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
@@ -341,6 +354,8 @@ JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
     ASSERT(branch->opcode() == Switch || join->numSuccessors() == 2);
 
     SimplifiedPredicate simplified = branch->opcode() == Branch ? simplifyPredicateOfBranch(branch->child(0)) : SimplifiedPredicate { branch->child(0), false };
+    if (simplified.predicate == phi && phi->useCount() != 1)
+        return MatchOfJoin::IsNotThreadable;
     if (simplified.predicate != phi) {
         if (branch->opcode() != Branch)
             return MatchOfJoin::IsNotThreadable;
@@ -554,14 +569,21 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
         bool isNotZero = *tested;
         chosenSuccessor = isNotZero != threadable->isInverted ? 0 : 1;
     }
-    Block* target = join->successor(chosenSuccessor).block();
+    Edge passing = join->successor(chosenSuccessor);
+    if (threadable->phi->useCount() == 2 && isSecondTest(passing.block(), join, threadable->phi)) {
+        std::optional<int64_t> tested = valueOfTestWherePhiHolds(passing.block()->last()->child(0), threadable->phi, value->asInt());
+        if (!tested)
+            return;
+        passing = passing.block()->successor(*tested ? 0 : 1);
+    }
+    Block* target = passing.block();
     ASSERT(target->phis().empty());
     if (!canGainPredecessor(target))
         return;
 
     bool isOnlyEdge = m_joinsThatOneWayLedToAtFirst.get(join->index());
     EdgeClass edgeClass = from->successor(successorIndex).edgeClass();
-    retargetPast(from, successorIndex, join->successor(chosenSuccessor));
+    retargetPast(from, successorIndex, passing);
     if (isOnlyEdge)
         setEdgeClass(from, successorIndex, edgeClass);
 }
@@ -1062,12 +1084,12 @@ bool JumpThreader::secondLeavesForAllThatFirstLeavesFor(const LeavingTest& first
     return leavesFor(second, 0) && leavesFor(second, ~masked->child(1)->asInt());
 }
 
-bool JumpThreader::mayRunForAnyValue(const Block* block)
+bool JumpThreader::mayRunForAnyValue(const Block* block, const Operation* loadThatMayRun)
 {
     if (!block->phis().empty() || !block->upsilons().empty() || block->isLandingPad())
         return false;
     for (const Operation* operation : block->operations()) {
-        if (operation == block->last())
+        if (operation == block->last() || operation == loadThatMayRun)
             continue;
         Opcode opcode = operation->opcode();
         if (!countsChildrenAtFirstUse(opcode) || operation->mustStay() || opcode == Div || opcode == UDiv || opcode == Mod || opcode == UMod)
@@ -1076,26 +1098,39 @@ bool JumpThreader::mayRunForAnyValue(const Block* block)
     return true;
 }
 
+bool JumpThreader::readsNarrowReference(const Operation* word)
+{
+    return isLoad(word->opcode()) && word->isNarrowReference();
+}
+
+bool JumpThreader::bothExitToSameBlock(const Block* first, unsigned leavingSuccessor, const Block* second)
+{
+    const Block* place = first->successor(leavingSuccessor).block();
+    return second->numSuccessors() == 2 && (second->successor(0).block() == place || second->successor(1).block() == place);
+}
+
 ALWAYS_INLINE bool JumpThreader::mayAskTestBehindNext(const Block* first)
 {
     if (first->numSuccessors() != 2)
         return false;
     const Edge* ways = first->successors().data();
     bool firstWayIsLikely = ways[0].edgeClass() == EdgeClass::Normal;
-    if (firstWayIsLikely == (ways[1].edgeClass() == EdgeClass::Normal))
+    bool secondWayIsLikely = ways[1].edgeClass() == EdgeClass::Normal;
+    if (!firstWayIsLikely && !secondWayIsLikely)
         return false;
     if (!first->upsilons().empty() || first->isEmpty() || first->last()->opcode() != Branch)
         return false;
-    unsigned leavingSuccessor = firstWayIsLikely ? 1 : 0;
 
     SimplifiedPredicate simplified = simplifyPredicateOfBranch(first->last()->child(0));
     const Operation* word = simplified.predicate;
-    bool leavesWhenNotZero = !leavingSuccessor != simplified.isInverted;
-    if (isComparisonByNumber(word->opcode()) || leavesWhenNotZero)
+    unsigned leavingSuccessor = simplified.isInverted ? 0 : 1;
+    if (isComparisonByNumber(word->opcode()) || ways[1 - leavingSuccessor].edgeClass() != EdgeClass::Normal)
         return false;
 
     const Block* second = ways[1 - leavingSuccessor].block();
     if (second == first || second->numberOfIncomingEdges() != 1)
+        return false;
+    if (ways[leavingSuccessor].edgeClass() == EdgeClass::Normal && !readsNarrowReference(word) && !bothExitToSameBlock(first, leavingSuccessor, second))
         return false;
     if (second->numSuccessors() != 2 || !second->phis().empty() || !second->upsilons().empty() || second->isLandingPad() || second->isEmpty() || second->last()->opcode() != Branch)
         return false;
@@ -1107,39 +1142,67 @@ ALWAYS_INLINE bool JumpThreader::mayAskTestBehindNext(const Block* first)
     if (!isComparisonByNumber(asked->opcode()))
         return false;
     const Operation* compared = asked->child(0);
-    return compared == word || compared == masked;
+    return compared == word || compared == masked || isReadAgainWhereNothingWasWritten(word, first, compared, second);
 }
 
 void JumpThreader::askTestBehindNextThatImpliesIt(Block* first)
 {
     if (first->isEmpty() || first->last()->opcode() != Branch || first->numSuccessors() != 2 || !first->upsilons().empty())
         return;
-    bool firstWayIsLikely = first->successor(0).edgeClass() == EdgeClass::Normal;
-    if (firstWayIsLikely == (first->successor(1).edgeClass() == EdgeClass::Normal))
+    SimplifiedPredicate simplified = simplifyPredicate(first->last()->child(0));
+    std::optional<LeavingTest> firstTest = describeTestLeavingBy(first, simplified.isInverted ? 0 : 1);
+    if (!firstTest || isComparison(simplified.predicate->opcode()))
         return;
-    std::optional<LeavingTest> firstTest = describeTestLeavingBy(first, firstWayIsLikely ? 1 : 0);
-    if (!firstTest || isComparison(simplifyPredicate(first->last()->child(0)).predicate->opcode()))
+    const Edge leaving = first->successor(firstTest->leavingSuccessor);
+    const Edge wayOn = first->successor(1 - firstTest->leavingSuccessor);
+    if (wayOn.edgeClass() != EdgeClass::Normal)
         return;
 
-    Block* second = first->successor(1 - firstTest->leavingSuccessor).block();
+    Block* second = wayOn.block();
     if (second == first || second->numberOfIncomingEdges() != 1)
         return;
     std::optional<LeavingTest> secondTest;
+    const Operation* wordReadAgain = nullptr;
     for (unsigned leavingSuccessor = 0; leavingSuccessor < 2 && !secondTest; ++leavingSuccessor) {
         if (second->numSuccessors() != 2 || second->successor(1 - leavingSuccessor).edgeClass() != EdgeClass::Normal)
             continue;
         secondTest = describeTestLeavingBy(second, leavingSuccessor);
-        if (secondTest && !secondLeavesForAllThatFirstLeavesFor(*firstTest, *secondTest))
+        if (!secondTest)
+            continue;
+        LeavingTest asked = *secondTest;
+        if (asked.subject != firstTest->subject && isReadAgainWhereNothingWasWritten(firstTest->subject, first, asked.subject, second)) {
+            wordReadAgain = asked.subject;
+            asked.subject = firstTest->subject;
+        }
+        if (!secondLeavesForAllThatFirstLeavesFor(*firstTest, asked))
             secondTest = std::nullopt;
     }
-    if (!secondTest || !mayRunForAnyValue(second))
+    if (!secondTest || !mayRunForAnyValue(second, wordReadAgain))
         return;
 
-    Block* targetOfFirst = first->successor(firstTest->leavingSuccessor).block();
+    Block* targetOfFirst = leaving.block();
     Block* targetOfSecond = second->successor(secondTest->leavingSuccessor).block();
+    if (targetOfFirst == targetOfSecond && targetOfFirst != second && targetOfFirst != first && targetOfFirst->phis().empty()) {
+        Order::leaveTestToNext(first, firstTest->leavingSuccessor);
+        return;
+    }
+    if (leaving.edgeClass() == EdgeClass::Normal && !readsNarrowReference(firstTest->subject))
+        return;
     if (targetOfFirst == second || targetOfSecond == second || targetOfSecond == first || !canGainPredecessor(targetOfFirst) || !canGainPredecessor(targetOfSecond))
         return;
-    Order::askBehind(first, firstTest->leavingSuccessor, second, secondTest->leavingSuccessor);
+    Operation* word = const_cast<Operation*>(firstTest->subject);
+    if (wordReadAgain && first->last()->child(0) != word)
+        return;
+    Block* asked = Order::askBehind(first, firstTest->leavingSuccessor, second, secondTest->leavingSuccessor);
+    if (!wordReadAgain)
+        return;
+    if (word->useCount() == 1) {
+        Order::readWordWhereRequested(asked, word);
+        return;
+    }
+    Operation* comparison = const_cast<Operation*>(simplifyPredicate(second->last()->child(0)).predicate);
+    if (comparison->child(0) == wordReadAgain && comparison->useCount() == 1 && wordReadAgain->useCount() == 1)
+        Order::compareEarlierReadWord(comparison, word);
 }
 
 ALWAYS_INLINE Operation* JumpThreader::findBitsThatBranchAsks(const Block* block, unsigned& wayWhereBitIsSet)

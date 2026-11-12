@@ -125,7 +125,10 @@ public:
         LValue loud { nullptr };
     };
     DeedsInFrontOfQuietCall countDeedOf(const ValueContext&);
+    void takeBackCountOfExtension();
     void putBackDeedsBehindQuietCall(DeedsInFrontOfQuietCall);
+    void saveDeedsForHandler(DeedsInFrontOfQuietCall);
+    void restoreDeedsInHandler();
 
     LValue readCollectionCount() { return readCollectionsForEffectsNet(nullptr); }
 
@@ -205,6 +208,7 @@ private:
 
     const WatchOfEffects* m_watchOfOperation { nullptr };
     Machine::StackSlot* m_transientBuffer { nullptr };
+    Machine::StackSlot* m_deedsForHandler { nullptr };
     mutable StubCallShapeCache* m_stubCallShapes { nullptr };
     PatchEffectsMemo* m_patchEffectsMemo { nullptr };
     mutable std::optional<RegisterSet> m_registersClobberedByCalls;

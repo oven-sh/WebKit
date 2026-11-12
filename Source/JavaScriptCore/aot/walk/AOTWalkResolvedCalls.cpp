@@ -18,6 +18,8 @@ bool callThroughTargetResolvedOnceOfItsOpcodes(Walker& walker, const BodyValue& 
     if (call.isDoneInPlace() || !walker.has(Mechanism::LoopInvariants))
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
+    if (!index.hasLoops())
+        return false;
     LoopID loop = index.loopOf(index.blockOf(call.id()));
     if (!loop || call.calleeOperand().index() >= index.block(index.loop(loop).head).firstParameter().index())
         return false;

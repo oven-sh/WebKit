@@ -669,7 +669,7 @@ static Operation* findChildThatDiesInRegisterOfResult(const Liveness& liveness, 
 {
     Operation* child = user->child(childIndex);
     if (liveness.isFused(child)) {
-        if (child->opcode() != Trunc)
+        if (child->opcode() != Trunc && !namesWord(child))
             return nullptr;
         child = child->child(0);
     }

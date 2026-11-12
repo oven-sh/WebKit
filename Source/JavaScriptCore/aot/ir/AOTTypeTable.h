@@ -168,7 +168,7 @@ public:
     static constexpr TypeID anythingButBoolean = idAt<TypeID>(IDHome::Program, 13);
     static constexpr uint32_t numberOfTypesInternedAtStart = 14;
     static constexpr bool passesEveryObject(TypeID id) { return id == anything || (id.bits() >= anythingButUndefined.bits() && id.bits() <= anythingButBoolean.bits()); }
-    static constexpr bool isAnythingButNullish(TypeID id) { return id == anythingButUndefined || id == anythingButNull || id == anythingButNullish; }
+    static constexpr bool isNonNullishTop(TypeID id) { return id == anythingButUndefined || id == anythingButNull || id == anythingButNullish; }
     static constexpr TypeID anythingBut(TypeID primitives)
     {
         if (primitives == undefined)
@@ -227,7 +227,7 @@ public:
     void endStableNumbersOfPropertyKeys(const ParallelLoops&);
     void addKeysOfTexts(uint32_t numberOfStrings, const ParallelLoops&);
     bool hasStableNumber(PropertyKeyID key) const { return key.index() < m_numberOfKeysWithStableNumbers; }
-    bool isLookedUpAsName(PropertyKeyID key) const { return key.index() < m_keysLookedUpAsNames.size() && m_keysLookedUpAsNames[key.index()]; }
+    bool isLookedUpByName(PropertyKeyID key) const { return key.index() < m_keysLookedUpByName.size() && m_keysLookedUpByName[key.index()]; }
     std::optional<uint8_t> locationBitOf(PropertyKeyID key) const
     {
         if (key.index() >= m_locationBitsOfKeys.size())
@@ -324,18 +324,24 @@ private:
     std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInKeySegments { };
     uint32_t m_numberOfKeysWithStableNumbers { UINT32_MAX };
     Vector<uint8_t> m_locationBitsOfKeys;
-    Vector<uint8_t> m_keysLookedUpAsNames;
+    Vector<uint8_t> m_keysLookedUpByName;
     Vector<TypeID> m_typeOfWireIndex;
     Vector<TypeID> m_typesOfLiteralStrings;
 };
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 ALWAYS_INLINE const Type& TypeTable::typeKeptAt(TypeID id) const
 {
     uint32_t position = positionInProgramOf(id);
     if (position < m_typesOnceFrozen.size()) [[likely]]
         return *m_typesOnceFrozen[position];
+    if (position < m_numberOfTypesFoundByAddress) [[likely]]
+        return *reinterpret_cast<const Type*>(m_addressesOfPositionZeroInTypeSegments.data()[internedSegmentOf(position)] + static_cast<uintptr_t>(position) * sizeof(Type));
     return typeKeptBeforeFreezeAt(id);
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 ALWAYS_INLINE Type TypeTable::typeInID(TypeID id)
 {

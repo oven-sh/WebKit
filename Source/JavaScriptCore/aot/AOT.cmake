@@ -75,6 +75,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTImageLoading.h
     aot/image/AOTImageText.h
     aot/image/AOTPrefixCode.h
+    aot/image/AOTRegExpMatchPlan.h
     aot/image/AOTRegExpSummary.h
     aot/image/AOTRuntimeDescription.h
     aot/image/AOTSideTableCodes.h
@@ -292,6 +293,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTMachineAllocationTests.cpp
     aot/tests/AOTMachineCallsOnWaysTests.cpp
     aot/tests/AOTMachineCheckerTests.cpp
+    aot/tests/AOTMachineExecutionFuzzer.cpp
+    aot/tests/AOTMachineExecutionFuzzerGenerator.cpp
+    aot/tests/AOTMachineExecutionFuzzerTests.cpp
     aot/tests/AOTMachineFoldingTests.cpp
     aot/tests/AOTMachineFrameFormTests.cpp
     aot/tests/AOTMachineFrameTests.cpp

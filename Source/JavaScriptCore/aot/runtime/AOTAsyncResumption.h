@@ -45,7 +45,7 @@ struct AdapterEntry {
     JSCell* outerAsyncGenerator { nullptr };
     JSCell* outerPromiseOfHandler { nullptr };
     uintptr_t outerAsyncContextIsPutBack { false };
-    const uint64_t* outerFrameThatMayContinue { nullptr };
+    const uint64_t* resumableOuterFrame { nullptr };
 };
 static_assert(sizeof(AdapterEntry) == 5 * sizeof(void*));
 struct AsyncGeneratorBodyEntry {

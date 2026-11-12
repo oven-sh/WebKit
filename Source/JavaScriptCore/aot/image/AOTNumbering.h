@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTCodeRole.h"
 #include "AOTID.h"
@@ -26,7 +27,6 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
@@ -58,7 +58,7 @@ using Typed::PropertyKeyID;
 using Typed::TypeID;
 using Typed::VariableID;
 
-enum class AskerOfClassGuardOfName : uint8_t { Reads, StoresAlone, ReadsBehindLookAtObject };
+enum class AskerOfClassGuardOfName : uint8_t { Reads, StoresAlone, ReadsBehindLookAtObject, AssignedMember };
 constexpr uint32_t sideWordOfClassGuardOfName(ClassSide side, AskerOfClassGuardOfName asker) { return static_cast<uint32_t>(side) + static_cast<uint32_t>(asker) * numberOfEnumerators<ClassSide>; }
 inline ClassSide sideOfClassGuardKey(std::span<const uint32_t> key) { return static_cast<ClassSide>(key[1] % numberOfEnumerators<ClassSide>); }
 inline AskerOfClassGuardOfName askerOfClassGuardKey(std::span<const uint32_t> key) { return static_cast<AskerOfClassGuardOfName>(key[1] / numberOfEnumerators<ClassSide>); }
@@ -152,11 +152,13 @@ enum class NumberSpace : uint8_t {
     PropertyRun,
     ShownString,
     AtomOfString,
+    NameHeader,
+    StringCharacters,
     Type,
     MethodSelector,
     RegExp,
 };
-inline constexpr unsigned numberOfNumberSpaces = 36;
+inline constexpr unsigned numberOfNumberSpaces = 38;
 static_assert(static_cast<unsigned>(NumberSpace::RegExp) + 1 == numberOfNumberSpaces);
 
 enum class GlobalBindingFlags : uint8_t {
@@ -172,6 +174,7 @@ enum class RequestKind : uint32_t {
     Data,
     CollectionData,
     FormatPattern,
+    ImportChecks,
 };
 
 struct Mention {
@@ -255,8 +258,10 @@ private:
     Vector<uint32_t, smallestTableSize> m_table;
 };
 
-inline std::span<const uint32_t> keyOf(const Mention& mention, std::span<const uint32_t> mentionWords)
+inline std::span<const uint32_t> keyOf(const Mention& mention LIFETIME_BOUND, std::span<const uint32_t> mentionWords)
 {
+    if (mention.numberOfWords == 1)
+        return { &mention.firstWord, 1 };
     if (mention.numberOfWords != Mention::longKey)
         return mentionWords.subspan(mention.firstWord, mention.numberOfWords);
     return mentionWords.subspan(mention.firstWord + 1, mentionWords[mention.firstWord]);
@@ -311,6 +316,8 @@ constexpr bool mayHaveUnitsBehind(NumberSpace space)
     case NumberSpace::PropertyRun:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::Type:
     case NumberSpace::RegExp:
         return false;
@@ -427,6 +434,7 @@ struct PlacedStatics {
     Vector<uint32_t> classGuardBits;
     Vector<PlacedClassGuardOfName> classGuardsOfNames;
     Vector<PlacedClassGuardOfName> namesOfClassGuardsOfSeveralNames;
+    Vector<PlacedClassGuardOfName> guardsOfAssignedMembers;
     Vector<uint32_t> bitsOfClassGuards;
     Vector<PlacedClassGuardCount> classGuardCounts;
     Vector<PlacedGuardOfClassGuardCount> guardsOfClassGuardCounts;
@@ -586,6 +594,7 @@ private:
     Vector<StringID> m_stringsInOrderOfText;
     BitVector m_stringsOnlyShown;
     BitVector m_atomsOfStrings;
+    uint32_t m_bytesBetweenNameHeaders { 0 };
     Vector<PropertyKeyID> m_keyCells;
     Vector<uint32_t> m_keyCellNumbersPlusOne;
     Vector<BuiltinCellKey> m_builtinCells;
@@ -673,6 +682,8 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::ClosureCell:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::MethodSelector:
         return true;
     case NumberSpace::CardOfWord:

@@ -303,6 +303,19 @@ void StubCalls::tailCall(CCallHelpers& jit, StubKey key)
     emitJump({ SymbolSpace::Stub, indexOf(prepare(jit, key, std::nullopt)) });
 }
 
+void StubCalls::callWithoutReturnSite(CCallHelpers& jit, StubKey key)
+{
+    RELEASE_ASSERT(!m_registerFilledInFrontOfNextCall);
+    m_relocations.call({ SymbolSpace::Stub, indexOf(prepare(jit, key, std::nullopt)) });
+}
+
+void StubCalls::emitPrecedingTailCall(CCallHelpers& jit, StubKey key)
+{
+    const StubSignature signature = signatureOf(key);
+    RELEASE_ASSERT(signature.filledOutOfResultInFront && !signature.movedIntoResultInFront);
+    emitJump({ SymbolSpace::Stub, indexOf(prepare(jit, key, std::nullopt)), entryInFrontOfStub });
+}
+
 void StubCalls::tailCall(CCallHelpers& jit, StubKey key, uint32_t immediate)
 {
     emitJump({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) });

@@ -114,7 +114,7 @@ TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, Proper
     LayoutID declaring = declaredLayoutOf(program, layout);
     std::span<const LayoutID> views = program.viewsAbove(declaring);
     if (views.size() >= Program::fewestViewsIndexedByKey) {
-        bool isAnswered = program.visitFieldsWrittenAbove(declaring, key, [&](Program::FieldOfView listed) {
+        bool isAnswered = program.visitInheritedFields(declaring, key, [&](Program::FieldOfView listed) {
             return add(listed.view, listed.field);
         });
         return isAnswered && isWritten ? written.finish() : TypeID();

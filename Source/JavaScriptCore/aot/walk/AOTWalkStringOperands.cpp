@@ -227,7 +227,7 @@ bool openGuessAtOperandThatSpecialCaseTakesAsMade(Walker& walker, const BodyValu
 static TypeID typeProvenOrExpectedForStringOperands(Walker& walker, ValueID input, ValueID call)
 {
     Reference reference = walker.referenceOf(input);
-    TypeID proven = reference ? walker.typeOf(reference) : TypeID();
+    TypeID proven = reference && reference.isRecord() ? walker.typeOf(reference) : TypeID();
     TypeID expected = input < call ? findExpectation(walker, input).type : TypeID();
     if (!expected)
         return proven;
@@ -238,7 +238,7 @@ static BuiltinID builtinExpectedToBeCalledForStringOperands(Walker& walker, cons
 {
     TypeArena& types = walker.types();
     const BodyIndex& index = walker.currentBodyIndex();
-    if (Reference callee = walker.referenceOf(call.calleeOperand())) {
+    if (Reference callee = walker.referenceOf(call.calleeOperand()); callee && callee.isRecord()) {
         Type type = types.at(walker.typeOf(callee));
         if (BuiltinID builtin = type.isObject() ? singleBuiltinOf(types, type) : BuiltinID())
             return builtin;

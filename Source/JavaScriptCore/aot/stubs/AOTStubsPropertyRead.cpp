@@ -357,8 +357,7 @@ void locateFieldOfObject(StubAssembler& jit, const ObjectLookupRegisters& r, Obj
 
 static void answerByFieldRecordAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isUnknown)
 {
-    constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
-    static_assert(sizeof(FieldData) == 1u << fieldSizeShift && sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
+    static_assert(sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
     const GPRReg flags = r.size;
     JumpList hasNoField;
     auto inField = [&](ptrdiff_t offset) {
@@ -369,10 +368,9 @@ static void answerByFieldRecordAndReturn(StubAssembler& jit, ObjectLookupQuestio
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), r.vector);
     jit.load16(BaseIndex(r.vector, r.index, CCallHelpers::TimesTwo), r.index);
     jit.and32(TrustedImm32(FieldRecordIndex::indexMask), r.index);
-    jit.lshift32(TrustedImm32(fieldSizeShift), r.index);
     loadStructure(jit, r.object, r.structure);
     jit.loadPtr(Address(r.structure, CompiledStructure::offsetOfLayout()), r.vector);
-    jit.addPtr(r.vector, r.index);
+    addOffsetOfField(jit, r.vector, r.index, r.index);
     jit.load16(inField(OBJECT_OFFSETOF(FieldData, flags)), flags);
     isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(fieldIsPrivate)));
 

@@ -1,5 +1,5 @@
 # The list follows from the program alone. What nobody knows is told by its structure: a built-in that writes what it is handed would move that structure, and every number that nobody knows would be a known object from then on, for this file and every later one. It is frozen.
-# Object.seal([7].flat()[0]); const twice = [0].flat()[0] * 2; new RegExp((twice ? "some" : "none").toUpperCase() + "q");   ([7].flat()[0]: flat is not entered: nobody knows what it gives.)
+# Object.seal([7].toSpliced()[0]); const twice = [0].toSpliced()[0] * 2; new RegExp((twice ? "some" : "none").toUpperCase() + "q");   ([7].toSpliced()[0]: toSpliced is not entered: nobody knows what it gives.)
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /NONEq/
 # CHECK: text /SOMEq/
@@ -11,15 +11,15 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v0 = Builtin builtin=ObjectSeal
     v1 = Integer integer=7
     v2 = NewArray v1 contents=anything
-    v3 = PropGet v2 key="flat"
-    v4 = Call v3, v2 calleeKey="flat"
+    v3 = PropGet v2 key="toSpliced"
+    v4 = Call v3, v2 calleeKey="toSpliced"
     v5 = Integer
     v6 = ElemGet v4, v5
     v7 = Call v0, -, v6
     v8 = Integer integer=0
     v9 = NewArray v8 contents=anything
-    v10 = PropGet v9 key="flat"
-    v11 = Call v10, v9 calleeKey="flat"
+    v10 = PropGet v9 key="toSpliced"
+    v11 = Call v10, v9 calleeKey="toSpliced"
     v12 = Integer
     v13 = ElemGet v11, v12
     v14 = Integer integer=2

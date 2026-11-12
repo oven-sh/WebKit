@@ -27,7 +27,7 @@ inline constexpr std::ptrdiff_t largestRangeSortedByInsertion = 32;
 
 inline constexpr std::ptrdiff_t longestRunThatMergingStartsFrom = 16;
 
-inline constexpr std::ptrdiff_t fewestIntegersSortedByDigits = 2048;
+inline constexpr std::ptrdiff_t minRadixSortLength = 2048;
 
 template<typename Iterator, typename IsLess, typename Projection>
 void insertEachWhereItBelongs(Iterator first, Iterator next, Iterator last, IsLess& isLess, Projection& projection)
@@ -88,7 +88,7 @@ NEVER_INLINE void mergeSortKeepingEqualElementsInOrder(Element* first, Element* 
 }
 
 template<std::unsigned_integral Integer>
-NEVER_INLINE void sortIntegersByDigits(Integer* first, Integer* last)
+NEVER_INLINE void radixSortIntegers(Integer* first, Integer* last)
 {
     constexpr unsigned bitsInDigit = 11;
     constexpr size_t valuesOfDigit = 1 << bitsInDigit;
@@ -128,8 +128,8 @@ void sortKeepingEqualElementsInOrder(Range&& range, IsLess isLess, Projection pr
     if (last - first > largestRangeSortedByInsertion) {
         static_assert(std::contiguous_iterator<decltype(first)>);
         if constexpr (std::unsigned_integral<std::iter_value_t<decltype(first)>> && std::same_as<IsLess, std::ranges::less> && std::same_as<Projection, std::identity>) {
-            if (last - first >= fewestIntegersSortedByDigits) {
-                sortIntegersByDigits(std::to_address(first), std::to_address(last));
+            if (last - first >= minRadixSortLength) {
+                radixSortIntegers(std::to_address(first), std::to_address(last));
                 return;
             }
         }

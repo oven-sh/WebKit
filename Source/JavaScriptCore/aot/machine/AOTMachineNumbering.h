@@ -43,7 +43,7 @@ public:
     {
         return combine(payload, static_cast<uint64_t>(opcode) | static_cast<uint64_t>(base) << 32);
     }
-    Operation* findWithoutPosition(Opcode opcode, uint64_t payload, uint32_t hash, uint32_t base = UINT32_MAX) const
+    ALWAYS_INLINE Operation* findWithoutPosition(Opcode opcode, uint64_t payload, uint32_t hash, uint32_t base = UINT32_MAX) const
     {
         for (uint32_t link = m_bucketsWithoutPosition[hash & (m_bucketsWithoutPosition.size() - 1)]; link; link = m_withoutPosition[link - 1].previousInBucket) {
             const Entry& entry = m_withoutPosition[link - 1];
@@ -78,7 +78,7 @@ public:
         Operation* operation { nullptr };
         bool isInherited { false };
     };
-    static uint32_t hashOf(const NumberingKey& key)
+    ALWAYS_INLINE static uint32_t hashOf(const NumberingKey& key)
     {
         uint64_t head = static_cast<uint64_t>(key.opcode) | static_cast<uint64_t>(key.type.kind()) << 8 | static_cast<uint64_t>(key.children[0]->index()) << 32;
         uint64_t rest = key.payload;

@@ -103,6 +103,7 @@ static PatchOperation* beginFixedRegisterPatch(Builder& builder, Opcode opcode, 
 template<typename Generator32, typename Generator64>
 static PatchOperation* finishFixedRegisterPatch(Builder& builder, PatchOperation* patch)
 {
+    patch->setClearsUpperHalf(patch->type() == Int32);
     if (patch->type() == Int32)
         patch->setGenerator(Generator32());
     else

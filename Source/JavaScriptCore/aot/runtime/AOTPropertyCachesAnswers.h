@@ -61,7 +61,7 @@ enum class PropertyAnswerKind : uint8_t {
 struct PropertyAnswer {
     static PropertyAnswer uncacheable(SlotAccess access, bool didFlatten = false) { return { .access = access, .didFlatten = didFlatten }; }
     static PropertyAnswer handlerOfProxyAnswers(SlotAccess access, JSCell* key) { return { .access = access, .keyForTrap = key }; }
-    static PropertyAnswer uncacheableAfter(SlotAccess access, ChainWalk&& walk) { return { .access = access, .didFlatten = walk.didFlatten, .changeableObjects = WTF::move(walk.changeableObjects) }; }
+    static PropertyAnswer uncacheableAfter(SlotAccess access, ChainWalk&& walk) { return { .access = access, .changeableObjects = WTF::move(walk.changeableObjects) }; }
     static PropertyAnswer own(PropertyAnswerKind kind, SlotAccess access, PropertyOffset offset = invalidOffset) { return { .kind = kind, .access = access, .isOwn = true, .offset = offset }; }
     static PropertyAnswer above(PropertyAnswerKind kind, SlotAccess access, ChainWalk&& walk) { return { .kind = kind, .access = access, .offset = walk.offset, .holder = walk.holder, .changeableObjects = WTF::move(walk.changeableObjects) }; }
 
@@ -76,6 +76,8 @@ struct PropertyAnswer {
     bool undefinedNeedsNoStorage { false };
     bool fieldTakesAnyValue { false };
     bool readsByteOffset { false };
+    bool isInModuleInstance { false };
+    JSCell* foreignInstance { nullptr };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };
@@ -83,6 +85,8 @@ struct PropertyAnswer {
     Structure* newStructure { nullptr };
     uint32_t newStorageCapacity { 0 };
     bool storageHasIndexingHeader { false };
+    bool clearsPristineFlag { false };
+    bool copiesElements { false };
     const FieldData* field { nullptr };
     SlotData variable { };
     uint32_t customAccessor { 0 };

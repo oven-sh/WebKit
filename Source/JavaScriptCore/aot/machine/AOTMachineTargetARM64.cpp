@@ -354,7 +354,7 @@ unsigned numberOfScratchGPRsOf(const ProcedureTraits&, const Operation& operatio
 {
     if (operation.opcode() != Switch)
         return 0;
-    return operation.switchData().caseValues.size() >= minCasesForJumpTable ? 1 : 0;
+    return operation.switchData().caseValues.size() >= minCasesForSwitchWindow ? 1 : 0;
 }
 
 uint32_t trapReach()

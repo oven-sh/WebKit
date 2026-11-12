@@ -63,7 +63,7 @@ struct NamedProgram {
     std::array<Vector<MentionedID>, numberOfFunctions> mentionsOfFunctions;
     BitVector keysNamedByTables;
     BitVector textsNamedAsKeysByTables;
-    BitVector keysWithColumn;
+    Typed::BitVector keysWithColumn;
 };
 
 } // anonymous namespace

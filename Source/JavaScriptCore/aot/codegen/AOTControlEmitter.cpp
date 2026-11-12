@@ -27,6 +27,10 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     case Representation::Int64:
         switchOnInteger(terminator, in<Integer>(subject).value(), Machine::Int64, otherwise);
         return;
+    case Representation::OptionalInt64:
+        static_assert(maxTrackedInteger < undefinedInteger && maxTrackedInteger < nullInteger && maxTrackedInteger < absentInteger);
+        switchOnInteger(terminator, in<OptionalInteger>(subject).value(), Machine::Int64, otherwise);
+        return;
     case Representation::OptionalDouble:
     case Representation::Double: {
         static_assert(undefinedDouble > PNaNAsBits && nullDouble > PNaNAsBits && absentDouble > PNaNAsBits);
@@ -48,7 +52,6 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
-    case Representation::OptionalInt64:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::RawWord:
@@ -62,7 +65,7 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
 bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& terminator, LValue subject, LType type, BlockEdge otherwise, SwitchesBehindSwitch& takenIn)
 {
     PayloadListView<int64_t> cases = terminator->cases();
-    if (cases.size() < Machine::minCasesForJumpTable)
+    if (cases.size() < Machine::minCasesForSwitchWindow)
         return false;
 
     const Code& code = generator().code();
@@ -181,10 +184,10 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
             ++numberOfListedCases;
         }
     }
-    if (someEdgeBringsValues || numberOfListedCases < Machine::minCasesForJumpTable)
+    if (someEdgeBringsValues || numberOfListedCases < Machine::minCasesForSwitchWindow)
         return false;
     uint64_t span = static_cast<uint64_t>(greatest) - static_cast<uint64_t>(least) + 1;
-    constexpr uint64_t maxBytesOfTablePerCase = Machine::maxEntriesOfJumpTablePerCase * sizeof(int32_t);
+    constexpr uint64_t maxBytesOfTablePerCase = 64;
     if (span <= Machine::valuesInSwitchWindow || span > maxBytesOfTablePerCase * numberOfListedCases)
         return false;
 

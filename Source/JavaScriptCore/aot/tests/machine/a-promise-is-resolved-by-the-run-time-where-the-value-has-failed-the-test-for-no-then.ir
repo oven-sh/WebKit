@@ -1,7 +1,7 @@
 # a promise is resolved in line by asking whether the value has no then and storing it; whatever else comes goes to the run time. Where the walk has asked that question itself
 # and stands on the way of the answer no, the question would be asked a second time, of the same value, with the same answer, and the store behind it would never be reached.
 # The walk marks the operation there, and it is the call of the run time and nothing else: it was 109 bytes a site, and is the 5 of a call. The block's frequency decides nothing.
-# async function member(x) { return x.member; }  async function run(x, n) { for (let i = 0; i < n; i++) x = await member(x); return x; }  sink(run);
+# async function member(x) { return x.member; }  async function run(x, n) { for (let i = 0; i < n; i++) keep(member(x)); return x; }  sink(run);
 # OPTIONS: report=Flow mechanisms=all-Inlining
 # RUN: bytes-by-form CoroutineBody
 # CHECK-NOT: the build failed
@@ -37,9 +37,11 @@ function f2 name="run" module=m0 flags=[IsAsync] length=2 thisType={type=anythin
   b2():
     v7 = NewClosure function=f1
     v8 = Call v7, -, v3 calleeName="member"
-    v9 = Await v8
-    v10 = Increment v4
-    Jump -> next b1(v9, v10)
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="keep" [isFreeName]
+    v11 = Call v10, -, v8
+    v12 = Increment v4
+    Jump -> next b1(v3, v12)
   b3():
     Return v3
 }

@@ -27,6 +27,8 @@ public:
     static constexpr unsigned brandFieldSlot = 1;
     static constexpr unsigned knownStructuresSlot = 2;
     static constexpr unsigned structuresWithoutNamesSlot = 3;
+    static constexpr unsigned numberOfStructuresWithoutNames = 8;
+    static constexpr unsigned shiftOfStructureWithoutName = 4;
     static constexpr unsigned firstNameSlot = 4;
 
     enum KnownStructureSlot : unsigned {

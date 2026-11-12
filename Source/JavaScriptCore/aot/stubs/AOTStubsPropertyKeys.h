@@ -64,6 +64,7 @@ constexpr StubKey callMethodById(unsigned count, unsigned lentArguments = 0) { r
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
 constexpr StubKey getByIdOfObjectAtSite() { return StubKey(StubFamily::GetByIdOfObjectAtSite); }
 constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
+constexpr StubKey getLengthRunningNoCode() { return StubKey(StubFamily::GetLengthRunningNoCode); }
 constexpr unsigned greatestIntegerThatLengthIsAskedFor = 7;
 constexpr StubKey lengthIs(unsigned integer) { return StubKey(StubFamily::LengthIs).withCount(integer); }
 static_assert(exists(lengthIs(greatestIntegerThatLengthIsAskedFor)) && !exists(lengthIs(greatestIntegerThatLengthIsAskedFor + 1)));
@@ -318,6 +319,7 @@ constexpr StubKey slotCannot(SlotFinisher finisher, SlotOrigin origin)
 constexpr StubKey callGetterOfAnswer(CallerFrame callerFrame) { return StubKey(StubFamily::CallGetterOfAnswer).withCallerFrame(callerFrame); }
 constexpr StubKey getterByAccessTable() { return StubKey(StubFamily::GetterByAccessTable); }
 constexpr StubKey getterAtSite() { return StubKey(StubFamily::GetterAtSite); }
+constexpr StubKey getByValRunningNoCode() { return StubKey(StubFamily::GetByValRunningNoCode); }
 constexpr StubKey getByValCachedOrOwnAccessor() { return StubKey(StubFamily::GetByValCachedOrOwnAccessor); }
 constexpr StubKey findsNoExtraPropertyAtSite() { return StubKey(StubFamily::FindsNoExtraPropertyAtSite); }
 

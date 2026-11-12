@@ -98,6 +98,7 @@ protected:
     template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
     Boxed boxed(ValueID id) const { return in<Boxed>(id); }
+    Word32 int32InBox(Boxed);
     Integer integerOf(ValueID);
 
     void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }

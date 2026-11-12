@@ -466,7 +466,15 @@ static void testRegExpAndWebAssembly()
 static void testConstantsInLastExecutablePage()
 {
     for (bool constantsFit : { true, false }) {
-        Steps steps(framedBodies(5));
+        unsigned numberOfBodies = 5;
+        {
+            Steps steps(framedBodies(numberOfBodies));
+            steps.findJumps();
+            steps.layOut();
+            if (steps.layout.executableSize - steps.layout.functionsEnd < imageConstantsAlignment + 24)
+                numberOfBodies = 50;
+        }
+        Steps steps(framedBodies(numberOfBodies));
         steps.findJumps();
         steps.constants.bytes.fill(1, constantsFit ? 24 : 2 * imagePageSize);
         steps.layOut();

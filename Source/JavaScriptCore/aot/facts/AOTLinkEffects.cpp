@@ -191,6 +191,7 @@ private:
 
     bool isSummarized(uint32_t function) const { return m_isSummarized.get(function); }
     bool isAnyCodeByItsOwnText(FunctionID, const ThinSummary&) const;
+    bool isEnteredByNobody(FunctionID) const;
     bool keepsDefaults(FunctionID, const ThinSummary&, OptionSet<SummaryTrait>) const;
     uint32_t nodeOfLostFunctions() const { return m_numberOfFunctions; }
     uint32_t nodeOfSharedCall(uint32_t shared) const { return m_numberOfFunctions + 1 + shared; }
@@ -251,7 +252,7 @@ private:
     struct GivenArgumentsInKnownEffects {
         uint32_t parametersTakenAsExpected { 0 };
         uint32_t parametersCalled { 0 };
-        Vector<uint32_t> parametersThatBringObjectsAlone;
+        Vector<uint32_t> soleObjectParameters;
     };
 
     static EffectsOfComponentInKnownEffects knownEffectsOfUnknownCode() { return { Effects::unknownCode(), LocationMasks::top(), objectsOfAnyLayout }; }
@@ -272,8 +273,8 @@ private:
     void takeKnownEffectsOfFunction(FunctionID callee, WayInKnownEffects, EffectsOfComponentInKnownEffects& into) const;
     bool mergeKnownEffectsOfCodeOutside(const CodeEntered&, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&) const;
     void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&, GivenArgumentsInKnownEffects&) const;
-    std::optional<uint16_t> primitivesExpectedOfParameter(FunctionID, uint32_t entryParameter) const;
-    uint32_t parametersExpectedPrimitiveThatBringObjectsAlone(FunctionID, const ThinSummary&, uint32_t node, GivenArgumentsInKnownEffects&) const;
+    std::optional<uint16_t> expectedParameterPrimitives(FunctionID, uint32_t entryParameter) const;
+    uint32_t findSoleObjectParameters(FunctionID, const ThinSummary&, uint32_t node, GivenArgumentsInKnownEffects&) const;
     bool readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID) const;
     void addEffectsOfAccessItself(FunctionID, const ThinSummary&, const SummaryAccess&, const LinkType& subject, PropertyKeyID, WayInKnownEffects, EffectsOfComponentInKnownEffects&);
     static std::optional<uint32_t> entryParameterAt(const ThinSummary&, uint32_t node);

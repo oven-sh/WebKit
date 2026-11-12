@@ -42,7 +42,7 @@ using Width = CompactTable::Width;
 using SlotKind = CompactTable::SlotKind;
 
 static uint64_t bitsOf(JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
-static unsigned hashOfBits(uint64_t bits) { return rapidHashMix64(bits); }
+static unsigned hashOfBits(uint64_t bits) { return CompactTable::hashOfKeyBits(bits); }
 
 namespace {
 
@@ -490,7 +490,10 @@ static Vector<uint64_t> createKeysComparedByBits(FakeHeap& heap, unsigned number
             keys.append(heap.createCell(SymbolType));
             break;
         case 2:
-            keys.append(hasNumbers ? bitsOf(jsNumber(static_cast<int32_t>(keys.size()) - 50)) : heap.createCell(JSFunctionType));
+            if (hasNumbers)
+                keys.append(keys.size() & 1 ? bitsOf(jsNumber(static_cast<int32_t>(keys.size()) - 50)) : bitsOf(jsNumber(keys.size() - 49.5)));
+            else
+                keys.append(heap.createCell(JSFunctionType));
             break;
         }
     }
@@ -510,7 +513,7 @@ static void checkKeysComparedByBits(Collections& collections, const TableSize& s
     }
     uint64_t map = collections.createOwner(JSMapType, mapTable.address());
     uint64_t set = collections.createOwner(JSSetType, setTable.address());
-    const uint64_t absentKeys[] = { heap.createCell(FinalObjectType), heap.createCell(SymbolType), bitsOf(jsBoolean(false)), bitsOf(jsNumber(123456)) };
+    const uint64_t absentKeys[] = { heap.createCell(FinalObjectType), heap.createCell(SymbolType), bitsOf(jsBoolean(false)), bitsOf(jsNumber(123456)), bitsOf(jsNumber(0.25)), bitsOf(jsNumber(1e300)) };
 
     for (KeyComparison comparison : comparisonsOfBits) {
         for (size_t i = 0; i < keys.size(); ++i) {
@@ -538,12 +541,18 @@ static void testKeysComparedByBits()
     }
 }
 
+static constexpr std::array numbersLeftToOperations { 3.0, -2147483648.0, -0.0, std::numeric_limits<double>::quiet_NaN() };
+static uint64_t bitsOfDouble(double number) { return bitsOf(JSValue(JSValue::EncodeAsDouble, number)); }
+
 static void testKeysLeftToOperations()
 {
     Collections collections;
     FakeTable table(collections.heap, 4, Width::Narrow, Width::Wide);
     uint64_t map = collections.createOwner(JSMapType, table.address());
-    for (uint64_t key : { bitsOf(jsNumber(0.5)), bitsOf(jsNaN()), collections.heap.createCell(HeapBigIntType) }) {
+    Vector<uint64_t> keys { collections.heap.createCell(HeapBigIntType) };
+    for (double number : numbersLeftToOperations)
+        keys.append(bitsOfDouble(number));
+    for (uint64_t key : keys) {
         checkLeftToOperation(collections, mapGet(KeyComparison::AnyValue), Entry::operationAOTMapGet, map, key);
         checkLeftToOperation(collections, mapHas(KeyComparison::AnyValue), Entry::operationAOTMapHas, map, key);
     }
@@ -1203,8 +1212,10 @@ static void testDeletionsLeftToOperations()
         checkLeftToOperation(collections, mapDelete(comparison), Entry::operationAOTMapDelete, map, heap.createRope());
         checkLeftToOperation(collections, setDelete(comparison), Entry::operationAOTSetDelete, set, heap.createRope());
     }
-    for (uint64_t key : { bitsOf(jsNumber(0.5)), heap.createCell(HeapBigIntType) })
-        checkLeftToOperation(collections, mapDelete(KeyComparison::AnyValue), Entry::operationAOTMapDelete, map, key);
+    checkLeftToOperation(collections, mapDelete(KeyComparison::AnyValue), Entry::operationAOTMapDelete, map, heap.createCell(HeapBigIntType));
+    for (double number : numbersLeftToOperations)
+        checkLeftToOperation(collections, mapDelete(KeyComparison::AnyValue), Entry::operationAOTMapDelete, map, bitsOfDouble(number));
+    checkAnswer(collections, mapDelete(KeyComparison::AnyValue), map, bitsOf(jsNumber(0.5)), bitsOf(jsBoolean(false)));
     AOT_TEST_CHECK(table.copyOfBytes() == bytesBefore);
 
     uint64_t mapWithoutStorage = collections.createOwner(JSMapType, 0);

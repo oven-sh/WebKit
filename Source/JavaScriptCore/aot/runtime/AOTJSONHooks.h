@@ -19,7 +19,9 @@ class JSGlobalObject;
 
 namespace AOT {
 
-JSValue tryParseJSON(JSGlobalObject*, StringView);
+enum class JSONTextMemory : bool { Constant, MayChange };
+
+JSValue tryParseJSON(JSGlobalObject*, StringView, JSONTextMemory = JSONTextMemory::Constant);
 [[noreturn]] void crashOnJSONOutputMismatch(const String& written, const String& genericOutput);
 
 } } // namespace JSC::AOT

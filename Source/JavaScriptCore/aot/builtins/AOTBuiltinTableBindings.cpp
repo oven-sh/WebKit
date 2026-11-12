@@ -13,6 +13,7 @@
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "ClassInfo.h"
+#include "Structure.h"
 #include <algorithm>
 #include <atomic>
 #include <type_traits>
@@ -173,19 +174,39 @@ std::span<const BuiltinClassBinding> BuiltinBindings::classesOfHost()
     return host ? host->classes : std::span<const BuiltinClassBinding>();
 }
 
+static Vector<Structure*, 192> hostInstanceStructures(const BuiltinBindingSet* host, JSGlobalObject* realm)
+{
+    if (!host || !host->findInstanceStructures)
+        return { };
+    Vector<Structure*, 192> structures(FillWith { }, host->classes.size(), nullptr);
+    host->findInstanceStructures(realm, structures.mutableSpan());
+    return structures;
+}
+
 void BuiltinBindings::forEachInstanceStructureOfHost(JSGlobalObject* realm, const ScopedLambda<void(const BuiltinClassBinding&, Structure*)>& function)
 {
     const BuiltinBindingSet* host = registeredHost();
-    if (!host || !host->findInstanceStructures)
-        return;
-    Vector<Structure*, 192> structures(host->classes.size(), [](size_t) -> Structure* {
-        return nullptr;
-    });
-    host->findInstanceStructures(realm, structures.mutableSpan());
+    auto structures = hostInstanceStructures(host, realm);
     for (size_t index = 0; index < structures.size(); ++index) {
         if (Structure* structure = structures[index])
             function(host->classes[index], structure);
     }
+}
+
+BuiltinClassID BuiltinBindings::findHostClass(JSGlobalObject* realm, Structure* structure)
+{
+    const BuiltinBindingSet* host = registeredHost();
+    auto structures = hostInstanceStructures(host, realm);
+    const ClassInfo* info = structure->classInfoForCells();
+    BuiltinClassID found;
+    for (size_t index = 0; index < structures.size(); ++index) {
+        if (structures[index] != structure) [[likely]]
+            continue;
+        const BuiltinClassBinding& binding = host->classes[index];
+        if (!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo))
+            found = binding.builtinClass;
+    }
+    return found;
 }
 
 std::optional<uint32_t> BuiltinBindings::cachedValueOffsetOf(BuiltinOverloadID id)

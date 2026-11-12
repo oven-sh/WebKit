@@ -145,7 +145,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
     JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
-    if (Object* made = !object && holdsNoField ? compiledObjectOrNull(result) : nullptr; made && objects.structures.structureIDOf(allocation) != made->structureID() && objects.structures.numberOfStructuresMade() == numberOfStructuresBefore)
+    if (Object* made = !object && holdsNoField ? compiledObjectOrNull(result) : nullptr; made && !made->compiledStructure().hasSpareWord() && objects.structures.structureIDOf(allocation) != made->structureID() && objects.structures.numberOfStructuresMade() == numberOfStructuresBefore)
         objects.classes.rememberInstanceBelow(vm, allocation, cellArgument<JSObject>(prototype, entry), *made, result == allocated ? instance->state->tables.allocations()[allocation].size() : made->layout().size);
     vm.writeBarrier(result);
     OPERATION_RETURN(scope, newCellForCompiledCode(vm, result));
@@ -309,11 +309,9 @@ static void rememberDefinitionAmongExtraProperties(VM& vm, JSCellButterfly* toke
     const_cast<CompiledStructure&>(before).setSuccessorByPrivateName(vm, const_cast<CompiledStructure*>(&after));
 }
 
-static constexpr unsigned numberOfStructuresWithoutNames = 8;
-
 static unsigned placeOfStructureWithoutName(StructureID structure, uint32_t field)
 {
-    return ((structure.bits() >> 4) + field) % numberOfStructuresWithoutNames * 2;
+    return ((structure.bits() >> ClassToken::shiftOfStructureWithoutName) + field) % ClassToken::numberOfStructuresWithoutNames * 2;
 }
 
 static bool isKnownToLackName(JSCellButterfly* token, uint32_t field, JSObject* object)
@@ -328,7 +326,7 @@ static bool isKnownToLackName(JSCellButterfly* token, uint32_t field, JSObject* 
 static void rememberStructureWithoutName(VM& vm, JSCellButterfly* token, uint32_t field, Structure* structure)
 {
     if (!token->get(ClassToken::structuresWithoutNamesSlot))
-        token->setIndex(vm, ClassToken::structuresWithoutNamesSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numberOfStructuresWithoutNames * 2));
+        token->setIndex(vm, ClassToken::structuresWithoutNamesSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::numberOfStructuresWithoutNames * 2));
     JSCellButterfly* places = uncheckedDowncast<JSCellButterfly>(token->get(ClassToken::structuresWithoutNamesSlot).asCell());
     unsigned place = placeOfStructureWithoutName(structure->id(), field);
     places->setIndex(vm, place, structure);

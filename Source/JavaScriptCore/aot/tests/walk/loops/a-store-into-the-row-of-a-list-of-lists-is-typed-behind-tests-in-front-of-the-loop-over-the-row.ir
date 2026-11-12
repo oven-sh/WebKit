@@ -4,11 +4,12 @@
 # turn finds counted as other code: no typed copy was even tried: 49 instructions a turn against 10 with the row taken out by hand; `grid[y][x] += 0.5` 127 against 14.
 # A raw double that a typed store lays into a list cannot be the row that was read off a list of cells: one list has not both storages unless it is converted between, and that writes its storage. The
 # mask of the elements of lists carries a mark, read or written, and the writes of the two typed stores of raw doubles alone lack it: the row moves to the front where no turn writes the mark.
-# The store asks its list in the front for its class and for writable storage of doubles where nothing has; each test that fails leads to the other copy.
+# Where every row of the loop leads from in front, the front reads it once, asks it as any list that leads from in front, for storage that takes numbers by its kind, and that it is not the list of rows itself.
 # RUN(FORM): walk f1 mechanisms=all
-# FORM: [[there]]: boolean @Boolean = IsElementPresent [[grid]], [[y]] arrayStorage=Contiguous [keyIsIntegral]
-# FORM: = HasArrayStorage [[row]] arrayStorage=Double [isWritable]
-# FORM: = PutDoubleIndex [[row]],
+# FORM: [[there]]: boolean @Boolean = IsElementPresent [[grid]], [[y]] arrayStorage=Contiguous [keyIsIntegral, isInBounds]
+# FORM: = HasArrayStorage [[row]] [isWritable]
+# FORM: = StrictEq [[row]], [[grid]] form=Bits
+# FORM: = PutContiguousIndex [[row]],{{*}}goesByKindOfStorage
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 0.25
 

@@ -19,6 +19,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsField.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "AOTVector.h"
 #include "Allocator.h"
@@ -428,6 +429,21 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
 void generateAssignToNewObjectFrontEnd(StubAssembler& jit)
 {
     generateFrontEndOfObjectCopy(jit, ObjectIsCopiedBy::Stores);
+}
+
+StubSignature signatureOfCopyAllDataProperties(StubKey)
+{
+    return StubSignature::withoutResult({ operationArgumentGPR(1), operationArgumentGPR(2) });
+}
+
+void generateCopyAllDataProperties(StubAssembler& jit)
+{
+    Jump isCell = jit.branchIfCell(jit.operand(1));
+    jit.returnToCaller();
+    isCell.link(&jit);
+    for (StubRegister argument : { StubRegister::A3, StubRegister::A4, StubRegister::A5 })
+        jit.move(TrustedImm32(0), jit.allocateScratch(argument));
+    jit.jumpToStub(callOperationFor(Entry::operationAOTCopyDataProperties, OperationCall::Returns::Void, OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(Entry::operationAOTCopyDataProperties)));
 }
 
 struct MoveWalk {

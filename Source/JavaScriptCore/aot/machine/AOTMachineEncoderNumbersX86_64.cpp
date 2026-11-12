@@ -10,6 +10,7 @@
 
 #include "AllowMacroScratchRegisterUsage.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <utility>
 
@@ -23,6 +24,7 @@ struct X86NumberSource {
 
     Reg reg;
     AddressForm memory;
+    const Operation* constant { nullptr };
 };
 
 } // anonymous namespace
@@ -31,7 +33,7 @@ static X86NumberSource takeX86NumberSource(Encoder& encoder, const Operation* us
 {
     X86NumberSource source;
     const Operation* child = user->child(childIndex);
-    if (encoder.m_liveness.isFused(child) && child->opcode() != Trunc) {
+    if (encoder.m_liveness.isFused(child) && child->opcode() != Trunc && child->opcode() != ZExt32) {
         RELEASE_ASSERT(child->opcode() == Load);
         source.memory = encoder.resolveAddress(child, cursor);
         return source;
@@ -50,9 +52,12 @@ static X86NumberSource takeX86NumberSource(Encoder& encoder, const Operation* us
         source.memory.offset = address.offset;
         return source;
     }
+    case Location::Immediate:
+        RELEASE_ASSERT(readsConstantInMemory(*user, childIndex, *child) && child->hasDouble());
+        source.constant = child;
+        return source;
     case Location::None:
     case Location::SlotBytes:
-    case Location::Immediate:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -167,9 +172,9 @@ bool Encoder::writesNumberRegister(const Step& step, FPRReg reg) const
     });
 }
 
-bool Encoder::numberRegisterMayBeWrittenShortlyInFrontOf(const Step& step, FPRReg reg) const
+bool Encoder::wasNumberRegisterWrittenRecently(const Step& step, FPRReg reg) const
 {
-    static constexpr unsigned stepsOfLastWriters = 16;
+    static constexpr unsigned maxRecentWriterSteps = 16;
     static constexpr unsigned mostBlocks = 8;
     struct EndOfBlock {
         const Block* block;
@@ -185,7 +190,7 @@ bool Encoder::numberRegisterMayBeWrittenShortlyInFrontOf(const Step& step, FPRRe
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return false;
     };
-    auto appendBlocksInFrontOf = [&](const Block* block, unsigned stepsLeft) {
+    auto appendPredecessors = [&](const Block* block, unsigned stepsLeft) {
         for (const Block* predecessor : placeOf(block).predecessors) {
             if (ends.size() == mostBlocks)
                 return false;
@@ -198,19 +203,19 @@ bool Encoder::numberRegisterMayBeWrittenShortlyInFrontOf(const Step& step, FPRRe
     const BlockSteps& steps = stepsOf(m_block);
     if (&step < m_steps + steps.begin || &step >= m_steps + steps.end)
         return true;
-    unsigned stepsLeft = stepsOfLastWriters;
-    if (isWrittenBetween(m_steps + steps.begin, &step, stepsLeft) || (stepsLeft && !appendBlocksInFrontOf(m_block, stepsLeft)))
+    unsigned stepsLeft = maxRecentWriterSteps;
+    if (isWrittenBetween(m_steps + steps.begin, &step, stepsLeft) || (stepsLeft && !appendPredecessors(m_block, stepsLeft)))
         return true;
     for (unsigned index = 0; index < ends.size(); ++index) {
-        auto [block, stepsLeftThere] = ends[index];
+        auto [block, remainingSteps] = ends[index];
         const BlockSteps& stepsThere = stepsOf(block);
         if (stepsThere.terminator != UINT32_MAX && writesNumberRegister(m_steps[stepsThere.terminator], reg))
             return true;
-        if (isWrittenBetween(m_steps + stepsThere.beginOfEdgeMoves, m_steps + stepsThere.endOfEdgeMoves, stepsLeftThere))
+        if (isWrittenBetween(m_steps + stepsThere.beginOfEdgeMoves, m_steps + stepsThere.endOfEdgeMoves, remainingSteps))
             return true;
-        if (isWrittenBetween(m_steps + stepsThere.begin, m_steps + stepsThere.end, stepsLeftThere))
+        if (isWrittenBetween(m_steps + stepsThere.begin, m_steps + stepsThere.end, remainingSteps))
             return true;
-        if (stepsLeftThere && !appendBlocksInFrontOf(block, stepsLeftThere))
+        if (remainingSteps && !appendPredecessors(block, remainingSteps))
             return true;
     }
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -235,10 +240,33 @@ static void encodeX86NumberUnary(Encoder& encoder, const Step* stepThatWaitsLong
     emit(destination);
 }
 
+static void encodeX86ArithmeticWithConstant(Encoder& encoder, Opcode opcode, FPRReg left, const Operation* constant, FPRReg destination)
+{
+    encoder.m_jit.moveDouble(left, destination);
+    auto bytes = std::bit_cast<std::array<uint8_t, sizeof(uint64_t)>>(constant->constantBits());
+    CodeSymbol symbol { SymbolSpace::Constant, encoder.m_proc.addConstantData(std::span<const uint8_t>(bytes), sizeof(uint64_t), ConstantKind::Number) };
+    if (opcode == Add)
+        encoder.m_relocations.addDouble(symbol, destination);
+    else if (opcode == Sub)
+        encoder.m_relocations.subDouble(symbol, destination);
+    else if (opcode == Mul)
+        encoder.m_relocations.mulDouble(symbol, destination);
+    else {
+        RELEASE_ASSERT(opcode == Div);
+        encoder.m_relocations.divDouble(symbol, destination);
+    }
+}
+
 static void encodeX86NumberArithmetic(Encoder& encoder, Opcode opcode, Width width, X86NumberSource left, X86NumberSource right, FPRReg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
     bool isDouble = width == Width64;
+
+    if (right.constant) {
+        RELEASE_ASSERT(isDouble && left.isRegister());
+        encodeX86ArithmeticWithConstant(encoder, opcode, left.reg.fpr(), right.constant, destination);
+        return;
+    }
 
     if (!left.isRegister() && isCommutative(opcode))
         std::swap(left, right);
@@ -516,7 +544,7 @@ static void encodeX86NumberMinOrMax(Encoder& encoder, Opcode opcode, Width width
     doneWithUnordered.link(&jit);
 }
 
-static bool mayBeFirstOfX86MinOrMax(Opcode opcode, const Operation* number)
+static bool canBeFirstX86MinMaxOperand(Opcode opcode, const Operation* number)
 {
     if (number->opcode() == IToD)
         return opcode == FMin;
@@ -525,7 +553,7 @@ static bool mayBeFirstOfX86MinOrMax(Opcode opcode, const Operation* number)
     return number->asDouble() || std::signbit(number->asDouble()) == (opcode == FMax);
 }
 
-static void encodeX86MinOrMaxOfDoubleKnownToComeFirst(Encoder& encoder, Opcode opcode, const X86NumberSource& first, const X86NumberSource& second, FPRReg destination)
+static void encodeX86OrderedMinMax(Encoder& encoder, Opcode opcode, const X86NumberSource& first, const X86NumberSource& second, FPRReg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
     FPRReg registerOfResult = first.isRegister() || !second.isRegister() ? destination : scratchFPR;
@@ -548,7 +576,7 @@ static void encodeX86NumberFromInteger(Encoder& encoder, const Step& step, Width
             jit.convertInt32ToDouble(operand, destination);
     };
 
-    if (encoder.numberRegisterMayBeWrittenShortlyInFrontOf(step, destination))
+    if (encoder.wasNumberRegisterWrittenRecently(step, destination))
         jit.moveZeroToDouble(destination);
     if (source.isRegister()) {
         convert(source.reg.gpr());
@@ -619,9 +647,9 @@ void Encoder::encodeNumber(const Step& step)
         X86NumberSource left = takeSource(0);
         X86NumberSource right = takeSource(1);
         for (unsigned known = 0; width == Width64 && known < 2; ++known) {
-            if (!mayBeFirstOfX86MinOrMax(opcode, operation->child(known)))
+            if (!canBeFirstX86MinMaxOperand(opcode, operation->child(known)))
                 continue;
-            encodeX86MinOrMaxOfDoubleKnownToComeFirst(*this, opcode, known ? right : left, known ? left : right, step.destination.fpr());
+            encodeX86OrderedMinMax(*this, opcode, known ? right : left, known ? left : right, step.destination.fpr());
             return;
         }
         encodeX86NumberMinOrMax(*this, opcode, width, left, right, step.destination.fpr());

@@ -136,6 +136,8 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     case NumberSpace::PropertyRun:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::Type:
     case NumberSpace::MethodSelector:
     case NumberSpace::RegExp:
@@ -217,6 +219,8 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     }
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::Name:
     case NumberSpace::NameOfText:
     case NumberSpace::String:
@@ -262,7 +266,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::StringCell:
         return m_stringConstants->numberOf(StringID(key[0]));
     case NumberSpace::AtomOfString:
+    case NumberSpace::StringCharacters:
         return std::nullopt;
+    case NumberSpace::NameHeader: {
+        std::optional<uint32_t> number = m_identifiers->numberOfText(StringID(key[0]));
+        return number ? std::optional(*number * m_bytesBetweenNameHeaders) : std::nullopt;
+    }
     case NumberSpace::KeyCell: {
         std::optional<uint32_t> numberPlusOne = numberIn(m_keyCellNumbersPlusOne, PropertyKeyID(key[0]));
         if (!numberPlusOne)
@@ -314,10 +323,11 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::ClassGuard: {
         constexpr uint64_t numberOfSides = numberOfEnumerators<ClassSide>;
         if (key.size() == 4) {
-            std::optional<uint32_t> place = placeAmongNumberedThings(m_statics.classGuardsOfNames.span(), std::array<uint32_t, 4> { key[0], key[1], key[2], key[3] }, &PlacedClassGuardOfName::key);
+            const Vector<PlacedClassGuardOfName>& guards = askerOfClassGuardKey(key) == AskerOfClassGuardOfName::AssignedMember ? m_statics.guardsOfAssignedMembers : m_statics.classGuardsOfNames;
+            std::optional<uint32_t> place = placeAmongNumberedThings(guards.span(), std::array<uint32_t, 4> { key[0], key[1], key[2], key[3] }, &PlacedClassGuardOfName::key);
             if (!place)
                 return std::nullopt;
-            return m_statics.classGuardsOfNames[*place].bit;
+            return guards[*place].bit;
         }
         if (key.size() > 4) {
             std::optional<uint32_t> place = m_classGuards.find(key);
@@ -396,7 +406,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::valueOf(con
     if (asInstanceWord || mention.numberOfWords != 1)
         return valueOfSlowCase(mention, mentionWords, asInstanceWord);
 
-    uint32_t id = mentionWords[mention.firstWord];
+    uint32_t id = mention.firstWord;
     std::optional<uint32_t> number;
     switch (mention.space) {
     case NumberSpace::Name:
@@ -528,6 +538,7 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numberPlaced(numbers.originsOfMethodSelectors(), PlacedStatics::noOffset);
     count += numberPlaced(statics.classGuardBits, noClassGuardBit);
     count += statics.classGuardsOfNames.size();
+    count += statics.guardsOfAssignedMembers.size();
     count += statics.classGuardCounts.size();
     const Vector<PlacedClassGuardOfName>& namesOfSharedGuards = statics.namesOfClassGuardsOfSeveralNames;
     for (size_t index = 0; index < namesOfSharedGuards.size(); ++index)

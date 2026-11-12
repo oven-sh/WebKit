@@ -27,6 +27,8 @@ namespace JSC { namespace AOT {
 StubSignature signatureOfCallHostFunction(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionWithoutBoxedCall(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionThatMayBeUnfetched(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallHostFunctionCheckingResult(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallHostFunctionThatMayBeUnfetchedCheckingResult(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallInternalFunction(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionWithCount(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallHostGetter(StubKey) { return callConventionSignature({ }); }
@@ -148,6 +150,20 @@ void generateCallHostFunction(StubAssembler& jit)
     jit.emitFunctionPrologue();
     emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
+}
+
+void generateCallHostFunctionThatMayBeUnfetchedCheckingResult(StubAssembler& jit)
+{
+    const unsigned count = jit.key().count();
+    const HostResult result = static_cast<HostResult>(jit.key().form());
+    const CallRegisters registers = CallRegisters::allocate(jit);
+    const GPRReg executable = registers.scratch;
+    fetchFunctionLeftUnfetched(jit, executable, count);
+    jit.bindEntry(callHostFunctionCheckingResult(result, count));
+    emitLoadExecutable(jit, executable);
+    jit.emitFunctionPrologue();
+    emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
+    callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), Address(executable, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall)), result);
 }
 
 void generateCallHostGetter(StubAssembler& jit)

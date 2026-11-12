@@ -1,0 +1,37 @@
+# A module with instances has one record. Its links name the instance layout of their target, and the fields that the run time fills are untyped.
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 1
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="user.js" displayPath="user.js" flags=[MayBeReevaluated] body=f1 requests=[{target=m2 completes=true}]
+module m2 path="dependency.js" displayPath="dependency.js" flags=[MayBeMocked, MayBeReevaluated] body=f2
+entry module=m0
+layout L0 kind=Environment module=m1 fields=[{key=@"0" declared={type=env L1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"1" declared={type=anything flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"2" declared={type=anything|absent flags=[IsFromCompiler]}}, {key=@"3" declared={type=anything|absent flags=[IsFromCompiler]}}]
+layout L1 kind=Environment module=m2 fields=[{key=@"0" declared={type=anything|absent flags=[IsFromCompiler]}}, {key=@"1" declared={type=anything|absent flags=[IsFromCompiler]}}]
+variable g0 module=m1 declared={type=env L0 flags=[IsFromCompiler]} flags=[HoldsInstance]
+variable g1 module=m1 declared={type=anything} initialization=Undefined flags=[IsReplaceable, GuardsInstance]
+variable g2 module=m1 declared={type=anything} initialization=Function function=f3 flags=[IsReplaceable, AllocatesInstance]
+variable g3 module=m2 declared={type=env L1 flags=[IsFromCompiler]} flags=[HoldsInstance]
+variable g4 module=m2 declared={type=anything} initialization=Undefined flags=[IsReplaceable, GuardsInstance]
+variable g5 module=m2 declared={type=anything} initialization=Function function=f4 flags=[IsReplaceable, AllocatesInstance]
+variable g6 module=m1 declared={type=anything} initialization=Undefined flags=[IsReplaceable, HasSeveralInstances]
+variable g7 module=m2 declared={type=anything} initialization=Undefined flags=[IsReplaceable, HasSeveralInstances]
+moduleinstance module=m1 layout=L0 namespaceField=2 deferredNamespaceField=3
+moduleinstance module=m2 layout=L1 namespaceField=0 deferredNamespaceField=1
+modulelink module=m1 target=m2 link=0 mock=1
+modulelink module=m1 target=m2 link=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="user" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="dependency" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+function f3 name="allocateUser" module=m1 results=[{type=anything}] {
+    Return
+}
+function f4 name="allocateDependency" module=m2 results=[{type=anything}] {
+    Return
+}

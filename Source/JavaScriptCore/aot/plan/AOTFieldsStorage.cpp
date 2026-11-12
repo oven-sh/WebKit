@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
 #include "AOTFamilies.h"
@@ -23,7 +24,6 @@
 #include <array>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>

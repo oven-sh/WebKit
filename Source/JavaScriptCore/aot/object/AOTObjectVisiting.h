@@ -147,6 +147,18 @@ ALWAYS_INLINE void visitReferences(const JSCell* cell, const Record& record, boo
     });
 }
 
+template<typename Visitor>
+NEVER_INLINE void visitReferenceAt(const JSCell* cell, SlotData slot, Visitor& visitor)
+{
+    const uint8_t* word = reinterpret_cast<const uint8_t*>(cell) + slot.offset;
+    if (slot.representation() == SlotRepresentation::Cell) {
+        visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(*reinterpret_cast<const uint64_t*>(word))));
+        return;
+    }
+    if (uint32_t reference = *reinterpret_cast<const uint32_t*>(word); reference >= minCell32)
+        visitNarrowReference(visitor, cell, reference);
+}
+
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

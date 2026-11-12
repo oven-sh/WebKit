@@ -9,6 +9,7 @@
 
 #include "AOTImageForward.h"
 #include "AOTLimits.h"
+#include "AOTRegExpMatchPlan.h"
 #include "AOTVector.h"
 #include "RegExpKey.h"
 #include "Yarr.h"
@@ -16,6 +17,8 @@
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
 #include <memory>
+#include <optional>
+#include <wtf/BitSet.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -56,6 +59,8 @@ struct RegExpSummary {
     unsigned minimumSize { 0 };
     unsigned numDuplicateNamedCaptureGroups { 0 };
     uint64_t groupsPresentInEveryMatch { 0 };
+    std::optional<WTF::BitSet<256>> firstCharacters;
+    bool firstCharactersAreLatin1 { false };
     Yarr::SpecificPattern specificPattern { Yarr::SpecificPattern::None };
     String source;
     String atom;
@@ -83,6 +88,7 @@ public:
 
     JS_EXPORT_PRIVATE const RegExpSummary& summaryOf(StringID pattern, OptionSet<Yarr::Flags>, StringView patternText);
     const RegExpSummary* summaryIfComputed(StringID pattern, OptionSet<Yarr::Flags>) const;
+    const RegExpMatchPlan* matchPlanOf(StringID pattern, OptionSet<Yarr::Flags>, StringView patternText);
 
 private:
     using Key = uint64_t;
@@ -94,6 +100,7 @@ private:
     mutable Lock m_lock;
     UncheckedKeyHashMap<Key, std::unique_ptr<const RegExpSummary>, DefaultHash<Key>, WTF::UnsignedWithZeroKeyHashTraits<Key>> m_summaries WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashMap<RegExpKey, std::unique_ptr<const RegExpSummary>> m_summariesByText WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<const RegExpSummary*, std::unique_ptr<const RegExpMatchPlan>> m_matchPlans WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } } // namespace JSC::AOT

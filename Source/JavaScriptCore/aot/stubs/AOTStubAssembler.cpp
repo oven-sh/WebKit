@@ -126,6 +126,10 @@ void StubAssembler::emitOperationCallHead()
         if (prelude.operation == entry && prelude.emit(*this) == PreludeExit::Returns)
             return;
     }
+    if (key().family() == StubFamily::TailCallOperation) {
+        tailCallOperation(entry, static_cast<OperationCall::FirstArgument>(key().form()));
+        return;
+    }
     jumpToOperationCallOf(entry);
 }
 
@@ -473,6 +477,8 @@ void StubAssembler::recordFarJump(PtrTag tag)
 
 void StubAssembler::alignWhatStandsBehind(unsigned size)
 {
+    if constexpr (isX86_64())
+        return;
     constexpr unsigned alignment = 16;
     while ((m_assembler.codeSize() + size) % alignment)
         emitPadding(*this);

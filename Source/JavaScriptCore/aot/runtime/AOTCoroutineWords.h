@@ -20,6 +20,7 @@ namespace AOT {
 class AsyncGeneratorStepInProgress;
 
 inline constexpr int32_t mustSuspendAtNextAwaitBit = 1;
+inline constexpr unsigned numberOfReleasedHeapFrames = 8;
 
 struct CoroutineWords {
     uint64_t savedFrameHeader;
@@ -28,10 +29,11 @@ struct CoroutineWords {
     uint32_t emptyAsyncGeneratorPrototypeStructureID;
     uint32_t structureIDsOfGeneratorsOfLibrary[2];
     JSCell* waiterToResume;
+    void* lastPromiseResolvedWithSettled;
     EncodedJSValue waiterResolution;
     EncodedJSValue waiterAsyncContext;
     AsyncGeneratorStepInProgress* stepInProgress;
-    const uint64_t* frameThatMayContinue;
+    const uint64_t* resumableFrame;
     uint64_t resumeJobWords[2];
     uint64_t bodyCallJobWords[2];
     uint64_t yieldAwaitedJobWord;
@@ -39,16 +41,20 @@ struct CoroutineWords {
     uint64_t reactionJobWords[4];
     uint64_t performMicrotaskJobWord;
     uint64_t promiseAllResolveJobWord;
+    uint64_t resolveThenableJobWord;
+    uint64_t resolveWithoutHandlerJobWord;
     void* asyncGeneratorAllocator;
     void* generatorAllocator;
     uint32_t stepStatus;
     uint8_t nextEntryEndsJob;
     uint8_t asyncContextIsPutBack;
-    uint8_t unused[2];
+    uint8_t handlerReturnsFulfillment;
+    uint8_t unused;
     JSCell* enteredFrame;
     JSCell* enteredAsyncGenerator;
     JSCell* promiseOfEnteredHandler;
     JSCell* asyncGeneratorSentinel;
+    JSCell* releasedHeapFrames[numberOfReleasedHeapFrames];
 };
 
 static_assert(std::is_trivially_default_constructible_v<CoroutineWords>);

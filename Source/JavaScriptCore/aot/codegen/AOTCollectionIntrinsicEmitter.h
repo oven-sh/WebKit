@@ -42,6 +42,8 @@ private:
     InlineWidths inlineWidthsOf(Collection, ValueID collection);
     Integer movesOfEntriesInCollections();
 
+    bool takesTableReadBeforeStep(const ValueContext& step, ValueID collection);
+    ValueID findTableReadAfterStep(const ValueContext& step, ValueID collection);
     ValueID m_forwardedTableRead;
     LValue m_forwardedTable { nullptr };
 };

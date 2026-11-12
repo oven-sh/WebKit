@@ -343,6 +343,7 @@ public:
 
     LValue relocatable(SymbolSpace space, uint32_t index, uint16_t entry = primaryEntry) { return addressOf(CodeSymbol { space, index, entry }); }
     LValue number(uint32_t mention) { return numberOf(CodeSymbol { SymbolSpace::Number, mention }); }
+    LValue wideNumber(uint32_t mention) { return numberOf(CodeSymbol { SymbolSpace::Number, mention }, Machine::Int64); }
     TypedPointer instanceWord(const Machine::AbstractHeap& heap, uint32_t mention) { return TypedPointer(heap, instanceAddressOf(CodeSymbol { SymbolSpace::InstanceWord, mention })); }
 
     uint32_t addConstantData(std::span<const uint8_t> bytes, ConstantKind kind) { return m_proc.addConstantData(bytes, alignmentOfConstant(bytes.size()), kind); }

@@ -248,7 +248,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     } else {
         numberOfWordsStored = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
         Vector<LValue, 6> operands;
-        operands.append(zeroExtended(numberOf(closureNumberMentionedBy(request))).value());
+        operands.append(m_out.wideNumber(closureNumberMentionedBy(request)));
         operands.append(cell.value());
         operands.append(captureWords.span().first(numberOfWordsStored));
         cell = CellPointer(emitter<RuntimeCallEmitter>().callStubWithoutSite(newSlimClosureInFrame(request.kind.slimClosureKind(), count), operands.span()).first);
@@ -279,14 +279,13 @@ CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const Ne
 
     unsigned count = request.numberOfWords;
     bool isSlim = ClosureRequest::isSlim(requestWord);
-    Integer word = zeroExtended(numberOf(closureNumberMentionedBy(request, isSlim ? 0 : static_cast<int32_t>(requestWord))));
-    if (!isSlim)
-        word = bitOr(word, Integer(m_out.shl(zeroExtended(numberOf(request.allocation.mention)).value(), ClosureRequest::allocationShift)));
+    uint32_t mention = closureNumberMentionedBy(request, isSlim ? 0 : static_cast<int32_t>(requestWord));
+    LValue word = isSlim ? m_out.wideNumber(mention) : bitOr(zeroExtended(numberOf(mention)), Integer(m_out.shl(zeroExtended(numberOf(request.allocation.mention)).value(), ClosureRequest::allocationShift))).value();
 
     Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
     size_t numberInRegisters = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
     Vector<LValue, 6> operands;
-    operands.append(word.value());
+    operands.append(word);
     operands.append(captureWords.span().first(numberInRegisters));
     CellPointer cell(callStub(value, isSlim ? AOT::newSlimClosure(request.kind.slimClosureKind(), count) : newClosure(count), operands.span()).first);
     if (numberInRegisters == count)

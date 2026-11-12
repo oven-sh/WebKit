@@ -155,7 +155,7 @@ export const operandRoles = [
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
-export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow", "Prototype", "CellAlone"] as const;
+export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "InheritedNamesKept", "Prototype", "CellAlone"] as const;
 export type PristineAspect = (typeof pristineAspects)[number];
 
 export const contentsSlots = ["Element", "Key", "Value"] as const;
@@ -188,6 +188,7 @@ export const rangeRules = [
   "AbsoluteValue",
   "IntegerPart",
   "Sign",
+  "CodeUnitOrNaN",
 ] as const;
 export type RangeRule = (typeof rangeRules)[number];
 
@@ -293,7 +294,7 @@ export type PlaceSpec =
   | { place: "OwnValues"; operand: OperandName }
   | { place: "Result" }
   | { place: "ResultSlot"; slot: SlotName }
-  | { place: "ResultField"; field: string | number; holdsOnlyWhatIsStored?: boolean }
+  | { place: "ResultField"; field: string | number; holdsOnlyWhatIsStored?: boolean; isOfElements?: boolean }
   | { place: "NewValue"; value: TypeSpec; holdsWhatIsThrown?: boolean }
   | { place: "NativeMemory" }
   | { place: "Prototype"; operand: OperandName }
@@ -559,6 +560,7 @@ export const builtinMarks = [
   "AsksOptionsForListedNamesAlone",
   "MayLayListenerForUncaughtExceptions",
   "IsReportedAsReadOnly",
+  "AppliesMethodDecorators",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

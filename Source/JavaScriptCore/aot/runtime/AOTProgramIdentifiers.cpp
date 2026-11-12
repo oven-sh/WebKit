@@ -107,7 +107,7 @@ void ProgramIdentifiers::createEngineSymbols()
 NEVER_INLINE UniquedStringImpl* ProgramIdentifiers::uidSlowCase(uint32_t number)
 {
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (m_text.stringRecords()[number].hasText())
+    if (number < m_count && m_text.stringRecords()[number].hasText())
         return static_cast<UniquedStringImpl*>(&m_text.ensureLazyHeader(number));
 #endif
     if (UniquedStringImpl* uid = m_symbols.find(number))
@@ -142,12 +142,16 @@ void ProgramIdentifiers::addSymbol(uint32_t number, UniquedStringImpl* uid)
 
 bool ProgramIdentifiers::isCreatedSymbol(uint32_t number) const
 {
-    return m_image.text().identifier(number).kind() == PropertyKeyKind::CreatedSymbol;
+    return number < m_count && m_image.text().kindOfIdentifier(number) == PropertyKeyKind::CreatedSymbol;
 }
 
 Identifier ProgramIdentifiers::create(uint32_t number) const
 {
     const ImageText& text = m_image.text();
+    if (number >= m_count) {
+        RELEASE_ASSERT(number < text.numberOfStrings());
+        return Identifier::fromString(m_vm, AtomString(text.createAtom(StringID(number))));
+    }
     const ImageIdentifierWord& record = text.identifier(number);
     StringID string = record.text();
     switch (record.kind()) {
@@ -299,11 +303,6 @@ static void createPlaceForNamesAskedForLately()
 
 static ALWAYS_INLINE AtomStringImpl* noteNameAskedFor(NamesAskedForLately& lately, AtomStringImpl* atom, unsigned hash, StringView characters)
 {
-    if (!atom) {
-        lately[1].atom = nullptr;
-        lately[1].hashAndMark = hash | NameAskedForLately::mark;
-        return nullptr;
-    }
     if (!characters.is8Bit() || characters.length() > NameAskedForLately::maxLength)
         return atom;
     lately[1] = lately[0];
@@ -314,32 +313,37 @@ static ALWAYS_INLINE AtomStringImpl* noteNameAskedFor(NamesAskedForLately& latel
     return atom;
 }
 
-AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned hash)
+static NEVER_INLINE AtomStringImpl* findAtomWithNumber(const Image& image, uint32_t number, StringView characters, unsigned hash, AtomStringImpl* (*findSlow)(StringView, unsigned))
 {
-    const Image* image = Image::sharedByAllThreads();
-    if (!image || characters.isEmpty()) [[unlikely]]
-        return findAtomSlow(characters, hash);
     ASSERT(!(hash & NameAskedForLately::mark));
     NamesAskedForLatelyOnThread& onThread = *s_namesAskedForLately.get();
     NamesAskedForLately& lately = onThread[hash % onThread.size()];
     for (const NameAskedForLately& name : lately) {
         if (name.hashAndMark != (hash | NameAskedForLately::mark))
             continue;
-        if (!name.atom)
-            return nullptr;
         if (name.length == characters.length() && characters.is8Bit() && areSameCharacters(name.characters, characters.span8().data(), name.length))
             return name.atom;
     }
-    std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
-    if (!number)
-        return noteNameAskedFor(lately, nullptr, hash, characters);
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    UniquedStringImpl& atom = image->text().identifierAtoms()[*number];
+    UniquedStringImpl& atom = image.text().identifierAtoms()[number];
     if (atom.length() == characters.length() && atom.existingHash() == hash && atom.is8Bit() && characters.is8Bit() && areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length())) [[likely]]
         return noteNameAskedFor(lately, static_cast<AtomStringImpl*>(&atom), hash, characters);
 #endif
-    AtomStringImpl* found = findAtomSlow(characters, hash);
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    UNUSED_PARAM(image);
+    UNUSED_PARAM(number);
+#endif
+    AtomStringImpl* found = findSlow(characters, hash);
     return found ? noteNameAskedFor(lately, found, hash, characters) : nullptr;
+}
+
+AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned hash)
+{
+    const Image* image = Image::sharedByAllThreads();
+    if (!image || characters.isEmpty()) [[unlikely]]
+        return findAtomSlow(characters, hash);
+    std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
+    return number ? findAtomWithNumber(*image, *number, characters, hash, findAtomSlow) : nullptr;
 }
 
 NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView characters, unsigned hash)

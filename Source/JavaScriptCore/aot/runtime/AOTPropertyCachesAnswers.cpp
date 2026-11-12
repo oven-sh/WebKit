@@ -28,6 +28,7 @@
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "DeletePropertySlot.h"
+#include "ErrorConstructor.h"
 #include "ErrorInstance.h"
 #include "GetterSetter.h"
 #include "JSBoundFunction.h"
@@ -36,6 +37,7 @@
 #include "JSTypedArrayViewPrototypeInternal.h"
 #include "PropertySlot.h"
 #include "PutPropertySlot.h"
+#include "RegExpObject.h"
 #include <wtf/Atomics.h>
 #include <wtf/StringPrintStream.h>
 
@@ -363,8 +365,6 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
     if (amongExtraProperties != ExtraPropertyLookupResult::Absent)
         return classifyExtraPropertyRead(query, object);
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, &object, query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
-    if (walk.didFlatten)
-        return uncacheableOnce(SlotAccess::Read);
     if (mayExistWithoutStorage) {
         bool findsPlainValue = walk.result == ChainWalkResult::Found && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isValidOffset(walk.offset);
         bool findsAccessor = walk.result == ChainWalkResult::Found && walk.attributes & PropertyAttribute::Accessor && isValidOffset(walk.offset) && leavesFieldOut(object.state(), object.layout(), object.orderWord(), field);
@@ -411,13 +411,44 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     }
     State& state = State::of(query.structureBefore->realm());
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
+    if (state.modules->isReadThroughStars(moduleNamespace->module(), *index, moduleNamespace->boundModuleInstance())) [[unlikely]]
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
     if (moduleExport.kind() == ModuleExportKind::Namespace) {
-        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index);
+        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index, moduleNamespace->boundModuleInstance());
         if (!inner)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
     }
-    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
+    if (moduleExport.kind() == ModuleExportKind::Field) {
+        Environment* bound = moduleNamespace->boundModuleInstance();
+        bool hasInstances = state.modules->hasInstances(moduleNamespace->module());
+        if (!bound && hasInstances)
+            return uncacheableOnce(SlotAccess::Read);
+        Modules::ResolvedField resolved = state.modules->resolveField(moduleNamespace->module(), *index, bound);
+        if (resolved.mockWord || traitsOf(resolved.slot.representation()).valueKind == SlotValueKind::DeferredClosure)
+            return PropertyAnswer::uncacheable(SlotAccess::Read);
+        if ((resolved.mayChange && hasInstances) || !state.modules->readField(resolved.instance, resolved.slot))
+            return uncacheableOnce(SlotAccess::Read);
+        if (!hasInstances) {
+            if (query.mode != ChainWalkMode::MayAllocate || state.modules->findMockForReexport(moduleNamespace->module(), moduleExport))
+                return PropertyAnswer::uncacheable(SlotAccess::Read);
+            state.modules->noteCachedForeignInstance(moduleNamespace->module());
+        }
+        return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .isInModuleInstance = true, .foreignInstance = resolved.instance == bound ? nullptr : resolved.instance, .variable = resolved.slot };
+    }
+    if (moduleExport.kind() != ModuleExportKind::Variable)
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    Modules::ResolvedVariable resolved;
+    if (state.modules->isLinkedReexport(moduleNamespace->module(), *index)) {
+        Environment* bound = moduleNamespace->boundModuleInstance();
+        if (!state.modules->isLinkedInstance(moduleNamespace->module(), bound))
+            return uncacheableOnce(SlotAccess::Read);
+        resolved = state.modules->resolveVariable(moduleNamespace->module(), *index, bound);
+        if (resolved.mockWord || resolved.starHolder)
+            return PropertyAnswer::uncacheable(SlotAccess::Read);
+    }
+    auto [source, sourceIndex] = resolved.original.value_or(std::pair { moduleNamespace->module(), *index });
+    if ((!resolved.isFollowed || resolved.original) && state.modules->findMockForReexport(source, state.modules->table().exports(source)[sourceIndex]))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     JSValue held = ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable);
     if (!held)
@@ -660,9 +691,15 @@ bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*
     return Structure::addPropertyTransitionToExistingStructure(before, uid, 0, offsetOfLastName) == after;
 }
 
-static OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset offset, bool leadsToStructureOfRun = false)
+static bool clearsOnlyPristineFlag(Structure* before, Structure* after)
 {
-    if (before->isDictionary() || after->isDictionary() || (after->previousID() != before && !leadsToStructureOfRun) || before->typeInfoBlob() != after->typeInfoBlob())
+    constexpr uint32_t pristineBitInBlob = IsPristine << 16;
+    return (before->typeInfoBlob() ^ after->typeInfoBlob()) == pristineBitInBlob && before->typeInfo().isPristine();
+}
+
+static OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset offset, bool leadsToStructureOfRun = false, bool clearsPristineFlag = false)
+{
+    if (before->isDictionary() || after->isDictionary() || (after->previousID() != before && !leadsToStructureOfRun) || (before->typeInfoBlob() != after->typeInfoBlob() && !clearsPristineFlag))
         return OutOfLineStorageChange::Unsupported;
     unsigned capacityBefore = before->outOfLineCapacity();
     unsigned capacityAfter = after->outOfLineCapacity();
@@ -734,7 +771,7 @@ static bool isFunctionWithOrdinaryPut(VM& vm, JSCell* base, Structure* structure
             return false;
     } else if (base->type() != SlimClosureWithPropertiesType && (base->type() != JSFunctionType || base->classInfo() != JSBoundFunction::info()))
         return false;
-    if (isFunctionOwnName(vm, uid) || uid == vm.propertyNames->displayName.impl() || Closure::isNameThatBuiltinFunctionsRefuse(vm, uid))
+    if (isFunctionOwnName(vm, uid) || Closure::isNameThatBuiltinFunctionsRefuse(vm, uid))
         return false;
     if (structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype())
         return false;
@@ -774,6 +811,8 @@ static bool hasOrdinaryPutForName(VM& vm, JSCell* base, Structure* structure, Un
         return !parseIndex(*uid) && uid != vm.propertyNames->length.impl() && uid != vm.propertyNames->callee.impl() && uid != vm.propertyNames->iteratorSymbol.impl();
     if (isJSArray(base) || structure->classInfoForCells() == ErrorInstance::info())
         return hasOrdinaryDefineForName(vm, base, structure, uid);
+    if (structure->classInfoForCells() == RegExpObject::info())
+        return !parseIndex(*uid) && uid != vm.propertyNames->lastIndex.impl();
     return !structure->typeInfo().overridesPut();
 }
 
@@ -792,6 +831,20 @@ static std::optional<PropertyAnswer> classifyReplacement(const StoreQuery& query
     unsigned attributes = 0;
     PropertyOffset offset = slot.cachedOffset();
     if (structure->get(vm, query.uid, attributes) != offset || (isDefinition ? attributes : attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
+        return std::nullopt;
+    structure->didCachePropertyReplacement(vm, offset);
+    return PropertyAnswer::own(PropertyAnswerKind::Value, accessFor(query.mode), offset);
+}
+
+static std::optional<PropertyAnswer> classifyStackTraceLimit(const StoreQuery& query)
+{
+    VM& vm = query.globalObject->vm();
+    Structure* structure = query.structureBefore;
+    if (query.mode == PutMode::Define || query.uid != vm.propertyNames->stackTraceLimit.impl() || query.base->classInfo() != ErrorConstructor::info())
+        return std::nullopt;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, query.uid, attributes);
+    if (query.base->structure() != structure || !isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(query.uid))
         return std::nullopt;
     structure->didCachePropertyReplacement(vm, offset);
     return PropertyAnswer::own(PropertyAnswerKind::Value, accessFor(query.mode), offset);
@@ -829,7 +882,8 @@ static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
             return PropertyAnswer::uncacheableAfter(access, WTF::move(walk));
         answer.changeableObjects = WTF::move(walk.changeableObjects);
     }
-    OutOfLineStorageChange change = outOfLineStorageChange(before, after, offset, isLastOfRun);
+    answer.clearsPristineFlag = !isLastOfRun && clearsOnlyPristineFlag(before, after);
+    OutOfLineStorageChange change = outOfLineStorageChange(before, after, offset, isLastOfRun, answer.clearsPristineFlag);
     if (change == OutOfLineStorageChange::Stays)
         return answer;
     if (change == OutOfLineStorageChange::Unsupported || (isJSFunctionType(before->typeInfo().type()) && !isFunction) || before->isCompiledStructure())
@@ -837,6 +891,7 @@ static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
     if (change == OutOfLineStorageChange::Doubled && before->outOfLineCapacity() > maxCapacityOfStorageGrownByStub)
         return std::nullopt;
     answer.storageHasIndexingHeader = change == OutOfLineStorageChange::GrowsBesideIndexingHeader;
+    answer.copiesElements = answer.storageHasIndexingHeader && before->canAllocatePropertyStorageInJIT() && !isCopyOnWrite(before->indexingMode()) && before->outOfLineCapacity() <= maxCapacityOfStorageGrownByStub;
     answer.newStorageCapacity = Slot::storageCapacityAfterAdding(Slot::wordIndexFor(offset));
     return answer;
 }
@@ -936,8 +991,6 @@ static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object
     }
     bool hasSamePrototype = object.getPrototypeDirect() == before->storedPrototype();
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, hasSamePrototype ? &object : nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, query.uid);
-    if (walk.didFlatten)
-        return uncacheableOnce(access);
     StoreThroughChain outcome = storeThroughChain(walk);
     if (outcome == StoreThroughChain::CreatesOwnProperty)
         answer.kind = PropertyAnswerKind::FieldCreation;
@@ -1102,13 +1155,18 @@ PropertyAnswer classifyStore(const StoreQuery& query)
         return PropertyAnswer::own(PropertyAnswerKind::LastIndexOfRegExp, access);
     if (access == SlotAccess::Store && hasCacheableArrayLength(vm, query.base, structureBefore, query.uid) && !isCopyOnWrite(structureBefore->indexingMode()))
         return PropertyAnswer::own(PropertyAnswerKind::ArrayLength, access);
-    for (auto* rule : { classifyReplacement, classifyAddition, classifySetterCall }) {
+    for (auto* rule : { classifyReplacement, classifyStackTraceLimit, classifyAddition, classifySetterCall }) {
         if (auto answer = rule(query))
             return WTF::move(*answer);
     }
     if (access == SlotAccess::Store && query.slot.isCustomAccessor() && query.slot.isCacheableCustom())
         return classifyCustomSetter(query);
     return classifyStoreDecidedByChain(query).value_or(PropertyAnswer::uncacheable(access));
+}
+
+static uint32_t typeInSlot(const FieldData& field)
+{
+    return Image::current()->programTables().offsetOfTypeOf(field);
 }
 
 static Slot uncacheableSlot(StructureID id, uint8_t flags)
@@ -1162,7 +1220,7 @@ static Slot slotForField(const PropertyAnswer& answer, Structure* receiverStruct
         flags |= Slot::fieldTakesAnyValue;
     if (kind == Slot::Kind::FieldCreation && canRememberOrder(answer))
         return Slot::createField(id, kind, flags | Slot::remembersOrder, field.slot, answer.orderWords->first, static_cast<uint16_t>(answer.orderWords->second & orderWordOrderMask));
-    return Slot::createField(id, kind, flags, field.slot, answer.access == SlotAccess::Read ? 0 : field.type, *extensionWordOffset);
+    return Slot::createField(id, kind, flags, field.slot, answer.access == SlotAccess::Read ? 0 : typeInSlot(field), *extensionWordOffset);
 }
 
 static Slot slotForFieldOrInherited(const PropertyAnswer& answer, Structure* receiverStructure, uint8_t flags)
@@ -1234,6 +1292,14 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
         return Slot::createInheritedField(id, flags, answer.holder, answer.wordOfInheritedField);
     case PropertyAnswerKind::Variable:
         RELEASE_ASSERT(isRead);
+        if (answer.isInModuleInstance)
+            flags |= Slot::isInModuleInstance;
+        if (JSCell* instance = answer.foreignInstance) {
+            uintptr_t cageBase = receiverStructure->vm().heap.cage().base();
+            if (MarkedBlockCage::baseOf(instance) != cageBase)
+                return Slot::createWithoutPayload(id, Kind::Uncacheable, 0);
+            return Slot::createField(id, Kind::Variable, flags, answer.variable, MarkedBlockCage::encode(cageBase, instance), 0);
+        }
         return Slot::createField(id, Kind::Variable, flags, answer.variable, 0, 0);
     case PropertyAnswerKind::ExtraProperty:
         return slotForExtraProperty(answer, id, receiverStructure, Kind::ExtraProperty, flags);
@@ -1244,6 +1310,10 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     case PropertyAnswerKind::Addition:
         if (answer.storageHasIndexingHeader)
             flags |= Slot::storageHasIndexingHeader;
+        if (answer.copiesElements)
+            flags |= Slot::copiesElements;
+        if (answer.clearsPristineFlag)
+            flags |= Slot::clearsPristineFlag;
         return Slot::tryCreateTransition(id, flags, answer.newStructure->id(), answer.offset, answer.newStorageCapacity).value_or(uncacheableSlot(id, flags));
     case PropertyAnswerKind::Removal:
         return Slot::tryCreateRemoval(id, Kind::Removal, flags, answer.newStructure->id(), answer.offset, 0).value_or(uncacheableSlot(id, flags));

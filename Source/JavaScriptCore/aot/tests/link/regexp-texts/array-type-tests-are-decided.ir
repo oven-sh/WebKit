@@ -1,0 +1,39 @@
+# Array.isArray(value) is lowered to a TypeTest for Array. The answer is known for an object that the rehearsal has made.
+# new RegExp((Array.isArray([7]) ? "array" : "other") + "A"); new RegExp((Array.isArray(Math) ? "array" : "other") + "B"); new RegExp((Array.isArray(function () { }) ? "array" : "other") + "C");
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /arrayA/
+# CHECK-NEXT: text /otherB/
+# CHECK-NEXT: text /otherC/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewArray v0 contents=anything
+    v2 = String string="A"
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1, v2
+    v5 = Builtin builtin=Math
+    v6 = String string="B"
+    v7 = Call v3, -, v5, v6
+    v8 = String string="C"
+    v9 = Call v3, -, v3, v8
+    Return v9
+}
+function f1 name="make" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=Array
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="array"
+    Jump -> next b3(v3)
+  b2():
+    v4 = String string="other"
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = Builtin builtin=RegExp
+    v7 = Add v5, v1
+    v8 = Construct v6, -, v7
+    Return v8
+}

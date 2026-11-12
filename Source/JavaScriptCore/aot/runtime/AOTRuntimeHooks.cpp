@@ -205,6 +205,12 @@ void didCreateRealm(JSGlobalObject* realm)
     installDeferredWatchpoints(realm);
 }
 
+void willRecompileRegExp(VM& vm)
+{
+    for (Instance* instance : vm.aotState().instances)
+        instance->regExpsAreRecompiled = true;
+}
+
 void didChangeMicrotaskQueueing(VM& vm)
 {
     for (Instance* instance : vm.aotState().instances) {

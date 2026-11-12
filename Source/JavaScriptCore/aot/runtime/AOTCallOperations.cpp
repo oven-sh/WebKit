@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinFamilyState.h"
+#include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCall.h"
 #include "AOTCompiledCallee.h"
@@ -46,6 +48,7 @@
 #include "JSCellButterfly.h"
 #include "JSFunction.h"
 #include "LLIntThunks.h"
+#include "ObjectConstructor.h"
 #include "OwedOutOfMemoryError.h"
 #include "ProtoCallFrameInlines.h"
 #include "VMEntryRecord.h"
@@ -282,6 +285,22 @@ private:
     VMState& m_state;
 };
 
+static JSValue createArrayOfHeir(JSGlobalObject* globalObject, VM& vm, JSObject* newTarget, unsigned length)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(globalObject, ArrayWithUndecided, newTarget);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* classObject = dynamicDowncast<JSFunction>(newTarget);
+    Instance* instance = classObject ? Instance::owning(classObject) : nullptr;
+    State* state = instance ? instance->state : nullptr;
+    JSArray* array = state && state->objects ? state->objects->classes.tryCreateArrayOfHeir(vm, newTarget, structure, length) : JSArray::tryCreate(vm, structure, length);
+    if (!array) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    return array;
+}
+
 template<bool isParent>
 static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
 {
@@ -304,8 +323,20 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
     }
-    if constexpr (isParent)
+    if (isParent && callee == JSValue(globalObject->arrayConstructor()) && newTarget.isObject() && newTarget != callee) {
+        if (arguments.size() > 1)
+            RELEASE_AND_RETURN(scope, constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments, newTarget));
+        JSValue given = arguments.isEmpty() ? jsNumber(0) : arguments.at(0);
+        if (given.isUInt32AsAnyInt() && given.asUInt32AsAnyInt() <= maxHoleArrayCapacity)
+            RELEASE_AND_RETURN(scope, createArrayOfHeir(globalObject, vm, asObject(newTarget), given.asUInt32AsAnyInt()));
+    }
+    if constexpr (isParent) {
+        if (callee == globalObject->objectConstructor() && newTarget.isObject() && newTarget != callee) {
+            if (JSObject* object = Instance::of(globalObject)->state->objects->classes.tryCreateInstanceBelowObject(vm, asObject(newTarget)))
+                RELEASE_AND_RETURN(scope, object);
+        }
         RELEASE_AND_RETURN(scope, JSC::construct(globalObject, callee, constructData, arguments, newTarget));
+    }
     RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, callee, constructData, arguments, newTarget));
 }
 
@@ -422,6 +453,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstructWithArray, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSuperConstruct);
+    if (count == 1 && JSValue::decode(parent) == JSValue(globalObject->arrayConstructor()) && JSValue::decode(newTarget).isCell() && !globalObject->isHavingABadTime()) {
+        JSValue given = JSValue::decode(*argumentValues);
+        State* state = instance->state;
+        if (given.isUInt32() && given.asUInt32() <= maxHoleArrayCapacity && state && state->objects) {
+            if (JSArray* array = state->objects->classes.tryCreateRememberedHeir(vm, JSValue::decode(parent).asCell(), JSValue::decode(newTarget).asCell(), given.asUInt32()))
+                OPERATION_RETURN(scope, JSValue::encode(array));
+        }
+    }
     ArgList arguments(const_cast<EncodedJSValue*>(argumentValues), count);
     OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }

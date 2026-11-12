@@ -77,6 +77,15 @@ static StructuralRead readGeneric(JSObject* base, UniquedStringImpl* uid)
     return lookUpGeneric(base, uid);
 }
 
+static ALWAYS_INLINE void adoptSharedStructureIfFilled(Instance* instance, JSObject* object)
+{
+    VM& vm = *instance->vm;
+    if (!vm.aotState().hasObjectsBeingFilled || !object->structure()->isDictionary()) [[likely]]
+        return;
+    if (FirstAdditions* additions = instance->state->firstAdditions.get())
+        additions->adoptSharedStructure(vm, object);
+}
+
 static JSValue readFieldGeneric(Instance* instance, Object* object, UniquedStringImpl* uid)
 {
     VM& vm = *instance->vm;
@@ -111,6 +120,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadRunningNoCode, EncodedJSValue,
     UniquedStringImpl* uid = instance->state->propertyCaches->nameOf(key).uid;
     if (Object* object = compiledObjectOrNull(base))
         return JSValue::encode(readFieldGeneric(instance, object, uid));
+    adoptSharedStructureIfFilled(instance, asObject(base));
     return JSValue::encode(readGeneric(asObject(base), uid).value);
 }
 
@@ -139,14 +149,14 @@ static StructuralRead readEmptyFieldByFiledSlot(const Object& object, UniquedStr
 
 static JSValue readModuleNamespaceExport(Instance* instance, ModuleNamespace* namespaceObject, UniquedStringImpl* uid)
 {
-    if (Instance::owning(namespaceObject) != instance || namespaceObject->isAnsweredByMock())
+    if (Instance::owning(namespaceObject) != instance || namespaceObject->isAnsweredByMock() || namespaceObject->needsModuleInstance())
         return { };
     const Modules& modules = *instance->state->modules;
     ModuleID module = namespaceObject->module();
     if (modules.status(module) != ModuleStatus::Evaluated)
         return { };
     auto index = namespaceObject->find(uid);
-    return index ? modules.readExportIfInitialized(module, *index) : JSValue();
+    return index ? modules.readExportIfInitialized(module, *index, namespaceObject->bindModuleInstance()) : JSValue();
 }
 
 static JSValue getDataProperty(JSObject* holder, PropertyOffset offset, unsigned attributes, PropertySlot& slot)
@@ -364,11 +374,11 @@ static LeafPresence findPresenceWithoutValue(Instance* instance, JSObject* base,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-enum class LeafQuestion : bool { Value, Presence };
+enum class LeafQuestion : uint8_t { Value, NamedValue, Presence };
 
 static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, LeafQuestion question)
 {
-    if (!base->isObject())
+    if (!base->isObject() || (question == LeafQuestion::NamedValue && key->isObject()))
         return { };
     JSObject* object = asObject(base);
     const JSCell*& lastKeyWithoutAtom = instance->state->propertyCaches->tables().lastKeyWithoutAtomLike(key);
@@ -380,6 +390,8 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, L
         lastKeyWithoutAtom = key;
         return hasOnlyOrdinaryLookupsOnChain(object) ? StructuralRead { jsUndefined(), LeafPresence::Absent } : StructuralRead { };
     case KeyNameKind::Index: {
+        if (question == LeafQuestion::NamedValue)
+            return { };
         JSValue value = object->tryGetIndexQuickly(name.index);
         if (!value)
             value = readSparseElement(object, name.index);
@@ -406,6 +418,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetByValGeneric, EncodedJSValue, (
 {
     LeafOperationScope leaf(*instance->vm);
     return JSValue::encode(readByKey(instance, base, key, LeafQuestion::Value).value);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetNamedByValGeneric, EncodedJSValue, (Instance* instance, JSCell* base, JSCell* key))
+{
+    LeafOperationScope leaf(*instance->vm);
+    return JSValue::encode(readByKey(instance, base, key, LeafQuestion::NamedValue).value);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key))

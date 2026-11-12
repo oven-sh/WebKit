@@ -3611,6 +3611,30 @@ public:
         m_formatter.twoByteOpRIPRelative(OP2_MOVSD_VsdWsd, (RegisterID)dst);
     }
 
+    void addsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_ADDSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void subsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_SUBSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void mulsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_MULSD_VsdWsd, (RegisterID)dst);
+    }
+
+    void divsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_DIVSD_VsdWsd, (RegisterID)dst);
+    }
+
     // Flow control:
 
     AssemblerLabel call()
@@ -6765,6 +6789,15 @@ public:
     // X86JumpShortener::startOfRareCode.
     void setStartOfRareCode(uint32_t offset) { m_startOfRareCode = offset; }
 
+    static constexpr uint32_t maxShortReturnLength = X86JumpShortener::longJumpLength(X86JumpKind::Unconditional);
+    void noteShortReturnEndingHere(uint32_t length)
+    {
+        RELEASE_ASSERT(length && length <= maxShortReturnLength && length <= codeSize());
+        uint32_t start = static_cast<uint32_t>(codeSize()) - length;
+        RELEASE_ASSERT(m_shortReturns.isEmpty() || m_shortReturns.last().start < start);
+        m_shortReturns.append(X86ShortReturn { start, length });
+    }
+
     void assignJumpKinds()
     {
         RELEASE_ASSERT(m_recordsJumps);
@@ -6775,7 +6808,8 @@ public:
     {
         RELEASE_ASSERT(m_recordsJumps);
         Vector<X86JumpShift> shifts;
-        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts, m_startOfRareCode);
+        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts, m_startOfRareCode, m_shortReturns.span());
+        m_shortReturns.clear();
         m_formatter.m_buffer.setCodeSize(size);
         m_indexOfLastWatchpoint = INT_MIN;
         m_indexOfTailOfLastWatchpoint = INT_MIN;
@@ -7933,6 +7967,7 @@ private:
     Vector<X86EmittedJump> m_emittedJumps;
     Vector<uint32_t> m_jumpsToNextInstruction;
     Vector<X86LinkedJump> m_linkedJumps;
+    Vector<X86ShortReturn, 4> m_shortReturns;
 };
 
 } // namespace JSC

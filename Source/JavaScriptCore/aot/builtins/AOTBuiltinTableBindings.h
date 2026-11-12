@@ -145,6 +145,7 @@ public:
     static BuiltinClassID classOf(const ClassInfo*);
     static JSObject* findPrototype(JSGlobalObject*, BuiltinClassID);
     static std::span<const BuiltinClassBinding> classesOfHost();
+    static BuiltinClassID findHostClass(JSGlobalObject*, Structure*);
     static void forEachInstanceStructureOfHost(JSGlobalObject*, const ScopedLambda<void(const BuiltinClassBinding&, Structure*)>&);
     static std::optional<uint32_t> cachedValueOffsetOf(BuiltinOverloadID);
     static std::optional<uint32_t> cachedValueOffsetOf(const ClassInfo*, WTF::UniquedStringImpl* getterName);

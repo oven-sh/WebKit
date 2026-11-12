@@ -18,7 +18,15 @@
 #include <wtf/PrintStream.h>
 #include <wtf/text/WTFString.h>
 
-namespace JSC { namespace AOT { namespace Machine {
+namespace JSC { namespace AOT {
+
+class ImageLinkBuffer;
+struct Relocation;
+
+namespace Machine {
+
+Vector<uint8_t> layOutTestProcedure(const Procedure&, ImageLinkBuffer&, std::span<const Relocation>);
+
 
 struct alignas(16) TestInstance {
     std::array<uint64_t, 64> wordsBelow { };

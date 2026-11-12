@@ -8,12 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTControlEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
+#include "AOTThrowEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
 #include "JSCJSValueInlines.h"
@@ -43,7 +45,7 @@ public:
         auto callEqual = [&] {
             return callEqualStub(value, isStrict, boxCell(left), boxCell(right));
         };
-        if (!generator().isInLoop(value.block()))
+        if (!generator().runsRepeatedly(value.block()))
             return callEqual();
         Word32 length = loadField<Word32>(left, m_heaps.JSBigInt_length);
         return selectByBranch<Condition>(equal(length, loadField<Word32>(right, m_heaps.JSBigInt_length)), [&] {
@@ -91,7 +93,7 @@ public:
             m_out.noteForm(Form::Closed, StateOfKnowledge::LiteralComparedByStub);
             return;
         }
-        FormAtPlace named = formByLoopAlone(value.opcode(), inPlace, generator().isInLoop(value.block()));
+        FormAtPlace named = formByLoopAlone(value.opcode(), inPlace, generator().usesLoopForms(value.block()));
         m_out.noteForm(named.form, inPlace, named.place);
     }
 
@@ -177,8 +179,8 @@ public:
         ValueID right = value->rightOperand();
         Boxed x = in<Boxed>(left);
         Boxed y = in<Boxed>(right);
-        return selectByBranch<Condition>(logicalAnd(isInt32(x), isInt32(y)), [&] {
-            return equal(low32(x), low32(y));
+        return selectByBranch<Condition>(isInt32(Boxed(m_out.bitAnd(x.value(), y.value()))), [&] {
+            return equal(int32InBox(x), int32InBox(y));
         }, [&] {
             ConversionEmitter& conversions = emitter<ConversionEmitter>();
             Operand first = conversions.unbox(x, typeOf(left), Representation::OptionalDouble);
@@ -186,6 +188,22 @@ public:
             Condition areEqualNumbers = equal(conversions.withoutMarkers(first).as<Number>(), conversions.withoutMarkers(second).as<Number>());
             Condition areSameNothing = logicalAnd(equal(conversions.bitsOf(first), conversions.bitsOf(second)), conversions.isMarker(first));
             return logicalOr(areEqualNumbers, areSameNothing);
+        });
+    }
+
+    Condition strictEqualityOnOptionalDoubles(const ValueContext& value, Number x, Number y)
+    {
+        auto holdSameMarker = [&] {
+            ConversionEmitter& conversions = emitter<ConversionEmitter>();
+            Operand left = get(value->leftOperand());
+            return logicalAnd(equal(conversions.bitsOf(left), conversions.bitsOf(get(value->rightOperand()))), conversions.isMarker(left));
+        };
+        return selectByBranch<Condition>(equalOrUnordered(x, y), [&] {
+            if (!generator().paysForCodeInLine(value.block()))
+                return logicalOr(equal(x, y), holdSameMarker());
+            return selectByBranch<Condition>(equal(x, y), [&] { return boolean(true); }, holdSameMarker);
+        }, [&] {
+            return boolean(false);
         });
     }
 
@@ -200,12 +218,30 @@ public:
             Integer leftBits = conversions.bitsOf(get(left));
             return equal(leftBits, conversions.bitsOf(get(right)));
         }
+        ConversionEmitter& integers = emitter<ConversionEmitter>();
+        std::optional<ConversionEmitter::ComparedInteger> leftInteger = isStrict ? integers.findComparedInteger(get(left)) : std::nullopt;
+        std::optional<ConversionEmitter::ComparedInteger> rightInteger = leftInteger ? integers.findComparedInteger(get(right)) : std::nullopt;
+        if (rightInteger && (leftInteger->mayBeMarker || rightInteger->mayBeMarker)) {
+            Condition areSame = equal(leftInteger->value, rightInteger->value);
+            if (leftInteger->mayBeMarker && rightInteger->mayBeMarker && (leftInteger->markerIsNaN || rightInteger->markerIsNaN))
+                areSame = logicalAnd(areSame, logicalNot(integers.isMarker(Operand(Representation::OptionalInt64, leftInteger->value.value()))));
+            if (emittersCheckProofs()) {
+                Condition areEqual = equal(numberOrNaN(value, left), numberOrNaN(value, right));
+                if (get(left).is<OptionalNumber>() && get(right).is<OptionalNumber>())
+                    areEqual = logicalOr(areEqual, logicalAnd(equal(integers.bitsOf(get(left)), integers.bitsOf(get(right))), integers.isMarker(get(left))));
+                emitter<ThrowEmitter>().requireOrCrash(value, equal(areSame, areEqual), std::nullopt, ProofSource::OtherOperation);
+            }
+            return areSame;
+        }
         uint16_t leftPrimitives = typeOf(left).primitives;
         uint16_t rightPrimitives = typeOf(right).primitives;
         bool mayBothBeNumbers = (leftPrimitives & Primitive::Number) && (rightPrimitives & Primitive::Number);
         bool mayBothBeNullish = (leftPrimitives & Primitive::UndefinedOrNull) && (rightPrimitives & Primitive::UndefinedOrNull);
         bool mayBeSameNullish = leftPrimitives & rightPrimitives & Primitive::UndefinedOrNull;
         bool mayBeEqualNullish = isStrict ? mayBeSameNullish : mayBothBeNullish;
+
+        if (isStrict && mayBothBeNumbers && mayBeEqualNullish && get(left).representation == Representation::OptionalDouble && get(right).representation == Representation::OptionalDouble)
+            return strictEqualityOnOptionalDoubles(value, numberOrNaN(value, left), numberOrNaN(value, right));
 
         Condition areEqualNumbers;
         if (mayBothBeNumbers)
@@ -425,7 +461,13 @@ public:
             });
             return;
         }
-        if (asksForInt32sFirst(value) && !bitsDecide(kindsComparedBy(value)) && !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
+        if (bitsDecide(kindsComparedBy(value))) {
+            m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
+            defineTest(value, equal(x, y));
+            return;
+        }
+        bool isOpen = generator().takesOpenForm(value, StateOfKnowledge::Generic) || generator().isInRecursion(value.block());
+        if (asksForInt32sFirst(value) && !isOpen) {
             m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
             defineTestByBranching(value, [&](BranchTargets targets) {
                 LBasicBlock areInt32s = newBlock();
@@ -441,7 +483,7 @@ public:
         }
         ValueID expectedObject = value->expectsObjectOnLeft() ? value->leftOperand() : value->expectsObjectOnRight() ? value->rightOperand() : ValueID();
         bool asksKindInLine = expectedObject && !mayBeEmpty(expectedObject) && generator().code().at(value.block()).frequency != BlockFrequency::Rare;
-        if (asksKindInLine && !bitsDecide(kindsComparedBy(value)) && generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
+        if (asksKindInLine && isOpen) {
             Boxed tested = expectedObject == value->leftOperand() ? x : y;
             defineTestByBranching(value, [&](BranchTargets targets) {
                 LBasicBlock isCellOfSomeKind = newBlock();
@@ -458,7 +500,7 @@ public:
             });
             return;
         }
-        if (!bitsDecide(kindsComparedBy(value)) && !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
+        if (!isOpen) {
             if (value.isBranchCondition()) {
                 LValue operands[] = { x.value(), y.value() };
                 emitter<RuntimeCallEmitter>().callStubAndBranch(value, strictEqualInFlags(), operands, { }, value.branchTargets());
@@ -542,8 +584,13 @@ private:
         m_out.noteForm(Form::Closed, stateOf(value->form()));
         Boxed x = in<Boxed>(value->leftOperand());
         Boxed y = in<Boxed>(value->rightOperand());
-        if (!mayBeEmpty(value->leftOperand()) && !mayBeEmpty(value->rightOperand()))
-            return Condition(m_out.castToInt32(callStub(value, equalOfNullableStrings(isStrict), { x.value(), y.value() }).first));
+        if (!mayBeEmpty(value->leftOperand()) && !mayBeEmpty(value->rightOperand())) {
+            if (typeOf(value->leftOperand()).isAnyString())
+                return Condition(m_out.castToInt32(callStub(value, stringEqualsNullable(), { x.value(), y.value() }).first));
+            if (typeOf(value->rightOperand()).isAnyString())
+                return Condition(m_out.castToInt32(callStub(value, stringEqualsNullable(), { y.value(), x.value() }).first));
+            return Condition(m_out.castToInt32(callStub(value, nullableStringsAreEqual(isStrict), { x.value(), y.value() }).first));
+        }
         return callEqualStub(value, isStrict, x, y);
     }
 
@@ -586,12 +633,6 @@ private:
         auto mayBeComparedByIdentity = [&, typesAreExhaustive = typesAreExhaustive](const Type& type) {
             return !typesAreExhaustive || type.hasObjects() || type.primitives & Primitive::AnySymbol;
         };
-        if (bitsDecide(kinds)) {
-            m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
-            branch(equal(x, y), targets);
-            return;
-        }
-
         bool areInt32sDecided = mayBothBeNumbers && asksForInt32sFirst(value);
         if (areInt32sDecided) {
             LBasicBlock areInt32s = newBlock();
@@ -602,7 +643,7 @@ private:
             m_out.appendTo(areNotBothInt32s);
         }
 
-        bool comparesStringsHere = generator().takesFormOfLoops(value, StateOfKnowledge::Generic) && mayBothBeStrings;
+        bool comparesStringsHere = (generator().takesFormOfLoops(value, StateOfKnowledge::Generic) || generator().isInRecursion(value.block())) && mayBothBeStrings;
 
         LBasicBlock hasOtherBits = newBlock();
         LBasicBlock callsStub = newBlock();
@@ -624,10 +665,10 @@ private:
         m_out.appendTo(hasOtherBits);
         LBasicBlock areCells = mayBeEqualByContents ? newBlock() : nullptr;
         LBasicBlock areNotBothCells = mayBothBeNumbers && !areInt32sDecided ? newBlock() : nullptr;
-        auto edgeBesideCells = [&] {
+        auto nonCellEdge = [&] {
             return areNotBothCells ? normalEdge(areNotBothCells) : areInt32sDecided ? edgeToStub() : targets.notTaken;
         };
-        m_out.branch(areBothCells(x, y).value(), areCells ? normalEdge(areCells) : targets.notTaken, edgeBesideCells());
+        m_out.branch(areBothCells(x, y).value(), areCells ? normalEdge(areCells) : targets.notTaken, nonCellEdge());
         if (areNotBothCells) {
             m_out.appendTo(areNotBothCells);
             m_out.branch(isInt32(Boxed(m_out.bitAnd(x.value(), y.value()))).value(), targets.notTaken, edgeToStub());
@@ -715,6 +756,10 @@ void OperatorEmitter::generateNumberOrNaN(const ValueContext& value)
 
 void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
 {
+    if (tryGenerateRemainderTest(value))
+        return;
+    if (emitter<ControlEmitter>().tryGenerateLiteralChain(value))
+        return;
     EqualityEmitter equality(generator());
     ValueID left = value->leftOperand();
     ValueID right = value->rightOperand();
@@ -728,6 +773,27 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
             equality.noteFormAgainstWrittenText(value, operationAt(written).string());
             defineTestByBranching(value, [&](BranchTargets targets) {
                 emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), operationAt(written).string(), targets, std::nullopt, everyCellIsString);
+            });
+            return;
+        }
+        if (bool isRightBigInt = isBigInt(right); isRightBigInt != isBigInt(left) && expectsBigInts(value.block(), left)) {
+            m_out.noteForm(Form::Open, StateOfKnowledge::BigInts);
+            Boxed known = boxedOperand(isRightBigInt ? right : left);
+            Boxed other = in<Boxed>(isRightBigInt ? left : right);
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                LBasicBlock isCellCase = newBlock();
+                LBasicBlock areBigInts = newBlock();
+                LBasicBlock isZeroCase = newBlock();
+                LBasicBlock otherCase = newBlock();
+                branch(isCell(other), { normalEdge(isCellCase), rareEdge(otherCase) });
+                m_out.appendTo(isCellCase);
+                branch(equal(loadByte(unboxCell(other), m_heaps.JSCell_typeInfoType), static_cast<int32_t>(HeapBigIntType)), { normalEdge(areBigInts), rareEdge(otherCase) });
+                m_out.appendTo(areBigInts);
+                branch(isZero(loadField<Word32>(unboxCell(known), m_heaps.JSBigInt_length)), { normalEdge(isZeroCase), rareEdge(otherCase) });
+                m_out.appendTo(isZeroCase);
+                branch(isZero(loadField<Word32>(unboxCell(other), m_heaps.JSBigInt_length)), targets);
+                m_out.appendTo(otherCase);
+                branch(equality.callEqualStub(value, isStrict, isRightBigInt ? other : known, isRightBigInt ? known : other), targets);
             });
             return;
         }

@@ -12,6 +12,7 @@
 #include "AOTBodyVerifier.h"
 #include "AOTBuildContext.h"
 #include "AOTCurrentWork.h"
+#include "AOTFactFaults.h"
 #include "AOTFacts.h"
 #include "AOTHeaps.h"
 #include "AOTIRProgram.h"
@@ -67,10 +68,10 @@ static bool computeFactsOfPreparedProgram(PreparedProgram& prepared, BuildContex
     return !build.diagnostics().hasErrors();
 }
 
-static BitVector findDictionariesOfPreparedProgram(const Typed::Program& program, const Typed::Facts& facts)
+static Typed::BitVector findDictionariesOfPreparedProgram(const Typed::Program& program, const Typed::Facts& facts)
 {
     unsigned numberOfLayouts = program.layouts.size();
-    BitVector layoutsOfDictionaries(numberOfLayouts);
+    Typed::BitVector layoutsOfDictionaries(numberOfLayouts);
     for (unsigned index = 0; index < numberOfLayouts; ++index)
         layoutsOfDictionaries.quickSet(index, facts.has(Typed::LayoutID(index), Typed::LayoutFact::ObjectsAreDictionaries));
     return layoutsOfDictionaries;
@@ -103,11 +104,13 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     Typed::Program& program = *prepared.program;
     const Typed::Facts& facts = *prepared.facts;
 
-    BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
+    Typed::BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
     Typed::noteLayoutsOfDictionaries(program, layoutsOfDictionaries);
 
     program.types.keepAddressesOfTypes();
     prepared.plan = Typed::planProgram(program, facts, build);
+    if (prepared.plan && build.options().misstatedFact) [[unlikely]]
+        Typed::misstatePlan(program, facts, *prepared.plan, build);
     program.types.freeze();
     times.didFinish("plan"_s);
     if (!prepared.plan || build.diagnostics().hasErrors())

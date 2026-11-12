@@ -194,7 +194,7 @@ const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: readonly So
 const itemsProtocols = b.runs("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"));
 const builtinIterable = b.union(
   b.string,
-  ...["Set", "Map", "SetIterator", "MapIterator", "StringIterator"].map(name => b.instance(name).pristine("Names")),
+  ...["Set", "Map", "ArrayIterator", "SetIterator", "MapIterator", "StringIterator"].map(name => b.instance(name).pristine("Names")),
 );
 
 const listAsItsClassMakesIt = b.instance("Array").pristine("Storage", "Names");
@@ -362,6 +362,8 @@ export default b.declarations(
   b.privateAlias("Array.prototype.forEach", "Array.prototype.map"),
 
   foldMethod("reduce"),
+  b.extend("Array.prototype.reduce", { callsFunctions: [b.functionIn("ArrayPrototype", "chainToValue")] }),
+  b.extend("Array.prototype.filter", { callsFunctions: [b.functionIn("ArrayPrototype", "chainToList")] }),
   foldMethod("reduceRight"),
 
   sortMethod(

@@ -58,6 +58,7 @@ inline JSValue getAndCache(const NamedAccess& access, JSValue base) { return get
 void fileReadWithoutCode(Instance*, JSObject* base, const Identifier&);
 JSValue getUnderKeyForReceiver(Instance*, JSObject* base, const Identifier&, JSValue receiver);
 void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);
+bool tryStoreBySlot(Instance&, JSObject* target, UniquedStringImpl*, JSValue);
 bool tryReplaceGlobalProperty(Instance*, VM&, JSValue base, UniquedStringImpl*, JSValue);
 bool hasPropertyAndCache(Instance*, JSObject*, const CachedName&);
 bool instanceOfAndCache(Instance*, JSValue, JSValue constructor);

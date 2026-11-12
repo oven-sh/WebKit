@@ -2,6 +2,7 @@
 # The function gets out, so nothing is proven of what the list holds: what an element is and that its slots hold numbers are guesses; that they are filled the mark of the cell answers, which the test of the shape asks.
 # Where one of their tests fails nobody has seen anything of the turn, so the other copy of the loop does the whole turn, from what the head held. No closed arm rejoins the typed copy:
 # the sum comes round as a raw number, the element is read and tested once, and the length and the storage of the list stand in front of the loop.
+# The numbers are only expected: written ones would have raw slots, whose checks run before the iteration does anything.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # The other copy opens guesses of its own and is no rare code: one element of another shape sends all the turns that are left there. It is printed first; its entry stands behind it.
@@ -36,7 +37,7 @@
 # SHELL-NEXT: 7
 # SHELL-NEXT: exited with 0
 
-layout L0 name="Item" module=m0 fields=[{key="price" declared={type=number} flags=[IsRequired]}, {key="count" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L0 name="Item" module=m0 fields=[{key="price" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="count" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
