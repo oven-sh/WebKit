@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
+#include "AOTDominatorJumps.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
@@ -588,8 +589,14 @@ void CodeVerifier::computeDominators()
     Vector<uint32_t> epochOfLastClimb;
     epochOfLastClimb.fill(0, m_numbers.size());
     uint32_t epoch = 0;
+    DominatorJumps jumps(m_numbers.size(), root());
+    auto above = [&](uint32_t node, uint32_t limit) {
+        uint32_t jump = jumps.from(node);
+        return m_numbers[jump] >= m_numbers[limit] ? jump : m_dominators[node];
+    };
 
-    for (bool hasChanged = true; hasChanged;) {
+    bool isFirstRound = true;
+    for (bool hasChanged = true; hasChanged; isFirstRound = false) {
         hasChanged = false;
         for (uint32_t node : m_nodesInOrder.span().subspan(1)) {
             ++epoch;
@@ -604,12 +611,12 @@ void CodeVerifier::computeDominators()
                 while (predecessor != dominator) {
                     if (m_numbers[predecessor] < m_numbers[dominator]) {
                         epochOfLastClimb[dominator] = epoch;
-                        dominator = m_dominators[dominator];
+                        dominator = above(dominator, predecessor);
                         continue;
                     }
                     if (std::exchange(epochOfLastClimb[predecessor], epoch) == epoch)
                         return;
-                    predecessor = m_dominators[predecessor];
+                    predecessor = above(predecessor, dominator);
                 }
             };
             BlockID block(node / 2);
@@ -624,6 +631,10 @@ void CodeVerifier::computeDominators()
             if (m_dominators[node] != dominator) {
                 m_dominators[node] = dominator;
                 hasChanged = true;
+                if (isFirstRound)
+                    jumps.set(node, dominator);
+                else
+                    jumps.stop();
             }
         }
     }

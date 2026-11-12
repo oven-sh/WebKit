@@ -793,6 +793,7 @@ Walker::Walker(const WalkInputs& inputs, TypeArena& types, Arrivals& arrivals, K
     , m_workerHasBegunUnit(kept.workerHasBegunUnit)
     , m_newestWalkerOfWorker(kept.newestWalker)
     , m_pendingBlocks(kept.roomOfPendingBlocks.take())
+    , m_placesOfPendingBlocks(kept.roomOfPlacesOfPendingBlocks.take())
     , m_bindings(kept.roomOfBindings.take())
     , m_unspecifiedConstants(kept.roomOfUnspecifiedConstants.take())
     , m_blocksWithFieldsOfScopesInOrder(kept.roomOfBlocksWithFieldsOfScopesInOrder.take())
@@ -3578,6 +3579,15 @@ Walker::ClosedArm::~ClosedArm()
     m_walker.m_opensGuesses = m_openedGuesses;
 }
 
+void Walker::unbindLoggedSince(size_t firstBinding, ValueID first, ValueID end)
+{
+    for (size_t logged = firstBinding, size = m_bindings.size(); logged < size; ++logged) {
+        Binding binding = m_bindings[logged];
+        if (binding.frame == currentFrameIndex() && binding.input >= first && binding.input < end && m_frames.last().references[binding.input.index()])
+            bind(binding.input, Reference());
+    }
+}
+
 TypeID Walker::joinTypes(TypeID first, TypeID second)
 {
     return first == second ? first : joinOf(m_types, facts().families(), first, second);
@@ -5386,22 +5396,41 @@ static ALWAYS_INLINE void takeStateOfBlockThatIsBegun(WalkState& state, WalkStat
 
 Walker::PendingBlock* Walker::findPendingBlock(BlockID block)
 {
+    uint32_t place = block.index() < m_placesOfPendingBlocks.size() ? m_placesOfPendingBlocks[block.index()] : neverPending;
+    if (place < m_pendingBlocks.size() && m_pendingBlocks[place].block == block) [[likely]]
+        return &m_pendingBlocks[place];
+    return place == neverPending ? nullptr : findMovedPendingBlock(block);
+}
+
+Walker::PendingBlock* Walker::findMovedPendingBlock(BlockID block)
+{
     PendingBlock* first = m_pendingBlocks.begin();
     for (PendingBlock* pending = m_pendingBlocks.end(); pending != first;) {
-        if ((--pending)->block == block)
+        if ((--pending)->block == block) {
+            m_placesOfPendingBlocks[block.index()] = pending - first;
             return pending;
+        }
     }
     return nullptr;
+}
+
+Walker::PendingBlock& Walker::appendPendingBlock(BlockID block)
+{
+    if (size_t size = m_placesOfPendingBlocks.size(); block.index() >= size)
+        m_placesOfPendingBlocks.insertFill(size, neverPending, block.index() + 1 - size);
+    m_placesOfPendingBlocks[block.index()] = m_pendingBlocks.size();
+    moveWhereSanitizerWatches(m_pendingBlocks);
+    m_pendingBlocks.constructAndAppend();
+    PendingBlock& pending = m_pendingBlocks.last();
+    pending.block = block;
+    return pending;
 }
 
 Walker::PendingBlock& Walker::pendingBlock(BlockID block)
 {
     if (PendingBlock* found = findPendingBlock(block))
         return *found;
-    moveWhereSanitizerWatches(m_pendingBlocks);
-    m_pendingBlocks.constructAndAppend();
-    PendingBlock& pending = m_pendingBlocks.last();
-    pending.block = block;
+    PendingBlock& pending = appendPendingBlock(block);
     pending.parametersAreSet = true;
     return pending;
 }
@@ -5412,6 +5441,8 @@ void Walker::releaseEndedPendingBlocks()
     m_pendingBlocks.removeAllMatching([&](const PendingBlock& pending) {
         return m_code.at(pending.block).hasEnded();
     });
+    for (size_t place = 0; place < m_pendingBlocks.size(); ++place)
+        m_placesOfPendingBlocks[m_pendingBlocks[place].block.index()] = place;
 }
 
 void Walker::settleParametersOf(BlockID block)
@@ -5440,11 +5471,7 @@ BlockID Walker::addBlock(BlockFrequency frequency)
         m_code.setLoopMarks(block, true, false);
     else if (m_coldCopyDepth && isInLoop())
         m_code.markBlockInRareLoop(block);
-    moveWhereSanitizerWatches(m_pendingBlocks);
-    m_pendingBlocks.constructAndAppend();
-    PendingBlock& pending = m_pendingBlocks.last();
-    pending.block = block;
-    pending.isMadeByAddBlock = true;
+    appendPendingBlock(block).isMadeByAddBlock = true;
     return block;
 }
 

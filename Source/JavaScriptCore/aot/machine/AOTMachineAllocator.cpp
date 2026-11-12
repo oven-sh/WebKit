@@ -601,6 +601,8 @@ void Allocator::run()
     findDeadSlots();
     settleFramedPart();
     findGapsAheadOfLandingPads();
+    if (!m_order.rareRegions().empty())
+        findGapsAheadOfRarePhis();
 }
 
 bool Allocator::hasImplicitReader(const SpillFacts& facts) const

@@ -424,6 +424,7 @@ public:
     void prepareSuspension(PatchOperation*);
     void findSpillsHeldAtSuspensions();
     void findGapsAheadOfLandingPads();
+    void findGapsAheadOfRarePhis();
 
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
     unsigned numberOfReadsThatWordWouldReload(const Operation*, Position end) const;

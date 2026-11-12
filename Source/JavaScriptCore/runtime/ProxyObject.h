@@ -178,7 +178,7 @@ private:
             return m_value >> 1;
         }
 
-        bool foundNothingWhileFieldOfCompiledHandlerWasEmpty() const
+        bool missedWithEmptyHandlerField() const
         {
             ASSERT(state() == State::HasCachedOffset);
             return m_value & 1;

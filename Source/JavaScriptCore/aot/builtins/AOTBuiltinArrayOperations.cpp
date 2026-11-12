@@ -131,7 +131,8 @@ static NEVER_INLINE CharacterType* appendRope(CharacterType* destination, const 
     if (JSString* second = rope->isNonSubstringRope() && !thirdPartOf(rope) ? secondPartOf(rope) : nullptr) {
         const StringImpl* firstImpl = firstPartOf(rope)->tryGetValueImpl();
         const StringImpl* secondImpl = second->tryGetValueImpl();
-        if (firstImpl && secondImpl)
+        constexpr bool takes16Bit = !std::is_same_v<CharacterType, Latin1Character>;
+        if (firstImpl && secondImpl && (takes16Bit || (firstImpl->is8Bit() && secondImpl->is8Bit())))
             return appendFlatString(appendFlatString(destination, *firstImpl), *secondImpl);
     }
     unsigned length = rope->length();
@@ -353,7 +354,7 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
         if (JSString* second = rope->isNonSubstringRope() && !thirdPartOf(rope) ? secondPartOf(rope) : nullptr) {
             const StringImpl* firstImpl = firstPartOf(rope)->tryGetValueImpl();
             const StringImpl* secondImpl = second->tryGetValueImpl();
-            if (firstImpl && secondImpl) {
+            if (firstImpl && secondImpl && firstImpl->is8Bit() && secondImpl->is8Bit()) {
                 hasRopePairs = true;
                 return append(firstImpl->span8()) && append(secondImpl->span8());
             }

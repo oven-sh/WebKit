@@ -2736,10 +2736,10 @@ private:
             terminator.forEachOperand([&](ValueID operand, uint32_t) {
                 mentionsParameter |= isParameter(operand);
             });
-            for (BodyTarget target : terminator.targets()) {
+            block.forEachOutgoingEdge([&](BodyTarget target, bool) {
                 for (ValueID argument : target.arguments())
                     mentionsParameter |= isParameter(argument);
-            }
+            });
             if (mentionsParameter)
                 return false;
         }

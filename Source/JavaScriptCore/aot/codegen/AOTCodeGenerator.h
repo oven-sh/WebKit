@@ -768,7 +768,10 @@ private:
     std::optional<double> maxIterationsForCarriedSums(BlockID head);
     void takeIntegersOfCarriedSums(const Block&);
     static bool isCarriedNarrow(Representation representation, LValue lowered) { return representation == Representation::OptionalInt64 && lowered && lowered->opcode() == Machine::Phi && lowered->type() == Machine::Int32; }
-    bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const;
+    bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft);
+    size_t placeAmongJumpArguments(BlockID home, ValueID parameter);
+    HashMap<ValueID, uint32_t> m_placesAmongJumpArguments;
+    BitVector m_blocksOfJumpArguments;
     ValueID sumBoxedBySlow(const Operation& box) const;
     void followNumbersOutOfBytes();
     bool letsAnyNaNInto(ValueID parameter);

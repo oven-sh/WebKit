@@ -189,7 +189,7 @@ NEVER_INLINE JSObject* ProxyObject::getTrapOfCompiledHandler(JSGlobalObject* glo
             const AOT::FieldData& field = compiledHandler->layout().fields()[offset.fieldOfCompiledHandler()];
             if (compiledHandler->isInSlot(field))
                 RELEASE_AND_RETURN(scope, callableTrap(globalObject, compiledHandler->read(field), callData, ident));
-            if (offset.foundNothingWhileFieldOfCompiledHandlerWasEmpty())
+            if (offset.missedWithEmptyHandlerField())
                 return nullptr;
             break;
         }
@@ -267,7 +267,7 @@ bool ProxyObject::isCachedTrapFieldEmpty(JSObject* handler, HandlerTrap trap)
     if (handler->type() != CompiledObjectType || !isHandlerTrapsCacheValid(handler))
         return false;
     ProxyHandlerOffset cached = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)];
-    if (cached.state() != ProxyHandlerOffset::State::HasCachedOffset || !cached.foundNothingWhileFieldOfCompiledHandlerWasEmpty())
+    if (cached.state() != ProxyHandlerOffset::State::HasCachedOffset || !cached.missedWithEmptyHandlerField())
         return false;
     AOT::Object* compiledHandler = uncheckedDowncast<AOT::Object>(handler);
     return !compiledHandler->hasFlagsInOrderWord() && !compiledHandler->isInSlot(compiledHandler->layout().fields()[cached.fieldOfCompiledHandler()]);

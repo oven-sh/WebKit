@@ -259,6 +259,7 @@ struct RowsOfProgramFacts {
     BuiltinName href;
     BitVector areEvents;
     BitVector writeUnderKeysOfCalls;
+    BitVector readUnderKeysOfCalls;
     Vector<BuiltinSpelledInProgramFacts> builtinsKeptOnlyWhenNamed;
     Vector<ModuleSpelledInProgramFacts> modulesOfLibrary;
     BitVector filterOfWords;
@@ -276,6 +277,11 @@ const BuiltinCondition* RowsOfProgramFacts::lightFormOf(const BuiltinTable& buil
     return *std::ranges::find_if(conditionsOnLightForms, [&](const BuiltinCondition* condition) {
         return builtins.canonicalID(condition->isAskedForOtherNames) == canonical;
     });
+}
+
+static bool readsUnderKeyOfCallInProgramFacts(const BuiltinPropertyAction& action)
+{
+    return action.kind == BuiltinPropertyActionKind::ReadsByKey && action.key.kind == BuiltinKeyKind::Operand;
 }
 
 static bool writesUnderKeyOfCallInProgramFacts(const BuiltinPropertyAction& action)
@@ -316,6 +322,7 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins, const std::
     , startWorkers(builtins.builtinCount())
     , areEvents(builtins.builtinCount())
     , writeUnderKeysOfCalls(builtins.builtinCount())
+    , readUnderKeysOfCalls(builtins.builtinCount())
     , conditionsOnLightForms(builtins.conditionsOnLightForms())
     , haveLightForms(builtins.builtinCount())
 {
@@ -348,6 +355,8 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins, const std::
                 readLocalesWithoutDescription.quickSet(row.index());
             if (std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfCallInProgramFacts) || std::ranges::contains(overload.flow.propertyActions, BuiltinPropertyActionKind::ChangesPrototype, &BuiltinPropertyAction::kind))
                 writeUnderKeysOfCalls.quickSet(row.index());
+            if (std::ranges::any_of(overload.flow.propertyActions, readsUnderKeyOfCallInProgramFacts))
+                readUnderKeysOfCalls.quickSet(row.index());
             if (const BuiltinParameter* receiver = overload.receiver.get())
                 noteParameter(*receiver);
             for (const BuiltinParameter& parameter : overload.parameters)
@@ -4511,6 +4520,7 @@ public:
     bool climberMayBeHandedWhatNobodyKnows() const { return m_climberMayBeHandedWhatNobodyKnows; }
     bool programMayReachPrototypes() const;
     bool writersMayRunUnseen() const;
+    bool readersMayBeHandedAnyKey() const;
     bool isOutOfSight(BuiltinID canonical) const { return m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
     bool isInReach(BuiltinID canonical) const { return !(m_uses[canonical.index()] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty(); }
     bool machineCodeMayBeLoaded() const;
@@ -5005,6 +5015,19 @@ bool BuilderOfProgramFacts::writersMayRunUnseen() const
 {
     for (size_t index : m_rows.writeUnderKeysOfCalls) {
         if (anyRowMayApply(BuiltinID(static_cast<uint32_t>(index))))
+            return true;
+    }
+    return false;
+}
+
+bool BuilderOfProgramFacts::readersMayBeHandedAnyKey() const
+{
+    const BitVector& handedOn = m_inputs.linked.lookups.builtinsLetGo;
+    for (size_t index : m_rows.readUnderKeysOfCalls) {
+        BuiltinID reader(static_cast<uint32_t>(index));
+        BuiltinID holder = m_builtins.at(reader).holder;
+        bool comesWithNamespace = holder && m_builtins.at(holder).kind == BuiltinKind::Namespace && handedOn.get(m_builtins.canonicalID(holder).index()) && anyRowMayApply(reader);
+        if (comesWithNamespace || handedOn.get(index))
             return true;
     }
     return false;
@@ -8024,6 +8047,11 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     if (m_builder->climberMayBeHandedWhatNobodyKnows()) {
         if (!std::exchange(m_linked->lookups.climbsFromUnseenObjects, true))
             m_builder->settle();
+    }
+    if (!m_linked->lookups.readsUnderKeysNobodyKnows && m_builder->readersMayBeHandedAnyKey()) {
+        m_linked->lookups.readsUnderKeysNobodyKnows = true;
+        m_builder->noteReadUnderKeyNobodyKnows();
+        m_builder->settle();
     }
     m_builder->takeBuiltinsThatCameIntoReach(cameIntoReach);
     m_builder->takeBuiltinsThatCameOutOfSight(cameOutOfSight);

@@ -1213,6 +1213,8 @@ public:
     bool takeQuestionOfTruthLeftToItsOwnTests(ValueID question) { return std::exchange(m_questionOfTruthLeftToItsOwnTests, ValueID()) == question && m_frameOfThatQuestionOfTruth == m_frames.size(); }
     Reference referenceBoundTo(ValueID input) const { return referenceBoundIn(m_frames.last(), input); }
     Reference nameLastBoundTo(ValueID input) const { return m_frames.last().lastNameOf(input); }
+    size_t numberOfLoggedBindings() const { return m_bindings.size(); }
+    void unbindLoggedSince(size_t firstBinding, ValueID first, ValueID end);
     ALWAYS_INLINE void bind(ValueID input, Reference reference)
     {
         Frame& frame = m_frames.last();
@@ -1514,8 +1516,24 @@ public:
             Origin origin;
         };
         Vector<PendingStore, 16> pendingStores { };
-        Vector<ValueID, 16> arithmeticReads { };
-        uint32_t endOfArithmeticReads { 0 };
+        struct ElementRead {
+            ValueID value;
+            uint32_t usesLeft { 0 };
+        };
+        Vector<ElementRead, 16> elementReads { };
+        uint32_t endOfElementReads { 0 };
+        struct ElementAccess {
+            static constexpr uint32_t none = UINT32_MAX;
+            uint32_t place { 0 };
+            int64_t element { 0 };
+            bool isRead { false };
+            uint32_t next { none };
+            int64_t greatest { 0 };
+        };
+        Vector<ElementAccess, 16> elementAccesses { };
+        uint32_t endOfElementAccesses { 0 };
+        HashSet<ValueID> numericOperands { };
+        uint32_t endOfNumericOperands { 0 };
     };
     ReadArm*& readArm() { return m_readArm; }
     struct InBoundsPath {
@@ -4865,6 +4883,8 @@ private:
 
     PendingBlock* findPendingBlock(BlockID);
     PendingBlock& pendingBlock(BlockID);
+    PendingBlock& appendPendingBlock(BlockID);
+    NEVER_INLINE PendingBlock* findMovedPendingBlock(BlockID);
     void settleParametersOf(BlockID);
     void arriveAt(BlockID, WalkState&&);
 
@@ -5132,6 +5152,8 @@ private:
     ListPutBackByLog<OpenEdge> m_openEdges;
     uint32_t m_firstFreeOpenEdge { noOpenEdge };
     Vector<PendingBlock>& m_pendingBlocks;
+    static constexpr uint32_t neverPending = UINT32_MAX;
+    Vector<uint32_t>& m_placesOfPendingBlocks;
     Vector<Binding>& m_bindings;
     Vector<Binding, 2> m_valuesStoodInFor;
     uint32_t m_numberOfClosedArms { 0 };
@@ -5359,6 +5381,7 @@ struct KeptBetweenUnits {
     size_t roomOf(const Walker& walker) const { return static_cast<const void*>(&walker) == roomsOfWalkers[1].data(); }
     alignas(Walker) std::array<std::array<std::byte, sizeof(Walker)>, 2> roomsOfWalkers;
     RoomOnly<std::remove_reference_t<decltype(Walker::m_pendingBlocks)>> roomOfPendingBlocks;
+    RoomOnly<std::remove_reference_t<decltype(Walker::m_placesOfPendingBlocks)>> roomOfPlacesOfPendingBlocks;
     RoomOnly<std::remove_reference_t<decltype(Walker::m_bindings)>> roomOfBindings;
     RoomOnly<std::remove_reference_t<decltype(Walker::m_unspecifiedConstants)>> roomOfUnspecifiedConstants;
     RoomOnly<std::remove_reference_t<decltype(Walker::m_blocksWithFieldsOfScopesInOrder)>> roomOfBlocksWithFieldsOfScopesInOrder;

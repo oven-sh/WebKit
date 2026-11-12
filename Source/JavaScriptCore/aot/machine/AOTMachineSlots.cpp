@@ -707,15 +707,26 @@ ALWAYS_INLINE_INTO_OTHER_FILES uint32_t SlotAssigner::takePlace(Part part, Size 
     ArenaVector<uint32_t>& freePlaces = m_freePlaces[part][size];
     if (taken.isEmpty() && !freePlaces.isEmpty())
         return take(freePlaces.takeLast());
-    for (uint32_t index = freePlaces.size(); index--;) {
+    static constexpr uint32_t fewPlaces = 64;
+    const bool beginsWithLast = beginBehindGap != noPosition && m_beginOfLastSearch == begin && m_placesSearchedLast == &freePlaces;
+    for (uint32_t index = beginsWithLast ? std::min(m_endOfNextSearch, freePlaces.size()) : freePlaces.size(); index--;) {
         uint32_t distance = freePlaces[index];
         if (!isFreeFor(distance))
             continue;
-        for (uint32_t next = index + 1; next < freePlaces.size(); ++next)
-            freePlaces[next - 1] = freePlaces[next];
+        if (freePlaces.size() - index <= fewPlaces) {
+            for (uint32_t next = index + 1; next < freePlaces.size(); ++next)
+                freePlaces[next - 1] = freePlaces[next];
+        } else
+            freePlaces[index] = freePlaces.last();
         freePlaces.takeLast();
+        if (beginBehindGap != noPosition) {
+            m_placesSearchedLast = &freePlaces;
+            m_beginOfLastSearch = begin;
+            m_endOfNextSearch = index;
+        }
         return take(distance);
     }
+    m_beginOfLastSearch = noPosition;
 
     m_bytesOfPart[part] += bytesPerPlaceWord;
     uint32_t distance = m_bytesOfPart[part];

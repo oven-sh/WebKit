@@ -1126,8 +1126,8 @@ static size_t countCharacterInSubstring(RegExpLiterals::SubstringCount& last, JS
         const size_t added = countCharacter(characters.subspan(last.length), character);
         count = last.count + added;
         startOfLast = added ? findLast(last.length) : last.startOfLast;
-    } else if (isOfSameString && last.length - length < length) {
-        auto whole = base->tryGetValueImpl()->span8();
+    } else if (const StringImpl* impl = base->tryGetValueImpl(); isOfSameString && last.length - length < length && impl->is8Bit()) {
+        auto whole = impl->span8();
         const size_t removed = countCharacter(whole.subspan(offset + length, last.length - length), character);
         count = last.count - removed;
         startOfLast = removed && count ? findLast(0) : last.startOfLast;

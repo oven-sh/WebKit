@@ -15590,28 +15590,33 @@ static ReadInArm openReadArm(Walker& walker, const BodyValue& read, bool isStrai
     Vector<Point, 8> points;
     bool armThrows = false;
     uint32_t firstOfBlock = block.firstValue().index();
-    auto isReadFrom = [&](ValueID value, uint32_t from) {
-        if (stretch.mentionedBehind.contains(value))
-            return true;
-        for (uint32_t later = from; later < ends.last(); ++later) {
-            bool isRead = false;
-            index.value(ValueID(firstOfBlock + later)).forEachOperand([&](ValueID operand, uint32_t) { isRead |= operand == value; });
-            if (isRead)
-                return true;
-        }
-        return false;
-    };
+    ValueID firstOfArm(firstOfBlock + place);
+    static constexpr uint32_t readAfterArm = UINT32_MAX;
+    Vector<uint32_t, 32> lastReads;
+    lastReads.fill(0, ends.last() - place);
+    for (uint32_t later = place; later < ends.last(); ++later) {
+        index.value(ValueID(firstOfBlock + later)).forEachOperand([&](ValueID operand, uint32_t) {
+            if (operand && operand >= firstOfArm && operand.index() - firstOfArm.index() < lastReads.size())
+                lastReads[operand.index() - firstOfArm.index()] = later;
+        });
+    }
+    for (ValueID mentioned : stretch.mentionedBehind)
+        lastReads[mentioned.index() - firstOfArm.index()] = readAfterArm;
     {
         Walker::ReadArm arm { walker.currentFrameIndex(), block.id(), read.id() };
         arm.isStraight = isStraight;
         arm.nestingDepth = walker.nestingDepth() + 1;
+        arm.endOfElementReads = place;
+        arm.endOfElementAccesses = place;
+        arm.endOfNumericOperands = place;
         SetForScope ofThisArm(walker.readArm(), &arm);
         uint32_t begin = place;
+        Vector<ValueID, 16> live;
         for (uint32_t end : ends) {
             points.append(Point { begin, walker.addBlock(BlockFrequency::Rare) });
-            for (uint32_t earlier = place; earlier < begin; ++earlier) {
-                ValueID value(firstOfBlock + earlier);
-                if (Reference built = walker.referenceOf(value); built && built.isRecord() && isReadFrom(value, begin))
+            live.removeAllMatching([&](ValueID value) { return lastReads[value.index() - firstOfArm.index()] < begin; });
+            for (ValueID value : live) {
+                if (Reference built = walker.referenceOf(value); built && built.isRecord())
                     points.last().carried.append({ value, built });
             }
             arm.asWritten = points.last().asWritten;
@@ -15626,7 +15631,10 @@ static ReadInArm openReadArm(Walker& walker, const BodyValue& read, bool isStrai
                 walker.walkStretch(block.id(), endOfPure, end);
             if (walker.hasFailed())
                 return ReadInArm::WalkedStretch;
-            begin = end;
+            for (; begin < end; ++begin) {
+                if (lastReads[begin - place] >= end)
+                    live.append(ValueID(firstOfBlock + begin));
+            }
         }
         armThrows = walker.isUnreachable();
         walker.listArm(stretch, arms);
@@ -15643,6 +15651,8 @@ static ReadInArm openReadArm(Walker& walker, const BodyValue& read, bool isStrai
         if (armThrows)
             openArm.emplace(walker);
         BlockID chain;
+        uint32_t firstBound = place;
+        size_t firstBinding = walker.numberOfLoggedBindings();
         for (size_t number = 0; number < points.size() && !walker.hasFailed(); ++number) {
             Point& point = points[number];
             uint32_t end = ends[number];
@@ -15663,8 +15673,10 @@ static ReadInArm openReadArm(Walker& walker, const BodyValue& read, bool isStrai
             if (ways.isEmpty())
                 continue;
             if (!chain || ways.size() == 2) {
-                for (uint32_t earlier = place; earlier < point.begin; ++earlier)
-                    walker.bind(ValueID(firstOfBlock + earlier), Reference());
+                walker.unbindLoggedSince(firstBinding, firstOfArm, ValueID(firstOfBlock + firstBound));
+                for (; firstBound < point.begin; ++firstBound)
+                    walker.bind(ValueID(firstOfBlock + firstBound), Reference());
+                firstBinding = walker.numberOfLoggedBindings();
             }
             if (ways.size() == 2) {
                 Vector<Reference, 8> met(point.carried.size());
@@ -15688,22 +15700,20 @@ static ReadInArm openReadArm(Walker& walker, const BodyValue& read, bool isStrai
     return ReadInArm::WalkedStretch;
 }
 
-static bool isMultipliedInArm(const BodyIndex& index, const Walker::ReadArm& arm, ValueID value)
+static bool isMultipliedInArm(const BodyIndex& index, Walker::ReadArm& arm, ValueID value)
 {
     static constexpr OpcodeSet takesNumbersAlone = productOperators | OpcodeSet { Opcode::Sub, Opcode::Negate };
-    ValueID named = index.stripCasts(value);
-    BodyBlock block = index.block(arm.inputBlock);
-    uint32_t end = block.firstValue().index() + arm.end;
-    for (uint32_t place = arm.first.index(); place < end; ++place) {
-        BodyValue operation = index.value(ValueID(place));
+    for (uint32_t first = index.block(arm.inputBlock).firstValue().index(); arm.endOfNumericOperands < arm.end; ++arm.endOfNumericOperands) {
+        BodyValue operation = index.value(ValueID(first + arm.endOfNumericOperands));
         if (!takesNumbersAlone.contains(operation.opcode()))
             continue;
-        bool takesValue = false;
-        operation.forEachOperand([&](ValueID operand, uint32_t) { takesValue |= operand && index.stripCasts(operand) == named; });
-        if (takesValue)
-            return true;
+        operation.forEachOperand([&](ValueID operand, uint32_t) {
+            if (operand)
+                arm.numericOperands.add(index.stripCasts(operand));
+        });
     }
-    return false;
+    ValueID named = index.stripCasts(value);
+    return named && arm.numericOperands.contains(named);
 }
 
 static bool everyOperandIsNumber(Walker& walker, const BodyValue& operation)
@@ -15778,18 +15788,38 @@ static Reference checkArrayInArm(Walker& walker, const BodyValue& access, Origin
     return exitReadArmUnlessChecked(walker, askWhetherListIsAsMade(walker, list, origin)) ? list : Reference();
 }
 
-static bool checkLengthInArm(Walker& walker, const BodyValue& access, Reference list, Origin origin)
+static const Walker::ReadArm::ElementAccess& elementAccessOfArm(Walker& walker, const BodyValue& access)
 {
+    using ElementAccess = Walker::ReadArm::ElementAccess;
     const BodyIndex& index = walker.currentBodyIndex();
     Walker::ReadArm& arm = *walker.readArm();
-    ValueID base = index.stripCasts(access.objectOperand());
-    int64_t greatest = 0;
-    uint32_t end = index.block(arm.inputBlock).firstValue().index() + arm.end;
-    for (uint32_t place = access.id().index(); place < end; ++place) {
-        BodyValue operation = index.value(ValueID(place));
-        if (std::optional<int64_t> element = constantElementIndex(index, operation); element && index.stripCasts(operation.objectOperand()) == base)
-            greatest = std::max(greatest, *element);
+    uint32_t first = index.block(arm.inputBlock).firstValue().index();
+    if (arm.endOfElementAccesses < arm.end) {
+        size_t firstAdded = arm.elementAccesses.size();
+        for (; arm.endOfElementAccesses < arm.end; ++arm.endOfElementAccesses) {
+            BodyValue operation = index.value(ValueID(first + arm.endOfElementAccesses));
+            if (std::optional<int64_t> element = constantElementIndex(index, operation))
+                arm.elementAccesses.append({ arm.endOfElementAccesses, *element, operation.opcode() == Opcode::ElemGet, ElementAccess::none, *element });
+        }
+        HashMap<ValueID, uint32_t> nextAccesses;
+        for (size_t added = arm.elementAccesses.size(); added-- > firstAdded;) {
+            ElementAccess& earlier = arm.elementAccesses[added];
+            auto next = nextAccesses.add(index.stripCasts(index.value(ValueID(first + earlier.place)).objectOperand()), ElementAccess::none).iterator;
+            if (next->value != ElementAccess::none) {
+                earlier.next = next->value;
+                earlier.greatest = std::max(earlier.greatest, arm.elementAccesses[earlier.next].greatest);
+            }
+            next->value = added;
+        }
     }
+    auto found = std::ranges::lower_bound(arm.elementAccesses, access.id().index() - first, { }, &ElementAccess::place);
+    RELEASE_ASSERT(found != arm.elementAccesses.end() && found->place == access.id().index() - first);
+    return *found;
+}
+
+static bool checkLengthInArm(Walker& walker, const BodyValue& access, Reference list, Origin origin)
+{
+    int64_t greatest = elementAccessOfArm(walker, access).greatest;
     if (walker.findWhatHoldsPositionInsideList(list, integerConstant(walker, greatest, origin)))
         return true;
     Reference length = buildArrayLength(walker, list, origin);
@@ -15817,34 +15847,23 @@ static bool checkLengthInArm(Walker& walker, const BodyValue& access, Reference 
 
 static constexpr uint32_t elementReadAsNumber = 2;
 
-static void collectArithmeticReadsOfArm(Walker& walker)
+static void collectElementReadsOfArm(Walker& walker)
 {
     static constexpr OpcodeSet arithmetic { Opcode::Sub, Opcode::Mul, Opcode::Div };
-    struct Read {
-        ValueID value;
-        uint32_t usesLeft;
-    };
+    using Read = Walker::ReadArm::ElementRead;
     const BodyIndex& index = walker.currentBodyIndex();
     Walker::ReadArm& arm = *walker.readArm();
-    uint32_t end = index.block(arm.inputBlock).firstValue().index() + arm.end;
-    Vector<Read, 16> reads;
-    for (uint32_t place = arm.first.index(); place < end; ++place) {
-        BodyValue operation = index.value(ValueID(place));
+    for (uint32_t first = index.block(arm.inputBlock).firstValue().index(); arm.endOfElementReads < arm.end; ++arm.endOfElementReads) {
+        BodyValue operation = index.value(ValueID(first + arm.endOfElementReads));
         operation.forEachOperand([&](ValueID operand, uint32_t) {
-            auto read = operand ? std::ranges::lower_bound(reads, operand.index(), { }, [](const Read& earlier) { return earlier.value.index(); }) : reads.end();
-            if (read == reads.end() || read->value != operand)
+            auto read = operand ? std::ranges::lower_bound(arm.elementReads, operand.index(), { }, [](const Read& earlier) { return earlier.value.index(); }) : arm.elementReads.end();
+            if (read == arm.elementReads.end() || read->value != operand)
                 return;
             read->usesLeft = arithmetic.contains(operation.opcode()) ? read->usesLeft - 1 : BodyIndex::maxCountedUses;
         });
         uint32_t uses = operation.opcode() == Opcode::ElemGet && constantElementIndex(index, operation) ? index.useCount(operation.id()) : 0;
         if (uses && uses < BodyIndex::maxCountedUses)
-            reads.append({ operation.id(), uses });
-    }
-    arm.endOfArithmeticReads = arm.end;
-    arm.arithmeticReads.shrink(0);
-    for (const Read& read : reads) {
-        if (!read.usesLeft)
-            arm.arithmeticReads.append(read.value);
+            arm.elementReads.append({ operation.id(), uses });
     }
 }
 
@@ -15853,9 +15872,9 @@ static bool isArithmeticReadOfArm(Walker& walker, ValueID read)
     Walker::ReadArm& arm = *walker.readArm();
     if (!walker.has(Mechanism::Folding))
         return false;
-    if (arm.endOfArithmeticReads != arm.end)
-        collectArithmeticReadsOfArm(walker);
-    return std::ranges::binary_search(arm.arithmeticReads, read.index(), { }, &ValueID::index);
+    collectElementReadsOfArm(walker);
+    auto found = std::ranges::lower_bound(arm.elementReads, read.index(), { }, [](const Walker::ReadArm::ElementRead& earlier) { return earlier.value.index(); });
+    return found != arm.elementReads.end() && found->value == read && !found->usesLeft;
 }
 
 bool isArithmeticReadInReadArm(Walker& walker, const BodyValue& read)
@@ -15865,27 +15884,23 @@ bool isArithmeticReadInReadArm(Walker& walker, const BodyValue& read)
 
 static bool loadElementsInArm(Walker& walker, const BodyValue& read, Reference list, Origin origin)
 {
-    const BodyIndex& index = walker.currentBodyIndex();
+    using ElementAccess = Walker::ReadArm::ElementAccess;
     Walker::ReadArm& arm = *walker.readArm();
-    ValueID base = index.stripCasts(read.objectOperand());
+    uint32_t first = walker.currentBodyIndex().block(arm.inputBlock).firstValue().index();
     Vector<int64_t, 16> indexes;
     Vector<ValueID, 16> arithmeticReads;
-    uint32_t end = index.block(arm.inputBlock).firstValue().index() + arm.end;
-    for (uint32_t place = read.id().index(); place < end; ++place) {
-        BodyValue operation = index.value(ValueID(place));
-        std::optional<int64_t> element = operation.opcode() == Opcode::ElemGet ? constantElementIndex(index, operation) : std::nullopt;
-        if (!element || index.stripCasts(operation.objectOperand()) != base)
-            continue;
-        bool isArithmetic = isArithmeticReadOfArm(walker, operation.id());
-        if (size_t known = indexes.find(*element); known != notFound) {
+    for (const ElementAccess* access = &elementAccessOfArm(walker, read);; access = &arm.elementAccesses[access->next]) {
+        ValueID operation(first + access->place);
+        bool isArithmetic = access->isRead && isArithmeticReadOfArm(walker, operation);
+        if (size_t known = access->isRead ? indexes.find(access->element) : notFound; known != notFound) {
             if (!isArithmetic)
                 arithmeticReads[known] = { };
-            continue;
+        } else if (access->isRead && !arm.pendingStores.containsIf([&](const auto& store) { return store.array == list && store.position == integerConstant(walker, access->element, origin); })) {
+            indexes.append(access->element);
+            arithmeticReads.append(isArithmetic ? operation : ValueID());
         }
-        if (arm.pendingStores.containsIf([&](const auto& store) { return store.array == list && store.position == integerConstant(walker, *element, origin); }))
-            continue;
-        indexes.append(*element);
-        arithmeticReads.append(isArithmetic ? operation.id() : ValueID());
+        if (access->next == ElementAccess::none)
+            break;
     }
     Vector<PassedTest, 16> insides;
     for (int64_t element : indexes) {

@@ -981,7 +981,26 @@ void CodeGenerator::createBlocks()
 
 static constexpr OpcodeSet sumsThatMayStayBoxed { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 
-bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const
+size_t CodeGenerator::placeAmongJumpArguments(BlockID home, ValueID parameter)
+{
+    static constexpr size_t fewArguments = 16;
+    std::span<const ValueID> arguments = code().at(code().at(home).terminator.edge(0)).arguments();
+    if (arguments.size() <= fewArguments) {
+        auto found = std::ranges::find(arguments, parameter);
+        return found == arguments.end() ? notFound : found - arguments.begin();
+    }
+    m_blocksOfJumpArguments.ensureSize(code().numberOfBlocks());
+    if (!m_blocksOfJumpArguments.quickSet(home.index())) {
+        for (size_t place = 0; place < arguments.size(); ++place) {
+            if (arguments[place] && !code().isConstant(arguments[place]) && code().blockOf(arguments[place]) == home)
+                m_placesAmongJumpArguments.add(arguments[place], place);
+        }
+    }
+    auto found = m_placesAmongJumpArguments.find(parameter);
+    return found == m_placesAmongJumpArguments.end() ? notFound : found->value;
+}
+
+bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft)
 {
     if (code().useCountOf(parameter) != 1)
         return false;
@@ -997,16 +1016,12 @@ bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned s
     const Terminator& terminator = code().at(home).terminator;
     if (!stepsLeft || terminator.kind != TerminatorKind::Jump)
         return false;
-    const Edge& edge = code().at(terminator.edge(0));
-    std::span<const ValueID> arguments = edge.arguments();
-    std::span<const ValueID> parameters = code().at(edge.to).parameters();
-    for (size_t index = 0; index < arguments.size(); ++index) {
-        if (arguments[index] != parameter)
-            continue;
-        ValueID next = parameters[index];
-        return representationOf(next) == Representation::Double && code().isNeeded(next) && isReadByBoxAlone(edge.to, next, stepsLeft - 1);
-    }
-    return false;
+    size_t place = placeAmongJumpArguments(home, parameter);
+    if (place == notFound)
+        return false;
+    BlockID target = code().at(terminator.edge(0)).to;
+    ValueID next = code().at(target).parameters()[place];
+    return representationOf(next) == Representation::Double && code().isNeeded(next) && isReadByBoxAlone(target, next, stepsLeft - 1);
 }
 
 bool CodeGenerator::unboxesNumber(const Operation& operation) const
