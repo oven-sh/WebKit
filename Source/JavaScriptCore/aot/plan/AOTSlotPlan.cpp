@@ -1497,7 +1497,7 @@ void layAppendedFieldInCellForFields(const Program& program, const Facts& facts,
 
 static constexpr uint64_t maxCellBytesWithLateNames = 128;
 
-static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, uint64_t endOfSlotsInCell, bool areFilledTogether, unsigned inlineCapacity)
+static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, uint64_t endOfSlotsInCell, bool areFilledTogether)
 {
     constexpr uint64_t mostBytesOfCell = maxCellBytesWithLateNames;
     constexpr uint64_t bytesOfLargeCell = 512;
@@ -1514,13 +1514,7 @@ static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const Cel
     }
     if (endOfSlotsInCell >= bytesOfLargeCell && end <= endOfSlotsInCell + endOfSlotsInCell / 2)
         return true;
-    uint64_t bytesOfExtension = offsetOfFirstExtensionSlot + end - endOfSlotsInCell;
-    if (areFilledTogether && cellSizes.cellSizeFor(end) <= cellSizes.cellSizeFor(cellSizes.cellSizeFor(endOfSlotsInCell) + cellSizes.cellSizeFor(bytesOfExtension)))
-        return true;
     uint64_t sizeWithMore = std::min(cellSizes.cellSizeFor(endOfSlotsInCell + mostBytesAdded), mostBytesOfCell);
-    uint64_t endOfHiddenWords = offsetOfFirstField + (places.layoutsWithHiddenWords.get(id.index()) ? bytesPerSlotInSlotPlan : 0);
-    if (inlineCapacity && end <= endOfHiddenWords + inlineCapacity * bytesPerSlotInSlotPlan)
-        return true;
     return cellSizes.cellSizeFor(end) <= std::max(cellSizes.cellSizeFor(endOfSlotsInCell), sizeWithMore);
 }
 
@@ -1593,7 +1587,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
     for (FieldIndex field = numberOfDeclaredFields; field < numberOfFields; ++field)
         endOfSlotsInCell += places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields] == PlacesOfFieldsInSlotPlan::inCell ? bytesPerSlotInSlotPlan : 0;
     const bool canPlaceLateNamesInCell = isCompiledObject && !build.recordedOptions().useWideReferences() && !places.layoutsWithListedFieldsOutOfLine.quickGet(id.index());
-    const bool lateNamesLieInCell = canPlaceLateNamesInCell && lateNamesFitInCell(places, cellSizes, id, endOfSlotsInCell, facts.linked().layoutsFillingLateFieldsTogether.get(id.index()), facts.linked().inlineCapacityOf(id));
+    const bool lateNamesLieInCell = canPlaceLateNamesInCell && lateNamesFitInCell(places, cellSizes, id, endOfSlotsInCell, facts.linked().layoutsFillingLateFieldsTogether.get(id.index()));
     BitVector lateNamesInCell;
     if (canPlaceLateNamesInCell && !lateNamesLieInCell) {
         lateNamesInCell = lateMethodNamesInCell(facts.linked(), places, cellSizes, id, planned.appendedKeys.span(), endOfSlotsInCell);

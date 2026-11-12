@@ -1345,6 +1345,7 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     std::optional<uint64_t> instructionsAfterSweep = instructionsOfCompileThreadSoFar(m_build);
 
     RELEASE_ASSERT(m_walker->arrivalsHeld().empty());
+    m_walker->releaseAnswers();
     work.setStep("emit"_s);
     const Code& swept = m_walker->code();
     CompiledCode code = generateCode(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, swept, m_totals);

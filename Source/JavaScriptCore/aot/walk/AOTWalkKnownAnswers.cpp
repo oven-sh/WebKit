@@ -248,6 +248,23 @@ void AnswersOfWalk::clear()
     m_answersOfHolders.shrink(0);
 }
 
+void AnswersOfWalk::releaseRoom()
+{
+    static constexpr size_t mostAnswersKept = 1 << 15;
+    if (m_answers.capacity() <= mostAnswersKept && m_answersOfHolders.capacity() <= mostAnswersKept)
+        return;
+    clear();
+    m_conversions = { };
+    m_answers = { };
+    m_masks = { };
+    m_keys = { };
+    m_wordsOfKeys = { };
+    m_placesOfKeys = { };
+    m_newestOfFirstAnswers = { };
+    m_placesOfNotes = { };
+    m_answersOfHolders = { };
+}
+
 uint32_t AnswersOfWalk::hashOf(std::span<const uint32_t> words)
 {
     uint32_t hash = 0x811c9dc5u;

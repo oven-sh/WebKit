@@ -263,8 +263,6 @@ static void layKeysThatHeldAloneAppendsOver(const Program& program, LinkTables& 
     if (held.appendedKeys.isEmpty())
         return;
     linked.layoutsFillingLateFieldsTogether.merge(held.layoutsFillingLateFieldsTogether);
-    if (linked.inlineCapacities.isEmpty())
-        linked.inlineCapacities = held.inlineCapacities;
     linked.initialNames.appendVector(held.initialNames);
     linked.computedLiterals.merge(held.computedLiterals);
     linked.sortInitialNames();

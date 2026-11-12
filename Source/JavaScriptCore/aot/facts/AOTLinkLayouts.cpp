@@ -2005,8 +2005,6 @@ private:
     Vector<BitVector> m_dominators;
 };
 
-enum class ElementBound : uint8_t { Unknown, ArrayLength, CountOfHolder, Other };
-
 class InitializersInLinkLayouts {
 public:
     InitializersInLinkLayouts(const LinkFlow& flow, LayoutID made)
@@ -2331,6 +2329,14 @@ private:
         return m_flow.isAbsentFromObjectPrototype(key) && !m_flow.findMembers(m_made, ClassSide::Prototype, key).mayAnswer();
     }
 
+    static void addNarrowedNames(const BodyIndex& index, const BodyBlock& block, BitVector& names)
+    {
+        for (uint32_t position = 0; position < block.numberOfParameters(); ++position) {
+            if (ValueID narrowed = index.valueNarrowedInto(block.parameter(position)); narrowed && names.quickGet(narrowed.index()))
+                names.quickSet(block.parameter(position).index());
+        }
+    }
+
     Effects followBody(FunctionID id, ValueID object, bool isConstructor, Vector<std::pair<FunctionID, ValueID>, 8>* methodsToFollow)
     {
         Effects effects;
@@ -2375,6 +2381,7 @@ private:
             if (block.hasHandler())
                 return effects;
             filled.enterBlock(number);
+            addNarrowedNames(index, block, names);
             for (BodyValue operation : block.values()) {
                 Opcode opcode = operation.opcode();
                 bool mentionsObject = false;
@@ -3627,54 +3634,8 @@ private:
         LayoutID layout;
         uint32_t subject { 0 };
         Vector<PropertyKeyID, 8> keys;
-        FunctionID function;
-        uint32_t parameter { UINT32_MAX };
-        ValueID store;
-        ValueID read;
-
-        bool isInParameter() const { return parameter != UINT32_MAX; }
     };
-    struct LoopFill {
-        LayoutID layout;
-        FunctionID function;
-        BlockID head;
-        ValueID array;
-        ValueID bound;
-        ElementBound kind { ElementBound::Unknown };
-        BitVector constructors;
-        bool isRefused { false };
-    };
-    BlockID blockAboveReturns(FunctionID, const BodyIndex&) const;
-    bool runsOnEveryPath(FunctionID, const BodyIndex&, BlockID) const;
-    std::optional<LoopFill> findLoopFill(FunctionID, const BodyIndex&, LayoutID, ValueID store, ValueID read) const;
-    void addMethodsOfConstructor(FunctionID, Vector<FunctionID, 8>& methods) const;
-    BitVector findReachedMethods(LayoutID, Vector<FunctionID, 8>& methods) const;
-    mutable std::pair<FunctionID, BlockID> m_blockAboveReturns;
-    struct Allocation {
-        LayoutID layout;
-        uint32_t node { 0 };
-        ValueID object;
-    };
-    void forEachAllocatingFunction(const BitVector& layouts, NOESCAPE const Invocable<void(FunctionID, const ThinSummary&, const BodyIndex*, std::span<const Allocation>)> auto&) const;
-    ValueID findArrayOfObject(const BodyIndex&, ValueID object) const;
-    bool isFilledAfterAllocation(FunctionID, const ThinSummary&, const BodyIndex&, const Allocation&, const LoopFill&) const;
-    BitVector findFilledLayouts(Vector<LoopFill>&) const;
-    static uint64_t fillerOf(FunctionID function, uint32_t parameter) { return static_cast<uint64_t>(function.index()) << 32 | parameter; }
-    using Fillers = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-    bool callsFiller(FunctionID, const ThinSummary&, uint32_t call, uint32_t object, const Fillers&) const;
-    bool constructorCallsFiller(LayoutID, const Fillers&) const;
-    Vector<LoopFill> findLoopsWithFillers(const Fillers&) const;
-    void retainFilledLayouts(BitVector& layouts, const Fillers&) const;
-    void findInlineCapacities();
     static constexpr size_t minLateFieldsFilledTogether = 3;
-    struct LateFieldOfMethod {
-        LayoutID layout;
-        FunctionID method;
-        PropertyKeyID key;
-    };
-    Vector<LateFieldOfMethod> m_lateFieldsOfMethods;
-    void addCalledMethods(FunctionID, uint32_t object, LayoutID, Vector<FunctionID, 8>& methods) const;
-    void noteLateFieldsOfMethods();
     Vector<LateFieldsFilled, 2> m_lateFieldsFilledInFunction;
     Vector<LateFieldsFilled> m_lateFieldsFilled;
     Vector<RunOfMaker, 4> m_runsOfMakersInFunction;
@@ -4676,11 +4637,8 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const Thin
         m_definitionAtHand = nullptr;
     }
     for (LateFieldsFilled& filled : m_lateFieldsFilledInFunction) {
-        if (filled.keys.size() < minLateFieldsFilledTogether)
-            continue;
-        if (const SummaryNode& subject = summary.nodes[filled.subject]; subject.kind == SummaryNode::Kind::Parameter)
-            filled.parameter = subject.first;
-        m_lateFieldsFilled.append(WTF::move(filled));
+        if (filled.keys.size() >= minLateFieldsFilledTogether)
+            m_lateFieldsFilled.append(WTF::move(filled));
     }
     m_lateFieldsFilledInFunction.shrink(0);
     if (!m_runsOfMakersInFunction.isEmpty() || m_asksWhatBodyHandsOn)
@@ -4753,703 +4711,30 @@ WriterOfLinkLayouts::Traits WriterOfLinkLayouts::traitsOfStoreOfMaker(FunctionID
     return isConstructing ? Traits { Trait::FillsObjectBeingConstructed } : Traits { };
 }
 
-static ValueID stripChecksInLinkLayouts(const BodyIndex& index, ValueID value)
-{
-    value = index.stripCasts(value);
-    while (value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::CheckInitialized)
-        value = index.stripCasts(index.value(value).operand(0));
-    return value;
-}
-
-static bool isSameReadInLinkLayouts(const BodyIndex& index, ValueID a, ValueID b, unsigned depth = 3)
-{
-    a = stripChecksInLinkLayouts(index, a);
-    b = stripChecksInLinkLayouts(index, b);
-    if (!a || !b || a == b)
-        return a && a == b;
-    if (!depth || index.isParameter(a) || index.isParameter(b) || index.opcodeOf(a) != index.opcodeOf(b))
-        return false;
-    if (index.opcodeOf(a) == Opcode::GetModuleVariable)
-        return index.value(a).variable() == index.value(b).variable();
-    if (index.opcodeOf(a) != Opcode::PropGet || index.value(a).isFreeName() || index.value(b).isFreeName())
-        return false;
-    PropertyKeyID key = index.value(a).key();
-    return key && key == index.value(b).key() && isSameReadInLinkLayouts(index, index.value(a).objectOperand(), index.value(b).objectOperand(), depth - 1);
-}
-
-static PropertyKeyID findArrayKeyInLinkLayouts(const BodyIndex& index, ValueID array)
-{
-    array = stripChecksInLinkLayouts(index, array);
-    bool isNamed = array && !index.isParameter(array) && index.opcodeOf(array) == Opcode::PropGet && !index.value(array).isFreeName();
-    return isNamed ? index.value(array).key() : PropertyKeyID();
-}
-
-static bool haveSameNameInLinkLayouts(const BodyIndex& a, ValueID arrayOfA, const BodyIndex& b, ValueID arrayOfB)
-{
-    if (PropertyKeyID key = findArrayKeyInLinkLayouts(a, arrayOfA))
-        return key == findArrayKeyInLinkLayouts(b, arrayOfB);
-    arrayOfA = stripChecksInLinkLayouts(a, arrayOfA);
-    arrayOfB = stripChecksInLinkLayouts(b, arrayOfB);
-    auto findVariable = [](const BodyIndex& index, ValueID value) -> VariableID {
-        if (!value || index.isParameter(value))
-            return { };
-        if (index.opcodeOf(value) == Opcode::GetModuleVariable)
-            return index.value(value).variable();
-        BlockID block = index.blockOf(value);
-        for (BodyValue other : index.block(block).values()) {
-            if (other.opcode() == Opcode::PutModuleVariable && index.stripCasts(other.valueOperand()) == value)
-                return other.variable();
-        }
-        return { };
-    };
-    VariableID variable = findVariable(a, arrayOfA);
-    return variable && variable == findVariable(b, arrayOfB);
-}
-
-static ElementBound findElementBoundInLinkLayouts(const BodyIndex& index, const Program& program, ValueID bound, ValueID array)
-{
-    static constexpr OpcodeSet numbers { Opcode::Integer, Opcode::Double };
-    bound = index.stripCasts(bound);
-    if (!bound || (!index.isParameter(bound) && numbers.contains(index.opcodeOf(bound))))
-        return ElementBound::Unknown;
-    if (index.isParameter(bound) || index.opcodeOf(bound) != Opcode::PropGet || index.value(bound).isFreeName() || !index.value(bound).key())
-        return ElementBound::Other;
-    ValueID counted = index.value(bound).objectOperand();
-    if (index.value(bound).key() == program.keyOf(BuiltinNames::length) && isSameReadInLinkLayouts(index, counted, array))
-        return ElementBound::ArrayLength;
-    array = stripChecksInLinkLayouts(index, array);
-    return findArrayKeyInLinkLayouts(index, array) && isSameReadInLinkLayouts(index, counted, index.value(array).objectOperand()) ? ElementBound::CountOfHolder : ElementBound::Other;
-}
-
-static ElementBound findStoreBoundInLinkLayouts(const BodyIndex& index, const Program& program, ValueID store, ValueID read, ValueID& boundOfCounter)
-{
-    if (index.hasIrreducibleFlow() || index.isParameter(read) || index.opcodeOf(read) != Opcode::ElemGet)
-        return ElementBound::Unknown;
-    LoopID loop = index.loopOf(index.blockOf(read));
-    if (!loop || !index.isInLoop(index.blockOf(store), loop))
-        return ElementBound::Unknown;
-    BlockID head = index.loop(loop).head;
-    BodyBlock blockOfHead = index.block(head);
-    ValueID counter = index.stripCasts(index.value(read).propertyOperand());
-    if (!counter || !index.isParameter(counter) || index.blockOf(counter) != head)
-        return ElementBound::Unknown;
-    uint32_t position = 0;
-    while (position < blockOfHead.numberOfParameters() && blockOfHead.parameter(position) != counter)
-        ++position;
-    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyTarget target : index.terminator(member).targets()) {
-            if (target.block() != head)
-                continue;
-            ValueID stepped = position < target.arguments().size() ? index.stripCasts(target.arguments()[position]) : ValueID();
-            if (!index.dominates(index.blockOf(store), member) || !stepped || index.isParameter(stepped) || !steps.contains(index.opcodeOf(stepped)) || index.stripCasts(index.value(stepped).operand(0)) != counter)
-                return ElementBound::Unknown;
-        }
-    }
-    BodyTerminator end = index.terminator(head);
-    ValueID condition = end.kind() == TerminatorKind::Branch ? index.stripCasts(end.operand(0)) : ValueID();
-    static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
-    if (!condition || index.isParameter(condition) || !relations.contains(index.opcodeOf(condition)))
-        return ElementBound::Unknown;
-    ValueID left = index.stripCasts(index.value(condition).operand(0));
-    ValueID right = index.stripCasts(index.value(condition).operand(1));
-    boundOfCounter = left == counter ? right : right == counter ? left : ValueID();
-    return findElementBoundInLinkLayouts(index, program, boundOfCounter, index.value(read).objectOperand());
-}
-
 void WriterOfLinkLayouts::noteLateFieldsFilledByAccess(FunctionID id, const ThinSummary& summary, const SummaryAccess& access, PropertyKeyID key, const LinkType& subject)
 {
-    const SummaryNode& stored = summary.nodes[access.subject];
-    bool isHandedIn = stored.kind == SummaryNode::Kind::Parameter;
-    if (!key || access.kind != SummaryAccess::Kind::Store || access.isPartOfConstruction || (!isHandedIn && stored.kind != SummaryNode::Kind::ResultOfAccess))
+    if (!key || access.kind != SummaryAccess::Kind::Store || access.isPartOfConstruction || summary.nodes[access.subject].kind != SummaryNode::Kind::Parameter)
         return;
     if (subject.objects != LinkType::Objects::Layout || findField(m_program, subject.layout, key))
         return;
-    if (isHandedIn && stored.first == m_program.at(id).thisParameterIndex())
-        m_lateFieldsOfMethods.append({ subject.layout, id, key });
-    const BodyIndex* body = bodiesLookedAt(m_flow.looks).find(id);
-    ValueID read;
-    if (!body || !access.site || body->isParameter(access.site))
-        return;
-    if (isHandedIn) {
-        BlockID above = blockAboveReturns(id, *body);
-        if (!above || !body->dominates(body->blockOf(access.site), above))
-            return;
-    } else {
-        read = summary.accesses[stored.first].site;
-        ValueID bound;
-        if (!read || findStoreBoundInLinkLayouts(*body, m_program, access.site, read, bound) == ElementBound::Unknown)
-            return;
-    }
-    auto isReadAlike = [&](uint32_t subjectBefore) {
-        const SummaryNode& before = summary.nodes[subjectBefore];
-        if (before.kind != SummaryNode::Kind::ResultOfAccess || stored.kind != SummaryNode::Kind::ResultOfAccess)
-            return false;
-        const SummaryAccess& first = summary.accesses[before.first];
-        const SummaryAccess& second = summary.accesses[stored.first];
-        bool areReadsByName = first.kind == SummaryAccess::Kind::Read && second.kind == SummaryAccess::Kind::Read && !first.isToContents() && !second.isToContents();
-        return areReadsByName && first.key && first.key == second.key && first.subject == second.subject;
-    };
+    if (summary.nodes[access.subject].first == m_program.at(id).thisParameterIndex())
+        m_tables.lateFieldsStoredThroughThis.append(LinkTables::lateFieldOf(subject.layout, key));
     size_t place = m_lateFieldsFilledInFunction.findIf([&](const LateFieldsFilled& filled) {
-        return filled.layout == subject.layout && (filled.subject == access.subject || isReadAlike(filled.subject));
+        return filled.subject == access.subject;
     });
     if (place == notFound) {
         if (m_lateFieldsFilledInFunction.size() == longestListGoneThrough)
             return;
         place = m_lateFieldsFilledInFunction.size();
-        m_lateFieldsFilledInFunction.append(LateFieldsFilled { subject.layout, access.subject, { }, id, UINT32_MAX, access.site, read });
+        m_lateFieldsFilledInFunction.append(LateFieldsFilled { subject.layout, access.subject, { } });
     }
     if (Vector<PropertyKeyID, 8>& keys = m_lateFieldsFilledInFunction[place].keys; keys.size() < maxFieldsInOrder && !keys.contains(key))
         keys.append(key);
 }
 
-bool WriterOfLinkLayouts::callsFiller(FunctionID caller, const ThinSummary& summary, uint32_t number, uint32_t object, const Fillers& fillers) const
-{
-    const SummaryCall& call = summary.calls[number];
-    if (call.isConstruction || call.passesList)
-        return false;
-    const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[caller.index()] + number];
-    auto fills = [&](FunctionID callee) {
-        const Function& function = m_program.at(callee);
-        if (std::optional<unsigned> own = function.thisParameterIndex(); own && call.receiver == object && fillers.contains(fillerOf(callee, *own)))
-            return true;
-        for (uint32_t place = 0; place < call.numberOfArguments; ++place) {
-            if (summary.arguments[call.firstArgument + place] == object && fillers.contains(fillerOf(callee, function.firstParameterIndex() + place)))
-                return true;
-        }
-        return false;
-    };
-    return callees.listed().size() && std::ranges::all_of(callees.listed(), fills);
-}
-
-bool WriterOfLinkLayouts::constructorCallsFiller(LayoutID layout, const Fillers& fillers) const
-{
-    FunctionID id = m_program.at(layout).constructor;
-    if (!id || !m_flow.reached.get(id.index()))
-        return false;
-    const Function& constructor = m_program.at(id);
-    std::optional<unsigned> own = constructor.kind == FunctionKind::Plain ? constructor.thisParameterIndex() : std::nullopt;
-    if (!own && constructor.kind != FunctionKind::BaseConstructor)
-        return false;
-    const ThinSummary& summary = m_flow.summaries.at(id);
-    SummaryNode made = own ? SummaryNode { SummaryNode::Kind::Parameter, *own, 0 } : SummaryNode { SummaryNode::Kind::Allocation, layout.index(), 0 };
-    uint32_t object = 0;
-    while (object < summary.nodes.size() && summary.nodes[object] != made)
-        ++object;
-    for (uint32_t number = 0; object < summary.nodes.size() && number < summary.calls.size(); ++number) {
-        if (callsFiller(id, summary, number, object, fillers) && isOnEveryPath(id, summary.calls[number].site))
-            return true;
-    }
-    return false;
-}
-
-BlockID WriterOfLinkLayouts::blockAboveReturns(FunctionID id, const BodyIndex& index) const
-{
-    if (m_blockAboveReturns.first == id)
-        return m_blockAboveReturns.second;
-    BlockID above;
-    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
-        BlockID block(number);
-        if (!index.isReachable(block))
-            continue;
-        TerminatorKind end = index.terminator(block).kind();
-        if (end != TerminatorKind::Return && end != TerminatorKind::ReturnCall)
-            continue;
-        if (!above)
-            above = block;
-        while (!index.dominates(above, block))
-            above = index.immediateDominator(above);
-    }
-    m_blockAboveReturns = { id, above };
-    return above;
-}
-
-bool WriterOfLinkLayouts::runsOnEveryPath(FunctionID id, const BodyIndex& index, BlockID block) const
-{
-    if (index.hasIrreducibleFlow())
-        return false;
-    for (LoopID loop = index.loopOf(block); loop; loop = index.loop(loop).parent) {
-        BlockID head = index.loop(loop).head;
-        for (BlockID member : index.membersOf(loop)) {
-            for (BodyTarget target : index.terminator(member).targets()) {
-                if (target.block() == head && !index.dominates(block, member))
-                    return false;
-            }
-        }
-        block = head;
-    }
-    BlockID above = blockAboveReturns(id, index);
-    return above && index.dominates(block, above);
-}
-
-static BlockID findOuterHeadInLinkLayouts(const BodyIndex& index, BlockID block, BlockID other)
-{
-    for (LoopID loop = index.loopOf(block); loop && !index.isInLoop(other, loop); loop = index.loop(loop).parent)
-        block = index.loop(loop).head;
-    return block;
-}
-
-static bool comesBeforeInLinkLayouts(const BodyIndex& index, BlockID block, BlockID later)
-{
-    BlockID head = findOuterHeadInLinkLayouts(index, block, later);
-    return head != later && index.dominates(head, later);
-}
-
-std::optional<WriterOfLinkLayouts::LoopFill> WriterOfLinkLayouts::findLoopFill(FunctionID id, const BodyIndex& index, LayoutID layout, ValueID store, ValueID read) const
-{
-    LoopFill loop;
-    loop.kind = findStoreBoundInLinkLayouts(index, m_program, store, read, loop.bound);
-    if (loop.kind == ElementBound::Unknown)
-        return std::nullopt;
-    loop.layout = layout;
-    loop.function = id;
-    loop.head = index.loop(index.loopOf(index.blockOf(read))).head;
-    loop.array = index.value(read).objectOperand();
-    BlockID before = index.immediateDominator(loop.head);
-    if (!before || !runsOnEveryPath(id, index, loop.head))
-        return std::nullopt;
-    if (loop.kind != ElementBound::CountOfHolder)
-        return loop;
-    const ThinSummary& summary = m_flow.summaries.at(id);
-    Vector<FunctionID, 8> methods;
-    for (uint32_t number = 0; number < summary.calls.size(); ++number) {
-        const SummaryCall& call = summary.calls[number];
-        if (!call.isConstruction || !call.site || !comesBeforeInLinkLayouts(index, index.blockOf(call.site), loop.head))
-            continue;
-        for (FunctionID constructor : m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[id.index()] + number].listed()) {
-            methods.shrink(0);
-            loop.constructors.set(constructor.index());
-            addMethodsOfConstructor(constructor, methods);
-            loop.constructors.merge(findReachedMethods(m_program.at(constructor).constructedClass, methods));
-        }
-    }
-    return loop;
-}
-
-Vector<WriterOfLinkLayouts::LoopFill> WriterOfLinkLayouts::findLoopsWithFillers(const Fillers& fillers) const
-{
-    Vector<LoopFill> loops;
-    BitVector functions;
-    for (uint64_t filler : fillers)
-        functions.set(filler >> 32);
-    auto callees = m_flow.calleesOfCallsAsSettled();
-    for (size_t index : m_flow.reached) {
-        FunctionID id(index);
-        const ThinSummary& summary = m_flow.summaries.at(id);
-        for (uint32_t number = 0; number < summary.calls.size(); ++number) {
-            const SummaryCall& call = summary.calls[number];
-            if (!call.isInLoop || !std::ranges::any_of(callees[m_flow.firstCallOfFunction[index] + number].listed(), [&](FunctionID callee) { return functions.get(callee.index()); }))
-                continue;
-            auto noteObject = [&](uint32_t object) {
-                if (object == noSummaryNode || summary.nodes[object].kind != SummaryNode::Kind::ResultOfAccess)
-                    return;
-                const LinkType& type = typeAt(id, object);
-                const BodyIndex* body = type.objects == LinkType::Objects::Layout ? bodiesLookedAt(m_flow.looks).find(id) : nullptr;
-                ValueID read = summary.accesses[summary.nodes[object].first].site;
-                if (!body || !read || !callsFiller(id, summary, number, object, fillers))
-                    return;
-                if (std::optional<LoopFill> loop = findLoopFill(id, *body, type.layout, call.site, read))
-                    loops.append(WTF::move(*loop));
-            };
-            noteObject(call.receiver);
-            for (uint32_t place = 0; place < call.numberOfArguments; ++place)
-                noteObject(summary.arguments[call.firstArgument + place]);
-        }
-    }
-    return loops;
-}
-
-static bool reachesWithoutBranchInLinkLayouts(const BodyIndex& index, BlockID from, BlockID to)
-{
-    constexpr unsigned mostSteps = 8;
-    for (unsigned step = 0; step < mostSteps && from != to; ++step) {
-        BlockID next;
-        for (BodyTarget target : index.terminator(from).targets()) {
-            if (next)
-                return false;
-            next = target.block();
-        }
-        if (!next)
-            return false;
-        from = next;
-    }
-    return from == to;
-}
-
-void WriterOfLinkLayouts::forEachAllocatingFunction(const BitVector& layouts, NOESCAPE const Invocable<void(FunctionID, const ThinSummary&, const BodyIndex*, std::span<const Allocation>)> auto& functor) const
-{
-    Vector<Allocation, 16> allocations;
-    HashMap<uint32_t, size_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> literals;
-    for (size_t index : m_flow.reached) {
-        FunctionID id(index);
-        const ThinSummary& summary = m_flow.summaries.at(id);
-        bool hasConstruction = std::ranges::any_of(summary.calls, [](const SummaryCall& call) { return call.isConstruction; });
-        if (!summary.makesObjects && !hasConstruction)
-            continue;
-        allocations.shrink(0);
-        literals.clear();
-        for (uint32_t number = 0; number < summary.nodes.size(); ++number) {
-            const SummaryNode& node = summary.nodes[number];
-            auto append = [&](LayoutID layout, ValueID object) {
-                if (layouts.get(layout.index()))
-                    allocations.append({ layout, number, object });
-            };
-            if (node.kind == SummaryNode::Kind::ResultOfCall && summary.calls[node.first].isConstruction) {
-                const LinkType& type = typeAt(id, number);
-                if (type.objects == LinkType::Objects::Layout)
-                    append(type.layout, summary.calls[node.first].site);
-                else if (type.objects == LinkType::Objects::Set) {
-                    m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
-                        append(layout, { });
-                    });
-                }
-            } else if (LayoutID layout(node.first); node.kind == SummaryNode::Kind::Allocation && m_program.at(layout).constructor != id && layouts.get(node.first)) {
-                literals.add(node.first, allocations.size());
-                append(layout, { });
-            }
-        }
-        if (allocations.isEmpty())
-            continue;
-        const BodyIndex* body = bodiesLookedAt(m_flow.looks).find(id);
-        BitVector seen;
-        for (uint32_t block = 0; body && !literals.isEmpty() && block < body->numberOfBlocks(); ++block) {
-            for (BodyValue value : body->block(BlockID(block)).values()) {
-                if (value.opcode() != Opcode::NewObject)
-                    continue;
-                uint32_t layout = value.as<Opcode::NewObject>().layout().index();
-                if (auto found = literals.find(layout); found != literals.end())
-                    allocations[found->value].object = seen.add(layout) ? value.id() : ValueID();
-            }
-        }
-        functor(id, summary, body, allocations.span());
-    }
-}
-
-void WriterOfLinkLayouts::retainFilledLayouts(BitVector& layouts, const Fillers& fillers) const
-{
-    BitVector pending;
-    BitVector functions;
-    for (uint64_t filler : fillers)
-        functions.set(filler >> 32);
-    for (size_t index : layouts) {
-        LayoutID layout(index);
-        FunctionID constructor = m_program.at(layout).constructor;
-        if (constructorCallsFiller(layout, fillers))
-            continue;
-        pending.set(index);
-        if (m_flow.lostLayouts.get(index) || (constructor && m_flow.lostFunctions.get(constructor.index())))
-            layouts.clear(index);
-    }
-    if (pending.isEmpty())
-        return;
-    BitVector allocated;
-    HashMap<uint32_t, size_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> places;
-    Vector<bool, 16> areFilled;
-    forEachAllocatingFunction(pending, [&](FunctionID id, const ThinSummary& summary, const BodyIndex* body, std::span<const Allocation> allocations) {
-        places.clear();
-        areFilled.fill(false, allocations.size());
-        for (size_t place = 0; place < allocations.size(); ++place)
-            places.add(allocations[place].node, place);
-        for (uint32_t number = 0; body && number < summary.calls.size(); ++number) {
-            const SummaryCall& call = summary.calls[number];
-            auto look = [&](uint32_t node) {
-                auto found = places.find(node);
-                if (found == places.end() || !allocations[found->value].object || !callsFiller(id, summary, number, node, fillers))
-                    return;
-                areFilled[found->value] |= reachesWithoutBranchInLinkLayouts(*body, body->blockOf(allocations[found->value].object), body->blockOf(call.site));
-            };
-            if (!std::ranges::any_of(m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[id.index()] + number].listed(), [&](FunctionID callee) { return functions.get(callee.index()); }))
-                continue;
-            look(call.receiver);
-            for (uint32_t place = 0; place < call.numberOfArguments; ++place)
-                look(summary.arguments[call.firstArgument + place]);
-        }
-        for (size_t place = 0; place < allocations.size(); ++place) {
-            allocated.set(allocations[place].layout.index());
-            if (!areFilled[place])
-                layouts.clear(allocations[place].layout.index());
-        }
-    });
-    for (size_t index : pending) {
-        if (!allocated.get(index))
-            layouts.clear(index);
-    }
-}
-
-ValueID WriterOfLinkLayouts::findArrayOfObject(const BodyIndex& index, ValueID object) const
-{
-    ValueID user = index.onlyUsingValue(object);
-    while (user && !index.isParameter(user) && (index.stripCasts(user) == object || index.opcodeOf(user) == Opcode::FinishObject)) {
-        if (index.opcodeOf(user) == Opcode::FinishObject)
-            object = user;
-        user = index.onlyUsingValue(user);
-    }
-    if (!user || index.isParameter(user))
-        return { };
-    if (index.opcodeOf(user) == Opcode::ElemSet) {
-        auto store = index.value(user).as<Opcode::ElemSet>();
-        return index.stripCasts(store.valueOperand()) == object ? store.objectOperand() : ValueID();
-    }
-    if (index.opcodeOf(user) != Opcode::Call)
-        return { };
-    auto call = index.value(user).as<Opcode::Call>();
-    return call.calleeKey() && call.calleeKey() == m_program.keyOf(BuiltinNames::push) ? call.thisValueOperand() : ValueID();
-}
-
-static bool isAllocatedUpToInLinkLayouts(const BodyIndex& index, ValueID object, ValueID bound)
-{
-    LoopID loop = index.loopOf(index.blockOf(object));
-    if (!loop)
-        return false;
-    BodyTerminator end = index.terminator(index.loop(loop).head);
-    ValueID condition = end.kind() == TerminatorKind::Branch ? index.stripCasts(end.operand(0)) : ValueID();
-    static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
-    if (!condition || index.isParameter(condition) || !relations.contains(index.opcodeOf(condition)))
-        return false;
-    for (uint32_t side = 0; side < 2; ++side) {
-        ValueID most = index.stripCasts(index.value(condition).operand(side));
-        if (isSameReadInLinkLayouts(index, most, bound))
-            return true;
-        if (!most || index.isParameter(most) || index.opcodeOf(most) != Opcode::PropGet || index.value(most).isFreeName() || !index.value(most).key())
-            continue;
-        for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
-            for (BodyValue value : index.block(BlockID(block)).values()) {
-                if (value.opcode() == Opcode::PropSet && !value.isFreeName() && value.key() == index.value(most).key() && isSameReadInLinkLayouts(index, value.valueOperand(), bound))
-                    return true;
-            }
-        }
-    }
-    return false;
-}
-
-bool WriterOfLinkLayouts::isFilledAfterAllocation(FunctionID id, const ThinSummary& summary, const BodyIndex& body, const Allocation& allocation, const LoopFill& loop) const
-{
-    ValueID array = allocation.object ? findArrayOfObject(body, allocation.object) : ValueID();
-    if (!array)
-        return false;
-    BlockID block = body.blockOf(allocation.object);
-    const BodyIndex& filling = *bodiesLookedAt(m_flow.looks).find(loop.function);
-    if (id == loop.function) {
-        if (!isSameReadInLinkLayouts(body, array, loop.array) && !haveSameNameInLinkLayouts(body, array, body, loop.array))
-            return false;
-        return comesBeforeInLinkLayouts(body, block, loop.head) && (loop.kind != ElementBound::Other || isAllocatedUpToInLinkLayouts(body, allocation.object, loop.bound));
-    }
-    if (loop.kind == ElementBound::Other || !haveSameNameInLinkLayouts(body, array, filling, loop.array))
-        return false;
-    if (loop.constructors.get(id.index()))
-        return true;
-    for (uint32_t number = 0; number < summary.calls.size(); ++number) {
-        const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[id.index()] + number];
-        ValueID site = summary.calls[number].site;
-        if (callees.listed().size() != 1 || callees.listed()[0] != loop.function || !site)
-            continue;
-        BlockID blockOfCall = body.blockOf(site);
-        BlockID head = findOuterHeadInLinkLayouts(body, block, blockOfCall);
-        if (body.dominates(head, blockOfCall) && runsOnEveryPath(id, body, blockOfCall))
-            return true;
-    }
-    return false;
-}
-
-BitVector WriterOfLinkLayouts::findFilledLayouts(Vector<LoopFill>& loops) const
-{
-    BitVector filled;
-    BitVector pending;
-    for (const LoopFill& loop : loops) {
-        FunctionID constructor = m_program.at(loop.layout).constructor;
-        if (!m_flow.lostLayouts.get(loop.layout.index()) && !(constructor && m_flow.lostFunctions.get(constructor.index())))
-            pending.set(loop.layout.index());
-    }
-    if (pending.isEmpty())
-        return filled;
-    AOT::stableSort(loops, { }, [](const LoopFill& loop) {
-        return loop.layout.index();
-    });
-    BitVector allocated;
-    forEachAllocatingFunction(pending, [&](FunctionID id, const ThinSummary& summary, const BodyIndex* body, std::span<const Allocation> allocations) {
-        for (const Allocation& allocation : allocations) {
-            allocated.set(allocation.layout.index());
-            for (LoopFill& loop : std::ranges::equal_range(loops, allocation.layout.index(), { }, [](const LoopFill& loop) { return loop.layout.index(); }))
-                loop.isRefused = loop.isRefused || !body || !isFilledAfterAllocation(id, summary, *body, allocation, loop);
-        }
-    });
-    for (const LoopFill& loop : loops) {
-        if (!loop.isRefused && allocated.get(loop.layout.index()) && pending.get(loop.layout.index()))
-            filled.set(loop.layout.index());
-    }
-    return filled;
-}
-
-void WriterOfLinkLayouts::findInlineCapacities()
-{
-    constexpr size_t mostProperties = 32;
-    BitVector layoutsWithPrototypeData;
-    for (const LinkFlow::NameOnPrototype& name : m_flow.namesOnPrototypes()) {
-        const LinkType& stored = m_flow.typeAt(name.stored);
-        if (stored.primitives || stored.objects != LinkType::Objects::None)
-            layoutsWithPrototypeData.set(name.layout.index());
-    }
-    uint32_t numberOfLayouts = static_cast<uint32_t>(m_program.layouts.size());
-    m_tables.inlineCapacities.fill(0, numberOfLayouts);
-    Vector<PropertyKeyID, 16> keys;
-    for (uint32_t number = 0; number < numberOfLayouts; ++number) {
-        LayoutID id(number);
-        const Layout& layout = m_program.at(id);
-        if (m_tables.appendedKeysOf(id).empty())
-            continue;
-        uint8_t& capacity = m_tables.inlineCapacities[number];
-        if (layout.kind == LayoutKind::Record) {
-            capacity = std::min(layout.fields.size(), mostProperties);
-            continue;
-        }
-        FunctionID constructor = layout.constructor;
-        if (!constructor || m_program.at(constructor).kind != FunctionKind::Plain || !m_flow.reached.get(constructor.index()))
-            continue;
-        std::optional<unsigned> own = m_program.at(constructor).thisParameterIndex();
-        const ThinSummary& summary = m_flow.summaries.at(constructor);
-        keys.shrink(0);
-        for (const SummaryAccess& access : summary.accesses) {
-            if (access.kind != SummaryAccess::Kind::Store || !own || summary.nodes[access.subject] != SummaryNode { SummaryNode::Kind::Parameter, *own, 0 })
-                continue;
-            if (PropertyKeyID key = m_flow.keyOf(constructor, access); key && keys.size() < mostProperties && !keys.contains(key))
-                keys.append(key);
-        }
-        if (!keys.isEmpty())
-            capacity = keys.size();
-        else if (own && m_flow.prototypeKeepsConstructor(id) && !layoutsWithPrototypeData.get(number))
-            capacity = JSFinalObject::defaultInlineCapacity;
-    }
-}
-
-void WriterOfLinkLayouts::addCalledMethods(FunctionID caller, uint32_t object, LayoutID layout, Vector<FunctionID, 8>& methods) const
-{
-    auto isObject = [&](uint32_t node) {
-        if (node == object || node == noSummaryNode)
-            return node != noSummaryNode;
-        const LinkType& type = typeAt(caller, node);
-        return layout && type.objects == LinkType::Objects::Layout && type.layout == layout;
-    };
-    const ThinSummary& summary = m_flow.summaries.at(caller);
-    auto callees = m_flow.calleesOfCallsAsSettled();
-    PropertyKeyID call = m_program.keyOf(BuiltinNames::call);
-    PropertyKeyID apply = m_program.keyOf(BuiltinNames::apply);
-    for (uint32_t number = 0; number < summary.calls.size(); ++number) {
-        const SummaryCall& made = summary.calls[number];
-        if (made.isConstruction)
-            continue;
-        bool isForwarded = made.key && (made.key == call || made.key == apply) && made.numberOfArguments && isObject(summary.arguments[made.firstArgument]);
-        if (!isForwarded && !isObject(made.receiver))
-            continue;
-        for (FunctionID callee : callees[m_flow.firstCallOfFunction[caller.index()] + number].listed())
-            methods.append(callee);
-    }
-}
-
-void WriterOfLinkLayouts::addMethodsOfConstructor(FunctionID constructor, Vector<FunctionID, 8>& methods) const
-{
-    if (!m_flow.reached.get(constructor.index()))
-        return;
-    const ThinSummary& summary = m_flow.summaries.at(constructor);
-    LayoutID made = m_program.at(constructor).constructedClass;
-    std::optional<unsigned> own = m_program.at(constructor).thisParameterIndex();
-    uint32_t object = 0;
-    while (object < summary.nodes.size() && !(own && summary.nodes[object] == SummaryNode { SummaryNode::Kind::Parameter, *own, 0 }))
-        ++object;
-    addCalledMethods(constructor, object < summary.nodes.size() ? object : noSummaryNode, made, methods);
-}
-
-BitVector WriterOfLinkLayouts::findReachedMethods(LayoutID layout, Vector<FunctionID, 8>& methods) const
-{
-    BitVector seen;
-    for (size_t next = 0; next < methods.size(); ++next) {
-        FunctionID method = methods[next];
-        if (!seen.add(method.index()))
-            continue;
-        const ThinSummary& summary = m_flow.summaries.at(method);
-        std::optional<unsigned> own = m_program.at(method).thisParameterIndex();
-        uint32_t object = 0;
-        while (object < summary.nodes.size() && !(own && summary.nodes[object] == SummaryNode { SummaryNode::Kind::Parameter, *own, 0 }))
-            ++object;
-        addCalledMethods(method, object < summary.nodes.size() ? object : noSummaryNode, layout, methods);
-    }
-    return seen;
-}
-
-void WriterOfLinkLayouts::noteLateFieldsOfMethods()
-{
-    if (m_lateFieldsOfMethods.isEmpty())
-        return;
-    auto callees = m_flow.calleesOfCallsAsSettled();
-    HashMap<uint32_t, Vector<FunctionID, 8>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> methodsOfLayouts;
-    for (const LateFieldOfMethod& field : m_lateFieldsOfMethods)
-        methodsOfLayouts.add(field.layout.index(), Vector<FunctionID, 8> { });
-    for (size_t index : m_flow.reached) {
-        FunctionID id(index);
-        const ThinSummary& summary = m_flow.summaries.at(id);
-        for (uint32_t number = 0; number < summary.calls.size(); ++number) {
-            const SummaryCall& call = summary.calls[number];
-            if (call.isConstruction || call.receiver == noSummaryNode)
-                continue;
-            const SummaryNode& receiver = summary.nodes[call.receiver];
-            bool isNew = receiver.kind == SummaryNode::Kind::Allocation || (receiver.kind == SummaryNode::Kind::ResultOfCall && summary.calls[receiver.first].isConstruction);
-            if (!isNew)
-                continue;
-            const LinkType& type = typeAt(id, call.receiver);
-            if (type.objects != LinkType::Objects::Layout)
-                continue;
-            auto found = methodsOfLayouts.find(type.layout.index());
-            if (found == methodsOfLayouts.end())
-                continue;
-            for (FunctionID callee : callees[m_flow.firstCallOfFunction[index] + number].listed())
-                found->value.append(callee);
-        }
-    }
-    AOT::stableSort(m_lateFieldsOfMethods, { }, [](const LateFieldOfMethod& field) {
-        return field.layout.index();
-    });
-    std::span<const LateFieldOfMethod> fields = m_lateFieldsOfMethods.span();
-    for (size_t first = 0, end = 0; first < fields.size(); first = end) {
-        LayoutID filled = fields[first].layout;
-        while (end < fields.size() && fields[end].layout == filled)
-            ++end;
-        Vector<FunctionID, 8>& methods = methodsOfLayouts.find(filled.index())->value;
-        for (LayoutID layout = filled; layout; layout = m_program.at(layout).base) {
-            FunctionID constructor = m_program.at(layout).constructor;
-            if (!constructor || !m_flow.reached.get(constructor.index()))
-                break;
-            addMethodsOfConstructor(constructor, methods);
-        }
-        BitVector seen = findReachedMethods(filled, methods);
-        for (const LateFieldOfMethod& field : fields.subspan(first, end - first)) {
-            if (seen.get(field.method.index()))
-                m_tables.lateFieldsStoredThroughThis.append(LinkTables::lateFieldOf(field.layout, field.key));
-        }
-    }
-}
-
 void WriterOfLinkLayouts::findLateFieldsFilledTogether()
 {
-    findInlineCapacities();
-    Fillers fillers;
-    BitVector filledLayouts;
-    Vector<LoopFill> loops;
     for (const LateFieldsFilled& filled : m_lateFieldsFilled) {
-        if (filled.isInParameter()) {
-            fillers.add(fillerOf(filled.function, filled.parameter));
-            filledLayouts.set(filled.layout.index());
-            continue;
-        }
-        const BodyIndex* body = bodiesLookedAt(m_flow.looks).find(filled.function);
-        if (std::optional<LoopFill> loop = body ? findLoopFill(filled.function, *body, filled.layout, filled.store, filled.read) : std::nullopt)
-            loops.append(WTF::move(*loop));
-    }
-    retainFilledLayouts(filledLayouts, fillers);
-    Vector<LoopFill> loopsWithFillers = findLoopsWithFillers(fillers);
-    filledLayouts.merge(findFilledLayouts(loopsWithFillers));
-    BitVector elementLayouts = findFilledLayouts(loops);
-    for (const LateFieldsFilled& filled : m_lateFieldsFilled) {
-        if (!(filled.isInParameter() ? filledLayouts : elementLayouts).get(filled.layout.index()))
-            continue;
         std::span<const PropertyKeyID> appended = m_tables.appendedKeysOf(filled.layout);
         bool fillsAll = appended.size() >= minLateFieldsFilledTogether && std::ranges::all_of(appended, [&](PropertyKeyID key) {
             return filled.keys.contains(key);
@@ -5457,7 +4742,6 @@ void WriterOfLinkLayouts::findLateFieldsFilledTogether()
         if (fillsAll)
             m_tables.layoutsFillingLateFieldsTogether.set(filled.layout.index());
     }
-    noteLateFieldsOfMethods();
     Vector<uint64_t>& storedThroughThis = m_tables.lateFieldsStoredThroughThis;
     std::ranges::sort(storedThroughThis);
     storedThroughThis.shrink(storedThroughThis.size() - std::ranges::unique(storedThroughThis).size());

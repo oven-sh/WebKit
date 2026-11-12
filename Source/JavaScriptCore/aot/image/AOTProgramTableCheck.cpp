@@ -587,8 +587,6 @@ static void checkFunctionTables(const JoinedTables& check)
         && std::ranges::all_of(tables.closureFactNumbers(), [&](uint16_t number) { return number < tables.closureFacts().size(); }) && tables.closureCells().size() >= NumberGroup::numberOfGroupWords(numberOfClosureFunctions);
     if (!check.expect(hasRowForEachFunction, "TableOutOfBounds"_s, { }, "functionRecordNumbers"_s))
         return;
-    if (!check.expect(tables.areUnsharedRecordsConsistent(), "TableOutOfBounds"_s, { }, "unsharedFunctionRecords"_s))
-        return;
     for (uint32_t number = 0; number < numberOfClosureFunctions; ++number) {
         CodeUnit unit = conventions.unitAt(functions.unitOf(FunctionID(tables.closureFunctionWithNumber(number))));
         uint32_t cell = cells.at(number);

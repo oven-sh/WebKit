@@ -831,6 +831,7 @@ public:
     ~Walker();
 
     void takeRoomOf(Walker& former);
+    void releaseAnswers() { m_answersOfStates.releaseRoom(); }
     bool hasBegunUnit() const { return m_hasBegunUnit; }
     bool walk(CodeUnit, WalkMode = WalkMode::AsBuilt);
     bool hasLastWalksOfLoopsToWalkAlone() const;

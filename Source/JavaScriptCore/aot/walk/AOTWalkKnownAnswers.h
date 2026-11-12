@@ -219,6 +219,7 @@ public:
     AnswersOfWalk() = default;
 
     void clear();
+    void releaseRoom();
     void takeRoomOf(AnswersOfWalk& former)
     {
         takeRoom(m_answers, former.m_answers);

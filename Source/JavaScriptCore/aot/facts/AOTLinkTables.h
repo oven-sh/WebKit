@@ -695,8 +695,6 @@ struct LinkTables : LinkedFirstStores {
     BitVector keysAppendedByHeldAloneLaidLate;
     BitVector appendedFieldsThatTakeWordLeftInCell;
     BitVector layoutsFillingLateFieldsTogether;
-    Vector<uint8_t> inlineCapacities;
-    uint8_t inlineCapacityOf(LayoutID layout) const { return layout.index() < inlineCapacities.size() ? inlineCapacities[layout.index()] : 0; }
     Vector<uint64_t> lateFieldsStoredThroughThis;
     BitVector appendedFieldsThatFollowersOfMakersStore;
     BitVector keysAppendedByHeldAloneThatFollowersOfMakersStore;
