@@ -123,6 +123,35 @@ bool Modules::isImportedByGraphUnderEvaluation(ModuleID module, bool forIntactOr
     return false;
 }
 
+bool Modules::isLinkedByDeferredImport(ModuleID module) const
+{
+    auto isUnevaluated = [&](ModuleID each) {
+        return status(each) <= ModuleStatus::Linked && !isMocked(each) && !m_modulesWithPendingMock.get(each.index());
+    };
+    BitVector isReached(m_table.size());
+    Vector<ModuleID, 16> linked;
+    auto visit = [&](ModuleID importer, const ModuleRequestData& request) {
+        ModuleID imported = moduleLoadedBy(request);
+        if (!request.isHoisted && !request.isRequire && isUnevaluated(imported) && !isLinkedToReleasedInstance(importer, imported) && !isReached.quickSet(imported.index()))
+            linked.append(imported);
+    };
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (!data(importer).hasDeferredRequest() || status(importer) <= ModuleStatus::Linked)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.isDeferred)
+                visit(importer, request);
+        }
+    }
+    while (!linked.isEmpty()) {
+        ModuleID importer = linked.takeLast();
+        for (const ModuleRequestData& request : m_table.imports(importer))
+            visit(importer, request);
+    }
+    return isReached.quickGet(module.index());
+}
+
 std::optional<ModuleFailureID> Modules::failureByAbsentExport(ModuleID module) const
 {
     if (!m_errorsOfExportsThatBuildFoundAbsent || status(module) != ModuleStatus::Failed)
@@ -411,7 +440,7 @@ bool Modules::evaluateLinkedModuleBeforeMock(ModuleID module, bool keepsOriginal
         return false;
     };
     bool isInSweptGraph = m_rootWhoseLoadIsSwept && m_rootWhoseLoadIsSwept != module && staticImportClosure(*m_rootWhoseLoadIsSwept, MockTraversal::Stop).get(module.index()) && !waitsForFactories();
-    if (endsBeforeLink || (!isInSweptGraph && !isImportedByGraphUnderEvaluation(module, keepsOriginalIntact) && (keepsOriginalIntact || (!wasLinkedBeforeLinkFailure(module) && !hasImporterLinkedBeforeFailure(module) && !(isLinkedAndUnevaluated(module) && m_linkedByFailedLoads.get(module.index()))))))
+    if (endsBeforeLink || (!isInSweptGraph && !isImportedByGraphUnderEvaluation(module, keepsOriginalIntact) && (keepsOriginalIntact || (!isLinkedByDeferredImport(module) && !wasLinkedBeforeLinkFailure(module) && !hasImporterLinkedBeforeFailure(module) && !(isLinkedAndUnevaluated(module) && m_linkedByFailedLoads.get(module.index()))))))
         return !hasRun(module) && !didCaptureExports(module);
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { module };

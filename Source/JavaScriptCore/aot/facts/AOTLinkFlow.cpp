@@ -6212,11 +6212,10 @@ bool LinkFlow::openLayoutsThatChanged()
         if (m_openLayouts.get(layout.index()))
             continue;
         if (!escapedLayouts.get(layout.index()) && !layoutsThatGainWhatUnseenCodeGaveSources.get(layout.index()) && !(lostLayouts.get(layout.index()) ? possibleChanges : changesByMoreThanStoresInSight)[layout.index()].containsAny({ LayoutChange::GainsProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor })) {
-            FlowNodeID found(m_extraPropertyNodes[2 * static_cast<size_t>(layout.index())]);
-            if (layoutsThatGetNullAbove.get(layout.index()) && !(typeAt(found).primitives & Primitive::Undefined)) {
-                arrive(found, fromTypeID(TypeTable::undefined));
-                if (uint32_t underNames = m_nonNumericKeyReadNodes[layout.index()]; underNames != noNodeInLinkFlow)
-                    arrive(FlowNodeID(underNames), fromTypeID(TypeTable::undefined));
+            for (uint32_t node : { m_extraPropertyNodes[2 * static_cast<size_t>(layout.index())], m_nonNumericKeyReadNodes[layout.index()] }) {
+                if (!layoutsThatGetNullAbove.get(layout.index()) || node == noNodeInLinkFlow || typeAt(FlowNodeID(node)).primitives & Primitive::Undefined)
+                    continue;
+                arrive(FlowNodeID(node), fromTypeID(TypeTable::undefined));
                 hasOpened = true;
             }
             continue;

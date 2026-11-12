@@ -3614,7 +3614,10 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
     }
     captured->putDirectMayBeIndex(realm, key, value);
     RETURN_IF_EXCEPTION(scope, false);
-    if (JSObject* namespaceObject = namespaceIfCreated(module, ModulePhase::Evaluation)) {
+    for (ModulePhase phase : { ModulePhase::Evaluation, ModulePhase::Defer }) {
+        JSObject* namespaceObject = namespaceIfCreated(module, phase);
+        if (!namespaceObject)
+            continue;
         uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
         RETURN_IF_EXCEPTION(scope, false);
     }

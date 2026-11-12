@@ -1736,7 +1736,7 @@ JSObject* Modules::instanceNamespace(ModuleID module, Environment* instance, Mod
     auto lacking = std::ranges::find(m_namespacesThatLackNames, object, &NamespaceThatLacksNames::object);
     if (lacking != m_namespacesThatLackNames.end())
         m_outermostNamespaceReadWhileBeingMade = std::min(m_outermostNamespaceReadWhileBeingMade, lacking->outermostRead);
-    else if (created && created->boundModuleInstance() == instance) {
+    else if (created && created->boundModuleInstance() == instance && !(phase == ModulePhase::Defer && isMocked(module) && instance == currentInstance(module) && !m_linkedInstances.get(module.index()))) {
         writeField(instance, field, object);
         created->setBelongsToInstance();
     }

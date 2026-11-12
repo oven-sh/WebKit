@@ -859,6 +859,7 @@ public:
     JSPromise* pendingEvaluation(ModuleID, bool hasAlreadyWaited);
     JSPromise* pendingEvaluationInGraph(ModuleID file);
     bool isImportedByGraphUnderEvaluation(ModuleID, bool forIntactOriginal = false);
+    bool isLinkedByDeferredImport(ModuleID) const;
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
     bool wasRegisteredByFailedLoad(ModuleID) const;
     bool wasLinkedByFailedGraph(ModuleID, bool byEarlierTestFile);
