@@ -1835,7 +1835,10 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Walker::holdStoredValuesToPlaces(const Draft
         storesWrittenConstant = stored && !index.isParameter(stored) && constantsInFormOfUses.contains(index.opcodeOf(stored));
     }
     if (draft.opcode == Opcode::PutModuleVariable) {
-        holdToTypeOfPlace(draft.valueOperand(), m_positionsOfBuild->variable(TypeLevel::Proven, draft.variable()), plan().promotedEnvironments().find(draft.variable()) ? ProofSource::Capture : ProofSource::Variable, origin, storesWrittenConstant);
+        const PromotedVariable* promoted = plan().promotedEnvironments().find(draft.variable());
+        if (promoted && promoted->function)
+            return;
+        holdToTypeOfPlace(draft.valueOperand(), m_positionsOfBuild->variable(TypeLevel::Proven, draft.variable()), promoted ? ProofSource::Capture : ProofSource::Variable, origin, storesWrittenConstant);
         return;
     }
     if (draft.opcode == Opcode::PutEnvironmentField) {

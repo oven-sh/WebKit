@@ -1369,7 +1369,8 @@ public:
         const ModuleData& file = data(fileOf(module));
         return (file.kind != ModuleKind::SourceText && file.kind != ModuleKind::CommonJs) || file.mayBeEvicted();
     }
-    void delegateToHostUnlessEvaluated(ModuleID);
+    enum class DelegatedBy : bool { Host, RequireCache };
+    void delegateToHostUnlessEvaluated(ModuleID, DelegatedBy = DelegatedBy::Host);
     void takeOutOfLoader(ModuleID);
     bool hasNoEntryBehindMock(ModuleID);
     void retainMockForLinkedImporters(ModuleID);
@@ -1418,6 +1419,7 @@ public:
     bool requiresPatch(ModuleID, JSObject*& exports) const;
     bool wasModifiedSinceBuild(StringView path) const;
     bool wasWrittenSinceBuild(ModuleID file) const;
+    bool wasDelegatedByHost(ModuleID file) const { return m_filesDelegatedByHost.get(file.index()); }
     bool isImportedDataURL(StringView url) const;
     bool rejectsLoadsByName() const { return !m_loadsModulesByName && !m_runsUncompiledCode && !m_hostRunsCopiesFromDisk && !isInHostRequest(); }
     bool isInHostRequest() const { return m_currentHostRequest && !isHostRequestStale(); }
@@ -2465,6 +2467,7 @@ private:
         return found == m_exportsLeftOut.end() ? BitVector() : found->value;
     }
     BitVector m_evictedFiles;
+    BitVector m_filesDelegatedByHost;
     BitVector m_filesModifiedSinceBuild;
     bool m_hasNotedTextsThatHostKeeps { false };
     BitVector m_dataFilesThatHostPrintsAsJavaScript;

@@ -1306,7 +1306,7 @@ static ModuleNamespace* namespaceOfCompiledOriginal(JSModuleRecord* record)
 std::optional<ModuleID> Modules::compiledOriginalNamedBy(const Identifier& key)
 {
     std::optional<ModuleID> module = originalNamedBy(key);
-    if (!module || key.string().contains("&actual"_s) || !hasInstances(*module) || !data(*module).isESModuleOfProgram() || data(*module).isFacade() || isEvicted(*module) || delegatesToHost(*module) || wasWrittenSinceBuild(fileOf(*module)))
+    if (!module || key.string().contains("&actual"_s) || !hasInstances(*module) || !data(*module).isESModuleOfProgram() || data(*module).isFacade() || isEvicted(*module) || delegatesToHost(*module) || wasDelegatedByHost(fileOf(*module)) || wasWrittenSinceBuild(fileOf(*module)))
         return std::nullopt;
     return module;
 }
@@ -1941,7 +1941,7 @@ bool isCompiledOriginal(JSGlobalObject* realm, const String& key)
     if (modules->compiledOriginalNamedBy(name))
         return true;
     std::optional<ModuleID> file = modules->commonJSOriginalNamedBy(name);
-    return file && !modules->wasWrittenSinceBuild(*file);
+    return file && !modules->wasDelegatedByHost(*file) && !modules->wasWrittenSinceBuild(*file);
 }
 
 bool hasLoadedCommonJSFile(JSGlobalObject* realm)

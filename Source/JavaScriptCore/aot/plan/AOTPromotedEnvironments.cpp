@@ -70,6 +70,7 @@ private:
     struct TypesOfCapture {
         TypeID established;
         TypeID proven;
+        bool everyWriterIsKnown { false };
 
         friend bool operator==(const TypesOfCapture&, const TypesOfCapture&) = default;
     };
@@ -103,7 +104,7 @@ private:
     TypesOfCapture typesOfCapture(FunctionID function, uint32_t capture) const
     {
         const LinkedCell& cell = m_facts.linked().capture(function, capture);
-        return { m_program.provenTypeOf(m_program.at(function).captures[capture]), cell.everyWriterIsKnown ? cell.proven : TypeID() };
+        return { m_program.provenTypeOf(m_program.at(function).captures[capture]), cell.everyWriterIsKnown ? cell.proven : TypeID(), cell.everyWriterIsKnown };
     }
 
     LayoutID scopeIn(TypeID type) const { return type && !holdsOnlyPrimitives(type) ? m_program.types.typeKeptAt(type).environment : LayoutID(); }
@@ -117,7 +118,7 @@ private:
     uint32_t rootOf(uint32_t node);
     void unite(uint32_t, uint32_t);
     void addSource(uint32_t node, uint32_t source);
-    static bool agrees(TypesOfCapture ofSource, TypesOfCapture ofReader) { return ofSource.established == ofReader.established && (!ofReader.proven || ofSource.proven == ofReader.proven); }
+    static bool agrees(TypesOfCapture ofSource, TypesOfCapture ofReader) { return ofSource.established == ofReader.established && (ofSource.proven == ofReader.proven || (!ofReader.proven && ofReader.everyWriterIsKnown)); }
     static void noteReader(Source&, FunctionID reader, uint32_t capture, TypesOfCapture);
     bool mayLieInFrameOfCaller(FunctionID, const BodyIndex&, ValueID) const;
     void followCapturedValues(FunctionID, const ThinSummary&, const BodyIndex&, bool serves);
@@ -327,7 +328,7 @@ void PlannerOfPromotedEnvironments::unite(uint32_t first, uint32_t second)
 
 void PlannerOfPromotedEnvironments::noteReader(Source& source, FunctionID reader, uint32_t capture, TypesOfCapture types)
 {
-    if (!source.types.proven && types.proven && source.types.established == types.established) {
+    if (!source.types.proven && source.types.everyWriterIsKnown && types.proven && source.types.established == types.established) {
         source.firstReader = reader;
         source.captureOfFirstReader = capture;
         source.types = types;

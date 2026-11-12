@@ -578,9 +578,11 @@ void Modules::makeESModuleReadyToRunAgain(ModuleID module)
     }
 }
 
-void Modules::delegateToHostUnlessEvaluated(ModuleID module)
+void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegatedBy)
 {
     ModuleID file = fileOf(module);
+    if (delegatedBy == DelegatedBy::Host)
+        m_filesDelegatedByHost.set(file.index());
     if (status(file) >= ModuleStatus::Evaluating || isEvicted(file) || hasRun(file))
         return;
     delegateToHost(file);
@@ -7267,7 +7269,7 @@ static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy taken
     if (isDeleted && modules->isEvicted(module))
         modules->takeOutOfLoader(module);
     if (standsInPlaceOfFile)
-        modules->delegateToHostUnlessEvaluated(module);
+        modules->delegateToHostUnlessEvaluated(module, Modules::DelegatedBy::RequireCache);
 }
 
 void willReevaluateEntryPoint(JSGlobalObject* realm, ModuleID module)
