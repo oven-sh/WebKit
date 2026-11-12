@@ -613,11 +613,13 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     };
     auto passLoopHead = [&] {
         BlockID head;
-        for (BlockID awaited : loopHeadsAwaited) {
+        loopHeadsAwaited.removeAllMatching([&](BlockID awaited) {
             const BlockBelowBirth& below = blocksBelow[awaited.index()];
-            if (below.numberOfEdgesAwaited && !below.isPassedLoopHeader && (!head || awaited < head))
+            bool isAwaited = below.numberOfEdgesAwaited && !below.isPassedLoopHeader;
+            if (isAwaited && (!head || awaited < head))
                 head = awaited;
-        }
+            return !isAwaited;
+        });
         if (!head)
             return false;
         BlockBelowBirth& below = blocksBelow[head.index()];
@@ -643,6 +645,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     Vector<BlockID, 32> blocksInPassedLoops;
     auto markPassedLoops = [&] {
         blocksInPassedLoops.shrink(0);
+        AOT::stableSort(backEdgesToHeaders, { }, &BackEdgeToHeader::head);
         for (size_t index = loopHeadsPassed.size(); index--;) {
             BlockID head = loopHeadsPassed[index];
             auto addToLoop = [&](BlockID block) {
@@ -663,10 +666,8 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
                 blocksBelow[loop.index()].loopAround = head;
                 blocksOfLoop.append(loop);
             };
-            for (BackEdgeToHeader edge : backEdgesToHeaders) {
-                if (edge.head == head)
-                    addToLoop(edge.from);
-            }
+            for (BackEdgeToHeader edge : std::ranges::equal_range(backEdgesToHeaders, head, { }, &BackEdgeToHeader::head))
+                addToLoop(edge.from);
             while (!blocksOfLoop.isEmpty()) {
                 BlockID block = blocksOfLoop.takeLast();
                 for (EdgeID edge = code.at(block).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {

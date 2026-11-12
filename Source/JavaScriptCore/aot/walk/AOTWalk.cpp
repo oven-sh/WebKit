@@ -10124,6 +10124,8 @@ bool Walker::isReleasableArray(Reference object) const
 Vector<Reference, 2> Walker::listReleasableArrays(uint32_t numberOfValuesBuiltBefore) const
 {
     Vector<Reference, 2> arrays;
+    if (!m_state.mayHoldFreshObjectsFrom(numberOfValuesBuiltBefore))
+        return arrays;
     m_state.forEachFreshObject([&](Reference object) {
         if (object.id().index() >= numberOfValuesBuiltBefore && isReleasableArray(object))
             arrays.append(object);

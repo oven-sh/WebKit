@@ -145,28 +145,6 @@ static void noteStoredElementInTypedElements(Walker& walker, Reference base, Ref
     walker.state().noteElement(object ? object : base, key, stored);
 }
 
-static std::optional<int64_t> findConstantPosition(Walker& walker, Reference key)
-{
-    if (!key || !key.isConstant() || walker.code().at(key.id()).opcode != Opcode::Integer)
-        return std::nullopt;
-    return walker.code().at(key.id()).integer();
-}
-
-static bool isReadOfBody(const AccessOfTypedElements&);
-
-static Vector<WalkState::ElementOfObject, 8> listOtherConstantElements(const AccessOfTypedElements& access, int64_t stored)
-{
-    Walker& walker = access.walker;
-    Vector<WalkState::ElementOfObject, 8> elements;
-    std::optional<uint32_t> loop = isReadOfBody(access) ? walker.loopReadingConstantsAfter(access.value) : std::nullopt;
-    for (const WalkState::ElementOfObject& element : walker.state().listElementsOf(access.base)) {
-        std::optional<int64_t> position = findConstantPosition(walker, element.index);
-        if (position && *position != stored && (!loop || walker.readsElementAfter(*loop, access.value, *position)))
-            elements.append(element);
-    }
-    return elements;
-}
-
 static bool answerAheadOfTypedElements(const AccessOfTypedElements& access, Opcode opcode, KnowledgeLevel level)
 {
     access.walker.noteFormAskedAhead(opcode, level);
@@ -1841,8 +1819,6 @@ static bool buildCarriedRead(const AccessOfTypedElements& access, const HoistedA
         walker.checkThatMemoryAnswersAsBelieved(carried, WTF::move(read));
         walker.state() = WTF::move(believed);
     }
-    if (access.key.isConstant())
-        noteStoredElementInTypedElements(walker, access.base, access.key, carried);
     walker.bind(access.value.id(), carried);
     return true;
 }
@@ -2252,8 +2228,8 @@ static bool askKeyOfLaterStoresOfTypedElements(const AccessOfTypedElements& acce
     const BodyValue& first = access.value;
     if (first.opcode() != Opcode::ElemSet || first.id().index() >= index.numberOfValues() || index.value(first.id()).words() != first.words())
         return true;
-    for (auto [blockAndKey, numberOfLater] : walker.laterStoresUnderSameKeyInBlockInCurrentBody(first)) {
-        BodyValue later = index.value(ValueID(numberOfLater));
+    for (ValueID next : walker.nextStoresUnderSameKey(first)) {
+        BodyValue later = index.value(next);
         Reference list = nameOfListThatEntersLoopAround(walker, index, later);
         std::optional<HoistedArrayGuard> tested = list && list != access.base ? findListTestedForStoresInFrontOfLoop(walker, list) : std::nullopt;
         if (!tested || !tested->isWritable || positionIsKnownToLieInsideList(walker, list, access.key))
@@ -2609,30 +2585,60 @@ bool Walker::isPopFromLiteral(const BodyValue& call)
     return false;
 }
 
-std::span<const std::pair<uint64_t, uint32_t>> Walker::laterStoresUnderSameKeyInBlockInCurrentBody(const BodyValue& first)
+Vector<ValueID, 4> Walker::nextStoresUnderSameKey(const BodyValue& first)
 {
     const BodyIndex& index = currentBodyIndex();
     auto blockAndKeyOf = [&](const BodyValue& store) {
         ValueID key = index.stripCasts(store.propertyOperand());
         return static_cast<uint64_t>(index.blockOf(store.id()).index()) << 32 | (key ? key.index() : std::numeric_limits<uint32_t>::max());
     };
-    const Vector<std::pair<uint64_t, uint32_t>>& stores = m_storesByKeyOfBlocks.ensure(&index, [&] {
-        Vector<std::pair<uint64_t, uint32_t>> found;
+    auto placeOf = [](const StoreUnderKey& store) { return std::pair { store.blockAndKey, store.store }; };
+    auto holderOf = [&](const StoreUnderKey& store) {
+        ValueID holder = index.stripCasts(index.value(ValueID(store.store)).objectOperand());
+        if (holder && !index.isParameter(holder) && index.opcodeOf(holder) == Opcode::CheckInitialized)
+            holder = index.stripCasts(index.value(holder).operand(0));
+        if (holder && !index.isParameter(holder) && index.opcodeOf(holder) == Opcode::GetModuleVariable)
+            return uint64_t { 1 } << 32 | index.value(holder).variable().index();
+        return static_cast<uint64_t>(holder ? holder.index() : store.store);
+    };
+    const Vector<StoreUnderKey>& stores = m_storesByKeyOfBlocks.ensure(&index, [&] {
+        Vector<StoreUnderKey> found;
         if (!index.holdsAnyOf(OpcodeSet { Opcode::ElemSet }))
             return found;
         for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
             for (BodyValue operation : index.block(BlockID(block)).values()) {
                 if (operation.opcode() == Opcode::ElemSet)
-                    found.append({ blockAndKeyOf(operation), operation.id().index() });
+                    found.append(StoreUnderKey { blockAndKeyOf(operation), operation.id().index() });
             }
         }
-        std::ranges::sort(found);
+        std::ranges::sort(found, { }, placeOf);
+        HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> newestOfHolders;
+        for (size_t place = 0; place < found.size(); ++place) {
+            if (place && found[place].blockAndKey != found[place - 1].blockAndKey)
+                newestOfHolders.clear();
+            uint32_t& newest = newestOfHolders.add(holderOf(found[place]), 0).iterator->value;
+            found[place].previousOfHolder = std::exchange(newest, found[place].store);
+        }
+        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> holders;
+        for (size_t place = found.size(); place--;) {
+            if (place + 1 < found.size() && found[place].blockAndKey != found[place + 1].blockAndKey)
+                holders.clear();
+            found[place].numberOfHoldersAfter = holders.size();
+            holders.add(holderOf(found[place]));
+        }
         return found;
     }).iterator->value;
     uint64_t asked = blockAndKeyOf(first);
-    auto begin = std::ranges::upper_bound(stores, std::pair<uint64_t, uint32_t> { asked, first.id().index() });
-    auto end = std::ranges::upper_bound(stores, std::pair<uint64_t, uint32_t> { asked, std::numeric_limits<uint32_t>::max() });
-    return stores.span().subspan(begin - stores.begin(), end - begin);
+    Vector<ValueID, 4> next;
+    auto store = std::ranges::lower_bound(stores, std::pair { asked, first.id().index() }, { }, placeOf);
+    if (store == stores.end() || store->store != first.id().index())
+        return next;
+    for (size_t wanted = store->numberOfHoldersAfter; next.size() < wanted;) {
+        ++store;
+        if (store->previousOfHolder <= first.id().index())
+            next.append(ValueID(store->store));
+    }
+    return next;
 }
 
 static_assert(declaredBoundOf(Opcode::PutContiguousIndex).writes.isSubsetOf(declaredBoundOf(Opcode::ExtendArrayLength).writes) && declaredBoundOf(Opcode::PutDoubleIndex).writes.isSubsetOf(declaredBoundOf(Opcode::ExtendArrayLength).writes));
@@ -3307,12 +3313,12 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     std::optional<PassedTest> capacityProof;
     if (extendsLength && !checkCapacityForExtension(access, *tested, origin, capacityProof))
         return true;
+    uint32_t undoableStoreBefore = walker.state().newestUndoableStore();
     bool extendsBehindKind = extendsLength && asksForKind;
     if (extendsLength && !extendsBehindKind && !buildLengthExtension(access, *tested, origin, capacityProof, inside))
         return true;
     Reference valueBeforeStore;
     bool appendIsUndoable = mayAppend && !goesByKind && isNumericStorage(tested->storage) && walker.canRecordUndoableStore() && (turnStoresAgainBehindInTypedElements(access) || readsNamesAfterStore(access));
-    uint32_t undoableStoreBefore = walker.state().newestUndoableStore();
     if (mayAppend) {
     } else if (opcode == Opcode::PutDoubleIndex && !goesByKind && walker.canRecordUndoableStore() && (turnStoresAgainBehindInTypedElements(access) || readsNamesAfterStore(access) || readsRowsAfterStore(access))) {
         valueBeforeStore = walker.state().element(access.base, access.key);
@@ -3599,19 +3605,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         put.setStorageOperand(pointer);
     if (isMovedOutOfDoubleStorage)
         walker.count(StatisticID::DoubleElementsCopiedUnchecked);
-    std::optional<int64_t> storedConstant = inside && !isPush && !behindKinds && !freshObjectNamedInTypedElements(walker, access.base) ? findConstantPosition(walker, access.key) : std::nullopt;
-    Vector<WalkState::ElementOfObject, 8> preservedElements;
-    Vector<Walker::CarriedElementNote, 2> preservedNotes;
-    if (storedConstant) {
-        preservedElements = listOtherConstantElements(access, *storedConstant);
-        preservedNotes = walker.listCarriedElementNotes(access.base, *storedConstant);
-    }
     Reference store = walker.build(WTF::move(put));
-    if (store && !walker.isUnreachable()) {
-        for (const WalkState::ElementOfObject& element : preservedElements)
-            noteStoredElementInTypedElements(walker, access.base, element.index, element.value);
-        walker.restoreCarriedElementNotes(preservedNotes.span());
-    }
     walker.takePendingUndoableStore();
     if (extendsLength && mustUndoExtension && !walker.isUnreachable())
         walker.recordUndoableAppend(access.base, access.key, placeholderForAppend(walker, tested->storage, origin), access.key, tested->storage, undoableStoreBefore);

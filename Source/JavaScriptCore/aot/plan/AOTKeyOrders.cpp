@@ -357,7 +357,16 @@ private:
         ++m_numbersOfCandidates[layout.index()];
     }
     void listFieldsThatLayoutLists(LayoutID);
-    bool collectThisKeys(const LinkTables&, const ThinSummaries&, LayoutID, FunctionID, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered) const;
+    struct EventOnThis {
+        ValueID site;
+        PropertyKeyID key;
+        FunctionID method;
+        PropertyKeyID nameCalled;
+    };
+    Vector<EventOnThis> listEventsOnThis(const LinkTables&, const ThinSummaries&, FunctionID) const;
+    const Vector<EventOnThis>& eventsOnThis(const LinkTables&, const ThinSummaries&, FunctionID);
+    bool collectThisKeys(const LinkTables&, const ThinSummaries&, LayoutID, FunctionID, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered);
+    HashMap<uint32_t, std::unique_ptr<Vector<EventOnThis>>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_eventsOnThis;
     void addOrderOfClassConstructor(const LinkTables&, const ThinSummaries&, LayoutID);
     void addDeclaredOrderOf(LayoutID);
     void addOrderOfDataObject(const DataNode::Object&);
@@ -658,19 +667,11 @@ static bool isReachableInBody(const BodyIndex& body, BlockID from, BlockID to)
     return false;
 }
 
-bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSummaries& summaries, LayoutID layoutOfThis, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered) const
+auto CollectorOfKeyOrders::listEventsOnThis(const LinkTables& link, const ThinSummaries& summaries, FunctionID function) const -> Vector<EventOnThis>
 {
     const Function& record = m_program.at(function);
     LayoutID constructed = isClassConstructorOf(record.kind) ? record.constructedClass : LayoutID();
     std::optional<unsigned> thisParameter = record.kind == FunctionKind::Initializer ? std::optional<unsigned>(0) : record.thisParameterIndex();
-    if ((!thisParameter && !constructed) || entered.contains(function))
-        return false;
-    entered.append(function);
-    struct Event {
-        ValueID site;
-        PropertyKeyID key;
-        FunctionID method;
-    };
     const ThinSummary& summary = summaries.at(function);
     auto isConstructedLayout = [&](LayoutID layout) {
         size_t stepsLeft = m_program.layouts.size();
@@ -689,46 +690,74 @@ bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSum
             return isConstructedLayout(LayoutID(origin.first));
         return origin.kind == SummaryNode::Kind::ResultOfCall && isSuperCall(summary.calls[origin.first]);
     };
+    std::optional<BitVector> conversions;
+    auto collectConversions = [&] {
+        conversions.emplace(summary.nodes.size());
+        BitVector otherJoins(summary.nodes.size());
+        for (const SummaryEdge& edge : summary.edges) {
+            if (edge.to < summary.nodes.size() && summary.nodes[edge.to].kind == SummaryNode::Kind::Join)
+                (edge.from < summary.nodes.size() && isParameter(edge.from) ? *conversions : otherJoins).set(edge.to);
+        }
+        conversions->exclude(otherJoins);
+    };
     auto isThis = [&](uint32_t node) {
         if (node == noSummaryNode || isParameter(node))
             return node != noSummaryNode;
-        bool isConverted = false;
-        for (const SummaryEdge& edge : summary.edges) {
-            if (edge.to != node)
-                continue;
-            if (!isParameter(edge.from))
-                return false;
-            isConverted = true;
-        }
-        return isConverted && summary.nodes[node].kind == SummaryNode::Kind::Join;
+        if (summary.nodes[node].kind != SummaryNode::Kind::Join)
+            return false;
+        if (!conversions)
+            collectConversions();
+        return conversions->get(node);
     };
-    Vector<Event, 32> events;
+    Vector<EventOnThis> events;
     for (const SummaryAccess& access : summary.accesses) {
         if ((access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define) && !access.isToContents() && isThis(access.subject))
-            events.append({ access.site, access.key ? access.key : link.keyAt(function, access.site), { } });
+            events.append({ access.site, access.key ? access.key : link.keyAt(function, access.site), { }, { } });
     }
     for (const SummaryCall& call : summary.calls) {
         if (constructed && isSuperCall(call)) {
             LayoutID parent = m_program.at(constructed).base;
             if (FunctionID above = parent ? m_program.at(parent).constructor : FunctionID())
-                events.append({ call.site, { }, above });
+                events.append({ call.site, { }, above, { } });
             continue;
         }
         if (call.callee == SummaryCall::Callee::Binding && call.function && m_program.at(call.function).kind == FunctionKind::Initializer && call.numberOfArguments && isThis(summary.arguments[call.firstArgument])) {
-            events.append({ call.site, { }, call.function });
+            events.append({ call.site, { }, call.function, { } });
             continue;
         }
         if (call.isConstruction || !isThis(call.receiver))
             continue;
         FunctionID method = call.callee == SummaryCall::Callee::Binding ? call.function : link.calleeAt(function, call.site);
-        if (!method && call.callee == SummaryCall::Callee::Name)
-            method = link.findWrittenMethod(m_program, layoutOfThis, call.key);
-        if (method)
-            events.append({ call.site, { }, method });
+        PropertyKeyID nameCalled = !method && call.callee == SummaryCall::Callee::Name ? call.key : PropertyKeyID();
+        if (method || nameCalled)
+            events.append({ call.site, { }, method, nameCalled });
     }
-    std::ranges::sort(events, { }, &Event::site);
+    return events;
+}
+
+auto CollectorOfKeyOrders::eventsOnThis(const LinkTables& link, const ThinSummaries& summaries, FunctionID function) -> const Vector<EventOnThis>&
+{
+    return *m_eventsOnThis.ensure(function.index(), [&] {
+        return makeUniqueWithoutFastMallocCheck<Vector<EventOnThis>>(listEventsOnThis(link, summaries, function));
+    }).iterator->value;
+}
+
+bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSummaries& summaries, LayoutID layoutOfThis, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered)
+{
+    const Function& record = m_program.at(function);
+    bool hasThis = record.kind == FunctionKind::Initializer || record.thisParameterIndex() || (isClassConstructorOf(record.kind) && record.constructedClass);
+    if (!hasThis || entered.contains(function))
+        return false;
+    entered.append(function);
+    Vector<EventOnThis, 32> events;
+    for (const EventOnThis& event : eventsOnThis(link, summaries, function)) {
+        FunctionID method = event.nameCalled ? link.findWrittenMethod(m_program, layoutOfThis, event.nameCalled) : event.method;
+        if (method || !event.nameCalled)
+            events.append({ event.site, event.key, method, { } });
+    }
+    std::ranges::sort(events, { }, &EventOnThis::site);
     bool callsMethods = false;
-    for (const Event& event : events) {
+    for (const EventOnThis& event : events) {
         if (event.method) {
             callsMethods = true;
             collectThisKeys(link, summaries, layoutOfThis, event.method, keys, entered);
@@ -768,9 +797,12 @@ void CollectorOfKeyOrders::addOrderOfClassConstructor(const LinkTables& link, co
         m_fields.shrink(firstField);
         return;
     }
+    m_isListed.clearAll();
+    for (FieldIndex field : m_fields.span().subspan(firstField, endOfStored - firstField))
+        m_isListed.set(field);
     for (size_t place = endOfStored; place < endOfDeclared; ++place) {
         FieldIndex field = m_fields[place];
-        if (!std::ranges::contains(m_fields.span().subspan(firstField, endOfStored - firstField), field))
+        if (!m_isListed.set(field))
             m_fields[endOfStored++] = field;
     }
     m_fields.shrink(endOfStored);

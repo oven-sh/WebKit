@@ -140,6 +140,22 @@ public:
             return from->successor(from->successor(0).block() == target ? 0 : 1);
         return from->successor(successorIndexOfPredecessorWithManySuccessors(target, &predecessors[numberOfPredecessor]));
     }
+    bool isRareEdgeFromPredecessor(const Block* target, size_t numberOfPredecessor) const
+    {
+        const BlockPlace& place = of(target);
+        uint32_t regionOfFrom = of(place.predecessors[numberOfPredecessor]).rareRegion;
+        return (regionOfFrom != noRareRegion && regionOfFrom != place.rareRegion) || edgeFromPredecessor(target, numberOfPredecessor).isRare();
+    }
+    bool hasBackEdgeOutsideRareRegions(const Loop& loop) const
+    {
+        const Block* head = blocksInOrder()[loop.firstBlock];
+        std::span<Block* const> predecessors = of(head).predecessors;
+        for (size_t index = predecessors.size(); index-- && of(predecessors[index]).orderIndex >= loop.firstBlock;) {
+            if (!isRareEdgeFromPredecessor(head, index))
+                return true;
+        }
+        return false;
+    }
     uint32_t mostBlocks() const { return m_mostBlocks; }
     uint32_t mostOperations() const { return m_mostOperations; }
     static Block* splitLate(Procedure&, Block* from, unsigned successorIndex);

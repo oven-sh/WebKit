@@ -560,6 +560,7 @@ Instance* Instance::create(JSGlobalObject* realm)
         Locker locker { vmState.instancesLock };
         vmState.instances.append(instance);
         vmState.didChangeInstances();
+        vmState.lendTablesOfLivingInstances();
         for (Instance* each : vmState.instances)
             each->propertyCaches.forgetReplacedMembers();
     }
@@ -580,6 +581,23 @@ void VMState::didChangeInstances()
     if (onlyInstance)
         onlyInstance->propertyCaches.hasRunSinceClear = true;
     instanceOfRecentRun = { };
+}
+
+Instance* VMState::findInstanceThatLendsTables() const
+{
+    for (Instance* instance : instances) {
+        if (instance->state)
+            return instance;
+    }
+    return nullptr;
+}
+
+void VMState::lendTablesOfLivingInstances()
+{
+    for (JSGlobalObject* realm : realmsWithBorrowedTables) {
+        if (!realm->aotInstance() && !instances.contains(realm->aotTableInstance()))
+            realm->setAOTTableInstance(findInstanceThatLendsTables());
+    }
 }
 
 void Instance::destroy(Instance* instance)

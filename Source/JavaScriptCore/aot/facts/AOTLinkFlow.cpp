@@ -491,6 +491,14 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     m_keysOfLayoutAreTold = BytesSharedByThreads(program.layouts.size());
     m_nameOfFunctionIsTold = BytesSharedByThreads(program.functions.size());
     m_functionsThatReadOffViewsMadeAtSites = BytesSharedByThreads(program.functions.size());
+    for (const Layout& layout : program.layouts) {
+        if (!layout.constructor)
+            continue;
+        for (const SummaryChange& change : summaries.at(layout.constructor).changes) {
+            if (change.fillsObjectBeingMade && change.key)
+                keysFilledOnObjectsBeingMade.set(change.key.index());
+        }
+    }
     for (size_t index : summaries.namesUnderWhichEventsHang()) {
         BuiltinName name(static_cast<uint32_t>(index));
         if (PropertyKeyID key = program.keyOf(name))
@@ -9156,7 +9164,7 @@ void LinkFlow::noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID wri
             return false;
         return subject.objects == LinkType::Objects::Prototypes || (subject.objects == LinkType::Objects::Prototype && isBelowBuiltinClass(subject.layout));
     };
-    if ((mayBeInstance || isNoPlainObjectOfProgram() || standsAboveWhatIsNoPlainObject()) && mayHideConstructor) {
+    if (mayHideConstructor && (mayBeInstance || isNoPlainObjectOfProgram() || standsAboveWhatIsNoPlainObject())) {
         arrive(whereInstancesLoseTheirConstructor(), LinkType::anything());
         note(Note::InstancesLoseTheirConstructor, 0);
     }

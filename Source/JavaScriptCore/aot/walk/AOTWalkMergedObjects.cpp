@@ -41,7 +41,7 @@ bool Walker::isNamedAtHead(const WalkState& state, ValueID cell, BlockID inputBl
         indexedIteration(name).forEachValueHeld(look);
     });
     if (!isNamed)
-        state.forEachValueHeldByAnother(look);
+        state.forEachValueHeldByAnotherSince(cell, look);
     return isNamed;
 }
 

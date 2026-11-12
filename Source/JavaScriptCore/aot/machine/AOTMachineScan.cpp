@@ -233,7 +233,11 @@ static NEVER_INLINE void listScannedReadFromOutsideLoops(BackwardScan& scan, Ope
         return;
     const Loop* loops = scan.m_order.loops().data();
     uint32_t& loopOfLastListedRead = scan.m_loopOfLastListedRead[value->index()];
-    for (uint32_t loop = at.loop; loop != noLoop; loop = loops[loop].parent) {
+    for (uint32_t next = at.loop; next != noLoop;) {
+        uint32_t loop = scan.m_loopStates[next].loopThatListsReads;
+        if (loop == noLoop)
+            break;
+        next = loops[loop].parent;
         if (!value->hasNoPosition() && loops[loop].begin <= scan.m_order.headOf(value->owner()))
             break;
         if (loopOfLastListedRead != noLoop && loops[loop].firstBlock <= loops[loopOfLastListedRead].firstBlock && loops[loopOfLastListedRead].endBlock <= loops[loop].endBlock)
@@ -1179,6 +1183,10 @@ BackwardScan::BackwardScan(Procedure& proc, Liveness& liveness)
         findBlocksThatRareBlocksBranchOff();
     }
     m_loopStates.grow(arena, numberOfLoops);
+    for (uint32_t loop = 0; loop < numberOfLoops; ++loop) {
+        uint32_t parent = m_order.loops()[loop].parent;
+        m_loopStates[loop].loopThatListsReads = parent == noLoop || m_order.hasBackEdgeOutsideRareRegions(m_order.loops()[loop]) ? loop : m_loopStates[parent].loopThatListsReads;
+    }
     if (numberOfLoops) {
         m_loopCountedFor.fill(arena, numberOfOperations, noLoop);
         m_loopOfLastListedRead.fill(arena, numberOfOperations, noLoop);

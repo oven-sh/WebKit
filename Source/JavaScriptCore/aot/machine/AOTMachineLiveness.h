@@ -542,6 +542,7 @@ public:
         static constexpr uint32_t notLookedFor = noLoop - 1;
         uint32_t nearestLoopAroundOfOtherRegion { notLookedFor };
         uint32_t loopAroundThatMayLackExitingBlock { noLoop };
+        uint32_t loopThatListsReads { noLoop };
     };
     ArenaVector<LoopState> m_loopStates;
     ArenaVector<uint32_t> m_loopOfLastListedRead;

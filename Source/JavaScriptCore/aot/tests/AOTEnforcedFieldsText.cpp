@@ -46,6 +46,7 @@ static void printEnforcedFields(TestCommandContext& context, StagedBuild& stage,
     TypeArena types(program.types, ArenaKeeps::InProgram);
     bool hasTypedSlots = withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots);
     FamiliesOfInstances familiesOfInstances(program, facts.families());
+    WrittenTypesOfFamilies writtenInFamilies(program, facts.families(), types);
 
     std::array<uint64_t, numberOfSourcesInEnforcedFieldsText> numberBySource { };
     uint64_t numberOfFields = 0;
@@ -60,7 +61,7 @@ static void printEnforcedFields(TestCommandContext& context, StagedBuild& stage,
         for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
             FieldReference reference { id, field };
             FieldFacts row = facts.field(reference);
-            EnforcedField answer = hasTypedSlots ? enforcedTypeOfField(program, facts.linked(), facts.held(), facts.families(), familiesOfInstances, types, reference) : EnforcedField();
+            EnforcedField answer = hasTypedSlots ? enforcedTypeOfField(program, facts.linked(), facts.held(), facts.families(), familiesOfInstances, writtenInFamilies, types, reference) : EnforcedField();
             bool differsFromTable = answer.type != row.slotType || !!answer.type != row.facts.contains(FieldFact::IsEnforced) || answer.holdsUndefinedAndNull != row.facts.contains(FieldFact::SlotHoldsUndefinedAndNull);
             bool sparesTest = answer.type && enforcedTypeSparesTestOfStoresByName(types, answer.type);
 

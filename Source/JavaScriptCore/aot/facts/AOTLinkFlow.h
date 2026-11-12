@@ -1881,6 +1881,7 @@ public:
     BitVector functionsEnteredAsAccessors;
     void noteEnteredAsAccessor(FunctionID);
     BitVector layoutsWithKnownAccessors;
+    BitVector keysFilledOnObjectsBeingMade;
     BitVector layoutsDefinedOnUnderWrittenKeys;
     BitVector layoutsDefinedOnUnderKeysThatAreNotWritten;
     BitVector layoutsGivenAccessorsByDescriptorsInSight;
@@ -2521,7 +2522,8 @@ private:
     FlowNodeID findOrMakeAnyFieldReadThrough(LinkType::Objects, LayoutID, FamilyID, bool keyIsNumber);
     FlowNodeID findOrMakeAnyFieldStoredThrough(LinkType::Objects, LayoutID, FamilyID, bool keyIsNumber);
     Vector<NameOnClosures> m_namesOnClosures;
-    mutable Vector<FunctionID> m_onlyReferrers;
+    mutable Lock m_lockOfOnlyReferrers;
+    mutable Vector<FunctionID> m_onlyReferrers WTF_GUARDED_BY_LOCK(m_lockOfOnlyReferrers);
     UncheckedKeyHashMap<uint32_t, Vector<FlowNodeID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesThatLeaveWithClassObjects;
     BitVector m_classObjectsThatAreOpen;
     BitVector m_layoutsWithNotedBases;

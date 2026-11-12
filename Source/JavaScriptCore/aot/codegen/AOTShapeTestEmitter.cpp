@@ -134,10 +134,15 @@ ShapeTestsKeptAcrossUnits& ShapeTestEmitter::testsKeptAcrossUnits()
 {
     if (!m_testsKeptAcrossUnits) {
         m_testsKeptAcrossUnits = &generator().procedure().arena().objectKeptAcrossResets<ShapeTestsKeptAcrossUnits>();
-        if (m_testsKeptAcrossUnits->table != &m_plan.shapes()) {
+        bool isOfAnotherTable = m_testsKeptAcrossUnits->table != &m_plan.shapes();
+        if (isOfAnotherTable) {
             m_testsKeptAcrossUnits->entries.fill(ShapeTestsKeptAcrossUnits::Entry { });
             m_testsKeptAcrossUnits->setsThatMayBearMark.clear();
             m_testsKeptAcrossUnits->table = &m_plan.shapes();
+        }
+        if (isOfAnotherTable || liesInThread(m_testsKeptAcrossUnits->setListedLast)) {
+            m_testsKeptAcrossUnits->setListedLast = { };
+            m_testsKeptAcrossUnits->shapesOfSetListedLast.shrink(0);
         }
     }
     return *m_testsKeptAcrossUnits;
@@ -146,6 +151,17 @@ ShapeTestsKeptAcrossUnits& ShapeTestEmitter::testsKeptAcrossUnits()
 ShapeTestsKeptAcrossUnits::Entry& ShapeTestEmitter::entryKeptAcrossUnits(uint64_t testedAndKnown)
 {
     return testsKeptAcrossUnits().entries[(testedAndKnown * 0x9E3779B97F4A7C15ull) >> (64 - ShapeTestsKeptAcrossUnits::numberOfBits)];
+}
+
+std::span<const uint32_t> ShapeTestEmitter::shapesOf(LayoutSetID set)
+{
+    ShapeTestsKeptAcrossUnits& kept = testsKeptAcrossUnits();
+    if (kept.setListedLast != set) {
+        kept.setListedLast = set;
+        kept.shapesOfSetListedLast.shrink(0);
+        m_plan.shapes().appendMemberShapes(membersOf(typeReader(), set), kept.shapesOfSetListedLast);
+    }
+    return kept.shapesOfSetListedLast.span();
 }
 
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, MarkedObjects marked)
@@ -160,13 +176,11 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     if (marked == MarkedObjects::AreRefused || marked == MarkedObjects::AreAskedAgain || marked == MarkedObjects::PassAlone || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return passes(cell, tested, testOf(tested), word);
     const ShapeTable& shapes = m_plan.shapes();
-    if (m_setWhoseShapesAreKept != known.layouts) {
-        m_setWhoseShapesAreKept = known.layouts;
-        m_keptSetHoldsCompiledObjectsAlone = hasOnlyCompiledObjects(known);
-        m_shapesKept.shrink(0);
-        m_shapesOfKeptSetAreListed = false;
+    if (m_setKnownLast != known.layouts) {
+        m_setKnownLast = known.layouts;
+        m_setKnownLastHoldsCompiledObjectsAlone = hasOnlyCompiledObjects(known);
     }
-    if (!m_keptSetHoldsCompiledObjectsAlone)
+    if (!m_setKnownLastHoldsCompiledObjectsAlone)
         return passes(cell, tested, testOf(tested), word);
 
     m_lastTestRejectsMarks = false;
@@ -195,17 +209,13 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     ShapeTestsKeptAcrossUnits::Entry* kept = tested && !liesInThread(tested) && !liesInThread(known.layouts) ? &entryKeptAcrossUnits(testedAndKnown) : nullptr;
     if (kept && kept->testedAndKnown == testedAndKnown)
         return passes(cell, tested, kept->test, mayBearMark(known.layouts) ? WordOfTest::WithoutMark : WordOfTest::AsItLies);
-    if (!m_shapesOfKeptSetAreListed) {
-        m_shapesOfKeptSetAreListed = true;
-        shapes.appendMemberShapes(membersOf(typeReader(), known), m_shapesKept);
-    }
     ShapeTable::ShapeList testedShapes;
     shapes.appendMemberShapes(membersOf(typeReader(), tested), testedShapes);
-    const ShapeTable::ShapeList& knownShapes = m_shapesKept;
-    ShapeTest test = shapes.testOfShapes(testedShapes.span(), knownShapes.span());
+    std::span<const uint32_t> knownShapes = shapesOf(known.layouts);
+    ShapeTest test = shapes.testOfShapes(testedShapes.span(), knownShapes);
 
     if (test.form == ShapeTestForm::BitSet) {
-        if (std::optional<Condition> passesTest = passesBitSetThatHoldsEveryKnownShape(shapeWordOf(cell, known.layouts), tested, known.layouts, testedShapes.span(), knownShapes.span()))
+        if (std::optional<Condition> passesTest = passesBitSetThatHoldsEveryKnownShape(shapeWordOf(cell, known.layouts), tested, known.layouts, testedShapes.span(), knownShapes))
             return *passesTest;
     } else if (kept)
         *kept = ShapeTestsKeptAcrossUnits::Entry { testedAndKnown, test };

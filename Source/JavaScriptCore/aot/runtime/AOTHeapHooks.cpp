@@ -118,6 +118,10 @@ void finalize(VM& vm, CollectionScope scope)
         });
         state.didChangeInstances();
     }
+    state.realmsWithBorrowedTables.removeAllMatching([&](JSGlobalObject* realm) {
+        return !vm.heap.isMarked(realm);
+    });
+    state.lendTablesOfLivingInstances();
     if (state.realmWhoseDatesAreWrittenInPlace && !vm.heap.isMarked(state.realmWhoseDatesAreWrittenInPlace))
         state.realmWhoseDatesAreWrittenInPlace = nullptr;
 

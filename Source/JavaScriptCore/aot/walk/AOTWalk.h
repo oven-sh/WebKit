@@ -958,7 +958,13 @@ public:
     };
     std::span<const ListAccessesInBlock> listAccessesOfLoop(LoopID);
     bool isOutermostPushPopLoop(LoopID);
-    std::span<const std::pair<uint64_t, uint32_t>> laterStoresUnderSameKeyInBlockInCurrentBody(const BodyValue& first);
+    struct StoreUnderKey {
+        uint64_t blockAndKey;
+        uint32_t store;
+        uint32_t previousOfHolder { 0 };
+        uint32_t numberOfHoldersAfter { 0 };
+    };
+    Vector<ValueID, 4> nextStoresUnderSameKey(const BodyValue& first);
     bool textOfOutermostLoopStoresUnderNameInCurrentBody(LoopID outermost, PropertyKeyID name);
     bool someElementOfLoopMeetsWhatGoesRoundInCurrentBody(LoopID);
     TypeID literalElementTypeInLoops(ValueID literal);
@@ -2098,42 +2104,14 @@ public:
     bool tryPreparePreheaderForCall();
     Reference buildOnFirstArrival(ValueID site, const Draft& call, const Effects&);
     Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult);
-    static constexpr uint32_t noCounter = std::numeric_limits<uint32_t>::max();
-    struct RecurringAccess {
-        uint32_t loop;
+    struct ElementRecurrence {
+        ValueID store;
+        ValueID read;
         uint32_t counterPosition;
         int32_t offset;
-        ValueID id;
     };
-    struct ElementRecurrences {
-        Vector<RecurringAccess> stores;
-        Vector<RecurringAccess> reads;
-    };
-    Reference findElementAtConstant(Reference array, int64_t position) const;
-    Reference headerArrayOfVariable(FunctionID callee, ValueID read);
-    struct CarriedElementNote {
-        Reference array;
-        Reference parameter;
-        uint64_t noted;
-    };
-    Vector<CarriedElementNote, 2> listCarriedElementNotes(Reference array, int64_t storedPosition) const;
-    void restoreCarriedElementNotes(std::span<const CarriedElementNote>);
-    struct ConstantElementReads {
-        struct AtConstant {
-            friend auto operator<=>(const AtConstant&, const AtConstant&) = default;
-
-            uint32_t loop;
-            int64_t position;
-            uint32_t id;
-        };
-        Vector<AtConstant> atConstants;
-        Vector<std::pair<uint32_t, uint32_t>> others;
-    };
-    const ConstantElementReads& constantElementReads();
-    std::optional<uint32_t> loopReadingConstantsAfter(const BodyValue& store);
-    bool readsElementAfter(uint32_t openLoop, const BodyValue& store, int64_t position);
     bool mayCarryElements() const { return !m_carriedResultRequests.isEmpty(); }
-    const ElementRecurrences& elementRecurrences();
+    std::span<const ElementRecurrence> elementRecurrences();
     void carryStoredElement(const BodyValue& store, Reference array, Reference stored);
     std::optional<uint32_t> outermostLoopToLookUpInFrontOf(std::span<const Reference> operands, const Effects& ofLookup);
     std::optional<uint32_t> outermostLoopForBuiltinPreheaderRead();
@@ -3278,11 +3256,9 @@ private:
         bool isElement { false };
         bool isStruck { false };
         Representation form { Representation::JSValue };
-        std::optional<int32_t> constantPosition { };
         FieldReference field { };
         PropertyKeyID fieldKey { };
         VariableID staticField { };
-        FunctionID copiedCallee { };
         bool isField() const { return !!fieldKey; }
     };
     struct LoopSummary {
@@ -3978,7 +3954,6 @@ private:
         struct CarriedElement {
             uint32_t slot;
             uint32_t counterPosition;
-            int32_t offset;
             Reference array;
             bool isRead { false };
             bool isMissingOnBackEdge { false };
@@ -4699,8 +4674,7 @@ private:
     LazyMap<HashMap<const BodyIndex*, Vector<ComputedComparison>>> m_computedComparisons;
     mutable LazyMap<HashMap<const void*, BitVector>> m_numbersInListsOfWrittenObjects;
     LazyMap<HashMap<const BodyIndex*, Vector<uint32_t>>> m_lastStoresByKeyOfLoops;
-    LazyMap<HashMap<const BodyIndex*, ElementRecurrences>> m_elementRecurrences;
-    LazyMap<HashMap<const BodyIndex*, ConstantElementReads>> m_constantElementReads;
+    LazyMap<HashMap<const BodyIndex*, Vector<ElementRecurrence>>> m_elementRecurrences;
     LazyMap<HashMap<const BodyIndex*, Vector<std::optional<Vector<uint32_t>>>>> m_pushesOntoLiterals;
     LazyMap<HashMap<const BodyIndex*, Vector<std::optional<Vector<MentionInLoop>>>>> m_mentionsBeforeLoops;
     LazyMap<HashMap<const BodyIndex*, Vector<std::optional<Vector<ListAccessesInBlock>>>>> m_listAccessesOfLoops;
@@ -4708,7 +4682,7 @@ private:
     LazyMap<HashMap<const BodyIndex*, Vector<std::optional<bool>>>> m_outermostPushPopLoops;
     HashMap<std::pair<const BodyIndex*, uint32_t>, bool> m_steppedCounters;
     HashMap<std::pair<const BodyIndex*, uint32_t>, uint8_t> m_unsignedZeroValues;
-    LazyMap<HashMap<const BodyIndex*, Vector<std::pair<uint64_t, uint32_t>>>> m_storesByKeyOfBlocks;
+    LazyMap<HashMap<const BodyIndex*, Vector<StoreUnderKey>>> m_storesByKeyOfBlocks;
     LazyMap<HashMap<const BodyIndex*, Vector<uint64_t>>> m_namesStoredInOutermostLoops;
     LazyMap<HashMap<const BodyIndex*, Vector<uint8_t>>> m_whetherElementsOfLoopsMeetWhatGoesRound;
     LazyMap<HashMap<const BodyIndex*, Vector<std::pair<ValueID, TypeID>>>> m_literalElementTypes;

@@ -36,6 +36,7 @@ JS_EXPORT_PRIVATE String name(JSObject* callee);
 JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
 JS_EXPORT_PRIVATE bool canAssumeNameAndLengthAreOriginal(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
+JSString* functionStringIfCreated(VM&, JSObject* callee);
 JSString* sourceStringIfCreated(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
 

@@ -38,7 +38,7 @@ static constexpr OptionSet<CellFact> handledCellFacts {
 
 static_assert(handledCellFacts.toRaw() == (1u << numberOfCellFacts) - 1);
 
-void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
+void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject, const FreshCellWriter* freshCellWriter)
 {
     if (effects.mayRunOtherCode()) {
         invalidate(effects);
@@ -51,12 +51,12 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
     };
     m_answers.endWhatIsWritten(effects, endsAnswer);
     if (!holdsNoRecord() && !effects.writes.isEmpty()) {
-        heldToWrite().endWhatIsWritten(m_program, effects, mayBeWritten, mayEndGuard, writtenAlone, writerOfOneObject);
+        heldToWrite().endWhatIsWritten(m_program, effects, mayBeWritten, mayEndGuard, writtenAlone, writerOfOneObject, freshCellWriter);
         noteKindsOfRecordsLeft();
     }
 }
 
-void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
+void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject, const FreshCellWriter* freshCellWriter)
 {
     const LocationMasks& writes = effects.writes;
     if (!writes.containsOnly(heapsJudgedInKnownWriters)) {
@@ -123,7 +123,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     }
     if (goesByLists()) [[unlikely]] {
         endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .environmentFields = environmentFieldsWritten, .guards = guardsWritten,
-            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .program = &program, .writtenAlone = writtenAlone });
+            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .freshCellWriter = freshCellWriter, .program = &program, .writtenAlone = writtenAlone });
         dropEndedRecordsIfMany();
         return;
     }
@@ -549,8 +549,13 @@ void endFreshArrayWrites(Walker& walker, Reference array, const Effects& effects
     auto mayEndGuard = [](LayoutID, PropertyKeyID) {
         return true;
     };
+    auto findRoot = [&](Reference holder) {
+        return rootInKnownWriters(walker.code(), holder);
+    };
+    auto rootOf = scopedLambda<Reference(Reference)>(findRoot);
+    WalkState::FreshCellWriter writer { singleElementSpan(written), rootOf };
     state.markEscaped(written);
-    state.invalidate(effects, mayBeWritten, mayEndGuard);
+    state.invalidate(effects, mayBeWritten, mayEndGuard, nullptr, nullptr, &writer);
     state.noteFresh(written);
 }
 

@@ -170,7 +170,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(TypedArrayOperations, TypedArrayPut) \
     v(TypedArrayOperations, TypedArraySetOfAnyValue) \
     v(TypedArrayOperations, TypedArraySubarrayOfAnyValue) \
-    v(TypedArrayOperations, TypedArrayOfPlainArray) \
     v(TextEncodingOperations, TextOfBytes) \
     v(PrivateNameOperations, BeginMemberGuards) \
     v(PrivateNameOperations, NewClassToken) \
@@ -336,10 +335,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayCreationOperations, NewArrayFromDoubles) \
     v(ArrayCreationOperations, NewArrayIterator) \
     v(ArrayCreationOperations, NewArrayOfGiven) \
-    v(ArrayCreationOperations, NewArrayOfHoles) \
     v(ArrayCreationOperations, NewArrayOfList) \
     v(ArrayCreationOperations, NewArrayOfView) \
-    v(ArrayCreationOperations, NewArrayWithHoles) \
     v(ArrayCreationOperations, NewArrayWithHolesAtSite) \
     v(ArrayCreationOperations, NewArrayWithLengthAtReviewedSite) \
     v(ArrayCreationOperations, NewArrayWithIndexingType) \

@@ -1209,6 +1209,7 @@ static ValueID whatStepGoesThroughForLinkAccesses(const BodyIndex& index, ValueI
 FunctionID LinkFlow::findOnlyReferrer(FunctionID function) const
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    Locker locker { m_lockOfOnlyReferrers };
     if (m_onlyReferrers.isEmpty()) {
         m_onlyReferrers.fill(FunctionID(), program.functions.size());
         BitVector hasSeveralReferrers(program.functions.size());

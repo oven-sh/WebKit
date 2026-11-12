@@ -117,6 +117,8 @@ public:
     template<typename Visitor> void visitAggregate(Visitor&);
 
     void didChangeInstances();
+    Instance* findInstanceThatLendsTables() const;
+    void lendTablesOfLivingInstances();
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
@@ -216,6 +218,7 @@ public:
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
+    Vector<JSGlobalObject*> realmsWithBorrowedTables;
     StructuresWithFastIndexing structuresWithFastIndexing;
     PolledInstances polledInstances;
     uint32_t momentOfLoads { 0 };

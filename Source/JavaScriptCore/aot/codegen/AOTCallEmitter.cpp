@@ -357,7 +357,7 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
         chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
         conventionCall.stub = conventionCall.stub.withForm(static_cast<uint8_t>(positionOf(context)));
         if (isX86_64() && hasOneInstance() && positionOf(context) == CallPosition::Ordinary && values.size() <= numberOfArgumentGPRs && context.valueID() && context.block() && generator().usesLoopForms(context.block()))
-            conventionCall.stub = callValueCopy(conventionCall.stub, intHash(context.origin().position) % numberOfCallValueCopies);
+            conventionCall.stub = callValueCopy(conventionCall.stub, (generator().code().numberOfOperationsInOrder() + m_numberOfCallsOfCopies++) % numberOfCallValueCopies);
     }
     return callByConvention(context, conventionCall, options);
 }

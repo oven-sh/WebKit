@@ -495,7 +495,7 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     return made;
 }
 
-JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
+JSString* functionStringIfCreated(VM& vm, JSObject* callee)
 {
     FunctionID function = checkedFunctionOf(callee);
     if (functionKindData(function).isInRuntimeModule)
@@ -503,6 +503,14 @@ JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
     const FunctionTables::SourceTextMap& answered = FunctionTables::of(vm).sourceTexts;
     auto found = answered.find(function);
     return found == answered.end() ? nullptr : found->value.get();
+}
+
+JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
+{
+    const ProgramTables& tables = Image::current()->programTables();
+    uint32_t function = checkedFunctionOf(callee).index();
+    bool holdsSource = std::ranges::contains(findFunctionSourceEntries(tables, tables.sourceFunctionOf(function)), function, [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; });
+    return holdsSource ? functionStringIfCreated(vm, callee) : nullptr;
 }
 
 FunctionKind kind(JSObject* callee)

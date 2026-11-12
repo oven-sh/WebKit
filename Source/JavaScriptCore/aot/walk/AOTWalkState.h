@@ -296,6 +296,7 @@ public:
     }
     bool isFresh(Reference object) const { return mayHold(Kinds::freshObjects) && m_held->mayHaveRecordOf(object) && m_held->holderIsFresh(object); }
     bool holdsFreshObjects() const { return mayHold(Kinds::freshObjects) && m_held->m_numberOfFreshHolders; }
+    bool mayHoldFreshObjectsFrom(uint32_t firstRecord) const { return holdsFreshObjects() && m_held->m_endOfFreshObjects > firstRecord; }
     void noteStoreIntoUnmadeRecord(uint32_t number) { heldToWrite().m_newestStoreIntoUnmadeRecord = number; }
     uint32_t newestStoreIntoUnmadeRecord() const { return m_held ? m_held->m_newestStoreIntoUnmadeRecord : 0; }
     void forEachFreshObject(NOESCAPE const Invocable<void(Reference)> auto& functor) const
@@ -373,6 +374,20 @@ public:
         m_answers.forEachHolderOfAnswerAboutFreshHolderLackingIn(arriving.m_answers, [&](Reference holder) {
             functor(holder, std::nullopt, holder);
         });
+    }
+    void forEachValueHeldByAnotherSince(ValueID oldest, NOESCAPE const Invocable<void(Reference)> auto& functor) const
+    {
+        if (!m_held)
+            return;
+        for (uint32_t position = 0; position < m_held->m_places.size();) {
+            if (!(position % Held::placesOfNewestValue) && m_held->holdsOnlyValuesBefore(oldest, position / Held::placesOfNewestValue)) {
+                position += Held::placesOfNewestValue;
+                continue;
+            }
+            const Place& place = m_held->m_places[position++];
+            if (place.value && place.value != m_held->m_holders[place.holder].object)
+                functor(place.value);
+        }
     }
     void forEachValueHeldByAnother(NOESCAPE const Invocable<void(Reference)> auto& functor) const
     {
@@ -678,7 +693,11 @@ public:
         const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone;
         const ScopedLambda<ClassOfHolder(Reference holder)>& classOf;
     };
-    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone = nullptr, const WriterOfOneObject* = nullptr);
+    struct FreshCellWriter {
+        std::span<const Reference> cells;
+        const ScopedLambda<Reference(Reference holder)>& rootOf;
+    };
+    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone = nullptr, const WriterOfOneObject* = nullptr, const FreshCellWriter* = nullptr);
     void invalidateHeap()
     {
         clearRestartMark();
@@ -853,7 +872,7 @@ private:
         void noteElementsLieOutsideViews(Reference object);
         void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone);
         void meetWith(const Held&, RecordsLastMet*);
-        void endWhatIsWritten(const ProgramOfState&, const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject*);
+        void endWhatIsWritten(const ProgramOfState&, const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject*, const FreshCellWriter*);
 
         bool mayHaveRecordOf(Reference object) const { return m_filterOfHolders & bitInFilterOfHolders(object); }
         TypeID shapeOfHolderOf(Reference) const;
@@ -909,6 +928,7 @@ private:
             const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>* mayEndGuard { nullptr };
             VariableID variableWrittenAlone;
             const WriterOfOneObject* writerOfOneObject { nullptr };
+            const FreshCellWriter* freshCellWriter { nullptr };
             const ProgramOfState* program { nullptr };
             const MemoryLocation* writtenAlone { nullptr };
         };
@@ -961,6 +981,15 @@ private:
         void dropEndedRecords();
 
         using Table = SharedArray<uint32_t, 0, 8>;
+        static constexpr uint32_t placesOfNewestValue = 64;
+        static constexpr uint32_t placesWithoutNewestValues = 256;
+        void noteNewestValue(uint32_t position, Reference value)
+        {
+            if (m_places.size() > placesWithoutNewestValues) [[unlikely]]
+                noteNewestValueSlowCase(position, value);
+        }
+        void noteNewestValueSlowCase(uint32_t position, Reference value);
+        bool holdsOnlyValuesBefore(ValueID oldest, uint32_t group) const { return group < m_newestValues.size() && m_newestValues[group] < oldest.index(); }
         static uint32_t findInTable(const Table&, unsigned hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isSought);
         static void addToTable(Table&, unsigned hash, uint32_t position);
 
@@ -979,6 +1008,7 @@ private:
         uint32_t m_numberOfShapes { 0 };
         uint32_t m_numberOfFactHolders { 0 };
         uint32_t m_numberOfFreshHolders { 0 };
+        uint32_t m_endOfFreshObjects { 0 };
         uint32_t m_numberOfShapesReachedByEffects { 0 };
         uint32_t m_reachedFactHolderCount { 0 };
         uint32_t m_numberOfPlacesReachedByEffects { 0 };
@@ -996,6 +1026,7 @@ private:
         SharedArray<uint32_t, holdersFoundWithoutTable> m_holdersReachedByEffects;
         SharedArray<Holder, holdersFoundWithoutTable> m_holders;
         SharedArray<Place, placesThatLieInHeld> m_places;
+        Table m_newestValues;
         uint32_t m_newestStoreIntoUnmadeRecord { 0 };
     };
 

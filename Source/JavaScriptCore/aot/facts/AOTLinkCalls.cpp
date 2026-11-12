@@ -7029,7 +7029,7 @@ bool CallInLinkCalls::hasKnownPrototypeChain(LayoutID layout, ClassSide side) co
 LinkType CallInLinkCalls::prototypeOfObjectsOf(LayoutID layout) const
 {
     if (m_program.at(layout).kind == LayoutKind::Record && m_flow.hasPristinePrototypes(layout))
-        return builtinForLinkCalls(m_builtins.canonicalID(Builtins::ObjectPrototype));
+        return m_flow.unseenObjectsBelow(m_builtins.canonicalID(Builtins::ObjectPrototype), m_caller);
     return prototypeForLinkCalls(layout);
 }
 

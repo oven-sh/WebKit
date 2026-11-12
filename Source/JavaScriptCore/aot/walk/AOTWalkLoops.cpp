@@ -661,7 +661,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_WALKER_THAT_HANGS_ON_NO_STATE(macro) \
     macro(m_typesHeldOfSlots) macro(m_namesSteppedInLoops) \
-    macro(m_listsThatCallsAloneTake) macro(m_elementRecurrences) macro(m_constantElementReads) macro(m_unsignedZeroValues) \
+    macro(m_listsThatCallsAloneTake) macro(m_elementRecurrences) macro(m_unsignedZeroValues) \
     macro(methodsGivenUnderKeys) macro(m_storesIntoRowsOfBlocks) macro(m_usersWithinBlocks) macro(m_usersOfValuesOfLoops) macro(m_mentionsBeforeLoops) macro(m_listAccessesOfLoops) macro(m_valuesTakenForKeys) macro(m_loopsThatReckonWithElements) macro(m_loopsToUnswitch) macro(m_lastReturnDominators) macro(m_holdersStoredByName) macro(m_elementReadsOfLoops) macro(m_elementAccesses) macro(m_computedComparisons) macro(m_numbersInListsOfWrittenObjects) macro(m_lastStoresByKeyOfLoops) macro(m_pushesOntoLiterals) macro(m_outermostPushPopLoops) macro(m_bodiesPushingOntoFields) macro(m_steppedCounters) macro(m_storesByKeyOfBlocks) macro(m_namesStoredInOutermostLoops) macro(m_whetherElementsOfLoopsMeetWhatGoesRound) macro(m_literalElementTypes) macro(m_literalsPushedOntoByLoops) macro(receiversMadeInBodies) macro(gettersExpectedInFunction) macro(m_placesSeenToStandInStretches) macro(m_keptByGeneratorsInLoops) \
     macro(m_listsOfMembersByTag) macro(m_membersByTagOfSets) macro(m_types) macro(m_roundsKept) macro(m_listsOfNames) macro(m_numbersOfListsOfNames) \
     macro(m_functionsInReachOfUnit) macro(m_surveysOfConstants) macro(m_constantsThatListFieldsHeldFilled) macro(m_positionsOfSlowBody) macro(m_noTextWasEvaluated) macro(m_positionsKnowingNothing) \

@@ -14,6 +14,7 @@
 #include <limits>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -808,7 +809,6 @@ bool validateBehindBlockPasses(Procedure& procedure)
 bool checkVectorsAcrossCalls(Procedure& procedure)
 {
     uint32_t numberOfBlocks = procedure.numberOfBlocks();
-    Vector<BitVector> liveAtHead(numberOfBlocks);
     RegisterMask numberRegisters = 0;
     for (unsigned index = 0; index <= Reg::maxIndex(); ++index) {
         if (Reg reg = Reg::fromIndex(index); reg.isFPR())
@@ -823,39 +823,91 @@ bool checkVectorsAcrossCalls(Procedure& procedure)
             return true;
         return (patch->effects.exitsSideways || patch->effects.mayCollect) && clobbered != numberRegisters;
     };
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (uint32_t index = numberOfBlocks; index--;) {
-            const Block* block = procedure.blockAt(index);
-            BitVector live;
-            for (const Edge& edge : block->successors())
-                live.merge(liveAtHead[edge.block()->index()]);
-            auto noteUses = [&](const Operation* operation) {
-                for (const Operation* child : operation->children()) {
-                    if (child->type().isVector())
-                        live.set(child->index());
-                }
-            };
-            for (const Operation* upsilon : block->upsilons())
-                noteUses(upsilon);
-            for (unsigned place = block->size(); place--;) {
-                const Operation* operation = block->at(place);
-                if (operation->type().isVector())
-                    live.clear(operation->index());
-                if (endsVectors(operation) && !live.isEmpty()) {
-                    procedure.fail(FailureKind::MalformedProcedure, operation);
+    struct PlaceInBlock {
+        uint32_t block { 0 };
+        uint32_t firstPlaceBehind { 0 };
+    };
+    struct Use {
+        uint32_t vector;
+        PlaceInBlock place;
+    };
+    HashMap<uint32_t, PlaceInBlock, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> definitions;
+    Vector<Use> uses;
+    Vector<uint32_t> endsOfVectors;
+    Vector<uint32_t> firstEndOfBlock;
+    Vector<uint32_t> firstPredecessorOfBlock(FillWith { }, numberOfBlocks + 1, 0u);
+    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        const Block* block = procedure.blockAt(index);
+        firstEndOfBlock.append(endsOfVectors.size());
+        for (const Edge& edge : block->successors())
+            ++firstPredecessorOfBlock[edge.block()->index()];
+        auto noteUses = [&](const Operation* operation, uint32_t place) {
+            for (const Operation* child : operation->children()) {
+                if (child->type().isVector())
+                    uses.append({ static_cast<uint32_t>(child->index()), { index, place } });
+            }
+        };
+        for (const Operation* phi : block->phis()) {
+            if (phi->type().isVector())
+                definitions.add(phi->index(), PlaceInBlock { index, 0 });
+        }
+        for (uint32_t place = 0; place < block->size(); ++place) {
+            const Operation* operation = block->at(place);
+            if (operation->type().isVector())
+                definitions.add(operation->index(), PlaceInBlock { index, place + 1 });
+            if (endsVectors(operation))
+                endsOfVectors.append(place);
+            noteUses(operation, place);
+        }
+        for (const Operation* upsilon : block->upsilons())
+            noteUses(upsilon, block->size());
+    }
+    firstEndOfBlock.append(endsOfVectors.size());
+    if (uses.isEmpty() || endsOfVectors.isEmpty())
+        return true;
+    uint32_t numberOfEdges = 0;
+    for (uint32_t& first : firstPredecessorOfBlock)
+        first = std::exchange(numberOfEdges, numberOfEdges + first);
+    Vector<uint32_t> predecessors(FillWith { }, numberOfEdges, 0u);
+    Vector<uint32_t> nextPredecessor = firstPredecessorOfBlock;
+    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        for (const Edge& edge : procedure.blockAt(index)->successors())
+            predecessors[nextPredecessor[edge.block()->index()]++] = index;
+    }
+    auto holdsNoEnd = [&](uint32_t block, uint32_t begin, uint32_t end) {
+        auto last = endsOfVectors.begin() + firstEndOfBlock[block + 1];
+        auto found = std::lower_bound(endsOfVectors.begin() + firstEndOfBlock[block], last, begin);
+        if (found == last || *found >= end)
+            return true;
+        procedure.fail(FailureKind::MalformedProcedure, procedure.blockAt(block)->at(*found));
+        return false;
+    };
+    std::ranges::sort(uses, { }, &Use::vector);
+    Vector<uint32_t> vectorLookedAtLast(FillWith { }, numberOfBlocks, std::numeric_limits<uint32_t>::max());
+    Vector<uint32_t, 16> blocksWhereItIsLiveAtHead;
+    for (const Use& use : uses) {
+        auto found = definitions.find(use.vector);
+        PlaceInBlock definition = found == definitions.end() ? PlaceInBlock { numberOfBlocks, 0 } : found->value;
+        if (definition.block == use.place.block && definition.firstPlaceBehind <= use.place.firstPlaceBehind) {
+            if (!holdsNoEnd(use.place.block, definition.firstPlaceBehind, use.place.firstPlaceBehind))
+                return false;
+            continue;
+        }
+        if (!holdsNoEnd(use.place.block, 0, use.place.firstPlaceBehind))
+            return false;
+        blocksWhereItIsLiveAtHead.append(use.place.block);
+        while (!blocksWhereItIsLiveAtHead.isEmpty()) {
+            uint32_t block = blocksWhereItIsLiveAtHead.takeLast();
+            for (uint32_t place = firstPredecessorOfBlock[block]; place < firstPredecessorOfBlock[block + 1]; ++place) {
+                uint32_t predecessor = predecessors[place];
+                if (std::exchange(vectorLookedAtLast[predecessor], use.vector) == use.vector)
+                    continue;
+                bool isMadeThere = predecessor == definition.block;
+                if (!holdsNoEnd(predecessor, isMadeThere ? definition.firstPlaceBehind : 0, procedure.blockAt(predecessor)->size()))
                     return false;
-                }
-                noteUses(operation);
+                if (!isMadeThere)
+                    blocksWhereItIsLiveAtHead.append(predecessor);
             }
-            for (const Operation* phi : block->phis()) {
-                if (phi->type().isVector())
-                    live.clear(phi->index());
-            }
-            if (live == liveAtHead[index])
-                continue;
-            liveAtHead[index] = live;
-            changed = true;
         }
     }
     return true;

@@ -647,7 +647,7 @@ static JSString* functionSourceForKey(VM& vm, JSCell* key)
     auto* function = dynamicDowncast<JSFunction>(toString);
     if (!function || !function->isHostFunction() || function->nativeFunction() != toTagged(NativeFunction(functionProtoFuncToString)))
         return nullptr;
-    return CompiledCallee::sourceStringIfCreated(vm, asObject(key));
+    return CompiledCallee::functionStringIfCreated(vm, asObject(key));
 }
 
 static bool mayBeginWithDigit(const JSString* string)

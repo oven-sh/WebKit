@@ -334,23 +334,59 @@ bool isLibraryLayout(const Program& program, LayoutID id)
     return layout.module && program.at(layout.module).flags.contains(ModuleFlags::IsLibrary);
 }
 
-static TypeID typeWrittenByFamilyInEnforcedFields(const Program& program, const Families& families, TypeArena& types, LayoutID layout, PropertyKeyID key)
+WrittenTypesOfFamilies::WrittenTypesOfFamilies(const Program& program, const Families& families, TypeArena& types)
+    : m_program(program)
+    , m_families(families)
+    , m_types(types)
+    , m_isListed(families.size())
 {
-    FamilyID nearest = families.nearestFamilyOf(layout);
-    if (!nearest || !key || program.at(layout).kind != LayoutKind::Instance)
-        return { };
-    Vector<TypeID, 8> written;
-    program.at(families.layoutsOf(families.topmostFamilyAtOrAbove(nearest))).forEach([&](LayoutID member) {
-        const Layout& other = program.at(member);
-        std::optional<uint32_t> listed = member != layout && other.kind == LayoutKind::Instance ? other.findField(key) : std::nullopt;
-        if (!listed || isLibraryLayout(program, member) != isLibraryLayout(program, layout))
+}
+
+static uint64_t placeInWrittenTypesOfFamilies(FamilyID family, bool isLibrary, PropertyKeyID key)
+{
+    return (static_cast<uint64_t>(family.index()) << 1 | isLibrary) << 32 | key.bits();
+}
+
+void WrittenTypesOfFamilies::listMembersOf(FamilyID family)
+{
+    m_program.at(m_families.layoutsOf(family)).forEach([&](LayoutID member) {
+        const Layout& layout = m_program.at(member);
+        if (layout.kind != LayoutKind::Instance)
             return;
-        const Field& record = fieldAt(program, declarationOf(program, { member, *listed }));
-        if (TypeID type = holdsPlainValueInEnforcedFields(program, record) && record.declared.isGuarded() ? record.declared.written() : TypeID(); type && type != TypeTable::anything && !written.contains(type))
-            written.append(type);
+        bool isLibrary = isLibraryLayout(m_program, member);
+        LayoutID base = baseWhoseFieldListIsCopiedWhole(m_program, member);
+        FamilyID familyOfBase = base && m_program.at(base).kind == LayoutKind::Instance && isLibraryLayout(m_program, base) == isLibrary ? m_families.nearestFamilyOf(base) : FamilyID();
+        bool isBaseListed = familyOfBase && m_families.topmostFamilyAtOrAbove(familyOfBase) == family;
+        size_t end = isBaseListed ? layout.ownFieldCount : layout.fields.size();
+        for (uint32_t field = 0; field < end; ++field) {
+            const Field& declaration = fieldAt(m_program, declarationOf(m_program, { member, field }));
+            if (!layout.fields[field].key || !declaration.declared.isGuarded() || !holdsPlainValueInEnforcedFields(m_program, declaration))
+                continue;
+            TypeID type = declaration.declared.written();
+            if (type && type != TypeTable::anything)
+                m_writtenTypes.add(placeInWrittenTypesOfFamilies(family, isLibrary, layout.fields[field].key), WrittenTypes()).iterator->value.types.append(type);
+        }
     });
-    TypeID united = written.isEmpty() ? TypeID() : types.unionOf(written.span());
-    return united && !isNeverType(united) ? united : TypeID();
+}
+
+TypeID WrittenTypesOfFamilies::find(LayoutID layout, PropertyKeyID key)
+{
+    FamilyID nearest = m_families.nearestFamilyOf(layout);
+    if (!nearest || !key || m_program.at(layout).kind != LayoutKind::Instance)
+        return { };
+    FamilyID family = m_families.topmostFamilyAtOrAbove(nearest);
+    if (!m_isListed.set(family.index()))
+        listMembersOf(family);
+    auto found = m_writtenTypes.find(placeInWrittenTypesOfFamilies(family, isLibraryLayout(m_program, layout), key));
+    if (found == m_writtenTypes.end())
+        return { };
+    WrittenTypes& written = found->value;
+    if (!written.united) {
+        std::ranges::sort(written.types, { }, &TypeID::bits);
+        written.types.shrink(std::ranges::unique(written.types).begin() - written.types.begin());
+        written.united = m_types.unionOf(written.types.span());
+    }
+    return isNeverType(written.united) ? TypeID() : written.united;
 }
 
 static bool holdsSeenStores(const LinkTables& held, TypeArena& types, FieldReference field, TypeID type, bool isExpectedOfUnknownValues)
@@ -375,7 +411,7 @@ static bool holdsSeenStores(const LinkTables& held, TypeArena& types, FieldRefer
     return types.isSubset(stored, type);
 }
 
-EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, const FamiliesOfInstances& familiesOfInstances, TypeArena& types, FieldReference reference)
+EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, const FamiliesOfInstances& familiesOfInstances, WrittenTypesOfFamilies& writtenInFamilies, TypeArena& types, FieldReference reference)
 {
     if (!slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, reference.layout))
         return { };
@@ -406,7 +442,7 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
             written = record.declared.written();
         bool isOnlyExpected = record.declared.isExpected() && !record.declared.writtenFlags().contains(PositionFlags::IsFromCompiler);
         if (isOnlyExpected || written == TypeTable::anything) {
-            TypeID ofOthers = typeWrittenByFamilyInEnforcedFields(program, families, types, declaration.layout, record.key);
+            TypeID ofOthers = writtenInFamilies.find(declaration.layout, record.key);
             TypeID inWords = ofOthers ? typeInWordsOfTestsInEnforcedFields(families, types, ofOthers) : TypeID();
             TypeID expected = inWords && isOnlyExpected && record.declared.written() ? typeInWordsOfTestsInEnforcedFields(families, types, record.declared.written()) : TypeID();
             if (inWords && (!isOnlyExpected || (expected && types.isSubset(expected, inWords))) && holdsSeenStores(held, types, declaration, inWords, isOnlyExpected)) {

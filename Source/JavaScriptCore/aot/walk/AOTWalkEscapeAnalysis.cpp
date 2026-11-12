@@ -1406,20 +1406,25 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
         if (effects.writes.contains(AbstractHeap::MemberGuards) && !effects.mayRunOtherCode() && writerEndsNoGuard(walker, draft))
             effects.writes.remove(AbstractHeapSet { AbstractHeap::MemberGuards });
         std::optional<MemoryLocation> writtenAlone = storeMayLeaveWhatLiesBeside(state, draft) ? locationThatStoreNames(walker.program(), draft, effects) : std::nullopt;
-        auto isLent = [&](Reference holder) {
-            if (!holder.isValue())
-                return false;
+        auto findRoot = [&](Reference holder) {
             const Code& code = walker.code();
-            ValueID cell = underlyingCellOf(code, holder.id());
-            return !code.isConstant(cell) && lent.contains(Reference::value(cell));
+            ValueID cell = holder.isValue() ? underlyingCellOf(code, holder.id()) : ValueID();
+            return cell && !code.isConstant(cell) ? Reference::value(cell) : Reference();
+        };
+        auto isLent = [&](Reference holder) {
+            Reference root = findRoot(holder);
+            return root && lent.contains(root);
         };
         auto mayEndGuard = [](LayoutID, PropertyKeyID) {
             return true;
         };
         if (someObjectHasLeft)
             state.invalidate(effects, writtenAlone ? &*writtenAlone : nullptr);
-        else
-            state.invalidate(effects, isLent, mayEndGuard, writtenAlone ? &*writtenAlone : nullptr);
+        else {
+            auto rootOf = scopedLambda<Reference(Reference)>(findRoot);
+            WalkState::FreshCellWriter writer { lent.span(), rootOf };
+            state.invalidate(effects, isLent, mayEndGuard, writtenAlone ? &*writtenAlone : nullptr, nullptr, &writer);
+        }
     }
     for (Reference object : lent)
         state.noteFresh(object);

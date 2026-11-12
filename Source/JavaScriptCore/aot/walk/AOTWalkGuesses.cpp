@@ -776,11 +776,14 @@ struct BodySpeculationCache final : KeptWithBodyIndex {
     Vector<uint64_t> joinsThatHandNamesBack;
     ALWAYS_INLINE std::span<const PropertyKeyID> ownNamesOf(uint32_t root) const
     {
-        size_t first = std::ranges::lower_bound(rootsAskedForNames, root) - rootsAskedForNames.begin();
-        size_t end = first;
-        while (end < rootsAskedForNames.size() && rootsAskedForNames[end] == root)
+        auto first = std::ranges::lower_bound(rootsAskedForNames, root);
+        auto end = first;
+        auto endOfFewNames = first + std::min<ptrdiff_t>(16, rootsAskedForNames.end() - first);
+        while (end != endOfFewNames && *end == root)
             ++end;
-        return namesUsedOffValues.span().subspan(first, end - first);
+        if (end == endOfFewNames) [[unlikely]]
+            end = std::ranges::upper_bound(end, rootsAskedForNames.end(), root);
+        return namesUsedOffValues.span().subspan(first - rootsAskedForNames.begin(), end - first);
     }
     auto joinsThatHandNamesBackTo(uint32_t root) const
     {
@@ -842,10 +845,14 @@ struct BodySpeculationCache final : KeptWithBodyIndex {
     Vector<std::pair<uint32_t, uint8_t>> numbersStoredUnderNames;
     Vector<uint32_t> variablesUsedBeyondLength;
     Vector<PropertyKeyID, 1> keysComparedWithTexts;
+    Vector<uint64_t> namedAccessesOfRoots;
+    Vector<uint64_t> castsOfValues;
     Lock lockOfLists;
     std::atomic<bool> hasNumbersStoredUnderNames { false };
     std::atomic<bool> hasVariablesUsedBeyondLength { false };
     std::atomic<bool> hasKeysComparedWithTexts { false };
+    std::atomic<bool> hasNamedAccessesOfRoots { false };
+    std::atomic<bool> hasCastsOfValues { false };
     std::atomic<bool> hasIncomingEdges { false };
     std::atomic<bool> hasStoresOfOutermostLoops { false };
     std::atomic<bool> hasBlocksThatBranchOnTruth { false };
@@ -4228,19 +4235,26 @@ static uint32_t countUsesThroughCasts(const BodyIndex& index, ValueID input, uin
     uint32_t uses = index.useCount(input);
     if (uses >= enough || !index.holdsAnyOf(inputPassThroughOpcodes))
         return uses;
-    Vector<bool, 256> names;
-    names.fill(false, index.numberOfValues());
-    names[input.index()] = true;
-    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
-        if (!index.isReachable(BlockID(number)))
-            continue;
-        for (BodyValue operation : index.block(BlockID(number)).values()) {
-            if (!inputPassThroughOpcodes.contains(operation.opcode()) || !operation.operand(0) || !names[operation.operand(0).index()])
+    BodySpeculationCache& kept = bodySpeculationCache(index);
+    ensureCachedList(kept, kept.hasCastsOfValues, [&] {
+        for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+            if (!index.isReachable(BlockID(number)))
                 continue;
-            names[operation.id().index()] = true;
-            uses += index.useCount(operation.id());
-            if (uses >= enough)
-                return uses;
+            for (BodyValue operation : index.block(BlockID(number)).values()) {
+                if (inputPassThroughOpcodes.contains(operation.opcode()) && operation.operand(0))
+                    kept.castsOfValues.append(static_cast<uint64_t>(operation.operand(0).index()) << 32 | operation.id().index());
+            }
+        }
+        std::ranges::sort(kept.castsOfValues);
+    });
+    Vector<uint32_t, 8> names { input.index() };
+    while (!names.isEmpty() && uses < enough) {
+        auto casts = std::ranges::equal_range(kept.castsOfValues.span(), names.takeLast(), { }, [](uint64_t listed) {
+            return static_cast<uint32_t>(listed >> 32);
+        });
+        for (uint64_t listed : casts) {
+            names.append(static_cast<uint32_t>(listed));
+            uses += index.useCount(ValueID(static_cast<uint32_t>(listed)));
         }
     }
     return uses;
@@ -4253,15 +4267,13 @@ static TypeID findHierarchyByNames(Walker& walker, ValueID input, const Detailed
     const Function& function = walker.program().at(walker.currentFunction());
     if (function.has(FunctionFlags::IsChecked) || expectation.isHeld || function.thisParameterIndex() == std::optional<unsigned>(input.index()) || !(walker.isInLoop() || isReachedByLoops(walker)))
         return { };
-    if (countUsesThroughCasts(walker.currentBodyIndex(), input, fewestNames) < fewestNames)
-        return { };
     const LayoutsByNames& byNames = walker.facts().layoutsByNames();
     Vector<PropertyKeyID, 16> names;
     for (PropertyKeyID name : walker.namesUsedOff(input)) {
         if (byNames.isNameOfSomeInstance(name))
             names.append(name);
     }
-    if (names.size() < fewestNames)
+    if (names.size() < fewestNames || countUsesThroughCasts(walker.currentBodyIndex(), input, fewestNames) < fewestNames)
         return { };
     TypeArena& types = walker.types();
     if (!types.isUninformative(expectation.type)) {
@@ -4356,12 +4368,29 @@ static QuestionAboutName questionOfRead(Walker& walker, const BodyIndex& index, 
     return index.useCount(access.id()) <= usesByQuestion ? QuestionAboutName { answer, blockOfFoundName } : QuestionAboutName();
 }
 
+static std::span<const uint64_t> namedAccessesOfRoot(const BodyIndex& index, BodySpeculationCache& kept, uint32_t root)
+{
+    ensureCachedList(kept, kept.hasNamedAccessesOfRoots, [&] {
+        for (uint32_t number = 0; number < index.numberOfValues(); ++number) {
+            ValueID id(number);
+            if (index.isParameter(id) || (index.opcodeOf(id) != Opcode::PropGet && index.opcodeOf(id) != Opcode::PropSet))
+                continue;
+            if (BodyValue access = index.value(id); !access.isFreeName())
+                kept.namedAccessesOfRoots.append(static_cast<uint64_t>(kept.rootOf(access.objectOperand().index())) << 32 | number);
+        }
+        std::ranges::sort(kept.namedAccessesOfRoots);
+    });
+    return std::ranges::equal_range(kept.namedAccessesOfRoots.span(), root, { }, [](uint64_t listed) {
+        return static_cast<uint32_t>(listed >> 32);
+    });
+}
+
 static Vector<PropertyKeyID, 16> unconditionallyUsedNames(Walker& walker, ValueID input)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     Vector<PropertyKeyID, 16> told;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    const BodySpeculationCache& kept = bodySpeculationCache(index);
+    BodySpeculationCache& kept = bodySpeculationCache(index);
     if (names.empty() || kept.rootsOfValuesWithMarks.isEmpty())
         return told;
     uint32_t root = kept.rootOf(input.index());
@@ -4369,13 +4398,9 @@ static Vector<PropertyKeyID, 16> unconditionallyUsedNames(Walker& walker, ValueI
     Vector<BlockID, 8> blocksOfFoundNames;
     Vector<PropertyKeyID, 16> direct;
     bool anyNameIsRequested = false;
-    for (uint32_t number = 0; number < index.numberOfValues(); ++number) {
-        ValueID id(number);
-        if (index.isParameter(id) || (index.opcodeOf(id) != Opcode::PropGet && index.opcodeOf(id) != Opcode::PropSet))
-            continue;
+    for (uint64_t listed : namedAccessesOfRoot(index, kept, root)) {
+        ValueID id(static_cast<uint32_t>(listed));
         BodyValue access = index.value(id);
-        if (access.isFreeName() || kept.rootOf(access.objectOperand().index()) != root)
-            continue;
         direct.append(access.key());
         QuestionAboutName question = questionOfRead(walker, index, access);
         if (!question.answer) {
@@ -4413,6 +4438,8 @@ static Vector<PropertyKeyID, 16> unconditionallyUsedNames(Walker& walker, ValueI
         if (std::ranges::binary_search(used, name.index(), { }, &PropertyKeyID::index) || !std::ranges::binary_search(direct, name.index(), { }, &PropertyKeyID::index))
             told.append(name);
     }
+    if (told.isEmpty())
+        told.append(names);
     return told;
 }
 

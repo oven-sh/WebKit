@@ -88,6 +88,7 @@ EnforcedFieldCounts fillEnforcedFieldsForFacts(Program& program, const LinkTable
     };
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
+    WrittenTypesOfFamilies writtenInFamilies(program, families, types);
     EnforcedFieldCounts counts;
     auto isMadeByLibrary = [&](LayoutID id) {
         FunctionID constructor = program.at(id).constructor;
@@ -98,7 +99,7 @@ EnforcedFieldCounts fillEnforcedFieldsForFacts(Program& program, const LinkTable
     }, [&](FieldReference field) {
         if (isTakenFromAbove(field))
             return;
-        EnforcedField answer = enforcedTypeOfField(program, linked, held, families, familiesOfInstances, types, field);
+        EnforcedField answer = enforcedTypeOfField(program, linked, held, families, familiesOfInstances, writtenInFamilies, types, field);
         counts.seen += answer.type && answer.source == SourceOfSlotType::Seen && !isMadeByLibrary(field.layout);
         counts.ofFamily += answer.type && answer.source == SourceOfSlotType::WrittenInFamily && !isLibraryLayout(program, field.layout);
         writeForFactsOfEnforcedFields(rowOf(field), answer.type, answer.holdsUndefinedAndNull);

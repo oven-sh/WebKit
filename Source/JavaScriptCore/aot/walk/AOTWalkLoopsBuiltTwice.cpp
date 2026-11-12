@@ -2707,6 +2707,19 @@ bool Walker::mergeUndoableElementStores(MergedUndoableStores& merged, std::span<
             return false;
         });
     };
+    LoopID loopOfParting = currentBodyIndex().loopOf(dominator);
+    bool partsInOpenLoop = !loopOfParting;
+    for (size_t place = 0; place < m_openLoops.size() && !partsInOpenLoop; ++place)
+        partsInOpenLoop = m_openLoops[place].frame == m_frames.size() - 1 && m_openLoops[place].loop == loopOfParting;
+    auto isBuiltBeforeVersionedLoop = [&](Reference name) {
+        const VersionedLoop& versionedLoop = m_versionedLoops.last();
+        for (uint32_t place = m_openLoops.size(); place--;) {
+            const OpenLoop& loop = m_openLoops[place];
+            if (loop.frame == versionedLoop.frameIndex && m_frames[loop.frame].index->loop(loop.loop).head == versionedLoop.inputHead && isInvariantInLoop(place, name))
+                return true;
+        }
+        return false;
+    };
     auto nameBeforePaths = [&](Reference reference, bool isArray) {
         Vector<Reference, 4> names { reference };
         while (names.last().isValue() && !m_code.isConstant(names.last().id()) && valuePreservingOpcodes.contains(m_code.at(names.last().id()).opcode))
@@ -2716,7 +2729,7 @@ bool Walker::mergeUndoableElementStores(MergedUndoableStores& merged, std::span<
             bool isTyped = isArray ? hasKind(m_types, ownTypeOf(name), OperandKind::Array) : m_types.at(ownTypeOf(name)).isInteger();
             if (!isTyped || !isBuiltBeforePaths(name))
                 continue;
-            if (place + 1 == names.size() || name.isConstant() || m_code.isConstant(name.id()) || dominatesPaths(name))
+            if ((place + 1 == names.size() && (partsInOpenLoop || isBuiltBeforeVersionedLoop(name))) || name.isConstant() || m_code.isConstant(name.id()) || dominatesPaths(name))
                 return name;
         }
         return Reference();

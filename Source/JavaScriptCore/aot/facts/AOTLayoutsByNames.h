@@ -158,6 +158,8 @@ public:
 
     ALWAYS_INLINE bool hasAll(uint32_t holder, std::span<const PropertyKeyID> names) const
     {
+        if (names.size() > namesSoughtOneByOne) [[unlikely]]
+            return hasAllOfLongList(holder, names);
         for (PropertyKeyID name : names) {
             if (!has(holder, name))
                 return false;
@@ -521,6 +523,37 @@ private:
     }
 
     static uint64_t filterBitOf(uint32_t name) { return 1ull << (name * 0x9e3779b9u >> 26); }
+
+    static constexpr size_t namesSoughtOneByOne = 16;
+
+    NEVER_INLINE bool hasAllOfLongList(uint32_t holder, std::span<const PropertyKeyID> names) const
+    {
+        std::span<const uint32_t> own = m_names.span().subspan(m_firstNameOfLayout[holder], m_firstNameOfLayout[holder + 1] - m_firstNameOfLayout[holder]);
+        size_t next = 0;
+        uint32_t last = 0;
+        for (PropertyKeyID name : names) {
+            if (name.index() < last) {
+                if (!has(holder, name))
+                    return false;
+                continue;
+            }
+            last = name.index();
+            if (!(m_nameFilters[holder] & filterBitOf(last)))
+                return false;
+            if (next < own.size() && own[next] < last)
+                ++next;
+            if (next < own.size() && own[next] < last) {
+                size_t step = 1;
+                for (; next + step < own.size() && own[next + step] < last; step *= 2)
+                    next += step;
+                std::span<const uint32_t> rest = own.subspan(next, std::min(step + 1, own.size() - next));
+                next += std::ranges::lower_bound(rest, last) - rest.begin();
+            }
+            if (next == own.size() || own[next] != last)
+                return false;
+        }
+        return true;
+    }
 
     ALWAYS_INLINE bool has(uint32_t layout, PropertyKeyID name) const
     {

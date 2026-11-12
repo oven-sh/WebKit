@@ -37,6 +37,8 @@ struct ShapeTestsKeptAcrossUnits {
     const ShapeTable* table { nullptr };
     std::array<Entry, 1 << numberOfBits> entries;
     UncheckedKeyHashMap<LayoutSetID, bool> setsThatMayBearMark;
+    LayoutSetID setListedLast;
+    ShapeTable::ShapeList shapesOfSetListedLast;
 };
 
 class ShapeTestEmitter final : public OperationEmitter {
@@ -95,15 +97,14 @@ private:
     BitSetConstant bitSetConstant(LayoutSetID tested);
     ShapeTestsKeptAcrossUnits& testsKeptAcrossUnits();
     ShapeTestsKeptAcrossUnits::Entry& entryKeptAcrossUnits(uint64_t testedAndKnown);
+    std::span<const uint32_t> shapesOf(LayoutSetID);
 
-    LayoutSetID m_setWhoseShapesAreKept;
-    bool m_keptSetHoldsCompiledObjectsAlone { true };
-    bool m_shapesOfKeptSetAreListed { false };
+    LayoutSetID m_setKnownLast;
+    bool m_setKnownLastHoldsCompiledObjectsAlone { true };
     bool m_lastTestRejectsMarks { false };
     bool m_lastTestIsHeldAgainstEveryShape { false };
     bool m_wordIsAskedForMark { true };
     UncheckedKeyHashMap<LayoutSetID, bool> m_setsThatMayBearMark;
-    ShapeTable::ShapeList m_shapesKept;
     UncheckedKeyHashMap<LayoutSetID, BitSetConstant> m_bitSetConstants;
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bitSetsThatHoldEveryKnownShape;
     UncheckedKeyHashMap<uint64_t, ShapeTest, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_testsAmongKnownShapes;

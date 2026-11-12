@@ -150,6 +150,7 @@ private:
     bool hasStackWordsOfCaller(uint32_t numberOfWords) const;
 
     std::optional<ArgumentLocations> m_ownLocations;
+    uint32_t m_numberOfCallsOfCopies { 0 };
 };
 
 } } } // namespace JSC::AOT::Typed

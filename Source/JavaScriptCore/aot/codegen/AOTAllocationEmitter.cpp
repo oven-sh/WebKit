@@ -583,32 +583,43 @@ void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, std::
     auto isStored = [&](const PlacedSlot& slot) {
         return zeroedBy == ZeroedBy::Nobody || !isZeroWhileEmpty(slot.representation);
     };
-    auto fillsWord = [&](const PlacedSlot& slot) {
-        return isStored(slot) && widthOf(slot.representation) == sizeof(uint64_t) && !(slot.offset % sizeof(uint64_t));
+    auto liesInWord = [&](const PlacedSlot& slot) {
+        size_t width = widthOf(slot.representation);
+        return isStored(slot) && slot.offset % sizeof(uint64_t) + width <= sizeof(uint64_t) && slot.offset + width <= planned.size;
     };
     BitVector isStoredInLoop;
     bool storesWordsInLoop = false;
-    auto fillMoreWordsThanAreStoredInLine = [&] {
-        size_t numberOfWords = std::ranges::count_if(emptySlots, [&](FieldIndex field) { return fillsWord(planned.slots[field]); });
-        return numberOfWords * sizeof(uint64_t) > CellAllocationEmitter::maxBytesZeroedInLine;
+    auto fillMoreBytesThanAreStoredInLine = [&] {
+        size_t numberOfBytes = 0;
+        for (FieldIndex field : emptySlots)
+            numberOfBytes += liesInWord(planned.slots[field]) ? widthOf(planned.slots[field].representation) : 0;
+        return numberOfBytes > CellAllocationEmitter::maxBytesZeroedInLine;
     };
-    if (emptySlots.size() * sizeof(uint64_t) > CellAllocationEmitter::maxBytesZeroedInLine && !generator().isInLoop(block) && fillMoreWordsThanAreStoredInLine()) {
+    if (emptySlots.size() * sizeof(uint64_t) > CellAllocationEmitter::maxBytesZeroedInLine && !generator().isInLoop(block) && fillMoreBytesThanAreStoredInLine()) {
         size_t numberOfWords = planned.size / sizeof(uint64_t);
         Vector<int64_t, 64> wordsWhileEmpty(FillWith { }, numberOfWords, 0);
-        BitVector isEmptyWord(numberOfWords);
+        Vector<uint8_t, 64> bytesWhileEmpty(FillWith { }, numberOfWords, 0);
         for (FieldIndex field : emptySlots) {
             const PlacedSlot& slot = planned.slots[field];
-            if (!fillsWord(slot))
+            if (!liesInWord(slot))
                 continue;
-            wordsWhileEmpty[slot.offset / sizeof(uint64_t)] = static_cast<int64_t>(bitsBeforeCreation(slot.representation));
-            isEmptyWord.quickSet(slot.offset / sizeof(uint64_t));
+            size_t width = widthOf(slot.representation);
+            size_t shift = slot.offset % sizeof(uint64_t);
+            uint64_t bits = width == sizeof(uint64_t) || mayBeCreatedByStore(slot.representation) ? static_cast<uint64_t>(bitsBeforeCreation(slot.representation)) : 0;
+            if (width < sizeof(uint64_t))
+                bits &= (uint64_t { 1 } << (width * 8)) - 1;
+            wordsWhileEmpty[slot.offset / sizeof(uint64_t)] |= static_cast<int64_t>(bits << (shift * 8));
+            bytesWhileEmpty[slot.offset / sizeof(uint64_t)] |= static_cast<uint8_t>(((1u << width) - 1) << shift);
         }
         isStoredInLoop.ensureSize(numberOfWords);
+        auto isEmptyWord = [&](size_t word) {
+            return bytesWhileEmpty[word] == UINT8_MAX;
+        };
         for (size_t begin = 0, end = 0; begin < numberOfWords; begin = end) {
             end = begin + 1;
-            if (!isEmptyWord.quickGet(begin))
+            if (!isEmptyWord(begin))
                 continue;
-            while (end < numberOfWords && isEmptyWord.quickGet(end) && wordsWhileEmpty[end] == wordsWhileEmpty[begin])
+            while (end < numberOfWords && isEmptyWord(end) && wordsWhileEmpty[end] == wordsWhileEmpty[begin])
                 ++end;
             constexpr size_t wordsInTurn = CellAllocationEmitter::bytesStoredInTurnOfLoop / sizeof(uint64_t);
             size_t wordsInChunks = (end - begin) / wordsInTurn * wordsInTurn;
@@ -622,7 +633,7 @@ void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, std::
     }
     for (FieldIndex field : emptySlots) {
         const PlacedSlot& slot = planned.slots[field];
-        if (!isStored(slot) || (storesWordsInLoop && fillsWord(slot) && isStoredInLoop.get(slot.offset / sizeof(uint64_t))))
+        if (!isStored(slot) || (storesWordsInLoop && liesInWord(slot) && isStoredInLoop.get(slot.offset / sizeof(uint64_t))))
             continue;
         TypedPointer address = slots.addressOf(cell, slot, locationOfField(m_program, m_plan.slots(), layout, field));
         if (mayBeCreatedByStore(slot.representation))

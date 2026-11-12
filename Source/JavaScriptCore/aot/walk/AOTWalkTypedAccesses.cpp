@@ -3228,7 +3228,7 @@ static bool cellSaysWhetherObjectHidesMethodForTypedAccess(const Walker& walker,
     if (held.layout(classLayout).instancesAreLaidAsPrototypes)
         return true;
     std::span<const LinkedNameBesideFields> names = held.namesStoredBesideFieldsOf(classLayout);
-    if (!std::ranges::contains(names, key, &LinkedNameBesideFields::key))
+    if (!std::ranges::binary_search(names, key, { }, &LinkedNameBesideFields::key))
         return false;
     return std::ranges::all_of(names, [&](const LinkedNameBesideFields& name) {
         LayoutID classOfObjects;
@@ -3361,7 +3361,7 @@ bool instancesShadowMethod(const Walker& walker, TypeID typeOfObjects, PropertyK
         return false;
     return std::ranges::any_of(walker.types().listOf(objects.layouts), [&](LayoutID member) {
         LayoutID classLayout = declaredLayoutOf(walker.program(), member);
-        return std::ranges::contains(held.namesStoredBesideFieldsOf(classLayout), key, &LinkedNameBesideFields::key) && findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout);
+        return std::ranges::binary_search(held.namesStoredBesideFieldsOf(classLayout), key, { }, &LinkedNameBesideFields::key) && findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout);
     });
 }
 
@@ -3592,6 +3592,8 @@ ValueID findForwardedCall(const Walker& walker, const BodyValue& read)
 static bool closureTableHoldsMethodForTypedAccess(const Walker& walker, FunctionID method)
 {
     const Plan& plan = walker.plan();
+    if (LayoutID constructed = walker.program().at(method).constructedClass; constructed && !walker.facts().isEvaluatedAtMostOnce(constructed))
+        return false;
     return plan.hasClosureCell(method) && walker.program().at(method).captures.size() == plan.promotedEnvironments().numberOfRemovedCapturesOf(method);
 }
 

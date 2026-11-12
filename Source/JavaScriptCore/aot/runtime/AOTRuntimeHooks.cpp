@@ -196,11 +196,10 @@ void didCreateRealm(JSGlobalObject* realm)
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
     if (!instance) {
-        for (Instance* other : realm->vm().aotState().instances) {
-            if (other->state) {
-                realm->setAOTTableInstance(other);
-                break;
-            }
+        VMState& state = realm->vm().aotState();
+        if (Instance* lender = state.findInstanceThatLendsTables()) {
+            realm->setAOTTableInstance(lender);
+            state.realmsWithBorrowedTables.append(realm);
         }
         return;
     }
