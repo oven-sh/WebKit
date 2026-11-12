@@ -776,7 +776,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
     v(Bool, useDecimal, false, Normal, "Expose the Decimal constructor of the TC39 Decimal proposal, and parse Decimal literals (1.5m)."_s) \
     v(Bool, useDecimalToJSON, false, Normal, "With useDecimal: Decimal.prototype.toJSON() answers the exact value as a String. In the proposal it throws."_s) \
-    v(Bool, useDecimalOperators, false, Normal, "With useDecimal: + - * / % < <= > >= and unary -, ++ and -- work on Decimals, where they throw in the proposal, and == and != compare two Decimals by value, where they compare identity. Not in programs compiled ahead of time."_s) \
+    v(Bool, useDecimalOperators, false, Normal, "With useDecimal: + - * / % < <= > >= and unary -, ++ and -- work on Decimals, where they throw in the proposal, and == and != compare two Decimals by value, where they compare identity. Code compiled ahead of time does not have this, code from strings beside it does."_s) \
     /* Not sourced from UnifiedWebPreferences.yaml: unconditionally expose SharedArrayBuffer to every global object. */ \
     v(Bool, alwaysUseSharedArrayBuffer, false, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: allows an embedder to conditionally expose SharedArrayBuffer per global, see callers of JSGlobalObject::exposeSharedArrayBuffer(). */ \
