@@ -190,7 +190,15 @@ alignas(sizeof(Decimal128::Divisor)) static constexpr auto divisorsOf64Bits = []
     for (unsigned i = 1; i < result.size(); ++i) {
         uint64_t powerOf5 = powersOf10In64Bits[i] >> i;
         unsigned shift = 63 - std::countl_zero(powerOf5);
-        result[i] = { powersOf10In64Bits[i], powersOf10In64Bits[i] / 2, lowOf((makeUInt128(1, 0) << shift) / powerOf5) + 1, shift };
+        // 2^(64 + shift) / 5^i. The division of UInt128 is not constexpr everywhere.
+        uint64_t quotient = 0;
+        uint64_t remainder = 1ull << shift;
+        for (unsigned bit = 0; bit < 64; ++bit) {
+            remainder *= 2;
+            quotient = quotient * 2 + (remainder >= powerOf5);
+            remainder %= powerOf5;
+        }
+        result[i] = { powersOf10In64Bits[i], powersOf10In64Bits[i] / 2, quotient + 1, shift };
     }
     return result;
 }();
