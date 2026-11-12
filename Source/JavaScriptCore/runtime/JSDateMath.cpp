@@ -410,13 +410,42 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
     if (date == m_cachedDateString)
         return m_cachedDateStringValue;
 
+    auto parseDateImpl = [&](std::span<const Latin1Character> dateString) {
+        double value;
+        if (Options::useV8DateParser()) {
+            bool local = false;
+            value = v8::ParseDateTimeString(byteCast<uint8_t>(dateString.data()), dateString.size(), local);
+
+            if (local)
+                value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+
+            value = v8::TimeClip(value);
+        } else {
+            bool isLocalTime;
+            value = WTF::parseES5Date(dateString, isLocalTime);
+            if (std::isnan(value))
+                value = WTF::parseDate(dateString, isLocalTime);
+
+            if (isLocalTime && JSDateMathInternal::canNarrowToInt64Milliseconds(value))
+                value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+        }
+
+        m_cachedDateString = date;
+        m_cachedDateStringValue = value;
+        return value;
+    };
+
+    bool isASCII = date.containsOnlyASCII();
+    if (isASCII && date.is8Bit())
+        return parseDateImpl(date.span8());
+
     // V8's date parser (and useful web compat) treats every ECMAScript WhiteSpace code point as a
     // separator: TAB/VT/FF/SP, NBSP, BOM, and every Unicode Zs character including the
     // narrowNoBreakSpace that ICU >= 72 emits from toLocaleString. Both parsers below scan the
     // UTF-8 encoding one byte at a time, so fold all of those into ASCII spaces here. Line
     // terminators (LS/PS) are intentionally left alone so they continue to reject, matching V8.
     String updatedString = date;
-    if (!date.containsOnlyASCII()) {
+    if (!isASCII) {
         if (date.is8Bit())
             updatedString = makeStringByReplacingAll(date, noBreakSpace, space);
         else {
@@ -441,32 +470,8 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
         return std::numeric_limits<double>::quiet_NaN();
     }
 
-    auto parseDateImpl = [this] (auto dateString) {
-        if (Options::useV8DateParser()) {
-            bool local = false;
-            double value = v8::ParseDateTimeString(byteCast<uint8_t>(dateString.data()), dateString.size(), local);
-
-            if (local)
-                value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
-
-            return v8::TimeClip(value);
-        }
-        bool isLocalTime;
-        double value = WTF::parseES5Date(dateString, isLocalTime);
-        if (std::isnan(value))
-            value = WTF::parseDate(dateString, isLocalTime);
-
-        if (isLocalTime && JSDateMathInternal::canNarrowToInt64Milliseconds(value))
-            value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
-
-        return value;
-    };
-
     // FIXME: expectedString is UTF-8 but parseDateImpl requires Latin1. Which is correct?
-    double value = parseDateImpl(byteCast<Latin1Character>(expectedString.value().span()));
-    m_cachedDateString = date;
-    m_cachedDateStringValue = value;
-    return value;
+    return parseDateImpl(byteCast<Latin1Character>(expectedString.value().span()));
 }
 
 // https://tc39.es/ecma402/#sec-defaulttimezone

@@ -120,6 +120,7 @@ public:
     bool suspends() const { return m_proc.traits().savesFrameOnSuspend; }
     bool hasHandlers() const { return code().hasHandlers(); }
     bool isLayingOutTurns() const { return !!m_headOfTurnsLaidOut; }
+    bool mayThrowInPlace() const { return !isLayingOutTurns() || m_iterationMayThrowInPlace; }
     bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
     bool restartsUnrolledIteration(BlockID target) const { return leavesTurnLaidOut(target) && !(m_blockLeavingLoop && m_exitsOfUnrolledLoop.contains(target)); }
     bool isInLoop(BlockID block) const { return code().at(block).isInLoop; }
@@ -1183,6 +1184,7 @@ private:
     bool m_nextBlockGoesOnHere { false };
     Vector<LBasicBlock, 4> m_blocksLeftOut;
     BlockID m_headOfTurnsLaidOut;
+    bool m_iterationMayThrowInPlace { false };
     mutable size_t m_cachedLoopHeaderPosition { std::numeric_limits<size_t>::max() };
     mutable size_t m_cachedLoopQueryPosition { std::numeric_limits<size_t>::max() };
     mutable std::optional<CountedLoop> m_cachedCountedLoop;

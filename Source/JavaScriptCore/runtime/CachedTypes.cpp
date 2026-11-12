@@ -2756,7 +2756,7 @@ private:
     uint32_t m_bits;
 };
 
-typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<PrivateNameEntry>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<PrivateNameEntry>, IdentifierRepHash, HashTraits<PackedRefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
@@ -2803,7 +2803,7 @@ private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
     uint8_t m_unused[2] { };
-    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<VariableEnvironmentEntry>, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
+    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<VariableEnvironmentEntry>, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<PackedRefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
     CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
 };
 

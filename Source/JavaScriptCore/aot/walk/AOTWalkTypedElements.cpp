@@ -4069,6 +4069,12 @@ bool tryOpenInBoundsPath(Walker& walker, const BodyValue& access)
                 savedBindings.append({ value, walker.referenceOf(value) });
             walker.bind(value, reference);
         };
+        auto forgetOtherPaths = [&](uint32_t placeOfExit) {
+            for (uint32_t place = begin; place < placeOfExit; ++place)
+                walker.bind(ValueID(first + place), Reference());
+            for (auto [value, bound] : savedBindings)
+                walker.bind(value, bound);
+        };
         BlockID chain;
         for (size_t number = 0; number < path.exits.size() && !walker.hasFailed();) {
             const Walker::InBoundsPath::Exit& exit = path.exits[number];
@@ -4087,6 +4093,7 @@ bool tryOpenInBoundsPath(Walker& walker, const BodyValue& access)
                 walker.continueIn(path.exits[number].slowPath);
                 if (walker.isUnreachable())
                     continue;
+                forgetOtherPaths(exit.begin);
                 for (auto [value, built] : path.exits[number].needed) {
                     if (built)
                         bindOnSlowPath(value, built);
@@ -4109,10 +4116,12 @@ bool tryOpenInBoundsPath(Walker& walker, const BodyValue& access)
                 Vector<Reference, 8> met(exit.needed.size());
                 if (!walker.joinArms(ways.span(), walker.addBlock(BlockFrequency::Rare), met.mutableSpan()))
                     break;
+                forgetOtherPaths(exit.begin);
                 for (size_t position = 0; position < met.size(); ++position)
                     walker.bind(exit.needed[position].first, met[position]);
             } else {
                 walker.continueIn(ways[0].last);
+                forgetOtherPaths(exit.begin);
                 for (size_t position = 0; position < exit.needed.size(); ++position)
                     walker.bind(exit.needed[position].first, ways[0].values[position]);
             }

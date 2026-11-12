@@ -2945,10 +2945,11 @@ ALWAYS_INLINE void WriterOfLink::writeFunction(FunctionID id)
         return;
 
     const Function& function = m_program.at(id);
-    linked.isIterationCallback = m_flow.iterationCallbacks.get(index);
-    linked.isRepeatedCallback = m_flow.repeatedCallbacks.get(index);
-    linked.isTrapOfProxy = m_flow.trapsOfProxies.get(index);
-    linked.makesProxies = m_flow.makersOfProxies.get(index);
+    OptionSet<LinkFlow::FoundByCalls> found = m_flow.foundByCalls(id);
+    linked.isIterationCallback = found.contains(LinkFlow::FoundByCalls::IsIterationCallback);
+    linked.isRepeatedCallback = found.contains(LinkFlow::FoundByCalls::IsRepeatedCallback);
+    linked.isTrapOfProxy = found.contains(LinkFlow::FoundByCalls::IsTrapOfProxy);
+    linked.makesProxies = found.contains(LinkFlow::FoundByCalls::MakesProxies);
     linked.everyCallerIsKnown = everyCallerIsKnownOf(index);
     linked.holdsInt32Promise = m_flow.summaries.at(id).has(SummaryTrait::HoldsInt32Promise);
     linked.neverReturns = function.hasBody() && m_flow.summaries.at(id).has(SummaryTrait::NeverReturns);

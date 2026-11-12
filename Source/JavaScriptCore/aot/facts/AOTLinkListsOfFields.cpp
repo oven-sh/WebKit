@@ -12,6 +12,7 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkFlow.h"
 #include <algorithm>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -39,6 +40,8 @@ public:
         findFields();
         if (!m_records.isEmpty())
             findMakers();
+        if (!m_records.isEmpty())
+            checkHolderUses();
         if (!m_records.isEmpty())
             lookAtSummaries();
         if (!m_records.isEmpty())
@@ -198,6 +201,172 @@ private:
                 nameElsewhere(record.family);
         }
         dropRecordsNamedElsewhere();
+    }
+
+    void findHolders()
+    {
+        m_holders = BitVector(m_program.layouts.size());
+        for (uint32_t number = 0; number < m_program.layouts.size(); ++number) {
+            const Layout& layout = m_program.at(LayoutID(number));
+            for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+                if (recordAt(m_flow.field({ LayoutID(number), field })) != none)
+                    m_holders.quickSet(number);
+            }
+        }
+        for (bool hasChanged = true; std::exchange(hasChanged, false);) {
+            for (uint32_t number = 0; number < m_program.layouts.size(); ++number) {
+                if (m_holders.quickGet(number))
+                    continue;
+                LayoutID id(number);
+                LayoutID declared = declaredLayoutOf(m_program, id);
+                LayoutID base = m_program.at(id).base;
+                bool isHolder = (declared && m_holders.quickGet(declared.index())) || (base && m_holders.quickGet(base.index()));
+                forEachOfSeveralParents(m_program, id, [&](LayoutID parent) {
+                    isHolder |= m_holders.quickGet(parent.index());
+                });
+                if (isHolder) {
+                    m_holders.quickSet(number);
+                    hasChanged = true;
+                }
+            }
+        }
+    }
+
+    bool mayBeHolder(const LinkType& type)
+    {
+        if (type.objects == LinkType::Objects::None || type.objects == LinkType::Objects::Prototype || type.objects == LinkType::Objects::Prototypes)
+            return false;
+        if (type.objects == LinkType::Objects::Layout)
+            return m_holders.quickGet(type.layout.index());
+        uint32_t number = type.objects == LinkType::Objects::Family ? type.family.index() : type.layout.bits();
+        auto added = m_holderTypes.add(static_cast<uint64_t>(type.objects) << 32 | number, false);
+        if (added.isNewEntry) {
+            bool names = false;
+            m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
+                names |= m_holders.quickGet(layout.index());
+            });
+            added.iterator->value = names;
+        }
+        return added.iterator->value;
+    }
+
+    void dropListsOfHolders(const LinkType& type)
+    {
+        m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
+            if (!m_holders.quickGet(layout.index()))
+                return;
+            bool hasSeveralParents = false;
+            forEachOfSeveralParents(m_program, layout, [&](LayoutID) { hasSeveralParents = true; });
+            for (const Record& record : m_records) {
+                if (hasSeveralParents || findField(m_program, layout, record.key))
+                    nameElsewhere(record.family);
+            }
+        });
+    }
+
+    void checkHolderUses()
+    {
+        findHolders();
+        BitVector keys;
+        for (const Record& record : m_records)
+            keys.set(record.key.index());
+        for (uint32_t number = 0; number < m_program.functions.size(); ++number) {
+            if (!m_flow.reached.get(number))
+                continue;
+            FunctionID function(number);
+            const ThinSummary& summary = m_flow.summaries.at(function);
+            auto nameAt = [&](uint32_t node) {
+                if (node == noSummaryNode)
+                    return;
+                const LinkType& type = m_flow.typeAt(m_flow.nodeOf(function, node));
+                if (mayBeHolder(type))
+                    dropListsOfHolders(type);
+            };
+            for (const SummaryAccess& access : summary.accesses) {
+                nameAt(access.receiver);
+                if (!access.key || liesInThread(access.key) || access.isToContents()) {
+                    nameAt(access.subject);
+                    continue;
+                }
+                bool storesUnderKey = (access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define) && keys.get(access.key.index());
+                if (storesUnderKey && !storesOnlyMadeList(function, access))
+                    nameAt(access.subject);
+            }
+            for (const SummaryChange& change : summary.changes) {
+                nameAt(change.subject);
+                if (change.kind != SummaryChange::Kind::BecomesPrototype)
+                    nameAt(change.other);
+            }
+            for (uint32_t place = 0; place < summary.calls.size(); ++place) {
+                const SummaryCall& call = summary.calls[place];
+                if (!mayUseHolders(function, place))
+                    continue;
+                nameAt(call.subject);
+                nameAt(call.receiver);
+                for (uint32_t argument = 0; argument < call.numberOfArguments; ++argument)
+                    nameAt(summary.arguments.span()[call.firstArgument + argument]);
+            }
+        }
+        dropRecordsNamedElsewhere();
+    }
+
+    bool storesOnlyMadeList(FunctionID function, const SummaryAccess& access) const
+    {
+        const BodyIndex* index = access.site ? m_bodies.find(function) : nullptr;
+        if (!index || index->isParameter(access.site))
+            return false;
+        BodyValue store = index->value(access.site);
+        if (store.opcode() == Opcode::NewObject)
+            return true;
+        ValueID stored;
+        if (store.opcode() == Opcode::PropSet)
+            stored = store.as<Opcode::PropSet>().valueOperand();
+        else if (store.opcode() == Opcode::PropDefine)
+            stored = store.as<Opcode::PropDefine>().valueOperand();
+        while (stored && !index->isParameter(stored) && inputIdentityOpcodes.contains(index->opcodeOf(stored)))
+            stored = index->value(stored).operand(0);
+        if (!stored)
+            return false;
+        bool isMade = std::ranges::any_of(m_records, [&](const Record& record) {
+            return std::ranges::contains(record.makers, LinkedReceiverAsMade { function, stored });
+        });
+        if (isMade || (!index->isParameter(stored) && primitiveConstants.contains(index->opcodeOf(stored))))
+            return true;
+        return access.value != noSummaryNode && recordAt(m_flow.nodeOf(function, access.value)) == none;
+    }
+
+    bool usesHolders(BuiltinID builtin) const
+    {
+        static constexpr OperandUses usesAllowed { OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns };
+        const BuiltinTable& builtins = m_program.builtins();
+        std::span<const BuiltinOverload> rows = builtins.overloadsOf(builtins.canonicalID(builtin));
+        return rows.empty() || std::ranges::any_of(rows, [](const BuiltinOverload& row) {
+            bool usesArgument = std::ranges::any_of(row.parameters, [](const BuiltinParameter& parameter) {
+                return !usesAllowed.containsAll(parameter.uses);
+            });
+            return row.isUndeclared() || usesArgument || !row.flow.propertyActions.empty();
+        });
+    }
+
+    template<typename Visitor>
+    void forEachBuiltinEntered(FunctionID caller, uint32_t place, const Visitor& visit) const
+    {
+        const SummaryCall& call = m_flow.summaries.at(caller).calls[place];
+        if (call.callee == SummaryCall::Callee::Builtin)
+            visit(call.builtin);
+        const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[caller.index()] + place];
+        std::ranges::for_each(callees.builtins(), visit);
+        for (uint32_t shared : callees.shared())
+            std::ranges::for_each(m_flow.calleesOfSharedCallsAsSettled()[shared].builtins(), visit);
+    }
+
+    bool mayUseHolders(FunctionID caller, uint32_t place) const
+    {
+        bool uses = false;
+        forEachBuiltinEntered(caller, place, [&](BuiltinID builtin) {
+            uses |= !builtin || usesHolders(builtin);
+        });
+        return uses;
     }
 
     void lookAtSummaries()
@@ -466,6 +635,8 @@ private:
             if (!linked.everyCallerIsKnown || !linked.everyCallHasOneCallee || body.isCoroutine())
                 return false;
             for (FunctionID caller : callersOf(function)) {
+                if (!isEnteredByWrittenCalls(caller, function))
+                    return false;
                 if (!leadToStores.quickSet(caller.index()))
                     toVisit.append(caller);
             }
@@ -485,6 +656,31 @@ private:
             return std::ranges::none_of(m_tables.callsOf(read.function), [&](const LinkedCall& call) {
                 return isBetween(call.site) && leadToStores.quickGet(call.callee.index());
             });
+        });
+    }
+
+    bool isEnteredByWrittenCalls(FunctionID caller, FunctionID callee)
+    {
+        static constexpr OpcodeSet writtenCalls { Opcode::Call, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
+        const BodyIndex* index = m_bodies.find(caller);
+        if (!index)
+            return false;
+        auto added = m_indirectCallSites.add(caller.index(), Vector<ValueID, 8>());
+        Vector<ValueID, 8>& indirectSites = added.iterator->value;
+        if (added.isNewEntry) {
+            std::span<const SummaryCall> calls = m_flow.summaries.at(caller).calls.span();
+            for (uint32_t place = 0; place < calls.size(); ++place) {
+                bool isIndirect = calls[place].isMadeByProtocol || calls[place].isMadeByHost;
+                forEachBuiltinEntered(caller, place, [&](BuiltinID) { isIndirect = true; });
+                if (isIndirect)
+                    indirectSites.append(calls[place].site);
+            }
+            std::ranges::sort(indirectSites);
+        }
+        return std::ranges::all_of(m_tables.callsOf(caller), [&](const LinkedCall& call) {
+            if (call.callee != callee)
+                return true;
+            return call.site && !index->isParameter(call.site) && writtenCalls.contains(index->opcodeOf(call.site)) && !std::ranges::binary_search(indirectSites, call.site);
         });
     }
 
@@ -520,6 +716,9 @@ private:
     const BodyIndexTable& m_bodies;
     Vector<uint32_t> m_recordOfFamily;
     BitVector m_familiesNamedElsewhere;
+    BitVector m_holders;
+    HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_holderTypes;
+    HashMap<uint32_t, Vector<ValueID, 8>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_indirectCallSites;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_possibleHolderNodes;
     Vector<Record> m_records;
     Vector<PropertyKeyID, 24> m_methods;
