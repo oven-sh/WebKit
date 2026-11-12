@@ -4921,9 +4921,11 @@ static void collectClassFieldNames(const Program& program, const LinkFlow& flow,
         if (layout.isEnvironment() || layout.kind == LayoutKind::Container)
             continue;
         for (uint32_t place = 0; place < layout.fields.size(); ++place) {
+            if (layout.fields[place].flags.contains(FieldFlags::IsInherited))
+                continue;
             FieldReference field { LayoutID(index), place };
             PropertyKeyID key = layout.fields[place].key;
-            if (!key || liesInThread(key) || key.index() >= fieldsOfKeys.size() || declarationOf(program, field) != field)
+            if (!key || liesInThread(key) || key.index() >= fieldsOfKeys.size())
                 continue;
             uint32_t& known = fieldsOfKeys[key.index()];
             if (known) {

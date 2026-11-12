@@ -38,6 +38,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/OptionSet.h>
+#include <wtf/PageBlock.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
