@@ -1432,10 +1432,33 @@ Reference Walker::makeGeneratorAgain(Reference generator)
     return buildCallThatMayBorrowScopes(WTF::move(again), &effects);
 }
 
+bool Walker::isOnlyPassedToCopy(Reference generator)
+{
+    const Frame& leaving = frameLeftForCall();
+    size_t copy = m_frames.size() - 1;
+    while (copy && &m_frames[copy] != &leaving)
+        --copy;
+    if (!copy)
+        return false;
+    const Frame& caller = m_frames[copy - 1];
+    const BodyIndex& index = *caller.index;
+    ValueID call = leaving.callCopied;
+    if (!call || index.isParameter(call) || index.opcodeOf(call) != Opcode::Call || facts().linked().calleeAt(caller.function, call) != leaving.function)
+        return false;
+    for (ValueID argument : index.value(call).as<Opcode::Call>().argumentsOperands()) {
+        ValueID creation = index.stripCasts(argument);
+        if (referenceBoundIn(caller, creation) != generator)
+            continue;
+        ValueID name = creation;
+        return !index.isParameter(creation) && index.opcodeOf(creation) == Opcode::Call && index.blockOf(creation) == index.blockOf(call) && followCastsToOnlyTaker(index, name) == call;
+    }
+    return false;
+}
+
 bool Walker::checkPassedGenerator(Reference generator, Origin origin)
 {
     origin.isTailCall = false;
-    Reference function = functionOfGenerator(generator);
+    Reference function = isOnlyPassedToCopy(generator) ? functionOfGenerator(generator) : Reference();
     Draft test(function ? Opcode::MakesPlainGenerators : Opcode::IsUnmodifiedGenerator, origin);
     chooseConservativeFields(test);
     if (function)

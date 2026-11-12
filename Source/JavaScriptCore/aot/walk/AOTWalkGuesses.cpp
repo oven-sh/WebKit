@@ -797,6 +797,7 @@ struct BodySpeculationCache final : KeptWithBodyIndex {
         return membersOfGroupsThatHandNamesOn.span().subspan(firstMembersOfGroupsThatHandNamesOn[group], firstMembersOfGroupsThatHandNamesOn[group + 1] - firstMembersOfGroupsThatHandNamesOn[group]);
     }
     Vector<uint32_t> readersOfCharactersNotOnlyCalled;
+    Lock lockOfObjectsExpected;
     Vector<std::unique_ptr<ObjectsExpectedOfLooks>> listsOfObjectsExpected;
     Vector<uint32_t> rootsHandedFunctionsWrittenInPlace;
     Vector<uint64_t> castsOfRoots;
@@ -1708,6 +1709,15 @@ static void ensureCachedList(BodySpeculationCache& kept, std::atomic<bool>& isMa
     isMade.store(true, std::memory_order_release);
 }
 
+static BodySpeculationCache& usesOfValues(Walker& walker, const BodyIndex& index)
+{
+    BodySpeculationCache& kept = bodySpeculationCache(index);
+    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
+        collectValueUses(walker, index, kept);
+    });
+    return kept;
+}
+
 TypeID numbersExpectedOfFieldOfHeir(Walker& walker, LayoutID heir, uint32_t field)
 {
     enum class StoredUnderName : uint8_t { Int32, Number, Other };
@@ -1891,18 +1901,15 @@ std::span<const uint64_t> Walker::holdersFromInFrontThatLoopReadsUnderIndexes(Bl
 bool Walker::hasElementArithmeticInLoop(BlockID inputHead)
 {
     const BodyIndex& index = *m_frames.last().index;
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(*this, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(*this, index);
     return std::ranges::binary_search(kept.loopsWithElementArithmetic, index.loopOf(inputHead).index());
 }
 
 bool Walker::mayVersionLoopUnderHandler(BlockID inputHead)
 {
     const BodyIndex& index = *m_frames.last().index;
-    if (!hasElementArithmeticInLoop(inputHead) && !std::ranges::binary_search(bodySpeculationCache(index).loopsMovingElements, index.loopOf(inputHead).index()))
-        return !isUnderHandlerOtherThanCleanups() && std::ranges::binary_search(bodySpeculationCache(index).innerLoopsTakingElements, index.loopOf(inputHead).index());
+    if (!hasElementArithmeticInLoop(inputHead) && !std::ranges::binary_search(usesOfValues(*this, index).loopsMovingElements, index.loopOf(inputHead).index()))
+        return !isUnderHandlerOtherThanCleanups() && std::ranges::binary_search(usesOfValues(*this, index).innerLoopsTakingElements, index.loopOf(inputHead).index());
     if (!isUnderHandlerOtherThanCleanups())
         return true;
     if (m_handlerMadeOverCopies || m_numberOfFramesOverHandlersOfCode)
@@ -1976,10 +1983,7 @@ bool Walker::canExitCurrentHandlers() const
 bool Walker::hasElementComparisonInLoop(BlockID inputHead)
 {
     const BodyIndex& index = *m_frames.last().index;
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(*this, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(*this, index);
     return std::ranges::binary_search(kept.loopsWithElementComparisons, index.loopOf(inputHead).index());
 }
 
@@ -2045,10 +2049,7 @@ static ALWAYS_INLINE std::span<const PropertyKeyID> namesOfRootAndOfJoinsItArriv
 std::span<const PropertyKeyID> Walker::namesUsedOff(ValueID value)
 {
     const BodyIndex& index = *m_frames.last().index;
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(*this, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(*this, index);
     if (kept.rootsOfValuesWithMarks.isEmpty())
         return { };
     return namesOfRootAndOfJoinsItArrivesAtForGuesses(*this, kept, kept.rootOf(value.index()));
@@ -2057,10 +2058,7 @@ std::span<const PropertyKeyID> Walker::namesUsedOff(ValueID value)
 bool Walker::appendNamesUsedOffViewsOf(ValueID value, Vector<PropertyKeyID, 16>& names)
 {
     const BodyIndex& index = *m_frames.last().index;
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(*this, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(*this, index);
     if (kept.rootsOfValuesWithMarks.isEmpty() || kept.viewsOfRoots.isEmpty())
         return false;
     size_t sizeBefore = names.size();
@@ -2083,10 +2081,7 @@ static bool textOfBodyIsSilentOnValueForGuesses(Walker& walker, const BodyIndex&
         if (firstUser && firstUser->kind == BodyUseKind::Operand && index.opcodeOf(firstUser->value) == Opcode::ElemGet && index.value(firstUser->value).operand(0) == value)
             return false;
     }
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(walker, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     if (kept.rootsOfValuesWithMarks.isEmpty())
         return true;
     return !kept.textSpeaksOfRootOf(value.index()) && !(walker.canRestartIteration() && std::ranges::binary_search(kept.rootsThatOperatorsOutsideLoopsReckonWith, kept.rootOf(value.index())));
@@ -2097,10 +2092,7 @@ std::span<const uint64_t> Walker::castsOf(ValueID value)
     const BodyIndex& index = *m_frames.last().index;
     if (!index.opcodes().contains(Opcode::Convert))
         return { };
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(*this, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(*this, index);
     if (kept.rootsOfValuesWithMarks.isEmpty())
         return { };
     auto listedUnder = [](const Vector<uint64_t>& list, uint32_t root) {
@@ -2162,7 +2154,7 @@ std::optional<uint32_t> Walker::numberOfLongListOfNamesUsedOff(ValueID value, st
     if (names.size() <= namesGoneThroughAtEveryAsk) [[likely]]
         return std::nullopt;
     Frame& frame = m_frames.last();
-    const BodySpeculationCache& kept = bodySpeculationCache(*frame.index);
+    const BodySpeculationCache& kept = usesOfValues(*this, *frame.index);
     auto added = frame.numbersOfLongListsOfNamesOfRoots.add(kept.rootOf(value.index()), 0);
     if (added.isNewEntry)
         added.iterator->value = numberOfListOfNames(names);
@@ -2409,8 +2401,7 @@ static TypeID layoutsPutIntoListMadeHereThatHandsOutForGuesses(Walker& walker, V
     ValueID list = operation.opcode() == Opcode::Call ? operation.as<Opcode::Call>().thisValueOperand() : operation.opcode() == Opcode::ElemGet ? operation.objectOperand() : ValueID();
     if (!list)
         return { };
-    walker.namesUsedOff(value);
-    const BodySpeculationCache& kept = bodySpeculationCache(index);
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     if (kept.rootsOfValuesWithMarks.isEmpty())
         return { };
     TypeArena& types = walker.types();
@@ -2544,7 +2535,7 @@ static DetailedExpectation expectationByNamesUsedForGuesses(Walker& walker, Valu
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
     std::optional<uint32_t> numberOfLongList = walker.numberOfLongListOfNamesUsedOff(input, names);
     LayoutID only = walker.onlyLayoutInSightWithAllNames(names, isInLoop && names.size() > 1, { }, numberOfLongList);
-    if (!only && !names.empty() && !bodySpeculationCache(walker.currentBodyIndex()).viewsOfRoots.isEmpty()) {
+    if (!only && !names.empty() && !usesOfValues(walker, walker.currentBodyIndex()).viewsOfRoots.isEmpty()) {
         Vector<PropertyKeyID, 16> withViews;
         if (walker.appendNamesUsedOffViewsOf(input, withViews)) {
             withViews.append(names);
@@ -2553,7 +2544,7 @@ static DetailedExpectation expectationByNamesUsedForGuesses(Walker& walker, Valu
     }
     Vector<PropertyKeyID, 8> namesUsedElsewhere;
     const BodyIndex& index = walker.currentBodyIndex();
-    if (ValueID read = index.stripCasts(input); !only && isInLoop && !names.empty() && read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::PropGet && bodySpeculationCache(index).callsStoredLeavesOffReads) {
+    if (ValueID read = index.stripCasts(input); !only && isInLoop && !names.empty() && read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::PropGet && usesOfValues(walker, index).callsStoredLeavesOffReads) {
         namesUsedElsewhere = findNamesUsedElsewhere(walker, input);
         if (namesUsedElsewhere.size() >= minNamesUsedElsewhere) {
             numberOfLongList = std::nullopt;
@@ -2694,8 +2685,8 @@ static bool isMatchedAgainstRegExp(Walker& walker, ValueID input)
     if (kept.callsThatMatch.isEmpty())
         return false;
     TypeArena& types = walker.types();
-    walker.namesUsedOff(input);
-    auto rootOf = [&](ValueID value) { return kept.rootsOfValuesWithMarks.isEmpty() ? index.stripCasts(value).index() : kept.rootOf(value.index()); };
+    const BodySpeculationCache& uses = usesOfValues(walker, index);
+    auto rootOf = [&](ValueID value) { return uses.rootsOfValuesWithMarks.isEmpty() ? index.stripCasts(value).index() : uses.rootOf(value.index()); };
     return std::ranges::any_of(kept.callsThatMatch, [&](uint32_t number) {
         auto call = index.value(ValueID(number)).as<Opcode::Call>();
         if (rootOf(call.thisValueOperand()) != rootOf(input))
@@ -2707,7 +2698,7 @@ static bool isMatchedAgainstRegExp(Walker& walker, ValueID input)
 
 static Vector<PropertyKeyID, 8> findNamesUsedElsewhere(Walker& walker, ValueID input)
 {
-    const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+    const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
     if (kept.rootsOfValuesWithMarks.isEmpty() || kept.namesUsedElsewhereByInput.isEmpty())
         return { };
     uint32_t root = kept.rootOf(input.index());
@@ -2749,8 +2740,7 @@ static bool isMatchedByCallee(Walker& walker, ValueID input)
     TypeArena& types = walker.types();
     BuiltinName nameOfTest = program.builtins().nameOf(byteCast<uint8_t>("test"_s.span()));
     PropertyKeyID test = nameOfTest ? program.keyOf(nameOfTest) : PropertyKeyID();
-    walker.namesUsedOff(input);
-    const BodySpeculationCache& kept = bodySpeculationCache(index);
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     auto rootOf = [&](ValueID value) { return kept.rootsOfValuesWithMarks.isEmpty() ? index.stripCasts(value).index() : kept.rootOf(value.index()); };
     const uint32_t root = rootOf(input);
     for (uint32_t number = 0; number < index.numberOfValues(); ++number) {
@@ -2795,10 +2785,7 @@ std::span<const uint32_t> additionsToTables(Walker& walker)
     const BodyIndex& index = walker.currentBodyIndex();
     if (!index.opcodes().contains(Opcode::Call))
         return { };
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(walker, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     return kept.additionsToTables.span();
 }
 
@@ -2807,10 +2794,7 @@ std::span<const uint32_t> slicingCalls(Walker& walker)
     const BodyIndex& index = walker.currentBodyIndex();
     if (!index.opcodes().contains(Opcode::Call))
         return { };
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(walker, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     return kept.slicingCalls.span();
 }
 
@@ -2908,7 +2892,7 @@ static DetailedExpectation expectationOfListHandedFunctionWrittenInPlaceForGuess
             return table.isSameOrSubclassOf(BuiltinClasses::Array, holder);
         });
     });
-    BodySpeculationCache& kept = bodySpeculationCache(index);
+    BodySpeculationCache& kept = usesOfValues(walker, index);
     if (!listsAloneAnswerEveryName || kept.rootsOfValuesWithMarks.isEmpty())
         return { };
     ensureCachedList(kept, kept.hasRootsHandedFunctionsWrittenInPlace, [&] {
@@ -2976,7 +2960,7 @@ static DetailedExpectation expectationByNamesOfTextsForGuesses(Walker& walker, V
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
     if (!std::ranges::all_of(names, textsAnswer))
         return { };
-    const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+    const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
     const BuiltinTable& table = program.builtins();
     bool someCallReadsCharacter = std::ranges::any_of(names, [&](PropertyKeyID key) {
         if (classesThatAnswer(key).size() != 1 || kept.readersOfCharactersNotOnlyCalled.contains(key.index()))
@@ -3021,7 +3005,7 @@ static bool isProvenDictionaryForGuesses(Walker& walker, ValueID input)
 
 static DetailedExpectation expectationOfPlaceThatLoopsReadByKeyForGuesses(Walker& walker, ValueID input)
 {
-    const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+    const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
     if (kept.rootsOfValuesWithMarks.isEmpty())
         return { };
     uint32_t root = kept.rootOf(input.index());
@@ -3062,7 +3046,7 @@ static DetailedExpectation expectationOfWhatLoopReadsByKeyForGuesses(Walker& wal
         return { };
     const Program& program = walker.program();
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    if (const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex()); names.empty() && !kept.rootsOfValuesWithMarks.isEmpty() && std::ranges::binary_search(kept.rootsWhoseElementsUnderIndexesAreAskedInLoops, kept.rootOf(input.index()))) {
+    if (const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex()); names.empty() && !kept.rootsOfValuesWithMarks.isEmpty() && std::ranges::binary_search(kept.rootsWhoseElementsUnderIndexesAreAskedInLoops, kept.rootOf(input.index()))) {
         if (!hasNonArrayPropertyUse(kept, input)) {
             if (isProvenDictionaryForGuesses(walker, input))
                 return { };
@@ -3072,7 +3056,7 @@ static DetailedExpectation expectationOfWhatLoopReadsByKeyForGuesses(Walker& wal
     }
     if (std::ranges::none_of(names, [&](PropertyKeyID name) { return program.nameClassOf(name) == NameClass::Length; }))
         return expectationOfPlaceThatLoopsReadByKeyForGuesses(walker, input);
-    const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+    const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
     if (kept.rootsOfValuesWithMarks.isEmpty())
         return { };
     uint32_t root = kept.rootOf(input.index());
@@ -3094,8 +3078,7 @@ static DetailedExpectation expectationOfRowUsedInArithmetic(Walker& walker, Valu
     const BodyIndex& index = walker.currentBodyIndex();
     if (!index.hasLoops())
         return { };
-    walker.namesUsedOff(input);
-    const BodySpeculationCache& kept = bodySpeculationCache(index);
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     auto isRowThatIsReckonedWith = [&] {
         std::optional<uint64_t> row = kept.rowsReckonedWithAtWrittenPlacesInLoops.isEmpty() ? std::nullopt : kept.holderAndKeyOfRow(index, kept.rootOf(input.index()));
         return row && std::ranges::binary_search(kept.rowsReckonedWithAtWrittenPlacesInLoops, *row);
@@ -3109,7 +3092,7 @@ static DetailedExpectation expectationOfRowUsedInArithmetic(Walker& walker, Valu
 static bool isOnlyReadUnderIndexes(Walker& walker, ValueID input)
 {
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+    const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
     if (kept.rootsOfValuesWithMarks.isEmpty() || !std::ranges::binary_search(kept.rootsReadUnderIndexesInLoops, kept.rootOf(input.index())))
         return false;
     const Program& program = walker.program();
@@ -3935,8 +3918,7 @@ static DetailedExpectation expectationOfTextInPlaceForGuesses(Walker& walker, Va
 {
     if (walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked) || !walker.currentBodyIndex().hasLoops() || !turnsCallReaderOfCharactersForGuesses(walker, walker.currentBodyIndex()))
         return { };
-    walker.namesUsedOff(input);
-    const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+    const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
     if (kept.rootsOfValuesWithMarks.isEmpty() || !std::ranges::binary_search(kept.readsOfTexts, kept.rootOf(input.index())))
         return { };
     const Program& program = walker.program();
@@ -3979,8 +3961,7 @@ static TypeID typeThatLiteralsMadeHereWriteIntoFieldForGuesses(Walker& walker, V
     static constexpr OpcodeSet operatorsWhoseAnswersAreExpectedToBeNumbers = numberProducingOperators | allBitwiseOperators;
     TypeArena& types = walker.types();
     const BodyIndex& index = walker.currentBodyIndex();
-    walker.namesUsedOff(read);
-    const BodySpeculationCache& kept = bodySpeculationCache(index);
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     TypingContext expecting { walker.program(), types, walker.positionsKnowingNothing(), TypeLevel::Expected };
     TypeID objects = types.withoutNullish(receiver);
     if (kept.rootsOfValuesWithMarks.isEmpty() || kept.literalsMadeHere.isEmpty() || !objects || isNeverType(objects) || !types.at(objects).hasOnlyLayouts())
@@ -4390,7 +4371,7 @@ static Vector<PropertyKeyID, 16> unconditionallyUsedNames(Walker& walker, ValueI
     const BodyIndex& index = walker.currentBodyIndex();
     Vector<PropertyKeyID, 16> told;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    BodySpeculationCache& kept = bodySpeculationCache(index);
+    BodySpeculationCache& kept = usesOfValues(walker, index);
     if (names.empty() || kept.rootsOfValuesWithMarks.isEmpty())
         return told;
     uint32_t root = kept.rootOf(input.index());
@@ -4680,8 +4661,7 @@ static DetailedExpectation findExpectationAnewForGuesses(Walker& walker, ValueID
             if (opcode == Opcode::PropGet && !definition.isFreeName() && ofReceiver.type && walker.isInLoop() && types.isUninformative(expectation.type))
                 expectation.type = typeThatLiteralsMadeHereWriteIntoFieldForGuesses(walker, input, definition.key(), ofReceiver.type);
             if (opcode == Opcode::ElemGet && walker.isInLoop() && types.isUninformative(expectation.type)) {
-                walker.namesUsedOff(input);
-                const BodySpeculationCache& kept = bodySpeculationCache(index);
+                const BodySpeculationCache& kept = usesOfValues(walker, index);
                 std::span<const uint64_t> puts = kept.rootsOfValuesWithMarks.isEmpty() ? std::span<const uint64_t>() : kept.layoutsPutIntoListsMadeHere.span();
                 uint64_t list = puts.empty() ? 0 : kept.rootOf(definition.operand(*receiver).index());
                 auto put = std::ranges::equal_range(puts, list, { }, [](uint64_t listed) { return listed >> 32; });
@@ -4908,8 +4888,7 @@ static DetailedExpectation findExpectationAnewForGuesses(Walker& walker, ValueID
     };
     bool isInSpecializedCallerLoop = walker.canRestartIteration() && !walker.isInLoopOfBodyAtWork();
     if (!firstUsed && !isReadByKeyFirst && (index.hasLoops() || isInSpecializedCallerLoop) && isUninformativeOrNumeric(provenTypeOfInputForGuesses(walker, input))) {
-        walker.namesUsedOff(input);
-        const BodySpeculationCache& kept = bodySpeculationCache(index);
+        const BodySpeculationCache& kept = usesOfValues(walker, index);
         ValueID root = kept.rootsOfValuesWithMarks.isEmpty() ? ValueID() : ValueID(kept.rootOf(input.index()));
         TypeID writtenOfRoot = root && index.isParameter(root) && index.blockOf(root) == entryBlock ? expectationOfEntryParameterForGuesses(walker, root.index()).type : TypeID();
         if (root && (!writtenOfRoot || types.overlap(writtenOfRoot, TypeTable::int32)) && std::ranges::binary_search(kept.rootsFromInFrontThatLoopsMakeWholeNumbersOf, root.index()))
@@ -5483,7 +5462,7 @@ static DetailedExpectation expectationOfOperandForGuesses(Walker& walker, const 
     }
     if (!allNumericOperators.contains(operation.opcode())) {
         if (expectation.type == TypeTable::number && !expectation.isDeclared && !expectation.isHeld && walker.canRestartIteration() && !walker.isInLoopOfBodyAtWork()) {
-            const BodySpeculationCache& kept = bodySpeculationCache(walker.currentBodyIndex());
+            const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
             if (!kept.rootsOfValuesWithMarks.isEmpty() && std::ranges::binary_search(kept.rootsThatOperatorsOutsideLoopsReckonWith, kept.rootOf(operand.index())))
                 return { };
         }
@@ -7363,9 +7342,11 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                         else if (std::optional<TestOfGuess> expected = objectExpectedInSlotReadForAccesses(walker, block, operation, limit)) {
                             foundInFilledSlot = expected->tested;
                             if (!stretch.objectsExpected) {
-                                auto& kept = bodySpeculationCache(index).listsOfObjectsExpected;
-                                kept.append(makeUniqueWithoutFastMallocCheck<ObjectsExpectedOfLooks>());
-                                stretch.objectsExpected = kept.last().get();
+                                auto made = makeUniqueWithoutFastMallocCheck<ObjectsExpectedOfLooks>();
+                                stretch.objectsExpected = made.get();
+                                BodySpeculationCache& kept = bodySpeculationCache(index);
+                                Locker locker { kept.lockOfObjectsExpected };
+                                kept.listsOfObjectsExpected.append(WTF::move(made));
                             }
                             stretch.objectsExpected->append({ lookOfObject, *expected });
                         }
@@ -9915,10 +9896,7 @@ static TypeID closuresStoredIntoReadField(Walker& walker, const BodyValue& call)
     ValueID callee = index.stripCasts(call.calleeOperand());
     if (!callee || index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet || index.value(callee).isFreeName())
         return { };
-    BodySpeculationCache& kept = bodySpeculationCache(index);
-    ensureCachedList(kept, kept.hasNamesUsedOffValues, [&] {
-        collectValueUses(walker, index, kept);
-    });
+    const BodySpeculationCache& kept = usesOfValues(walker, index);
     if (!std::ranges::binary_search(kept.callsOfStoredLeaves, call.id().index()) || walker.facts().held().findCallThatFindsBuiltin(walker.currentFunction(), call.id()))
         return { };
     BodyValue read = index.value(callee);
@@ -11559,7 +11537,7 @@ bool tryGuardInvariantBaseAsArray(Walker& walker, const BodyValue& access)
     if ((access.opcode() != Opcode::ElemGet && !readsLength) || !walker.canBuildIterationGuard() || !walker.canRestartIteration() || !walker.currentGenericVersionSpeculates() || !walker.executesInEverySpecializedIteration())
         return false;
     Reference base = walker.referenceOf(access.objectOperand());
-    if (!base || !base.isValue() || !walker.types().isUninformative(walker.typeOf(base)) || !walker.isInvariantInSpecializedVersion(base) || walker.isHoistedDiamondParameter(base) || findDetailedExpectation(walker, access.objectOperand()).type || hasNonArrayPropertyUse(bodySpeculationCache(walker.currentBodyIndex()), access.objectOperand()))
+    if (!base || !base.isValue() || !walker.types().isUninformative(walker.typeOf(base)) || !walker.isInvariantInSpecializedVersion(base) || walker.isHoistedDiamondParameter(base) || findDetailedExpectation(walker, access.objectOperand()).type || hasNonArrayPropertyUse(usesOfValues(walker, walker.currentBodyIndex()), access.objectOperand()))
         return false;
     if (!readsLength && !walker.types().at(provenTypeOfInputForGuesses(walker, access.propertyOperand())).isNumber())
         return false;

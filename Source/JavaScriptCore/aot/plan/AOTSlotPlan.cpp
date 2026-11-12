@@ -1533,6 +1533,15 @@ static BitVector lateMethodNamesInCell(const LinkTables& link, const PlacesOfFie
     return lieInCell;
 }
 
+static bool mayBeFilledInSightForSlotPlan(const Program& program, const LinkTables& link, FieldReference field)
+{
+    const LinkedLayout& layout = link.layout(field.layout);
+    if (layout.reachesUnseenCode || layout.possibleChanges.contains(LayoutChange::GainsProperty))
+        return false;
+    TypeID held = link.field(field).proven;
+    return !held || program.at(held).hasObjects() || (program.at(held).primitives & ~Primitive::Absent);
+}
+
 static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& facts, const MentionedKeys& mentioned, const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, StorageOfLayoutInSlotPlan storage, LayoutID id, BuildContext& build)
 {
     const Layout& layout = program.at(id);
@@ -1559,7 +1568,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
     for (FieldIndex field = 0; field < numberOfDeclaredFields; ++field) {
         PlacedSlot& slot = planned.slots[field];
         const Field& declared = layout.fields[field];
-        bool isSpelledByTypeAlone = declared.key && declared.flags.contains(FieldFlags::IsNeverWritten) && !mentioned.isSpelled(declared.key);
+        bool isSpelledByTypeAlone = declared.key && declared.flags.contains(FieldFlags::IsNeverWritten) && !mentioned.isSpelled(declared.key) && !mayBeFilledInSightForSlotPlan(program, facts.linked(), { id, field });
         uint32_t row = places.rowOf({ id, field });
         bool hasNoSlot = places.granulesOfListedFields[row] == PlacesOfFieldsInSlotPlan::withoutSlot;
         if (isCompiledObject && !isSpelledByTypeAlone && !hasNoSlot)

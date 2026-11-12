@@ -4415,12 +4415,12 @@ void CallInLinkCalls::noteKeysOfPrinterThatRegistryMayGive(const RowCall& call)
 
 void CallInLinkCalls::noteTrapsOfHandler(const RowCall& call)
 {
-    m_flow.makersOfProxies.set(m_caller.index());
+    m_flow.noteFunctionFoundByCalls(m_caller, LinkFlow::FoundByCalls::MakesProxies);
     Values handlers = valuesAt(call, BuiltinOperand::argument(1));
     for (BuiltinName trap : { BuiltinNames::get, BuiltinNames::set, BuiltinNames::has }) {
         forEachType(whatLiesUnder(trap, handlers), [&](const LinkType& type, const Source*) {
             if (type.functions == LinkType::Functions::Closure)
-                m_flow.trapsOfProxies.set(type.function.index());
+                m_flow.noteFunctionFoundByCalls(type.function, LinkFlow::FoundByCalls::IsTrapOfProxy);
         });
     }
 }
@@ -5079,9 +5079,9 @@ void CallInLinkCalls::applyCallback(RowCall& call, const BuiltinCallback& callba
         forEachType(valuesAt(call, callback.callee), [&](const LinkType& type, const Source*) {
             if (type.functions != LinkType::Functions::Closure)
                 return;
-            m_flow.iterationCallbacks.set(type.function.index());
+            m_flow.noteFunctionFoundByCalls(type.function, LinkFlow::FoundByCalls::IsIterationCallback);
             if (callback.times == BuiltinCallbackTimes::Repeatedly)
-                m_flow.repeatedCallbacks.set(type.function.index());
+                m_flow.noteFunctionFoundByCalls(type.function, LinkFlow::FoundByCalls::IsRepeatedCallback);
         });
     }
     PassedMadeInLinkCalls passed;

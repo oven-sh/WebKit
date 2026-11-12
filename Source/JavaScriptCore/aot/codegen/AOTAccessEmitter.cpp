@@ -646,12 +646,16 @@ void AccessEmitter::generatePutGlobalBinding(const ValueContext& value)
 void AccessEmitter::generateGetKeyedPropertyAddress(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
+    if (value->key() && value->takesFunctions()) {
+        define(value, Pointer(callOperation<Integer>(value, RuntimeOperation::OwnNamedPropertyAddress, { object, identifierNumber(value->key()), word32(static_cast<uint32_t>(AddressLookup::FindsAgain)), Pointer(m_out.constInt64(0)) }).value()));
+        return;
+    }
     if (PropertyKeyID key = value->key(); key && !value->findsOnlyFields()) {
         bool asksTableOfFields = m_plan.slots().someLayoutHasField(key);
         bool isFieldOfThisFile = asksTableOfFields && m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);
         std::optional<Pointer> site = isFieldOfThisFile ? std::nullopt : siteOfStore(value, key, SlotAccess::Store);
         auto search = [&](Pointer cache) {
-            return callOperation<Integer>(value, RuntimeOperation::OwnNamedPropertyAddress, { object, identifierNumber(key), word32(value->fitsFieldTypes()), cache });
+            return callOperation<Integer>(value, RuntimeOperation::OwnNamedPropertyAddress, { object, identifierNumber(key), word32(static_cast<uint32_t>(value->fitsFieldTypes() ? AddressLookup::FitsFieldTypes : AddressLookup::StoresAnyValue)), cache });
         };
         if (!site) {
             define(value, Pointer(search(Pointer(m_out.constInt64(0))).value()));
@@ -661,7 +665,7 @@ void AccessEmitter::generateGetKeyedPropertyAddress(const ValueContext& value)
         bool asksTables = m_generator.isInLoop(value.block());
         LBasicBlock hasOtherStructure = asksTables ? newBlock() : searches;
         OperandJoin addresses(m_out, Integer::representation);
-        checkStoreSiteInline(object, *site, { typeOf(value->objectOperand()), asksTableOfFields, hasOtherStructure, searches }, [&](CellPointer, Pointer place) {
+        checkStoreSiteInline(object, *site, { typeOf(value->objectOperand()), asksTableOfFields, hasOtherStructure, searches, searches }, [&](CellPointer, Pointer place) {
             addresses.add(Integer(place.value()));
         });
         if (asksTables) {
@@ -1679,6 +1683,11 @@ void AccessEmitter::checkStoreSiteInline(Boxed receiver, Pointer site, const Sha
     m_out.appendTo(isNotInCell);
     goOnIf(equal(kindAndFlags, ownWordInStorage), shapes.asksStub);
     askReceiver();
+    if (shapes.hasMovingStorage) {
+        LBasicBlock keepsStorage = newBlock();
+        m_out.branch(hasCellTypeIn(object, typesWithMovingStorage).value(), unlikelyEdge(shapes.hasMovingStorage), normalEdge(keepsStorage));
+        m_out.appendToContinuation(keepsStorage);
+    }
     usePlace(object, offsetBy(loadField<Pointer>(object, m_heaps.JSObject_butterfly), signExtended(Word32(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())))), 3));
 }
 

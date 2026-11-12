@@ -963,6 +963,14 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     return result;
 }
 
+void PropertyWalk::willPutDirectOnClosure(VM& vm, JSObject* object, UniquedStringImpl* uid)
+{
+    Closure* closure = uncheckedDowncast<Closure>(object);
+    const LayoutData* classLayout = closure->classData();
+    if (classLayout && !classLayout->staticFields().empty() && StaticFields::tryRead(*closure, uid))
+        closure->ensureClassObject(vm);
+}
+
 void PropertyWalk::didPutDirectOnClosure(VM& vm, JSObject* object, UniquedStringImpl* uid)
 {
     Closure* closure = uncheckedDowncast<Closure>(object);
