@@ -39,6 +39,7 @@
 #include "ObjectConstructor.h"
 #include "Symbol.h"
 #include "SymbolTable.h"
+#include "TopExceptionScope.h"
 #include "VariableEnvironment.h"
 #include <algorithm>
 #include <bit>
@@ -483,6 +484,7 @@ void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue 
         ProgramStatics& statics = *m_instance->state->statics;
         m_instance->state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
         RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, m_instance->statics() + offset, value));
+        statics.didWriteVariable(offset);
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);
         return;
@@ -573,6 +575,8 @@ public:
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+
+    bool hasName(JSGlobalObject*, PropertyName);
 
 private:
     static constexpr unsigned numberOfScopeOffsets = 4;
@@ -666,6 +670,35 @@ bool EvalVariableScope::deleteProperty(JSCell* cell, JSGlobalObject* globalObjec
     if (!variables)
         return true;
     return variables->methodTable()->deleteProperty(variables, globalObject, name, slot);
+}
+
+bool EvalVariableScope::hasName(JSGlobalObject* globalObject, PropertyName name)
+{
+    VM& vm = globalObject->vm();
+    if (EvalBindings* ownBindings = this->ownBindings(); ownBindings && ownBindings->find(vm, name))
+        return true;
+    JSObject* variables = variablesObject();
+    if (!variables)
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(variables, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = variables->methodTable()->getOwnPropertySlot(variables, globalObject, name, slot);
+    scope.assertNoException();
+    return isFound;
+}
+
+NameInEvalScope findNameInEvalScope(JSGlobalObject* globalObject, JSScope* scope, PropertyName name)
+{
+    auto hasName = [&]() -> std::optional<bool> {
+        if (scope->classInfo() == EvalScope::info())
+            return name.isSymbol() || uncheckedDowncast<EvalBindings>(uncheckedDowncast<EvalScope>(scope)->bindings())->find(globalObject->vm(), name);
+        if (scope->classInfo() == EvalVariableScope::info())
+            return name.isSymbol() || uncheckedDowncast<EvalVariableScope>(scope)->hasName(globalObject, name);
+        return std::nullopt;
+    }();
+    if (!hasName)
+        return NameInEvalScope::NotEvalScope;
+    return *hasName ? NameInEvalScope::Present : NameInEvalScope::Absent;
 }
 
 static Structure* ensureStructure(VM& vm, Instance& instance, Structure* DirectEvalStructures::* member, Structure* (*create)(VM&, JSGlobalObject*))

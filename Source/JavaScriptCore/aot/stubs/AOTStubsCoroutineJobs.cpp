@@ -30,8 +30,7 @@ Address argumentOfJob(GPRReg slot, unsigned index)
 
 static void emitLoadAddressOfJob(StubAssembler& jit, GPRReg queue, GPRReg indexAndResult, GPRReg scratch)
 {
-    jit.lshift64(indexAndResult, TrustedImm32(2), scratch);
-    jit.add64(scratch, indexAndResult);
+    jit.getEffectiveAddress(BaseIndex(indexAndResult, indexAndResult, CCallHelpers::TimesFour), indexAndResult);
     jit.loadPtr(Address(queue, MicrotaskQueue::offsetOfBuffer()), scratch);
     jit.getEffectiveAddress(BaseIndex(scratch, indexAndResult, CCallHelpers::TimesEight), indexAndResult);
 }
@@ -150,7 +149,7 @@ void emitTakeReactionJob(StubAssembler& jit, ReactionJob kind, const HeadJobRegi
     }
     jit.load64(argumentOfJob(slot, 1), handler);
     jit.load64(argumentOfJob(slot, 2), argument);
-    emitDequeueHeadJob(jit, queue, scratch);
+    emitDequeueHeadJobAndPrefetch(jit, queue, scratch, PrefetchedJobs::Reactions);
 }
 
 void emitTakePerformMicrotaskJob(StubAssembler& jit, const HeadJobRegisters& registers, GPRReg function, JumpList& isLeftToJobLoop)
@@ -179,7 +178,7 @@ void emitTakeFunctionResumeJob(StubAssembler& jit, const HeadJobRegisters& regis
     isLeftToJobLoop.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
     emitPutAsyncContextOfJobInPlace(jit, argumentOfJob(slot, 3), scratch, value, isLeftToJobLoop);
     jit.load64(argumentOfJob(slot, 1), value);
-    emitDequeueHeadJob(jit, queue, scratch);
+    emitDequeueHeadJobAndPrefetch(jit, queue, scratch, PrefetchedJobs::FunctionResumes);
 }
 
 void emitDequeueHeadJob(StubAssembler& jit, GPRReg queue, GPRReg scratch)
@@ -189,10 +188,50 @@ void emitDequeueHeadJob(StubAssembler& jit, GPRReg queue, GPRReg scratch)
     hasMarkedNone.link(&jit);
     jit.load64(Address(queue, MicrotaskQueue::offsetOfStart()), scratch);
     jit.add64(TrustedImm32(1), scratch);
+#if CPU(X86_64)
+    jit.and64(Address(queue, MicrotaskQueue::offsetOfCapacityMask()), scratch);
+#else
     jit.load64(Address(queue, MicrotaskQueue::offsetOfCapacityMask()), queue);
     jit.and64(queue, scratch);
     jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), queue);
+#endif
     jit.store64(scratch, Address(queue, MicrotaskQueue::offsetOfStart()));
+}
+
+void emitDequeueHeadJobAndPrefetch(StubAssembler& jit, GPRReg queue, GPRReg scratch, PrefetchedJobs kind)
+{
+    emitDequeueHeadJob(jit, queue, scratch);
+#if CPU(X86_64)
+    constexpr int32_t jobsInBetween = 5;
+    constexpr int32_t bytesPerCacheLine = 64;
+    jit.add64(TrustedImm32(jobsInBetween), scratch);
+    jit.and64(Address(queue, MicrotaskQueue::offsetOfCapacityMask()), scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, scratch, CCallHelpers::TimesFour), scratch);
+    jit.loadPtr(Address(queue, MicrotaskQueue::offsetOfBuffer()), queue);
+    jit.getEffectiveAddress(BaseIndex(queue, scratch, CCallHelpers::TimesEight), scratch);
+    auto prefetchArgument = [&](unsigned index) {
+        jit.load64(argumentOfJob(scratch, index), queue);
+        jit.prefetch(Address(queue));
+    };
+    switch (kind) {
+    case PrefetchedJobs::Reactions:
+    case PrefetchedJobs::ThenableResolutions:
+        prefetchArgument(0);
+        prefetchArgument(1);
+        break;
+    case PrefetchedJobs::Resolutions:
+        prefetchArgument(0);
+        break;
+    case PrefetchedJobs::FunctionResumes:
+        prefetchArgument(2);
+        static_assert(sizeof(SavedFrame) == bytesPerCacheLine);
+        jit.prefetch(Address(queue, bytesPerCacheLine));
+        jit.prefetch(Address(queue, 2 * bytesPerCacheLine));
+        break;
+    }
+#else
+    UNUSED_PARAM(kind);
+#endif
 }
 
 } } // namespace JSC::AOT

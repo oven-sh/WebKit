@@ -1,5 +1,5 @@
 # The list follows from the program alone. The statics of Object go into what they are handed first: of what nobody knows they would list the names of the cell that stands for it: a known empty list. They are not entered.
-# new RegExp((Object.keys([7].flat()[0]).length ? "named" : "bare").toUpperCase() + "q");   ([7].flat(): flat is not entered: nobody knows what it gives.)
+# new RegExp((Object.keys([7].toSpliced()[0]).length ? "named" : "bare").toUpperCase() + "q");   ([7].toSpliced(): toSpliced is not entered: nobody knows what it gives.)
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /BAREq/
 # CHECK: text /NAMEDq/
@@ -11,8 +11,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v0 = Builtin builtin=ObjectKeys
     v1 = Integer integer=7
     v2 = NewArray v1 contents=anything
-    v3 = PropGet v2 key="flat"
-    v4 = Call v3, v2 calleeKey="flat"
+    v3 = PropGet v2 key="toSpliced"
+    v4 = Call v3, v2 calleeKey="toSpliced"
     v5 = Integer
     v6 = ElemGet v4, v5
     v7 = Call v0, -, v6

@@ -297,6 +297,17 @@ struct TemplateObjectRequest {
 };
 static_assert(sizeof(TemplateObjectRequest) == 4);
 
+struct ImportChecksRequest {
+    struct Check {
+        uint32_t offsetInStatics;
+        uint32_t failure;
+    };
+
+    uint32_t count;
+    Check checks[];
+};
+static_assert(sizeof(ImportChecksRequest) == 4 && sizeof(ImportChecksRequest::Check) == 8);
+
 constexpr bool isAssignableBinding(EvalBindingKind kind)
 {
     return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
@@ -347,7 +358,8 @@ struct PropertyDescriptorBits {
     uint32_t isConfigurable : 1;
     uint32_t hasGet : 1;
     uint32_t hasSet : 1;
-    uint32_t unused : 23;
+    uint32_t isOfPropertyMap : 1;
+    uint32_t unused : 22;
 };
 static_assert(sizeof(PropertyDescriptorBits) == 4);
 
@@ -411,6 +423,24 @@ struct WrittenNativeResult {
 };
 static_assert(sizeof(WrittenNativeResult) == 4);
 
+enum class HostResult : uint8_t { Boolean, String, Symbol, Object, Array };
+
+constexpr uint32_t kindsOfHostResult(HostResult result)
+{
+    switch (result) {
+    case HostResult::Boolean:
+        return WrittenNativeResult::booleanKind;
+    case HostResult::String:
+        return WrittenNativeResult::stringKind;
+    case HostResult::Symbol:
+        return WrittenNativeResult::symbolKind;
+    case HostResult::Object:
+    case HostResult::Array:
+        return WrittenNativeResult::objectKind;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 enum class ThrowKind : uint8_t {
     NullishRead,
     NullishWrite,
@@ -453,7 +483,8 @@ struct FalseProofWord {
 
 struct ThrowSiteWord {
     static constexpr uint32_t none = UINT32_MAX;
-    static constexpr uint32_t narrowNone = (1u << 17) - 1;
+    static constexpr unsigned narrowABits = 17;
+    static constexpr uint32_t narrowNone = (1u << narrowABits) - 1;
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
 #if CPU(X86_64)
@@ -470,7 +501,16 @@ struct ThrowSiteWord {
     static constexpr size_t sizeOfWordBehindCall = sizeof(uint32_t);
 #endif
 
-    uint32_t narrowA() const { return a == narrowNone ? none : a; }
+    static constexpr Typed::Representation runtimeErrorRepresentation = Typed::Representation::RawWord;
+
+    bool isUninitializedBinding() const { return static_cast<ThrowKind>(kind) == ThrowKind::UninitializedBinding; }
+    uint32_t narrowA() const
+    {
+        if (isUninitializedBinding() && calleeIsReadFromReceiver)
+            return registerNumber << narrowABits | a;
+        return a == narrowNone ? none : a;
+    }
+    bool throwsRuntimeError() const { return static_cast<ThrowKind>(kind) == ThrowKind::ErrorWithMessage && static_cast<Typed::Representation>(representation) == runtimeErrorRepresentation; }
     bool stopsAtFalseProof() const { return static_cast<ThrowKind>(kind) == ThrowKind::ErrorWithMessage && calleeIsReadFromReceiver; }
     bool isCallSite() const { return static_cast<ThrowKind>(kind) == ThrowKind::NotAFunction && static_cast<Typed::Representation>(representation) == Typed::Representation::Void; }
     bool differsOnlyInRegisterNumber(ThrowSiteWord other) const
@@ -482,10 +522,15 @@ struct ThrowSiteWord {
     {
         auto word = std::bit_cast<ThrowSiteWord>(firstWord);
         RELEASE_ASSERT(word.hasWideA && !word.a);
-        if (a > maxNarrowA)
-            return std::nullopt;
+        if (a > maxNarrowA) {
+            uint32_t above = a >> narrowABits;
+            if (!word.isUninitializedBinding() || word.calleeIsReadFromReceiver || !above || above >= numberOfRegistersPerBank)
+                return std::nullopt;
+            word.registerNumber = above;
+            word.calleeIsReadFromReceiver = true;
+        }
         word.hasWideA = false;
-        word.a = a;
+        word.a = a & narrowNone;
         return std::bit_cast<uint32_t>(word);
     }
     static constexpr uint64_t inRegister(uint32_t firstWord, uint32_t wideA) { return firstWord | static_cast<uint64_t>(wideA) << 32; }
@@ -496,7 +541,7 @@ struct ThrowSiteWord {
     uint32_t hasWideA : 1;
     uint32_t hasB : 1;
     uint32_t calleeIsReadFromReceiver : 1;
-    uint32_t a : 17;
+    uint32_t a : narrowABits;
 };
 static_assert(sizeof(ThrowSiteWord) == 4);
 static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numberOfEnumerators<Typed::Representation> <= 1u << 4);
@@ -507,6 +552,7 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \
+    v(variablesWithViewMirror, StaticsRange) \
     v(functionVariables, FunctionVariableData) \
     v(namedVariables, uint8_t) \
     v(identifiersByHash, uint32_t) \

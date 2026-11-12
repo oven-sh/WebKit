@@ -60,6 +60,18 @@ public:
         return mayBeObject(operand) ? twoWay() : call();
     }
 
+    InlineForm forGetPrototypeOf() const
+    {
+        TypeID operand = m_query.argument(0);
+        if (!mayBeObject(operand))
+            return call();
+        Type type = typeOf(operand);
+        bool areObjectsOfProgram = type.isJavaScriptValue() && type.isObject() && type.hasOnlyLayouts() && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) && std::ranges::none_of(membersOf(m_query.context.types, type), [&](LayoutID id) {
+            return liesBelowBuiltinClass(id) || !isFoundByShapeTest(m_query.context.program.at(id));
+        });
+        return areObjectsOfProgram ? InlineForm::Whole : twoWay();
+    }
+
     InlineForm forObjectCreate() const
     {
         TypeID prototype = m_query.argument(0);
@@ -91,6 +103,15 @@ public:
         bool mayBothBeStrings = (left.primitives & Primitive::AnyString) && (right.primitives & Primitive::AnyString);
         bool mayBothBeBigInts = left.primitives & right.primitives & Primitive::BigInt;
         return mayBothBeStrings || mayBothBeBigInts ? twoWay() : InlineForm::Whole;
+    }
+
+    InlineForm forStringOfSymbol() const
+    {
+        if (!m_query.receiver())
+            return call();
+        Type receiver = typeOf(m_query.receiver());
+        bool isSymbol = receiver.isJavaScriptValue() && !receiver.hasObjects() && receiver.primitives && !(receiver.primitives & ~Primitive::AnySymbol);
+        return isSymbol ? InlineForm::Whole : call();
     }
 
     InlineForm forCollectionFromIterable() const
@@ -135,8 +156,11 @@ InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinQuery& query)
         return query.numberOfArguments() >= 2 ? rules.formWhereInlineCodeHandlesEveryObject(query.argument(0)) : rules.call();
     case InlineBuiltin::ObjectHasOwn:
         return rules.wholeIfArgumentCountIsAtLeast(query.overload.receiver ? 1 : 2);
+    case InlineBuiltin::ObjectIsPrototypeOf:
     case InlineBuiltin::ObjectPropertyIsEnumerable:
         return rules.wholeIfArgumentCountIsAtLeast(1);
+    case InlineBuiltin::ReflectSet:
+        return rules.wholeIfArgumentCountIsAtLeast(3);
     case InlineBuiltin::ObjectValues:
     case InlineBuiltin::ObjectEntries:
         return InlineForm::Whole;
@@ -158,7 +182,7 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinQuery& query)
     case InlineBuiltin::CallObjectConstructor:
         return rules.formWhereInlineCodeHandlesEveryObject(query.argument(0));
     case InlineBuiltin::GetPrototypeOf:
-        return rules.formWhereInlineCodeHandlesSomeObjects(query.argument(0));
+        return rules.forGetPrototypeOf();
     case InlineBuiltin::ObjectPrototypeToString:
         return rules.formWhereInlineCodeHandlesSomeObjects(query.receiver());
     case InlineBuiltin::SetPrototypeOf:
@@ -169,6 +193,9 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinQuery& query)
         return rules.forObjectIs();
     case InlineBuiltin::ReturnThis:
         return InlineForm::Whole;
+    case InlineBuiltin::SymbolDescription:
+    case InlineBuiltin::SymbolToString:
+        return rules.forStringOfSymbol();
     FOR_EACH_AOT_INLINE_BUILTIN_IN_OWN_PROPERTY_BUILTIN(AOT_CASE_OUTSIDE_FAMILY_OF_OBJECT_FORM_RULES)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_HASH_TABLE_BUILTIN(AOT_CASE_OUTSIDE_FAMILY_OF_OBJECT_FORM_RULES)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_MAP_SET_BUILTIN(AOT_CASE_OUTSIDE_FAMILY_OF_OBJECT_FORM_RULES)

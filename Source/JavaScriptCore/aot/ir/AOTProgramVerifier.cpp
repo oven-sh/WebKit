@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTInliningAcrossFiles.h"
@@ -26,7 +27,6 @@
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -741,6 +741,8 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.expectedResults);
     verifyList(m_program.variables);
     verifyList(m_program.modules);
+    verifyList(m_program.moduleInstances);
+    verifyList(m_program.moduleLinks);
     verifyList(m_program.moduleFailures);
     verifyList(m_program.ambiguousExports);
     verifyList(m_program.sourceStamps);
@@ -913,7 +915,7 @@ BitVector variablesThatRunTimeMayFill(const Program& program)
     }
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
         const Variable& variable = program.variables[index];
-        if (variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }) || variable.owner)
+        if (variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable, VariableFlags::HoldsInstance }) || variable.owner)
             found.quickSet(index);
     }
     return found;
@@ -930,6 +932,16 @@ void ProgramVerifier::verifyVariables()
     }
 
     BitVector hasVariableThatHoldsMock(m_program.modules.size());
+    BitVector hasInstanceVariable(m_program.modules.size());
+    BitVector hasInstanceGuard(m_program.modules.size());
+    BitVector hasInstanceAllocator(m_program.modules.size());
+    BitVector hasSeveralInstancesVariable(m_program.modules.size());
+    auto hasInstanceType = [&](const Variable& variable) {
+        if (!variable.declared.isEstablished() || holdsOnlyPrimitives(variable.declared.written()))
+            return false;
+        Type written = types.at(variable.declared.written());
+        return written.environment && !written.primitives;
+    };
     auto isValid = [&](unsigned index) {
         const Variable& variable = m_program.variables[index];
         bool startsAsFunction = variable.initialization == VariableInitialization::Function;
@@ -946,6 +958,26 @@ void ProgramVerifier::verifyVariables()
         }
         if (variable.flags.contains(VariableFlags::OriginalMayRun) && !variable.flags.contains(VariableFlags::HoldsMock))
             return false;
+        if (variable.flags.contains(VariableFlags::HoldsInstance)) {
+            const Module& module = m_program.at(variable.module);
+            return !variable.flags.containsAny({ VariableFlags::IsImmutable, VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::GuardsInstance, VariableFlags::AllocatesInstance, VariableFlags::HasSeveralInstances }) && variable.initialization == VariableInitialization::Uninitialized && !variable.owner
+                && module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::MayBeReevaluated) && !hasInstanceVariable.quickSet(variable.module.index()) && hasInstanceType(variable);
+        }
+        if (variable.flags.contains(VariableFlags::GuardsInstance)) {
+            if (!variable.flags.contains(VariableFlags::IsReplaceable) || variable.flags.contains(VariableFlags::HoldsMock) || variable.initialization != VariableInitialization::Undefined
+                || hasInstanceGuard.quickSet(variable.module.index()))
+                return false;
+        }
+        if (variable.flags.contains(VariableFlags::AllocatesInstance)) {
+            if (!variable.flags.contains(VariableFlags::IsReplaceable) || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::GuardsInstance }) || !startsAsFunction
+                || !m_program.at(variable.function).captures.isEmpty() || !m_program.at(variable.function).parameters.isEmpty() || hasInstanceAllocator.quickSet(variable.module.index()))
+                return false;
+        }
+        if (variable.flags.contains(VariableFlags::HasSeveralInstances)) {
+            if (!variable.flags.contains(VariableFlags::IsReplaceable) || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::GuardsInstance, VariableFlags::AllocatesInstance })
+                || variable.initialization != VariableInitialization::Undefined || hasSeveralInstancesVariable.quickSet(variable.module.index()))
+                return false;
+        }
         if (mayBeFilledByRunTime.quickGet(index) && variable.declared.isEstablished() && !types.at(variable.declared.written()).isAnything())
             return false;
         return !variable.owner || (m_program.at(variable.owner).kind == LayoutKind::Instance && isStaticField.quickGet(index));
@@ -953,6 +985,10 @@ void ProgramVerifier::verifyVariables()
     for (unsigned index = 0; index < m_program.variables.size(); ++index) {
         if (!isValid(index))
             fail({ .kind = InternalErrorKind::InvalidVariable, .function = m_program.variables[index].function, .count = index });
+    }
+    for (unsigned index = 0; index < m_program.modules.size(); ++index) {
+        if (hasInstanceVariable.quickGet(index) != hasInstanceGuard.quickGet(index) || hasInstanceVariable.quickGet(index) != hasInstanceAllocator.quickGet(index) || hasInstanceVariable.quickGet(index) != hasSeveralInstancesVariable.quickGet(index))
+            fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
     }
 }
 

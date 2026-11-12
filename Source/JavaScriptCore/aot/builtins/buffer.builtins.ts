@@ -207,7 +207,7 @@ export default b.declarations(
         answersWhetherInstance: { arg: b.union(b.instance("TypedArray"), b.instance("DataView")) },
         capability: "heap",
         uses: { arg: b.inspected },
-        implementation: b.hostCall,
+        implementation: b.inline("ArrayBufferIsView", { otherwise: b.hostCall }),
       },
     },
     proto: {

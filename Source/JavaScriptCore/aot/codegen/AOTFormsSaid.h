@@ -89,9 +89,10 @@ public:
     static constexpr uint32_t noSite = UINT32_MAX;
 
     bool areNoted() const { return m_areNoted; }
-    void beginNoting()
+    void beginNoting(bool isTrapOfProxy)
     {
         m_areNoted = true;
+        m_isTrapOfProxy = isTrapOfProxy;
         m_saidFalsely = formSaidFalsely();
     }
 
@@ -132,6 +133,7 @@ public:
     }
     std::optional<Opcode> opcodeBeingGenerated() const { return m_current == noSite ? std::nullopt : std::optional<Opcode>(m_sites[m_current].opcode); }
 
+    bool isTrapOfProxy() const { return m_isTrapOfProxy; }
     std::span<const SiteOfForm> sites() const LIFETIME_BOUND { return m_sites.span(); }
     uint32_t siteOf(uint32_t machineOperation) const
     {
@@ -148,6 +150,7 @@ private:
     Vector<SiteOfForm> m_sites;
     Vector<Turn> m_turns;
     std::optional<FormSaidFalsely> m_saidFalsely;
+    bool m_isTrapOfProxy { false };
     uint32_t m_current { noSite };
     bool m_areNoted { false };
 };

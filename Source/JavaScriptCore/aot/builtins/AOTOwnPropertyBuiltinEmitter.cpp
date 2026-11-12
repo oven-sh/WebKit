@@ -14,9 +14,11 @@
 #include "AOTElementEmitterAllocation.h"
 #include "AOTGuardEmitter.h"
 #include "AOTObjectWords.h"
+#include "AOTOperatorEmitter.h"
 #include "AOTPlan.h"
 #include "AOTShapeTest.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsPropertyKeys.h"
 #include "JSCellButterfly.h"
 #include "StructureRareData.h"
@@ -26,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class KeyListKey : bool { Shape, Structure };
+enum class KeyListKey : uint8_t { Shape, Structure, StructureForEnumerableKeys };
 
 class KeyListReader final : public BuiltinFamilyEmitter {
 public:
@@ -40,12 +42,14 @@ public:
         static_assert(sizeof(KeyListCacheEntry) == 16);
         static_assert(hasOneBitSet(numberOfKeyLists));
         static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
-        static_assert(keyListWordOfStructure(UINT32_MAX) == UINT32_MAX >> 1);
+        static_assert(keyListWordOfStructure(UINT32_MAX) == UINT32_MAX >> 1 && structureEnumerableKeysWord(16) == (16 >> 1 | 1));
         if (key == KeyListKey::Shape && kind != KeyListKind::Strings && !hasOneInstance())
             leaveUnless(emitter<GuardEmitter>().belongsToInstance(object), otherwise);
         ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
         const Machine::AbstractHeap& heap = key == KeyListKey::Shape ? m_heaps.entire(AbstractHeap::RuntimeState) : m_heaps.collectorState;
         Word32 shapeWord = key == KeyListKey::Shape ? shapeTests.shapeWordOf(object) : shiftRightUnsigned(loadStructureID(object), 1);
+        if (key == KeyListKey::StructureForEnumerableKeys)
+            shapeWord = bitOr(shapeWord, word32(1));
         if (kind != KeyListKind::Strings)
             shapeWord = add(shapeWord, word32(keyListWordOf(0, kind)));
         Word32 objectOrderWord = shapeTests.orderWordOf(object);
@@ -132,12 +136,25 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
     const Type& type = typeOf(argument);
     KeyListReader reader(generator());
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
-    LBasicBlock outOfLine = newBlock();
-    Join<Pointer> lists(m_out);
     Join<CellPointer> results(m_out);
     bool testsForObject = !call.canMiss() && !type.isObject();
     LBasicBlock isNoObject = testsForObject ? newBlock() : nullptr;
     CellPointer object = testsForObject ? objectOrElse(argument, isNoObject) : objectOrMiss(call, argument);
+    auto finishWithResults = [&] {
+        if (testsForObject) {
+            m_out.appendTo(isNoObject);
+            results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
+        }
+        finish(call, results.finish());
+    };
+    static_assert(!static_cast<unsigned>(OwnKeysKind::Keys));
+    if (!call.canMiss() && kind == OwnKeysKind::Keys && !generator().isInLoop(call.context().block())) {
+        results.add(CellPointer(callStub(call.context(), listOwnKeys(), { boxCell(object).value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
+        finishWithResults();
+        return;
+    }
+    LBasicBlock outOfLine = newBlock();
+    Join<Pointer> lists(m_out);
     KeyListKind listKind = kind == OwnKeysKind::Symbols ? KeyListKind::Symbols : kind == OwnKeysKind::All ? KeyListKind::StringsAndSymbols : KeyListKind::Strings;
 
     auto listCompiledObjectKeys = [&] {
@@ -155,7 +172,7 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
         lists.add(reader.keyListOrElse(object, unlikelyEdge(isNotCachedByShape), KeyListKey::Shape, listKind));
         m_out.appendTo(isNotCachedByShape);
         branchUnless(hasBits(shapeTests.orderWordOf(object), orderWordHasExtraProperties), outOfLine);
-        lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), KeyListKey::Structure));
+        lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), kind == OwnKeysKind::Keys ? KeyListKey::StructureForEnumerableKeys : KeyListKey::Structure));
     };
     bool mayBeCompiledObject = type.anyObject || type.layouts;
     if (shapeTests.hasOnlyCompiledObjects(type))
@@ -177,12 +194,7 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
 
     m_out.appendTo(outOfLine);
     results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { boxCell(object), word32(static_cast<int32_t>(kind)) }, { .calledBuiltin = functionOf(call.overload()), .isOnRarePath = true }));
-    if (testsForObject) {
-        m_out.appendTo(isNoObject);
-        results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
-    }
-
-    finish(call, results.finish());
+    finishWithResults();
 }
 
 void OwnPropertyBuiltinEmitter::generateObjectHasOwn(const InlineCall& call)
@@ -196,11 +208,41 @@ void OwnPropertyBuiltinEmitter::generateObjectHasOwn(const InlineCall& call)
     finish(call, Condition(m_out.castToInt32(result.first)));
 }
 
+void OwnPropertyBuiltinEmitter::generateObjectIsPrototypeOf(const InlineCall& call)
+{
+    Boxed receiver = boxedOperand(call.context(), call.receiver());
+    Boxed value = boxedOperand(call.context(), call.argument(0));
+    auto askHost = [&] {
+        return callOperation<Condition>(call.context(), RuntimeOperation::IsPrototypeOf, { receiver, value }, { .calledBuiltin = functionOf(call.overload()) });
+    };
+    if (!generator().isInLoop(call.context().block())) {
+        finish(call, askHost());
+        return;
+    }
+    finish(call, asBoolean([&](BranchTargets targets) {
+        LBasicBlock slowPath = newBlock();
+        CellPointer prototype = objectOrElse(call.receiver(), slowPath);
+        emitter<OperatorEmitter>().branchOnPrototypeAbove(call.argument(0), prototype, slowPath, targets);
+        m_out.appendTo(slowPath);
+        branch(askHost(), targets);
+    }));
+}
+
 void OwnPropertyBuiltinEmitter::generateObjectPropertyIsEnumerable(const InlineCall& call)
 {
     Boxed receiver = boxedOperand(call.context(), call.receiver());
     Boxed key = boxedOperand(call.context(), call.argument(0));
     finish(call, callOperation<Condition>(call.context(), RuntimeOperation::PropertyIsEnumerable, { receiver, key }, { .calledBuiltin = functionOf(call.overload()) }));
+}
+
+void OwnPropertyBuiltinEmitter::generateReflectSet(const InlineCall& call)
+{
+    Boxed target = boxedOperand(call.context(), call.argument(0));
+    Boxed key = boxedOperand(call.context(), call.argument(1));
+    Boxed value = boxedOperand(call.context(), call.argument(2));
+    ValueID receiver = call.argumentOrNull(3);
+    StubCallResult result = callStub(call.context(), reflectSet(), { target.value(), key.value(), value.value(), receiver ? boxedOperand(call.context(), receiver).value() : target.value() }, { .calledBuiltin = functionOf(call.overload()) });
+    finish(call, Condition(m_out.notZero64(result.first)));
 }
 
 void OwnPropertyBuiltinEmitter::generateObjectGetOwnPropertyDescriptor(const InlineCall& call)

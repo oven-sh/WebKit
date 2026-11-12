@@ -13,6 +13,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsBoxedCallsOfLanguage.h"
+#include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPropertyKeys.h"
@@ -21,12 +22,15 @@
 #include "JSCustomGetterFunction.h"
 #include "JSFunction.h"
 #include "NativeExecutable.h"
+#include <variant>
 
 namespace JSC { namespace AOT {
 
 StubSignature signatureOfCallHostFunction(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionWithoutBoxedCall(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionThatMayBeUnfetched(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallHostFunctionCheckingResult(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallHostFunctionThatMayBeUnfetchedCheckingResult(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallInternalFunction(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionWithCount(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallHostGetter(StubKey) { return callConventionSignature({ }); }
@@ -128,6 +132,60 @@ static void fetchFunctionLeftUnfetched(StubAssembler& jit, GPRReg scratch, unsig
     });
 }
 
+static void pushManyWithinCapacity(StubAssembler& jit, const CallRegisters& registers, std::variant<unsigned, GPRReg> count)
+{
+    static_assert(numberOfArgumentGPRs >= 2);
+    constexpr int32_t offsetOfStackWordsAtEntry = static_cast<int32_t>(offsetOfStackWordsFromFrame) - static_cast<int32_t>(prologueStackPointerDelta());
+    const GPRReg* countInRegister = std::get_if<GPRReg>(&count);
+    const unsigned numberOfRegisters = countInRegister ? numberOfArgumentGPRs : std::get<unsigned>(count);
+    RELEASE_ASSERT(numberOfRegisters > BoxedCallEntry::maxArgumentCount || countInRegister);
+    RELEASE_ASSERT(numberOfRegisters <= numberOfArgumentGPRs);
+    const GPRReg executable = registers.scratch;
+    const GPRReg length = registers.scratch;
+    const GPRReg kind = registers.word;
+    const GPRReg butterfly = registers.word;
+    RELEASE_ASSERT(noOverlap(registers.scratch, registers.word, thisGPR, calleeGPR, instanceGPR) && noOverlap(registers.scratch, registers.word, countInRegister ? *countInRegister : InvalidGPRReg));
+    for (unsigned i = 0; i < numberOfRegisters; ++i)
+        RELEASE_ASSERT(noOverlap(argumentGPR(i), registers.scratch, registers.word, thisGPR, calleeGPR));
+    JumpList isLeftToHostFunction;
+
+    emitLoadExecutable(jit, executable);
+    jit.loadPtr(Address(executable, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall)), kind);
+    isLeftToHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, kind, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs.arrayPush))));
+    isLeftToHostFunction.append(jit.branchIfNotCell(thisGPR));
+    isLeftToHostFunction.append(jit.branchIfNotType(thisGPR, ArrayType));
+    jit.load8(Address(thisGPR, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    isLeftToHostFunction.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ContiguousShape)));
+    isLeftToHostFunction.append(branchIfBarrierIsNeeded(jit, thisGPR, kind));
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    if (countInRegister)
+        jit.add32(*countInRegister, length);
+    else
+        jit.add32(TrustedImm32(static_cast<int32_t>(numberOfRegisters)), length);
+    isLeftToHostFunction.append(jit.branch32(CCallHelpers::Above, length, Address(butterfly, Butterfly::offsetOfVectorLength())));
+
+    const GPRReg destination = calleeGPR;
+    if (countInRegister)
+        jit.sub32(length, *countInRegister, destination);
+    else
+        jit.sub32(length, TrustedImm32(static_cast<int32_t>(numberOfRegisters)), destination);
+    jit.getEffectiveAddress(BaseIndex(butterfly, destination, CCallHelpers::TimesEight), destination);
+    for (unsigned i = 0; i < numberOfRegisters; ++i)
+        jit.store64(argumentGPR(i), Address(destination, static_cast<int32_t>(i * sizeof(EncodedJSValue))));
+    if (countInRegister) {
+        const GPRReg source = argumentGPR(0);
+        jit.sub32(TrustedImm32(static_cast<int32_t>(numberOfRegisters)), *countInRegister);
+        jit.addPtr(TrustedImm32(offsetOfStackWordsAtEntry), CCallHelpers::stackPointerRegister, source);
+        emitCopyFromLastWord(jit, Address(source), Address(destination, static_cast<int32_t>(numberOfRegisters * sizeof(EncodedJSValue))), *countInRegister, argumentGPR(1));
+    }
+    jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
+    boxInt32(jit, length, jit.result());
+    jit.returnToCaller();
+    isLeftToHostFunction.link(&jit);
+}
+
 void generateCallHostFunction(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
@@ -142,12 +200,27 @@ void generateCallHostFunction(StubAssembler& jit)
         jit.bindEntry(callHostFunctionThatMayBeUnfetched(count));
         fetchFunctionLeftUnfetched(jit, executable, count);
         jit.bindEntry(callHostFunctionWithoutBoxedCall(count));
-    }
+    } else if (count > BoxedCallEntry::maxArgumentCount)
+        pushManyWithinCapacity(jit, registers, count);
     emitLoadExecutable(jit, executable);
     hasNoBoxedCall.link(&jit);
     jit.emitFunctionPrologue();
     emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
+}
+
+void generateCallHostFunctionThatMayBeUnfetchedCheckingResult(StubAssembler& jit)
+{
+    const unsigned count = jit.key().count();
+    const HostResult result = static_cast<HostResult>(jit.key().form());
+    const CallRegisters registers = CallRegisters::allocate(jit);
+    const GPRReg executable = registers.scratch;
+    fetchFunctionLeftUnfetched(jit, executable, count);
+    jit.bindEntry(callHostFunctionCheckingResult(result, count));
+    emitLoadExecutable(jit, executable);
+    jit.emitFunctionPrologue();
+    emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
+    callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), Address(executable, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall)), result);
 }
 
 void generateCallHostGetter(StubAssembler& jit)
@@ -229,6 +302,10 @@ void generateCallHostFunctionWithCount(StubAssembler& jit)
     const Address nativeFunction(executable, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall));
     JumpList doesNotFitOnStack;
 
+    Jump fitsInRegisters = jit.branch32(CCallHelpers::BelowOrEqual, count, TrustedImm32(numberOfArgumentGPRs));
+    pushManyWithinCapacity(jit, registers, count);
+    fitsInRegisters.link(&jit);
+
     jit.emitFunctionPrologue();
     emitHostCallFrameOfCallWithCount(jit, calleeGPR, thisGPR, count, doesNotFitOnStack);
     emitLoadExecutable(jit, executable);
@@ -257,6 +334,7 @@ void generateCallInternalFunction(StubAssembler& jit)
     if (kind == CodeSpecializationKind::CodeForCall) {
         emitCallOfBooleanConstructor(jit, scratch);
         emitCallOfNumberOrStringConstructor(jit, scratch);
+        emitObjectOrArrayConstructorCall(jit, scratch);
     }
 
     jit.emitFunctionPrologue();

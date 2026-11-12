@@ -11,8 +11,10 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
+#include "AOTSumOverRecords.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -39,44 +41,83 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
         return std::nullopt;
     if (std::optional<PassedTest> found = showElementPresentBehindTest(list, position, findPassedTest(recordNotedInKnownElements(findKnown(*this, KnownNote::PositionFoundInsideList, list, position)))))
         return found;
+    if (std::optional<PassedTest> behind = findElementFoundAfter(list, position))
+        return behind;
     Reference length = recordNotedInKnownElements(findKnown(*this, KnownNote::LengthOfList, list));
     std::optional<PassedTest> fromZeroUp = length ? findNonNegativeProof(position) : std::nullopt;
     std::optional<PassedTest> below = fromZeroUp ? findUpperBoundProof(position, length) : std::nullopt;
     if (below)
         return boundsProofFromChecks(list, position, length, *fromZeroUp, *below);
-    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : std::nullopt;
+    if (std::optional<PassedTest> lowered = length ? findLoweredCounterProof(list, position, length) : std::nullopt)
+        return lowered;
+    if (std::optional<PassedTest> stepped = fromZeroUp ? findSteppedKeyProof(list, position, length) : std::nullopt)
+        return stepped;
+    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : provePositionAfterCounterStart(list, position, length);
 }
 
-static bool isTermTestedForPosition(const Code& code, const Operation& narrowed, bool isWholePosition)
+std::optional<PassedTest> Walker::findElementFoundAfter(Reference list, Reference position)
+{
+    if (!list || !list.isRecord() || !position.isValue())
+        return std::nullopt;
+    for (ValueID term = position.id(); !m_code.isConstant(term);) {
+        const Operation& record = m_code.at(term);
+        bool stepsDown = record.opcode == Opcode::Decrement || (record.opcode == Opcode::Sub && m_code.isConstant(record.operand(1)));
+        if (!stepsDown && !valuePreservingOpcodes.contains(record.opcode))
+            return std::nullopt;
+        term = record.operand(0);
+        if (!stepsDown)
+            continue;
+        std::optional<PassedTest> found = findPassedTest(recordNotedInKnownElements(findKnown(*this, KnownNote::PositionFoundInsideList, list, referenceTo(term))));
+        if (!found || !testsProveElementAtOrAfter(m_code, m_types, list.id(), position.id(), found->sides()))
+            continue;
+        PassedTest inside = *found;
+        inside.m_groundsOfPosition = GroundsOfPosition { .view = list.id(), .position = position.id() };
+        return inside;
+    }
+    return std::nullopt;
+}
+
+static bool isSumInKnownElements(const Code& code, ValueID value)
 {
     static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    while (valuePreservingOpcodes.contains(code.at(value).opcode))
+        value = code.at(value).operand(0);
+    return sums.contains(code.at(value).opcode);
+}
+
+static bool isTermTestedAsIndex(const Code& code, const Operation& narrowed, bool isWholePosition, bool lengthIsSum)
+{
     if (!narrowed.testOperand())
         return false;
     const Operation& test = code.at(narrowed.testOperand());
     if (!allRelations.contains(test.opcode) || test.form() != OperatorForm::Integers || narrowed.operandIndex() > 1)
         return false;
-    if (!isWholePosition)
-        return true;
-    ValueID bound = test.operand(1 - narrowed.operandIndex());
-    while (valuePreservingOpcodes.contains(code.at(bound).opcode))
-        bound = code.at(bound).operand(0);
-    return sums.contains(code.at(bound).opcode);
+    return !isWholePosition || lengthIsSum || isSumInKnownElements(code, test.operand(1 - narrowed.operandIndex()));
 }
 
 std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length)
 {
     if (!list.isRecord() || !position.isValue() || !length.isRecord())
         return std::nullopt;
+    bool lengthIsSum = isSumInKnownElements(m_code, length.id());
+    GroundsOfPosition groundsByLength { .view = list.id(), .position = position.id(), .length = length.id() };
+    if (lengthIsSum && m_inputs.options.shouldSkipBoundsProof) {
+        PassedTest taken;
+        taken.m_groundsOfPosition = groundsByLength;
+        return taken;
+    }
+    if (std::optional<PassedTest> shown = lengthIsSum ? showPositionInside(groundsByLength) : std::nullopt)
+        return shown;
     for (ValueID term = position.id(); term && !m_code.isConstant(term);) {
         const Operation& record = m_code.at(term);
-        bool isTermTested = record.opcode == Opcode::Narrowed && !record.narrowsTermOfOperand() && isTermTestedForPosition(m_code, record, term == position.id());
+        bool isTermTested = record.opcode == Opcode::Narrowed && !record.narrowsTermOfOperand() && isTermTestedAsIndex(m_code, record, term == position.id(), lengthIsSum);
         if (isTermTested || (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand())) {
             GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowResult = record.isOnTakenEdge() };
             std::optional<PassedTest> shown = m_inputs.options.shouldSkipBoundsProof ? findPassedTest(referenceTo(grounds.isBelow), grounds.isBelowResult) : showPositionInside(grounds);
             if (shown && m_inputs.options.shouldSkipBoundsProof)
                 shown->m_groundsOfPosition = grounds;
             if (shown && isTermTested)
-                count(StatisticID::PositionsShownByTestedTerms);
+                count(StatisticID::IndexesProvenByTestedTerms);
             if (shown)
                 return shown;
         }
@@ -159,19 +200,57 @@ void noteStorageOfListMade(Walker& walker, Reference list)
     walker.count(StatisticID::ArrayIndexingTypesRecorded);
 }
 
-WrittenListOfVariable writtenListThatVariableHolds(Walker& walker, VariableID variable)
+static WrittenListOfVariable literalArrayAt(Walker& walker, ModuleID module, LiteralArrayLocation place)
+{
+    FunctionID body = walker.program().at(module).body;
+    if (!body)
+        return { };
+    const ThinSummary& summary = walker.facts().summaries().at(body);
+    const SummaryWrittenListOfVariable* written = summary.findLiteralArray(place);
+    if (!written || summary.constantListIsStoredIntoInLoop(written->made) || walker.facts().summaries().storesElementInto(written->data))
+        return { };
+    return { written->data, static_cast<ArrayStorage>(written->storage), written->length };
+}
+
+static WrittenListOfVariable literalNumericArray(const WrittenListOfVariable& written)
+{
+    return isNumericStorage(written.storage) ? written : WrittenListOfVariable();
+}
+
+static WrittenListOfVariable listThatVariableHolds(Walker& walker, VariableID variable)
 {
     const Program& program = walker.program();
     if (!walker.has(Mechanism::TypedOperations) || (!numberReadOutOfVariableStays(walker, variable) && !objectOfVariablePutOffStays(walker, variable)))
         return { };
-    FunctionID body = program.at(program.at(variable).module).body;
-    if (!body)
+    if (walker.facts().summaries().storesElementInto(variable))
         return { };
-    const ThinSummary& summary = walker.facts().summaries().at(body);
-    const SummaryWrittenListOfVariable* written = summary.findWrittenListOf(variable);
-    if (!written || summary.constantListIsStoredIntoInLoop(written->made))
+    return literalArrayAt(walker, program.at(variable).module, LiteralArrayLocation::of(variable));
+}
+
+WrittenListOfVariable writtenListThatVariableHolds(Walker& walker, VariableID variable) { return literalNumericArray(listThatVariableHolds(walker, variable)); }
+
+static WrittenListOfVariable listInInstance(Walker& walker, FieldReference field)
+{
+    const Program& program = walker.program();
+    if (!walker.has(Mechanism::TypedOperations) || !leavesDeadZoneForGood(program, field) || !fieldAt(program, field).flags.contains(FieldFlags::IsImmutable))
         return { };
-    return { written->data, static_cast<ArrayStorage>(written->storage), written->length };
+    return literalArrayAt(walker, program.at(field.layout).module, LiteralArrayLocation::of(field));
+}
+
+WrittenListOfVariable literalArrayInInstance(Walker& walker, FieldReference field) { return literalNumericArray(listInInstance(walker, field)); }
+
+WrittenListOfVariable writtenListReadBy(Walker& walker, ValueID input)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID source = index.stripCasts(input);
+    if (source && !index.isParameter(source) && index.opcodeOf(source) == Opcode::CheckInitialized)
+        source = index.stripCasts(index.value(source).operand(0));
+    if (!source || index.isParameter(source))
+        return { };
+    BodyValue read = index.value(source);
+    if (read.opcode() == Opcode::GetModuleVariable)
+        return listThatVariableHolds(walker, read.variable());
+    return read.opcode() == Opcode::GetEnvironmentField ? listInInstance(walker, { read.layout(), read.field() }) : WrittenListOfVariable();
 }
 
 bool isReadOutOfVariableOfFileThatStays(Walker& walker, ValueID input)
@@ -261,7 +340,12 @@ static void checkTestOfListInKnownElements(Walker& walker, Draft&& test)
 
 std::optional<uint32_t> lengthOfListMadeInSight(Walker& walker, Reference list)
 {
-    std::optional<uint64_t> noted = list && list.isValue() ? findKnown(walker, KnownNote::StorageOfListMadeInSight, list) : std::nullopt;
+    return lengthOfListMadeInSight(walker, walker.state(), list);
+}
+
+std::optional<uint32_t> lengthOfListMadeInSight(const Walker& walker, const WalkState& state, Reference list)
+{
+    std::optional<uint64_t> noted = list && list.isValue() ? findKnown(walker, state, KnownNote::StorageOfListMadeInSight, list) : std::nullopt;
     if (!noted)
         return std::nullopt;
     return static_cast<uint32_t>(*noted >> shiftOfLengthInKnownElements);
@@ -269,13 +353,11 @@ std::optional<uint32_t> lengthOfListMadeInSight(Walker& walker, Reference list)
 
 Reference elementWrittenInListMadeInSight(Walker& walker, Reference list, uint32_t position)
 {
-    if (!list || !list.isValue() || !findKnown(walker, KnownNote::StorageOfListMadeInSight, list))
-        return { };
-    const Operation& made = walker.code().at(list.id());
-    const auto* constant = made.opcode == Opcode::Data && made.data() ? walker.program().at(made.data()).root.tryAs<DataNode::Array>() : nullptr;
-    if (!constant || position >= constant->elements.size())
-        return { };
-    const DataNode& element = constant->elements[position];
+    return elementWrittenInListMadeInSight(walker, walker.state(), list, position);
+}
+
+static Reference constantOfElement(Walker& walker, const DataNode& element)
+{
     switch (element.kind()) {
     case DataNode::Kind::Undefined:
         return walker.constant(Draft(Opcode::Undefined));
@@ -305,6 +387,99 @@ Reference elementWrittenInListMadeInSight(Walker& walker, Reference list, uint32
     default:
         return { };
     }
+}
+
+Reference elementOfConstantArray(Walker& walker, DataID data, uint32_t position)
+{
+    const auto* array = walker.program().at(data).root.tryAs<DataNode::Array>();
+    return array && position < array->elements.size() ? constantOfElement(walker, array->elements[position]) : Reference();
+}
+
+Reference elementWrittenInListMadeInSight(Walker& walker, const WalkState& state, Reference list, uint32_t position)
+{
+    if (!list || !list.isValue() || !findKnown(walker, state, KnownNote::StorageOfListMadeInSight, list))
+        return { };
+    const Operation& made = walker.code().at(list.id());
+    const auto* constant = made.opcode == Opcode::Data && made.data() ? walker.program().at(made.data()).root.tryAs<DataNode::Array>() : nullptr;
+    return constant && position < constant->elements.size() ? constantOfElement(walker, constant->elements[position]) : Reference();
+}
+
+static constexpr uint32_t mostElementsCompared = 12;
+
+static Reference buildSearchAmong(Walker& walker, std::span<const Reference> elements, Reference sought, AnswerOfSearch answer, Origin origin)
+{
+    Vector<Walker::JoinArm, mostElementsCompared + 1> arms;
+    auto addArm = [&](std::optional<uint32_t> place) {
+        if (answer == AnswerOfSearch::Membership) {
+            arms.append({ walker.currentBlock(), { walker.constant(PrimitiveKnownToFolding::boolean(place.has_value())) } });
+            return;
+        }
+        Draft number(Opcode::Integer, origin);
+        number.setInteger(place ? static_cast<int64_t>(*place) : -1);
+        arms.append({ walker.currentBlock(), { walker.constant(WTF::move(number)) } });
+    };
+    uint32_t place = 0;
+    for (Reference element : elements) {
+        Reference isEqual = buildOperatorForStrings(walker, Opcode::StrictEq, sought, element, origin);
+        if (!isEqual || walker.isUnreachable())
+            return { };
+        BlockID found = walker.addBlock();
+        BlockID next = walker.addBlock();
+        walker.branch(isEqual, found, next);
+        walker.continueIn(found);
+        if (!walker.isUnreachable())
+            addArm(place);
+        walker.continueIn(next);
+        if (walker.isUnreachable())
+            break;
+        ++place;
+    }
+    if (!walker.isUnreachable())
+        addArm(std::nullopt);
+    if (walker.hasFailed() || arms.isEmpty())
+        return { };
+    Reference met;
+    if (!walker.joinArms(arms.span(), walker.addBlock(), std::span<Reference>(&met, 1)))
+        return { };
+    walker.count(StatisticID::MembershipsComparedInline);
+    return met;
+}
+
+Reference buildSearchInWrittenList(Walker& walker, DataID data, Reference sought, AnswerOfSearch answer, Origin origin)
+{
+    const auto* list = walker.program().at(data).root.tryAs<DataNode::Array>();
+    if (!list || !sought || walker.isUnreachable() || list->elements.size() > mostElementsComparedInLoop)
+        return { };
+    Vector<Reference, mostElementsComparedInLoop> elements;
+    for (const DataNode& node : list->elements) {
+        Reference element = constantOfElement(walker, node);
+        if (!element)
+            return { };
+        elements.append(element);
+    }
+    origin.isTailCall = false;
+    return buildSearchAmong(walker, elements.span(), sought, answer, origin);
+}
+
+Reference buildSearchInKnownArray(Walker& walker, Reference list, Reference sought, AnswerOfSearch answer, Origin origin)
+{
+    if (!list || !list.isValue() || !sought || walker.isUnreachable())
+        return { };
+    list = Reference::value(underlyingCellOf(walker.code(), list.id()));
+    std::optional<uint32_t> length = lengthOfListMadeInSight(walker, list);
+    if (!length || *length > (walker.isInLoop() ? mostElementsComparedInLoop : mostElementsCompared))
+        return { };
+    Vector<Reference, mostElementsCompared> elements;
+    for (uint32_t position = 0; position < *length; ++position) {
+        Reference element = elementWrittenInListMadeInSight(walker, list, position);
+        if (!element)
+            return { };
+        elements.append(element);
+    }
+
+    checkLengthOfListMadeInSight(walker, list, *length, origin);
+    origin.isTailCall = false;
+    return buildSearchAmong(walker, elements.span(), sought, answer, origin);
 }
 
 void checkLengthOfListMadeInSight(Walker& walker, Reference list, uint32_t length, Origin origin)

@@ -1087,6 +1087,34 @@ static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
         return llint_aot_is_integer_thunk;
     case ArrayIsArrayIntrinsic:
         return llint_aot_is_array_thunk;
+    case ArrayPushIntrinsic:
+        return llint_aot_array_push_thunk;
+    case CharAtIntrinsic:
+        return llint_aot_char_at_thunk;
+    case FromCharCodeIntrinsic:
+        return llint_aot_from_char_code_thunk;
+    case HasOwnPropertyIntrinsic:
+        return llint_aot_has_own_property_thunk;
+    case FloorIntrinsic:
+        return llint_aot_math_floor_thunk;
+    case IMulIntrinsic:
+        return llint_aot_math_imul_thunk;
+    case MaxIntrinsic:
+        return llint_aot_math_max_thunk;
+    case MinIntrinsic:
+        return llint_aot_math_min_thunk;
+    case Clz32Intrinsic:
+        return llint_aot_math_clz32_thunk;
+    case AbsIntrinsic:
+        return llint_aot_math_abs_thunk;
+    case SqrtIntrinsic:
+        return llint_aot_math_sqrt_thunk;
+    case CeilIntrinsic:
+        return llint_aot_math_ceil_thunk;
+    case TruncIntrinsic:
+        return llint_aot_math_trunc_thunk;
+    case RoundIntrinsic:
+        return llint_aot_math_round_thunk;
     default:
         return nullptr;
     }
@@ -1390,6 +1418,9 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 
 void VM::pruneUnusedSourceProviderCaches()
 {
+#if ENABLE(AOT)
+    aotState().identifiersOfLastSource = nullptr;
+#endif
     sourceProviderCacheMap.removeIf([](auto& entry) {
         return !entry.value->takeUsedSinceLastPrune();
     });
@@ -1524,6 +1555,8 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
     using Action = Exception::StackCaptureAction;
     if (globalObject->debugger())
         return Exception::create(vm, thrownValue, Action::CaptureStack);
+    if (vm.topCallFrame && vm.interpreter.isCaughtByInterpretedTopFrame())
+        return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
     std::optional<HandlerType> nearest;
     if (globalObject->aotInstance() && vm.topCallFrame)
         nearest = AOT::findNearestHandler(vm, vm.topCallFrame);

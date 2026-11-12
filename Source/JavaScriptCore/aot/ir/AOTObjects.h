@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTTypeIDs.h"
 #include "AOTVector.h"
@@ -14,7 +15,6 @@
 #include <array>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 

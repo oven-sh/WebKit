@@ -14,7 +14,9 @@
 #include "AOTStubsBarriers.h"
 #include "AOTStubsClosures.h"
 #include "AllowMacroScratchRegisterUsage.h"
+#include "PureNaN.h"
 #include "RememberedSlot.h"
+#include <bit>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -187,11 +189,46 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
         isStored.link(m_jit);
 }
 
+static std::optional<int64_t> wordOfNumberInSlot(SlotRepresentation representation, JSValue constant)
+{
+    if (!constant.isNumber())
+        return std::nullopt;
+    switch (representation) {
+    case SlotRepresentation::OptionalInt64:
+        if (!constant.isAnyInt())
+            return std::nullopt;
+        return constant.asAnyInt();
+    case SlotRepresentation::OptionalDouble:
+        return std::bit_cast<int64_t>(purifyNaN(constant.asNumber()));
+    default:
+        return std::nullopt;
+    }
+}
+
+void StraightEmitter::storeVariable(VariableID variable, ValueID stored)
+{
+    PlannedVariable planned = plan().variable(variable);
+    if (planned.hasViewMirror) {
+        fail(Opcode::PutModuleVariable);
+        return;
+    }
+    std::optional<int64_t> word;
+    if (std::optional<JSValue> constant = constantOf(stored); constant && planned.hasWordInStatics())
+        word = planned.representation == SlotRepresentation::JSValue ? JSValue::encode(*constant) : wordOfNumberInSlot(planned.representation, *constant);
+    if (!word) {
+        storeVariable(variable, loadIntoResultRegister(stored));
+        return;
+    }
+    GPRReg result = takeResultRegister();
+    m_jit->move(CCallHelpers::TrustedImm64(*word), result);
+    relocations().storeInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, result, instanceGPR);
+}
+
 void StraightEmitter::storeVariable(VariableID variable, GPRReg boxed)
 {
     PlannedVariable planned = plan().variable(variable);
     bool holdsNumbersRaw = !!formOfRawNumbersInStraightForm(planned.representation);
-    if (!planned.hasWordInStatics() || (planned.representation != SlotRepresentation::JSValue && !holdsNumbersRaw)) {
+    if (!planned.hasWordInStatics() || planned.hasViewMirror || (planned.representation != SlotRepresentation::JSValue && !holdsNumbersRaw)) {
         fail(Opcode::PutModuleVariable);
         return;
     }
@@ -205,9 +242,17 @@ void StraightEmitter::storeVariable(VariableID variable, GPRReg boxed)
         return;
     }
     relocations().storeInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, boxed, instanceGPR);
-    GPRReg card = m_jit->scratchRegister();
-    m_jit->move(CCallHelpers::TrustedImm32(RememberedSlotSet::writtenCard), card);
-    relocations().storeInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::CardOfVariable, variable) }, InstanceWordWidth::Byte, card, instanceGPR);
+    const CodeSymbol card { SymbolSpace::InstanceWord, mentions().add(NumberSpace::CardOfVariable, variable) };
+#if CPU(X86_64)
+    relocations().withInstanceWordAsOperand(card, instanceGPR, [&](CCallHelpers::Address address) {
+        m_jit->store8(CCallHelpers::TrustedImm32(RememberedSlotSet::writtenCard), address);
+        return true;
+    });
+#else
+    GPRReg mark = m_jit->scratchRegister();
+    m_jit->move(CCallHelpers::TrustedImm32(RememberedSlotSet::writtenCard), mark);
+    relocations().storeInstanceWord(card, InstanceWordWidth::Byte, mark, instanceGPR);
+#endif
 }
 
 void StraightEmitter::barrierAfterStore(GPRReg owner)

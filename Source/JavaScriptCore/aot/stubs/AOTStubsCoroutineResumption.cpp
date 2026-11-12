@@ -72,6 +72,18 @@ static void emitStepCheck(StubAssembler& jit, GeneratorStepCheck check, GPRReg g
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void emitReleaseHeapFrame(StubAssembler& jit, GPRReg frame, GPRReg scratch)
+{
+    JumpList isLeftToCollector;
+    isLeftToCollector.append(jit.branchTest8(CCallHelpers::Zero, Address(frame, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(SavedFrame::liesOnHeapBit)));
+    isLeftToCollector.append(jit.branch8(CCallHelpers::NotEqual, Address(frame, JSCell::cellStateOffset()), TrustedImm32(static_cast<int32_t>(CellState::DefinitelyWhite))));
+    isLeftToCollector.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+    jit.load32(Address(frame, SavedFrame::offsetOfCapacityOfHeapFrame()), scratch);
+    jit.and32(TrustedImm32(numberOfReleasedHeapFrames - 1), scratch);
+    jit.storePtr(frame, BaseIndex(instanceGPR, scratch, CCallHelpers::TimesEight, AOT_INSTANCE_OFFSET(coroutines.releasedHeapFrames)));
+    isLeftToCollector.link(&jit);
+}
+
 StubSignature signatureOfStepGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
 void generateStepGenerator(StubAssembler& jit)
@@ -80,21 +92,56 @@ void generateStepGenerator(StubAssembler& jit)
     const GPRReg generator = jit.clobberOperand(0);
     const GPRReg result = jit.result();
     const GPRReg status = jit.secondResult();
-    const GPRReg saved = jit.allocateScratch(StubRegister::T10);
+    const GPRReg saved = jit.allocateScratch(leafStepFrameRegister);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg generatorOfLeafStep = isARM64() ? jit.allocateScratch(leafStepGeneratorRegister) : generator;
     static_assert(static_cast<int32_t>(Generator::State::Running) < 0 && static_cast<int32_t>(Generator::State::Completed) < 0);
     static_assert(static_cast<int32_t>(Generator::State::SuspendedAtStart) >= 0 && static_cast<int32_t>(Generator::State::SuspendedAtYield) >= 0);
     RELEASE_ASSERT(noOverlap(generator, jit.operand(1), jit.operand(2), status, saved, scratch, instanceGPR));
-    RELEASE_ASSERT(noOverlap(result, status, scratch));
-    checkStubOperands(enterGeneratorFrame(), { generator, jit.operand(1), jit.operand(2) });
+    RELEASE_ASSERT(noOverlap(result, status, scratch) && generatorOfLeafStep == gprOf(leafStepGeneratorRegister));
+    checkStubOperands(resumeSteppedGenerator(), { generator, jit.operand(1), jit.operand(2), saved });
 
     JumpList isNotStepped;
     emitStepCheck(jit, check, generator, status, scratch, isNotStepped);
     jit.load32(Address(generator, Generator::offsetOfState()), status);
     isNotStepped.append(jit.branch32(CCallHelpers::LessThan, status, TrustedImm32(0)));
     jit.loadPtr(Address(generator, Generator::offsetOfSavedFrame()), saved);
-    jit.load32(Address(saved, JSCell::structureIDOffset()), scratch);
-    isNotStepped.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
+    if (!jit.options().hasOneInstance) {
+        jit.load32(Address(saved, JSCell::structureIDOffset()), scratch);
+        isNotStepped.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
+    }
+
+    JumpList hasNoLeafStep;
+    jit.load64(Address(saved, SavedFrame::offsetOfAsyncContext()), scratch);
+    hasNoLeafStep.append(jit.branch64(CCallHelpers::Below, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(numberTag))));
+    hasNoLeafStep.append(jit.branchTest32(CCallHelpers::NonZero, jit.operand(1)));
+    jit.zeroExtend32ToWord(scratch, scratch);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), scratch);
+    jit.move(generator, generatorOfLeafStep);
+    jit.farJump(scratch, JSEntryPtrTag);
+
+    hasNoLeafStep.link(&jit);
+    jit.jumpToStub(resumeSteppedGenerator());
+
+    isNotStepped.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::NotStepped)), status);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), result);
+    jit.returnToCaller();
+}
+
+StubSignature signatureOfResumeSteppedGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(leafStepFrameRegister) }); }
+
+void generateResumeSteppedGenerator(StubAssembler& jit)
+{
+    const GPRReg generator = jit.clobberOperand(0);
+    const GPRReg saved = jit.clobberOperand(3);
+    const GPRReg result = jit.result();
+    const GPRReg status = jit.secondResult();
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    RELEASE_ASSERT(noOverlap(generator, jit.operand(1), jit.operand(2), status, saved, scratch, instanceGPR));
+    RELEASE_ASSERT(noOverlap(result, status, scratch));
+    checkStubOperands(enterGeneratorFrame(), { generator, jit.operand(1), jit.operand(2) });
+
     jit.store32(TrustedImm32(static_cast<int32_t>(Generator::State::Running)), Address(generator, Generator::offsetOfState()));
 
     jit.emitFunctionPrologue();
@@ -109,22 +156,21 @@ void generateStepGenerator(StubAssembler& jit)
     jit.load32(Address(status, Generator::offsetOfState()), scratch);
     Jump didYield = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(Generator::State::Running)));
     jit.store32(TrustedImm32(static_cast<int32_t>(Generator::State::Completed)), Address(status, Generator::offsetOfState()));
+    jit.loadPtr(Address(status, Generator::offsetOfSavedFrame()), saved);
     jit.storePtr(MacroAssembler::TrustedImmPtr(nullptr), Address(status, Generator::offsetOfSavedFrame()));
+    emitReleaseHeapFrame(jit, saved, scratch);
     jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Completed)), status);
     jit.returnToCaller();
 
     didYield.link(&jit);
     jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Yielded)), status);
     jit.returnToCaller();
-
-    isNotStepped.link(&jit);
-    jit.move(TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::NotStepped)), status);
-    jit.move(TrustedImm64(JSValue::ValueUndefined), result);
-    jit.returnToCaller();
 }
 
 StubSignature signatureOfEnterSavedFrame(StubKey) { return { }; }
 StubSignature signatureOfEnterHandlerOfJob(StubKey) { return { }; }
+StubSignature signatureOfHandlerOfJobReturn(StubKey) { return { }; }
+StubSignature signatureOfResumeNextJob(StubKey) { return { }; }
 
 void generateEnterSavedFrame(StubAssembler& jit)
 {
@@ -157,7 +203,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
     Label enter = jit.label();
     jit.callStub(restoreSavedFrameToStack());
     jit.bindReturnLabel(StubFrameKind::SavedFrameAdapter);
-    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
 
     JumpList leave;
     JumpList leaveWithSentinel;
@@ -189,11 +235,14 @@ void generateEnterSavedFrame(StubAssembler& jit)
     Label takeJob = jit.label();
     emitLoadHeadJob(jit, { next, slot, scratch }, leaveWithSentinel);
     Jump resumesFunction = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumeJobWords)));
+    Label hasOtherJob = jit.label();
     Jump resumesDriver = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.driverResumeJobWord)));
     Jump finishesYield = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.yieldAwaitedJobWord)));
     Jump resumesBody = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.bodyCallJobWords)));
     JumpList callsHandler;
     callsHandler.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.reactionJobWords))));
+    Jump followsThenable = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resolveThenableJobWord)));
+    Jump resolvesPromise = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resolveWithoutHandlerJobWord)));
     callsHandler.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.reactionJobWords) + sizeof(uint64_t))));
     JumpList callsHandlerUnderContext;
     callsHandlerUnderContext.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.reactionJobWords) + 2 * sizeof(uint64_t))));
@@ -201,6 +250,11 @@ void generateEnterSavedFrame(StubAssembler& jit)
     Jump callsFunction = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.performMicrotaskJobWord)));
     Jump takesElement = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseAllResolveJobWord)));
     Jump throwsIntoFunction = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumeJobWords) + sizeof(uint64_t)));
+    Jump takesReactionChainStep = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.reactionChainStepJobWord)));
+    JumpList takesSettledElement;
+    takesSettledElement.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseAllSettledResolveJobWords))));
+    takesSettledElement.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseAllSettledResolveJobWords) + sizeof(uint64_t))));
+    Jump settlesRace = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseRaceResolveJobWord)));
     leaveWithSentinel.append(jit.branch64(CCallHelpers::NotEqual, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.bodyCallJobWords) + sizeof(uint64_t))));
 
     jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Throw)), mode);
@@ -221,18 +275,62 @@ void generateEnterSavedFrame(StubAssembler& jit)
     entersDriver.append(jit.jump());
     hasQueuedDriver.linkTo(takeJob, &jit);
 
+    followsThenable.link(&jit);
+    emitRunResolveThenableJob(jit, slot, { driver, saved, slot }, { mode, value, next, scratch }, leaveWithSentinel);
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
+    jit.jump().linkTo(takeJob, &jit);
+
+    settlesRace.link(&jit);
+    JumpList wasSettledByOther;
+    emitBranchIfRaceIsSettled(jit, slot, driver, mode, wasSettledByOther, leaveWithSentinel);
+    resolvesPromise.link(&jit);
+    JumpList resolvesNoPromise;
+    Label hasPromiseToResolve = emitRunResolveWithoutHandlerJob(jit, slot, driver, GPRInfo::returnValueGPR, { mode, value, next, scratch }, resolvesNoPromise, leaveWithSentinel);
+    Label hasRunJob = jit.label();
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
+    jit.jump().linkTo(takeJob, &jit);
+
+    resolvesNoPromise.link(&jit);
+    emitRunSettleReactionChainJob(jit, slot, driver, GPRInfo::returnValueGPR, scratch, { mode, value, next, scratch }, leaveWithSentinel);
+    jit.jump().linkTo(hasRunJob, &jit);
+
+    wasSettledByOther.link(&jit);
+    emitDequeueHeadJob(jit, next, scratch);
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
+    jit.jump().linkTo(takeJob, &jit);
+
+    const Address generatorArgument = CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Generator)));
+    const Address chainArgument = CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::State)));
+    const GPRReg scratchOfElement = GPRInfo::returnValueGPR == saved ? jit.reuseScratch(StubRegister::A4) : GPRInfo::returnValueGPR;
+    takesSettledElement.link(&jit);
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
+    emitNewSettledResult(jit, slot, scratch);
+    jit.store64(GPRInfo::returnValueGPR, generatorArgument);
+    emitLoadHeadJob(jit, { next, slot, scratch }, leaveWithSentinel);
+    emitRunPromiseAllResolveJob(jit, { next, slot, scratch }, { driver, saved, value, mode }, scratchOfElement, leaveWithSentinel, generatorArgument);
+    jit.jump().linkTo(takeJob, &jit);
+
     takesElement.link(&jit);
-    emitRunPromiseAllResolveJob(jit, { next, slot, scratch }, { driver, saved, value, mode }, GPRInfo::returnValueGPR == saved ? jit.reuseScratch(StubRegister::A4) : GPRInfo::returnValueGPR, leaveWithSentinel);
+    emitRunPromiseAllResolveJob(jit, { next, slot, scratch }, { driver, saved, value, mode }, scratchOfElement, leaveWithSentinel, argumentOfJob(slot, 1));
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
     jit.jump().linkTo(takeJob, &jit);
 
     throwsIntoFunction.link(&jit);
     jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Throw)), mode);
     Jump hasModeOfFunction = jit.jump();
+
+    JumpList leaveBehindSuspension;
+    jit.align();
+    jit.bindEntry(resumeNextJob());
+    leaveBehindSuspension.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
+    leaveBehindSuspension.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
+    JumpList hasNoJob;
+    emitLoadHeadJob(jit, { next, slot, scratch }, hasNoJob);
+    Jump isOtherJob = jit.branch64(CCallHelpers::NotEqual, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumeJobWords)));
     resumesFunction.link(&jit);
-    jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Next)), mode);
+    jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Next) | resumesFunctionOfJobBit), mode);
     hasModeOfFunction.link(&jit);
-    emitTakeFunctionResumeJob(jit, { next, slot, scratch }, saved, value, leaveWithSentinel);
+    emitTakeFunctionResumeJob(jit, { next, slot, scratch }, saved, value, leaveBehindSuspension);
 
     hasFrame.link(&jit);
     jit.storePtr(saved, calleeSlot);
@@ -242,7 +340,14 @@ void generateEnterSavedFrame(StubAssembler& jit)
     jit.store8(TrustedImm32(SavedFrame::isEnteredByJobLoopFlag), Address(saved, SavedFrame::offsetOfFlags()));
     jit.jump().linkTo(enter, &jit);
 
-    const Address generatorArgument = CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Generator)));
+    isOtherJob.link(&jit);
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
+    jit.jump().linkTo(hasOtherJob, &jit);
+    hasNoJob.link(&jit);
+    leaveBehindSuspension.link(&jit);
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
+    leaveWithSentinel.append(jit.jump());
+
     isNotAsyncFunction.link(&jit);
     {
         const GPRReg yielded = GPRInfo::returnValueGPR;
@@ -273,11 +378,17 @@ void generateEnterSavedFrame(StubAssembler& jit)
         const GPRReg promise = driver;
         const GPRReg handler = mode;
         const GPRReg result = GPRInfo::returnValueGPR;
+#if CPU(X86_64)
+        Jump returnsFulfillment;
+#endif
+        JumpList hasHandlerOfReactionChain;
         auto callHandler = [&](bool hasArgument, JumpList& doesNotGoOn) {
             jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
             jit.storePtr(handler, calleeSlot);
             jit.loadPtr(Address(fp), next);
             jit.storePtr(handler, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+            if (hasArgument)
+                hasHandlerOfReactionChain.link(&jit);
             if (hasArgument)
                 jit.shuffleRegisters<GPRReg, 2>({ handler, value }, { calleeGPR, argumentGPR(0) });
             else
@@ -285,11 +396,37 @@ void generateEnterSavedFrame(StubAssembler& jit)
             jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
             jit.callStub(hasArgument ? callValue(1) : callValueCell(0));
             jit.bindReturnLabel(StubFrameKind::HandlerOfJob);
+#if CPU(X86_64)
+            if (hasArgument) {
+                jit.bindEntry(handlerOfJobReturn());
+                returnsFulfillment = jit.branchTest8(CCallHelpers::NonZero, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.handlerReturnsFulfillment)));
+            }
+#endif
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
             doesNotGoOn.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset())));
             doesNotGoOn.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
             doesNotGoOn.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
         };
+
+        takesReactionChainStep.link(&jit);
+        {
+            JumpList isForOtherStatus;
+            const GPRReg promiseOfChain = scratchOfElement;
+            emitTakeReactionChainStepJob(jit, { next, slot, scratch }, { saved, promiseOfChain, promise, handler, value }, isForOtherStatus, leaveWithSentinel);
+            jit.store64(saved, chainArgument);
+            jit.store64(promise, generatorArgument);
+            jit.storePtr(promise, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseOfEnteredHandler)));
+            jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
+            jit.storePtr(promiseOfChain, calleeSlot);
+            jit.loadPtr(Address(fp), next);
+            jit.storePtr(promiseOfChain, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+            hasHandlerOfReactionChain.append(jit.jump());
+
+            isForOtherStatus.link(&jit);
+            emitBranchIfReactionChainContinues(jit, saved, handler, scratch, leaveWithSentinel);
+            jit.move(promiseOfChain, promise);
+            jit.jump().linkTo(hasPromiseToResolve, &jit);
+        }
 
         callsHandlerUnderContext.link(&jit);
         emitTakeReactionJob(jit, ReactionJob::HasAsyncContext, { next, slot, scratch }, promise, handler, value, leaveWithSentinel);
@@ -303,9 +440,29 @@ void generateEnterSavedFrame(StubAssembler& jit)
         callHandler(true, leave);
         jit.load64(generatorArgument, promise);
         RELEASE_ASSERT(noOverlap(result, promise, slot, mode, value, next, scratch));
-        emitFulfillPromise(jit, promise, result, slot, { mode, value, next, scratch }, leave);
+        Jump isReactionChain = jit.branchPtr(CCallHelpers::Equal, chainArgument, promise);
+        emitResolvePromise(jit, promise, result, slot, { mode, value, next, scratch }, leave);
+        Label hasSettledPromise = jit.label();
         jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseOfEnteredHandler)));
         jit.jump().linkTo(takeJob, &jit);
+
+        isReactionChain.link(&jit);
+        emitResolveReactionChain(jit, promise, result, slot, { mode, value, next, scratch }, leave);
+        jit.jump().linkTo(hasSettledPromise, &jit);
+
+#if CPU(X86_64)
+        returnsFulfillment.link(&jit);
+        leave.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
+        leave.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
+        jit.load64(generatorArgument, promise);
+        emitQueueResolutionWithFulfillment(jit, promise, result, slot, { mode, value, next, scratch }, leave);
+        jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.handlerReturnsFulfillment)));
+        jit.branchPtr(CCallHelpers::NotEqual, chainArgument, promise).linkTo(hasSettledPromise, &jit);
+        emitAdvanceReactionChain(jit, promise);
+        jit.jump().linkTo(hasSettledPromise, &jit);
+#else
+        UNUSED_VARIABLE(hasSettledPromise);
+#endif
 
         callsFunction.link(&jit);
         emitTakePerformMicrotaskJob(jit, { next, slot, scratch }, handler, leaveWithSentinel);
@@ -320,7 +477,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
         jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)));
         jit.store64(scratch, endsJob);
         jit.load64(generatorArgument, promise);
-        jit.load64(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::State))), handler);
+        jit.load64(chainArgument, handler);
         jit.load64(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Value))), value);
         jit.branchIfNotCell(promise).linkTo(entersFunction, &jit);
         jit.jump().linkTo(entersHandler, &jit);
@@ -418,49 +575,55 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     const GPRReg second = jit.allocateScratch(StubRegister::A3);
     const GPRReg destination = jit.allocateScratch(StubRegister::T10);
     const FPRReg pair = jit.allocateScratch(FPRInfo::fpRegT0);
+    const FPRReg secondPair = jit.allocateScratch(FPRInfo::fpRegT1);
     RELEASE_ASSERT(saved == X86Registers::edi && mode == X86Registers::esi && second == X86Registers::ecx);
     RELEASE_ASSERT(noOverlap(saved, mode, value, count, scratch, second, destination, instanceGPR));
 
     const GPRReg skippedAtBottom = second;
     emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, scratch);
     jit.lshift64(TrustedImm32(3), scratch);
-    jit.subPtr(sp, scratch, destination);
-    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), destination);
+    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), sp, destination);
+    jit.subPtr(scratch, destination);
     jit.checkStackBeforeEntering(destination);
 
     jit.emitFunctionPrologue();
     jit.subPtr(scratch, sp);
     jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), destination);
-    Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom);
-    jit.moveZeroToDouble(pair);
-    Jump isMultipleOfFour = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom, TrustedImm32(2));
-    jit.storeVector(pair, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -16));
-    Jump isCleared = jit.branchSub32(CCallHelpers::Zero, TrustedImm32(2), skippedAtBottom);
-    isMultipleOfFour.link(&jit);
-    Label clearNext = jit.label();
-    jit.storeVector(pair, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -16));
-    jit.storeVector(pair, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -32));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(4), skippedAtBottom).linkTo(clearNext, &jit);
-    isCleared.link(&jit);
-    skipsNothing.link(&jit);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
-    Jump isSmall = jit.branch32(CCallHelpers::Below, count, TrustedImm32(SavedFrame::minWordsForStringMove));
-    jit.move(count, X86Registers::ecx);
-    jit.move(mode, count);
-    jit.move(saved, scratch);
-    jit.addPtr(TrustedImm32(SavedFrame::offsetOfWords()), saved, X86Registers::esi);
-    jit.move(destination, X86Registers::edi);
-    jit.x86RepeatMoveString64();
-    jit.move(scratch, saved);
-    jit.move(count, mode);
-    Jump isMoved = jit.jump();
-    isSmall.link(&jit);
+    Jump isLong = jit.branch32(CCallHelpers::AboveOrEqual, count, TrustedImm32(SavedFrame::minWordsForStringMove));
+    auto copyPair = [&](FPRReg vector, int32_t wordsBelowCount, bool stores) {
+        const int32_t offset = -(wordsBelowCount + 2) * static_cast<int32_t>(sizeof(uint64_t));
+        if (stores)
+            jit.storeVector(vector, BaseIndex(destination, count, CCallHelpers::TimesEight, offset));
+        else
+            jit.loadVector(BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() + offset), vector);
+    };
+    Jump isMultipleOfFour = jit.branchTest32(CCallHelpers::Zero, count, TrustedImm32(2));
+    copyPair(pair, 0, false);
+    copyPair(pair, 0, true);
+    Jump isPair = jit.branchSub32(CCallHelpers::Zero, TrustedImm32(2), count);
+    isMultipleOfFour.link(&jit);
     Label next = jit.label();
-    jit.loadVector(BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 16), pair);
-    jit.storeVector(pair, BaseIndex(destination, count, CCallHelpers::TimesEight, -16));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), count).linkTo(next, &jit);
+    copyPair(pair, 0, false);
+    copyPair(secondPair, 2, false);
+    copyPair(pair, 0, true);
+    copyPair(secondPair, 2, true);
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(4), count).linkTo(next, &jit);
+    isPair.link(&jit);
     isEmpty.link(&jit);
-    isMoved.link(&jit);
+    Label isMoved = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        isLong.link(&jit);
+        jit.move(count, X86Registers::ecx);
+        jit.move(mode, count);
+        jit.move(saved, scratch);
+        jit.addPtr(TrustedImm32(SavedFrame::offsetOfWords()), saved, X86Registers::esi);
+        jit.move(destination, X86Registers::edi);
+        jit.x86RepeatMoveString64();
+        jit.move(scratch, saved);
+        jit.move(count, mode);
+        jit.jump().linkTo(isMoved, &jit);
+    });
 }
 #elif CPU(ARM64)
 static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
@@ -484,11 +647,7 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(sizeof(CallerFrameAndPC)), destination);
     jit.move(destination, sp);
-    Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom);
-    Label clearNext = jit.label();
-    jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, CCallHelpers::PostIndexAddress(destination, 2 * sizeof(uint64_t)));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), skippedAtBottom).linkTo(clearNext, &jit);
-    skipsNothing.link(&jit);
+    jit.addLeftShift64(destination, skippedAtBottom, TrustedImm32(3), destination);
     jit.addPtr(TrustedImm32(SavedFrame::offsetOfWords()), saved, source);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
     Jump isMultipleOfFour = jit.branchTest32(CCallHelpers::Zero, count, TrustedImm32(2));
@@ -514,21 +673,37 @@ static void emitContinueAtSite(StubAssembler& jit, const RestoredFrame& frame)
     RELEASE_ASSERT(flags == resumeMode);
     RELEASE_ASSERT(noOverlap(result, mode, value, resumeMode, resumeAddress));
 
+#if CPU(X86_64)
+    static_assert(!static_cast<int32_t>(AsyncGeneratorStepStatus::Result));
+    RELEASE_ASSERT(noOverlap(flags, saved, value));
+    jit.loadPtr(Address(saved, SavedFrame::offsetOfResumeAddress()), resumeAddress);
+    Jump isOther = jit.branchTest32(CCallHelpers::Zero, mode, TrustedImm32(resumesFunctionOfJobBit));
+    jit.move(value, result);
+    jit.storePtr(fp, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
+    jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Result)), resumeMode);
+    emitSiteContinuationNote(jit);
+    jit.farJump(resumeAddress, JSEntryPtrTag);
+    isOther.link(&jit);
+    jit.load8(Address(saved, SavedFrame::offsetOfFlags()), flags);
+#else
     jit.load8(Address(saved, SavedFrame::offsetOfFlags()), flags);
     jit.loadPtr(Address(saved, SavedFrame::offsetOfResumeAddress()), resumeAddress);
+#endif
     jit.move(value, result);
     Jump isNotEnteredByJobLoop = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(SavedFrame::isEnteredByJobLoopFlag));
     Jump mustSuspendAtAwaits = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend)));
-    jit.storePtr(fp, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+    jit.storePtr(fp, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
     isNotEnteredByJobLoop.link(&jit);
     mustSuspendAtAwaits.link(&jit);
     Jump isAtYield = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(SavedFrame::isSuspendedAtYieldFlag));
     Jump throws = jit.branchTest32(CCallHelpers::NonZero, mode, TrustedImm32(static_cast<int32_t>(ResumeMode::Throw)));
     jit.urshift32(TrustedImm32(SavedFrame::stepStatusShift), resumeMode);
+    emitSiteContinuationNote(jit);
     jit.farJump(resumeAddress, JSEntryPtrTag);
 
     isAtYield.link(&jit);
     jit.move(mode, resumeMode);
+    emitSiteContinuationNote(jit);
     jit.farJump(resumeAddress, JSEntryPtrTag);
 
     throws.link(&jit);
@@ -555,7 +730,7 @@ static void emitContinueAtEntrypoint(StubAssembler& jit, const RestoredFrame& fr
     Jump isNotEnteredByJobLoop = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(SavedFrame::isEnteredByJobLoopFlag));
     Jump mustSuspendAtAwaits = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend)));
     jit.subPtr(sp, TrustedImm32(static_cast<int32_t>(prologueStackPointerDelta())), frameOfBody);
-    jit.storePtr(frameOfBody, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+    jit.storePtr(frameOfBody, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
     isNotEnteredByJobLoop.link(&jit);
     mustSuspendAtAwaits.link(&jit);
     Jump isAtYield = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(SavedFrame::isSuspendedAtYieldFlag));
@@ -597,20 +772,46 @@ void generateRestoreSavedFrameToStack(StubAssembler& jit)
     emitCopyFrameToStack(jit, frame);
 
     const GPRReg bits = frame.scratch;
+#if CPU(X86_64)
+    Jump savesFewer = jit.branch8(CCallHelpers::NotEqual, Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(savedPreservedRegisterBit | savedR15Bit));
+    jit.storePtr(X86Registers::r15, Address(fp, -static_cast<int>(sizeof(CPURegister))));
+    jit.storePtr(SavedFrame::preservedRegister, Address(fp, -2 * static_cast<int>(sizeof(CPURegister))));
+    jit.load64(Address(frame.saved, SavedFrame::offsetOfPreservedRegister()), SavedFrame::preservedRegister);
+    Label hasSavedRegisters = jit.label();
+    jit.addOutOfLinePart([savesFewer, hasSavedRegisters, frame, bits](StubAssembler& jit) {
+        savesFewer.link(&jit);
+        jit.load8(Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), bits);
+        emitMoveRegistersSavedInFrame(jit, bits, 0, RegistersSavedInFrame::AreStored);
+        Jump doesNotSavePreservedRegister = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
+        jit.load64(Address(frame.saved, SavedFrame::offsetOfPreservedRegister()), SavedFrame::preservedRegister);
+        doesNotSavePreservedRegister.link(&jit);
+        jit.jump().linkTo(hasSavedRegisters, &jit);
+    });
+#else
     jit.load8(Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), bits);
     emitMoveRegistersSavedInFrame(jit, bits, 0, RegistersSavedInFrame::AreStored);
-#if CPU(X86_64)
-    Jump doesNotSavePreservedRegister = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
-    jit.load64(Address(frame.saved, SavedFrame::offsetOfPreservedRegister()), SavedFrame::preservedRegister);
-    doesNotSavePreservedRegister.link(&jit);
 #endif
 
     const Address version(frame.saved, SavedFrame::offsetOfVersion());
+    const Address liveSlotMapOffsetPlusOne(frame.saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne());
+#if CPU(X86_64)
+    Jump collectorMayRead = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
+    jit.store32(TrustedImm32(0), liveSlotMapOffsetPlusOne);
+    Label isOnStack = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        collectorMayRead.link(&jit);
+        jit.add32(TrustedImm32(1), version);
+        jit.store32(TrustedImm32(0), liveSlotMapOffsetPlusOne);
+        jit.add32(TrustedImm32(1), version);
+        jit.jump().linkTo(isOnStack, &jit);
+    });
+#else
     jit.add32(TrustedImm32(1), version);
     jit.storeFence();
-    jit.store32(TrustedImm32(0), Address(frame.saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+    jit.store32(TrustedImm32(0), liveSlotMapOffsetPlusOne);
     jit.storeFence();
     jit.add32(TrustedImm32(1), version);
+#endif
 
     emitContinueAtSite(jit, frame);
 

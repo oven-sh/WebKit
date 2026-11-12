@@ -14,6 +14,7 @@ namespace JSC { namespace AOT {
 
 constexpr StubKey copyObjectFrontEnd() { return StubKey(StubFamily::CopyObjectFrontEnd); }
 constexpr StubKey assignToNewObjectFrontEnd() { return StubKey(StubFamily::AssignToNewObjectFrontEnd); }
+constexpr StubKey copyAllDataProperties() { return StubKey(StubFamily::CopyAllDataProperties); }
 
 static_assert(exists(copyObjectFrontEnd()) && descriptorOf(StubFamily::CopyObjectFrontEnd).linkage == StubLinkage::CalledByCode);
 static_assert(exists(assignToNewObjectFrontEnd()) && descriptorOf(StubFamily::AssignToNewObjectFrontEnd).linkage == StubLinkage::CalledByCode);

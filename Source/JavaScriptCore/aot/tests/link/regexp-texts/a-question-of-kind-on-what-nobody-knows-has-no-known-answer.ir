@@ -1,5 +1,5 @@
 # The list follows from the program alone. A built-in that asks the kind or the identity of what it is handed converts nothing, so nothing throws: handed what nobody knows it would give a known answer and cut one arm of the branch behind it. It answers what nobody knows, and both arms are gone through.
-# const seven = [7].flat()[0]; new RegExp((Number.isInteger(seven) ? "whole" : "broken").toUpperCase() + "q");   ([7].flat()[0]: flat is not entered: nobody knows what it gives.)
+# const seven = [7].toSpliced()[0]; new RegExp((Number.isInteger(seven) ? "whole" : "broken").toUpperCase() + "q");   ([7].toSpliced()[0]: toSpliced is not entered: nobody knows what it gives.)
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /BROKENq/
 # CHECK: text /WHOLEq/
@@ -11,8 +11,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v0 = Builtin builtin=NumberIsInteger
     v1 = Integer integer=7
     v2 = NewArray v1 contents=anything
-    v3 = PropGet v2 key="flat"
-    v4 = Call v3, v2 calleeKey="flat"
+    v3 = PropGet v2 key="toSpliced"
+    v4 = Call v3, v2 calleeKey="toSpliced"
     v5 = Integer
     v6 = ElemGet v4, v5
     v7 = Call v0, -, v6

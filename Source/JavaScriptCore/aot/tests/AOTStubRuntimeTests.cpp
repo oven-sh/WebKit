@@ -39,6 +39,7 @@
 #include "MarkedBlockCage.h"
 #include "MarkedSpace.h"
 #include "NativeExecutable.h"
+#include "NumericStrings.h"
 #include "PureNaN.h"
 #include <array>
 #include <bit>
@@ -237,16 +238,16 @@ static void checkOrderLeftToOperation(StubRunner& runner, StubKey key, uint64_t 
     }
 }
 
-static int64_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES findNoOrderInPlace(JSCell*, JSCell*)
+static int64_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES cannotCompare(JSCell*, JSCell*)
 {
-    return noOrderOfStringsInPlace;
+    return cannotCompareInline;
 }
 
 static void testBinaryOperationStringOrder()
 {
     StubRunner runner;
     runner.install(Entry::operationAOTCompareStringImpls, operationAOTCompareStringImpls);
-    runner.install(Entry::operationAOTCompareStringsInPlace, findNoOrderInPlace);
+    runner.install(Entry::operationAOTCompareStringsInPlace, cannotCompare);
 
     FakeString flat("order"_s, CharacterWidth::Is8Bit);
     FakeString wideFlat("order"_s, CharacterWidth::Is16Bit);
@@ -265,6 +266,50 @@ static void testBinaryOperationStringOrder()
             checkOrderLeftToOperation(runner, key, fraction, wideFlat.address());
         }
         runner.countCallsOf(orderOperator.entry);
+    }
+}
+
+static void testBinaryOperationBigIntOrder()
+{
+    StubRunner runner;
+    const FakeBigInt ascending[] = { FakeBigInt({ 7 }, true), FakeBigInt({ }), FakeBigInt({ 1 }), FakeBigInt({ 7 }), FakeBigInt({ std::numeric_limits<JSBigInt::Digit>::max() }), FakeBigInt({ 0, 1 }), FakeBigInt({ 0, 3 }), FakeBigInt({ 5, 0, 1 }) };
+    const FakeBigInt otherZero({ });
+    const FakeBigInt otherSeven({ 7 });
+    const FakeBigInt negativeEight({ 8 }, true);
+    const FakeBigInt otherHighDigit({ 1, 3 });
+    const uint64_t seven = static_cast<uint64_t>(JSValue::encode(jsNumber(7)));
+    for (const OrderOperator& orderOperator : orderOperators) {
+        for (bool isAfterInt32Check : { false, true }) {
+            StubKey key = binaryOperation(orderOperator.operation, isAfterInt32Check);
+            auto check = [&](const FakeBigInt& left, const FakeBigInt& right, std::strong_ordering order) {
+                StubRun run = runner.run(key, { left.address(), right.address() });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(orderOperator.holds(order)));
+            };
+            for (size_t left = 0; left < std::size(ascending); ++left) {
+                for (size_t right = 0; right < std::size(ascending); ++right) {
+                    if (left != right)
+                        check(ascending[left], ascending[right], left <=> right);
+                }
+            }
+            check(ascending[1], otherZero, std::strong_ordering::equal);
+            check(ascending[3], otherSeven, std::strong_ordering::equal);
+            auto checkBesideSeven = [&](const FakeBigInt& bigInt, std::strong_ordering order) {
+                StubRun run = runner.run(key, { bigInt.address(), seven });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(orderOperator.holds(order)));
+                run = runner.run(key, { seven, bigInt.address() });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(orderOperator.holds(order == std::strong_ordering::less ? std::strong_ordering::greater : order)));
+            };
+            checkBesideSeven(ascending[0], std::strong_ordering::less);
+            checkBesideSeven(ascending[1], std::strong_ordering::less);
+            checkBesideSeven(ascending[2], std::strong_ordering::less);
+            checkBesideSeven(ascending[3], std::strong_ordering::equal);
+            runner.recordCallsOf(orderOperator.entry);
+            checkOrderLeftToOperation(runner, key, ascending[0].address(), negativeEight.address());
+            checkOrderLeftToOperation(runner, key, ascending[6].address(), otherHighDigit.address());
+            checkOrderLeftToOperation(runner, key, ascending[4].address(), seven);
+            checkOrderLeftToOperation(runner, key, ascending[5].address(), seven);
+            runner.countCallsOf(orderOperator.entry);
+        }
     }
 }
 
@@ -289,7 +334,7 @@ static bool isNumberInCanonicalFormWithSign(uint64_t result, double expected)
 
 static void checkLeftToOperation(StubRunner& runner, StubKey key, Entry entry, std::initializer_list<uint64_t> operands)
 {
-    constexpr uint64_t resultOfOperation = 0x7777;
+    const uint64_t resultOfOperation = signatureOf(key).result == StubResult::Flags ? 1 : 0x7777;
     runner.recordCallsOf(entry);
     runner.setResultOfRecordedOperation(resultOfOperation);
     StubRun run = runner.run(key, operands);
@@ -398,6 +443,8 @@ static void testBinaryOperationsOnNumbers()
     StubRunner runner;
     runner.install(Entry::operationAOTFmod, operationAOTFmod);
     FakeString string("7"_s, CharacterWidth::Is8Bit);
+    Vector<NumericStrings::StringWithJSString> integersWithoutStrings(NumericStrings::cacheSize);
+    runner.instance().realm.smallIntStrings = integersWithoutStrings.span().data();
 
     for (const BinaryCase& binaryCase : binaryCasesOnNumbers) {
         AOT_TEST_CHECK(binaryCase.operation != BinaryOperator::Mod || std::isnan(binaryCase.expected) || std::fmod(binaryCase.left, binaryCase.right) == binaryCase.expected);
@@ -850,7 +897,7 @@ static void testTypedArraysWithLength()
     constexpr uint32_t type = TypeFloat32;
     constexpr uint32_t typeWithoutRecord = TypeInt8;
     constexpr unsigned elementSize = sizeof(float);
-    constexpr size_t maxBytesFromStub = 256;
+    constexpr size_t maxBytesFromStub = 1024;
     constexpr size_t numberOfSizeSteps = maxBytesFromStub / MarkedSpace::sizeStep + 1;
     constexpr uint8_t untouchedByte = 0xab;
     static_assert(sizeof(JSArrayBufferView) < sizeof(FakeCell) && !(sizeof(JSArrayBufferView) % sizeof(uint64_t)) && !(JSArrayBufferView::offsetOfMode() % sizeof(uint64_t)));
@@ -870,7 +917,7 @@ static void testTypedArraysWithLength()
         return cell.words[offset / sizeof(uint64_t)];
     };
 
-    for (uint32_t length : { 1u, 3u, 5u, 64u }) {
+    for (auto [length, isWholeNumber] : { std::pair { 1u, false }, { 3u, false }, { 5u, false }, { 64u, false }, { 256u, false }, { 1u, true }, { 4u, true }, { 5u, true }, { 6u, true }, { 9u, true }, { 255u, true }, { 256u, true } }) {
         const size_t bytes = JSArrayBufferView::sizeOf(length, elementSize);
         const size_t sizeOfStorageCell = MarkedSpace::sizeClassToIndex(bytes) * MarkedSpace::sizeStep;
         FakeAllocator storages { static_cast<uint32_t>(sizeOfStorageCell) };
@@ -880,15 +927,15 @@ static void testTypedArraysWithLength()
         views.makeRoomAt(view.address(), sizeof(JSArrayBufferView));
         allocatorOfStorage(bytes) = &storages;
 
-        StubRun run = runner.run(newTypedArray(), { type, std::bit_cast<uint64_t>(static_cast<double>(length)) });
+        StubRun run = isWholeNumber ? runner.run(newTypedArray(LengthOfTypedArray::WholeNumber), { type, length }) : runner.run(newTypedArray(LengthOfTypedArray::Number), { type, std::bit_cast<uint64_t>(static_cast<double>(length)) });
         AOT_TEST_CHECK(!run.calledOperation && run.result == view.address() && !storages.hasRoom() && !views.hasRoom());
         AOT_TEST_CHECK(view.words[0] == header && !wordOf(view, JSObject::butterflyOffset()));
         AOT_TEST_CHECK(wordOf(view, JSArrayBufferView::offsetOfVector()) == room.address());
         AOT_TEST_CHECK(wordOf(view, JSArrayBufferView::offsetOfLength()) == length && !wordOf(view, JSArrayBufferView::offsetOfByteOffset()));
         AOT_TEST_CHECK(static_cast<uint8_t>(wordOf(view, JSArrayBufferView::offsetOfMode())) == FastTypedArray);
         AOT_TEST_CHECK(wordOf(view, sizeof(JSArrayBufferView)) == FakeCell::untouched);
-        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).first(bytes), [](uint8_t byte) { return !byte; }));
-        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).subspan(bytes), [](uint8_t byte) { return byte == untouchedByte; }));
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).first(sizeOfStorageCell), [](uint8_t byte) { return !byte; }));
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).subspan(sizeOfStorageCell), [](uint8_t byte) { return byte == untouchedByte; }));
         allocatorOfStorage(bytes) = nullptr;
     }
 
@@ -904,15 +951,23 @@ static void testTypedArraysWithLength()
     auto isLeftToOperation = [&](uint32_t requestedType, double length) {
         FakeCell fromOperation;
         runner.setResultOfRecordedOperation(fromOperation.address());
-        StubRun run = runner.run(newTypedArray(), { requestedType, std::bit_cast<uint64_t>(length) });
+        StubRun run = runner.run(newTypedArray(LengthOfTypedArray::Number), { requestedType, std::bit_cast<uint64_t>(length) });
         return run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == requestedType && run.recordedArguments[1] == std::bit_cast<uint64_t>(length) && run.result == fromOperation.address() && fromOperation.isUntouched();
+    };
+    auto leavesIntegerToOperation = [&](uint32_t requestedType, int32_t length) {
+        FakeCell fromOperation;
+        runner.setResultOfRecordedOperation(fromOperation.address());
+        StubRun run = runner.run(newTypedArray(LengthOfTypedArray::WholeNumber), { requestedType, static_cast<uint32_t>(length) });
+        return run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == requestedType && run.recordedArguments[1] == std::bit_cast<uint64_t>(static_cast<double>(length)) && run.result == fromOperation.address() && fromOperation.isUntouched();
     };
     for (size_t bytes = MarkedSpace::sizeStep; bytes <= maxBytesFromStub; bytes += MarkedSpace::sizeStep)
         allocatorOfStorage(bytes) = &storages;
     makeRoom();
 
     constexpr double infinity = std::numeric_limits<double>::infinity();
-    for (double length : { 0.0, -0.0, -1.0, 0.5, 1.5, 65.0, 257.0, 4294967297.0, -4294967295.0, 1e300, infinity, -infinity, PNaN, -PNaN })
+    for (int32_t length : { 0, -1, 257, 1001, 1 << 30, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() })
+        AOT_TEST_CHECK(leavesIntegerToOperation(type, length) && tookNothing());
+    for (double length : { 0.0, -0.0, -1.0, 0.5, 1.5, 257.0, 1001.0, 4294967297.0, -4294967295.0, 1e300, infinity, -infinity, PNaN, -PNaN })
         AOT_TEST_CHECK(isLeftToOperation(type, length) && tookNothing());
     AOT_TEST_CHECK(isLeftToOperation(typeWithoutRecord, 1) && tookNothing());
 
@@ -938,7 +993,7 @@ struct ObjectWithKeyOrder {
     explicit ObjectWithKeyOrder(StubRunner& runner)
         : runner(runner)
         , structure(reinterpret_cast<uint8_t*>(runner.instance().prefix().structureIDBase) + structureID)
-        , runs(std::make_unique<KeyOrderRun[]>(numberOfKeyOrderRuns))
+        , runs(std::make_unique<KeyOrderRun[]>(sizeOfKeyOrderRunTable))
     {
         auto offsetInTables = [&](const void* address) {
             return static_cast<uint32_t>(static_cast<const uint8_t*>(address) - reinterpret_cast<const uint8_t*>(this));
@@ -975,7 +1030,7 @@ struct ObjectWithKeyOrder {
         transitions[place] = { wordsBefore, key, orderAndCountAfter };
     }
     void forgetTransitions() { transitions.fill({ }); }
-    void forgetRuns() { std::fill_n(runs.get(), numberOfKeyOrderRuns, KeyOrderRun { }); }
+    void forgetRuns() { std::fill_n(runs.get(), sizeOfKeyOrderRunTable, KeyOrderRun { }); }
 
     bool create(uint32_t orderWordBefore, uint64_t key)
     {
@@ -1029,6 +1084,58 @@ static void testCreatedFieldsInOrdersOfImage()
     AOT_TEST_CHECK(object.create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[0]) && object.orderWord() == (orderWordOf(0, 1) | orderWordHasFieldOutsideSlot));
     object.forgetTransitions();
     object.forgetRuns();
+
+    uint16_t& numberInStructure = object.inStructure<uint16_t>(CompiledStructure::offsetOfNumberOfExtraKeys());
+    uint32_t& bits = object.inStructure<uint32_t>(Structure::bitFieldOffset());
+    for (uint32_t flags : { orderWordHasExtraProperties, orderWordHasExtraProperties | orderWordHasFieldOutsideSlot }) {
+        for (uint16_t number : { static_cast<uint16_t>(1), CompiledStructure::unknownNumberOfExtraKeys }) {
+            numberInStructure = number;
+            AOT_TEST_CHECK(!object.create(orderWordOf(0, 0) | flags, slotKeys[0]));
+        }
+        numberInStructure = 0;
+        AOT_TEST_CHECK(object.create(orderWordOf(0, 0) | flags, slotKeys[0]) && object.orderWord() == (orderWordOf(0, 1) | flags));
+        AOT_TEST_CHECK(!object.create(orderWordOf(0, 0) | flags, slotKeys[1]));
+        object.forgetRuns();
+        bits |= Structure::s_mayBePrototypeBits;
+        AOT_TEST_CHECK(!object.create(orderWordOf(0, 0) | flags, slotKeys[0]));
+        bits &= ~Structure::s_mayBePrototypeBits;
+    }
+    numberInStructure = CompiledStructure::unknownNumberOfExtraKeys;
+}
+
+static void testLatestRunsOfCreatedFields()
+{
+    constexpr uint32_t slotKey = ObjectWithKeyOrder::slotKeys[1];
+    constexpr uint32_t shapeWord = shapeWordOf(ObjectWithKeyOrder::shape);
+    StubRunner runner;
+    ObjectWithKeyOrder object(runner);
+    auto latest = [&]() -> const KeyOrderRun& {
+        return object.runs[indexOfLatestRun(shapeWord, slotKey)];
+    };
+    auto wordsBefore = [](uint32_t orderWord) {
+        return static_cast<uint64_t>(shapeWord) << 32 | orderWord;
+    };
+
+    for (uint32_t order : { 2, 3 })
+        object.publish(orderWordOf(order, 1), slotKey, orderWordOf(order, 2));
+    AOT_TEST_CHECK(object.create(orderWordOf(2, 1), slotKey) && object.create(orderWordOf(3, 1), slotKey));
+    object.forgetTransitions();
+    for (unsigned round = 0; round < 3; ++round) {
+        for (uint32_t order : { 2, 2, 3 }) {
+            AOT_TEST_CHECK(object.create(orderWordOf(order, 1), slotKey) && object.orderWord() == orderWordOf(order, 2));
+            AOT_TEST_CHECK(latest().orderAndShapeWordsBefore == wordsBefore(orderWordOf(order, 1)) && latest().slotKeys == slotKey && latest().orderAndCountAfter == orderWordOf(order, 2));
+            AOT_TEST_CHECK(!object.create(orderWordOf(order, 1), ObjectWithKeyOrder::slotKeys[0]) && !object.create(orderWordOf(order, 2), slotKey));
+        }
+    }
+
+    KeyOrderRun& run = object.runs[indexOfLatestRun(shapeWord, slotKey)];
+    object.forgetRuns();
+    run = { wordsBefore(orderWordOf(2, 1)), slotKey, orderWordOf(5, 2), 0 };
+    AOT_TEST_CHECK(object.create(orderWordOf(2, 1), slotKey) && object.orderWord() == orderWordOf(5, 2));
+    run.slotKeys = ObjectWithKeyOrder::slotKeys[0];
+    AOT_TEST_CHECK(!object.create(orderWordOf(2, 1), slotKey));
+    run = { wordsBefore(orderWordOf(2, 1)) + (1ull << 32), slotKey, orderWordOf(5, 2), 0 };
+    AOT_TEST_CHECK(!object.create(orderWordOf(2, 1), slotKey));
 }
 
 struct ExtensionGivenByOperation {
@@ -1136,7 +1243,7 @@ static void testFirstFieldInExtensionOfObjectWithoutOne()
     withExtensionData.extensionData.granulesOfFirstExtensionLow = 0;
 
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
-    constexpr uint32_t budget = 81;
+    constexpr uint32_t budget = 82;
     begin();
     runner.setCountsInstructions(true);
     StubRun run = runner.run(store, { object.object.address(), value }, slotKey);
@@ -1688,12 +1795,12 @@ static void testCopiesOfPropertiesByChunks()
         place = nullptr;
 
         using Flag = CompiledStructure::Flag;
-        using HeldKeyOrder = CompiledStructure::HeldKeyOrder;
+        using FurtherFlag = CompiledStructure::FurtherFlag;
         constexpr uint8_t flagsOfOrdered = static_cast<uint8_t>(Flag::HasOnlyPlainSlots) | static_cast<uint8_t>(Flag::HasOutOfLineKeyOrder);
         auto& unordered = structures[0];
         auto& ordered = structures[1];
         uint8_t& flags = ordered.at<uint8_t>(CompiledStructure::offsetOfFlags());
-        uint8_t& heldKeyOrder = ordered.at<uint8_t>(CompiledStructure::offsetOfHeldKeyOrder());
+        uint8_t& furtherFlags = ordered.at<uint8_t>(CompiledStructure::offsetOfFurtherFlags());
         uint32_t& orderWordOfSource = source.at<uint32_t>(offsetOfOrderWord);
         flags = flagsOfOrdered;
         source.at<uint32_t>(JSCell::structureIDOffset()) = static_cast<uint32_t>(ordered.address());
@@ -1716,8 +1823,8 @@ static void testCopiesOfPropertiesByChunks()
             }
         }
         orderWordOfSource = outOfLineOrderWord;
-        AOT_TEST_CHECK(isCopiedOnlyWithout(heldKeyOrder, static_cast<uint8_t>(HeldKeyOrder::IsOfOneObject)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(heldKeyOrder, static_cast<uint8_t>(HeldKeyOrder::IsBesideExtraProperties)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderOfOneObject)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderWithExtraProperties)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(Flag::HasOnlyPlainSlots)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasExtraProperties))));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasOtherPrototype))));
@@ -1933,11 +2040,13 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/slim-closures-with-more-captures-than-registers"_s, ImageTests::whenExecutable<testSlimClosuresWithMoreCapturesThanRegisters> },
         { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
         { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },
+        { "stubs/latest-runs-of-created-fields"_s, ImageTests::whenExecutable<testLatestRunsOfCreatedFields> },
         { "stubs/growth-of-extensions"_s, ImageTests::whenExecutable<testGrowthOfExtensions> },
         { "stubs/first-field-in-the-extension-of-an-object-without-one"_s, ImageTests::whenExecutable<testFirstFieldInExtensionOfObjectWithoutOne> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
         { "stubs/created-fields-of-slots-known-to-the-caller"_s, ImageTests::whenExecutable<testCreatedFieldsOfSlotsKnownToCaller> },
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },
+        { "stubs/binary-operation-bigint-order"_s, ImageTests::whenExecutable<testBinaryOperationBigIntOrder> },
         { "stubs/binary-operations-on-numbers"_s, ImageTests::whenExecutable<testBinaryOperationsOnNumbers> },
         { "stubs/binary-operations-with-double"_s, ImageTests::whenExecutable<testBinaryOperationsWithDouble> },
         { "stubs/unary-operations"_s, ImageTests::whenExecutable<testUnaryOperations> },

@@ -12,6 +12,7 @@
 #include "AOTInliningAcrossFiles.h"
 #include "AOTOpcodeSets.h"
 #include "AOTRepresentationRules.h"
+#include "AOTWalkCountersOfLoops.h"
 #include "AOTWalkTextBuilders.h"
 #include <algorithm>
 #include <wtf/SetForScope.h>
@@ -188,6 +189,22 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
     m_state.clear();
 }
 
+static std::optional<Opcode> oppositeOfRelation(const Operation& test)
+{
+    if (!allRelations.contains(test.opcode) || test.form() != OperatorForm::Integers)
+        return std::nullopt;
+    switch (test.opcode) {
+    case Opcode::Less:
+        return Opcode::GreaterEq;
+    case Opcode::LessEq:
+        return Opcode::Greater;
+    case Opcode::Greater:
+        return Opcode::LessEq;
+    default:
+        return Opcode::Less;
+    }
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
 {
     switch (terminator.kind()) {
@@ -202,7 +219,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::leaveBlockAnotherWay(const BodyTermi
         return true;
     }
     case TerminatorKind::Branch: {
-        if (handTurnOverWhereLesserBoundIsReached(terminator))
+        if (handTurnOverWhereLesserBoundIsReached(terminator) || (m_normalizesLoopTests && (branchOnCounterRelation(terminator) || branchOnEndTest(terminator))))
             return true;
         if (!has(Mechanism::Folding))
             return false;
@@ -216,14 +233,132 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::leaveBlockAnotherWay(const BodyTermi
         }
         const Operation& made = m_code.at(condition.id());
         bool isLookedThrough = made.opcode == Opcode::LogicalNot || (made.opcode == Opcode::ToBoolean ? isBooleanType(m_code.at(made.valueOperand()).type) : conversionsOfForm.contains(made.opcode));
-        return isLookedThrough && branchOnTestBelowNegations(terminator);
+        return (isLookedThrough || oppositeOfRelation(made)) && branchOnTestBelowNegations(terminator);
     }
     case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
         return has(Mechanism::Folding) && endBlockWithSwitchOverShapes(terminator);
+    case TerminatorKind::SwitchString:
+        return has(Mechanism::Folding) && (endBlockWithSwitchOverShapes(terminator) || branchOnHoistedComparisons(terminator));
     default:
         return false;
     }
+}
+
+bool Walker::branchOnHoistedComparisons(const BodyTerminator& terminator)
+{
+    auto overStrings = terminator.as<TerminatorKind::SwitchString>();
+    if (!m_opensGuesses || !has(Mechanism::Guesses) || m_versionedLoops.isEmpty() || overStrings.strings().size() > mostTextsToldApart)
+        return false;
+    Reference subject = referenceOf(overStrings.subjectOperand());
+    if (!subject || !subject.isValue() || !isInvariantInSpecializedVersion(subject))
+        return false;
+    const BodyIndex& index = currentBodyIndex();
+    bool someProofIsRead = false;
+    index.forEachEdgeResult(terminator.block(), [&](const BodyEdgeResult& result) {
+        someProofIsRead |= !index.isUnused(result.parameter);
+    });
+    if (someProofIsRead || !tryHoistEntryTest())
+        return false;
+
+    count(StatisticID::InvariantStringSwitchesHoisted);
+    uint32_t caseIndex = 0;
+    for (StringID text : overStrings.strings()) {
+        Draft comparison(Opcode::ValueEqualsLiteral, m_origin);
+        chooseConservativeFields(comparison);
+        comparison.setOperand(0, subject);
+        comparison.setLiteral(text);
+        Reference isEqual;
+        {
+            SpecializedPreheaderScope preheaderScope(*this, true);
+            isEqual = build(WTF::move(comparison));
+        }
+        if (!isEqual || m_hasFailed)
+            return true;
+        BlockID equal = addBlock();
+        BlockID next = addBlock();
+        branch(isEqual, equal, next);
+        continueIn(equal);
+        EdgeToTargetOfBody toCase { terminator.block(), caseIndex++ };
+        endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, m_origin), singleElementSpan(toCase));
+        continueIn(next);
+    }
+    EdgeToTargetOfBody otherwise { terminator.block(), caseIndex };
+    endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, m_origin), singleElementSpan(otherwise));
+    return true;
+}
+
+bool Walker::branchOnCounterRelation(const BodyTerminator& terminator)
+{
+    BlockID inputHead = terminator.block();
+    size_t frameIndex = m_frames.size() - 1;
+    if (m_frames[frameIndex].blocks.isEmpty())
+        return false;
+    const InputBlock opened = m_frames[frameIndex].blocks[inputHead.index()];
+    if (!opened.head || !opened.hasEqualityTest || isUnreachable() || hasStringsInBuilders() || !has(Mechanism::Folding) || !has(Mechanism::UnboxedNumbers))
+        return false;
+    bool isProven = opened.counterStaysWithinBound;
+    std::optional<EqualityLoopTest> test = findEqualityLoopTest(*this, inputHead);
+    if (!test)
+        return false;
+    const BodyIndex& index = currentBodyIndex();
+    bool someProofIsRead = false;
+    index.forEachEdgeResult(inputHead, [&](const BodyEdgeResult& result) {
+        someProofIsRead |= !index.isUnused(result.parameter);
+    });
+    Reference condition = referenceOf(terminator.as<TerminatorKind::Branch>().conditionOperand());
+    Reference counter = referenceOf(index.block(inputHead).parameter(test->position));
+    Draft zero(Opcode::Integer, m_origin);
+    Reference bound = test->bound ? referenceOf(test->bound) : constant(WTF::move(zero));
+    auto isInteger = [&](Reference value) {
+        return value && value.isRecord() && m_types.at(typeOf(value)).isInteger();
+    };
+    if (someProofIsRead || !condition || !condition.isValue() || !isInteger(counter) || counter != Reference::value(m_code.at(opened.head).parameters()[test->position]) || !isInteger(bound))
+        return false;
+
+    if (!isProven && (!m_opensGuesses || !canRestartIteration()))
+        return false;
+
+    Reference relation = buildIntegerOperator(*this, test->countsUp ? Opcode::Less : Opcode::Greater, counter, bound, m_origin);
+    if (!relation || !relation.isValue() || isUnreachable() || m_code.isConstant(relation.id()) || m_code.at(relation.id()).form() != OperatorForm::Integers)
+        return false;
+    count(StatisticID::EqualityLoopTestsNormalized);
+    EdgeToTargetOfBody exit { inputHead, test->exitTarget };
+    EdgeToTargetOfBody stay { inputHead, 1 - test->exitTarget };
+    BlockID continuing = addBlock();
+    BlockID leaving = addBlock();
+    branch(relation, continuing, leaving, true);
+    continueIn(continuing);
+    Draft narrowing(Opcode::Narrowed, m_origin);
+    narrowing.setValueOperand(counter);
+    narrowing.setTestOperand(relation);
+    narrowing.setOperandIndex(OperandIndex::Less::left);
+    narrowing.setIsOnTakenEdge(true);
+    Reference narrowed = build(WTF::move(narrowing));
+    BlockID next = terminator.targets()[stay.targetIndex].block();
+    if (narrowed && narrowed.isValue() && narrowed != counter && !inputBlock(frameIndex, next).head && index.numberOfIncomingEdges(next) == 1 && !index.isLoopHead(next))
+        noteNarrowerName(next, counter, narrowed);
+    endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, m_origin), singleElementSpan(stay));
+    if (m_hasFailed)
+        return true;
+    continueIn(leaving);
+    if (isProven) {
+        if (checksBounds() && !isUnreachable())
+            checkThatValuesAreTheSame(condition, booleanOfUnit(!test->exitTarget), m_origin);
+    } else {
+        Reference isReached = buildIntegerOperator(*this, Opcode::StrictEq, counter, bound, m_origin);
+        if (!isReached || m_hasFailed || isUnreachable())
+            return true;
+        BlockID reached = addBlock();
+        BlockID passed = addBlock(BlockFrequency::Rare);
+        branch(isReached, reached, passed);
+        continueIn(passed);
+        if (!isUnreachable())
+            restartIteration();
+        continueIn(reached);
+        recordSpeculation();
+    }
+    endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, m_origin), singleElementSpan(exit));
+    return true;
 }
 
 bool Walker::branchOnTestBelowNegations(const BodyTerminator& terminator)
@@ -244,10 +379,18 @@ bool Walker::branchOnTestBelowNegations(const BodyTerminator& terminator)
             break;
         test = made.valueOperand();
     }
-    if (!hasPassedNegation || m_code.isConstant(test))
+    if (m_code.isConstant(test))
         return false;
 
     const BodyIndex& index = currentBodyIndex();
+    ValueID written = terminator.operand(0);
+    LoopID loop = index.loopOf(terminator.block());
+    BodyTarget leftTo = isNegated ? terminator.notTaken() : terminator.taken();
+    BodyTarget stayedIn = isNegated ? terminator.taken() : terminator.notTaken();
+    bool isFromCopy = !index.isParameter(written) && !allRelations.contains(index.opcodeOf(written)) && m_code.blockOf(test) == m_block;
+    std::optional<Opcode> relation = isFromCopy && loop && !index.isInLoop(leftTo.block(), loop) && index.isInLoop(stayedIn.block(), loop) ? oppositeOfRelation(m_code.at(test)) : std::nullopt;
+    if (!hasPassedNegation && !relation)
+        return false;
     bool someProofIsRead = false;
     index.forEachEdgeResult(terminator.block(), [&](const BodyEdgeResult& result) {
         someProofIsRead |= !index.isUnused(result.parameter);
@@ -255,8 +398,12 @@ bool Walker::branchOnTestBelowNegations(const BodyTerminator& terminator)
     if (someProofIsRead)
         return false;
 
+    Reference opposite = relation ? buildIntegerOperator(*this, *relation, Reference::value(m_code.at(test).operand(0)), Reference::value(m_code.at(test).operand(1)), m_origin) : Reference();
+    bool branchesOnOpposite = opposite && opposite.isValue() && !m_code.isConstant(opposite.id());
+    SetForScope negatedTest(m_negatedTest, branchesOnOpposite ? Reference::value(test) : Reference());
+    isNegated ^= branchesOnOpposite;
     TerminatorDraft branch(TerminatorKind::Branch, m_origin);
-    branch.setConditionOperand(Reference::value(test));
+    branch.setConditionOperand(branchesOnOpposite ? opposite : Reference::value(test));
     EdgeToTargetOfBody edges[] { { terminator.block(), isNegated ? 1u : 0u }, { terminator.block(), isNegated ? 0u : 1u } };
     endBlockLeadingTo(WTF::move(branch), edges);
     return true;

@@ -58,6 +58,7 @@ aot/codegen/AOTArrayBuiltinEmitterCopies.cpp
 aot/codegen/AOTArrayIntrinsicEmitter.cpp
 aot/codegen/AOTArrayStorageBuiltinEmitter.cpp
 aot/codegen/AOTBarrierEmitter.cpp
+aot/codegen/AOTBigIntValues.cpp
 aot/codegen/AOTBindingEmitter.cpp
 aot/codegen/AOTCallEmitter.cpp
 aot/codegen/AOTCallEmitterDirect.cpp
@@ -72,6 +73,9 @@ aot/codegen/AOTCodeDescription.cpp
 aot/codegen/AOTCodeGenerator.cpp
 aot/codegen/AOTCodeGeneratorDispatch.cpp
 aot/codegen/AOTCodeGeneratorEmitters.cpp
+aot/codegen/AOTCodeGeneratorInterleaving.cpp
+aot/codegen/AOTCodeGeneratorRowLoops.cpp
+aot/codegen/AOTCodeGeneratorVectors.cpp
 aot/codegen/AOTCollectionIntrinsicEmitter.cpp
 aot/codegen/AOTConstantEmitter.cpp
 aot/codegen/AOTConstantEmitterClosures.cpp
@@ -111,6 +115,7 @@ aot/codegen/AOTPrimitiveEmitter.cpp
 aot/codegen/AOTPrivateAccessEmitter.cpp
 aot/codegen/AOTPromiseBuiltinEmitter.cpp
 aot/codegen/AOTPromiseIntrinsicEmitter.cpp
+aot/codegen/AOTRegExpMatchEmitter.cpp
 aot/codegen/AOTRegExpMatchLiteral.cpp
 aot/codegen/AOTRepresentationEmitter.cpp
 aot/codegen/AOTResolvedCallEmitter.cpp
@@ -158,6 +163,7 @@ aot/codegen/AOTTruthinessEmitter.cpp
 aot/codegen/AOTTypeTestEmitter.cpp
 aot/codegen/AOTTypeTestEmitterCells.cpp
 aot/codegen/AOTTypeTestPlan.cpp
+aot/codegen/AOTVectorOutput.cpp
 aot/driver/AOTCodeReports.cpp
 aot/driver/AOTCompileStage.cpp
 aot/driver/AOTDriver.cpp
@@ -184,6 +190,7 @@ aot/facts/AOTLinkFlow.cpp
 aot/facts/AOTLinkKeyOrders.cpp
 aot/facts/AOTLinkKnownEffects.cpp
 aot/facts/AOTLinkLayouts.cpp
+aot/facts/AOTLinkListsOfFields.cpp
 aot/facts/AOTLinkOperators.cpp
 aot/facts/AOTLinkPrototypes.cpp
 aot/facts/AOTLinkReach.cpp
@@ -195,6 +202,7 @@ aot/facts/AOTLocalesPassedAtCalls.cpp
 aot/facts/AOTScan.cpp
 aot/facts/AOTScanStrings.cpp
 aot/facts/AOTTestRunsOfProgram.cpp
+aot/facts/AOTTypeOrigins.cpp
 aot/facts/AOTUnionTaggedMakers.cpp
 aot/image/AOTBodyFactsForTables.cpp
 aot/image/AOTCallSiteTable.cpp
@@ -215,6 +223,7 @@ aot/image/AOTImage.cpp
 aot/image/AOTImageBuilder.cpp
 aot/image/AOTImageLoading.cpp
 aot/image/AOTImageText.cpp
+aot/image/AOTLatin1Test.cpp
 aot/image/AOTLayoutTables.cpp
 aot/image/AOTMentions.cpp
 aot/image/AOTMethodTable.cpp
@@ -225,8 +234,11 @@ aot/image/AOTNumberFunctions.cpp
 aot/image/AOTNumbering.cpp
 aot/image/AOTPrefixCode.cpp
 aot/image/AOTProgramTablesDriver.cpp
+aot/image/AOTRegExpBitParallel.cpp
 aot/image/AOTRegExpCompiler.cpp
 aot/image/AOTRegExpInProcessLoader.cpp
+aot/image/AOTRegExpMatchPlan.cpp
+aot/image/AOTRegExpMatcher.cpp
 aot/image/AOTRegExpRequests.cpp
 aot/image/AOTRegExpSection.cpp
 aot/image/AOTRegExpSummary.cpp
@@ -376,6 +388,7 @@ aot/plan/AOTEnvironmentsHandedBack.cpp
 aot/plan/AOTFieldsSlotForms.cpp
 aot/plan/AOTFieldsStorage.cpp
 aot/plan/AOTFunctionKinds.cpp
+aot/plan/AOTHeldRegExps.cpp
 aot/plan/AOTKeyOrders.cpp
 aot/plan/AOTModuleEvaluationPlan.cpp
 aot/plan/AOTNamePlan.cpp
@@ -418,6 +431,7 @@ aot/runtime/AOTJobs.cpp
 aot/runtime/AOTMembersLeftOut.cpp
 aot/runtime/AOTModuleEvaluation.cpp
 aot/runtime/AOTModuleGraph.cpp
+aot/runtime/AOTModuleInstances.cpp
 aot/runtime/AOTModuleLinking.cpp
 aot/runtime/AOTModuleTable.cpp
 aot/runtime/AOTModules.cpp
@@ -433,6 +447,7 @@ aot/runtime/AOTPropertyCachesOperations.cpp
 aot/runtime/AOTPropertyCachesStringKeys.cpp
 aot/runtime/AOTPropertyOperations.cpp
 aot/runtime/AOTPropertyRunOperations.cpp
+aot/runtime/AOTReactionChain.cpp
 aot/runtime/AOTRegExpOperations.cpp
 aot/runtime/AOTRemovableFeature.cpp
 aot/runtime/AOTRuntimeCheckFailure.cpp
@@ -464,6 +479,7 @@ aot/stubs/AOTStubsBoxedCallsOfLanguage.cpp
 aot/stubs/AOTStubsBoxedCallsOfStrings.cpp
 aot/stubs/AOTStubsCompiledMethods.cpp
 aot/stubs/AOTStubsPropertyGettersAtSites.cpp
+aot/stubs/AOTStubsReactionChains.cpp
 aot/support/AOTBuildContext.cpp
 aot/support/AOTCompileOptions.cpp
 aot/support/AOTCurrentWork.cpp
@@ -521,6 +537,7 @@ aot/walk/AOTWalkFolding.cpp
 aot/walk/AOTWalkForIn.cpp
 aot/walk/AOTWalkForInKeys.cpp
 aot/walk/AOTWalkFrontsOfLoops.cpp
+aot/walk/AOTWalkFusedChains.cpp
 aot/walk/AOTWalkGeneratorStepsByHand.cpp
 aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp
@@ -530,6 +547,7 @@ aot/walk/AOTWalkInlining.cpp
 aot/walk/AOTWalkInt32Promises.cpp
 aot/walk/AOTWalkIteration.cpp
 aot/walk/AOTWalkKeyOrdersAccessors.cpp
+aot/walk/AOTWalkKeyedAddresses.cpp
 aot/walk/AOTWalkKnownAnswers.cpp
 aot/walk/AOTWalkKnownEffects.cpp
 aot/walk/AOTWalkKnownElements.cpp
@@ -545,6 +563,7 @@ aot/walk/AOTWalkLoopInvariants.cpp
 aot/walk/AOTWalkLoops.cpp
 aot/walk/AOTWalkLoopsBuiltTwice.cpp
 aot/walk/AOTWalkLoopsOverGenerators.cpp
+aot/walk/AOTWalkMergedObjects.cpp
 aot/walk/AOTWalkNarrowingOfBranches.cpp
 aot/walk/AOTWalkNarrowingOfGuesses.cpp
 aot/walk/AOTWalkNotes.cpp
@@ -562,11 +581,14 @@ aot/walk/AOTWalkNumberSwitches.cpp
 aot/walk/AOTWalkNumbers.cpp
 aot/walk/AOTWalkPositionsInTexts.cpp
 aot/walk/AOTWalkPromotedEnvironments.cpp
+aot/walk/AOTWalkReactionChains.cpp
 aot/walk/AOTWalkRegExps.cpp
 aot/walk/AOTWalkReplacements.cpp
 aot/walk/AOTWalkResolvedCalls.cpp
 aot/walk/AOTWalkResultsInParts.cpp
+aot/walk/AOTWalkScalarReplacement.cpp
 aot/walk/AOTWalkSlicesInSight.cpp
+aot/walk/AOTWalkSortKeys.cpp
 aot/walk/AOTWalkStableBindings.cpp
 aot/walk/AOTWalkStackTests.cpp
 aot/walk/AOTWalkState.cpp
@@ -613,4 +635,5 @@ aot/walk/AOTWalkUnionSlots.cpp
 aot/walk/AOTWalkUnionSwitches.cpp
 aot/walk/AOTWalkUnionTableCalls.cpp
 aot/walk/AOTWalkUnionTaggedMakers.cpp
+aot/walk/AOTWalkWideProducts.cpp
 aot/walk/AOTWalkWrittenDescriptors.cpp

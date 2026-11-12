@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTClosureWord.h"
+#include "AOTCompactTable.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTConvention.h"
 #include "AOTImageTestSupport.h"
@@ -26,6 +27,7 @@
 #include "CallFrame.h"
 #include "JITOperationList.h"
 #include "JITOperationValidation.h"
+#include "JSBigInt.h"
 #include "JSCJSValueInlines.h"
 #include "LinkBuffer.h"
 #include "LocalAllocator.h"
@@ -72,6 +74,16 @@ struct alignas(16) FakeObject {
     }
 
     std::array<uint8_t, size> bytes { };
+};
+
+struct FakeBigInt : FakeObject<JSBigInt::offsetOfData() + 4 * sizeof(JSBigInt::Digit)> {
+    explicit FakeBigInt(std::initializer_list<JSBigInt::Digit> digits, bool isNegative = false)
+    {
+        setHeader(0, HeapBigIntType);
+        at<uint8_t>(JSCell::typeInfoFlagsOffset()) = isNegative ? TypeInfoPerCellBit : 0;
+        at<uint32_t>(JSBigInt::offsetOfLength()) = digits.size();
+        std::ranges::copy(digits, &at<JSBigInt::Digit>(JSBigInt::offsetOfData()));
+    }
 };
 
 struct FakeAllocator : FakeObject<sizeof(LocalAllocator)> {
@@ -562,6 +574,7 @@ inline StubRunner::StubRunner(const StubOptions& options, std::span<const StubKe
     instance.numberTag = JSValue::NumberTag;
     instance.notCellMask = JSValue::NotCellMask;
     std::ranges::copy(WTF::intHashSecrets, instance.numbers.hashSecrets);
+    instance.numbers.keyMultiplierOfTables = CompactTable::keyMultiplier;
     instance.propertyCaches.absenceFilters = m_environment->absenceFilters.data();
     instance.propertyCaches.missesOfPairs = m_environment->missesOfPairs.data();
     instance.propertyCaches.accessTable.publish(*std::bit_cast<AccessTable*>(roundUpToMultipleOf<AccessTable::alignment>(std::bit_cast<uintptr_t>(m_environment->roomForAccessTable.data()))));

@@ -146,15 +146,16 @@ private:
 
 ALWAYS_INLINE UniquedStringImpl* ProgramIdentifiers::uid(uint32_t number)
 {
-    RELEASE_ASSERT(number < m_count);
+    if (number < m_count) [[likely]] {
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (StringImpl* atom = m_text.tryGetLazyHeader(number)) [[likely]]
-        return static_cast<UniquedStringImpl*>(atom);
+        if (StringImpl* atom = m_text.tryGetLazyHeader(number)) [[likely]]
+            return static_cast<UniquedStringImpl*>(atom);
 #else
-    UniquedStringImpl* atom = m_atoms + number;
-    if (atom->length()) [[likely]]
-        return atom;
+        UniquedStringImpl* atom = m_atoms + number;
+        if (atom->length()) [[likely]]
+            return atom;
 #endif
+    }
     return uidSlowCase(number);
 }
 

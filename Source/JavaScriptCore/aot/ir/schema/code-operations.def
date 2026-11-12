@@ -1,11 +1,13 @@
 family Cast Placed..Placed
-engine operation Narrowed (value: Convertible/returns, test?: Convertible/inspects, operandIndex: UInt32, caseIndex?: UInt32) [| engine isOnTakenEdge narrowsHolderOfOperand narrowsOtherResultOfOperand narrowsTermOfOperand] -> natural(same(value)) ; none ; passThrough = NarrowerType ; form = Open
+engine operation Narrowed (value: Convertible/returns, test?: Convertible/inspects, operandIndex: UInt32, caseIndex?: UInt32) [| engine isOnTakenEdge narrowsHolderOfOperand narrowsOtherResultOfOperand narrowsTermOfOperand narrowsWithCounter] -> natural(same(value)) ; none ; passThrough = NarrowerType ; form = Open
 
 enum ProofSource { | engine EntryParameter ResultOfCall Field Variable Capture SlotOfScope Contents ResultOfOtherCall OtherOperation Test RememberedFact HoistedCall Lifetime }
 engine operation CheckProof (value: Convertible/inspects, checkedType: Type, typeWithoutProof: Type, source: ProofSource) [| engine isLeftToTestBehind goesWithItsValue] -> none ; none ; form = Open
 
 family Hint Placed..Placed
 engine operation EndCellLifetime (cell: Convertible/inspects) -> none ; writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements) ; form = Open
+engine operation ReleaseArray (array: Convertible/inspects) -> none ; reads(ArrayStorage, RuntimeState) writes(AllocatorState) ; form = Open
+engine operation ReleaseList (list: Any/inspects+writesContents) [| engine isCopy] -> none ; reads(ArrayStorage, RuntimeState) writes(AllocatorState, ArrayStorage, Elements[Array], ArrayLengths, LoweredArrayLengths) ; form = Open
 engine operation GuessFailsUnasked () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open
 engine operation BeginEffectsCheck () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open
 engine operation CheckIterationRestart (beginning: Convertible/inspects) -> none ; writes(ExternalState) ; form = Open

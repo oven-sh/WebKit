@@ -1,0 +1,74 @@
+# class C { static MAX = 1000; static MIN = 0; }  function count(n: number) { let s = 0; for (let i = 0; i < n; i++) s += ++C.MIN; return s; }
+# A static field that a loop counts up where it lies is tested for int32: as any whole number it would go through a double in each turn.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: testedType=int|whole
+# CHECK: GetStaticFieldOrAbsent
+# CHECK-NOT: testedType=int|whole
+# CHECK: PutStaticField
+
+layout L0 kind=Instance name="C" module=m0 constructor=f2 staticFields=[{key="MAX" variable=g2}, {key="MIN" variable=g3}]
+variable g0 name="C" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=anything} owner=L0
+variable g3 module=m0 declared={type=anything} owner=L0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g1
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=function flags=[IsFromCompiler]}
+    v5 = CallDirect v4 function=f3
+    v6 = Convert v3 declared={type=f2 flags=[IsFromCompiler]}
+    PutModuleVariable v6 variable=g0
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = NewClosure function=f1
+    v11 = Call v9, -, v10
+    Return v11
+}
+function f1 name="count" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="C"
+    v11 = PropGet v10 key="MIN"
+    v12 = Increment v11
+    PropSet v10, v12 key="MIN"
+    v14 = Convert v12 declared={type=number}
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=number}
+    v17 = Increment v6
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b1(v16, v18)
+  b3():
+    Return v5
+}
+function f2 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    Return v3
+}
+function f3 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1000
+    PropDefine v1, v2 key="MAX"
+    v4 = Integer
+    PropDefine v1, v4 key="MIN"
+    v6 = Undefined
+    Return v6
+}

@@ -1,0 +1,64 @@
+# const held = { b: 1 }; const names = {}; Object.defineProperty(names, "held", { enumerable: true, get: () => held }); held.b;
+# `__export(names, { held: () => held })` of a bundler comes to this. Were the getter handed to unseen code, each class that a namespace object names would be open.
+# A getter that takes no receiver and no argument does the same whoever calls it, so it stays with the record that it is laid on.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: field L2.0 "b" proven=1 writers-known
+# CHECK: layout L2 {{*}}changes=[]
+# Once the record goes, what its getter answers goes with it.
+# RUN(GOES): link functions fields layouts mechanisms=all
+# GOES: field L3.0 "b"
+# GOES-NOT: field L3.0 "b" proven
+
+layout L0 module=m0 fields=[{key="held" declared={type=anything} flags=[IsNeverWritten]}] ownFieldCount=1
+layout L1 fields=[{key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}] ownFieldCount=2
+layout L2 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="other" declared={type=anything} flags=[IsNeverWritten]}] ownFieldCount=1
+variable g0 name="held" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=2
+    v5 = NewObject -, v4 layout=L3 fields=[0]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g1
+    v8 = NewObject layout=L0
+    v9 = FinishObject v8
+    v10 = Builtin builtin=Object
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = String string="held"
+    v13 = Boolean boolean=true
+    v14 = NewClosure function=f1
+    v15 = NewObject -, v13, v14 layout=L1 fields=[0, 1]
+    v16 = FinishObject v15
+    v17 = Call v11, v10, v9, v12, v16 calleeName="defineProperty"
+    v18 = NewObject layout=L4
+    v19 = FinishObject v18
+    v20 = String string="other"
+    v21 = Boolean boolean=true
+    v22 = NewClosure function=f2
+    v23 = NewObject -, v21, v22 layout=L1 fields=[0, 1]
+    v24 = FinishObject v23
+    v25 = Call v11, v10, v19, v20, v24 calleeName="defineProperty"
+    v26 = Builtin builtin=GlobalThis
+    PropSet v26, v19 key="names" mode=Strict
+    v28 = GetModuleVariable variable=g0
+    v29 = PropGet v28 key="b"
+    Return v29
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f2 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}

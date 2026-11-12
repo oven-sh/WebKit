@@ -198,6 +198,22 @@ JS_EXPORT_PRIVATE OverflowCheckedSum overflowCheckedSumOf(const Liveness&, const
 
 inline bool namesWord(const Operation* operation) { return operation->opcode() == ZExt32 && clearsUpperHalf(operation->child(0)); }
 
+inline bool isFreeZeroExtension(const Operation* operation)
+{
+    if (!namesWord(operation) || operation->has(OperationFlag::HasOpaqueReader))
+        return false;
+    const Operation* word = operation->child(0);
+    return !word->hasNoPosition() && !word->isNarrowReference();
+}
+
+inline bool isFreeTruncation(const Operation* operation)
+{
+    if (operation->opcode() != Trunc || operation->has(OperationFlag::HasOpaqueReader) || operation->isNarrowReference())
+        return false;
+    const Operation* value = operation->child(0);
+    return !value->hasNoPosition() && value->useCount() > 1 && value->opcode() != Add && value->opcode() != Sub;
+}
+
 inline bool isShiftByConstant(const Operation* operation)
 {
     Opcode opcode = operation->opcode();
@@ -255,16 +271,26 @@ JS_EXPORT_PRIVATE WayOutOfBranch wayOutOfBranchThrough(const Order&, const Block
 
 inline constexpr unsigned maxLeaves = 5;
 
-inline Operation* armOfSelectThatExtends(const Operation* select, const Operation* word)
+inline Operation* armOfSelectThatExtends(const Operation* select, const Operation* reader, const Operation* word)
 {
-    if (word->hasNoPosition())
+    if (word->hasNoPosition() || reader->opcode() == ZExt32)
         return nullptr;
     for (unsigned index : { 1u, 2u }) {
         Operation* arm = select->child(index);
         if ((arm->opcode() == ZExt32 || arm->opcode() == SExt32) && arm->child(0) == word)
-            return arm;
+            return isFreeZeroExtension(arm) ? nullptr : arm;
     }
     return nullptr;
+}
+
+template<typename Functor>
+void visitOperandAsLeaf(const Liveness& liveness, const Operation* user, unsigned childIndex, const Functor& functor)
+{
+    Operation* operand = user->child(childIndex);
+    if (liveness.isFused(operand) && operand->opcode() == Trunc)
+        functor(operand, 0, operand->child(0));
+    else
+        functor(user, childIndex, operand);
 }
 
 template<typename Functor>
@@ -275,14 +301,14 @@ void forEachLeafBelow(const Liveness& liveness, const Operation* operation, cons
     if (liveness.worksInMemory(operation)) [[unlikely]] {
         MemoryUpdate update = memoryUpdateOf(liveness, operation);
         functor(update.load, update.load->numChildren() - 1, update.load->lastChild());
-        functor(update.userOfOperand, update.indexOfOperand, update.operand());
+        visitOperandAsLeaf(liveness, update.userOfOperand, update.indexOfOperand, functor);
         return;
     }
     if (liveness.usesOverflowFlag(operation)) [[unlikely]] {
         OverflowCheckedSum test = overflowCheckedSumOf(liveness, operation);
         if (operation->opcode() != Branch) {
-            functor(test.userOfLeft, test.indexOfLeft, test.left());
-            functor(test.userOfRight, test.indexOfRight, test.right());
+            visitOperandAsLeaf(liveness, test.userOfLeft, test.indexOfLeft, functor);
+            visitOperandAsLeaf(liveness, test.userOfRight, test.indexOfRight, functor);
         } else if (test.branchReadsSum())
             functor(test.userOfSum, test.indexOfSum, test.userOfSum->child(test.indexOfSum));
         return;
@@ -295,7 +321,7 @@ void forEachLeafBelow(const Liveness& liveness, const Operation* operation, cons
             continue;
         }
         if (selectAbove) [[unlikely]] {
-            if (Operation* arm = armOfSelectThatExtends(selectAbove, child))
+            if (Operation* arm = armOfSelectThatExtends(selectAbove, operation, child))
                 child = arm;
         }
         functor(operation, index, child);
@@ -511,10 +537,12 @@ public:
         RegisterMask registersTakenByPatches { 0 };
         ArenaVector<Operation*> valuesReadFromOutside;
         uint16_t phisReadOnlyBehindLoop[numberOfBanks] { 0, 0 };
+        uint8_t comparisonsWithHeldConstants[numberOfHeldConstants] { 0, 0 };
         Position endOfLastExitingBlock { 0 };
         static constexpr uint32_t notLookedFor = noLoop - 1;
         uint32_t nearestLoopAroundOfOtherRegion { notLookedFor };
         uint32_t loopAroundThatMayLackExitingBlock { noLoop };
+        uint32_t loopThatListsReads { noLoop };
     };
     ArenaVector<LoopState> m_loopStates;
     ArenaVector<uint32_t> m_loopOfLastListedRead;

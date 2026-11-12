@@ -244,7 +244,7 @@ static LayoutID layoutOfRecordForFieldTable(const TableEncoder& encoder, uint32_
     return shapes.shape(shape).layout;
 }
 
-static void fillFieldTableRowOfShapes(const TableEncoder& encoder, uint32_t highestObjectShape, uint32_t typeOfAnyValue, FieldTableRow& row, std::span<FieldTableRowEntry> entriesOfAllRows)
+static void fillFieldTableRowOfShapes(const TableEncoder& encoder, uint32_t highestObjectShape, uint16_t numberOfAnyType, FieldTableRow& row, std::span<FieldTableRowEntry> entriesOfAllRows)
 {
     const IdentifierNumbering& identifiers = encoder.numbers.identifiers();
     LayoutID id = layoutOfRecordForFieldTable(encoder, row.firstShape);
@@ -264,7 +264,7 @@ static void fillFieldTableRowOfShapes(const TableEncoder& encoder, uint32_t high
             continue;
         TypeRecordForFieldTable type = describeTypeForFieldTable(encoder.program.at(slot.typeInLayoutRecord() ? slot.typeInLayoutRecord() : TypeID(Typed::TypeTable::anything)));
         RELEASE_ASSERT(row.size < room.size());
-        const uint16_t recordIndex = FieldRecordIndex::create(field, *slot.indexInLayoutRecord, type.header, typeOfAnyValue).bits;
+        const uint16_t recordIndex = FieldRecordIndex::create(field, *slot.indexInLayoutRecord, type.header, numberOfAnyType).bits;
         room[row.size++] = { field.name, FieldTableEntry::forField(record.layout, field).bits, recordIndex, recordIndex & FieldRecordIndex::isStoredWithoutTypeTest ? WordsOfFieldRecord { } : std::bit_cast<WordsOfFieldRecord>(field) };
     }
     AOT::sortInLine(room.first(row.size));
@@ -325,7 +325,7 @@ static FieldTableRows collectFieldTableRows(const TableEncoder& encoder, uint32_
     const ParallelLoops& loops = encoder.build.parallelLoops();
     const Typed::ShapeTable& shapes = encoder.plan.shapes();
     const Vector<FieldsOfLayoutRecord>& fieldsOfLayoutRecords = encoder.firstParts->fieldsOfLayoutRecords;
-    const uint32_t typeOfAnyValue = encoder.typeOffset(Typed::TypeTable::anything);
+    const uint16_t numberOfAnyType = encoder.typeNumber(Typed::TypeTable::anything);
 
     Vector<uint32_t> firstShapes = findIndicesInParallel(loops, highestObjectShape + 1, [&](unsigned shape) {
         LayoutID id = layoutOfRecordForFieldTable(encoder, shape);
@@ -352,7 +352,7 @@ static FieldTableRows collectFieldTableRows(const TableEncoder& encoder, uint32_
     forEachIndexInParallel(loops, static_cast<unsigned>(rows.rows.size()), [&](unsigned index) {
         FieldTableRow& row = rows.rows[index];
         if (row.firstShape)
-            fillFieldTableRowOfShapes(encoder, highestObjectShape, typeOfAnyValue, row, rows.entries.mutableSpan());
+            fillFieldTableRowOfShapes(encoder, highestObjectShape, numberOfAnyType, row, rows.entries.mutableSpan());
         else if (classes[row.rankOfClass].members)
             fillFieldTableRowOfClass(classes[row.rankOfClass], row, rows.entries.mutableSpan(), accessors);
     });

@@ -128,6 +128,7 @@ JSString* ProgramStrings::constant(VM& vm, uint32_t number)
     if (JSString* cell = constantIfCreated(number))
         return cell;
     JSString* cell = string(vm, m_image.text().stringConstant(number), Made::Once);
+    reinterpret_cast<uint8_t*>(cell)[JSCell::typeInfoFlagsOffset()] |= ConstantCellWords::flagOfStringConstant;
     Locker locker { m_state.caches->lock() };
     if (m_usesWideReferences)
         m_instance.runtime.constants.wideStringCells[number].set(m_constantCells, cell);

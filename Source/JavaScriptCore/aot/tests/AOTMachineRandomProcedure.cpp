@@ -198,6 +198,7 @@ static uint64_t canonicalRandomBits(TypeKind type, uint64_t bits)
     case Int64:
     case Double:
         return bits;
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -228,6 +229,7 @@ static uint64_t bitsOfRandomResult(TypeKind type, uint64_t sum)
         return bitsOfRandomValue(static_cast<float>(number));
     case Double:
         return bitsOfRandomValue(number);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -438,6 +440,7 @@ static uint64_t evaluateRandomOperation(Opcode opcode, TypeKind type, uint64_t l
         return evaluateRandomOperationOn<float>(opcode, std::bit_cast<float>(static_cast<uint32_t>(left)), std::bit_cast<float>(static_cast<uint32_t>(right)));
     case Double:
         return evaluateRandomOperationOn<double>(opcode, std::bit_cast<double>(left), std::bit_cast<double>(right));
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -617,6 +620,7 @@ static void storeRandomResult(CCallHelpers& jit, const ValueRep& rep, TypeKind t
             jit.storeDouble(number, word);
         return;
     }
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -902,6 +906,7 @@ private:
             if (chance(70))
                 return bitsOfRandomValue(numbers[pick(numbers.size())]);
             return bitsOfRandomValue(static_cast<double>(static_cast<int32_t>(m_random.getUint32())) / 8);
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -920,6 +925,7 @@ private:
             return bitsOfRandomValue(static_cast<float>(static_cast<int16_t>(bits)) / 4 + 0.125f);
         case Double:
             return bitsOfRandomValue(static_cast<double>(static_cast<int32_t>(bits)) / 16 + 0.03125);
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -1031,6 +1037,7 @@ private:
             s.opcode = DoubleToFloat;
             s.operands[0] = variableOf(Double);
             return s;
+        case Vector128:
         case Void:
         case Int64:
         case Tuple:
@@ -1227,6 +1234,7 @@ private:
             else
                 setUnary(s, BitwiseCast, Int32);
             return s;
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -1709,6 +1717,7 @@ private:
             return m_out.constFloat(std::bit_cast<float>(static_cast<uint32_t>(bits)));
         case Double:
             return m_out.constDouble(std::bit_cast<double>(bits));
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -1726,6 +1735,7 @@ private:
             return m_out.bitwiseCast(m_out.opaque(constant(Int32, bits)), Float);
         case Double:
             return m_out.bitwiseCast(m_out.opaque(constant(Int64, bits)), Double);
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -1753,6 +1763,7 @@ private:
             return m_out.zeroExtPtr(m_out.bitCast(value, Int32));
         case Double:
             return m_out.bitCast(value, Int64);
+        case Vector128:
         case Void:
         case Tuple:
             break;

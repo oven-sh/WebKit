@@ -15,6 +15,7 @@
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTUnitPlacement.h"
 #include "AOTVector.h"
 #include "CPU.h"
 #include "MacroAssembler.h"
@@ -466,7 +467,15 @@ static void testRegExpAndWebAssembly()
 static void testConstantsInLastExecutablePage()
 {
     for (bool constantsFit : { true, false }) {
-        Steps steps(framedBodies(5));
+        unsigned numberOfBodies = 5;
+        {
+            Steps steps(framedBodies(numberOfBodies));
+            steps.findJumps();
+            steps.layOut();
+            if (steps.layout.executableSize - steps.layout.functionsEnd < imageConstantsAlignment + 24)
+                numberOfBodies = 50;
+        }
+        Steps steps(framedBodies(numberOfBodies));
         steps.findJumps();
         steps.constants.bytes.fill(1, constantsFit ? 24 : 2 * imagePageSize);
         steps.layOut();
@@ -492,6 +501,23 @@ static void testNoBody()
     Steps steps(Vector<CompiledCode> { });
     steps.layOut();
     AOT_TEST_CHECK(steps.layout.sharedCodeCopies.size() == 1);
+}
+
+static void testShortLoopsInLines()
+{
+    Vector<CompiledCode> code = framedBodies(48);
+    for (uint32_t index = 0; index < code.size(); ++index) {
+        if (index % 3)
+            code[index].body.rareLists.ensure().placesInLine = 0xffull << (index * 11 % 56);
+    }
+    Steps steps(WTF::move(code));
+    steps.layOut();
+    for (size_t position = 0; position < steps.functions.size(); ++position) {
+        const CodeBody& body = steps.functions[position].body;
+        AOT_TEST_CHECK(body.placesInLine() >> steps.layout.bodyStarts[position] % sizeOfCodeLine & 1);
+        AOT_TEST_CHECK(!((steps.layout.bodyStarts[position] + body.primaryEntryOffset()) % imageFunctionAlignment));
+    }
+    checkCodeIsDisjoint(steps);
 }
 
 static void testJumpToNext()
@@ -663,6 +689,7 @@ std::span<const NativeTest> codeLayoutTests()
         { "image/layout/constants-in-last-executable-page"_s, testConstantsInLastExecutablePage },
         { "image/layout/neither"_s, testNeitherRegExpNorWebAssembly },
         { "image/layout/no-body"_s, testNoBody },
+        { "image/layout/short-loops-in-lines"_s, testShortLoopsInLines },
         { "image/fall-through/jump-to-next"_s, testJumpToNext },
         { "image/fall-through/returning-call-before-jump"_s, testReturningCallBeforeJump },
         { "image/fall-through/run-of-three"_s, testRunOfThree },

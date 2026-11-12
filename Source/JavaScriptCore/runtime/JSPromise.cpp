@@ -37,6 +37,9 @@
 #include "JSCInlines.h"
 #include "JSFunctionWithFields.h"
 #include "JSMicrotask.h"
+#if ENABLE(AOT)
+#include "AOTReactionChain.h"
+#endif
 #include "JSPromiseCombinatorsContext.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromisePrototype.h"
@@ -363,6 +366,19 @@ JSValue JSPromise::asyncStackTraceContext() const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+JSPromise* JSPromise::promiseForReactionCell(JSCell* cell)
+{
+    if (!cell)
+        return nullptr;
+    if (auto* promise = dynamicDowncast<JSPromise>(cell))
+        return promise;
+#if ENABLE(AOT)
+    if (auto* chain = dynamicDowncast<AOT::ReactionChain>(cell))
+        return chain->promise();
+#endif
+    return nullptr;
+}
+
 void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>& callback) const
 {
     ASSERT(status() == Status::Pending);

@@ -9,6 +9,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTCode.h"
+#include <optional>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -16,9 +17,11 @@ namespace JSC { namespace AOT { namespace Typed {
 class Walker;
 struct LinkedCall;
 
-inline constexpr OpcodeSet opcodesOfGeneratorsInLoops { Opcode::Call, Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread, Opcode::InitialYield, Opcode::Yield };
+inline constexpr OpcodeSet opcodesOfGeneratorsInLoops { Opcode::Call, Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread, Opcode::InitialYield, Opcode::Yield, Opcode::PropGet, Opcode::InstanceOf };
 
 struct GeneratorTakenByConsumer {
+    Reference functionTested;
+    ValueID stepInFront;
     uint32_t inlineFrame { 0 };
     ValueID taker;
     ValueID step;
@@ -32,6 +35,14 @@ struct GeneratorTakenByConsumer {
     bool regionHoldsIterations { false };
     bool hasBackEdge { false };
     bool takerCallsMethodItself { false };
+    bool isSteppedByHand { false };
+    bool headPrecedesLoop { false };
+    std::optional<uint32_t> placeOfResult;
+    BlockID blockOfStep;
+    Vector<BlockID, 4> blocksBeforeStep;
+    uint32_t numberOfPatternSteps { 0 };
+    ValueID restArray;
+    Vector<ValueID, 4> stepsInRow;
     Reference state;
     Vector<Reference, 8> entryArguments;
     Vector<BlockID, 8> region;
@@ -39,7 +50,28 @@ struct GeneratorTakenByConsumer {
     Vector<ValueID, 8> valuesThatRegionNamesFromOutside;
 };
 
+struct LoopThatStepsByHand {
+    BlockID inputHead;
+    BlockID blockOfStep;
+    ValueID step;
+    ValueID generator;
+    ValueID stepInFront;
+    std::optional<uint32_t> placeOfResult;
+    Vector<BlockID, 4> blocksBeforeStep;
+    bool frontIsSeen { false };
+    bool loopIsSeenBeforeStep { false };
+};
+
+struct StepsInRow {
+    ValueID generator;
+    Vector<ValueID, 4> steps;
+    bool frontIsSeen { false };
+};
+
 struct GeneratorWalkedInConsumer {
+    Reference functionTested;
+    bool countsSteps { false };
+    bool headPrecedesLoop { false };
     uint32_t frameOfConsumer { 0 };
     uint32_t frameOfGenerator { 0 };
     uint32_t frameOfTurn { UINT32_MAX };
@@ -53,6 +85,16 @@ struct GeneratorWalkedInConsumer {
     uint32_t numberOfYields { 0 };
     uint64_t numberOfOperationsOfRegion { 0 };
     bool regionHoldsIterations { false };
+    bool isSteppedByHand { false };
+    std::optional<uint32_t> placeOfResult;
+    BlockID blockOfStep;
+    Vector<BlockID, 4> blocksBeforeStep;
+    uint32_t numberOfPatternSteps { 0 };
+    Vector<ValueID, 4> stepsInRow;
+    Vector<ValueID, 4> valuesKeptOverSteps;
+    Vector<uint32_t, 4> inlineFramesOfSteps;
+    uint32_t inlineFrameOfCall { 0 };
+    uint32_t inlineFrameOfStep { 0 };
     Vector<BlockID, 8> region;
     Vector<TypeID, 4> typesOfCarriedValues;
     Vector<BlockID, 2> headsThatCarryValues;
@@ -63,6 +105,9 @@ struct GeneratorWalkedInConsumer {
     ValueID yieldStoodAt;
 };
 
+std::optional<LoopThatStepsByHand> findLoopThatStepsByHand(const Program&, const BodyIndex&, ValueID generatorCall);
+bool onlyStepsParameter(const Program&, const BodyIndex&, ValueID parameter);
+std::optional<StepsInRow> findStepsInRow(const Program&, const BodyIndex&, ValueID generatorCall);
 bool callMayEnterCopyOfBody(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands);
 Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands);
 bool operationsFitWindowOfCallWrittenInLoop(const Walker&, uint64_t numberOfOperations);

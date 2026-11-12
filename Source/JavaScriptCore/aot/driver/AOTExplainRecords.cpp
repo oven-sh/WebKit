@@ -49,6 +49,11 @@ struct ExplainedHeapCause {
     Wire::AllocationHeapCause cause { Wire::AllocationHeapCause::None };
 };
 
+struct ExplainedAccess {
+    Wire::AccessRecord record;
+    const Typed::WalkNote* paidNote { nullptr };
+};
+
 class NamesInExplainRecords {
 public:
     explicit NamesInExplainRecords(const Typed::Program& program)
@@ -346,37 +351,217 @@ static uint32_t countExplainedAllocations(std::span<const Typed::WalkNotes> unit
     return numberOfAllocations;
 }
 
-static Wire::AccessRecord makeExplainedAccess(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
+static ExplainedAccess makeExplainedAccess(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
 {
     const PlacedExplainNote& place = notesOfPlace.front();
     const Typed::WalkNote& worst = explainedWalkNote(units, place);
 
-    Wire::AccessRecord record;
+    ExplainedAccess access;
+    Wire::AccessRecord& record = access.record;
     record.location = place.location;
     record.kind = worst.access;
     record.level = levelOfExplainedOperation(worst.kind);
     record.layout = worst.layout.index();
     record.copies = countExplainedCopies(units, notesOfPlace);
     record.function = place.function;
-    record.cost = worst.cost;
+    record.cost = Wire::AccessCost::Free;
+    record.origin = Wire::none;
     for (const PlacedExplainNote& placed : notesOfPlace) {
         const Typed::WalkNote& note = explainedWalkNote(units, placed);
-        record.cost = std::min(record.cost, note.cost);
+        if (!note.isOnUsualPath)
+            continue;
         record.loopDepth = std::max<uint32_t>(record.loopDepth, note.loopDepth);
+        if (note.cost >= record.cost)
+            continue;
+        record.cost = note.cost;
+        record.layout = note.layout.index();
+        if (!asksForCause)
+            continue;
+        record.cause = note.cause;
+        access.paidNote = &note;
     }
-    if (asksForCause)
-        record.cause = worst.cause;
-    return record;
+    return access;
 }
 
-static Vector<Wire::AccessRecord> explainAccesses(const Typed::Program& program, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
+static Vector<ExplainedAccess> explainAccesses(const Typed::Program& program, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
 {
     Vector<PlacedExplainNote> notes = placeExplainNotes(program, units, NotesToExplain::Operations, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
-    return collectInParallel<Wire::AccessRecord>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<Wire::AccessRecord>& found) {
+    return collectInParallel<ExplainedAccess>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<ExplainedAccess>& found) {
         found.append(makeExplainedAccess(units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
     });
 }
+
+static Typed::OriginUser originUserOfAccess(Wire::AccessKind kind)
+{
+    switch (kind) {
+    case Wire::AccessKind::Read:
+    case Wire::AccessKind::Store:
+    case Wire::AccessKind::Define:
+    case Wire::AccessKind::Has:
+    case Wire::AccessKind::Delete:
+        return Typed::OriginUser::Access;
+    case Wire::AccessKind::Call:
+    case Wire::AccessKind::Construct:
+        return Typed::OriginUser::Call;
+    case Wire::AccessKind::Unknown:
+    case Wire::AccessKind::Truthiness:
+    case Wire::AccessKind::Equality:
+    case Wire::AccessKind::Arithmetic:
+    case Wire::AccessKind::Comparison:
+    case Wire::AccessKind::Conversion:
+    case Wire::AccessKind::TypeOf:
+    case Wire::AccessKind::InstanceOf:
+    case Wire::AccessKind::Iteration:
+    case Wire::AccessKind::Spread:
+        return Typed::OriginUser::Operator;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+class ListedTypeOrigins {
+public:
+    ListedTypeOrigins(const Typed::Program& program, const Typed::TypeOrigins* traced, CompileOutput& output)
+        : m_program(program)
+        , m_traced(traced)
+        , m_output(output)
+    {
+        if (traced)
+            m_listedAs.fill(Wire::none, traced->origins.size());
+    }
+
+    void explain(std::span<ExplainedAccess> accesses)
+    {
+        for (ExplainedAccess& access : accesses)
+            explainByFlow(access);
+        static constexpr unsigned mostRounds = 4;
+        for (unsigned round = 0; round < mostRounds; ++round) {
+            bool hasExplained = false;
+            for (ExplainedAccess& access : accesses)
+                hasExplained |= explainBySource(access, accesses);
+            if (!hasExplained)
+                break;
+        }
+        for (ExplainedAccess& access : accesses) {
+            if (!access.paidNote || access.record.origin != Wire::none || access.record.cost == Wire::AccessCost::Free)
+                continue;
+            const Typed::WalkNote& note = *access.paidNote;
+            if (note.reason != Wire::TypeOriginReason::Unknown)
+                access.record.origin = listReason(note.reason);
+            else if (note.sourceIn)
+                access.record.origin = listResult(Wire::TypeOriginReason::PropertyRead, note);
+        }
+    }
+
+    std::span<const Wire::TypeOriginRecord> records() const LIFETIME_BOUND { return m_records.span(); }
+
+private:
+    static bool decidesAlone(Wire::TypeOriginReason reason)
+    {
+        return reason == Wire::TypeOriginReason::CheckedElement || reason == Wire::TypeOriginReason::CheckedKeys || reason == Wire::TypeOriginReason::StaticField || reason == Wire::TypeOriginReason::ChangedShape;
+    }
+
+    void explainByFlow(ExplainedAccess& access)
+    {
+        Wire::AccessRecord& record = access.record;
+        if (record.cost == Wire::AccessCost::Free || !access.paidNote || !m_traced || decidesAlone(access.paidNote->reason))
+            return;
+        const Typed::TypeOrigins::User* user = m_traced->find(record.location, FunctionID(record.function), originUserOfAccess(record.kind));
+        if (user && (hasModule(m_traced->origins[user->origin].location) || access.paidNote->reason == Wire::TypeOriginReason::Unknown))
+            takeOrigin(record, *user);
+    }
+
+    bool explainBySource(ExplainedAccess& access, std::span<const ExplainedAccess> accesses)
+    {
+        Wire::AccessRecord& record = access.record;
+        if (record.cost == Wire::AccessCost::Free || record.origin != Wire::none || !access.paidNote || !access.paidNote->sourceIn || decidesAlone(access.paidNote->reason))
+            return false;
+        const Typed::WalkNote& note = *access.paidNote;
+        Wire::SourceLocation location = m_program.at(note.sourceIn).locationAt(note.sourceAt.position);
+        if (!hasModule(location))
+            return false;
+        if (note.sourceIsCall) {
+            if (copyOrigin(record, note, location, accesses))
+                return true;
+            bool isOfLibrary = note.sourceBuiltin || (note.sourceFunction && isLibraryCode(m_program, m_program.at(note.sourceFunction)));
+            record.origin = listResult(!note.sourceIsOnUsualPath ? Wire::TypeOriginReason::CheckedResult : isOfLibrary ? Wire::TypeOriginReason::BuiltinResult : Wire::TypeOriginReason::CallResult, note);
+            return true;
+        }
+        if (const Typed::TypeOrigins::User* user = m_traced ? m_traced->find(location, note.sourceIn, Typed::OriginUser::Access) : nullptr; user && hasModule(m_traced->origins[user->origin].location)) {
+            takeOrigin(record, *user);
+            return true;
+        }
+        return copyOrigin(record, note, location, accesses);
+    }
+
+    void takeOrigin(Wire::AccessRecord& record, const Typed::TypeOrigins::User& user)
+    {
+        uint32_t& listed = m_listedAs[user.origin];
+        if (listed == Wire::none)
+            listed = list(m_traced->origins[user.origin]);
+        record.origin = listed;
+        record.hasOtherOrigins = user.hasOtherOrigins;
+    }
+
+    bool copyOrigin(Wire::AccessRecord& record, const Typed::WalkNote& note, const Wire::SourceLocation& location, std::span<const ExplainedAccess> accesses) const
+    {
+        auto placeOf = [](const ExplainedAccess& other) { return std::tuple { other.record.location.module, other.record.location.position }; };
+        for (const ExplainedAccess& other : std::ranges::equal_range(accesses, std::tuple { location.module, location.position }, { }, placeOf)) {
+            bool isSource = originUserOfAccess(other.record.kind) == (note.sourceIsCall ? Typed::OriginUser::Call : Typed::OriginUser::Access);
+            if (!isSource || other.record.function != note.sourceIn.index() || other.record.origin == Wire::none || !hasModule(m_records[other.record.origin].location))
+                continue;
+            record.origin = other.record.origin;
+            record.hasOtherOrigins = other.record.hasOtherOrigins;
+            return true;
+        }
+        return false;
+    }
+
+    uint32_t list(const Typed::TypeOrigin& origin)
+    {
+        Wire::TypeOriginRecord record;
+        record.reason = origin.reason;
+        record.location = origin.location;
+        record.entry = origin.entry;
+        if (origin.name)
+            record.name = m_output.appendText(m_program.string(origin.name));
+        record.builtin = origin.builtin.index();
+        m_records.append(record);
+        return static_cast<uint32_t>(m_records.size() - 1);
+    }
+
+    uint32_t listResult(Wire::TypeOriginReason reason, const Typed::WalkNote& note)
+    {
+        Typed::TypeOrigin origin;
+        origin.reason = reason;
+        origin.location = m_program.at(note.sourceIn).locationAt(note.sourceAt.position);
+        origin.builtin = note.sourceBuiltin;
+        if (note.sourceFunction)
+            origin.name = m_program.at(note.sourceFunction).name;
+        uint64_t place = static_cast<uint64_t>(origin.location.module) << 32 | origin.location.position;
+        return m_listedResults[static_cast<size_t>(reason)].ensure(place, [&] { return list(origin); }).iterator->value;
+    }
+
+    uint32_t listReason(Wire::TypeOriginReason reason)
+    {
+        uint32_t& listed = m_listedReasons[static_cast<size_t>(reason)];
+        if (!listed)
+            listed = list({ .reason = reason, .location = noSourceLocation, .entry = noSourceLocation, .name = { }, .builtin = { } }) + 1;
+        return listed - 1;
+    }
+
+    const Typed::Program& m_program;
+    const Typed::TypeOrigins* m_traced;
+    CompileOutput& m_output;
+    Vector<uint32_t> m_listedAs;
+    std::array<HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>, numberOfEnumerators<Wire::TypeOriginReason>> m_listedResults;
+    std::array<uint32_t, numberOfEnumerators<Wire::TypeOriginReason>> m_listedReasons { };
+    Vector<Wire::TypeOriginRecord> m_records;
+};
+
+} // anonymous namespace
 
 static Wire::TypeTestRecord makeExplainedTypeTest(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace)
 {
@@ -522,7 +707,7 @@ static void writeExplainedLayoutNames(const Typed::Program& program, const BitVe
     output.setRecords(Wire::ResultSection::LayoutNames, records.span());
 }
 
-void writeExplainSections(const Typed::Program& program, std::span<const Typed::WalkNotes> units, BuildContext& build, CompileOutput& output)
+void writeExplainSections(const Typed::Program& program, std::span<const Typed::WalkNotes> units, const Typed::TypeOrigins* origins, BuildContext& build, CompileOutput& output)
 {
     Wire::ReportSet reports = build.options().reports;
     bool explainsFlow = hasFlag(reports, Wire::ReportSet::Flow);
@@ -535,7 +720,14 @@ void writeExplainSections(const Typed::Program& program, std::span<const Typed::
     NamesInExplainRecords names(program);
 
     if (explainsFlow || countsAccesses) {
-        Vector<Wire::AccessRecord> accesses = explainAccesses(program, units, explainsFlow, loops);
+        Vector<ExplainedAccess> explained = explainAccesses(program, units, explainsFlow, loops);
+        ListedTypeOrigins listedOrigins(program, origins, output);
+        Vector<Wire::AccessRecord> accesses;
+        accesses.reserveInitialCapacity(explained.size());
+        if (explainsFlow)
+            listedOrigins.explain(explained.mutableSpan());
+        for (const ExplainedAccess& access : explained)
+            accesses.append(access.record);
         Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, units, loops);
         if (countsAccesses) {
             Vector<Wire::AccessCountRecord> counts = countExplainedAccesses(program, accesses.span(), typeTests.span());
@@ -558,6 +750,7 @@ void writeExplainSections(const Typed::Program& program, std::span<const Typed::
                 names.addLayout(record.layout);
             }
             output.setRecords(Wire::ResultSection::Accesses, accesses.span());
+            output.setRecords(Wire::ResultSection::TypeOrigins, listedOrigins.records());
             output.setRecords(Wire::ResultSection::TypeTests, typeTests.span());
         }
     }

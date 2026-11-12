@@ -54,7 +54,7 @@ public:
 
     enum Part : uint8_t { KeptAtSuspensions, DeadAtSuspensions };
     static constexpr unsigned numberOfParts = 2;
-    enum Size : uint8_t { Half, Word };
+    enum Size : uint8_t { Half, Word, Pair };
     static constexpr unsigned numberOfSizes = 2;
 
     struct Holder {
@@ -104,6 +104,7 @@ public:
     };
     ArenaVector<PositionsTakenBehindGaps> m_positionsTakenBehindGaps[numberOfParts];
     uint32_t m_bytesOfPart[numberOfParts] { 0, 0 };
+    bool m_holdsPairs { false };
     ArenaVector<Part> m_partOfSpill;
     ArenaVector<Part> m_partOfStackSlot;
 };

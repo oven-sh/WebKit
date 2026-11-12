@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
@@ -20,27 +21,33 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsUnderStructureInHeirsOfBuiltins { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
 
-LayoutID layoutKnownByStructureOfClass(const Walker& walker, TypeID type)
+static constexpr AbstractHeapSet subclassElementHeaps = heapsUnderStructureInHeirsOfBuiltins | AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ShapeWords };
+
+LayoutID findLayoutKnownByStructure(const Walker& walker, TypeID type)
 {
-    if (!type || holdsOnlyPrimitives(type) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Folding) || !walker.state().remembersPlaces())
-        return { };
     const Type& record = walker.types().recordOf(type);
-    if (!record.isJavaScriptValue() || record.primitives || !record.hasOnlyLayouts() || record.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || !holdsOneMember(record.layouts))
+    if (record.primitives || !holdsOneMember(record.layouts) || !record.isJavaScriptValue() || !record.hasOnlyLayouts() || record.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return { };
     LayoutID layout(positionOf(record.layouts));
-    const Layout& heir = walker.program().at(layout);
-    BuiltinClassID above = heir.writtenBuiltinBase;
     const Program& program = walker.program();
+    const Layout& heir = program.at(layout);
+    BuiltinClassID above = builtinClassOfInstances(heir);
+    if (!above || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Folding) || !walker.state().remembersPlaces())
+        return { };
     bool isArray = above == BuiltinClasses::Array;
     bool isError = above == BuiltinClasses::Error;
-    bool structureTellsEveryOwnName = above == BuiltinClasses::Map || above == BuiltinClasses::Set || above == BuiltinClasses::WeakMap || above == BuiltinClasses::WeakSet || above == BuiltinClasses::Promise;
-    if (!isKnownByStructureOfClass(heir) || (!structureTellsEveryOwnName && !isArray && !isError))
+    bool isView = isTypedView(program.builtins().typedArrayTypeOf(above));
+    bool structureTellsEveryOwnName = above == BuiltinClasses::Map || above == BuiltinClasses::Set || above == BuiltinClasses::WeakMap || above == BuiltinClasses::WeakSet || above == BuiltinClasses::Promise
+        || above == BuiltinClasses::Date || above == BuiltinClasses::DataView;
+    if (!isKnownByStructureOfClass(heir) || (!structureTellsEveryOwnName && !isArray && !isError && !isView))
         return { };
     auto mayLieOutsideStructure = [&](PropertyKeyID key) {
         if (!key)
             return true;
         if (isArray)
             return key == program.keyOf(BuiltinNames::length) || program.isIndexLike(key);
+        if (isView)
+            return program.isIndexLike(key);
         return isError && program.builtins().mayDefineOnNewInstances(above, program.builtinNameOf(key));
     };
     bool someNameMayLieOutsideStructure = std::ranges::any_of(heir.fields, [&](const Field& field) {
@@ -53,12 +60,13 @@ LayoutID layoutKnownByStructureOfClass(const Walker& walker, TypeID type)
     return walker.facts().isEvaluatedAtMostOnce(layout) && walker.plan().hasClassRecord(layout) ? layout : LayoutID();
 }
 
-Reference buildLookAtStructureOfClass(Walker& walker, Reference value, LayoutID layout, Origin origin)
+Reference buildLookAtStructureOfClass(Walker& walker, Reference value, LayoutID layout, Origin origin, bool asksElements)
 {
     origin.isTailCall = false;
     Draft look(Opcode::HasStructureOfClass, origin);
     look.setValueOperand(value);
     look.setLayout(layout);
+    look.setAsksElements(asksElements);
     Reference built = walker.build(WTF::move(look));
     if (built)
         walker.count(StatisticID::BuiltinSubclassesCheckedByStructure);
@@ -81,6 +89,9 @@ Reference buildNameBehindLookAtStructureOfClass(Walker& walker, Reference value,
     ValueID root = underlyingCellOf(walker.code(), name.id());
     if (!walker.state().isFresh(walker.code().isConstant(root) ? Reference::constant(root) : Reference::value(root)))
         noteKnown(walker, KnownNote::StructureOfClassIsSeen, { }, name, layout.index(), LocationMasks(heapsUnderStructureInHeirsOfBuiltins), name.bits());
+    const Operation& asked = walker.code().at(look.id());
+    if (asked.opcode == Opcode::HasStructureOfClass && asked.asksElements())
+        noteKnown(walker, KnownNote::ElementsOfSubclassAreSeen, name, { }, 0, LocationMasks(subclassElementHeaps), 1);
     return name;
 }
 
@@ -90,6 +101,98 @@ Reference nameBehindLookAtStructureOfClass(const Walker& walker, Reference objec
         return { };
     std::optional<uint64_t> noted = findKnown(walker, KnownNote::StructureOfClassIsSeen, { }, object, layout.index());
     return noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
+}
+
+LayoutID arraySubclassWithElements(const Walker& walker, TypeID type)
+{
+    TypeID present = type ? walker.types().withoutNullish(type) : TypeID();
+    LayoutID layout = present ? layoutKnownByStructureOfClass(walker, present) : LayoutID();
+    return layout && walker.program().at(layout).writtenBuiltinBase == BuiltinClasses::Array && isArrayPrototypeChainSane(walker) ? layout : LayoutID();
+}
+
+LayoutID viewSubclassWithLength(const Walker& walker, TypeID type)
+{
+    TypeID present = builtinClassBelowType(walker, type) ? walker.types().withoutNullish(type) : TypeID();
+    LayoutID layout = present ? layoutKnownByStructureOfClass(walker, present) : LayoutID();
+    BuiltinClassID above = layout ? walker.program().at(layout).writtenBuiltinBase : BuiltinClassID();
+    PropertyKeyID key = walker.program().keyOf(BuiltinNames::length);
+    if (!above || !isTypedView(walker.program().builtins().typedArrayTypeOf(above)) || walker.program().at(layout).findField(key) || walker.facts().hasMemberUnder(layout, ClassSide::Prototype, key))
+        return { };
+    return findMemberAboveHeirsOfBuiltinClass(walker, above, key) ? layout : LayoutID();
+}
+
+Draft draftSubclassElementsTest(Reference array, LayoutID subclass, Origin origin)
+{
+    origin.isTailCall = false;
+    Draft test(Opcode::HasStructureOfClass, origin);
+    test.setValueOperand(array);
+    test.setLayout(subclass);
+    test.setAsksElements(true);
+    return test;
+}
+
+LayoutID subclassOfArrayName(const Walker& walker, Reference array)
+{
+    std::optional<uint64_t> noted = walker.program().someClassExtendsArray && array && array.isValue() ? findKnown(walker, KnownNote::SubclassOfArrayName, array) : std::nullopt;
+    return noted ? LayoutID(static_cast<uint32_t>(*noted)) : LayoutID();
+}
+
+Reference arrayNameOfInstance(Walker& walker, Reference instance, Origin origin)
+{
+    if (!instance || !instance.isValue() || walker.isUnreachable())
+        return { };
+    TypeArena& types = walker.types();
+    TypeID array = types.builtinClass(BuiltinClasses::Array);
+    auto isNamedAsInstance = [&](ValueID name) {
+        TypeID type = walker.code().at(name).type;
+        return !types.overlap(type, array) || layoutKnownByStructureOfClass(walker, type);
+    };
+    ValueID named = instance.id();
+    while (walker.code().at(named).opcode == Opcode::Narrowed && isNamedAsInstance(named))
+        named = walker.code().at(named).valueOperand();
+    if (walker.code().isConstant(named) || isNamedAsInstance(named))
+        return { };
+    Reference object = Reference::value(named);
+    if (std::optional<uint64_t> noted = findKnown(walker, KnownNote::ArrayNameOfInstance, object))
+        return Reference::fromBits(static_cast<uint32_t>(*noted));
+
+    origin.isTailCall = false;
+    bool isInvariant = walker.isInvariantInSpecializedVersion(object);
+    Reference isArray;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, isInvariant);
+        Draft test(Opcode::TypeTest, origin);
+        test.setValueOperand(object);
+        test.setTestedType(array);
+        isArray = walker.build(WTF::move(test));
+    }
+    if (!isArray || !isArray.isValue() || walker.isUnreachable())
+        return { };
+    bool isInPreheader = isInvariant && walker.tryBranchInPreheader(isArray, true);
+    if (!isInPreheader && !walker.findPassedTest(isArray)) {
+        BlockID failed = walker.addBlock(BlockFrequency::Rare);
+        walker.continueIfCheckPasses(isArray, failed);
+        BlockID passed = walker.currentBlock();
+        walker.continueIn(failed);
+        if (!walker.isUnreachable())
+            walker.stopWhereWordOfLinkIsFalse(origin);
+        walker.continueIn(passed);
+        if (walker.isUnreachable())
+            return { };
+    }
+    Walker::SpecializedPreheaderScope preheaderScope(walker, isInPreheader);
+    Draft proof(Opcode::Narrowed, origin);
+    proof.setValueOperand(object);
+    proof.setTestOperand(isArray);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    Reference name = walker.build(WTF::move(proof));
+    if (name && name.isValue() && !walker.isUnreachable()) {
+        noteKnown(walker, KnownNote::ArrayNameOfInstance, object, { }, 0, LocationMasks(), name.bits());
+        if (LayoutID subclass = arraySubclassWithElements(walker, walker.typeOf(instance)))
+            noteKnown(walker, KnownNote::SubclassOfArrayName, name, { }, 0, LocationMasks(), subclass.index());
+    }
+    return name;
 }
 
 void checkStructureOfClassThatIsRemembered(Walker& walker, Reference name, LayoutID layout, Origin origin)
@@ -116,6 +219,28 @@ void nameFieldInEffectsOfAccessToHeir(const Program& program, Opcode opcode, Pro
     RELEASE_ASSERT(opcode == Opcode::PutPropertyOfHeir);
     effects.writes.remove(AbstractHeapSet { AbstractHeap::NamedProperties });
     effects.writes.add(program, field);
+}
+
+bool isLengthOfTypedArraySubclass(const Walker& walker, const BodyValue& read, LayoutID subclass)
+{
+    if (read.opcode() != Opcode::PropGet || read.isFreeName() || read.key() != walker.program().keyOf(BuiltinNames::length))
+        return false;
+    BuiltinClassID above = walker.program().at(subclass).writtenBuiltinBase;
+    return above && isTypedView(walker.program().builtins().typedArrayTypeOf(above));
+}
+
+void buildTypedArraySubclassLength(Walker& walker, const BodyValue& read, Reference view, LayoutID subclass)
+{
+    Origin origin = walker.originOf(read);
+    Draft length(Opcode::GetTypedArrayLength, origin);
+    walker.chooseConservativeFields(length);
+    length.setViewOperand(view);
+    length.setTypedArrayType(walker.program().builtins().typedArrayTypeOf(walker.program().at(subclass).writtenBuiltinBase));
+    length.inputValueGiven = read.id();
+    Reference built = walker.build(WTF::move(length));
+    walker.bind(read.id(), built);
+    if (built && built.isValue() && !walker.isUnreachable())
+        noteKnown(walker, KnownNote::LengthOfList, view, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), built.bits());
 }
 
 static LocationMasks heapsUnderValueOfFieldInHeirsOfBuiltins(const Program& program, LayoutID layout, uint32_t field)

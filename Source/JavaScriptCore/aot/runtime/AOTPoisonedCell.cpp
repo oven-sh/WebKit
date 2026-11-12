@@ -12,12 +12,15 @@
 #include "AOTEndOfThread.h"
 #include "AOTEnvironment.h"
 #include "AOTObject.h"
+#include "AOTObjectWords.h"
 #include "AOTRuntimeCheckFailure.h"
 #include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
 #include "AOTVMState.h"
+#include "GCMemoryOperations.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
+#include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -126,7 +129,7 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
                 clearSlot(field.slot.representation(), slot);
         }
     } else if (classInfo == Environment::info() || classInfo == Closure::info() || classInfo == SlimClosure::info())
-        zeroSpan(std::span { bytes + sizeof(JSCell), cell->cellSize() - sizeof(JSCell) });
+        gcSafeZeroMemory(reinterpret_cast<uint64_t*>(bytes + sizeof(JSCell)), cell->cellSize() - sizeof(JSCell));
     else if (classInfo != JSArray::info())
         return false;
 
@@ -142,11 +145,12 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
     }
 
     *reinterpret_cast<uint64_t*>(bytes + JSObject::butterflyOffset()) = 0;
-    WTF::storeStoreFence();
-    bytes[JSCell::indexingTypeAndMiscOffset()] = structure->indexingModeIncludingHistory();
-    bytes[JSCell::typeInfoTypeOffset()] = structure->typeInfo().type();
-    bytes[JSCell::typeInfoFlagsOffset()] = structure->typeInfo().inlineTypeFlags();
-    *reinterpret_cast<uint32_t*>(bytes + JSCell::structureIDOffset()) = structure->id().bits();
+    constexpr uint64_t cellStateMask = 0xffull << 8 * JSCell::cellStateOffset();
+    uint64_t poisonedHeader = cellHeaderFor(structure) & ~cellStateMask;
+    reinterpret_cast<Atomic<uint64_t>*>(bytes)->transaction([&](uint64_t& header) {
+        header = (header & cellStateMask) | poisonedHeader;
+        return true;
+    });
     return true;
 }
 

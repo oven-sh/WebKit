@@ -35,12 +35,19 @@ public:
     StringID stringOf(uint32_t number) const { return m_strings[number]; }
     uint32_t count() const { return m_strings.size(); }
     std::span<const StringID> strings() const { return m_strings.span(); }
+    uint32_t numberOfPlaced() const { return m_numberOfPlaced; }
+    bool isPlaced(StringID string) const
+    {
+        std::optional<uint32_t> number = numberOf(string);
+        return number && *number < m_numberOfPlaced;
+    }
 
 private:
     friend struct ImageNumbersBuilder;
 
     Vector<uint32_t> m_numbersPlusOne;
     Vector<StringID> m_strings;
+    uint32_t m_numberOfPlaced { 0 };
 };
 
 } } // namespace JSC::AOT

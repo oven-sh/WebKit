@@ -22,6 +22,7 @@
 #include "RegExpPrototype.h"
 
 #include "AOTRemovableFeature.h"
+#include "AOTRuntimeHooks.h"
 #include "CachedCallInlines.h"
 #include "InterpreterInlines.h"
 #include "IntegrityInlines.h"
@@ -358,6 +359,9 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncCompile, (JSGlobalObject* globalObject, 
         return throwVMError(globalObject, scope, regExp->errorToThrow(globalObject));
 
     globalObject->regExpRecompiledWatchpointSet().fireAll(vm, "RegExp is recompiled");
+#if ENABLE(AOT)
+    AOT::RuntimeHooks::willRecompileRegExp(vm);
+#endif
 
     thisRegExp->setRegExp(vm, regExp);
     scope.release();
@@ -822,7 +826,7 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
     ASSERT(StringSplitCache::canBeKey(subject->impl()));
 
     constexpr unsigned atomStringsArrayLimit = 100;
-    bool makeAtomStringsArray = subject->impl()->isAtom() && resultLength < atomStringsArrayLimit;
+    bool makeAtomStringsArray = resultLength < atomStringsArrayLimit;
     Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
     auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultLength);
     if (!newButterfly)

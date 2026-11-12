@@ -5,12 +5,12 @@
 # RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # PLAN: layout L0 CompiledObject
 # PLAN-NEXT: slot 0 "part" OptionalDouble Inline
-# PLAN-NEXT: slot 1 "whole" OptionalInt64 Inline
+# PLAN-NEXT: slot 1 "whole" Int32 Inline
 # PLAN: layout L1 CompiledObject
 # PLAN-NEXT: slot 0 "whole" JSValue Inline
 # PLAN-NEXT: slot 1 "part" OptionalDouble Inline
 # PLAN: layout L2 CompiledObject
-# PLAN-NEXT: slot 0 "part" Cell32 Inline
+# PLAN-NEXT: slot 0 "part" JSValue Inline
 # PLAN-NEXT: slot 1 "whole" Cell32 Inline
 # RUN(CODE): bytes f1:Body f2:Body f5:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # CODE: Call Stub ReadAtSite.OfAnyValue

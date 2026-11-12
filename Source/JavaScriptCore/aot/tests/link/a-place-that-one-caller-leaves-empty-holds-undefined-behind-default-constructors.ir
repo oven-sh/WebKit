@@ -2,13 +2,13 @@
 #   class Base { constructor(n, s) { this.n = n; this.s = s; } }  class Middle extends Base {}  class Leaf extends Middle {}  new Leaf(1, "x"); new Middle(2, "y"); new Leaf(3);
 # OPTIONS: check=FlowFixpoint
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "n" proven=i32 writers-known
+# CHECK: field L0.0 "n" proven=int[0, 2147483647] writers-known
 # CHECK-NEXT: field L0.1 "s" proven=undefined|string writers-known
 # RUN(OLDEST): link fields oldest-first mechanisms=all
-# OLDEST: field L0.0 "n" proven=i32 writers-known
+# OLDEST: field L0.0 "n" proven=int[0, 2147483647] writers-known
 # OLDEST-NEXT: field L0.1 "s" proven=undefined|string writers-known
 # RUN(SCATTERED): link fields scattered mechanisms=all
-# SCATTERED: field L0.0 "n" proven=i32 writers-known
+# SCATTERED: field L0.0 "n" proven=int[0, 2147483647] writers-known
 # SCATTERED-NEXT: field L0.1 "s" proven=undefined|string writers-known
 
 layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2

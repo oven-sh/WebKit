@@ -6,7 +6,7 @@ const elementOrUndefined = b.union(element, b.undefined);
 const callbackResult = b.callbackResult("callback");
 const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh;
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
-const methodsWrittenTwice = new Set(["every", "filter", "find", "findIndex", "forEach", "map", "reduce", "some"]);
+const methodsWrittenTwice = new Set(["every", "filter", "find", "findIndex", "flatMap", "forEach", "map", "reduce", "some"]);
 const textOnList = (name: string) => (methodsWrittenTwice.has(name) ? `${name}OfList` : name);
 
 interface Receiver {
@@ -191,10 +191,14 @@ const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: readonly So
     })),
   ]);
 
+const copiedFunctions = (...names: readonly string[]) => ({
+  callsFunctions: names.map(name => ({ function: b.functionIn("ArrayPrototype", name), uses: [] })),
+});
+
 const itemsProtocols = b.runs("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"));
 const builtinIterable = b.union(
   b.string,
-  ...["Set", "Map", "SetIterator", "MapIterator", "StringIterator"].map(name => b.instance(name).pristine("Names")),
+  ...["Set", "Map", "ArrayIterator", "SetIterator", "MapIterator", "StringIterator"].map(name => b.instance(name).pristine("Names")),
 );
 
 const listAsItsClassMakesIt = b.instance("Array").pristine("Storage", "Names");
@@ -362,6 +366,13 @@ export default b.declarations(
   b.privateAlias("Array.prototype.forEach", "Array.prototype.map"),
 
   foldMethod("reduce"),
+  b.extend("Array.prototype.reduce", copiedFunctions("reduceArray", "reduceArrayFromFirst", "chainToValue")),
+  b.extend("Array.prototype.map", copiedFunctions("mapArray", "chainToList")),
+  b.extend("Array.prototype.filter", copiedFunctions("filterArray", "filterTruthyArray", "countInArray", "countTruthyInArray", "chainToList")),
+  b.extend("Array.prototype.some", copiedFunctions("someArray")),
+  b.extend("Array.prototype.every", copiedFunctions("everyArray")),
+  b.extend("Array.prototype.find", copiedFunctions("findInArray")),
+  b.extend("Array.prototype.findIndex", copiedFunctions("findIndexInArray")),
   foldMethod("reduceRight"),
 
   sortMethod(

@@ -65,6 +65,11 @@ struct ProgramWithSourcesSize {
     uint32_t functionsInModule;
 };
 
+struct SourcesAtHost {
+    Vector<Vector<uint8_t>> modules;
+    uint32_t releases { 0 };
+};
+
 struct RecordsReadBack {
     unsigned objects { 0 };
     unsigned objectsWithSeveralOrders { 0 };
@@ -566,6 +571,49 @@ static void testCompressedSourcesRoundTrip()
     }
 }
 
+static HostFunctionSources hostOf(SourcesAtHost& sources)
+{
+    return {
+        .owner = &sources,
+        .size = [](void* owner, uint32_t module) { return static_cast<SourcesAtHost*>(owner)->modules[module].size(); },
+        .copy = [](void* owner, uint32_t module, uint8_t* destination) {
+            const Vector<uint8_t>& source = static_cast<SourcesAtHost*>(owner)->modules[module];
+            memcpy(destination, source.span().data(), source.size());
+        },
+        .maxCompressedSize = maxPackedSize,
+        .compress = packSevenBitBytes,
+        .view = [](void* owner, uint32_t module) -> const uint8_t* { return module % 2 ? static_cast<SourcesAtHost*>(owner)->modules[module].span().data() : nullptr; },
+        .release = [](void* owner) {
+            static_cast<SourcesAtHost*>(owner)->modules = { };
+            ++static_cast<SourcesAtHost*>(owner)->releases;
+        },
+    };
+}
+
+static void testPreparedSourcesRoundTrip()
+{
+    for (ProgramWithSourcesSize size : { fewSources, manySources }) {
+        TestBuild build(textOfProgramWithSources(size), { });
+        SourcesAtHost sources;
+        for (Typed::Module& module : build.program().modules) {
+            sources.modules.append(Vector<uint8_t>(std::span<const uint8_t>(module.functionSource)));
+            if (sources.modules.size() > 1)
+                module.functionSource = { };
+        }
+        build.context().setFunctionSources(hostOf(sources));
+        AOT_TEST_CHECK(!prepareFunctionSources(build.program(), build.context(), 0));
+        build.program().admitsReplacedBuiltins = true;
+        AOT_TEST_CHECK(!prepareFunctionSources(build.program(), build.context()) && !sources.releases);
+        std::unique_ptr<PreparedFunctionSources> prepared = prepareFunctionSources(build.program(), build.context(), 0);
+        AOT_TEST_CHECK(prepared && sources.releases == 1);
+        build.program().admitsReplacedBuiltins = false;
+        TestImage image = builtImage(build, codeOfProgramWithSources(build, size), WTF::move(prepared));
+        AOT_TEST_CHECK(image.image->programTables().functionSources()[0].numberOfBlocks);
+        AOT_TEST_CHECK(sources.releases == 1);
+        checkSourcesRoundTrip(image, size);
+    }
+}
+
 static Vector<uint8_t> bytesOfImageWithLongLists(unsigned threadCount, const HostThreadPool* hostPool)
 {
     TestBuild build(textOfProgramWithSources(manySources), { .threadCount = threadCount, .hostPool = hostPool });
@@ -940,6 +988,7 @@ std::span<const NativeTest> determinismTests()
         { "image/determinism/types-born-in-two-orders"_s, testTypesBornInTwoOrders },
         { "image/determinism/sources-round-trip"_s, testSourcesRoundTrip },
         { "image/determinism/compressed-sources-round-trip"_s, testCompressedSourcesRoundTrip },
+        { "image/determinism/prepared-sources-round-trip"_s, testPreparedSourcesRoundTrip },
         { "image/determinism/lists-longer-than-a-range"_s, testListsLongerThanRange },
         { "image/determinism/records-of-many-layouts"_s, testRecordsOfManyLayouts },
         { "image/determinism/records-of-many-layouts-of-a-validating-build"_s, testRecordsOfManyLayoutsOfValidatingBuild },

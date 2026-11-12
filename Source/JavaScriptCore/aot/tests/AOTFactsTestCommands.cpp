@@ -15,6 +15,7 @@
 #include "AOTLinkTables.h"
 #include "AOTRemovableFeature.h"
 #include "AOTThinSummary.h"
+#include "AOTTypeOrigins.h"
 #include "VM.h"
 #include "YarrFlags.h"
 #include <wtf/CommaPrinter.h>
@@ -212,8 +213,10 @@ static ASCIILiteral nameInFactsText(SummaryTrait trait)
         return "OnlyPassesOnGatheredArguments"_s;
     case SummaryTrait::HoldsInt32Promise:
         return "HoldsInt32Promise"_s;
-    case SummaryTrait::ReturnsUInt32:
-        return "ReturnsUInt32"_s;
+    case SummaryTrait::NeverReturns:
+        return "NeverReturns"_s;
+    case SummaryTrait::SuspendsAfterStart:
+        return "SuspendsAfterStart"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -520,6 +523,8 @@ static void printAccessOfSummary(IRPrinter& printer, const ThinSummary& summary,
         out.print(" on-no-way-to-return"_s);
     if (access.storesObjectMadeForIt)
         out.print(" made-for-it"_s);
+    if (access.storesConstructedObject)
+        out.print(" constructed-for-it"_s);
     if (access.laysAccessorAsWritten) {
         const SummaryWrittenAccessor& written = summary.writtenAccessorOf(index);
         out.print(" accessor-as-written"_s);
@@ -555,7 +560,7 @@ static void printOperatorOfSummary(IRPrinter& printer, const ThinSummary& summar
         printReferenceToNodeOfSummary(printer, summary, operation.operands[operand]);
         printNamedNodeOfSummary(printer, summary, "or "_s, operation.converted[operand]);
     }
-    out.println(operation.writtenDivisor == SummaryOperator::WrittenDivisor::None ? ")"_s : operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? ") divisor-written-below-two-to-31"_s : ") divisor-written-up-to-two-to-32"_s);
+    out.println(operation.writtenDivisor == SummaryOperator::WrittenDivisor::None ? ")"_s : operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? ") divisor-written-below-two-to-31"_s : ") divisor-written-up-to-two-to-32"_s, operation.shiftsRightByConstant ? " shifts-right-by-constant"_s : ""_s);
 }
 
 static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary, uint32_t index)
@@ -1049,6 +1054,14 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
             out.println();
         }
 
+        for (const LinkedTableCallee& held : tables.tableCalleesOf(id)) {
+            out.print("  table-callee of "_s, held.capture, " "_s);
+            if (held.callee)
+                printer.print(held.callee);
+            else
+                printer.print(held.builtin);
+            out.println();
+        }
         if (const LinkedEffectsGivenArguments* given = tables.known.findEffectsGivenArguments(id)) {
             out.print("  given-arguments"_s);
             printEntryParametersInFactsText(out, "as-expected"_s, given->parametersTakenAsExpected);
@@ -1136,6 +1149,13 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(receiver.function);
         printer.out().print(" "_s);
         printer.print(receiver.site);
+        printer.out().println();
+    }
+    for (const LinkedReceiverAsMade& read : tables.plainListsRead) {
+        printer.out().print("plain-list "_s);
+        printer.print(read.function);
+        printer.out().print(" "_s);
+        printer.print(read.site);
         printer.out().println();
     }
     for (const LinkedReceiverAsMade& receiver : tables.receiversThatNobodyChanges) {
@@ -1340,6 +1360,8 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
             out.print(" stays-with-compiled-code"_s);
         if (layout.isAllocated && !layout.hasDirectInstances)
             out.print(" has-no-direct-instances"_s);
+        if (!layout.isMadeInSight)
+            out.print(" made-nowhere-in-sight"_s);
         if (layout.isRedefinedByLiteralsAlone)
             out.print(" redefined-by-literals-alone"_s);
         if (layout.isFilledUnderComputedKeys)
@@ -1775,6 +1797,42 @@ static void printLinkOfChainInWhyGone(PrintStream& out, const LinkFlow& flow, Fl
     out.println();
 }
 
+static void printTypeOrigins(PrintStream& out, const LinkFlow& flow)
+{
+    static constexpr ASCIILiteral users[] { "access"_s, "call"_s, "operator"_s };
+    static constexpr ASCIILiteral reasons[] { "unknown"_s, "untracked"_s, "builtin-result"_s, "call-result"_s, "property-read"_s, "outside-caller"_s, "exposed-object"_s, "exposed-variable"_s, "caught-exception"_s, "other-value"_s, "array-argument"_s, "other-builtin"_s, "other-function"_s, "many-shapes"_s, "many-functions"_s, "changed-shape"_s, "missing-field"_s, "checked-element"_s, "checked-result"_s, "checked-keys"_s, "static-field"_s, "builtin-property"_s, "computed-name"_s };
+    static_assert(std::size(reasons) == numberOfEnumerators<Wire::TypeOriginReason>);
+    auto printLocation = [&](const Wire::SourceLocation& location) {
+        if (hasModule(location))
+            out.print("m"_s, location.module, "@"_s, location.position);
+        else
+            out.print("nowhere"_s);
+    };
+    std::unique_ptr<TypeOrigins> origins = traceTypeOrigins(flow);
+    for (const TypeOrigins::User& user : origins->users) {
+        const TypeOrigin& origin = origins->origins[user.origin];
+        out.print("f"_s, user.function.index(), " "_s, users[static_cast<unsigned>(user.kind)], " "_s);
+        printLocation(user.location);
+        out.print(": "_s, reasons[static_cast<unsigned>(origin.reason)], " at "_s);
+        printLocation(origin.location);
+        if (hasModule(origin.entry)) {
+            out.print(" entry "_s);
+            printLocation(origin.entry);
+        }
+        if (origin.name) {
+            Vector<char16_t> buffer;
+            out.print(" \""_s, flow.program.strings.viewOf(origin.name, buffer), "\""_s);
+        }
+        if (origin.builtin)
+            out.print(" builtin"_s, origin.builtin.index());
+        if (origin.node) {
+            out.print(" from "_s);
+            flow.describe(out, FlowNodeID(*origin.node));
+        }
+        out.println(user.hasOtherOrigins ? " and others"_s : ""_s);
+    }
+}
+
 static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& asked)
 {
     size_t numberOfNodes = flow.numberOfNodesWithLists();
@@ -1796,17 +1854,33 @@ static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& a
     };
 
     bool namesLayout = asked.length() > 1 && asked[0] == 'L' && !asked.contains('.');
-    if (namesLayout) {
+    bool namesFunction = asked.length() > 1 && asked[0] == 'f' && !asked.contains('.');
+    if (namesLayout || namesFunction) {
         std::optional<uint32_t> number = parseInteger<uint32_t>(StringView(asked).substring(1));
-        if (!number || *number >= flow.program.layouts.size()) {
-            out.println("why-gone "_s, asked, ": no such layout"_s);
+        if (!number || *number >= (namesLayout ? flow.program.layouts.size() : flow.program.functions.size())) {
+            out.println("why-gone "_s, asked, namesLayout ? ": no such layout"_s : ": no such function"_s);
             return;
         }
-        LayoutID layout(*number);
-        out.println("why-gone "_s, asked, flow.escapedLayouts.get(*number) ? ": it has gone"_s : ": it has not gone"_s);
+        LayoutID layout(namesLayout ? *number : 0);
+        bool hasGone = namesLayout ? flow.escapedLayouts.get(*number) : flow.escapedFunctions.get(*number);
+        out.println("why-gone "_s, asked, hasGone ? ": it has gone"_s : ": it has not gone"_s);
         auto holds = [&](uint32_t node) {
+            LinkType type = flow.typeAt(FlowNodeID(node));
+            if (namesFunction) {
+                switch (type.functions) {
+                case LinkType::Functions::None:
+                    return false;
+                case LinkType::Functions::Set:
+                    return std::ranges::contains(flow.functionsOfSet(type), FunctionID(*number));
+                case LinkType::Functions::Closure:
+                case LinkType::Functions::Constructors:
+                    return type.function.index() == *number;
+                case LinkType::Functions::Lost:
+                    return true;
+                }
+            }
             bool isHeld = false;
-            flow.forEachLayoutOf(flow.typeAt(FlowNodeID(node)), [&](LayoutID member) {
+            flow.forEachLayoutOf(type, [&](LayoutID member) {
                 isHeld |= member == layout;
             });
             return isHeld;
@@ -1814,26 +1888,30 @@ static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& a
         for (uint32_t function = 0; function < flow.program.functions.size(); ++function) {
             const ThinSummary& summary = flow.summaries.at(FunctionID(function));
             for (uint32_t node = 0; node < summary.nodes.size(); ++node) {
-                if (summary.nodes[node].kind == SummaryNode::Kind::Allocation && summary.nodes[node].first == *number) {
+                if (summary.nodes[node].kind == (namesLayout ? SummaryNode::Kind::Allocation : SummaryNode::Kind::Closure) && summary.nodes[node].first == *number) {
                     uint32_t made = flow.nodeOf(FunctionID(function), node).index();
                     reach(made, made);
                 }
             }
         }
         out.println("made at "_s, reached.size(), " nodes"_s);
+        constexpr unsigned maxChains = 40;
+        unsigned numberOfChains = 0;
         for (size_t place = 0; place < reached.size(); ++place) {
             for (FlowNodeID end : flow.endsOfEdgesOutOf(FlowNodeID(reached[place]))) {
                 if (end == flow.unseen()) {
-                    out.println("an edge leads it to what is unseen; the chain, the root last:"_s);
-                    out.println("  unseen"_s);
-                    printChainFrom(reached[place]);
-                    return;
-                }
-                if (holds(end.index()))
+                    if (numberOfChains++ < maxChains) {
+                        out.println("an edge leads it to what is unseen; the chain, the root last:"_s);
+                        out.println("  unseen"_s);
+                        printChainFrom(reached[place]);
+                    }
+                } else if (holds(end.index()))
                     reach(end.index(), reached[place]);
             }
         }
-        out.println(flow.escapedLayouts.get(*number) ? "no edge leads it to what is unseen: a rule let it go; "_s : ""_s, "every node that it reaches, "_s, reached.size(), ", with what is told there:"_s);
+        if (numberOfChains)
+            return;
+        out.println(hasGone ? "no edge leads it to what is unseen: a rule let it go; "_s : ""_s, "every node that it reaches, "_s, reached.size(), ", with what is told there:"_s);
         for (uint32_t node : reached)
             printLinkOfChainInWhyGone(out, flow, FlowNodeID(node));
         return;
@@ -1899,6 +1977,14 @@ static void runLinkCommand(TestCommandContext& context)
     OrderOfWorklist order = OrderOfWorklist::NewestFirst;
     bool printsWhatIsHeld = false;
     bool printsCoroutines = false;
+    if (context.arguments.size() == 1 && context.arguments[0] == "origins"_s) {
+        context.build.askOfFlowAtRest([&](const LinkFlow& flow) {
+            printTypeOrigins(context.out, flow);
+        });
+        StagedBuild stage = context.stage(order);
+        stage.facts();
+        return;
+    }
     if (context.arguments.size() >= 2 && context.arguments[0] == "why-gone"_s) {
         context.build.askOfFlowAtRest([&](const LinkFlow& flow) {
             for (size_t place = 1; place < context.arguments.size(); ++place)
@@ -2213,7 +2299,7 @@ std::span<const TestCommand> factsTestCommands()
     static constexpr TestCommand commands[] {
         { "locks"_s, runLocksCommand, ProgramOfCommand::AsWritten, ""_s },
         { "summary"_s, runSummaryCommand, ProgramOfCommand::AsWritten, "f.."_s },
-        { "link"_s, runLinkCommand, ProgramOfCommand::AsWritten, "[functions|calls|accesses|fields|variables|captures|members|layouts|families|counts].. [oldest-first|scattered] | why-gone <L12 | L12.field3 | f7.parameter0>.."_s },
+        { "link"_s, runLinkCommand, ProgramOfCommand::AsWritten, "[functions|calls|accesses|fields|variables|captures|members|layouts|families|counts].. [oldest-first|scattered] | why-gone <L12 | L12.field3 | f7.parameter0>.. | origins"_s },
         { "locales"_s, runLocalesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "causes"_s, runCausesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "features"_s, runFeaturesCommand, ProgramOfCommand::AsWritten, ""_s },

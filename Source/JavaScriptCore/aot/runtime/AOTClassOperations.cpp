@@ -93,7 +93,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberStructureOfClass, size_t, 
 {
     VM& vm = *instance->vm;
     ClassTable& classes = instance->state->objects->classes;
+    bool asksElements = offsetOfStructures & StructuresOfHeir::asksElements;
+    offsetOfStructures &= ~StructuresOfHeir::asksElements;
     bool isRemembered = classes.rememberStructureOfInstances(vm, cell, classLayoutAt(classes, classIndex), offsetOfStructures);
+    if (asksElements)
+        isRemembered = isRemembered && classes.rememberPrototypeWithoutElements(cell, offsetOfStructures);
     countEvent(vm, isRemembered ? RuntimeCounterID::BuiltinSubclassStructuresAccepted : RuntimeCounterID::BuiltinSubclassStructuresRejected);
     return isRemembered;
 }
@@ -113,6 +117,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
 {
     constexpr Entry entry = Entry::operationAOTGetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
+    countEvent(vm, RuntimeCounterID::ConstructPrototypeLookups);
     JSObject* target = objectArgument(newTarget, entry);
     if (auto* closure = dynamicDowncast<Closure>(target); closure && Instance::owning(closure) == instance && FunctionTables::hasPrototypePropertyAtCreation(closure->kind())) {
         ClassTable& classes = instance->state->objects->classes;
@@ -145,7 +150,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
     JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
-    if (Object* made = !object && holdsNoField ? compiledObjectOrNull(result) : nullptr; made && objects.structures.structureIDOf(allocation) != made->structureID() && objects.structures.numberOfStructuresMade() == numberOfStructuresBefore)
+    if (Object* made = !object && holdsNoField ? compiledObjectOrNull(result) : nullptr; made && !made->compiledStructure().hasSpareWord() && objects.structures.structureIDOf(allocation) != made->structureID() && objects.structures.numberOfStructuresMade() == numberOfStructuresBefore)
         objects.classes.rememberInstanceBelow(vm, allocation, cellArgument<JSObject>(prototype, entry), *made, result == allocated ? instance->state->tables.allocations()[allocation].size() : made->layout().size);
     vm.writeBarrier(result);
     OPERATION_RETURN(scope, newCellForCompiledCode(vm, result));
@@ -269,9 +274,11 @@ static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, S
         return;
     PropertyOffset offset = after->transitionOffset();
     std::optional<uint32_t> newCapacity = capacityOfStorageGrownByStub(vm, before, after, offset);
-    if (!newCapacity)
+    bool isStoredWithElements = !newCapacity && before->typeInfo().type() == ArrayType && offset == firstOutOfLineOffset && !before->outOfLineCapacity() && after->outOfLineCapacity() == initialOutOfLineCapacity
+        && !before->hasElementsStartOffset() && !before->mayBePrototype() && !before->mayHaveImmutableProperties() && after->propertyAccessesAreCacheable();
+    if (!newCapacity && !isStoredWithElements)
         return;
-    int32_t placeOfValue = *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
+    int32_t placeOfValue = isStoredWithElements ? 1 : *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
     int32_t placeOfBrand = brand ? locationOf(*brand) : 0;
     if (placeOfValue != static_cast<int16_t>(placeOfValue) || placeOfBrand != static_cast<int16_t>(placeOfBrand))
         return;
@@ -309,11 +316,9 @@ static void rememberDefinitionAmongExtraProperties(VM& vm, JSCellButterfly* toke
     const_cast<CompiledStructure&>(before).setSuccessorByPrivateName(vm, const_cast<CompiledStructure*>(&after));
 }
 
-static constexpr unsigned numberOfStructuresWithoutNames = 8;
-
 static unsigned placeOfStructureWithoutName(StructureID structure, uint32_t field)
 {
-    return ((structure.bits() >> 4) + field) % numberOfStructuresWithoutNames * 2;
+    return ((structure.bits() >> ClassToken::shiftOfStructureWithoutName) + field) % ClassToken::numberOfStructuresWithoutNames * 2;
 }
 
 static bool isKnownToLackName(JSCellButterfly* token, uint32_t field, JSObject* object)
@@ -328,7 +333,7 @@ static bool isKnownToLackName(JSCellButterfly* token, uint32_t field, JSObject* 
 static void rememberStructureWithoutName(VM& vm, JSCellButterfly* token, uint32_t field, Structure* structure)
 {
     if (!token->get(ClassToken::structuresWithoutNamesSlot))
-        token->setIndex(vm, ClassToken::structuresWithoutNamesSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numberOfStructuresWithoutNames * 2));
+        token->setIndex(vm, ClassToken::structuresWithoutNamesSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::numberOfStructuresWithoutNames * 2));
     JSCellButterfly* places = uncheckedDowncast<JSCellButterfly>(token->get(ClassToken::structuresWithoutNamesSlot).asCell());
     unsigned place = placeOfStructureWithoutName(structure->id(), field);
     places->setIndex(vm, place, structure);

@@ -31,7 +31,13 @@ struct X86LinkedJump {
     uint32_t to;
     X86JumpKind kind { X86JumpKind::Unconditional };
     uint8_t condition { 0 };
-    bool isShort { false };
+    uint8_t savings { 0 };
+    uint8_t lengthOfReturn { 0 };
+};
+
+struct X86ShortReturn {
+    uint32_t start;
+    uint32_t length;
 };
 
 struct X86JumpShift {
@@ -136,6 +142,11 @@ struct X86JumpShortener {
         return longJumpLength(kind) - shortJumpLength;
     }
 
+    static constexpr uint8_t savingsOfReturn(uint8_t lengthOfReturn)
+    {
+        return longJumpLength(X86JumpKind::Unconditional) - lengthOfReturn;
+    }
+
     static constexpr bool fitsShortJump(int64_t distance)
     {
         return distance >= -shortJumpReach && distance < shortJumpReach;
@@ -158,19 +169,27 @@ struct X86JumpShortener {
             std::ranges::sort(jumps, { }, &X86LinkedJump::from);
             RELEASE_ASSERT(indexJumps());
         }
-        classifyJumps();
+        if (shortReturns.empty())
+            classifyJumps<false>();
+        else
+            classifyJumps<true>();
         findShortJumps();
+        if (replaceLongJumpsWithReturns()) {
+            dropDecidedJumps();
+            sumUpFrom(firstCopiedReturn);
+            findShortJumps();
+        }
         if (chainJumpsIntoRareCode()) {
             dropDecidedJumps();
             sumUpFrom(firstChainedJump);
             findShortJumps();
         }
-        if (!shiftBefore[count]) {
+        if (!shiftBefore[count] && firstCopiedReturn == UINT32_MAX) {
             for (X86LinkedJump& jump : jumps)
-                jump.isShort = false;
+                jump.savings = 0;
             return size;
         }
-        return compactCode();
+        return firstCopiedReturn == UINT32_MAX ? compactCode<false>() : compactCode<true>();
     }
 
     static uint32_t startOf(const X86LinkedJump& jump)
@@ -181,7 +200,32 @@ struct X86JumpShortener {
     // By findShortJumps().
     bool staysLong(uint32_t i) const
     {
-        return !appliedSavings.span().data()[i];
+        return !appliedSavings.span().data()[i] && !jumpData[i].lengthOfReturn;
+    }
+
+    uint8_t returnLengthAt(uint32_t to) const
+    {
+        auto found = std::ranges::lower_bound(shortReturns, to, { }, &X86ShortReturn::start);
+        return found != shortReturns.end() && found->start == to ? static_cast<uint8_t>(found->length) : 0;
+    }
+
+    void replaceJumpWithReturn(uint32_t index, uint8_t lengthOfReturn)
+    {
+        jumpData[index].lengthOfReturn = lengthOfReturn;
+        appliedSavings.mutableSpan().data()[index] = savingsOfReturn(lengthOfReturn);
+        firstCopiedReturn = std::min(firstCopiedReturn, index);
+    }
+
+    bool replaceLongJumpsWithReturns()
+    {
+        bool hasCopied = false;
+        for (auto [index, lengthOfReturn] : jumpsToShortReturns) {
+            if (!staysLong(index))
+                continue;
+            replaceJumpWithReturn(index, lengthOfReturn);
+            hasCopied = true;
+        }
+        return hasCopied;
     }
 
     // Whether the jump, once it is short, reaches the first byte of the other as the code stands. Shortening only brings the two nearer.
@@ -345,6 +389,15 @@ struct X86JumpShortener {
         return true;
     }
 
+    uint64_t shortReturnFilter() const
+    {
+        uint64_t filter = 0;
+        for (const X86ShortReturn& shortReturn : shortReturns)
+            filter |= uint64_t { 1 } << shortReturn.start % 64;
+        return filter;
+    }
+
+    template<bool hasShortReturns>
     void classifyJumps()
     {
         const X86LinkedJump* const data = jumpData;
@@ -355,6 +408,7 @@ struct X86JumpShortener {
         UndecidedJump* const firstUndecided = undecided.mutableSpan().data();
         UndecidedJump* nextUndecided = firstUndecided;
         const uint32_t jumpCount = count;
+        const uint64_t filter = hasShortReturns ? shortReturnFilter() : 0;
         uint32_t sum = 0;
         for (uint32_t i = 0; i < jumpCount; ++i) {
             uint32_t to = data[i].to;
@@ -365,6 +419,18 @@ struct X86JumpShortener {
                 ++target;
             targets[i] = target;
             sums[i] = sum;
+            if constexpr (hasShortReturns) {
+                if (filter >> to % 64 & 1 && data[i].kind == X86JumpKind::Unconditional) [[unlikely]] {
+                    uint8_t lengthOfReturn = returnLengthAt(to);
+                    if (lengthOfReturn && lengthOfReturn <= shortJumpLength) {
+                        replaceJumpWithReturn(i, lengthOfReturn);
+                        sum += applied[i];
+                        continue;
+                    }
+                    if (lengthOfReturn)
+                        jumpsToShortReturns.append({ i, lengthOfReturn });
+                }
+            }
             if (distance >= 0) {
                 if (distance < shortJumpReach) {
                     applied[i] = savings;
@@ -410,7 +476,7 @@ struct X86JumpShortener {
         const uint8_t* const applied = appliedSavings.span().data();
         uint32_t kept = 0;
         for (uint32_t k = 0; k < undecidedCount; ++k) {
-            if (!applied[list[k].index])
+            if (!applied[list[k].index] && !jumpData[list[k].index].lengthOfReturn)
                 list[kept++] = list[k];
         }
         undecidedCount = kept;
@@ -472,6 +538,7 @@ struct X86JumpShortener {
             *destination = *source;
     }
 
+    template<bool hasCopiedReturns>
     size_t compactCode()
     {
         shifts.grow(count);
@@ -491,9 +558,10 @@ struct X86JumpShortener {
             uint32_t from = jump.from - shift;
             uint32_t to = jump.to - sums[targets[i]];
             uint32_t distance = to - from;
-            bool isShort = applied[i];
-            data[i] = X86LinkedJump { from, to, jump.kind, jump.condition, isShort };
-            if (!isShort) {
+            const uint8_t savings = applied[i];
+            const uint8_t lengthOfReturn = hasCopiedReturns ? jump.lengthOfReturn : 0;
+            data[i] = X86LinkedJump { from, to, jump.kind, jump.condition, savings, lengthOfReturn };
+            if (!savings && !lengthOfReturn) {
                 memcpy(bytes + jump.from - sizeof(uint32_t), &distance, sizeof(uint32_t));
                 continue;
             }
@@ -501,11 +569,17 @@ struct X86JumpShortener {
             if (out != in)
                 moveCode(bytes + out, bytes + in, start - in);
             out += start - in;
+            in = jump.from;
+            if (savings || !hasCopiedReturns)
+                *nextShift++ = X86JumpShift { jump.from, shift };
+            if (lengthOfReturn) [[unlikely]] {
+                memcpy(bytes + out, bytes + (jump.to < jump.from ? to : jump.to), lengthOfReturn);
+                out += lengthOfReturn;
+                continue;
+            }
             bytes[out] = jump.kind == X86JumpKind::Conditional ? shortConditionalJumpOpcode | jump.condition : shortJumpOpcode;
             bytes[out + 1] = static_cast<uint8_t>(distance);
             out += shortJumpLength;
-            in = jump.from;
-            *nextShift++ = X86JumpShift { jump.from, shift };
         }
         memmove(bytes + out, bytes + in, size - in);
         shifts.shrink(static_cast<size_t>(nextShift - firstShift));
@@ -518,15 +592,18 @@ struct X86JumpShortener {
     Vector<X86JumpShift>& shifts;
     // A jump to this offset or behind it is seldom taken.
     uint32_t startOfRareCode { UINT32_MAX };
+    std::span<const X86ShortReturn> shortReturns { };
     X86LinkedJump* jumpData { nullptr };
     uint32_t count { 0 };
     uint32_t undecidedCount { 0 };
     uint32_t firstChainedJump { UINT32_MAX };
+    uint32_t firstCopiedReturn { UINT32_MAX };
     Vector<uint32_t, inlineJumpCapacity> firstJumpByStretch { };
     Vector<uint32_t, inlineJumpCapacity> targetIndex { };
     Vector<uint32_t, inlineJumpCapacity + 1> shiftBefore { };
     Vector<uint8_t, inlineJumpCapacity> appliedSavings { };
     Vector<UndecidedJump, inlineJumpCapacity> undecided { };
+    Vector<std::pair<uint32_t, uint8_t>, 8> jumpsToShortReturns { };
     Vector<uint64_t, inlineJumpCapacity> chainKeys { };
 };
 
@@ -534,9 +611,9 @@ static_assert(X86JumpShortener::maxShrinkFactor * X86JumpShortener::shortJumpLen
 static_assert(X86JumpShortener::maxSavings == std::max(X86JumpShortener::savingsOf(X86JumpKind::Conditional), X86JumpShortener::savingsOf(X86JumpKind::Unconditional)));
 static_assert(X86JumpShortener::maxCandidateDistance + X86JumpShortener::maxSavings <= INT16_MAX);
 
-inline size_t shortenX86Jumps(std::span<uint8_t> code, Vector<X86LinkedJump>& jumps, Vector<X86JumpShift>& shifts, uint32_t startOfRareCode = UINT32_MAX)
+inline size_t shortenX86Jumps(std::span<uint8_t> code, Vector<X86LinkedJump>& jumps, Vector<X86JumpShift>& shifts, uint32_t startOfRareCode = UINT32_MAX, std::span<const X86ShortReturn> shortReturns = { })
 {
-    return X86JumpShortener { code.data(), code.size(), jumps, shifts, startOfRareCode }.run();
+    return X86JumpShortener { code.data(), code.size(), jumps, shifts, startOfRareCode, shortReturns }.run();
 }
 
 } // namespace JSC

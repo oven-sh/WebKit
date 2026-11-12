@@ -7,9 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTFactRecords.h"
 #include <memory>
-#include <wtf/BitVector.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 
 
@@ -37,10 +38,27 @@ OwnedLooksAtBodies makeEmptyLooksAtBodies(const BodyIndexTable&);
 void lookAtBodies(LooksAtBodies&, const Program&, const ThinSummaries&, BuildContext&);
 const BodyIndexTable& bodiesLookedAt(const LooksAtBodies&);
 class FieldsOfNumbers;
+class NamesOfModules;
 struct LinkTables;
 const FieldsOfNumbers& fieldsReadAsIntegersIn(const LooksAtBodies&);
+const NamesOfModules& namesReadAsIntegersIn(const LooksAtBodies&);
 const FieldsOfNumbers& fieldsReadForArithmeticIn(const LooksAtBodies&);
 const FieldsOfNumbers& fieldsStoredWhatIsNoInt32In(const LooksAtBodies&);
+const FieldsOfNumbers& initializerFields(const LooksAtBodies&);
+BitVector initializerMethodsIn(const LooksAtBodies&, const Program&);
+BitVector functionsCalledInLoopsIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held, BitVector& keysCalledInLoops, bool& elementsAreCalledInLoops);
+BitVector functionsCalledInLoopsOfOwnFileIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+BitVector constructorsCalledInLoopsIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+BitVector mixedClassesConstructedIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+BitVector functionsCalledByValueInLoopsIn(const Program&, const ThinSummaries&, const LinkTables&, BitVector& functionsInElements);
+BitVector comparatorCallees(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+void markLiteralsStoredByCallees(ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+struct FunctionsDoneInIterations {
+    BitVector functions;
+    BitVector inNestedIterations;
+};
+FunctionsDoneInIterations findFunctionsFinishedInIterations(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+FieldsOfNumbers fieldsUsedInProductsIn(const LooksAtBodies&, const BitVector& functionsCalledInLoops);
 FieldsOfNumbers fieldsStoredCountsIn(const LooksAtBodies&, const Program&, const LinkTables& linked);
 const BitVector& keysStoredWhatIsNoInt32In(const LooksAtBodies&);
 
@@ -50,6 +68,7 @@ public:
     BuiltinsInReach(const Program&, const LooksAtBodies&, const ThinSummaries&, BuildContext&);
     ~BuiltinsInReach();
 
+    void leaveOutDirectEvals();
     void noteFindingsIn(FunctionID);
     void noteFindingsIn(std::span<const FunctionID>);
     void noteWhatBodyMakes(FunctionID);
@@ -96,6 +115,7 @@ public:
     bool mayRunOrHasObjects(BuiltinID canonical) const;
     bool isAskedForOtherNames(BuiltinID canonical) const;
     bool isOutOfSight(BuiltinID canonical) const;
+    bool isInReach(BuiltinID canonical) const;
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const;
     bool loaderOfHostMayRun() const;
     bool hostIsAskedForValueOfModule() const;
@@ -151,8 +171,10 @@ private:
     BitVector m_builtinsWorthFollowingToWrites;
     Vector<BuiltinID> m_membersWrittenAfterAll;
     Vector<NameOnHolder> m_namesTakenForUnlaid;
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesEverTakenForUnlaid;
     Vector<NameOnHolder> m_namesLaidAfterAll;
     bool m_wasToldSomethingNew { true };
+    bool m_writersMayRunUnseen { false };
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -13,6 +13,7 @@ namespace JSC { namespace AOT {
 
 enum class KeyComparison : uint8_t { AnyValue, String, Bits };
 enum class CompactTableOwner : uint8_t { Map, Set };
+enum class IteratedClass : uint8_t { Map, Set, Array };
 
 constexpr StubKey mapGet(KeyComparison comparison) { return StubKey(StubFamily::MapGet).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey findKeyInMap(KeyComparison comparison) { return StubKey(StubFamily::FindKeyInMap).withForm(static_cast<uint8_t>(comparison)); }
@@ -49,6 +50,8 @@ constexpr StubKey weakMapHas() { return StubKey(StubFamily::WeakMapHas); }
 constexpr StubKey weakSetHas() { return StubKey(StubFamily::WeakSetHas); }
 constexpr StubKey newMap() { return StubKey(StubFamily::NewMap); }
 constexpr StubKey newSet() { return StubKey(StubFamily::NewSet); }
+constexpr StubKey newIterator(IteratedClass iterated) { return StubKey(StubFamily::NewIterator).withForm(static_cast<uint8_t>(iterated)); }
+constexpr StubKey nextSetElement() { return StubKey(StubFamily::NextSetElement); }
 constexpr StubKey newCompactTable(CompactTableOwner owner) { return StubKey(StubFamily::NewCompactTable).withForm(static_cast<uint8_t>(owner)); }
 constexpr StubKey growCompactTable(CompactTableOwner owner) { return StubKey(StubFamily::GrowCompactTable).withForm(static_cast<uint8_t>(owner)); }
 

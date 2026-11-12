@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTOperationEmitter.h"
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -32,7 +32,9 @@ private:
     CellPointer receiverOrElse(const ValueContext&, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest = nullptr, std::optional<CellPointer>* baseOfSlot = nullptr);
     CellPointer elementsOwnerOrElse(const ValueContext&, Boxed object, LBasicBlock failure);
     Word32 indexOrElse(Boxed position, LBasicBlock failure);
+    bool isTestedForPresence(const ValueContext& read);
     void readElementOfProvenList(const ValueContext&);
+    Condition hasElementOfList(const ValueContext&);
     void readNumberOfProvenList(const ValueContext&);
     void storeInProvenListUnderAnyKey(const ValueContext&);
     bool unitReckonsWithElement(const ValueContext& read);

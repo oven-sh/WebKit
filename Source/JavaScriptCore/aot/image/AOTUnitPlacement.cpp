@@ -63,7 +63,7 @@ private:
     size_t numberOfUnits() const { return m_inputs.sizes.size(); }
     size_t alignmentOf(size_t unit) const { return m_inputs.alignments[m_inputs.alignments.size() == 1 ? 0 : unit]; }
     uint32_t firstUseOfUnit(size_t unit) const { return m_inputs.uses.empty() ? 0 : m_inputs.firstUseByUnit[unit]; }
-    size_t endOfRun(const RunOfUnits& run) const { return startOfUnit(positionAfterBatch(), run.first) + run.size; }
+    size_t endOfRun(const RunOfUnits& run) const { return startOfRun(positionAfterBatch(), run) + run.size; }
     size_t offsetOfLastCopy(uint32_t copyable) const { return m_result.copies[*m_lastCopies[copyable]].offset; }
     bool isInBatch(uint32_t copyable) const { return m_lastCopies[copyable] && *m_lastCopies[copyable] >= m_firstCopyOfBatch; }
 
@@ -93,6 +93,15 @@ private:
         return WTF::roundUpToMultipleOf(alignmentOf(unit), position + alignedOffset) - alignedOffset;
     }
 
+    size_t startOfRun(size_t position, const RunOfUnits& run) const
+    {
+        size_t start = startOfUnit(position, run.first);
+        if (m_inputs.placesInLine.empty() || m_inputs.placesInLine[run.first] == UINT64_MAX)
+            return start;
+        uint64_t later = std::rotr(m_inputs.placesInLine[run.first], static_cast<int>(start % sizeOfCodeLine)) & alignedPlacesInLine(alignmentOf(run.first));
+        return later ? start + std::countr_zero(later) : start;
+    }
+
     size_t positionAfterBatch() const
     {
         if (m_result.copies.size() == m_firstCopyOfBatch)
@@ -102,7 +111,7 @@ private:
 
     size_t placeUnit(size_t unit, const RunOfUnits& run)
     {
-        size_t start = startOfUnit(m_position, unit);
+        size_t start = unit == run.first ? startOfRun(m_position, run) : startOfUnit(m_position, unit);
         RELEASE_ASSERT(unit == run.first || start == m_position);
         m_result.unitStarts[unit] = start;
         m_position = start + m_inputs.sizes[unit];

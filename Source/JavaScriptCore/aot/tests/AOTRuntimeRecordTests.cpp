@@ -145,6 +145,8 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
         return false;
     if (flags & Slot::needsHandler)
         return false;
+    if (kind == Slot::Kind::Field && (flags & (Slot::isOwn | Slot::absentIsUndefined)) == Slot::absentIsUndefined)
+        return false;
     static_assert(Slot::inheritedIsOutOfLine == Slot::storageHasIndexingHeader);
     bool namesPlaceInHolder = Slot::payloadOf(kind) == SlotPayload::FieldAndHolder && Slot::locationOf(kind) == SlotLocation::WordIndex;
     if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage) && !namesPlaceInHolder)
@@ -231,10 +233,14 @@ static void testPackedSlotRoundTrip()
     Cells cells(realms);
     unsigned numberPacked = 0;
     forEachLegalSlot(cells, [&](const Slot& slot, Slot::Kind kind, uint8_t flags) {
-        AOT_TEST_CHECK(packsAndUnpacks(slot, cells.cageBase) == (!alwaysStaysOutsideTheFront(kind) && !(flags & Slot::storageHasIndexingHeader)));
+        bool isReportedReplacement = Slot::payloadOf(kind) == SlotPayload::Key && (flags & Slot::isOwn);
+        AOT_TEST_CHECK(packsAndUnpacks(slot, cells.cageBase) == (!alwaysStaysOutsideTheFront(kind) && !isReportedReplacement && !(flags & Slot::storageHasIndexingHeader)));
         ++numberPacked;
     });
+    AOT_TEST_CHECK(!packsAndUnpacks(Slot::createReportedReplacement(cells.id(), 3), cells.cageBase));
     AOT_TEST_CHECK(numberPacked > numberOfSlotKinds);
+    for (uint8_t flags : { 0, static_cast<int>(Slot::isOutOfLine), static_cast<int>(Slot::dependsOnChain) })
+        AOT_TEST_CHECK(packsAndUnpacks(createSlotOfKind(cells, Slot::Kind::Field, flags | Slot::isOwn | Slot::emptySlotMayBeUndefined), cells.cageBase));
 }
 
 static void testInheritedIndexOutsideEightBitsDoesNotPack()
@@ -263,6 +269,16 @@ static void testHolderOutsideTheCageDoesNotPack()
     }
     Slot inheritedField = Slot::createInheritedField(cells.id(), Slot::dependsOnChain, cells.holder);
     AOT_TEST_CHECK(packsAndUnpacks(inheritedField, cells.cageBase) && !PackedSlot::tryPack(inheritedField, testName, otherCageBase));
+}
+
+static void testForeignInstanceSlotStaysUnpacked()
+{
+    Realms realms;
+    Cells cells(realms);
+    SlotData slotData = SlotData::create(32, SlotRepresentation::Cell32);
+    constexpr uint8_t flags = Slot::isOwn | Slot::isInModuleInstance;
+    AOT_TEST_CHECK(packsAndUnpacks(Slot::createField(cells.id(), Slot::Kind::Variable, flags, slotData, 0, 0), cells.cageBase));
+    AOT_TEST_CHECK(!PackedSlot::tryPack(Slot::createField(cells.id(), Slot::Kind::Variable, flags, slotData, 1, 0), testName, cells.cageBase));
 }
 
 static void testHiddenWordOffsetOver1020DoesNotPack()
@@ -397,6 +413,7 @@ std::span<const NativeTest> runtimeRecordTests()
         { "runtime-records/packed-slot-round-trip"_s, testPackedSlotRoundTrip },
         { "runtime-records/inherited-index-outside-eight-bits-does-not-pack"_s, testInheritedIndexOutsideEightBitsDoesNotPack },
         { "runtime-records/holder-outside-the-cage-does-not-pack"_s, testHolderOutsideTheCageDoesNotPack },
+        { "runtime-records/slot-naming-other-instance-does-not-pack"_s, testForeignInstanceSlotStaysUnpacked },
         { "runtime-records/hidden-word-offset-over-1020-does-not-pack"_s, testHiddenWordOffsetOver1020DoesNotPack },
         { "runtime-records/transition-index-outside-eight-bits-does-not-pack"_s, testTransitionIndexOutsideEightBitsDoesNotPack },
         { "runtime-records/own-inline-value-has-zero-bytes"_s, testOwnInlineValueHasZeroBytes },

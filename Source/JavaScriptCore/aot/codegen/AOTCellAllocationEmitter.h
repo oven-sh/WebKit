@@ -51,7 +51,8 @@ public:
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
     CellPointer allocateArrayOfLength(const OperationContext&, IndexingType, unsigned length);
     void finishArrayOfLength(const OperationContext&, CellPointer array, unsigned length);
-    CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements);
+    CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Boxed>);
+    CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements, bool hasPropertyRoom = false);
     CellPointer newArrayFromBuffer(const OperationContext&, Word32 count, Pointer buffer);
 
 private:

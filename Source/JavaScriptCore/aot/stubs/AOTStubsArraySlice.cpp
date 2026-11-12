@@ -124,6 +124,50 @@ static void emitCopyElements(StubAssembler& jit, const ArrayCopyRegisters& regis
 #endif
 }
 
+static void emitReleasedCopyReuse(StubAssembler& jit, const ArrayCopyRegisters& registers, Jump hasReleasedCopy, Label isNotServed, Label hasCell)
+{
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        constexpr int32_t extraCapacity = 16;
+        constexpr ptrdiff_t offsetOfStructures = AOT_INSTANCE_OFFSET(arrays.structuresAroundFirstShift);
+        constexpr ptrdiff_t offsetOfStartOffset = -static_cast<ptrdiff_t>(sizeof(IndexingHeader) + sizeof(uint64_t));
+        constexpr int32_t offsetOfElements = sizeof(JSArray) + sizeof(IndexingHeader);
+        const auto [result, relativeShape, source, count, storage, scratch] = registers;
+        JumpList doesNotServe;
+
+        hasReleasedCopy.link(&jit);
+        doesNotServe.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+        jit.load64(BaseIndex(instanceGPR, relativeShape, CCallHelpers::TimesFour, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header)), result);
+        jit.load64(Address(storage), scratch);
+        Jump startsAtSamePlace = jit.branch64(CCallHelpers::Equal, scratch, result);
+        doesNotServe.append(jit.branch32(CCallHelpers::NotEqual, result, Address(instanceGPR, offsetOfStructures)));
+        doesNotServe.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, offsetOfStructures + sizeof(uint32_t))));
+        jit.xor64(scratch, result);
+        jit.urshift64(TrustedImm32(32), result);
+        doesNotServe.append(jit.branchTest64(CCallHelpers::NonZero, result));
+        jit.loadPtr(Address(storage, JSObject::butterflyOffset()), result);
+        jit.load64(Address(result, offsetOfStartOffset), scratch);
+        Jump hasStart = jit.jump();
+        startsAtSamePlace.link(&jit);
+        jit.loadPtr(Address(storage, JSObject::butterflyOffset()), result);
+        jit.move(TrustedImm32(0), scratch);
+        hasStart.link(&jit);
+
+        jit.getEffectiveAddress(BaseIndex(storage, scratch, CCallHelpers::TimesEight, offsetOfElements), storage);
+        doesNotServe.append(jit.branchPtr(CCallHelpers::NotEqual, storage, result));
+        jit.load32(Address(storage, Butterfly::offsetOfVectorLength()), result);
+        jit.add32(scratch, result);
+        jit.neg64(scratch);
+        jit.getEffectiveAddress(BaseIndex(storage, scratch, CCallHelpers::TimesEight, -offsetOfElements), storage);
+        jit.or32(TrustedImm32(1), count, scratch);
+        jit.sub32(scratch, result);
+        doesNotServe.append(jit.branch32(CCallHelpers::Above, result, TrustedImm32(extraCapacity)));
+        jit.store64(TrustedImm32(0), Address(instanceGPR, AOT_INSTANCE_OFFSET(arrays.releasedCopy)));
+        jit.jump().linkTo(hasCell, &jit);
+        doesNotServe.link(&jit);
+        jit.jump().linkTo(isNotServed, &jit);
+    });
+}
+
 StubSignature signatureOfArraySlice(StubKey key)
 {
     switch (static_cast<ArraySliceRange>(key.form())) {
@@ -182,6 +226,12 @@ void generateArraySlice(StubAssembler& jit)
     }
     slowPath.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxLengthForElementwiseCopy)));
     slowPath.append(branchIfHavingABadTime(jit));
+    Jump hasReleasedCopy;
+    if (!propertyRoom && !makesDoubles) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(arrays.releasedCopy)), storage);
+        hasReleasedCopy = jit.branchTestPtr(CCallHelpers::NonZero, storage);
+    }
+    Label isNotServed = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), storageAllocator);
     Jump isOne = jit.branch32(CCallHelpers::Equal, count, TrustedImm32(1));
 
@@ -189,6 +239,9 @@ void generateArraySlice(StubAssembler& jit)
     jit.loadPtr(BaseIndex(storageAllocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep() + (2 + propertyRoom / MarkedSpace::sizeStep) * sizeof(Allocator)), storageAllocator);
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, storageAllocator));
     allocateCell(jit, storage, storageAllocator, scratch, slowPath);
+    Label hasCell = jit.label();
+    if (!propertyRoom && !makesDoubles)
+        emitReleasedCopyReuse(jit, registers, hasReleasedCopy, isNotServed, hasCell);
     skipCellAndPropertyRoom(storage);
     jit.or32(TrustedImm32(1), count, vectorLength);
     jit.store32(count, Address(storage, 0));

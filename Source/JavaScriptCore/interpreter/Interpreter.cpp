@@ -1344,6 +1344,24 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
     return result;
 }
 
+#if ENABLE(AOT)
+// Checks the first frame that isExceptionCaughtByUserCatchClause() visits, if it is the interpreter's. The record that an operation of compiled
+// code publishes as the top frame is not a CallFrame: its return address is in compiled code, but not after a stub's call of a function.
+bool Interpreter::isCaughtByInterpretedTopFrame()
+{
+    VM& vm = this->vm();
+    CallFrame* top = vm.topCallFrame;
+    auto compiledCode = AOT::compiledCodeOf(vm);
+    const void* returnPC = removeCodePtrTag(top->rawReturnPC());
+    if (std::bit_cast<uintptr_t>(returnPC) - std::bit_cast<uintptr_t>(compiledCode.data()) < compiledCode.size() && !AOT::isCallStubReturnSite(vm, returnPC))
+        return false;
+    if (top->isZombieFrame() || top->isNativeCalleeFrame())
+        return false;
+    CodeBlock* codeBlock = top->codeBlock();
+    return codeBlock && isCatchingHandlerUserCatchClause(codeBlock->unlinkedCodeBlock(), top->bytecodeIndex()).value_or(false);
+}
+#endif
+
 CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
 {
     m_valid = !!handler;

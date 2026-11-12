@@ -9,6 +9,7 @@
 
 #include "AOTRuntimeRecords.h"
 #include "JSCJSValue.h"
+#include "JSTypeInfo.h"
 #include "PropertyOffset.h"
 #include "StructureID.h"
 #include <array>
@@ -48,6 +49,9 @@ struct BindingWords {
 };
 
 struct ConstantCellWords {
+    static constexpr unsigned flagOfStringConstant = OverridesGetPrototype;
+    static constexpr unsigned flagsOfNamedText = flagOfStringConstant | TypeInfoPerCellBit;
+
     void* stringAllocator;
     uint8_t* cardsOfStringCells;
     uint8_t* nextStringHeader;

@@ -1,0 +1,42 @@
+# function at(row, key) { return row[key]; }  function lay(row, key, value) { row[key] = value; }  function other(row, key) { return row[key]; }  sink(at, lay, other);
+# Of `row` a record or a view of bytes is expected: an index is read off the view. Where two kinds of views are expected, none is named.
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet {{*}} expectedElements=Uint8Array
+# CHECK-LABEL: code f2:Body
+# CHECK: ElemSet {{*}} expectedElements=Uint8Array
+# CHECK-LABEL: code f3:Body
+# CHECK: = ElemGet
+# CHECK-NOT: expectedElements
+
+layout L0 name="Row" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = String string="a"
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v0, v1, v2, v4 calleeName="sink"
+    Return v7
+}
+function f1 name="at" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|Uint8Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|Uint8Array, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="lay" module=m0 length=3 thisType={type=anything} parameters=[{type=undefined|null|L0|Uint8Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|Uint8Array, v1: anything, v2: anything):
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}
+function f3 name="other" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|Uint8Array|Float64Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|Uint8Array|Float64Array, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}

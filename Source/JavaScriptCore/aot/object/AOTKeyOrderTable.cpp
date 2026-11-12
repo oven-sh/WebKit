@@ -43,7 +43,7 @@ static_assert(maxKeyOrdersPerLayout <= UINT16_MAX);
 static constexpr uint32_t maxOrdersPerLayout = defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture());
 static_assert(maxOrdersPerLayout <= maxKeyOrdersPerLayout);
 
-static constexpr uint32_t initialTransitionTableSize = 1024;
+static constexpr uint32_t initialTransitionTableSize = 512;
 static_assert(!(initialTransitionTableSize & (initialTransitionTableSize - 1)));
 static constexpr uint64_t maxTransitionLoadNumerator = 1;
 static constexpr uint64_t maxTransitionLoadDenominator = 2;
@@ -305,11 +305,20 @@ struct KeyOrderTable::StorageOfOrders : public RefCounted<KeyOrderTable::Storage
         ordersAskedForLast = &orders;
         if (!layout.numberOfOrders)
             addOrder(orders, { });
-        for (uint32_t order = 1; order < layout.numberOfOrders; ++order) {
+        Vector<uint32_t, 32> firstOrderWithBeginning;
+        std::span<const uint16_t> entriesInFront;
+        for (uint32_t order = 0; order < layout.numberOfOrders; ++order) {
             std::span<const uint16_t> entries = tables.keyOrder(layout, order).entries();
-            Place reached = follow(layout, orders, entries);
-            if (reached.count < entries.size())
-                continuations.add({ layout.shape, orderWordOf(reached.order, reached.count), entries[reached.count], static_cast<uint16_t>(order) });
+            uint32_t shared = static_cast<uint32_t>(std::ranges::mismatch(entriesInFront, entries).in1 - entriesInFront.begin());
+            if (order && shared < entries.size()) {
+                uint32_t reached = shared ? firstOrderWithBeginning[shared - 1] : 0;
+                ASSERT(follow(layout, orders, entries).order == reached && follow(layout, orders, entries).count == shared);
+                continuations.add({ layout.shape, orderWordOf(reached, shared), entries[shared], static_cast<uint16_t>(order) });
+            }
+            firstOrderWithBeginning.shrink(shared);
+            while (firstOrderWithBeginning.size() < entries.size())
+                firstOrderWithBeginning.append(order);
+            entriesInFront = entries;
         }
         return orders;
     }
@@ -474,12 +483,13 @@ KeyOrderTable::KeyOrderTable(State& state)
     state.immortalCells->add(instance.objects.emptyKeyList);
     instance.objects.keyOrderTransitions = static_cast<KeyOrderTransition*>(state.pages.allocate(initialTransitionTableSize * sizeof(KeyOrderTransition)));
     instance.objects.keyOrderTransitionMask = initialTransitionTableSize - 1;
-    instance.objects.keyOrderRuns = static_cast<KeyOrderRun*>(state.pages.allocate(numberOfKeyOrderRuns * sizeof(KeyOrderRun)));
+    instance.objects.keyOrderRuns = static_cast<KeyOrderRun*>(state.pages.allocate(sizeOfKeyOrderRunTable * sizeof(KeyOrderRun)));
     instance.objects.enumerators = state.tableArena.allocate<EnumeratorCacheEntry>(numberOfCachedEnumerators);
     state.caches->add(CacheKind::StrongRoots, "key lists"_s, *this);
     state.caches->add(CacheKind::ClearedEachCollection, "key lists by structure"_s, m_keyListsByStructure);
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
+    state.caches->addClearedEachCollection("enumerators below compiled objects"_s, asWritableBytes(std::span { m_enumeratorsBelowCompiledObjects }));
 }
 
 KeyOrderTable::~KeyOrderTable() = default;
@@ -535,7 +545,7 @@ JSCellButterfly* KeyOrderTable::tryCreateKeyList(VM& vm, const LayoutData& layou
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
     Vector<uint16_t, 16> listed;
     for (uint16_t index : entries) {
-        if (index >= layout.numberOfFields || layout.fields()[index].attributes())
+        if (index >= layout.numberOfFields || layout.fields()[index].attributes() & PropertyAttribute::DontEnum)
             return nullptr;
         if (kind != KeyListKind::Symbols && layouts.hasStringKey(layout.fields()[index]))
             listed.append(index);
@@ -642,11 +652,14 @@ const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotK
         return field.slot.offset == offset && field.isOutOfLine() == isOutOfLine;
     };
     constexpr size_t longestWalk = 16;
+    constexpr uint32_t searchesBeforeSorting = 8;
     auto fieldsBehind = fields.subspan(first, std::min(longestWalk, fields.size() - first));
     auto foundBehind = std::ranges::find_if(fieldsBehind, hasKey);
     size_t index = first + (foundBehind - fieldsBehind.begin());
-    if (foundBehind == fieldsBehind.end())
-        index = fields.size() <= 2 * longestWalk ? std::ranges::find_if(fields, hasKey) - fields.begin() : indexOfFieldAt(layout, slotKey);
+    if (foundBehind == fieldsBehind.end()) {
+        bool isSearched = fields.size() <= 2 * longestWalk || m_fieldsBySlotKey.add(layout.shape, FieldsBySlotKey { }).iterator->value.numberOfSearches++ < searchesBeforeSorting;
+        index = isSearched ? std::ranges::find_if(fields, hasKey) - fields.begin() : indexOfFieldAt(layout, slotKey);
+    }
     RELEASE_ASSERT(index < fields.size());
     last = { layout.shape, static_cast<uint32_t>(index) + 1 };
     return &fields[index];
@@ -655,7 +668,7 @@ const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotK
 size_t KeyOrderTable::indexOfFieldAt(const LayoutData& layout, uint32_t slotKey)
 {
     std::span<const FieldData> fields = layout.fields();
-    Vector<uint64_t>& keysAndIndexes = m_fieldsBySlotKey.add(layout.shape, Vector<uint64_t> { }).iterator->value;
+    Vector<uint64_t>& keysAndIndexes = m_fieldsBySlotKey.find(layout.shape)->value.keysAndIndexes;
     if (keysAndIndexes.isEmpty()) {
         for (size_t index = 0; index < fields.size(); ++index) {
             if (uint32_t key = slotKeyFor(fields[index].slot.offset, fields[index].isOutOfLine()); key != noSlotKey)
@@ -669,13 +682,14 @@ size_t KeyOrderTable::indexOfFieldAt(const LayoutData& layout, uint32_t slotKey)
     return static_cast<uint32_t>(*found);
 }
 
-std::optional<uint32_t> KeyOrderTable::stepInsideOrderOfImage(const LayoutData& layout, uint32_t orderWord, uint16_t entry) const
+std::optional<uint32_t> KeyOrderTable::stepInsideOrderOfImage(const LayoutData& layout, uint32_t orderAndCount, uint16_t entry) const
 {
-    uint32_t order = orderOf(orderWord);
-    if (orderWord & ~orderAndCountMask || order >= layout.numberOfOrders)
+    ASSERT(!(orderAndCount & ~orderAndCountMask));
+    uint32_t order = orderOf(orderAndCount);
+    if (order >= layout.numberOfOrders)
         return std::nullopt;
     std::span<const uint16_t> entries = m_tables.keyOrder(layout, order).entries();
-    uint32_t count = countOf(orderWord);
+    uint32_t count = countOf(orderAndCount);
     if (count >= entries.size() || entries[count] != entry)
         return std::nullopt;
     return orderWordOf(order, count + 1);
@@ -742,22 +756,24 @@ bool KeyOrderTable::shouldSearchForHeldOrder(const LayoutData& layout)
     return !(++orders.heldOrdersMadeWithoutSearch % ordersMadeBetweenSearches);
 }
 
-std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& layout, uint32_t orderWord, const FieldData& field)
+std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& layout, uint32_t orderAndCount, const FieldData& field, uint32_t numberOfExtraKeys)
 {
-    ASSERT(!(orderWord & ~orderAndCountMask) && !isOrderStoredOutOfLine(orderWord));
-    uint32_t order = orderOf(orderWord);
+    ASSERT(!(orderAndCount & ~orderAndCountMask) && !isOrderStoredOutOfLine(orderAndCount));
+    uint32_t order = orderOf(orderAndCount);
     if (order < layout.numberOfOrders)
         return std::nullopt;
     StorageOfOrders& storage = m_orders;
     AddedOrder*& added = storage.addedOrder(layout, storage.ordersOf(layout), order);
-    uint32_t count = countOf(orderWord);
+    uint32_t count = countOf(orderAndCount);
     if (count != added->length || count >= maxFieldsInOrder)
         return std::nullopt;
+    if (numberOfExtraKeys && !positionsExtraKeys(layout, orderAndCount, numberOfExtraKeys))
+        return std::nullopt;
     uint16_t entry = static_cast<uint16_t>(layout.indexOf(field));
-    ASSERT(!storage.continuations.find(layout.shape, orderWord, entry));
+    ASSERT(!storage.continuations.find(layout.shape, orderAndCount, entry));
     storage.append(added, singleElementSpan(entry));
     uint32_t after = orderWordOf(order, count + 1);
-    publishTransition(layout, orderWord, field, after);
+    publishTransition(layout, orderAndCount, field, after, numberOfExtraKeys);
     return after;
 }
 

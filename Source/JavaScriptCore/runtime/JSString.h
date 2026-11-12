@@ -678,6 +678,13 @@ public:
 
     JSString* substringBase() const { return fiber1(); }
 
+#if CPU(ADDRESS64)
+    // A substring has no first fiber. This word caches the hash of its characters. It is zero until the hash is computed.
+    static constexpr unsigned substringHashShift = 32;
+    unsigned hashOfSubstring() const { return static_cast<unsigned>(m_fiber >> substringHashShift); }
+    void setHashOfSubstring(unsigned hash) const { m_fiber |= static_cast<uintptr_t>(hash) << substringHashShift; }
+#endif
+
     unsigned substringOffset() const
     {
         return static_cast<unsigned>(std::bit_cast<uintptr_t>(fiber2()));

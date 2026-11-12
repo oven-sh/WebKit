@@ -1,8 +1,8 @@
 # only a string among the elements is compared by its characters, and only with a string. A search for a number compares words: it throws nothing and collects nothing
 # a needle that may be a string may resolve a rope, for which memory may lack
 # f1 = find, f2 = finds
-# function find(n) { const xs = [1, 2, 3]; if (typeof n === "number") { try { return xs.indexOf(n); } catch { return -2; } } return -1; }
-# function finds(s) { const xs = ["a", "b"]; try { return xs.indexOf(s); } catch { return -2; } }
+# function find(n) { const xs = [1, 2, .. 17]; if (typeof n === "number") { try { return xs.indexOf(n); } catch { return -2; } } return -1; }
+# function finds(s) { const xs = ["a", "b", .. "q"]; try { return xs.indexOf(s); } catch { return -2; } }
 # a search for what is no string is code in line that may miss, so it ends its block (TryCallInline), and the end of a block prints no traits. What it may do shows under a handler:
 # a block whose end may throw leads an edge to the handler, which its head prints. So the block of the search for a number has none, and only the call behind the miss has one
 # by hand, so that the search takes the value that the test hands on
@@ -18,8 +18,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
-data d1 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}, Number{value=17}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}, String{value="c"}, String{value="d"}, String{value="e"}, String{value="f"}, String{value="g"}, String{value="h"}, String{value="i"}, String{value="j"}, String{value="k"}, String{value="l"}, String{value="m"}, String{value="n"}, String{value="o"}, String{value="p"}, String{value="q"}]} module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis

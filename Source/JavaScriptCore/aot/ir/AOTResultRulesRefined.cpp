@@ -109,6 +109,33 @@ static TypeID refinedTypeOfWholeRemainder(TypeArena& types, TypeID dividendID, T
     return wholeRemainderType(types, dividend.integers, divisor.integers);
 }
 
+static TypeID refinedTypeOfIntegerProduct(TypeArena& types, TypeID multiplicandID, TypeID multiplierID, TypeID upperBound)
+{
+    Type multiplicand = types.at(multiplicandID);
+    Type multiplier = types.at(multiplierID);
+    if (!multiplicand.isInteger() || !multiplier.isInteger())
+        return upperBound;
+    TypeID product = wholeProductType(types, multiplicand.integers, multiplier.integers);
+    return product ? product : upperBound;
+}
+
+static TypeID refinedTypeOfProductSum(TypeArena& types, OperandTypes operands, TypeID upperBound)
+{
+    using namespace OperandIndex::MultiplyAddIntegers;
+    for (TypeID operand : { operands[multiplicand], operands[multiplier], operands[addend] }) {
+        if (!types.at(operand).isInteger())
+            return upperBound;
+    }
+    std::optional<Range> sums = rangeOfProduct(types.at(operands[multiplicand]).integers, types.at(operands[multiplier]).integers);
+    for (TypeID term : { operands[addend], operands[carry] }) {
+        if (!sums || !sums->isSubsetOf(Range::full()) || (term && !types.at(term).isInteger()))
+            return upperBound;
+        if (term)
+            sums = Range { sums->minimum + types.at(term).integers.minimum, sums->maximum + types.at(term).integers.maximum };
+    }
+    return sums->isSubsetOf(Range::full()) ? types.integer(*sums) : upperBound;
+}
+
 static TypeID refinedTypeOfStringLength(const TypingContext& context, TypeID stringID, TypeID upperBound)
 {
     Type string = context.at(stringID);
@@ -177,6 +204,13 @@ static TypeID refinedTypeOfTypedArrayLength(TypeArena& types, TypedArrayType typ
     return types.integer({ 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE >> logElementSize(type)) });
 }
 
+static TypeID refinedMirroredLengthType(TypeArena& types, TypedArrayType type, TypeID upperBound)
+{
+    if (!isTypedView(type))
+        return upperBound;
+    return types.integer({ 0, (1ll << 31) >> logElementSize(type) });
+}
+
 static TypeID refinedTypeOfConversion(TypeArena& types, Opcode opcode, TypeID operandID, TypeID upperBound)
 {
     Type operand = types.at(operandID);
@@ -241,6 +275,10 @@ static TypeID refinedTypeOfOperation(const TypingContext& context, const Operati
         return refinedTypeOfQuotient(types, operands[OperandIndex::DivideIntegers::dividend], operands[OperandIndex::DivideIntegers::divisor], operation.rounding(), upperBound);
     case Opcode::RemainderOfIntegers:
         return refinedTypeOfWholeRemainder(types, operands[OperandIndex::RemainderOfIntegers::dividend], operands[OperandIndex::RemainderOfIntegers::divisor], upperBound);
+    case Opcode::MultiplyIntegers:
+        return refinedTypeOfIntegerProduct(types, operands[OperandIndex::MultiplyIntegers::multiplicand], operands[OperandIndex::MultiplyIntegers::multiplier], upperBound);
+    case Opcode::MultiplyAddIntegers:
+        return refinedTypeOfProductSum(types, operands, upperBound);
     case Opcode::RemainderByReciprocal:
         return refinedTypeOfWholeRemainder(types, operands[OperandIndex::RemainderByReciprocal::dividend], operands[OperandIndex::RemainderByReciprocal::divisor], upperBound);
     case Opcode::WholeDivisor:
@@ -255,6 +293,10 @@ static TypeID refinedTypeOfOperation(const TypingContext& context, const Operati
         return refinedTypeOfStringLength(context, operands[OperandIndex::GetStringLength::string], upperBound);
     case Opcode::GetTypedArrayElement:
         return refinedTypeOfTypedArrayElement(context, operation, operands[OperandIndex::GetTypedArrayElement::view], upperBound);
+    case Opcode::GetDataViewElement:
+        return elementTypeOf(operation.typedArrayType());
+    case Opcode::GetMirroredLength:
+        return refinedMirroredLengthType(types, operation.typedArrayType(), upperBound);
     case Opcode::GetTypedArrayLength:
         return refinedTypeOfTypedArrayLength(types, operation.typedArrayType(), upperBound);
     case Opcode::GetSuperBase:

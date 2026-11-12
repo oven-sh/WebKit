@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTCallSiteTable.h"
 #include "AOTClassPrototype.h"
 #include "AOTBuiltinModules.h"
@@ -337,6 +340,12 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
         return createTypeError(globalObject, "iterable should have an iterator symbol"_s);
     case Typed::RuntimeErrorKind::AsyncFromSyncIteratorNotObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
+    case Typed::RuntimeErrorKind::ResourceNotObject:
+        return createTypeError(globalObject, "Disposable value must be an object, null, or undefined"_s);
+    case Typed::RuntimeErrorKind::DisposeMethodAbsent:
+        return createTypeError(globalObject, "@@dispose must not be undefined or null"_s);
+    case Typed::RuntimeErrorKind::DisposeMethodNotCallable:
+        return createTypeError(globalObject, "@@dispose must be callable"_s);
     case Typed::RuntimeErrorKind::OmittedFromExecutable:
         reportUnreachableCall(globalObject->vm(), name, "refer to"_s);
         CRASH();
@@ -377,7 +386,7 @@ static void printKindsOfNativeResult(PrintStream& out, uint32_t kinds)
     }
 }
 
-[[noreturn]] static void stopAtNativeResult(Instance& instance, CallerFrameAndPC* operationFrameRecord, JSValue found, WrittenNativeResult written)
+[[noreturn]] static void stopAtNativeResult(Instance& instance, CallerFrameAndPC* operationFrameRecord, JSValue found, WrittenNativeResult written, const String& nameOfFunction = { })
 {
     StringPrintStream declared;
     printKindsOfNativeResult(declared, written.kinds);
@@ -390,9 +399,21 @@ static void printKindsOfNativeResult(PrintStream& out, uint32_t kinds)
         failure.detail("a number outside the declared range");
     else
         failure.detail(reportedTypeName(found));
-    failure.detail(" in the result of ", written.constructs ? "new " : "", BuiltinTable::singleton().textOf(BuiltinID(written.builtin)));
+    failure.detail(" in the result of ", written.constructs ? "new " : "", nameOfFunction.isNull() ? BuiltinTable::singleton().textOf(BuiltinID(written.builtin)) : nameOfFunction);
     failure.report();
     CRASH();
+}
+
+void stopAtHostResult(Instance& instance, CallerFrameAndPC* operationFrameRecord, JSValue found, JSCell* function, uint32_t kinds)
+{
+    if (std::optional<BuiltinCellKey> key = instance.state->builtinCells->keyOfCellHolding(function))
+        stopAtNativeResult(instance, operationFrameRecord, found, WrittenNativeResult::decode(WrittenNativeResult::encode(kinds, false, key->builtin().index())));
+    stopAtNativeResult(instance, operationFrameRecord, found, WrittenNativeResult::decode(WrittenNativeResult::encode(kinds, false, 0)), getCalculatedDisplayName(*instance.vm, asObject(function)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtHostResult, void, (Instance* instance, EncodedJSValue found, JSCell* function, uint32_t kinds))
+{
+    stopAtHostResult(*instance, AOT_OPERATION_FRAME_RECORD(), JSValue::decode(found), function, kinds);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instance* instance, EncodedJSValue found, uint32_t encodedWritten))
@@ -624,6 +645,8 @@ static bool isKnownToSayLessOfSecondDigest(uint32_t operationAndCalleeRows, uint
         { "operation:GetConstructPrototype"_s, { Lane::Structure, Lane::NamedProperties } },
         { "operation:PropGet"_s, { Lane::Structure, Lane::NamedProperties } },
         { "operation:SuperGet"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "runtime:operationAOTReadRunningNoCode"_s, { Lane::Structure } },
+        { "runtime:operationAOTReadBeforeLoop"_s, { Lane::Structure } },
         { "operation:CheckIterationRestart"_s, { Lane::Structure, Lane::NamedProperties } },
         { "operation:CheckInlineeFallback"_s, { Lane::Structure, Lane::NamedProperties } },
     };
@@ -675,7 +698,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instanc
         if (part >> 16 == Typed::noOperandInEffectsNet) {
             static constexpr std::array<ASCIILiteral, Typed::heapsOfCountsInEffectsNet.size()> deeds {
                 "guards were invalidated"_s, "guards were armed or started"_s, "an unmodified built-in, or the prototype chain of its instances, was written"_s,
-                "a module variable, a static field or a statically allocated scope variable changed"_s,
+                "a module variable, a static field or a statically allocated scope variable changed"_s, "static fields moved to their class object"_s,
                 "compiled code stored to a module variable"_s, "compiled code stored to a static field"_s, "compiled code stored to a statically allocated scope variable"_s
             };
             CommaPrinter commaOfDeeds;
@@ -1125,6 +1148,13 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
 
 static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObject, ThrowScope& scope, const DecodedThrowSite& decoded)
 {
+    if (decoded.word.throwsRuntimeError()) {
+        std::optional<Identifier> name;
+        if (decoded.a != ThrowSiteWord::none)
+            name = identifierOf(globalObject->vm(), StringID(decoded.a));
+        throwException(globalObject, scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(decoded.word.registerNumber), name ? &*name : nullptr));
+        return;
+    }
     ErrorInstance* error = createErrorWithMessage(instance, globalObject, static_cast<Typed::ErrorKind>(decoded.word.registerNumber), StringID(decoded.a));
     RETURN_IF_EXCEPTION(scope, void());
     instance->runtime.exceptions.thrownValue = JSValue::encode(error);
@@ -1189,13 +1219,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         }
         stopAtFalseProofBehind(*instance, site, found, proofSource, expectedType);
     }
+    auto value = [&] {
+        return throwSiteValue(instance, registers, decoded);
+    };
+    if (decoded.isFaultSite && static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::JSValue) {
+        if (JSValue found = value(); found.isNumber() || found.isBoolean())
+            stopAtFalseProofBehind(*instance, site, JSValue::encode(found), static_cast<uint32_t>(Typed::ProofSource::Contents), 0);
+    }
     if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
         instance->runtime.exceptions.thrownValue = JSValue::encode(jsUndefined());
         OPERATION_RETURN(scope);
     }
-    auto value = [&] {
-        return throwSiteValue(instance, registers, decoded);
-    };
     switch (static_cast<ThrowKind>(decoded.word.kind)) {
     case ThrowKind::NullishRead:
     case ThrowKind::NullishWrite:

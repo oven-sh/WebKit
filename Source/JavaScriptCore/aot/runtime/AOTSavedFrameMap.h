@@ -50,6 +50,14 @@ public:
     bool listsValue(uint32_t location) const { return isSet(m_valueBits, location); }
     bool listsNarrowReference(uint32_t narrowLocation) const { return isSet(m_narrowReferenceBits, narrowLocation); }
 
+    std::optional<uint64_t> onlyValueBits() const
+    {
+        if (m_narrowReferenceBits.size() || m_valueBits.size() > 2)
+            return std::nullopt;
+        uint64_t bits = m_valueBits.empty() ? 0 : m_valueBits[0];
+        return m_valueBits.size() == 2 ? bits | static_cast<uint64_t>(m_valueBits[1]) << 32 : bits;
+    }
+
     template<typename Functor>
     bool forEachValue(const Functor& functor) const { return forEachSetBit(m_valueBits, functor); }
 

@@ -162,7 +162,7 @@ void StraightEmitter::generateOperator(const BodyValue& value)
         return;
     }
     case Opcode::TypeOf:
-        callOperation(value, RuntimeOperation::TypeOf, { value.valueOperand() });
+        callStub(value, typeofString(), { value.valueOperand() });
         define(value);
         return;
     case Opcode::ToNumber:

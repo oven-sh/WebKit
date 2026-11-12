@@ -64,10 +64,12 @@ static BitVector findSidesWithClassGuardsHereOrBelow(const TableEncoder& encoder
         markUpwardFrom(guard.classLayout, guard.side);
     for (const PlacedClassGuardOfName& guard : statics.namesOfClassGuardsOfSeveralNames)
         markUpwardFrom(guard.classLayout, guard.side);
+    for (const PlacedClassGuardOfName& guard : statics.guardsOfAssignedMembers)
+        markUpwardFrom(guard.classLayout, guard.side);
     return sides;
 }
 
-static BitVector findClassesWithRecordsAllTheWayUp(const TableEncoder& encoder)
+static Typed::BitVector findClassesWithRecordsAllTheWayUp(const TableEncoder& encoder)
 {
     const Typed::Program& program = encoder.program;
     return Typed::answerAlongRows(program.layouts.size(), false, [&](LayoutID id) -> Typed::StepAlongRow {
@@ -80,7 +82,7 @@ static BitVector findClassesWithRecordsAllTheWayUp(const TableEncoder& encoder)
     });
 }
 
-static BitVector findClassesWhoseClassObjectsFindNoHasInstance(const TableEncoder& encoder)
+static Typed::BitVector findClassesWhoseClassObjectsFindNoHasInstance(const TableEncoder& encoder)
 {
     const Typed::Program& program = encoder.program;
     PropertyKeyID key = program.keyOf(program.builtins().nameOf(WellKnownSymbol::HasInstance));
@@ -202,7 +204,7 @@ static bool codeCreatesClass(const TableEncoder& encoder, LayoutID classLayout)
     return !!encoder.numbers.numberOf(NumberSpace::Request, request);
 }
 
-static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation, bool holdsOneFunction)
+static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation, bool holdsOneFunction, bool isLaidFirst)
 {
     const Typed::Program& program = encoder.program;
     bool takesEnvironment = member.function && program.at(member.function).captures.size() > encoder.plan.promotedEnvironments().numberOfRemovedCapturesOf(member.function);
@@ -212,6 +214,8 @@ static MethodData describeMemberInClassRecord(const TableEncoder& encoder, Layou
     method.flags = (member.key ? 0 : methodHasComputedName) | (takesEnvironment ? methodTakesEnvironment : 0);
     if (!holdsOneFunction)
         method.flags |= methodMayBeStoredOver;
+    if (isLaidFirst)
+        method.flags |= methodIsStoredFirst;
     method.function = FunctionID().index();
     switch (creation) {
     case Typed::MemberCreation::AtDefinition:
@@ -256,6 +260,27 @@ Vector<ClassBelowWithGuardOfNameData> collectClassesBelowWithGuardsOfNames(const
     AOT::sort(classes);
     classes.shrink(static_cast<size_t>(std::ranges::unique(classes).begin() - classes.begin()));
     return classes;
+}
+
+Vector<AssignedMemberData> collectAssignedMembers(const TableEncoder& encoder)
+{
+    auto entrypointOf = [&](FunctionID function) {
+        return (function ? encoder.findEntrypoint(function).value_or(FunctionID()) : FunctionID()).index();
+    };
+    Vector<AssignedMemberData> members;
+    for (const PlacedClassGuardOfName& guard : encoder.numbers.statics().guardsOfAssignedMembers) {
+        if (!isRankedAmongClassRecords(encoder, guard.classLayout))
+            encoder.fail("CodeTestsGuardOfClassWithoutRank"_s, guard.classLayout);
+        std::optional<uint32_t> name = encoder.numbers.numberOf(guard.spaceOfName, std::span<const uint32_t>(&guard.name, 1));
+        if (!name || guard.spaceOfName != NumberSpace::Name) {
+            encoder.fail("GuardedNameOfClassHasNoNumber"_s, guard.classLayout);
+            continue;
+        }
+        Typed::AssignedMember member = Typed::findAssignedMember(encoder.program, encoder.facts, guard.classLayout, PropertyKeyID(guard.name));
+        members.append(AssignedMemberData { guard.classLayout.index() * numberOfClassSides + static_cast<uint32_t>(guard.side), *name, guard.bit, entrypointOf(member.method), entrypointOf(member.getter), entrypointOf(member.setter), member.holdsValue });
+    }
+    AOT::sort(members, { }, &AssignedMemberData::place);
+    return members;
 }
 
 static Vector<uint32_t> collectGuardsOfNamesInClassRecord(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
@@ -331,7 +356,8 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
                     return encoder.facts.linked().memberHoldsOneFunction(program, classLayout, side, member.key, member.function);
                 };
                 bool holdsOneFunction = member.key && (answerHangsOnFunction ? ask() : namesThatHoldOneFunction.ensure(member.key.bits(), ask).iterator->value);
-                parts.methods.append(describeMemberInClassRecord(encoder, classLayout, environment, member, creationOfMemberInClassRecord(creation, index), holdsOneFunction));
+                bool isLaidFirst = answerHangsOnFunction && side == ClassSide::Prototype && member.key && member.function && encoder.facts.linked().findMember(program, classLayout, side, member.key).method == member.function;
+                parts.methods.append(describeMemberInClassRecord(encoder, classLayout, environment, member, creationOfMemberInClassRecord(creation, index), holdsOneFunction, isLaidFirst));
                 ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
             }
         }
@@ -382,6 +408,9 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     });
     data.classObjectLacksHasInstance = data.isChangedInSightAlone(ClassSide::Static) && encoder.classesWhoseClassObjectsFindNoHasInstance.quickGet(classLayout.index());
     data.privateNamesAreKnownToTexts = encoder.classesWhosePrivateNamesTextsKnow.quickGet(classLayout.index());
+    data.hasComputedMemberNames = std::ranges::any_of(parts.methods, [](const MethodData& method) {
+        return !!(method.flags & methodHasComputedName);
+    });
     return parts;
 }
 
@@ -403,10 +432,10 @@ void appendListsOfClassRecord(TableEncoder& encoder, LayoutID classLayout, const
     if (const Typed::Layout& layout = encoder.program.at(classLayout); Typed::isKnownByStructureOfClass(layout)) {
         Vector<uint32_t, 8> list;
         list.reserveInitialCapacity(layout.fields.size() + 2);
-        list.append(layout.writtenBuiltinBase.index());
+        list.append(Typed::builtinClassOfInstances(layout).index() | (layout.mixedBuiltinBase ? PropertiesOfHeirsData::extendsMixin : 0));
         list.append(static_cast<uint32_t>(layout.fields.size()));
         for (const Typed::Field& field : layout.fields)
-            list.append(nameInClassRecord(encoder, field.key, "a property of the instances of"_s, classLayout) | (field.flags.contains(Typed::FieldFlags::IsRequired) ? 0 : PropertiesOfHeirsData::mayBeStoredLate));
+            list.append(nameInClassRecord(encoder, field.key, "a property of the instances of"_s, classLayout) | (Typed::isDecidedByClassStructure(field) ? 0 : PropertiesOfHeirsData::mayBeStoredLate));
         data.propertiesOfHeirsOffset = encoder.part.append(list);
     }
 }

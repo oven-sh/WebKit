@@ -146,7 +146,7 @@ static void testSubstringsFromEveryStateOfTheFreeList()
     AOT_TEST_CHECK(ropes.runner.run(substring(), { string.address(), 2, 5 }).calledOperation);
 }
 
-static void testOneCharacterOfJoinedText()
+static void testJoinedTextCharacter()
 {
     RopeAllocation ropes;
     std::array<uint64_t, maxSingleCharacterString + 1> singleCharacterStrings;
@@ -170,7 +170,7 @@ static void testOneCharacterOfJoinedText()
     AOT_TEST_CHECK(!run.calledOperation && run.result == singleCharacterStrings['y']);
 }
 
-static void testLongKeyOfPairIsJoinedAsText()
+static void testLongPairKeyJoined()
 {
     RopeAllocation ropes;
     std::array<Latin1Character, StringKeyCache::maxCachedKeyLength + 1> letters;
@@ -478,8 +478,24 @@ static void testStrictEqualityInBothForms()
         }
     }
 
-    FakeFlatString bigInt = cellOfType(HeapBigIntType);
-    FakeFlatString otherBigInt = cellOfType(HeapBigIntType);
+    const FakeBigInt zero({ });
+    const FakeBigInt otherZero({ });
+    const FakeBigInt five({ 5 });
+    const FakeBigInt otherFive({ 5 });
+    const FakeBigInt six({ 6 });
+    const FakeBigInt negativeFive({ 5 }, true);
+    const FakeBigInt fiveAndHighDigit({ 5, 1 });
+    const FakeBigInt sixAndHighDigit({ 6, 1 });
+    check(zero.address(), otherZero.address(), true);
+    check(five.address(), otherFive.address(), true);
+    check(five.address(), zero.address(), false);
+    check(five.address(), six.address(), false);
+    check(five.address(), negativeFive.address(), false);
+    check(five.address(), fiveAndHighDigit.address(), false);
+    check(fiveAndHighDigit.address(), sixAndHighDigit.address(), false);
+
+    FakeBigInt bigInt({ 5, 1 });
+    FakeBigInt otherBigInt({ 5, 2 });
     runner.recordCallsOf(Entry::operationAOTCompareStrictEq);
     for (uint64_t answer : { 0, 1 }) {
         runner.setResultOfRecordedOperation(answer);
@@ -518,29 +534,48 @@ static void testMovesOfFewBytes()
     }
 }
 
-static void testMovesOfElementsDown()
+static void testShiftArrayStart()
 {
+    constexpr size_t numberOfElements = 5;
+    constexpr uint16_t noProperties = std::numeric_limits<uint16_t>::max() - 1;
     StubRunner runner;
-    runner.install(Entry::operationAOTMoveBytes, operationAOTMoveBytes);
-    for (uint64_t count : { 1u, 2u, 3u, 16u, 17u, 64u, 127u }) {
-        std::array<uint64_t, 130> words;
-        std::iota(words.begin(), words.end(), 1);
-        std::array<uint64_t, 130> expected = words;
-        std::memmove(expected.data(), expected.data() + 1, count * sizeof(uint64_t));
-        StubRun run = runner.run(moveElementsDown(), { std::bit_cast<uintptr_t>(words.data()), count });
-        AOT_TEST_CHECK(words == expected);
-        UNUSED_PARAM(run);
-    }
+    runner.recordCallsOf(Entry::operationAOTShiftArrayStart);
+    FakeObject<sizeof(Structure)> structure;
+    runner.instance().prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
+    FakeObject<sizeof(JSObjectWithButterfly)> array;
+    array.setHeader(static_cast<uint32_t>(structure.address()), ArrayType);
+    std::array<uint64_t, 2 + numberOfElements> words;
+    auto runWith = [&](uint32_t bits, uint16_t maxOffset) {
+        structure.at<uint32_t>(Structure::bitFieldOffset()) = bits;
+        structure.at<uint16_t>(Structure::maxOffsetOffset()) = maxOffset;
+        words = { 3, uint64_t { 9 } << 32 | numberOfElements, 11, 12, 13, 14, 15 };
+        array.at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(words.data() + 2);
+        return runner.run(shiftArrayStart(), { array.address() });
+    };
+    StubRun moved = runWith(Structure::s_hasElementsStartOffsetBits, noProperties);
+    AOT_TEST_CHECK(!moved.calledOperation && array.at<uint64_t>(JSObject::butterflyOffset()) == std::bit_cast<uintptr_t>(words.data() + 3));
+    AOT_TEST_CHECK(words[1] == 4 && words[2] == (uint64_t { 8 } << 32 | (numberOfElements - 1)) && words[3] == 12 && words[6] == 15);
+
+    auto isLeftToOperation = [&](uint32_t bits, uint16_t maxOffset) {
+        StubRun run = runWith(bits, maxOffset);
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == array.address());
+        AOT_TEST_CHECK(array.at<uint64_t>(JSObject::butterflyOffset()) == std::bit_cast<uintptr_t>(words.data() + 2) && words[0] == 3 && words[2] == 11);
+    };
+    isLeftToOperation(0, noProperties);
+    isLeftToOperation(~Structure::s_hasElementsStartOffsetBits, noProperties);
+    isLeftToOperation(Structure::s_hasElementsStartOffsetBits, firstOutOfLineOffset);
+    runner.instance().mutatorShouldBeFenced = true;
+    isLeftToOperation(Structure::s_hasElementsStartOffsetBits, noProperties);
 }
 
 std::span<const NativeTest> stubValueTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/move-few-bytes/every-length-and-overlap"_s, ImageTests::whenExecutable<testMovesOfFewBytes> },
-        { "stubs/move-elements-down/every-count"_s, ImageTests::whenExecutable<testMovesOfElementsDown> },
+        { "stubs/shift-array-start/moves-the-start-of-the-elements"_s, ImageTests::whenExecutable<testShiftArrayStart> },
         { "stubs/concatenate/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testRopesFromEveryStateOfTheFreeList> },
-        { "stubs/concatenate/long-key-of-pair"_s, ImageTests::whenExecutable<testLongKeyOfPairIsJoinedAsText> },
-        { "stubs/substring/one-character-of-joined-text"_s, ImageTests::whenExecutable<testOneCharacterOfJoinedText> },
+        { "stubs/concatenate/long-key-of-pair"_s, ImageTests::whenExecutable<testLongPairKeyJoined> },
+        { "stubs/substring/one-character-of-joined-text"_s, ImageTests::whenExecutable<testJoinedTextCharacter> },
         { "stubs/substring/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testSubstringsFromEveryStateOfTheFreeList> },
         { "stubs/to-boolean/doubles"_s, ImageTests::whenExecutable<testTruthinessOfDoubles> },
         { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },

@@ -32,6 +32,7 @@
 #include "Error.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSModuleEnvironment.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSObjectInlines.h"
 #include "JSWebAssemblyGlobal.h"
 #include "JSWebAssemblyHelpers.h"
@@ -240,7 +241,9 @@ NEVER_INLINE void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* glo
             if (isLiveExport) [[unlikely]] {
                 // As in JSModuleEnvironment::getOwnPropertySlot().
                 value = importedModule == importedRecord ? importedRecord->getLiveExport(globalObject, resolution.localName) : importedRecord->getReexportedLiveExport(globalObject, resolution.localName);
-            } else {
+            } else if (resolution.isNamespaceOfCompiledOriginal(vm)) [[unlikely]]
+                value = importedRecord->getModuleNamespace(globalObject);
+            else {
                 // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
                 SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
             }

@@ -181,7 +181,9 @@ static bool blockThatJumpsOnlyJumpsOn(const Encoder& encoder, const Block* block
     return true;
 }
 
-static bool rareBlockOnlyMovesAndJumpsOn(const Encoder& encoder, const Block* block)
+static bool isUnlikelyInLayout(const BlockPlace& place) { return place.isRare() || place.layoutPart == LayoutPart::Rare; }
+
+static bool blockOnlyMovesAndJumpsOn(const Encoder& encoder, const Block* block)
 {
     ASSERT(block->last()->opcode() == Jump);
 
@@ -189,7 +191,7 @@ static bool rareBlockOnlyMovesAndJumpsOn(const Encoder& encoder, const Block* bl
     if (steps.beginOfEdgeMoves == steps.endOfEdgeMoves)
         return false;
     const BlockPlace& place = encoder.placeOf(block);
-    if (!(place.isRare() || place.layoutPart == LayoutPart::Rare) || block->isEntry() || block->isLandingPad() || !block->phis().empty())
+    if (block->isEntry() || block->isLandingPad() || !block->phis().empty())
         return false;
     const Allocation& allocation = encoder.m_allocation;
     for (uint32_t index = steps.begin; index < steps.end; ++index) {
@@ -231,7 +233,7 @@ void Encoder::findBlocksWithoutCode()
     UncheckedSpan<const Block*> blocksEntered = m_blocksEntered;
     UncheckedSpan<uint32_t> nextLayoutIndexWithCode = m_nextLayoutIndexWithCode;
     ArenaVector<uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn;
-    ArenaVector<uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn;
+    ArenaVector<uint32_t> layoutIndexesOfMoveBlocks;
     for (uint32_t index = 0; index < numberOfBlocksInLayout; ++index) {
         const Block* block = layout[index];
         const Block* entered = block;
@@ -241,8 +243,8 @@ void Encoder::findBlocksWithoutCode()
             if (blockThatJumpsOnlyJumpsOn(*this, block)) {
                 entered = block->successor(0).block();
                 layoutIndexesOfBlocksThatOnlyJumpOn.append(m_arena, index);
-            } else if (rareBlockOnlyMovesAndJumpsOn(*this, block))
-                layoutIndexesOfRareBlocksThatMoveAndJumpOn.append(m_arena, index);
+            } else if (blockOnlyMovesAndJumpsOn(*this, block))
+                layoutIndexesOfMoveBlocks.append(m_arena, index);
         } else if (opcode == Patch) {
             if (m_hasSpills && block->numSuccessors() && m_allocation.isSpilled(last)) {
                 if (!m_blocksThatStoreResultOfPatchAtHead.size())
@@ -283,11 +285,11 @@ void Encoder::findBlocksWithoutCode()
         m_nextLayoutIndexWithCode[index] = m_nextLayoutIndexWithCode[index + 1];
         --m_numberOfBlocksWithCode;
     }
-    if (layoutIndexesOfRareBlocksThatMoveAndJumpOn.size() >= 2)
-        findRareBlocksThatRepeatAnother(layoutIndexesOfRareBlocksThatMoveAndJumpOn.span(), layoutIndexesOfBlocksThatOnlyJumpOn.span());
+    if (layoutIndexesOfMoveBlocks.size() >= 2)
+        removeRepeatedMoveBlocks(layoutIndexesOfMoveBlocks.span(), layoutIndexesOfBlocksThatOnlyJumpOn.span());
 }
 
-void Encoder::findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn)
+void Encoder::removeRepeatedMoveBlocks(std::span<const uint32_t> layoutIndexesOfMoveBlocks, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn)
 {
     struct Candidate {
         uint64_t key;
@@ -295,12 +297,12 @@ void Encoder::findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIn
     };
     UncheckedSpan<Block* const> layout = m_order.blocksInLayout();
     ArenaVector<Candidate> candidates;
-    candidates.reserve(m_arena, layoutIndexesOfRareBlocksThatMoveAndJumpOn.size());
+    candidates.reserve(m_arena, layoutIndexesOfMoveBlocks.size());
     auto wordOf = [](const Step& step) {
         uint64_t word = static_cast<uint64_t>(step.kind) << 56 ^ static_cast<uint64_t>(step.width) << 48 ^ static_cast<uint64_t>(std::bit_cast<uint32_t>(step.destination)) << 20 ^ std::bit_cast<uint32_t>(step.sources[0]);
         return step.kind == StepKind::Materialize ? word ^ static_cast<uint64_t>(step.operation->index()) * 0xff51afd7ed558ccdull : word;
     };
-    for (uint32_t index : layoutIndexesOfRareBlocksThatMoveAndJumpOn) {
+    for (uint32_t index : layoutIndexesOfMoveBlocks) {
         const Block* block = layout[index];
         if (m_blocksThatStoreResultOfPatchAtHead.size() && m_blocksThatStoreResultOfPatchAtHead.get(block->index()))
             continue;
@@ -320,7 +322,8 @@ void Encoder::findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIn
             return false;
         if (frameAtBlock(first).runsInFrame != frameAtBlock(second).runsInFrame)
             return false;
-        RELEASE_ASSERT(frameAtBlock(first).isTornDownAtEnd == frameAtBlock(second).isTornDownAtEnd);
+        if (frameAtBlock(first).isTornDownAtEnd != frameAtBlock(second).isTornDownAtEnd)
+            return false;
         const BlockSteps& stepsOfFirst = stepsOf(first);
         const BlockSteps& stepsOfSecond = stepsOf(second);
         const uint32_t numberOfMoves = stepsOfFirst.endOfEdgeMoves - stepsOfFirst.beginOfEdgeMoves;
@@ -336,15 +339,60 @@ void Encoder::findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIn
         }
         return true;
     };
+    UncheckedSpan<const Block*> blocksInFront;
+    auto findPrecedingBlocks = [&] {
+        blocksInFront = m_arena.createSpan<const Block*>(layout.size());
+        const Block* inFront = nullptr;
+        for (uint32_t index = 0; index < layout.size(); ++index) {
+            blocksInFront[index] = inFront;
+            if (hasCode(layout[index]))
+                inFront = layout[index];
+        }
+    };
+    auto isFallenInto = [&](uint32_t index) {
+        constexpr size_t successorsOfBranch = 2;
+        const Block* inFront = blocksInFront[index];
+        if (!inFront || !hasCode(inFront) || inFront->numSuccessors() > successorsOfBranch)
+            return true;
+        return std::ranges::any_of(inFront->successors(), [&](const Edge& edge) {
+            return blockEnteredThrough(edge.block()) == layout[index];
+        });
+    };
+    static constexpr unsigned rankOfBlockThatFallsIntoTarget = 3;
+    auto rankAsKept = [&](uint32_t index) -> unsigned {
+        const Block* block = layout[index];
+        if (isUnlikelyInLayout(placeOf(block)))
+            return 0;
+        uint32_t next = m_nextLayoutIndexWithCode[index + 1];
+        if (next < layout.size() && blockEnteredThrough(block->successor(0).block()) == layout[next])
+            return rankOfBlockThatFallsIntoTarget;
+        return isFallenInto(index) ? 2 : 1;
+    };
     ArenaVector<uint32_t> layoutIndexesOfCopies;
     for (uint32_t first = 0; first < candidates.size();) {
         uint32_t end = first + 1;
-        for (; end < candidates.size() && candidates[end].key == candidates[first].key; ++end) {
-            if (!repeats(layout[candidates[first].layoutIndex], layout[candidates[end].layoutIndex]))
-                continue;
-            m_blocksEntered[layout[candidates[end].layoutIndex]->index()] = layout[candidates[first].layoutIndex];
-            --m_numberOfBlocksWithCode;
-            layoutIndexesOfCopies.append(m_arena, candidates[end].layoutIndex);
+        while (end < candidates.size() && candidates[end].key == candidates[first].key)
+            ++end;
+        if (end - first > 1) {
+            if (blocksInFront.empty())
+                findPrecedingBlocks();
+            uint32_t kept = first;
+            unsigned rankOfKept = rankAsKept(candidates[first].layoutIndex);
+            for (uint32_t other = first + 1; other < end; ++other) {
+                if (unsigned rank = rankAsKept(candidates[other].layoutIndex); rank > rankOfKept) {
+                    kept = other;
+                    rankOfKept = rank;
+                }
+            }
+            const Block* blockKept = layout[candidates[kept].layoutIndex];
+            for (uint32_t other = first; other < end; ++other) {
+                const Block* block = layout[candidates[other].layoutIndex];
+                if (other == kept || !repeats(blockKept, block) || (rankOfKept != rankOfBlockThatFallsIntoTarget && !isUnlikelyInLayout(placeOf(block)) && isFallenInto(candidates[other].layoutIndex)))
+                    continue;
+                m_blocksEntered[block->index()] = blockKept;
+                --m_numberOfBlocksWithCode;
+                layoutIndexesOfCopies.append(m_arena, candidates[other].layoutIndex);
+            }
         }
         first = end;
     }
@@ -374,6 +422,7 @@ public:
         , m_order(encoder.m_order)
         , m_places(encoder.m_places)
         , m_stepsOfBlocks(encoder.m_stepsOfBlocks)
+        , m_mayJumpOverUnlikelySides(encoder.m_proc.traits().mayJumpOverUnlikelySides)
         , m_layout(encoder.m_order.blocksInLayout())
         , m_blocksEntered(encoder.m_blocksEntered)
         , m_next(encoder.m_nextLayoutIndexWithCode)
@@ -388,6 +437,7 @@ private:
     static constexpr uint32_t bytesGuessedForStep = 4;
     static constexpr uint32_t reach = 120;
     static constexpr uint32_t mostBytesOfPiece = 64;
+    static constexpr uint32_t maxBytesAfterBranch = 32;
     static constexpr uint32_t noPiece = UINT32_MAX;
 
     struct Piece {
@@ -433,6 +483,7 @@ private:
         return piece;
     }
 
+    bool leadsBackAfterBranch(const Piece&, uint32_t next) const;
     void findPieces();
     uint32_t writeRun(uint32_t index, uint32_t limit, bool nothingFallsIn);
     void writePiece(Piece&);
@@ -442,6 +493,7 @@ private:
     const Order& m_order;
     const BlockPlace* const m_places;
     const BlockSteps* const m_stepsOfBlocks;
+    const bool m_mayJumpOverUnlikelySides;
     UncheckedSpan<Block* const> m_layout;
     UncheckedSpan<const Block* const> m_blocksEntered;
     UncheckedSpan<const uint32_t> m_next;
@@ -503,6 +555,17 @@ void OrderOfWriting::findPieces()
     }
 }
 
+bool OrderOfWriting::leadsBackAfterBranch(const Piece& piece, uint32_t next) const
+{
+    uint32_t first = m_next[piece.begin];
+    if (first >= piece.end || placeOf(m_layout[first]).predecessors.size() != 1 || m_encoder.frameAtBlock(m_layout[first]).isSetUpAtHead)
+        return false;
+    uint32_t last = first;
+    for (uint32_t index = m_next[first + 1]; index < piece.end; index = m_next[index + 1])
+        last = index;
+    return fallsIntoNext(m_layout[last], next);
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES void OrderOfWriting::writePiece(Piece& piece)
 {
     piece.isPlaced = true;
@@ -537,6 +600,8 @@ uint32_t OrderOfWriting::writeRun(uint32_t index, uint32_t limit, bool nothingFa
         bytesOfRun += bytesGuessedFor(stepsOfBlocks[block->index()]);
         index = next[index + 1];
         somethingFallsOut = false;
+        uint32_t pieceBehindBranch = noPiece;
+        const bool takesPieceAfterBranch = m_mayJumpOverUnlikelySides && places[block->index()].loop == noLoop && index < limit && fallsIntoNext(block, index);
         for (const Edge& edge : block->successors()) {
             const BlockPlace& place = places[blocksEntered[edge.block()->index()]->index()];
             somethingFallsOut |= place.layoutIndex == index;
@@ -550,8 +615,21 @@ uint32_t OrderOfWriting::writeRun(uint32_t index, uint32_t limit, bool nothingFa
             uint32_t bytesOfPiece = 0;
             for (uint32_t inPiece = next[piece.begin]; inPiece < piece.end && bytesOfPiece <= mostBytesOfPiece; inPiece = next[inPiece + 1])
                 bytesOfPiece += bytesGuessedFor(stepsOfBlocks[layout[inPiece]->index()]);
-            if (bytesOfPiece <= mostBytesOfPiece)
-                m_entrances.append(m_arena, Entrance { number, bytesOfPiece, bytesOfRun });
+            if (bytesOfPiece > mostBytesOfPiece)
+                continue;
+            if (takesPieceAfterBranch && pieceBehindBranch == noPiece && bytesOfPiece <= maxBytesAfterBranch && leadsBackAfterBranch(piece, index)) {
+                pieceBehindBranch = number;
+                bytesOfRun += bytesOfPiece;
+                continue;
+            }
+            m_entrances.append(m_arena, Entrance { number, bytesOfPiece, bytesOfRun });
+        }
+        if (pieceBehindBranch != noPiece) {
+            Piece& piece = m_pieces[pieceBehindBranch];
+            piece.isPlaced = true;
+            m_somethingIsPlaced = true;
+            for (uint32_t inPiece = next[piece.begin]; inPiece < piece.end; inPiece = next[inPiece + 1])
+                written.append(m_arena, layout[inPiece]);
         }
     }
     const size_t endOfEntrances = m_entrances.size();
@@ -718,6 +796,35 @@ bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) con
     return frameAtBlock(from).isLeftInFrame() == frameAtBlock(target).isEnteredInFrame();
 }
 
+bool Encoder::isCall(const PatchOperation& patch)
+{
+    static constexpr int fewestRegisters = 8;
+    return std::popcount(patch.lateClobberedMask()) >= fewestRegisters;
+}
+
+void Encoder::noteShortLoopsEndingWith(const Block* block)
+{
+    static constexpr ptrdiff_t maxBytes = 128;
+    for (const Edge& edge : block->successors()) {
+        if (placeOf(edge.block()).loop != placeOf(block).loop)
+            continue;
+        const MacroAssembler::Label& begin = m_labels[blockEnteredThrough(edge.block())->index()];
+        if (!begin.isSet())
+            continue;
+        MacroAssembler::Label end = m_jit.labelIgnoringWatchpoints();
+        ptrdiff_t length = MacroAssembler::differenceBetween(begin, end);
+        if (length <= 0 || length > maxBytes || (m_lastCall.isSet() && MacroAssembler::differenceBetween(begin, m_lastCall) >= 0))
+            continue;
+        ptrdiff_t lastBegin = m_proc.m_shortLoops.isEmpty() ? -1 : MacroAssembler::differenceBetween(begin, m_proc.m_shortLoops.last().begin);
+        if (lastBegin > 0)
+            continue;
+        if (!lastBegin)
+            m_proc.m_shortLoops.last().end = end;
+        else
+            m_proc.m_shortLoops.append(m_arena, ShortLoop { begin, end });
+    }
+}
+
 template<FrameCoverage coverage>
 ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
 {
@@ -811,11 +918,15 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
         m_jit.ret();
         return;
     }
-    if (isTerminal(terminator.operation->opcode())) [[likely]] {
+    if (isTerminal(terminator.operation->opcode())) [[likely]]
         encodeTerminatorInline(block, terminator);
-        return;
+    else
+        encodeExecute(terminator);
+    if (isX86_64() && m_mayEndLoop) [[unlikely]] {
+        m_mayEndLoop = false;
+        if (place.loop != noLoop && place.layoutPart == LayoutPart::Likely)
+            noteShortLoopsEndingWith(block);
     }
-    encodeExecute(terminator);
 }
 
 template<FrameCoverage coverage>
@@ -1202,6 +1313,9 @@ void Encoder::storeToSpill(const Operation* value)
         return;
     case Double:
         m_jit.storeDouble(source.fpr(), address);
+        return;
+    case Vector128:
+        m_jit.storeVector(source.fpr(), address);
         return;
     case Void:
     case Tuple:

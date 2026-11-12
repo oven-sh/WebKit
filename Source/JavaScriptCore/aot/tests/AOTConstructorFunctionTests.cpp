@@ -1981,7 +1981,7 @@ static void testCommonJSModule()
 static Vector<uint32_t> allocationsOfInstances(LoadedProgram& program, EvaluationState evaluation)
 {
     const ProgramTables& tables = program.state().tables;
-    std::span<const AllocationData> allocations = tables.allocations();
+    const AllocationTable allocations = tables.allocations();
     Vector<uint32_t> numbers;
     for (uint32_t number = 0; number < allocations.size(); ++number) {
         if (allocations[number].isConstructed && tables.layoutForShape(allocations[number].shape).evaluation() == evaluation)
@@ -2633,6 +2633,37 @@ static void checkGuardsOfClassWrittenAboveBeginWithThoseOfClassBelow(LoadedProgr
     checkGuardsOfClassAboveBeginWithThoseOfClassBelow(program, *asked.above, *asked.below);
 }
 
+static void checkEveryReportDropsCheckedHolder(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    State& state = program.state();
+    ClassTable& classes = state.objects->classes;
+    const LayoutData* above = nullptr;
+    for (uint32_t index = 0; index < state.tables.numberOfLayoutIndices; ++index) {
+        if (const LayoutData* candidate = classes.classWithIndex(index); candidate && !classes.isDefinedByClass(*candidate))
+            above = candidate;
+    }
+    AOT_TEST_CHECK(above);
+    DeferGCForAWhile deferGC(vm);
+    Identifier note = Identifier::fromString(vm, "note"_s);
+    for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+        JSObject* holder = constructEmptyObject(program.realm());
+        auto isDroppedBy = [&](const Invocable<void()> auto& report) {
+            classes.addCheckedHolder(*above, side, { holder, holder->structureID(), { }, { }, false, false });
+            bool wasKept = classes.findCheckedHolder(*above, side, holder);
+            report();
+            return wasKept && !classes.findCheckedHolder(*above, side, holder);
+        };
+        AOT_TEST_CHECK(!isDroppedBy([] { }));
+        AOT_TEST_CHECK(isDroppedBy([&] { holder->putDirect(vm, Identifier::fromString(vm, side == ClassSide::Static ? "first"_s : "second"_s), jsNumber(1)); }));
+        AOT_TEST_CHECK(isDroppedBy([&] { classes.didChangeMember(*above, side, note.impl()); }));
+        AOT_TEST_CHECK(isDroppedBy([&] { classes.didFreezeHolder(vm, *above, side, holder); }));
+        AOT_TEST_CHECK(isDroppedBy([&] { classes.didChangeEveryMember(*above, side); }));
+        AOT_TEST_CHECK(isDroppedBy([&] { classes.didDefineMember(vm, *above, side, 0, holder, note.impl(), holder); }));
+        AOT_TEST_CHECK(isDroppedBy([&] { classes.armMemberGuards(vm, *above, side, holder); }));
+    }
+}
+
 static void checkNamesOfConstructorFunctionAboveAreCountedFromFirstObjectOfClassBelow(LoadedProgram& program)
 {
     State& state = program.state();
@@ -2750,6 +2781,7 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/one-word-counts-guards-of-several-classes"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkOneWordCountsGuardsOfSeveralClasses> },
         { "constructor-functions/guard-that-ends-ahead-of-the-first-object-is-counted-from-there"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkGuardThatEndsAheadOfFirstObjectIsCountedFromThere> },
         { "constructor-functions/guards-of-a-class-above-begin-with-those-of-the-class-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkGuardsOfClassWrittenAboveBeginWithThoseOfClassBelow> },
+        { "constructor-functions/every-report-drops-a-checked-holder"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowConstructorFunctionAskedInOneTest, checkEveryReportDropsCheckedHolder> },
         { "constructor-functions/names-of-a-constructor-function-above-are-counted-from-the-first-object-of-the-class-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowConstructorFunctionAskedInOneTest, checkNamesOfConstructorFunctionAboveAreCountedFromFirstObjectOfClassBelow> },
         { "constructor-functions/word-of-the-whole-side-and-two-names-fails-until-the-guards-begin"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, birthBehindLookAtTwoNames, checkWordOfWholeSideAndTwoNamesFailsUntilGuardsBegin> },
         { "constructor-functions/compiled-prototype-object-gets-the-name-of-a-field-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow> },

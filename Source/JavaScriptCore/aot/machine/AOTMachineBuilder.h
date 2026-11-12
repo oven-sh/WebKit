@@ -88,6 +88,7 @@ public:
         m_numbering.restore(fork.mark);
         begin(block);
     }
+    bool canRestoreScope(const ScopeFork& fork) const { return m_numbering.canRestore(fork.mark); }
     NEVER_INLINE void appendToJoin(Block* block, const ScopeFork& fork)
     {
         sealPendingPatch();
@@ -146,13 +147,14 @@ public:
     JS_EXPORT_PRIVATE Operation* framePointer();
     JS_EXPORT_PRIVATE Operation* slotBase(StackSlot*);
     JS_EXPORT_PRIVATE Operation* addressOf(CodeSymbol);
-    JS_EXPORT_PRIVATE Operation* numberOf(CodeSymbol);
+    JS_EXPORT_PRIVATE Operation* numberOf(CodeSymbol, Type = Int32);
     JS_EXPORT_PRIVATE Operation* instanceAddressOf(CodeSymbol);
 
     enum class Trapping : bool { No, Yes };
     JS_EXPORT_PRIVATE Operation* load(Opcode, Type, Operation* base, ptrdiff_t offset, const AbstractHeap&, Trapping = Trapping::No);
     JS_EXPORT_PRIVATE Operation* store(Opcode, Operation* value, Operation* base, ptrdiff_t offset, const AbstractHeap&);
     JS_EXPORT_PRIVATE Operation* reload(Operation* load);
+    JS_EXPORT_PRIVATE void forgetLoadsFrom(const AbstractHeap&);
     JS_EXPORT_PRIVATE void noteIntegerAddedTo(Operation* load);
     JS_EXPORT_PRIVATE void fence();
     JS_EXPORT_PRIVATE static std::optional<int64_t> valueKnownToBeReadThrough(const Operation* base);
@@ -179,8 +181,6 @@ public:
     JS_EXPORT_PRIVATE Operation* phiIn(Block*, Type);
     JS_EXPORT_PRIVATE Operation* upsilon(Operation* value, Operation* phi = nullptr);
     JS_EXPORT_PRIVATE void setPhi(Operation* upsilon, Operation* phi);
-    JS_EXPORT_PRIVATE Operation* upsilonOfCompletePhi(Operation* value, Operation* phi);
-    JS_EXPORT_PRIVATE bool handOnUpperHalf(const Operation* value, Operation* phi);
 
     JS_EXPORT_PRIVATE PatchOperation* patch(Type);
     JS_EXPORT_PRIVATE PatchOperation* check(Operation* predicate);
@@ -224,7 +224,8 @@ private:
         return index < m_epochOfLastInheritedFind.size() && m_epochOfLastInheritedFind[index] == m_scopeEpoch;
     }
     Operation* appendLoadLike(const Operation* load, Operation* base);
-    Operation* makeSumOfStore(Operation* sum);
+    Operation* makeSumOfStore(Operation* sum, const Operation* stored);
+    Operation* makeOwnShiftOfSum(Operation* shift);
 #if CPU(ARM64)
     Operation* sharedSumFor(Operation* sum);
 #else

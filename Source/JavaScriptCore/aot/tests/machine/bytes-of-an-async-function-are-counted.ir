@@ -19,7 +19,7 @@
 # RANGES: unit f1:CoroutineBody
 # RANGES: 0 {{*}} main {{*}}
 # RANGES: {{*}} main AwaitBySavingFrame v{{*}} frame 0 plainBlock
-# RANGES: {{*}} main End Return
+# RANGES: {{*}} main ReturnAsyncResult v{{*}} frame 0 plainBlock
 # RUN(ALONE): same-bytes-alone
 # ALONE-NOT: differs
 # ALONE: f1:CoroutineBody same

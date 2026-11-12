@@ -505,6 +505,19 @@ static void testThrowWordsThatNameOneStringShareThunk()
 
     AOT_TEST_CHECK(ThrowSiteWord::withNarrowA(firstThrowWordOfSiteWithName(), ThrowSiteWord::maxNarrowA));
     AOT_TEST_CHECK(!ThrowSiteWord::withNarrowA(firstThrowWordOfSiteWithName(), ThrowSiteWord::narrowNone));
+    AOT_TEST_CHECK(!ThrowSiteWord::withNarrowA(firstThrowWordOfSiteWithName(), ThrowSiteWord::narrowNone + 1));
+
+    ThrowSiteWord binding { };
+    binding.kind = static_cast<uint32_t>(ThrowKind::UninitializedBinding);
+    binding.hasWideA = true;
+    binding.registerNumber = 7;
+    constexpr uint32_t end = ThrowSiteWord::numberOfRegistersPerBank << ThrowSiteWord::narrowABits;
+    for (uint32_t number : { 0u, ThrowSiteWord::maxNarrowA, ThrowSiteWord::narrowNone + 1, 2 * ThrowSiteWord::narrowNone + 1, end - 1 }) {
+        std::optional<uint32_t> narrow = ThrowSiteWord::withNarrowA(std::bit_cast<uint32_t>(binding), number);
+        AOT_TEST_CHECK(narrow && std::bit_cast<ThrowSiteWord>(*narrow).narrowA() == number && std::bit_cast<ThrowSiteWord>(*narrow).isUninitializedBinding());
+    }
+    for (uint32_t number : { ThrowSiteWord::narrowNone, end })
+        AOT_TEST_CHECK(!ThrowSiteWord::withNarrowA(std::bit_cast<uint32_t>(binding), number));
 }
 
 static CompiledCode bodyThatReadsByName(uint32_t function, uint32_t mentionOfName)

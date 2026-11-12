@@ -193,7 +193,7 @@ static ASCIILiteral describeLinkFailureOfTestProcedure(LinkFailure failure)
     failNativeTest(__FILE__, __LINE__, "every relocation of a test procedure is applied");
 }
 
-static Vector<uint8_t> layOutTestProcedure(const Procedure& procedure, ImageLinkBuffer& buffer, std::span<const Relocation> relocations)
+Vector<uint8_t> layOutTestProcedure(const Procedure& procedure, ImageLinkBuffer& buffer, std::span<const Relocation> relocations)
 {
     decltype(RareListsOfBody::constants) constants;
     describeConstants(procedure, constants);

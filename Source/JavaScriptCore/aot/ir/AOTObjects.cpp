@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFactRecords.h"
 #include "AOTIRProgram.h"
@@ -17,7 +18,6 @@
 #include <algorithm>
 #include <optional>
 #include <utility>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -227,7 +227,10 @@ static ObjectShapesOfBuiltin objectShapesInRowsOf(const BuiltinTable& builtins, 
             notePlace(action.value);
     }
 
-    if (!builtins.moduleLoadsOf(canonical).empty() || !builtins.calledFunctionsOf(canonical).empty())
+    bool callsUndescribedFunction = std::ranges::any_of(builtins.calledFunctionsOf(canonical), [](const BuiltinCalledFunction& called) {
+        return !called.uses.areListed;
+    });
+    if (!builtins.moduleLoadsOf(canonical).empty() || callsUndescribedFunction)
         shapes.contents.noteObjectThatNoRowDescribes();
     return shapes;
 }
@@ -253,7 +256,7 @@ bool callOrReadOfBuiltinIsEvent(const BuiltinTable& builtins, BuiltinID canonica
         if (isThisBuiltin(loader.callee) || isThisBuiltin(loader.named))
             return true;
     }
-    return builtins.letsInUnseenCode(canonical) || builtins.unseenCodeOf(canonical) || raisesEventWhenCalled(builtins, canonical);
+    return builtins.letsInUnseenCode(canonical) || builtins.unseenCodeOf(canonical);
 }
 
 static Vector<uint32_t> placesOfFunctionsByGroup(std::span<const FunctionInOrderOfObjects> functions, NOESCAPE const Invocable<unsigned(const FunctionInOrderOfObjects&)> auto& groupOf)

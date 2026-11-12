@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTID.h"
 #include "AOTSchemaEnums.h"
@@ -15,7 +16,6 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/OptionSet.h>
 
@@ -52,6 +52,8 @@ struct Layout : LayoutRecord {
     void appendCopiesOfAllFieldsOf(LayoutID, const Layout&);
 
     bool mayBeOrdinaryObject { false };
+    BuiltinClassID mixedBuiltinBase;
+    LayoutID mixedSubclass;
     InheritedFields inheritedFields { InheritedFields::NotTaken };
     bool copiesWholeFieldListOfBase { false };
     bool fieldsChangedAfterLayoutsBelowTookThem { false };
@@ -137,16 +139,23 @@ inline LayoutID writtenBaseOf(const Layout& layout) { return layout.base; }
 inline bool isDefinedByClass(const Layout& layout) { return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction); }
 inline bool isFoundByShapeTest(const Layout& layout)
 {
-    return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && !layout.writtenBuiltinBase && !layout.mayBeOrdinaryObject && !layout.holdsOrdinaryObjects;
+    return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && !layout.writtenBuiltinBase && !layout.mixedBuiltinBase && !layout.mayBeOrdinaryObject && !layout.holdsOrdinaryObjects;
 }
+ALWAYS_INLINE BuiltinClassID builtinClassOfInstances(const Layout& layout) { return layout.writtenBuiltinBase ? layout.writtenBuiltinBase : layout.mixedBuiltinBase; }
+
 ALWAYS_INLINE bool isKnownByStructureOfClass(const Layout& layout)
 {
-    constexpr OptionSet<FieldFlags> flagsOfWhatIsNoPlainProperty { FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden };
-    if (layout.kind != LayoutKind::Instance || !layout.writtenBuiltinBase || layout.base || !isDefinedByClass(layout) || layout.isDerived())
+    if (layout.kind != LayoutKind::Instance || !builtinClassOfInstances(layout) || (layout.base && !layout.mixedBuiltinBase) || !isDefinedByClass(layout) || layout.isDerived())
         return false;
     return std::ranges::all_of(layout.fields, [&](const Field& field) {
-        return field.key && !field.form.contains(FieldForm::IsAccessor) && !field.flags.containsAny(flagsOfWhatIsNoPlainProperty);
+        bool isBrand = field.flags.containsAny({ FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods });
+        return field.key && !field.form.contains(FieldForm::IsAccessor) && (isBrand || !field.flags.contains(FieldFlags::IsHidden));
     });
+}
+
+inline bool isDecidedByClassStructure(const Field& field)
+{
+    return field.flags.contains(FieldFlags::IsRequired) && !field.flags.containsAny({ FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden });
 }
 
 struct ClassBelowBuiltinClass {
@@ -157,6 +166,7 @@ struct ClassBelowBuiltinClass {
 };
 BuiltinClassID classMadeByHeritage(const BuiltinTable&, BuiltinID heritage);
 void noteSubclassesOfBuiltinClasses(Program&, std::span<const ClassBelowBuiltinClass> sortedWithoutRepeats);
+void noteSubclassesOfMixins(Program&, std::span<const ClassBelowBuiltinClass> sortedWithoutRepeats);
 
 void noteLayoutsOfDictionaries(Program&, const BitVector& layoutsOfDictionaries);
 

@@ -10,6 +10,7 @@
 
 #include "AOTCompactTable.h"
 #include "AOTConvention.h"
+#include "AOTInstance.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
@@ -19,7 +20,9 @@
 #include "IndexingType.h"
 #include "JSCell.h"
 #include "JSCellButterfly.h"
+#include "JSGlobalObject.h"
 #include "JSObject.h"
+#include "JSMap.h"
 #include "OperationResult.h"
 #include <type_traits>
 
@@ -158,9 +161,10 @@ void generateAppendElements(StubAssembler& jit)
     const GPRReg kind = jit.allocateScratch(StubRegister::T12);
     const GPRReg position = jit.allocateScratch(StubRegister::T14);
     const GPRReg element = jit.allocateScratch(firstStubOperandRegister);
+    const GPRReg nextElement = jit.allocateScratch(StubRegister::T13);
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
-    RELEASE_ASSERT(noOverlap(array, source, newLength, target, elements, kind, position, element));
+    RELEASE_ASSERT(noOverlap(array, source, newLength, target, elements, kind, position, element, nextElement));
     const BaseIndex read(elements, position, CCallHelpers::TimesEight);
     const BaseIndex written(target, position, CCallHelpers::TimesEight);
     const Address lengthOfTarget(target, Butterfly::offsetOfPublicLength());
@@ -176,6 +180,25 @@ void generateAppendElements(StubAssembler& jit)
         copyElement();
         jit.add32(TrustedImm32(1), position);
         jit.branch32(CCallHelpers::Below, position, newLength).linkTo(loop, &jit);
+    };
+    auto copyPairsUpToHole = [&] {
+        constexpr int32_t distanceToNext = sizeof(EncodedJSValue);
+        JumpList isHole;
+        jit.sub32(TrustedImm32(1), newLength);
+        Jump hasNoPair = jit.branch32(CCallHelpers::AboveOrEqual, position, newLength);
+        Label loop = jit.label();
+        jit.load64(read, element);
+        jit.load64(BaseIndex(elements, position, CCallHelpers::TimesEight, distanceToNext), nextElement);
+        isHole.append(jit.branchTest64(CCallHelpers::Zero, element));
+        isHole.append(jit.branchTest64(CCallHelpers::Zero, nextElement));
+        jit.store64(element, written);
+        jit.store64(nextElement, BaseIndex(target, position, CCallHelpers::TimesEight, distanceToNext));
+        jit.add32(TrustedImm32(2), position);
+        jit.branch32(CCallHelpers::Below, position, newLength).linkTo(loop, &jit);
+        isHole.link(&jit);
+        hasNoPair.link(&jit);
+        jit.add32(TrustedImm32(1), newLength);
+        return jit.branch32(CCallHelpers::AboveOrEqual, position, newLength);
     };
     auto setLengthAndReturn = [&] {
         jit.store32(newLength, lengthOfTarget);
@@ -205,6 +228,7 @@ void generateAppendElements(StubAssembler& jit)
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
     copiesValues.link(&jit);
     jit.store32(newLength, lengthOfTarget);
+    Jump valuesAreCopied = copyPairsUpToHole();
     forEachElement([&] {
         jit.load64(read, element);
         Jump isNoHole = jit.branchTest64(CCallHelpers::NonZero, element);
@@ -212,6 +236,7 @@ void generateAppendElements(StubAssembler& jit)
         isNoHole.link(&jit);
         jit.store64(element, written);
     });
+    valuesAreCopied.link(&jit);
     Jump holdsNoCells = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, array, kind);
     holdsNoCells.link(&jit);
@@ -263,11 +288,13 @@ void generateAppendElements(StubAssembler& jit)
     loadKindOfSource();
     Jump takesInt32OutOfValues = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
+    Jump integersAreCopied = copyPairsUpToHole();
     forEachElement([&] {
         jit.load64(read, element);
         hasHole.append(jit.branchTest64(CCallHelpers::Zero, element));
         jit.store64(element, written);
     });
+    integersAreCopied.link(&jit);
     setLengthAndReturn();
 
     takesInt32OutOfValues.link(&jit);
@@ -335,6 +362,14 @@ void generateAppendElements(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTAppendElements, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+static void emitBranchUnlessPlainSet(StubAssembler& jit, GPRReg cell, GPRReg realm, GPRReg scratch, JumpList& isNoSuchSet)
+{
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), realm);
+    jit.load32(Address(cell, JSCell::structureIDOffset()), scratch);
+    isNoSuchSet.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(realm, OBJECT_OFFSETOF(JSGlobalObject, m_setStructure))));
+    isNoSuchSet.append(branchIfWatchpointSetIsNotWatched(jit, Address(realm, OBJECT_OFFSETOF(JSGlobalObject, m_setIteratorProtocolWatchpointSet)), scratch));
+}
+
 StubSignature signatureOfAppendIterable(StubKey)
 {
     StubSignature signature;
@@ -347,15 +382,20 @@ void generateAppendIterable(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);
     const GPRReg iterable = jit.operand(1);
-    JumpList isNoSuchList;
+    JumpList callsOperation;
 
-    isNoSuchList.append(jit.branchIfNotCell(iterable));
-    isNoSuchList.append(jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
-    isNoSuchList.append(branchIfNotPristine(jit, iterable));
+    callsOperation.append(jit.branchIfNotCell(iterable));
+    Jump isNoArray = jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType));
+    callsOperation.append(branchIfNotPristine(jit, iterable));
     checkStubOperands(appendElements(), { array, iterable });
     jit.jumpToStub(appendElements());
 
-    isNoSuchList.link(&jit);
+    isNoArray.link(&jit);
+    emitBranchUnlessPlainSet(jit, iterable, jit.allocateScratch(StubRegister::T9), jit.allocateScratch(StubRegister::T10), callsOperation);
+    checkStubOperands(appendMembers(), { array, iterable });
+    jit.jumpToStub(appendMembers());
+
+    callsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTAppendIterable, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
@@ -380,7 +420,7 @@ void generateDestructureIterable(StubAssembler& jit)
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     RELEASE_ASSERT(noOverlap(iterable, count, results, elements, length, position, element));
     const BaseIndex read(elements, position, CCallHelpers::TimesEight);
-    JumpList isNoSuchList;
+    JumpList callsOperation;
 
     auto takeElements = [&](const auto& loadElement) {
         JumpList isAbsent;
@@ -399,14 +439,14 @@ void generateDestructureIterable(StubAssembler& jit)
         jit.returnToCaller();
     };
 
-    isNoSuchList.append(jit.branchIfNotCell(iterable));
-    isNoSuchList.append(jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
+    callsOperation.append(jit.branchIfNotCell(iterable));
+    Jump isNoArray = jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType));
     loadPristineArrayKind(jit, iterable, element, IndexingShapeMask);
     jit.loadPtr(Address(iterable, JSObject::butterflyOffset()), elements);
     jit.move(TrustedImm32(0), position);
     Jump holdsDoubles = jit.branch32(CCallHelpers::Equal, element, TrustedImm32(DoubleShape));
     Jump holdsAnyValues = jit.branch32(CCallHelpers::Equal, element, TrustedImm32(ContiguousShape));
-    isNoSuchList.append(jit.branch32(CCallHelpers::NotEqual, element, TrustedImm32(Int32Shape)));
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, element, TrustedImm32(Int32Shape)));
     holdsAnyValues.link(&jit);
     jit.load32(Address(elements, Butterfly::offsetOfPublicLength()), length);
     takeElements([&](JumpList& isAbsent) {
@@ -421,7 +461,85 @@ void generateDestructureIterable(StubAssembler& jit)
         boxDouble(jit, PureDouble::branchIfNaN(jit, number, isAbsent), element);
     });
 
-    isNoSuchList.link(&jit);
+    isNoArray.link(&jit);
+    static_assert(CompactTable::keysShiftMask == 31, "a shift by 32 bits drops the other flags");
+    const GPRReg table = elements;
+    const GPRReg entry = length;
+    const GPRReg taken = position;
+    const GPRReg key = element;
+    const GPRReg flags = element;
+    const GPRReg column = jit.allocateScratch(StubRegister::T13);
+    RELEASE_ASSERT(noOverlap(iterable, count, results, table, entry, taken, key, column, instanceGPR));
+    const Address used(table, CompactTable::offsetOfUsed());
+    const Address deletedPrefix(iterable, JSMap::offsetOfDeletedPrefix());
+    emitBranchUnlessPlainSet(jit, iterable, table, key, callsOperation);
+
+    jit.loadPtr(Address(iterable, offsetOfHashTableStorage()), table);
+    JumpList hasNoEntry;
+    JumpList hasNoFirstEntry;
+    hasNoFirstEntry.append(jit.branchTestPtr(CCallHelpers::Zero, table));
+    hasNoFirstEntry.append(jit.branchTest32(CCallHelpers::Zero, count));
+    callsOperation.append(jit.branch8(CCallHelpers::Equal, Address(table, JSCell::typeInfoTypeOffset()), TrustedImm32(JSCellButterflyType)));
+    jit.load8(Address(table, CompactTable::offsetOfKeysShift()), flags);
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreInImage)));
+    jit.move(TrustedImm32(2), column);
+    jit.lshift32(flags, column);
+    jit.add64(table, column);
+    jit.load32(deletedPrefix, entry);
+    auto takeKeys = [&](const auto& loadKey, const auto& decodeKey) {
+        Label scanForFirst = jit.label();
+        hasNoFirstEntry.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, used));
+        loadKey();
+        Jump isDeleted = jit.branchTest64(CCallHelpers::Zero, key);
+        jit.store32(entry, deletedPrefix);
+        decodeKey();
+        jit.store64(key, Address(results));
+        Jump takesMore = jit.branch32(CCallHelpers::Above, count, TrustedImm32(1));
+        jit.returnToCaller();
+
+        isDeleted.link(&jit);
+        jit.add32(TrustedImm32(1), entry);
+        jit.jump().linkTo(scanForFirst, &jit);
+
+        takesMore.link(&jit);
+        jit.move(TrustedImm32(1), taken);
+        Label scan = jit.label();
+        jit.add32(TrustedImm32(1), entry);
+        hasNoEntry.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, used));
+        loadKey();
+        jit.branchTest64(CCallHelpers::Zero, key).linkTo(scan, &jit);
+        decodeKey();
+        jit.store64(key, BaseIndex(results, taken, CCallHelpers::TimesEight));
+        jit.add32(TrustedImm32(1), taken);
+        jit.branch32(CCallHelpers::Below, taken, count).linkTo(scan, &jit);
+        jit.returnToCaller();
+    };
+    Jump keysAreWide = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreWide));
+    takeKeys([&] {
+        jit.load32(BaseIndex(column, entry, CCallHelpers::TimesFour, CompactTable::offsetOfIndex()), key);
+    }, [&] {
+        Jump isImmediate = jit.branch32(CCallHelpers::Below, key, TrustedImm32(minCell32));
+        decodeCell32(jit, key, key);
+        isImmediate.link(&jit);
+    });
+    keysAreWide.link(&jit);
+    takeKeys([&] {
+        jit.load64(BaseIndex(column, entry, CCallHelpers::TimesEight, CompactTable::offsetOfIndex()), key);
+    }, [] { });
+
+    hasNoFirstEntry.link(&jit);
+    jit.move(TrustedImm32(0), taken);
+    hasNoEntry.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), key);
+    Label fill = jit.label();
+    Jump isFilled = jit.branch32(CCallHelpers::AboveOrEqual, taken, count);
+    jit.store64(key, BaseIndex(results, taken, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), taken);
+    jit.jump().linkTo(fill, &jit);
+    isFilled.link(&jit);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTDestructureIterable, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 

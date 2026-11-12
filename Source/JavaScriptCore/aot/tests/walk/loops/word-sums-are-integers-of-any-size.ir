@@ -1,0 +1,46 @@
+# The loop stores sums of 32-bit words under a name and reads the name off other elements of the list. They are integers of any size: the version asks for that and stores by the address of the property.
+# function step(w, m) { for (let i = 1; i < w.length; i++) { const u = w[i], o = w[i - 1]; const g = m[i] ^ 5; u.high = g + o.high; } }  sink(step);
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetValueAtSiteOrAbsent {{*}}key="high"
+# CHECK: = TypeTest {{*}}testedType=int[-562949953421312, 562949953421312]
+# CHECK: = GetKeyedPropertyAddress {{*}}key="high"
+# CHECK: = PutKeyedProperty
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="step" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = PropGet v0 key="length" @10
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4 @20
+    v9 = Integer integer=1
+    v10 = Sub v4, v9 @25
+    v11 = ElemGet v0, v10 @30
+    v12 = ElemGet v1, v4 @35
+    v13 = Integer integer=5
+    v14 = BitXor v12, v13 @40
+    v15 = PropGet v11 key="high" @50
+    v16 = Add v14, v15 @60
+    PropSet v8, v16 key="high" @70
+    v18 = Increment v4 @80
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v19)
+  b3():
+    v20 = Undefined
+    Return v20
+}

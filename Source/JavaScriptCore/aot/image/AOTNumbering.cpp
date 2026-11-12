@@ -113,6 +113,8 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     }
     case NumberSpace::EnvironmentHandedBack:
         return placedOffsetAt(statics.environmentHandedBackOffsets, key[0]);
+    case NumberSpace::HeirLookedAt:
+        return placedOffsetAt(statics.subclassStructuresOffsets, key[0]);
     case NumberSpace::Name:
     case NumberSpace::NameOfText:
     case NumberSpace::String:
@@ -128,7 +130,6 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     case NumberSpace::DataElements:
     case NumberSpace::ClassGuard:
     case NumberSpace::ClassRank:
-    case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
     case NumberSpace::Allocation:
@@ -136,6 +137,8 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     case NumberSpace::PropertyRun:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::Type:
     case NumberSpace::MethodSelector:
     case NumberSpace::RegExp:
@@ -182,6 +185,8 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
         std::optional<uint32_t> number = numbers.numberOf(space, key);
         if (!number || *number >= sizes.numberOfSiteCaches)
             return std::nullopt;
+        if (ImageNumbers::isPlaceWithSiteAnswers(key))
+            return static_cast<int64_t>(InstanceLayout::offsetOfIndexOfSiteAnswers(sizes, *number));
         return static_cast<int64_t>(InstanceLayout::offsetOfSiteCache(sizes, *number));
     }
     case NumberSpace::Variable:
@@ -194,6 +199,7 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::ArrayProfile:
     case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
+    case NumberSpace::HeirLookedAt:
         return byteOfStatics(offsetOfMentionedWordInStatics(numbers, space, key));
     case NumberSpace::CardOfVariable:
         return cardOfStatics(offsetOfMentionedWordInStatics(numbers, NumberSpace::Variable, key));
@@ -217,6 +223,8 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     }
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::Name:
     case NumberSpace::NameOfText:
     case NumberSpace::String:
@@ -225,7 +233,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::RequireEdge:
     case NumberSpace::DataElements:
     case NumberSpace::ClassRank:
-    case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
@@ -262,7 +269,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::StringCell:
         return m_stringConstants->numberOf(StringID(key[0]));
     case NumberSpace::AtomOfString:
+    case NumberSpace::StringCharacters:
         return std::nullopt;
+    case NumberSpace::NameHeader: {
+        std::optional<uint32_t> number = m_identifiers->numberOfText(StringID(key[0]));
+        return number ? std::optional(*number * m_bytesBetweenNameHeaders) : std::nullopt;
+    }
     case NumberSpace::KeyCell: {
         std::optional<uint32_t> numberPlusOne = numberIn(m_keyCellNumbersPlusOne, PropertyKeyID(key[0]));
         if (!numberPlusOne)
@@ -297,6 +309,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::ArrayProfile:
     case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
+    case NumberSpace::HeirLookedAt:
         return offsetOfMentionedWordInStatics(*this, space, key);
     case NumberSpace::DataElements: {
         if (key[0] >= m_nodesOfData.size() || !m_nodesOfData[key[0]])
@@ -314,10 +327,11 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::ClassGuard: {
         constexpr uint64_t numberOfSides = numberOfEnumerators<ClassSide>;
         if (key.size() == 4) {
-            std::optional<uint32_t> place = placeAmongNumberedThings(m_statics.classGuardsOfNames.span(), std::array<uint32_t, 4> { key[0], key[1], key[2], key[3] }, &PlacedClassGuardOfName::key);
+            const Vector<PlacedClassGuardOfName>& guards = askerOfClassGuardKey(key) == AskerOfClassGuardOfName::AssignedMember ? m_statics.guardsOfAssignedMembers : m_statics.classGuardsOfNames;
+            std::optional<uint32_t> place = placeAmongNumberedThings(guards.span(), std::array<uint32_t, 4> { key[0], key[1], key[2], key[3] }, &PlacedClassGuardOfName::key);
             if (!place)
                 return std::nullopt;
-            return m_statics.classGuardsOfNames[*place].bit;
+            return guards[*place].bit;
         }
         if (key.size() > 4) {
             std::optional<uint32_t> place = m_classGuards.find(key);
@@ -334,12 +348,6 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     }
     case NumberSpace::ClassRank:
         return rankOfClass(LayoutID(key[0]));
-    case NumberSpace::HeirLookedAt: {
-        std::optional<uint32_t> place = placeAmongNumberedThings(heirsLookedAt(), LayoutID(key[0]), std::identity { });
-        if (!place)
-            return std::nullopt;
-        return m_offsetsOfStructuresOfHeirs[*place];
-    }
     case NumberSpace::ClosureFunction: {
         std::optional<uint32_t> unit = unitIndexOfClosureEntry(key[0]);
         if (!unit)
@@ -396,7 +404,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::valueOf(con
     if (asInstanceWord || mention.numberOfWords != 1)
         return valueOfSlowCase(mention, mentionWords, asInstanceWord);
 
-    uint32_t id = mentionWords[mention.firstWord];
+    uint32_t id = mention.firstWord;
     std::optional<uint32_t> number;
     switch (mention.space) {
     case NumberSpace::Name:
@@ -504,7 +512,6 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numbers.regExpRequests().all().size();
     count += numbers.functions().numberOfFunctions();
     count += numbers.numberOfClosureCells();
-    count += numbers.heirsLookedAt().size();
     count += numbers.keyCells().size();
     count += numbers.builtinCells().size();
     count += numbers.bigIntConstants().size();
@@ -525,9 +532,11 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numberPlaced(statics.arrayProfileOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.readGroupCacheOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.environmentHandedBackOffsets, PlacedStatics::noOffset);
+    count += numberPlaced(statics.subclassStructuresOffsets, PlacedStatics::noOffset);
     count += numberPlaced(numbers.originsOfMethodSelectors(), PlacedStatics::noOffset);
     count += numberPlaced(statics.classGuardBits, noClassGuardBit);
     count += statics.classGuardsOfNames.size();
+    count += statics.guardsOfAssignedMembers.size();
     count += statics.classGuardCounts.size();
     const Vector<PlacedClassGuardOfName>& namesOfSharedGuards = statics.namesOfClassGuardsOfSeveralNames;
     for (size_t index = 0; index < namesOfSharedGuards.size(); ++index)

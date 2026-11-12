@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBigIntArithmetic.h"
 #include "AOTInstance.h"
+#include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "DeferTermination.h"
@@ -18,7 +20,28 @@
 
 namespace JSC { namespace AOT {
 
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES incrementAnyValue(Instance*, EncodedJSValue);
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES decrementAnyValue(Instance*, EncodedJSValue);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTIncrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    if (JSValue value = JSValue::decode(encodedValue); value.isHeapBigInt()) {
+        if (JSBigInt* result = BigIntArithmetic::tryIncrement(BigIntArithmetic::HeapPlace(*instance->vm), value.asHeapBigInt()))
+            return { JSValue::encode(result), nullptr };
+    }
+    AOT_MUST_TAIL_CALL return incrementAnyValue(instance, encodedValue);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDecrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    if (JSValue value = JSValue::decode(encodedValue); value.isHeapBigInt()) {
+        if (JSBigInt* result = BigIntArithmetic::tryDecrement(BigIntArithmetic::HeapPlace(*instance->vm), value.asHeapBigInt()))
+            return { JSValue::encode(result), nullptr };
+    }
+    AOT_MUST_TAIL_CALL return decrementAnyValue(instance, encodedValue);
+}
+
+OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES incrementAnyValue(Instance* instance, EncodedJSValue encodedValue)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTIncrement);
     JSValue numeric = JSValue::decode(encodedValue).toNumeric(globalObject);
@@ -28,7 +51,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIncrement, EncodedJSValue, (Instance* insta
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() + 1)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTDecrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES decrementAnyValue(Instance* instance, EncodedJSValue encodedValue)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDecrement);
     JSValue numeric = JSValue::decode(encodedValue).toNumeric(globalObject);
@@ -36,6 +59,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDecrement, EncodedJSValue, (Instance* insta
     if (numeric.isBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::dec(globalObject, numeric.asHeapBigInt())));
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() - 1)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSymbolDescription, EncodedJSValue, (Instance* instance, JSCell* symbol))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSymbolDescription);
+    JSString* description = cellArgument<Symbol>(symbol, Entry::operationAOTSymbolDescription)->description(vm);
+    OPERATION_RETURN(scope, JSValue::encode(description ? JSValue(description) : jsUndefined()));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSymbolToString, EncodedJSValue, (Instance* instance, JSCell* symbol))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSymbolToString);
+    JSString* string = cellArgument<Symbol>(symbol, Entry::operationAOTSymbolToString)->toString(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(string));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTToObject, JSCell*, (Instance* instance, EncodedJSValue encodedValue, uint32_t message))

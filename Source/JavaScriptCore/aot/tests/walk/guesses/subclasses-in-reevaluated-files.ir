@@ -1,0 +1,93 @@
+# The file of Below may run again behind a throw. Each run evaluates Below once, and the run time ends the guards of Below at its second evaluation. So `this` of Base, a class of the library, is tested for Below too, and the objects of both get the field in line.
+# base.js, of the library: function Base(a) { this.a = a; }
+# below.cjs: function Below(a) { Base.call(this, a); }  function Lower(b) { Other.call(this, b); }  publish(new Below(2), new Lower(3));
+# main.js: function Other(b) { this.b = b; }  function load() { return require("./below.cjs"); }  load();  publish(Base, new Base(1), Other, new Other(1));
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PutSlotOrAdd {{*}} key="a" receivers=[L0, L1]
+# Below a class of the program it takes bytes for time.
+# RUN(OTHER): walk f5:Body mechanisms=all
+# OTHER-LABEL: code f5:Body
+# OTHER: PutSlotOrAdd {{*}} key="b" receivers=[L2]
+
+layout L0 kind=Instance name="Base" module=m2 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Below" module=m1 base=L0 constructor=f3 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Other" module=m2 constructor=f5 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L3 kind=Instance name="Lower" module=m1 base=L2 constructor=f6 fields=[{key="b" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="Other" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Import completes=true}, {target=m1 kind=Require}]
+module m1 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeReevaluated] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1 requests=[{target=m2 kind=Require}]
+module m2 path="/base.js" displayPath="base.js" body=f7
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g2
+    v2 = NewClosure function=f4
+    v3 = Call v2, -
+    v4 = Integer integer=1
+    v5 = Construct v0, v4
+    v6 = Construct v1, v4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="publish" [isFreeName]
+    v9 = Call v8, -, v0, v5, v1, v6
+    Return v9
+}
+function f1 name="Base" module=m2 role=Library flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="below" module=m1 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m1 [isCallOfRequire]
+    v1 = Integer integer=0
+    PutModuleVariable v1 variable=g1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f6
+    v5 = Integer integer=2
+    v6 = Construct v3, v5
+    v7 = Construct v4, v5
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v6, v7
+    Return
+}
+function f3 name="Below" module=m1 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call"
+    v5 = Undefined
+    Return v5
+}
+function f4 name="load" module=m0 results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    Return
+}
+function f5 name="Other" module=m2 flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    PropSet v0, v1 key="b"
+    v3 = Undefined
+    Return v3
+}
+function f6 name="Lower" module=m1 flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L3 {
+  b0(v0: L3, v1: anything):
+    v2 = GetModuleVariable variable=g2
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Other.call"
+    v5 = Undefined
+    Return v5
+}
+function f7 name="base" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f5
+    PutModuleVariable v2 variable=g2
+    Return
+}

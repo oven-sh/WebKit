@@ -7,13 +7,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTSort.h"
 #include "AOTThinSummary.h"
+#include "AOTTypeArena.h"
 #include <algorithm>
 #include <span>
-#include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -25,7 +29,10 @@ public:
     LayoutsByNames(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
     {
         size_t numberOfLayouts = program.layouts.size();
-        listWhoWritesLayouts(program, summaries);
+        Vector<LayoutID> layoutsOfConstructors = layoutsOfConstructorFunctions(program);
+        Vector<FunctionID> creators;
+        listWhoWritesLayouts(program, summaries, layoutsOfConstructors.span(), &creators);
+        listLayoutsOfInitializers(program, summaries, layoutsOfConstructors.span(), creators.span());
         size_t numberOfKeys = program.types.numberOfPropertyKeys();
 
         Vector<uint64_t> namesAbove;
@@ -53,6 +60,7 @@ public:
                 std::ranges::sort(run);
         };
 
+        Vector<uint64_t> lateNames = namesStoredThroughParameters(program, summaries);
         Vector<uint64_t> pairs;
         for (uint32_t index = 0; index < numberOfLayouts; ++index) {
             const Layout& layout = program.layouts[index];
@@ -62,12 +70,25 @@ public:
             size_t firstPairOfLayout = pairs.size();
             if (layout.kind == LayoutKind::Instance)
                 m_isInstance.set(index);
-            for (const Field& field : layout.fields) {
-                if (field.key)
-                    pairs.append(holder | field.key.index());
+            uint32_t numberRequired = 0;
+            uint32_t numberWithoutInitializer = 0;
+            for (uint32_t place = 0; place < layout.fields.size(); ++place) {
+                const Field& field = layout.fields[place];
+                if (!field.key)
+                    continue;
+                pairs.append(holder | field.key.index());
+                if (layout.kind != LayoutKind::Record || !field.flags.contains(FieldFlags::IsRequired) || field.flags.contains(FieldFlags::IsNeverWritten))
+                    continue;
+                ++numberRequired;
+                const LinkedCell* cell = held.findCellOfField({ LayoutID(index), place });
+                numberWithoutInitializer += cell && cell->isGivenByNoMaker;
             }
+            if (numberWithoutInitializer > numberRequired - numberWithoutInitializer)
+                m_sparseRecords.set(index);
             for (PropertyKeyID key : linked.appendedKeysOf(LayoutID(index)))
                 pairs.append(holder | key.index());
+            for (uint64_t late : std::ranges::equal_range(lateNames, index, { }, [](uint64_t name) { return static_cast<uint32_t>(name >> 32); }))
+                pairs.append(late);
             size_t firstPairAbove = pairs.size();
             size_t steps = 0;
             auto above = [&](LayoutID current) {
@@ -76,8 +97,11 @@ public:
                 return parentIsValue ? held.layouts[current.index()].heritage : below.base;
             };
             for (LayoutID current(index); current && steps < numberOfLayouts; current = above(current), ++steps) {
-                for (uint64_t name : namesAbove.span().subspan(firstNameAboveOfLayout[current.index()], firstNameAboveOfLayout[current.index() + 1] - firstNameAboveOfLayout[current.index()]))
+                for (uint64_t name : namesAbove.span().subspan(firstNameAboveOfLayout[current.index()], firstNameAboveOfLayout[current.index() + 1] - firstNameAboveOfLayout[current.index()])) {
                     pairs.append(holder | static_cast<uint32_t>(name));
+                    if (layout.kind == LayoutKind::Instance)
+                        m_isInheritedByInstances.set(static_cast<uint32_t>(name));
+                }
             }
             std::span<uint64_t> pairsOfLayout = pairs.mutableSpan().subspan(firstPairOfLayout);
             putInOrder(pairsOfLayout.first(firstPairAbove - firstPairOfLayout));
@@ -89,7 +113,9 @@ public:
         m_firstNameOfLayout.fill(0, numberOfLayouts + 1);
         m_firstHolderOfName.fill(0, numberOfKeys + 1);
         m_names.reserveInitialCapacity(pairs.size());
+        m_nameFilters.fill(0, numberOfLayouts);
         for (uint64_t pair : pairs) {
+            m_nameFilters[pair >> 32] |= filterBitOf(static_cast<uint32_t>(pair));
             ++m_firstNameOfLayout[(pair >> 32) + 1];
             ++m_firstHolderOfName[static_cast<uint32_t>(pair) + 1];
             m_names.append(static_cast<uint32_t>(pair));
@@ -130,12 +156,60 @@ public:
         return fewest;
     }
 
-    bool hasAll(uint32_t holder, std::span<const PropertyKeyID> names) const
+    ALWAYS_INLINE bool hasAll(uint32_t holder, std::span<const PropertyKeyID> names) const
     {
-        return std::ranges::all_of(names, [&](PropertyKeyID name) { return has(holder, name); });
+        if (names.size() > namesSoughtOneByOne) [[unlikely]]
+            return hasAllOfLongList(holder, names);
+        for (PropertyKeyID name : names) {
+            if (!has(holder, name))
+                return false;
+        }
+        return true;
     }
 
     bool isInstance(LayoutID layout) const { return m_isInstance.get(layout.index()); }
+    bool isLayoutOfInitializer(LayoutID layout) const { return m_isLayoutOfInitializer.get(layout.index()); }
+
+    void dropFewSparseRecords(Program& program, std::span<const DeclaredSetForFamilies> declaredSets)
+    {
+        if (m_sparseRecords.isEmpty())
+            return;
+        constexpr size_t minOthersOfSparseRecord = 64;
+        TypeArena types(program.types, ArenaKeeps::InProgram);
+        Vector<LayoutID> sparse;
+        m_sparseRecords.forEachSetBit([&](size_t layout) {
+            sparse.append(LayoutID(static_cast<uint32_t>(layout)));
+        });
+        LayoutSetID sparseRecords = types.layoutSets().ofSorted(sparse.span());
+        for (const DeclaredSetForFamilies& declared : declaredSets) {
+            if (declared.size <= minOthersOfSparseRecord || !overlap(types.at(declared.layouts).untyped(), types.at(sparseRecords).untyped()))
+                continue;
+            LayoutSetID part = types.layoutSets().differenceOf(declared.layouts, sparseRecords);
+            size_t sizeOfPart = types.layoutSets().sizeOf(part);
+            size_t numberOfSparse = declared.size - sizeOfPart;
+            if (numberOfSparse * minOthersOfSparseRecord >= declared.size)
+                continue;
+            size_t numberOfUsedOthers = 0;
+            bool areFew = types.at(part).anyOf([&](LayoutID layout) {
+                numberOfUsedOthers += isInUse(layout);
+                return numberOfUsedOthers + numberOfSparse > numberOfSparse * minOthersOfSparseRecord;
+            });
+            if (!areFew)
+                continue;
+            for (uint16_t nullish : { uint16_t { 0 }, uint16_t { Primitive::Undefined }, uint16_t { Primitive::Null }, uint16_t { Primitive::UndefinedOrNull } }) {
+                TypeID whole = types.withPrimitives(types.forLayoutSet(declared.layouts), nullish);
+                m_typesWithFewSparseRecords.set(positionOf(whole));
+                m_partsWithoutSparseRecords.add(whole.bits(), types.withPrimitives(types.forLayoutSet(part), nullish));
+            }
+        }
+    }
+
+    TypeID withoutFewSparseRecords(TypeID type) const
+    {
+        if (!liesInProgram(type) || !m_typesWithFewSparseRecords.get(positionOf(type))) [[likely]]
+            return type;
+        return m_partsWithoutSparseRecords.get(type.bits());
+    }
 
     std::span<const uint32_t> layoutsWrittenIn(ModuleID module) const
     {
@@ -160,14 +234,32 @@ public:
     bool isWrittenInOneOf(std::span<const uint32_t> modules, uint32_t layout) const
     {
         std::span<const uint32_t> writers = rowOf(m_firstWriterOfLayout, m_writersOfLayouts, layout);
+        if (writers.size() == 1 && modules.size() == 1) [[likely]]
+            return writers.front() == modules.front();
         std::span<const uint32_t> fewer = modules.size() < writers.size() ? modules : writers;
         std::span<const uint32_t> more = modules.size() < writers.size() ? writers : modules;
         return std::ranges::any_of(fewer, [&](uint32_t member) { return std::ranges::binary_search(more, member); });
     }
 
+    bool isWrittenInImporterOf(ModuleID module, uint32_t layout) const
+    {
+        return std::ranges::any_of(rowOf(m_firstWriterOfLayout, m_writersOfLayouts, layout), [&](uint32_t writer) {
+            return std::ranges::binary_search(modulesSeenBy(ModuleID(writer)), module.index());
+        });
+    }
+
+    bool isInheritedByInstances(PropertyKeyID name) const { return m_isInheritedByInstances.get(name.index()); }
     bool isNameOfSomeInstance(PropertyKeyID name) const { return m_isNameOfSomeInstance.get(name.index()); }
     bool isNameOfSomeLayout(PropertyKeyID name) const { return !holdersOf(name).empty(); }
     bool severalLayoutsHold(PropertyKeyID name) const { return holdersOf(name).size() > 1; }
+
+    template<typename Predicate>
+    bool isAnyOfFewHolders(PropertyKeyID name, const Predicate& predicate) const
+    {
+        constexpr size_t mostHolders = 4;
+        std::span<const uint32_t> holders = holdersOf(name);
+        return holders.size() <= mostHolders && std::ranges::any_of(holders, [&](uint32_t holder) { return predicate(LayoutID(holder)); });
+    }
 
     bool isInUse(LayoutID layout) const { return static_cast<size_t>(layout.index()) + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 
@@ -175,15 +267,22 @@ public:
     {
         if (static_cast<size_t>(layout.index()) + 1 >= m_firstNameOfLayout.size())
             return false;
-        if (names.empty())
-            return true;
-        std::span<const uint32_t> namesOfLayout = m_names.span().subspan(m_firstNameOfLayout[layout.index()], m_firstNameOfLayout[layout.index() + 1] - m_firstNameOfLayout[layout.index()]);
-        return std::ranges::all_of(names, [&](PropertyKeyID name) { return std::ranges::binary_search(namesOfLayout, name.index()); });
+        return hasAll(layout.index(), names);
     }
 
-    bool hasAnyOf(LayoutID layout, std::span<const PropertyKeyID> ascending) const
+    static uint64_t filterOf(std::span<const PropertyKeyID> names)
     {
-        if (static_cast<size_t>(layout.index()) + 1 >= m_firstNameOfLayout.size())
+        uint64_t filter = 0;
+        for (PropertyKeyID name : names)
+            filter |= filterBitOf(name.index());
+        return filter;
+    }
+
+    ALWAYS_INLINE bool mayHaveAll(uint32_t layout, uint64_t filterOfNames) const { return (m_nameFilters[layout] & filterOfNames) == filterOfNames; }
+
+    bool hasAnyOf(LayoutID layout, std::span<const PropertyKeyID> ascending, uint64_t filterOfNames) const
+    {
+        if (layout.index() >= m_nameFilters.size() || !(m_nameFilters[layout.index()] & filterOfNames))
             return false;
         std::span<const uint32_t> namesOfLayout = m_names.span().subspan(m_firstNameOfLayout[layout.index()], m_firstNameOfLayout[layout.index() + 1] - m_firstNameOfLayout[layout.index()]);
         if (namesOfLayout.size() < ascending.size())
@@ -194,70 +293,63 @@ public:
     LayoutID findOnlyHolderAmong(PropertyKeyID name, std::span<const LayoutID> ascending) const
     {
         LayoutID only;
-        std::span<const uint32_t> holders = holdersOf(name);
-        if (holders.size() < ascending.size()) {
-            for (uint32_t holder : holders) {
-                if (!std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
-                    continue;
-                if (only)
-                    return { };
-                only = LayoutID(holder);
-            }
-            return only;
-        }
-        for (LayoutID layout : ascending) {
-            if (!isInUse(layout) || !has(layout.index(), name))
-                continue;
+        bool isOnly = visitHoldersAmong(name, ascending, [&](LayoutID layout) {
             if (only)
-                return { };
+                return false;
             only = layout;
-        }
-        return only;
+            return true;
+        });
+        return isOnly ? only : LayoutID();
     }
 
     template<size_t inlineCapacity>
     bool appendHoldersAmongUnlessMoreThan(size_t most, PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
     {
-        std::span<const uint32_t> holders = holdersOf(name);
-        if (holders.size() < ascending.size()) {
-            for (uint32_t holder : holders) {
-                if (!std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
-                    continue;
-                if (found.size() == most)
-                    return false;
-                found.append(LayoutID(holder));
-            }
-            return true;
-        }
-        for (LayoutID layout : ascending) {
-            if (!isInUse(layout) || !has(layout.index(), name))
-                continue;
+        return visitHoldersAmong(name, ascending, [&](LayoutID layout) {
             if (found.size() == most)
                 return false;
             found.append(layout);
-        }
-        return true;
+            return true;
+        });
     }
 
     template<size_t inlineCapacity>
     void appendHoldersAmong(PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
     {
-        std::span<const uint32_t> holders = holdersOf(name);
-        if (holders.size() < ascending.size()) {
-            for (uint32_t holder : holders) {
-                if (std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
-                    found.append(LayoutID(holder));
-            }
-            return;
-        }
-        for (LayoutID layout : ascending) {
-            if (isInUse(layout) && has(layout.index(), name))
-                found.append(layout);
-        }
+        visitHoldersAmong(name, ascending, [&](LayoutID layout) {
+            found.append(layout);
+            return true;
+        });
     }
 
 private:
-    void listWhoWritesLayouts(const Program& program, const ThinSummaries& summaries)
+    static Vector<uint64_t> namesStoredThroughParameters(const Program& program, const ThinSummaries& summaries)
+    {
+        Vector<uint64_t> names;
+        TypeReader types(program);
+        for (uint32_t index = 0; index < summaries.size() && index < program.functions.size(); ++index) {
+            const Function& function = program.functions[index];
+            if (function.has(FunctionFlags::IsChecked))
+                continue;
+            const ThinSummary& summary = summaries.at(FunctionID(index));
+            for (const SummaryAccess& access : summary.accesses) {
+                if (access.kind != SummaryAccess::Kind::Store || !access.key || access.isToContents() || summary.nodes[access.subject].kind != SummaryNode::Kind::Parameter)
+                    continue;
+                const DeclaredType* declared = function.declaredEntryParameter(summary.nodes[access.subject].first);
+                if (!declared || !declared->isExpected() || !declared->written())
+                    continue;
+                Type written = types.at(declared->written());
+                std::span<const LayoutID> layouts = written.hasOnlyLayouts() ? types.listOf(written.layouts) : std::span<const LayoutID>();
+                if (layouts.size() == 1 && program.at(layouts[0]).kind == LayoutKind::Instance && !program.at(layouts[0]).findField(access.key))
+                    names.append(static_cast<uint64_t>(layouts[0].index()) << 32 | access.key.index());
+            }
+        }
+        std::ranges::sort(names);
+        names.shrink(std::ranges::unique(names).begin() - names.begin());
+        return names;
+    }
+
+    void listWhoWritesLayouts(const Program& program, const ThinSummaries& summaries, std::span<const LayoutID> layoutsOfConstructors = { }, Vector<FunctionID>* creatorsOfConstructors = nullptr)
     {
         Vector<uint64_t> written;
         for (uint32_t layout = 0; layout < program.layouts.size(); ++layout) {
@@ -266,10 +358,16 @@ private:
         }
         for (uint32_t function = 0; function < summaries.size() && function < program.functions.size(); ++function) {
             ModuleID module = program.functions[function].module;
+            bool createsConstructor = false;
             for (const SummaryNode& node : summaries.at(FunctionID(function)).nodes.span()) {
-                if (module && module.index() < program.modules.size() && node.kind == SummaryNode::Kind::Allocation && program.at(LayoutID(node.first)).kind == LayoutKind::Record)
-                    written.append(static_cast<uint64_t>(module.index()) << 32 | node.first);
+                if (node.kind == SummaryNode::Kind::Allocation) {
+                    if (module && module.index() < program.modules.size() && program.at(LayoutID(node.first)).kind == LayoutKind::Record)
+                        written.append(static_cast<uint64_t>(module.index()) << 32 | node.first);
+                } else if (node.kind == SummaryNode::Kind::Closure)
+                    createsConstructor |= node.first < layoutsOfConstructors.size() && layoutsOfConstructors[node.first];
             }
+            if (createsConstructor && creatorsOfConstructors)
+                creatorsOfConstructors->append(FunctionID(function));
         }
         layRows(written, program.modules.size(), m_firstLayoutWrittenIn, m_layoutsWritten);
 
@@ -294,6 +392,66 @@ private:
         m_numberWrittenInSight.fill(0, program.modules.size());
         for (uint64_t pair : seen)
             m_numberWrittenInSight[pair >> 32] += layoutsWrittenIn(ModuleID(static_cast<uint32_t>(pair))).size();
+    }
+
+    static Vector<LayoutID> layoutsOfConstructorFunctions(const Program& program)
+    {
+        Vector<LayoutID> layouts;
+        layouts.grow(program.functions.size());
+        for (uint32_t layout = 0; layout < program.layouts.size(); ++layout) {
+            const Layout& record = program.layouts[layout];
+            if (record.kind == LayoutKind::Instance && record.has(LayoutFlags::IsConstructorFunction) && record.constructor && record.constructor.index() < layouts.size())
+                layouts[record.constructor.index()] = LayoutID(layout);
+        }
+        return layouts;
+    }
+
+    void listLayoutsOfInitializers(const Program& program, const ThinSummaries& summaries, std::span<const LayoutID> layoutsOfConstructors, std::span<const FunctionID> creatorsOfConstructors)
+    {
+        if (creatorsOfConstructors.empty())
+            return;
+        PropertyKeyID apply = program.keyOf(BuiltinNames::apply);
+        PropertyKeyID call = program.keyOf(BuiltinNames::call);
+        BitVector appliedKeys;
+        bool hasAppliedKeys = false;
+        for (uint32_t function = 0; function < summaries.size() && function < program.functions.size(); ++function) {
+            const ThinSummary& summary = summaries.at(FunctionID(function));
+            for (const SummaryCall& applied : summary.calls) {
+                if ((applied.key != apply && applied.key != call) || !applied.key || applied.callee != SummaryCall::Callee::Name || applied.isConstruction || applied.continuesConstruction || !applied.numberOfArguments || applied.receiver == noSummaryNode)
+                    continue;
+                const SummaryNode& callee = summary.nodes[applied.receiver];
+                if (callee.kind != SummaryNode::Kind::ResultOfAccess)
+                    continue;
+                const SummaryAccess& read = summary.accesses[callee.first];
+                if (read.kind != SummaryAccess::Kind::Read || !read.key || read.isToContents() || read.subject != summary.arguments[applied.firstArgument])
+                    continue;
+                appliedKeys.set(read.key.index());
+                hasAppliedKeys = true;
+            }
+        }
+        if (!hasAppliedKeys)
+            return;
+        for (FunctionID creator : creatorsOfConstructors) {
+            const ThinSummary& summary = summaries.at(creator);
+            auto note = [&](PropertyKeyID key, uint32_t value) {
+                const SummaryNode& node = summary.nodes[value];
+                if (node.kind != SummaryNode::Kind::Closure || !key || !appliedKeys.get(key.index()))
+                    return;
+                if (LayoutID layout = layoutsOfConstructors[node.first])
+                    m_isLayoutOfInitializer.set(layout.index());
+            };
+            for (const SummaryAccess& access : summary.accesses) {
+                if (access.laysValueInSightUnderName() && access.value != noSummaryNode)
+                    note(access.key, access.value);
+            }
+            for (const SummaryEdge& edge : summary.edges) {
+                if (summary.nodes[edge.from].kind != SummaryNode::Kind::Closure)
+                    continue;
+                const SummaryNode& to = summary.nodes[edge.to];
+                if (to.kind == SummaryNode::Kind::Field && to.first < program.layouts.size() && to.second < program.layouts[to.first].fields.size())
+                    note(program.layouts[to.first].fields[to.second].key, edge.from);
+            }
+        }
     }
 
     static uint64_t wordOfName(PropertyKeyID name)
@@ -364,13 +522,71 @@ private:
         return m_holders.span().subspan(m_firstHolderOfName[name.index()], m_firstHolderOfName[name.index() + 1] - m_firstHolderOfName[name.index()]);
     }
 
-    bool has(uint32_t layout, PropertyKeyID name) const
+    static uint64_t filterBitOf(uint32_t name) { return 1ull << (name * 0x9e3779b9u >> 26); }
+
+    static constexpr size_t namesSoughtOneByOne = 16;
+
+    NEVER_INLINE bool hasAllOfLongList(uint32_t holder, std::span<const PropertyKeyID> names) const
     {
+        std::span<const uint32_t> own = m_names.span().subspan(m_firstNameOfLayout[holder], m_firstNameOfLayout[holder + 1] - m_firstNameOfLayout[holder]);
+        size_t next = 0;
+        uint32_t last = 0;
+        for (PropertyKeyID name : names) {
+            if (name.index() < last) {
+                if (!has(holder, name))
+                    return false;
+                continue;
+            }
+            last = name.index();
+            if (!(m_nameFilters[holder] & filterBitOf(last)))
+                return false;
+            if (next < own.size() && own[next] < last)
+                ++next;
+            if (next < own.size() && own[next] < last) {
+                size_t step = 1;
+                for (; next + step < own.size() && own[next + step] < last; step *= 2)
+                    next += step;
+                std::span<const uint32_t> rest = own.subspan(next, std::min(step + 1, own.size() - next));
+                next += std::ranges::lower_bound(rest, last) - rest.begin();
+            }
+            if (next == own.size() || own[next] != last)
+                return false;
+        }
+        return true;
+    }
+
+    ALWAYS_INLINE bool has(uint32_t layout, PropertyKeyID name) const
+    {
+        if (!(m_nameFilters[layout] & filterBitOf(name.index()))) [[likely]]
+            return false;
         return std::ranges::binary_search(m_names.span().subspan(m_firstNameOfLayout[layout], m_firstNameOfLayout[layout + 1] - m_firstNameOfLayout[layout]), name.index());
+    }
+
+    template<typename Visit>
+    ALWAYS_INLINE bool visitHoldersAmong(PropertyKeyID name, std::span<const LayoutID> ascending, const Visit& visit) const
+    {
+        std::span<const uint32_t> holders = holdersOf(name);
+        if (holders.size() * std::bit_width(ascending.size()) < ascending.size()) {
+            for (uint32_t holder : holders) {
+                if (std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }) && !visit(LayoutID(holder)))
+                    return false;
+            }
+            return true;
+        }
+        if (holders.empty())
+            return true;
+        std::span<const uint64_t> filters = m_nameFilters.span();
+        uint64_t filter = filterBitOf(name.index());
+        for (LayoutID layout : ascending) {
+            if (layout.index() < filters.size() && (filters[layout.index()] & filter) && has(layout.index(), name) && !visit(layout))
+                return false;
+        }
+        return true;
     }
 
     Vector<uint32_t> m_firstNameOfLayout;
     Vector<uint32_t> m_names;
+    Vector<uint64_t> m_nameFilters;
     Vector<uint32_t> m_firstHolderOfName;
     Vector<uint32_t> m_holders;
     Vector<uint32_t> m_firstLayoutWrittenIn;
@@ -382,7 +598,12 @@ private:
     Vector<RecordOfDeclaredParameter> m_recordsOfDeclaredParameters;
     Vector<uint32_t> m_numberWrittenInSight;
     BitVector m_isInstance;
+    BitVector m_isLayoutOfInitializer;
+    BitVector m_sparseRecords;
+    BitVector m_typesWithFewSparseRecords;
+    UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partsWithoutSparseRecords;
     BitVector m_isNameOfSomeInstance;
+    BitVector m_isInheritedByInstances;
 };
 
 } } } // namespace JSC::AOT::Typed

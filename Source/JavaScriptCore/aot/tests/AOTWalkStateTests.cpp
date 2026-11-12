@@ -96,7 +96,7 @@ public:
             });
             return;
         }
-        noteFacts(object, { CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown });
+        noteFacts(object, { CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::OrderWordIsKnown });
         for (Cell& cell : cells) {
             if (cell.object == object)
                 cell.orderWord = *orderWord;
@@ -118,7 +118,7 @@ public:
     {
         OptionSet<CellFact> facts;
         if (written.contains(AbstractHeap::ShapeWords))
-            facts.add(CellFact::NotFrozen);
+            facts.add({ CellFact::NotFrozen, CellFact::IsExtensible });
         if (written.contains(AbstractHeap::NamedProperties))
             facts.add({ CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties });
         if (written.contains(AbstractHeap::PrototypeLinks))
@@ -300,7 +300,7 @@ static Effects effectsThatWriteInWalkStateTests(AbstractHeapSet written)
 }
 
 static constexpr uint32_t layoutsOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX };
-static constexpr uint32_t classesOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX >> 2 };
+static constexpr uint32_t classesOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX >> 3 };
 
 static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, uint32_t numberOfObjects, uint32_t numberOfFields)
 {
@@ -347,7 +347,7 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
         AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards,
     };
     static constexpr CellFact facts[] {
-        CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::HasLayoutPrototype, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent,
+        CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::HasLayoutPrototype, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent,
     };
 
     WeakRandom random(seed);
@@ -747,6 +747,22 @@ static void testRecordsKeepTheirSegmentsWhereUnitIsForgotten()
         AOT_TEST_CHECK(records[number] == number);
 }
 
+static void testRecordsTakeFewerAddressesThanProcessHas()
+{
+    StableArray<uint64_t, 44> records;
+    StableArray<uint64_t, 44> others;
+    for (uint64_t number = 0; number < 100000; ++number) {
+        records.append(number);
+        others.append(~number);
+    }
+    const uint64_t* first = &records[0];
+    for (uint64_t number = 100000; number < 200000; ++number)
+        records.append(number);
+    AOT_TEST_CHECK(&records[0] == first);
+    for (uint64_t number = 0; number < 100000; ++number)
+        AOT_TEST_CHECK(records[number] == number && records[number + 100000] == number + 100000 && others[number] == ~number);
+}
+
 static void testSideWordsKeepSegmentsOfUsualSizeAlone()
 {
     SideWords words;
@@ -842,6 +858,7 @@ std::span<const NativeTest> walkStateTests()
         { "walk-state/one-change-among-many-fresh-holders-is-found-in-what-is-not-shared"_s, testOneChangeAmongManyFreshHoldersIsFoundInWhatIsNotShared },
         { "walk-state/a-list-takes-the-room-of-a-former-list-and-nothing-that-it-held"_s, testListTakesRoomOfFormerListAndNothingThatItHeld },
         { "walk-state/records-keep-their-segments-where-a-unit-is-forgotten"_s, testRecordsKeepTheirSegmentsWhereUnitIsForgotten },
+        { "walk-state/records-take-fewer-addresses-than-a-process-has"_s, testRecordsTakeFewerAddressesThanProcessHas },
         { "walk-state/side-words-keep-segments-of-the-usual-size-alone"_s, testSideWordsKeepSegmentsOfUsualSizeAlone },
         { "walk-state/elements-outside-views-outlive-writes-into-views"_s, testElementsOutsideViewsOutliveWritesIntoViews },
     };

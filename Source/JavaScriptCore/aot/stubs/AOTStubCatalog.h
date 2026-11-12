@@ -37,6 +37,7 @@ struct StubOptions {
 
     bool useWideReferences { false };
     bool imageHasWebAssembly { false };
+    bool hasModuleInstances { true };
     bool hasOneInstance { false };
     bool matchesRegExps { true };
     bool recordsLastMatch { true };
@@ -44,6 +45,7 @@ struct StubOptions {
     bool checksWalk { false };
     bool methodsOfBuiltinsMayBeReplaced { false };
     bool callsNumberOrStringByValue { true };
+    bool callsArrayByValue { true };
     WTF::BitSet<numberOfBuiltinBoxedStubs> boxedCallsOutOfReach { };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t maxNameInFieldTable { UINT16_MAX };

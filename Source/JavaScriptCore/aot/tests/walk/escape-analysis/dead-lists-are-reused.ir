@@ -1,0 +1,131 @@
+# Only `sum` names the list that a call of `make` returns, and it only reads it: behind the inner loop the list is dead, and ReleaseArray lets the next `[]` reuse the cell. `local` allocates its list itself. `kept` pushes the list onto another one.
+# function make(n) { const list = []; if (n > 1) list.push(n); if (n > 2) list.push(n + 1); return list; }
+# function sum(n) { let t = 0; for (let i = 0; i < n; i++) { const list = make(i); for (let k = 0; k < list.length; k++) t += list[k]; } return t; }
+# function local(n) { let t = 0; for (let i = 0; i < n; i++) { const list = []; list.push(i); list.push(t); t += list.length; } return t; }
+# function kept(n, all) { let t = 0; for (let i = 0; i < n; i++) { const list = make(i); all.push(list); t += list.length; } return t; }
+# RUN(SUM): walk f2 mechanisms=all-Inlining
+# SUM-LABEL: code f2:Body
+# SUM: [[list]]: {{*}} = CallDirect {{*}}function=f1
+# SUM: ReleaseArray [[list]]
+# RUN(LOCAL): walk f3 mechanisms=all
+# LOCAL-LABEL: code f3:Body
+# LOCAL: [[list]]: {{*}} = NewArray
+# LOCAL: ReleaseArray [[list]]
+# RUN(KEPT): walk f4 mechanisms=all
+# KEPT-NOT: ReleaseArray
+# RUN(WITHHELD): walk f2 mechanisms=all-CellsInFrames
+# WITHHELD-NOT: ReleaseArray
+# RUN(SHELL): run-in-shell globalThis.sink = (sum, local, kept) => { if (!kept) return; const all = []; print([sum(9), local(7), kept(5, all), sum(40), all.join(":")].join()); };
+# SHELL: 74,14,5,1593,::2:3,4:4,5
+
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d0
+    v2 = Integer integer=1
+    v3 = Greater v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v1 key="push"
+    v5 = Call v4, v1, v0 calleeKey="push" calleeName="list.push"
+    Jump -> next b2()
+  b2():
+    v6 = Integer integer=2
+    v7 = Greater v0, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = PropGet v1 key="push"
+    v9 = Integer integer=1
+    v10 = Add v0, v9
+    v11 = Call v8, v1, v10 calleeKey="push" calleeName="list.push"
+    Jump -> next b4()
+  b4():
+    Return v1
+}
+function f2 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, -, v4 calleeName="make"
+    v9 = Integer
+    Jump -> next b3(v3, v9)
+  b3(v10, v11):
+    LoopHint
+    v13 = PropGet v8 key="length"
+    v14 = Less v11, v13
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    v15 = ElemGet v8, v11
+    v16 = Add v10, v15
+    v17 = Increment v11
+    Jump -> next b3(v16, v17)
+  b5():
+    v18 = Increment v4
+    Jump -> next b1(v10, v18)
+  b6():
+    Return v3
+}
+function f3 name="local" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Data data=d1
+    v8 = PropGet v7 key="push"
+    v9 = Call v8, v7, v4 calleeKey="push" calleeName="list.push"
+    v10 = PropGet v7 key="push"
+    v11 = Call v10, v7, v3 calleeKey="push" calleeName="list.push"
+    v12 = PropGet v7 key="length"
+    v13 = Add v3, v12
+    v14 = Increment v4
+    Jump -> next b1(v13, v14)
+  b3():
+    Return v3
+}
+function f4 name="kept" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = GetModuleVariable variable=g0
+    v9 = Call v8, -, v5 calleeName="make"
+    v10 = PropGet v1 key="push"
+    v11 = Call v10, v1, v9 calleeKey="push" calleeName="all.push"
+    v12 = PropGet v9 key="length"
+    v13 = Add v4, v12
+    v14 = Increment v5
+    Jump -> next b1(v13, v14)
+  b3():
+    Return v4
+}

@@ -21,6 +21,8 @@ public:
     void generateCreateAsyncFromSyncIterator(const ValueContext&);
     void generateRequireAttachedTypedArray(const ValueContext&);
     void generateRequireLengthFitsList(const ValueContext&);
+    void generateNextSetElement(const ValueContext&);
+    void generateReserveTableCapacity(const ValueContext&);
     void generateThrowNotIterable(const ValueContext& value) { callVoidOperation(value, RuntimeOperation::ThrowNotIterable, { in<Boxed>(value->iterableOperand()), word32(value->isSpread()) }); }
 };
 

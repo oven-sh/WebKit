@@ -58,19 +58,20 @@ uint32_t ExceptionEmitter::findOrAddLandingPad(const Edge& handler)
         hash = WTF::pairIntHash(hash, argument.index());
     uint64_t key = static_cast<uint64_t>(handler.to.index() + 1) << 32 | hash;
 
+    uint32_t loopExit = generator().findLoopExitThatRenames(handler.arguments());
     uint32_t added = static_cast<uint32_t>(m_landingPads.size());
     uint32_t next = noLandingPad;
     auto first = m_firstLandingPadsByKey.add(key, added);
     if (!first.isNewEntry) {
         for (uint32_t index = first.iterator->value; index != noLandingPad; index = m_landingPads[index].next) {
             const Edge& other = *m_landingPads[index].handler;
-            if (other.to == handler.to && std::ranges::equal(other.arguments(), handler.arguments()))
+            if (other.to == handler.to && m_landingPads[index].loopExit == loopExit && std::ranges::equal(other.arguments(), handler.arguments()))
                 return index;
         }
         next = first.iterator->value;
         first.iterator->value = added;
     }
-    m_landingPads.append(LandingPad { &handler, nullptr, 0, next, HandlerType::Catch });
+    m_landingPads.append(LandingPad { &handler, nullptr, 0, next, HandlerType::Catch, loopExit });
     return added;
 }
 
@@ -280,6 +281,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES const ExceptionEmitter::LandingPad& ExceptionEmit
 
     LBasicBlock siteBlock = m_out.m_block;
     m_out.appendTo(landingPad.block);
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
+        emitter<RuntimeCallEmitter>().restoreDeedsInHandler();
     if (landingPad.type == HandlerType::SynthesizedCatch)
         callWithoutSite<Boxed>(RuntimeOperation::Catch, { }, { .isOnRarePath = true, .followsThrow = true });
     if (generator().keepsValuesInHeapFrame()) [[unlikely]]

@@ -171,7 +171,7 @@ export default b.declarations(
       throws: true,
       uses: { view: b.inspected },
       reads: [typedArrayStorage],
-      implementation: b.hostCall,
+      implementation: b.inline("ViewLength", { otherwise: b.hostCall }),
     },
     isTypedArrayOutOfBounds: {
       args: { view: b.instance("TypedArray") },
@@ -179,7 +179,7 @@ export default b.declarations(
       capability: "heap",
       uses: { view: b.inspected },
       reads: [typedArrayStorage],
-      implementation: b.hostCall,
+      implementation: b.inline("ViewIsOutOfBounds", { otherwise: b.hostCall }),
     },
 
     iteratorHelperCreate: iteratorCreation("IteratorHelper", { generator: b.instance("Generator"), underlyingIterator: b.any }),

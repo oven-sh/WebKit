@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTImageBuilder.h"
+#include "AOTStubsRegExp.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -189,6 +190,8 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(PropertyRun)
         AOT_NAME_OF_NUMBER_SPACE(ShownString)
         AOT_NAME_OF_NUMBER_SPACE(AtomOfString)
+        AOT_NAME_OF_NUMBER_SPACE(NameHeader)
+        AOT_NAME_OF_NUMBER_SPACE(StringCharacters)
         AOT_NAME_OF_NUMBER_SPACE(Type)
         AOT_NAME_OF_NUMBER_SPACE(MethodSelector)
         AOT_NAME_OF_NUMBER_SPACE(RegExp)
@@ -238,6 +241,13 @@ struct CodeLinker {
         fail(piece, relocation, makeString("what it mentions in NumberSpace::"_s, nameOfNumberSpace(space), asInstanceWord ? " has no word of the instance"_s : " has no number"_s));
     }
 
+    std::optional<uint32_t> placeOfCharacters(const Mention& mention) const
+    {
+        if (mention.numberOfWords != 1 || mention.addend || mention.firstWord >= strings.size() || !strings[mention.firstWord].hasText() || strings[mention.firstWord].is16Bit())
+            return std::nullopt;
+        return strings[mention.firstWord].range(longStrings).offset;
+    }
+
     ALWAYS_INLINE std::optional<uint32_t> valueOfMention(const PieceOfLinkedCode& piece, const Relocation& relocation, bool asInstanceWord) const
     {
         using State = ValuesOfLinkedMention::State;
@@ -247,7 +257,7 @@ struct CodeLinker {
         if (known.states[asInstanceWord] == State::NotAsked) {
             const CodeBody& body = piece.function->body;
             const Mention& mention = body.mentions[relocation.symbol];
-            std::optional<uint32_t> value = numbers.valueOf(mention, body.mentionWords.span(), asInstanceWord);
+            std::optional<uint32_t> value = mention.space == NumberSpace::StringCharacters ? placeOfCharacters(mention) : numbers.valueOf(mention, body.mentionWords.span(), asInstanceWord);
             known.states[asInstanceWord] = value ? State::HasValue : State::HasNone;
             known.values[asInstanceWord] = value.value_or(0);
             if (!value)
@@ -277,7 +287,14 @@ struct CodeLinker {
         }
         case SymbolSpace::RegExp: {
             const auto& entries = inputs.regExpSection.entries;
-            if (target.index >= entries.size() || target.entry >= entries[target.index].size())
+            if (target.index >= entries.size())
+                return std::nullopt;
+            if (target.entry == entryOfMatcher) {
+                const auto& matchers = inputs.regExpSection.matchers;
+                std::optional<uint32_t> matcher = target.index < matchers.size() ? matchers[target.index] : std::nullopt;
+                return matcher ? std::optional(static_cast<size_t>(layout.regExpCodeOffset) + *matcher) : std::nullopt;
+            }
+            if (target.entry >= entries[target.index].size())
                 return std::nullopt;
             return static_cast<size_t>(layout.regExpCodeOffset) + entries[target.index][target.entry];
         }
@@ -573,6 +590,8 @@ struct CodeLinker {
     std::span<uint8_t> code;
     BuildContext& context;
     const StubOffsetTable& stubOffsets;
+    std::span<const ImageString> strings;
+    std::span<const ImageLongString> longStrings;
 };
 
 } // anonymous namespace
@@ -589,7 +608,7 @@ void linkCode(const CodeLinkerInputs& inputs, std::span<uint8_t> code, BuildCont
     RELEASE_ASSERT(inputs.constants.constantOffsetsByBody.size() == numberOfBodies && inputs.constants.jumpTableOffsetsByBody.size() == numberOfBodies);
     RELEASE_ASSERT(inputs.layoutInputs.callees.firstCallee.size() == static_cast<size_t>(numberOfBodies) + 1);
     StubOffsetTable stubOffsets(inputs.layoutInputs.sharedCode.blob.placements.span());
-    CodeLinker linker { inputs.layoutInputs, layout, inputs.constants, inputs.numbers, code, context, stubOffsets };
+    CodeLinker linker { inputs.layoutInputs, layout, inputs.constants, inputs.numbers, code, context, stubOffsets, inputs.strings, inputs.longStrings };
 
     std::span<const uint8_t> pool = inputs.constants.bytes.span();
     forEachIndexInParallel(loops, static_cast<unsigned>((pool.size() + bytesOfConstantsInChunk - 1) / bytesOfConstantsInChunk), [&](unsigned chunk) {

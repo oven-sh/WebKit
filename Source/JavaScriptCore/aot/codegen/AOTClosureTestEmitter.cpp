@@ -93,6 +93,13 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
         m_out.branch(hasMutableCellType(cell, SlimClosureWithPropertiesType).value(), rareEdge(hasOtherStructure), targets.notTaken);
 
         m_out.appendToContinuation(hasOtherStructure);
+    } else if (hasOneInstance() && isClassConstructorOf(m_program.at(function).kind)) {
+        LBasicBlock isFullClosure = newBlock();
+        m_out.branch(hasCellType(cell, CompiledClosureType).value(), normalEdge(isFullClosure), targets.notTaken);
+
+        m_out.appendTo(isFullClosure);
+        branch(hasClosureWordOf(cell, isSlim, function), targets);
+        return;
     } else {
         LBasicBlock hasInitialStructure = newBlock();
         m_out.branch(hasClosureStructure(cell, function).value(), normalEdge(hasInitialStructure), rareEdge(hasOtherStructure));

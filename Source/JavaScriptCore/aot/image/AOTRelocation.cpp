@@ -116,6 +116,26 @@ void RelocationRecorder::loadDouble(CodeSymbol symbol, FPRReg dest)
 {
     append(m_jit.loadPCRelativeDouble(dest), RelocationKind::Load64, symbol);
 }
+
+void RelocationRecorder::addDouble(CodeSymbol symbol, FPRReg dest)
+{
+    append(m_jit.addPCRelativeDouble(dest), RelocationKind::Load64, symbol);
+}
+
+void RelocationRecorder::subDouble(CodeSymbol symbol, FPRReg dest)
+{
+    append(m_jit.subPCRelativeDouble(dest), RelocationKind::Load64, symbol);
+}
+
+void RelocationRecorder::mulDouble(CodeSymbol symbol, FPRReg dest)
+{
+    append(m_jit.mulPCRelativeDouble(dest), RelocationKind::Load64, symbol);
+}
+
+void RelocationRecorder::divDouble(CodeSymbol symbol, FPRReg dest)
+{
+    append(m_jit.divPCRelativeDouble(dest), RelocationKind::Load64, symbol);
+}
 #endif
 
 void RelocationRecorder::emitNumber32(CodeSymbol symbol)
@@ -267,14 +287,14 @@ private:
     ALWAYS_INLINE void findNextShortJump()
     {
         std::span<const X86LinkedJump> jumps = m_jumps.span();
-        while (m_nextJump < jumps.size() && !jumps[m_nextJump].isShort)
+        while (m_nextJump < jumps.size() && !jumps[m_nextJump].savings)
             ++m_nextJump;
         if (m_nextJump == jumps.size()) {
             m_emittedEndOfNextShortJump = std::numeric_limits<uint64_t>::max();
             return;
         }
         const X86LinkedJump& jump = jumps[m_nextJump];
-        m_shiftBehindNextShortJump = m_shift + X86JumpShortener::savingsOf(jump.kind);
+        m_shiftBehindNextShortJump = m_shift + jump.savings;
         m_emittedEndOfNextShortJump = static_cast<uint64_t>(jump.from) + m_shiftBehindNextShortJump;
     }
 

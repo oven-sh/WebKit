@@ -23,6 +23,7 @@
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 
@@ -97,6 +98,8 @@ private:
     void collectNamesOfCaptures(uint32_t index, CodeUnit, Vector<NamedCaptureData>&) const;
     void collectConstructEntrypoint(uint32_t index, CodeUnit, FunctionKindData, Vector<ConstructEntrypointData>&) const;
     void numberRecords();
+    void numberClosureFacts();
+    void listCountsOf(uint32_t closureNumber);
     void forEachTable(const auto& functor) const;
 
     const TableEncoder& m_encoder;
@@ -119,9 +122,9 @@ private:
     Vector<UnsharedFunctionRecordData> m_unsharedRecords;
     Vector<uint32_t> m_groupsOfNames;
     Vector<uint32_t> m_sources;
-    Vector<FunctionKindData> m_kinds;
-    Vector<uint8_t> m_lengths;
-    Vector<uint8_t> m_captureCounts;
+    Vector<ClosureFacts> m_factsOfClosures;
+    Vector<uint16_t> m_closureFactNumbers;
+    Vector<ClosureFacts> m_closureFacts;
     Vector<uint32_t> m_cells;
 };
 
@@ -332,9 +335,7 @@ FunctionTablesByRange::FunctionTablesByRange(const TableEncoder& encoder)
     m_recordNumbers.grow(numberOfFunctions);
     m_groupsOfNames.fill(0, ProgramTables::numberOfFunctionNameGroupWords(m_firstDerived));
     m_sources.grow(numberOfFunctions - m_firstDerived);
-    m_kinds.grow(numberOfClosureFunctions);
-    m_lengths.grow(numberOfClosureFunctions);
-    m_captureCounts.grow(numberOfClosureFunctions);
+    m_factsOfClosures.grow(numberOfClosureFunctions);
     m_cells.grow(numberOfClosureFunctions);
 }
 
@@ -417,10 +418,9 @@ void FunctionTablesByRange::collectClosureFunction(uint32_t index, CodeUnit unit
         m_encoder.fail("CapturesOfClosureDoNotFitTheirCounts"_s, unit.function);
 
     uint32_t number = index - m_firstClosureFunction;
-    m_kinds[number] = kind;
-    m_lengths[number] = length < countsAreListed ? static_cast<uint8_t>(length) : countsAreListed;
-    m_captureCounts[number] = counts.encoded();
-    if ((m_lengths[number] == countsAreListed || m_captureCounts[number] == countsAreListed) && !AOT::hasFlag(m_encoder.build.options().injectedFaults, Wire::FaultInjection::DropLargeCountEntries))
+    ClosureFacts& facts = m_factsOfClosures[number];
+    facts = { kind, length < countsAreListed ? static_cast<uint8_t>(length) : countsAreListed, counts.encoded() };
+    if (facts.hasListedCounts() && !AOT::hasFlag(m_encoder.build.options().injectedFaults, Wire::FaultInjection::DropLargeCountEntries))
         functionsWithLargeCounts.append({ Number24(index), counts, { static_cast<uint8_t>(length), static_cast<uint8_t>(length >> 8) } });
     m_cells[number] = unit.role == Typed::CodeRole::GenericCallEntry ? m_encoder.numbers.closureCellNumber(unit.function) : 0;
 }
@@ -507,9 +507,47 @@ void FunctionTablesByRange::collect(size_t first, size_t end)
     m_ranges[first / indicesInRangeOfLoop] = WTF::move(rows);
 }
 
+void FunctionTablesByRange::listCountsOf(uint32_t closureNumber)
+{
+    const ClosureFacts& facts = m_factsOfClosures[closureNumber];
+    if (facts.hasListedCounts())
+        return;
+    uint32_t function = m_firstClosureFunction + closureNumber;
+    Vector<FunctionWithLargeCountsData>& listed = m_ranges[function / indicesInRangeOfLoop].functionsWithLargeCounts;
+    auto place = std::ranges::lower_bound(listed, function, { }, [](const FunctionWithLargeCountsData& row) {
+        return static_cast<uint32_t>(row.function);
+    });
+    listed.insert(static_cast<size_t>(place - listed.begin()), FunctionWithLargeCountsData { Number24(function), CaptureCounts::decode(facts.captureCounts), { facts.length, 0 } });
+}
+
+void FunctionTablesByRange::numberClosureFacts()
+{
+    static constexpr size_t mostRowsWithCounts = 1 << 15;
+    UncheckedKeyHashMap<uint32_t, uint16_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbers;
+    auto numberOf = [&](ClosureFacts facts) {
+        auto result = numbers.ensure(std::bit_cast<uint32_t>(facts), [&] {
+            RELEASE_ASSERT(m_closureFacts.size() <= UINT16_MAX);
+            m_closureFacts.append(facts);
+            return static_cast<uint16_t>(m_closureFacts.size() - 1);
+        });
+        return result.iterator->value;
+    };
+    m_closureFactNumbers.reserveInitialCapacity(m_factsOfClosures.size());
+    for (uint32_t closure = 0; closure < m_factsOfClosures.size(); ++closure) {
+        ClosureFacts facts = m_factsOfClosures[closure];
+        if (m_closureFacts.size() >= mostRowsWithCounts && !numbers.contains(std::bit_cast<uint32_t>(facts))) [[unlikely]] {
+            listCountsOf(closure);
+            facts.length = countsAreListed;
+            facts.captureCounts = countsAreListed;
+        }
+        m_closureFactNumbers.append(numberOf(facts));
+    }
+}
+
 void FunctionTablesByRange::place()
 {
     numberRecords();
+    numberClosureFacts();
     m_names.place(m_ranges.span(), &RowsOfFunctionRange::names);
     m_implementedBuiltins.place(m_ranges.span(), &RowsOfFunctionRange::implementedBuiltins);
     m_functionsWithLargeCounts.place(m_ranges.span(), &RowsOfFunctionRange::functionsWithLargeCounts);
@@ -554,9 +592,8 @@ void FunctionTablesByRange::forEachTable(const auto& functor) const
     functor(ProgramTableIndex::unsharedFunctionRecords, m_unsharedRecords);
     functor(ProgramTableIndex::sourceFunctions, m_sources);
     functor(ProgramTableIndex::implementedBuiltins, m_implementedBuiltins.rows);
-    functor(ProgramTableIndex::closureFunctionKinds, m_kinds);
-    functor(ProgramTableIndex::functionLengths, m_lengths);
-    functor(ProgramTableIndex::closureCaptureCounts, m_captureCounts);
+    functor(ProgramTableIndex::closureFactNumbers, m_closureFactNumbers);
+    functor(ProgramTableIndex::closureFacts, m_closureFacts);
     functor(ProgramTableIndex::functionsWithLargeCounts, m_functionsWithLargeCounts.rows);
     functor(ProgramTableIndex::closureCells, m_cells);
     functor(ProgramTableIndex::namedCaptures, m_bytesOfNamedCaptures);

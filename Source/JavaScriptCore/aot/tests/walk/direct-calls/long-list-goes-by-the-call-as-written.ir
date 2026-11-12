@@ -2,7 +2,7 @@
 # so the direct call stands behind a test of the length, and a list that is longer than a call can write out goes by the call as written, out of the way
 # function count(...all) { return all.length }  function nothing() { return 0 }
 # function returned(list) { return count(...list) }
-# Both ways leave by a tail call
+# The direct call leaves by a tail call. The call as written comes back: its result passes a return
 # RUN: walk f3 mechanisms=none+DirectCalls
 # CHECK-LABEL: code f3:Body
 # CHECK: [[list]]: Array {{*}} = NewArray
@@ -14,7 +14,7 @@
 # CHECK: ReturnCall [[entered]]
 # CHECK: [[written]]() frequency=Rare:
 # CHECK-NEXT: [[called]]: {{*}} = CallList {{*}}, -, [[list]] calleeName="count"
-# CHECK-NEXT: ReturnCall [[called]]
+# CHECK: Return [[called]]
 # function added(list) { return count(...list) + 1 }
 # The two ways meet behind the call
 # RUN(ADDED): walk f4 mechanisms=none+DirectCalls
@@ -43,7 +43,7 @@
 # LISTED-NOT: CallList
 # LISTED: [[entered]]: {{*}} = CallDirect {{*}}function=f1
 # LISTED: ReturnCall [[entered]]
-# with every mechanism on the lengths are compared as integers. The callee returns a raw number and the caller, which anybody may call, a boxed one: the direct call comes back and boxes, the rare way is a jump
+# with every mechanism on the lengths are compared as integers. The callee returns a raw number and the caller, which anybody may call, a boxed one: the direct call comes back and boxes, the rare way comes back too
 # RUN(ALL): walk f3 mechanisms=all
 # ALL-LABEL: code f3:Body
 # ALL: = LessEq {{*}}form=Integers
@@ -51,7 +51,7 @@
 # ALL-NEXT: [[boxed]]: {{*}} @JSValue = Box [[entered]]
 # ALL-NEXT: Return [[boxed]]
 # ALL: [[called]]: {{*}} @JSValue = CallList
-# ALL-NEXT: ReturnCall [[called]]
+# ALL-NEXT: Return [[called]]
 # with direct calls withheld there is the call as written and no test
 # RUN(CLOSED): walk f3 mechanisms=none
 # CLOSED-LABEL: code f3:Body

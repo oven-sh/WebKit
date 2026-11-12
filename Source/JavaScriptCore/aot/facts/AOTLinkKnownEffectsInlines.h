@@ -226,6 +226,19 @@ bool CalleeSummarizerForLinkEffects::callStillWaits(FunctionID id, const Summary
     return awaited != noSummaryNode && typeAt(id, awaited).isNever();
 }
 
+bool CalleeSummarizerForLinkEffects::isEnteredByNobody(FunctionID id) const
+{
+    if (m_tables.function(id).everyCallerIsKnown)
+        return false;
+    const Function& function = m_program.at(id);
+    for (uint32_t index = 0; index < function.numberOfEntryParameters(); ++index) {
+        EntryParameter kind = function.entryParameterKind(index);
+        if ((kind == EntryParameter::This || kind == EntryParameter::Parameter) && m_flow.typeAt(m_flow.parameter(id, index)).isNever())
+            return true;
+    }
+    return false;
+}
+
 bool CalleeSummarizerForLinkEffects::callNeverRuns(FunctionID id, const SummaryCall& call) const
 {
     switch (call.callee) {
@@ -287,7 +300,7 @@ bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeOutside(const CodeEn
     return everythingStandsOutside;
 }
 
-std::optional<uint16_t> CalleeSummarizerForLinkEffects::primitivesExpectedOfParameter(FunctionID id, uint32_t entryParameter) const
+std::optional<uint16_t> CalleeSummarizerForLinkEffects::expectedParameterPrimitives(FunctionID id, uint32_t entryParameter) const
 {
     std::span<const LinkedParameter> parameters = m_tables.parametersOf(id);
     TypeID expected = entryParameter < parameters.size() ? parameters[entryParameter].writtenOrSeenToArrive() : TypeID();
@@ -297,24 +310,24 @@ std::optional<uint16_t> CalleeSummarizerForLinkEffects::primitivesExpectedOfPara
     return LinkType::closed(LinkType::primitivesOf(type.primitives, type.integers));
 }
 
-uint32_t CalleeSummarizerForLinkEffects::parametersExpectedPrimitiveThatBringObjectsAlone(FunctionID id, const ThinSummary& summary, uint32_t node, GivenArgumentsInKnownEffects& given) const
+uint32_t CalleeSummarizerForLinkEffects::findSoleObjectParameters(FunctionID id, const ThinSummary& summary, uint32_t node, GivenArgumentsInKnownEffects& given) const
 {
     if (node == noSummaryNode || summary.nodes[node].kind != SummaryNode::Kind::Join)
         return 0;
     static constexpr uint32_t othersBringObjects = ~0u;
-    if (given.parametersThatBringObjectsAlone.isEmpty()) {
-        given.parametersThatBringObjectsAlone.fill(0, summary.nodes.size());
+    if (given.soleObjectParameters.isEmpty()) {
+        given.soleObjectParameters.fill(0, summary.nodes.size());
         for (const SummaryEdge& edge : summary.edges) {
             if (edge.to >= summary.nodes.size() || summary.nodes[edge.to].kind != SummaryNode::Kind::Join)
                 continue;
-            uint32_t& parameters = given.parametersThatBringObjectsAlone[edge.to];
+            uint32_t& parameters = given.soleObjectParameters[edge.to];
             if (parameters == othersBringObjects)
                 continue;
             std::optional<uint32_t> parameter = edge.passes == TypeTable::object ? entryParameterAt(summary, edge.from) : std::nullopt;
-            parameters = parameter && primitivesExpectedOfParameter(id, *parameter) ? parameters | 1u << *parameter : othersBringObjects;
+            parameters = parameter && expectedParameterPrimitives(id, *parameter) ? parameters | 1u << *parameter : othersBringObjects;
         }
     }
-    uint32_t parameters = given.parametersThatBringObjectsAlone[node];
+    uint32_t parameters = given.soleObjectParameters[node];
     return parameters == othersBringObjects ? 0 : parameters;
 }
 
@@ -331,7 +344,7 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
         LinkType type = typeAt(id, summary, node);
         if (type.isNever() || mayBeObjectForLinkEffects(type) || (type.primitives & ~plainPrimitives)) {
             std::optional<uint32_t> parameter = type.isNever() ? std::nullopt : entryParameterAt(summary, node);
-            std::optional<uint16_t> expected = parameter ? primitivesExpectedOfParameter(id, *parameter) : std::nullopt;
+            std::optional<uint16_t> expected = parameter ? expectedParameterPrimitives(id, *parameter) : std::nullopt;
             if (expected && !(*expected & ~plainPrimitives)) {
                 given.parametersTakenAsExpected |= 1u << *parameter;
                 mayTakeStrings |= !!(*expected & ~whatBecomesNumber);
@@ -380,6 +393,8 @@ void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, con
     uint64_t layouts = 0;
     switch (access.kind) {
     case SummaryAccess::Kind::Read:
+        if (thenLookupCannotThrow(subject, key))
+            ofLookup.mayThrow = ThrowEffect(false);
         if (key && readMayMakeClosureOfField(subject, key)) {
             ofLookup.writes.add(m_program, MemoryLocation::objectField(key));
             layouts = bitsOfLayoutsAt(subject);
@@ -499,7 +514,7 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
         return true;
     }
     case SummaryCall::Callee::Name: {
-        if (uint32_t bringers = call.isMadeByProtocol ? parametersExpectedPrimitiveThatBringObjectsAlone(id, summary, call.receiver, given) : 0) {
+        if (uint32_t bringers = call.isMadeByProtocol ? findSoleObjectParameters(id, summary, call.receiver, given) : 0) {
             given.parametersTakenAsExpected |= bringers;
             return true;
         }
@@ -524,6 +539,19 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void addEffectsOfSettledPromiseInKnownEffects(Effects& all, LocationMasks& writesOnReturn)
+{
+    Effects ofPromise = Effects::none();
+    ofPromise.reads = LocationMasks::top();
+    ofPromise.writes.add(AbstractHeap::AllocatorState);
+    ofPromise.writes.add(AbstractHeap::RuntimeState);
+    ofPromise.writes.add(AbstractHeap::PromiseState);
+    ofPromise.writes.add(AbstractHeap::ExternalState);
+    ofPromise.mayCollect = true;
+    all.merge(ofPromise);
+    writesOnReturn.merge(ofPromise.writes);
+}
+
 auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> EffectsOfComponentInKnownEffects
 {
     FunctionID id(function);
@@ -537,7 +565,7 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
     };
 
     bool isKnown = !keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) && !summary.ownEffectsMayCallUnknownCode()
-        && !handsObjectToCodeNobodyNames(id, summary) && !listingOfKeysMayRunCode(id, summary);
+        && !handsObjectToCodeNobodyNames(id, summary) && !listingOfKeysMayRunCode(id, summary) && !isEnteredByNobody(id);
     EffectsOfComponentInKnownEffects effects;
     GivenArgumentsInKnownEffects given;
     if (isKnown) {
@@ -615,6 +643,8 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
 
     if (!isKnown)
         return knownEffectsOfUnknownCode();
+    if (m_program.at(id).isCoroutine())
+        addEffectsOfSettledPromiseInKnownEffects(effects.all, effects.writesOnReturn);
     if (!given.parametersTakenAsExpected && !given.parametersCalled)
         return effects;
     if (!entersOwnComponent && !effects.all.mayCallUnknownCode) {

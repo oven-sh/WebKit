@@ -55,13 +55,14 @@ inline constexpr uint32_t speaksOfSecondDigestInEffectsNet = 1u << 15;
 inline constexpr uint32_t speaksOfValueOfVariableInEffectsNet = 1u << 14;
 
 enum class CountInEffectsNet : uint8_t {
-    MemberGuardsEnded, MemberGuardsArmedOrBegun, WatchOverBuiltinsEnded, WordsOfStaticsWritten, VariablesOfModulesStored, StaticFieldsStored, VariablesOfScopesInStaticsStored
+    MemberGuardsEnded, MemberGuardsArmedOrBegun, WatchOverBuiltinsEnded, WordsOfStaticsWritten, StaticFieldsMoved, VariablesOfModulesStored, StaticFieldsStored, VariablesOfScopesInStaticsStored
 };
-inline constexpr std::array<AbstractHeapSet, 7> heapsOfCountsInEffectsNet {
+inline constexpr std::array<AbstractHeapSet, 8> heapsOfCountsInEffectsNet {
     AbstractHeapSet { AbstractHeap::MemberGuards },
     AbstractHeapSet { AbstractHeap::MemberGuards },
     AbstractHeapSet { AbstractHeap::NamedProperties },
     AbstractHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields, AbstractHeap::NamedProperties },
+    AbstractHeapSet { AbstractHeap::ClassObjects, AbstractHeap::NamedProperties },
     AbstractHeapSet { AbstractHeap::ModuleVariables },
     AbstractHeapSet { AbstractHeap::NamedProperties },
     AbstractHeapSet { AbstractHeap::EnvironmentFields },

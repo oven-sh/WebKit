@@ -21,6 +21,7 @@
 #include "AOTSweep.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTWalkKnown.h"
+#include "AOTWalkTextBuilders.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -29,6 +30,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t mostOperationsOfJoinWalkedForEachWay = 8;
+static constexpr uint32_t maxOperationsAfterForgottenView = 96;
 
 static constexpr OpcodeSet operationsWalkedOnceInKnownThreading = opcodesOfFamily(OperationFamily::Iteration) | opcodesOfFamily(OperationFamily::ForIn) | opcodesOfFamily(OperationFamily::Coroutine)
     | opcodesOfFamily(OperationFamily::Exception) | opcodesWhere([](Opcode opcode) { return boundToOf(opcode) != BoundTo::Nothing; }) | OpcodeSet { Opcode::LoopHint };
@@ -96,6 +98,7 @@ public:
     bool endArmWithBranch();
     bool armsMayWalkEndOfBlockFrom(uint32_t begin);
     bool walkApartFromClosedWays();
+    bool walkApartFromWaysThatForgotView();
     bool walkApartFromWaysThatDidSomething();
     bool walkForEachWayThatBringsObjectInSight();
     bool walkApartBySidesOfQuestionAskedBefore();
@@ -105,15 +108,18 @@ public:
     const Walker::OpenLoop* loopWhoseQuietWaysGoToHead();
     bool letQuietReturnsOfCopyWalkEndOfBlockApart(ValueID call);
     bool letAnswersOfCopyWalkEndOfBlockApart(ValueID call);
+    bool letShapesOfCopyWalkEndOfBlockApart(ValueID call, uint32_t numberOfShapes);
 
 private:
     Walker::Frame& frame() { return m_walker.m_frames[m_frameIndex]; }
     bool isFrameRecursive() { return m_walker.isFrameRecursive(frame()); }
     uint32_t firstValue() const { return m_block.firstValue().index(); }
+    bool hasHandler() const { return m_block.hasHandler() && (m_frameIndex + 1 != m_walker.m_frames.size() || !m_walker.throwsPastHandlerOf(m_block)); }
     bool operationsMayBeWalkedAgain(uint32_t begin, uint32_t end);
+    bool relationMustStayOne();
     bool terminatorMayBeWalkedAgain();
     bool letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay);
-    bool mayBeWalkedApartFromClosedWays();
+    bool mayBeWalkedApartFromClosedWays(uint32_t mostOperations = mostOperationsOfJoinWalkedForEachWay, bool passesUnreachedHandler = false);
     bool isWhereAllSidesOfOneChoiceMeet();
     bool terminatorMayBeWalkedByWaysApart();
     struct PlaceLookedAt {
@@ -136,15 +142,23 @@ private:
     bool calleeAsksFirstWhatItIsHanded(const BodyValue& operation, uint32_t operandIndex, std::optional<bool>& copyOfCalleePays);
     bool endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin);
     bool mayThrowFrom(uint32_t begin);
+    Vector<uint32_t, 8> slotsBroughtApart(std::span<const uint32_t> ways);
     uint32_t numberOfNamesBroughtApart(std::span<const uint32_t> ways);
+    bool readsViewThatClosedWaysForgot(std::span<const uint32_t> passing, std::span<const uint32_t> closed);
+    template<typename Functor> bool readsViewOfVariable(const Functor&);
+    bool accessesViewOfVariable() { return readsViewOfVariable([](VariableID) { return true; }); }
+    bool waysKnowView(uint32_t place, VariableID);
     bool leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed);
-    bool takesApartParameter(ValueID parameter);
+    bool takesApart(ValueID, uint32_t begin);
+    bool asksWhetherPresent(ValueID);
     bool takesParameterAsKey(ValueID parameter);
+    bool accessesElementsOf(ValueID parameter);
     bool callsParameter(ValueID parameter, uint32_t numberOfBlocksLookedThrough = 0);
     bool letArmsWalkEndOfBlockFrom(uint32_t begin);
     void forgetValuesThatNobodyReadsAnyMore();
     void forgetValuesFrom(ValueID first);
     bool isReadBehindBlock(ValueID);
+    bool hasAllUsesInBlock(ValueID first);
 
     uint32_t numberOfOperationsBuiltIn(uint32_t begin, uint32_t end, uint32_t enough);
 
@@ -175,9 +189,26 @@ bool KnownThreading::operationsMayBeWalkedAgain(uint32_t begin, uint32_t end)
     return true;
 }
 
+bool KnownThreading::relationMustStayOne()
+{
+    if (!m_walker.isInLoop() || !boundsProvenOnEdge(m_index, m_block.terminator(), 0))
+        return false;
+    if (!m_walker.comparesElementsOfViews())
+        return true;
+    BodyValue relation = m_index.value(m_block.terminator().operand(0));
+    bool isBuiltHere = m_frameIndex + 1 == m_walker.m_frames.size() && frame().block == m_block.id() && m_block.holds(relation.id());
+    Reference answer = isBuiltHere ? m_walker.referenceOf(relation.id()) : Reference();
+    if (answer && answer.isRecord()) {
+        TypeID type = m_walker.typeOf(answer);
+        if (type == TypeArena::fromPrimitives(Primitive::True) || type == TypeArena::fromPrimitives(Primitive::False))
+            return false;
+    }
+    return !relationBoundsNothing(m_index, relation);
+}
+
 bool KnownThreading::terminatorMayBeWalkedAgain()
 {
-    if (m_walker.isInLoop() && boundsProvenOnEdge(m_index, m_block.terminator(), 0))
+    if (relationMustStayOne())
         return false;
     for (BodyTarget target : m_block.terminator().targets()) {
         BlockID to = target.block();
@@ -225,13 +256,66 @@ bool KnownThreading::isReadBehindBlock(ValueID value)
     return false;
 }
 
+bool KnownThreading::hasAllUsesInBlock(ValueID first)
+{
+    uint32_t end = m_block.endOfValues().index();
+    Vector<uint8_t, 32> usesLeft;
+    uint32_t numberOfUsesLeft = 0;
+    for (uint32_t value = first.index(); value < end; ++value) {
+        uint32_t uses = m_index.useCount(ValueID(value));
+        if (uses == BodyIndex::maxCountedUses)
+            return false;
+        if (uses == 1) {
+            BodyUser user = *m_index.firstUser(ValueID(value));
+            if (user.kind == BodyUseKind::Operand ? !m_block.holds(user.value) : user.block != m_block.id())
+                return false;
+            uses = 0;
+        }
+        usesLeft.append(static_cast<uint8_t>(uses));
+        numberOfUsesLeft += uses;
+    }
+    if (!numberOfUsesLeft)
+        return true;
+    auto meetUse = [&](ValueID used) {
+        if (!used || used < first || used.index() >= end || !usesLeft[used.index() - first.index()])
+            return;
+        --usesLeft[used.index() - first.index()];
+        --numberOfUsesLeft;
+    };
+    meetUse(m_block.subject());
+    for (BodyValue value : m_block.values()) {
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            meetUse(operand);
+        });
+    }
+    BodyTerminator terminator = m_block.terminator();
+    terminator.forEachOperand([&](ValueID operand, uint32_t) {
+        meetUse(operand);
+    });
+    m_block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+        std::ranges::for_each(target.arguments(), meetUse);
+    });
+    if (terminator.isConditionalBranch()) {
+        m_index.forEachEdgeResult(m_block.id(), [&](const BodyEdgeResult& result) {
+            meetUse(result.subject);
+        });
+    }
+    return !numberOfUsesLeft;
+}
+
 bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay)
 {
     if (frame().blocksBeingTailDuplicated.contains(m_block.id()))
         return true;
     BodyLiveness& liveness = m_walker.m_liveness;
-    if (!liveness.isComputedFor(m_index))
+    if (!liveness.isComputedFor(m_index)) {
+        if (!frame().duplicatedValues && hasAllUsesInBlock(firstBuiltOnEachWay)) {
+            frame().blocksBeingTailDuplicated.shrink(0);
+            frame().blocksBeingTailDuplicated.append(m_block.id());
+            return true;
+        }
         liveness.compute(m_index);
+    }
 
     Vector<ValueID, 8> readBehind;
     for (BodyTarget target : m_block.terminator().targets()) {
@@ -354,7 +438,7 @@ void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t 
     for (uint32_t place : places)
         walker.m_openEdges[place].next = std::exchange(record.firstOpenEdge, place);
     frame().block = { };
-    walker.walkBlock(m_block.id());
+    walker.walkBlock(m_block.id(), true);
 }
 
 bool KnownThreading::armsMayWalkEndOfBlockFrom(uint32_t begin)
@@ -370,7 +454,9 @@ bool KnownThreading::endArmWithBranch()
     if (frame().block != m_block.id() || frame().endOfStretch != numberOfOperations || !letArmsWalkEndOfBlockFrom(m_begin))
         return false;
 
+    ++frame().currentBlockEndCount;
     walker.walkStretch(m_block.id(), m_begin, numberOfOperations);
+    --frame().currentBlockEndCount;
     frame().walkedUpTo = m_begin;
     walker.walkTerminator(m_block.terminator());
     forgetValuesFrom(ValueID(firstValue() + m_begin));
@@ -379,16 +465,16 @@ bool KnownThreading::endArmWithBranch()
 
 static constexpr uint32_t mostBlocksLookedThroughInKnownThreading = 3;
 
-bool KnownThreading::mayBeWalkedApartFromClosedWays()
+bool KnownThreading::mayBeWalkedApartFromClosedWays(uint32_t mostOperations, bool passesUnreachedHandler)
 {
     BlockID block = m_block.id();
-    if (m_index.isLoopHead(block) || m_block.isHandlerBlock() || m_index.isEnteredByHandlerEdge(block) || m_block.hasHandler() || m_index.hasIrreducibleFlow())
+    if (m_index.isLoopHead(block) || m_block.isHandlerBlock() || m_index.isEnteredByHandlerEdge(block) || (passesUnreachedHandler ? hasHandler() : m_block.hasHandler()) || m_index.hasIrreducibleFlow())
         return false;
     TerminatorKind end = m_block.terminator().kind();
     if (end != TerminatorKind::Return && end != TerminatorKind::ReturnCall && !goesByOneOperand(end) && end != TerminatorKind::Jump)
         return false;
     uint32_t numberOfOperations = m_block.numberOfValues();
-    return numberOfOperationsBuiltIn(0, numberOfOperations, mostOperationsOfJoinWalkedForEachWay) <= mostOperationsOfJoinWalkedForEachWay && operationsMayBeWalkedAgain(0, numberOfOperations);
+    return numberOfOperationsBuiltIn(0, numberOfOperations, mostOperations) <= mostOperations && operationsMayBeWalkedAgain(0, numberOfOperations);
 }
 
 bool KnownThreading::isWhereAllSidesOfOneChoiceMeet()
@@ -425,7 +511,7 @@ bool KnownThreading::isWhereAllSidesOfOneChoiceMeet()
 
 bool KnownThreading::terminatorMayBeWalkedByWaysApart()
 {
-    if (m_walker.isInLoop() && boundsProvenOnEdge(m_index, m_block.terminator(), 0))
+    if (relationMustStayOne())
         return false;
     for (BodyTarget target : m_block.terminator().targets()) {
         BlockID to = target.block();
@@ -582,7 +668,11 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
         }
         if (end.kind() == TerminatorKind::Jump)
             lookBehindEdge(look, place, end, 0, end.targets()[0]);
-        else if (end.kind() == TerminatorKind::Return || end.kind() == TerminatorKind::ReturnCall)
+        else if (end.kind() == TerminatorKind::Branch && !place.frameIndex && here.isFrameRecursive()) {
+            uint32_t indexOfTarget = 0;
+            for (BodyTarget target : end.targets())
+                lookBehindEdge(look, place, end, indexOfTarget++, target);
+        } else if (end.kind() == TerminatorKind::Return || end.kind() == TerminatorKind::ReturnCall)
             lookBehindReturnOfCopy(look, place, end);
     }
     return false;
@@ -639,7 +729,7 @@ bool KnownThreading::armsWouldStayApartBehindEndOfBlock(uint32_t begin, uint32_t
     return false;
 }
 
-uint32_t KnownThreading::numberOfNamesBroughtApart(std::span<const uint32_t> ways)
+Vector<uint32_t, 8> KnownThreading::slotsBroughtApart(std::span<const uint32_t> ways)
 {
     Vector<uint32_t, 8> slots;
     for (size_t index = 1; index < ways.size(); ++index) {
@@ -649,7 +739,87 @@ uint32_t KnownThreading::numberOfNamesBroughtApart(std::span<const uint32_t> way
         });
     }
     std::ranges::sort(slots);
-    return static_cast<uint32_t>(std::ranges::unique(slots).begin() - slots.begin());
+    slots.shrink(std::ranges::unique(slots).begin() - slots.begin());
+    return slots;
+}
+
+uint32_t KnownThreading::numberOfNamesBroughtApart(std::span<const uint32_t> ways)
+{
+    return static_cast<uint32_t>(slotsBroughtApart(ways).size());
+}
+
+template<typename Functor>
+bool KnownThreading::readsViewOfVariable(const Functor& ask)
+{
+    if (!m_walker.comparesElementsOfViews() || !m_index.opcodes().contains(Opcode::GetModuleVariable) || !m_index.holdsAnyOf(OpcodeSet { Opcode::ElemGet, Opcode::ElemSet }) || !m_walker.isInLoop())
+        return false;
+    for (BodyValue access : m_block.values()) {
+        if (access.opcode() != Opcode::ElemGet && access.opcode() != Opcode::ElemSet)
+            continue;
+        ValueID read = m_index.stripCasts(access.objectOperand());
+        if (!read || !m_block.holds(read) || m_index.isParameter(read) || m_index.opcodeOf(read) != Opcode::GetModuleVariable)
+            continue;
+        if (ask(m_index.value(read).variable()))
+            return true;
+    }
+    return false;
+}
+
+bool KnownThreading::waysKnowView(uint32_t place, VariableID variable)
+{
+    Reference known = m_walker.m_openEdges[place].state.variable(variable);
+    return known && isViewOfNumbersReadInLine(m_walker, m_walker.types().withoutNullish(m_walker.typeOf(known)));
+}
+
+bool KnownThreading::readsViewThatClosedWaysForgot(std::span<const uint32_t> passing, std::span<const uint32_t> closed)
+{
+    return readsViewOfVariable([&](VariableID variable) {
+        auto knowsView = [&](uint32_t place) { return waysKnowView(place, variable); };
+        return std::ranges::all_of(passing, knowsView) && std::ranges::none_of(closed, knowsView);
+    });
+}
+
+bool KnownThreading::walkApartFromWaysThatForgotView()
+{
+    Walker& walker = m_walker;
+    if (!accessesViewOfVariable())
+        return false;
+    const WaysIn& ways = waysIn();
+    if (!ways.allMayBeLed || ways.places.size() < 2 || walker.isTailDuplicatingBlock(m_frameIndex) || !mayBeWalkedApartFromClosedWays(maxOperationsAfterForgottenView))
+        return false;
+    Vector<uint32_t, 4> knowing;
+    Vector<uint32_t, 4> others;
+    const Walker::OpenLoop* loop = walker.hasInBoundsPaths() ? loopWhoseQuietWaysGoToHead() : nullptr;
+    if (loop) {
+        for (uint32_t place : ways.places)
+            (walker.m_openEdges[place].state.hasOnlyKnownEffectsSince(loop->restartPoint) ? knowing : others).append(place);
+    }
+    bool someForgot = !knowing.isEmpty() && !others.isEmpty();
+    someForgot = someForgot || readsViewOfVariable([&](VariableID variable) {
+        knowing.shrink(0);
+        others.shrink(0);
+        for (uint32_t place : ways.places)
+            (waysKnowView(place, variable) ? knowing : others).append(place);
+        return !knowing.isEmpty() && !others.isEmpty();
+    });
+    if (!someForgot || numberOfNamesBroughtApart(knowing.span()) + numberOfNamesBroughtApart(others.span()) > maxOperationsAfterForgottenView)
+        return false;
+    if (!terminatorMayBeWalkedByWaysApart() || !letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
+        return false;
+    knowing.reverse();
+    others.reverse();
+    uint32_t namesAtHead = walker.inputBlock(m_frameIndex, m_block.id()).firstNarrowerName;
+    walkBlockOnWays(others.span(), namesAtHead);
+    walkBlockOnWays(knowing.span(), namesAtHead);
+
+    frame().blocksBeingTailDuplicated.shrink(0);
+    walker.inputBlock(m_frameIndex, m_block.id()).firstNarrowerName = namesAtHead;
+    forgetValuesFrom(m_block.firstParameter());
+    if (frame().duplicatedValues)
+        walker.forgetNamesOfWay(frame());
+    walker.m_block = { };
+    walker.m_state.clear();
+    return true;
 }
 
 bool KnownThreading::leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed)
@@ -705,13 +875,43 @@ bool KnownThreading::letAnswersOfCopyWalkEndOfBlockApart(ValueID call)
     return letTerminatorBeWalkedForEachWay(m_block.firstValue());
 }
 
+bool KnownThreading::letShapesOfCopyWalkEndOfBlockApart(ValueID call, uint32_t numberOfShapes)
+{
+    m_begin = call.index() - firstValue() + 1;
+    if (m_index.holdsAnyOf(opcodesThatMakeArguments) || !(takesApart(call, m_begin) || asksWhetherPresent(call)))
+        return false;
+    if (frame().block != m_block.id() || frame().endOfStretch != m_block.numberOfValues() || frame().numberOfStretchesBeingWalked != 1 || m_walker.isTailDuplicatingBlock(m_frameIndex) || !endOfBlockMayBeWalkedForEachWayFrom(m_begin))
+        return false;
+    if (numberOfOperationsBuiltIn(m_begin, m_block.numberOfValues(), mostOperationsOfJoinWalkedForEachWay) * (numberOfShapes - 1) > mostOperationsOfJoinWalkedForEachWay)
+        return false;
+    return letTerminatorBeWalkedForEachWay(m_block.firstValue());
+}
+
+bool KnownThreading::asksWhetherPresent(ValueID object)
+{
+    if (m_block.terminator().kind() != TerminatorKind::Branch)
+        return false;
+    ValueID asked = m_block.terminator().operand(0);
+    while (asked && asked > object && asked >= m_block.firstValue()) {
+        BodyValue operation = m_index.value(asked);
+        Opcode opcode = operation.opcode();
+        if (allEqualities.contains(opcode))
+            return operation.operand(0) == object || operation.operand(1) == object;
+        if (opcode != Opcode::ToBoolean && opcode != Opcode::LogicalNot && opcode != Opcode::TypeTest && !inputPassThroughOpcodes.contains(opcode))
+            return false;
+        asked = operation.operand(0);
+    }
+    return asked == object;
+}
+
 bool KnownThreading::letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<ReturnOfCopy* const> passing, std::span<ReturnOfCopy* const> closed)
 {
     Walker& walker = m_walker;
     m_begin = call.index() - firstValue() + 1;
     if (m_index.holdsAnyOf(opcodesThatMakeArguments))
         return false;
-    if (frame().block != m_block.id() || frame().endOfStretch != m_block.numberOfValues() || frame().numberOfStretchesBeingWalked != 1 || walker.isTailDuplicatingBlock(m_frameIndex) || !endOfBlockMayBeWalkedForEachWayFrom(m_begin))
+    bool isWalkedByPaths = !frame().currentBlockEndCount && walker.isTailDuplicatingBlock(m_frameIndex);
+    if (frame().block != m_block.id() || frame().endOfStretch != m_block.numberOfValues() || frame().numberOfStretchesBeingWalked != 1 + frame().currentBlockEndCount || isWalkedByPaths || !endOfBlockMayBeWalkedForEachWayFrom(m_begin))
         return false;
     auto typeOnWay = [&](const ReturnOfCopy& way, ValueID value, Reference name) {
         if (value)
@@ -771,20 +971,29 @@ ALWAYS_INLINE bool KnownThreading::walkApartFromClosedWays()
     Walker& walker = m_walker;
     BlockID block = m_block.id();
     const WaysIn& ways = waysIn();
-    if (!ways.allMayBeLed || !ways.numberLedByClosedArms || ways.numberLedByClosedArms == ways.places.size() || walker.isTailDuplicatingBlock(m_frameIndex) || !mayBeWalkedApartFromClosedWays())
+    if (!ways.allMayBeLed || !ways.numberLedByClosedArms || ways.numberLedByClosedArms == ways.places.size() || walker.isTailDuplicatingBlock(m_frameIndex))
+        return false;
+    bool isShort = mayBeWalkedApartFromClosedWays();
+    if (!isShort && !(accessesViewOfVariable() && mayBeWalkedApartFromClosedWays(maxOperationsAfterForgottenView)))
         return false;
     Vector<uint32_t, 4> passing;
     Vector<uint32_t, 4> closed;
     for (uint32_t place : ways.places)
         (walker.m_openEdges[place].isLedByClosedArm ? closed : passing).append(place);
-    if (numberOfOperationsBuiltIn(0, m_block.numberOfValues(), mostOperationsOfJoinWalkedForEachWay) + numberOfNamesBroughtApart(closed.span()) > mostOperationsOfJoinWalkedForEachWay)
+    if (!isShort && !readsViewThatClosedWaysForgot(passing.span(), closed.span()) && !leansOnWhatWaysHaveProven(passing.span(), closed.span()))
+        return false;
+    uint32_t mostOperations = isShort ? mostOperationsOfJoinWalkedForEachWay : maxOperationsAfterForgottenView;
+    if (numberOfOperationsBuiltIn(0, m_block.numberOfValues(), mostOperations) + numberOfNamesBroughtApart(closed.span()) > mostOperations)
         return false;
     passing.reverse();
     closed.reverse();
-    if (!leansOnWhatWaysHaveProven(passing.span(), closed.span()))
+    bool fieldsPartClosedWays = walker.carriedFieldsPartWays(passing.span(), closed.span());
+    if (isShort && !fieldsPartClosedWays && !leansOnWhatWaysHaveProven(passing.span(), closed.span()) && !readsViewThatClosedWaysForgot(passing.span(), closed.span()))
         return false;
     if (!terminatorMayBeWalkedByWaysApart() || !letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
         return false;
+    if (fieldsPartClosedWays)
+        walker.count(StatisticID::JoinsPartedByCarriedFields);
 
     uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
     bool standsInLoop = frame().loopDepthAtCall || m_index.loopDepthOf(block);
@@ -934,18 +1143,26 @@ ALWAYS_INLINE bool KnownThreading::walkApartBySidesOfQuestionAskedBefore()
     return true;
 }
 
-bool KnownThreading::takesApartParameter(ValueID parameter)
+bool KnownThreading::takesApart(ValueID object, uint32_t begin)
 {
-    for (uint32_t place = 0; place < m_block.numberOfValues(); ++place) {
+    for (uint32_t place = begin; place < m_block.numberOfValues(); ++place) {
         BodyValue operation = m_index.value(ValueID(firstValue() + place));
         auto names = [&](ValueID operand) {
-            while (operand && operand != parameter && operand >= m_block.firstValue() && inputPassThroughOpcodes.contains(m_index.opcodeOf(operand)))
+            while (operand && operand != object && operand >= m_block.firstValue() && inputPassThroughOpcodes.contains(m_index.opcodeOf(operand)))
                 operand = m_index.value(operand).operand(0);
-            return operand == parameter;
+            return operand == object;
         };
         switch (operation.opcode()) {
         case Opcode::PropGet:
             if (!operation.as<Opcode::PropGet>().isFreeName() && names(operation.as<Opcode::PropGet>().objectOperand()))
+                return true;
+            break;
+        case Opcode::ElemGet:
+            if (names(operation.as<Opcode::ElemGet>().objectOperand()))
+                return true;
+            break;
+        case Opcode::PropHas:
+            if (names(operation.as<Opcode::PropHas>().objectOperand()))
                 return true;
             break;
         case Opcode::CopyDataProperties:
@@ -964,6 +1181,17 @@ bool KnownThreading::takesApartParameter(ValueID parameter)
         default:
             break;
         }
+    }
+    return false;
+}
+
+bool KnownThreading::accessesElementsOf(ValueID parameter)
+{
+    for (uint32_t place = 0; place < m_block.numberOfValues(); ++place) {
+        BodyValue operation = m_index.value(ValueID(firstValue() + place));
+        bool isAccess = operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet || (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operation.key() == m_walker.program().keyOf(BuiltinNames::length));
+        if (isAccess && m_index.stripCasts(operation.objectOperand()) == parameter)
+            return true;
     }
     return false;
 }
@@ -1037,17 +1265,36 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
 {
     Walker& walker = m_walker;
     BlockID block = m_block.id();
-    if (!m_block.numberOfParameters() || !waysIn().allMayBeLed || waysIn().numberLedByClosedArms || waysIn().places.size() < 2 || walker.isTailDuplicatingBlock(m_frameIndex))
+    uint32_t firstWay = walker.inputBlock(m_frameIndex, block).firstOpenEdge;
+    bool severalWaysEnter = firstWay != Walker::noOpenEdge && walker.m_openEdges[firstWay].next != Walker::noOpenEdge;
+    bool mayHaveNamesApart = severalWaysEnter && walker.isInLoop() && frame().duplicatedValues && m_block.terminator().kind() == TerminatorKind::Branch;
+    bool mayPay = severalWaysEnter && (m_block.numberOfParameters() || mayHaveNamesApart);
+    uint32_t numberOfOperations = mayPay ? numberOfOperationsBuiltIn(0, m_block.numberOfValues(), mostOperationsOfJoinWalkedForEachWay) : 0;
+    if (!mayPay || numberOfOperations > mostOperationsOfJoinWalkedForEachWay || !waysIn().allMayBeLed || waysIn().numberLedByClosedArms || waysIn().places.size() < 2 || walker.isTailDuplicatingBlock(m_frameIndex))
         return false;
     Vector<uint32_t, 4> ways = waysIn().places;
+    if (numberOfOperations * (ways.size() - 1) > mostOperationsOfJoinWalkedForEachWay)
+        return false;
 
-    auto bringsObjectInSight = [&](uint32_t place, uint32_t parameter) {
-        const Walker::OpenEdge& open = walker.m_openEdges[place];
-        Reference brought = open.arguments[parameter];
-        if (!brought.isValue())
+    std::optional<OpcodeSet> opcodesOfBlock;
+    auto blockHasAnyOf = [&](const OpcodeSet& opcodes) {
+        if (!opcodesOfBlock) {
+            opcodesOfBlock.emplace();
+            for (uint32_t place = 0; place < m_block.numberOfValues(); ++place)
+                opcodesOfBlock->add(m_index.opcodeOf(ValueID(firstValue() + place)));
+        }
+        return opcodesOfBlock->intersects(opcodes);
+    };
+    auto isObjectInSight = [&](const Walker::OpenEdge& open, Reference brought) {
+        if (!brought || !brought.isValue())
             return false;
         ValueID cell = underlyingCellOf(walker.code(), brought.id());
-        return !walker.code().isConstant(cell) && open.state.isFresh(Reference::value(cell)) && open.state.orderWordOf(Reference::value(cell));
+        Reference object = Reference::value(cell);
+        return !walker.code().isConstant(cell) && open.state.isFresh(object) && (open.state.orderWordOf(object) || (isListOfKnownLength(walker, open.state, object) && !blockHasAnyOf({ Opcode::ElemSet })));
+    };
+    auto bringsObjectInSight = [&](uint32_t place, uint32_t parameter) {
+        const Walker::OpenEdge& open = walker.m_openEdges[place];
+        return isObjectInSight(open, open.arguments[parameter]);
     };
     auto calleeBroughtBy = [&](uint32_t place, uint32_t parameter) {
         const Walker::OpenEdge& open = walker.m_openEdges[place];
@@ -1072,7 +1319,15 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
     bool waysBringCallees = false;
     bool waysBringTextsOfKey = false;
     bool waysBringAnswers = false;
-    if (TerminatorKind end = m_block.terminator().kind(); !numberOfOperationsBuiltIn(0, m_block.numberOfValues(), 0) && (end == TerminatorKind::Branch || (end == TerminatorKind::Return && m_frameIndex && !frame().returnsInPlaceOfUnit))) {
+    bool waysBringGuardedArrays = false;
+    auto isGuardedArray = [&](uint32_t place, uint32_t parameter) {
+        const Walker::OpenEdge& open = walker.m_openEdges[place];
+        Reference brought = open.arguments[parameter];
+        while (Reference checked = brought ? open.state.checkedNameOf(brought) : Reference())
+            brought = checked;
+        return brought && brought.isValue() && findKnown(walker, open.state, KnownNote::HoistedArrayGuard, brought);
+    };
+    if (TerminatorKind end = m_block.terminator().kind(); !numberOfOperations && (end == TerminatorKind::Branch || (end == TerminatorKind::Return && m_frameIndex && !frame().returnsInPlaceOfUnit))) {
         ValueID asked = m_block.terminator().operand(0);
         while (asked && asked >= m_block.firstValue() && inputPassThroughOpcodes.contains(m_index.opcodeOf(asked)))
             asked = m_index.value(asked).operand(0);
@@ -1094,9 +1349,24 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
         bool everyWayBringsOne = std::ranges::all_of(ways, [&](uint32_t place) {
             return bringsObjectInSight(place, parameter);
         });
-        pays = everyWayBringsOne && takesApartParameter(m_block.parameter(parameter));
+        pays = everyWayBringsOne && takesApart(m_block.parameter(parameter), 0);
+        bool someWayBringsOne = !everyWayBringsOne && walker.isInLoop() && std::ranges::any_of(ways, [&](uint32_t place) {
+            return bringsObjectInSight(place, parameter);
+        });
+        if (someWayBringsOne) {
+            auto otherPathsAddNothing = [&] {
+                return std::ranges::all_of(ways, [&](uint32_t place) {
+                    return bringsObjectInSight(place, parameter) || walker.types().isSubset(walker.ownTypeOf(walker.m_openEdges[place].arguments[parameter]), TypeTable::nullish);
+                });
+            };
+            pays = takesApart(m_block.parameter(parameter), 0) || (asksWhetherPresent(m_block.parameter(parameter)) && otherPathsAddNothing());
+        }
         if (!pays && walker.isInLoop()) {
-            waysBringTextsOfKey = takesParameterAsKey(m_block.parameter(parameter)) && std::ranges::all_of(ways, [&](uint32_t place) {
+            waysBringGuardedArrays = blockHasAnyOf({ Opcode::ElemGet, Opcode::ElemSet, Opcode::PropGet }) && accessesElementsOf(m_block.parameter(parameter)) && std::ranges::all_of(ways, [&](uint32_t place) { return isGuardedArray(place, parameter); });
+            pays = waysBringGuardedArrays;
+        }
+        if (!pays && walker.isInLoop()) {
+            waysBringTextsOfKey = blockHasAnyOf(accessesUnderComputedKeys) && takesParameterAsKey(m_block.parameter(parameter)) && std::ranges::all_of(ways, [&](uint32_t place) {
                 return !!nameThatKeyIs(walker, walker.m_openEdges[place].arguments[parameter]);
             });
             pays = waysBringTextsOfKey;
@@ -1114,9 +1384,18 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
         waysBringCallees = everyWayBringsOneCallee && calleesDiffer && callsParameter(m_block.parameter(parameter));
         pays = waysBringCallees;
     }
-    if (!pays || !mayBeWalkedApartFromClosedWays())
-        return false;
-    if (numberOfOperationsBuiltIn(0, m_block.numberOfValues(), mostOperationsOfJoinWalkedForEachWay) * (ways.size() - 1) > mostOperationsOfJoinWalkedForEachWay)
+    if (!pays && mayHaveNamesApart) {
+        for (uint32_t slot : slotsBroughtApart(ways)) {
+            bool everyWayBringsOne = std::ranges::all_of(ways, [&](uint32_t place) {
+                const Walker::OpenEdge& open = walker.m_openEdges[place];
+                return isObjectInSight(open, open.names.nameIn(slot));
+            });
+            pays = everyWayBringsOne && takesApart(frame().duplicatedValues->slots[slot].value, 0);
+            if (pays)
+                break;
+        }
+    }
+    if (!pays || !mayBeWalkedApartFromClosedWays(mostOperationsOfJoinWalkedForEachWay, true))
         return false;
     if (!terminatorMayBeWalkedByWaysApart() || !letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
         return false;
@@ -1125,6 +1404,8 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
     ++walker.m_duplicatedJoinCount;
     if (waysBringCallees)
         walker.count(StatisticID::JoinsDuplicatedPerCallee);
+    if (waysBringGuardedArrays)
+        walker.count(StatisticID::JoinsDuplicatedPerKeyString);
     if (waysBringTextsOfKey)
         walker.count(StatisticID::JoinsDuplicatedPerKeyString);
     uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
@@ -1206,6 +1487,51 @@ bool Walker::letAnswersOfCopyWalkEndOfBlockApart(ValueID call)
     return KnownThreading(*this, m_frames.last().block).letAnswersOfCopyWalkEndOfBlockApart(call);
 }
 
+Vector<Vector<Walker::Frame::ReturnOfCopy*, 2>, 4> Walker::groupReturnsByShape(Vector<Frame::ReturnOfCopy, 2>& returns, uint32_t numberOfValuesBuiltBefore, bool& hasMixedReturns)
+{
+    Vector<Vector<Frame::ReturnOfCopy*, 2>, 4> groups;
+    Vector<Frame::ReturnOfCopy*, 2> absent;
+    Vector<Frame::ReturnOfCopy*, 2> others;
+    for (Frame::ReturnOfCopy& returned : returns) {
+        if (m_types.isSubset(ownTypeOf(returned.value), TypeTable::nullish)) {
+            absent.append(&returned);
+            continue;
+        }
+        auto meets = [&](const Frame::ReturnOfCopy& other) {
+            std::array<const WalkState*, 2> ways { &other.state, &returned.state };
+            std::array<Reference, 2> values { other.value, returned.value };
+            return !!findObjectsThatMeetAsOne(*this, ways, values, numberOfValuesBuiltBefore);
+        };
+        if (!meets(returned)) {
+            others.append(&returned);
+            continue;
+        }
+        size_t place = groups.findIf([&](const auto& group) {
+            return meets(*group[0]);
+        });
+        if (place == notFound) {
+            place = groups.size();
+            groups.append({ });
+        }
+        groups[place].append(&returned);
+    }
+    if (groups.isEmpty())
+        return groups;
+    hasMixedReturns = !others.isEmpty();
+    for (auto* ways : { &others, &absent }) {
+        if (!ways->isEmpty())
+            groups.insert(0, WTF::move(*ways));
+    }
+    return groups;
+}
+
+bool Walker::letShapesOfCopyWalkEndOfBlockApart(ValueID call, uint32_t numberOfShapes)
+{
+    if (m_hasFailed || !has(Mechanism::Guesses) || !has(Mechanism::TypedOperations) || !m_opensGuesses || m_coldCopyDepth || hasStringsInBuilders() || standsInForValueOfFrame())
+        return false;
+    return KnownThreading(*this, m_frames.last().block).letShapesOfCopyWalkEndOfBlockApart(call, numberOfShapes);
+}
+
 bool Walker::letQuietReturnsOfCopyWalkEndOfBlockApart(ValueID call)
 {
     return KnownThreading(*this, m_frames.last().block).letQuietReturnsOfCopyWalkEndOfBlockApart(call);
@@ -1228,6 +1554,8 @@ bool Walker::walkBlockApart(BlockID inputBlock)
     bool opensGuesses = has(Mechanism::Guesses) && m_opensGuesses;
     if (opensGuesses && threading.walkApartFromClosedWays())
         return true;
+    if (opensGuesses && !m_hasFailed && threading.walkApartFromWaysThatForgotView())
+        return true;
     if (!m_openLoops.isEmpty() && !m_hasFailed && threading.walkApartFromWaysThatDidSomething())
         return true;
     if (m_opensGuesses && !m_hasFailed && has(Mechanism::EscapeAnalysis) && has(Mechanism::TypedOperations) && threading.walkForEachWayThatBringsObjectInSight())
@@ -1242,6 +1570,30 @@ bool Walker::threadBranchOf(BlockID inputBlock)
     return KnownThreading(*this, inputBlock).endArmWithBranch();
 }
 
+bool Walker::blockEndKeepsStringBuilders(uint32_t begin)
+{
+    const Frame& frame = m_frames.last();
+    const BodyIndex& index = *frame.index;
+    BodyBlock block = index.block(frame.block);
+    bool namesString = false;
+    auto look = [&](ValueID operand, uint32_t) {
+        namesString |= operand && findStringInBuilder(*this, operand);
+    };
+    for (uint32_t place = begin; place < block.numberOfValues() && !namesString; ++place) {
+        ValueID id(block.firstValue().index() + place);
+        index.value(id).forEachOperand(look);
+        namesString |= !!findStringInBuilder(*this, id);
+    }
+    BodyTerminator end = block.terminator();
+    end.forEachOperand(look);
+    for (BodyTarget target : end.targets()) {
+        for (ValueID argument : target.arguments())
+            look(argument, 0);
+        namesString |= edgeExitsBuilderLoop(*this, target.block());
+    }
+    return !namesString;
+}
+
 bool Walker::canThreadBranchAfter(const BodyValue& operation)
 {
     const Frame& frame = m_frames.last();
@@ -1249,6 +1601,16 @@ bool Walker::canThreadBranchAfter(const BodyValue& operation)
     if (isUnreachable() || m_hasFailed || !block.holds(operation.id()) || hasStringsInBuilders())
         return false;
     return KnownThreading(*this, frame.block).armsMayWalkEndOfBlockFrom(operation.id().index() - block.firstValue().index() + 1);
+}
+
+bool Walker::canThreadBranchAfterMatch(const BodyValue& operation)
+{
+    const Frame& frame = m_frames.last();
+    BodyBlock block = frame.index->block(frame.block);
+    if (isUnreachable() || m_hasFailed || !block.holds(operation.id()))
+        return false;
+    uint32_t place = operation.id().index() - block.firstValue().index();
+    return (!hasStringsInBuilders() || blockEndKeepsStringBuilders(place)) && KnownThreading(*this, frame.block).armsMayWalkEndOfBlockFrom(place + 1);
 }
 
 bool Walker::canThreadBranchFrom(ValueID first)

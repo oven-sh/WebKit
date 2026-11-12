@@ -8,9 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTOpcodeSets.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStringEmitter.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
@@ -21,24 +23,42 @@ namespace {
 
 class StringSwitchEmitter final : public OperationEmitter {
 public:
-    StringSwitchEmitter(CodeGenerator& generator, const TerminatorContext& terminator)
+    StringSwitchEmitter(CodeGenerator& generator, const OperationContext& context)
         : OperationEmitter(generator)
         , m_strings(generator.emitter<StringEmitter>())
-        , m_terminator(terminator)
+        , m_context(context)
     {
     }
 
-    void generate()
+    void generate(const TerminatorContext& terminator)
     {
-        std::span<const StringID> literals = m_terminator->strings();
-        RELEASE_ASSERT(m_terminator.numberOfTargets() == literals.size() + 1);
+        std::span<const StringID> literals = terminator->strings();
+        RELEASE_ASSERT(terminator.numberOfTargets() == literals.size() + 1);
         Vector<SwitchCase, 8> cases;
         cases.reserveInitialCapacity(literals.size());
         for (uint32_t index = 0; index < literals.size(); ++index)
-            cases.append(SwitchCase { literals[index], m_strings.textOf(literals[index]), generator().edgeTo(m_terminator, index) });
-        m_otherwise = generator().edgeTo(m_terminator, static_cast<uint32_t>(literals.size()));
+            cases.append(SwitchCase { literals[index], m_strings.textOf(literals[index]), generator().edgeTo(terminator, index) });
+        m_otherwise = generator().edgeTo(terminator, static_cast<uint32_t>(literals.size()));
+        generate(terminator->subjectOperand(), cases);
+    }
 
-        ValueID subjectID = m_terminator->subjectOperand();
+    void generate(const ValueContext& first, const CodeGenerator::LiteralChain& chain)
+    {
+        Vector<SwitchCase, 8> cases;
+        for (const CodeGenerator::ComparisonWithLiteral& comparison : chain.comparisons) {
+            bool isRepeated = std::ranges::any_of(cases, [&](const SwitchCase& earlier) { return earlier.string == comparison.literal; });
+            if (!isRepeated)
+                cases.append(SwitchCase { comparison.literal, m_strings.textOf(comparison.literal), cases.isEmpty() ? first.branchTargets().taken : generator().edgeOutOf(comparison.block, 0) });
+        }
+        m_otherwise = generator().edgeOutOf(chain.comparisons.last().block, 1);
+        generate(chain.comparisons.first().subject, cases);
+    }
+
+private:
+    struct SwitchCase;
+
+    void generate(ValueID subjectID, const Vector<SwitchCase, 8>& cases)
+    {
         const Type& type = typeOf(subjectID);
         if (cases.isEmpty() || !(type.primitives & Primitive::AnyString)) {
             m_out.jump(m_otherwise);
@@ -66,15 +86,15 @@ public:
         case Representation::OptionalDouble:
         case Representation::Cell32:
         case Representation::RawWord:
-            fail(m_terminator, InternalErrorKind::OpcodeWithoutCode);
+            fail(m_context, InternalErrorKind::OpcodeWithoutCode);
             m_out.unreachable();
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-private:
     static constexpr unsigned maxLiteralsComparedOneByOne = 1;
+    static constexpr unsigned maxHeadersComparedOneByOne = 16;
     static constexpr unsigned minStringsForWordDispatch = 3;
     static constexpr size_t mostCharactersWrittenDown = std::tuple_size_v<decltype(NarrowCharactersOfString::characters)>;
     static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
@@ -182,7 +202,7 @@ private:
         if (cases.size() <= maxLiteralsComparedOneByOne) {
             bool everyCellIsString = !type.hasObjects() && !(type.primitives & otherCellPrimitives);
             emitTestChain(cases, [&](const SwitchCase& switchCase, BlockEdge next) {
-                m_strings.branchOnEqualsLiteral(m_terminator, ComparedOperand::Value, subject.value(), switchCase.string, { switchCase.target, next }, std::nullopt, everyCellIsString);
+                m_strings.branchOnEqualsLiteral(m_context, ComparedOperand::Value, subject.value(), switchCase.string, { switchCase.target, next }, std::nullopt, everyCellIsString);
             });
             return;
         }
@@ -196,6 +216,20 @@ private:
         bool hasWideText = narrowCases.size() != cases.size();
 
         CellPointer string = requireString(subject, type);
+        bool mayHoldName = cases.size() <= maxHeadersComparedOneByOne && std::ranges::all_of(cases, [&](const SwitchCase* switchCase) {
+            return m_strings.mayBeNameInLoop(m_context, switchCase->text);
+        });
+        if (mayHoldName) {
+            LBasicBlock holdsName = newBlock();
+            LBasicBlock holdsOtherText = newBlock();
+            ScopeFork fork = m_out.forkScope();
+            branch(m_strings.holdsName(string), { normalEdge(holdsName), normalEdge(holdsOtherText) });
+            m_out.appendToArm(holdsName, fork);
+            for (const SwitchCase* switchCase : cases)
+                m_strings.branchOnHeaderOf(string, switchCase->string, switchCase->target);
+            m_out.jump(m_otherwise);
+            m_out.appendToArm(holdsOtherText, fork);
+        }
         if (hasWideText)
             switchByLengthThenWord(string, narrowCases, cases);
         else
@@ -223,7 +257,7 @@ private:
 
     void compareByCall(CellPointer string, const SwitchCase& switchCase, BlockEdge next)
     {
-        m_strings.branchOnEqualsLiteralByStub(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
+        m_strings.branchOnEqualsLiteralByStub(m_context, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
     }
 
     void switchByCharactersOfNarrowString(CellPointer string, const CaseGroup& cases)
@@ -243,7 +277,7 @@ private:
 
         static_assert(maxLengthOfTextComparedInPlace <= mostCharactersWrittenDown);
         m_out.appendTo(needsStub);
-        if (generator().isInLoop(m_terminator.block())) {
+        if (generator().isInLoop(m_context.block())) {
             build().statistics().count(StatisticID::StringSwitchRopeLengthChecks);
             unsigned shortest = cases[0]->text.length();
             unsigned longest = shortest;
@@ -253,7 +287,7 @@ private:
             }
             m_strings.continueIf(belowOrEqual(sub(m_strings.lengthOf(string), word32(static_cast<int32_t>(shortest))), word32(static_cast<int32_t>(longest - shortest))), m_otherwise);
         }
-        StubCallResult narrow = callStub(m_terminator, narrowCharactersOfString(), { string.value() });
+        StubCallResult narrow = callStub(m_context, narrowCharactersOfString(), { string.value() });
         goOnWith(Pointer(narrow.first), low32(Integer(narrow.second)));
 
         m_out.appendToJoin(hasCharacters, fork);
@@ -262,7 +296,7 @@ private:
 
     void switchByLengthThenWord(CellPointer string, const CaseGroup& narrowCases, const CaseGroup& allCases)
     {
-        CharacterView view = m_strings.viewOfString(m_terminator, string);
+        CharacterView view = m_strings.viewOfString(m_context, string);
         LBasicBlock narrow = newBlock();
         LBasicBlock wide = newBlock();
         branch(view.is8Bit, { normalEdge(narrow), unlikelyEdge(wide) });
@@ -306,6 +340,8 @@ private:
         auto wordOf = [&](const SwitchCase& switchCase) -> uint64_t {
             return littleEndianWordAt(bytesOf(switchCase.text, is8Bit).span(), word->offset, word->width);
         };
+        for (const SwitchCase* switchCase : group)
+            m_strings.recordInlined(switchCase->string);
         Integer loaded = zeroExtended(loadWord(view, *word));
         ensureStillAliveHere(view.owner);
 
@@ -393,7 +429,7 @@ private:
     }
 
     StringEmitter& m_strings;
-    const TerminatorContext& m_terminator;
+    const OperationContext& m_context;
     BlockEdge m_otherwise;
 };
 
@@ -401,7 +437,123 @@ private:
 
 void ControlEmitter::generateSwitchString(const TerminatorContext& terminator)
 {
-    StringSwitchEmitter(generator(), terminator).generate();
+    StringSwitchEmitter(generator(), terminator).generate(terminator);
+}
+
+bool ControlEmitter::tryGenerateLiteralChain(const ValueContext& comparison)
+{
+    if (!comparison.isBranchCondition())
+        return false;
+    std::optional<CodeGenerator::LiteralChain> chain = generator().findLiteralChain(comparison.block());
+    if (!chain)
+        return false;
+    for (auto [block, name] : chain->names)
+        generator().generateName(block, name);
+    StringSwitchEmitter(generator(), comparison).generate(comparison, *chain);
+    build().statistics().count(StatisticID::LiteralChainsSwitched);
+    return true;
+}
+
+static ValueID valueUnderNames(const Code& code, ValueID value)
+{
+    while (opcodesThatNameTheirOperand.contains(code.at(value).opcode) && code.at(code.at(value).operand(0)).representation == code.at(value).representation)
+        value = code.at(value).operand(0);
+    return value;
+}
+
+static std::optional<CodeGenerator::ComparisonWithLiteral> findComparisonWithLiteral(const Code& code, const TypeArena& types, BlockID block, ValueID test)
+{
+    if (!test)
+        return std::nullopt;
+    const Operation& comparison = code.at(test);
+    switch (comparison.opcode) {
+    case Opcode::StringEqualsLiteral:
+        if (comparison.lengthOperand() || comparison.flatOperand())
+            return std::nullopt;
+        return CodeGenerator::ComparisonWithLiteral { block, comparison.stringOperand(), comparison.literal() };
+    case Opcode::ValueEqualsLiteral:
+        if (comparison.lengthOperand())
+            return std::nullopt;
+        return CodeGenerator::ComparisonWithLiteral { block, comparison.valueOperand(), comparison.literal() };
+    case Opcode::StrictEq:
+    case Opcode::Eq:
+        for (auto [written, subject] : { std::pair { comparison.rightOperand(), comparison.leftOperand() }, std::pair { comparison.leftOperand(), comparison.rightOperand() } }) {
+            if (code.at(written).opcode != Opcode::String || code.isConstant(subject))
+                continue;
+            if (comparison.opcode == Opcode::Eq && !types.at(code.at(subject).type).isAnyString())
+                continue;
+            return CodeGenerator::ComparisonWithLiteral { block, subject, code.at(written).string() };
+        }
+        return std::nullopt;
+    default:
+        return std::nullopt;
+    }
+}
+
+std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(BlockID id) const
+{
+    static constexpr size_t minComparisons = 3;
+    const bool isInLoop = code().at(id).isInLoop;
+    if ((!isInLoop && !usesLoopForms(id)) || isLayingOutTurns() || m_keepsValuesInHeapFrame || m_notesForms)
+        return std::nullopt;
+    const TypeArena& types = inputs().types;
+    std::optional<ComparisonWithLiteral> first = findComparisonWithLiteral(code(), types, id, testOfBranch(id));
+    if (!first)
+        return std::nullopt;
+    ValueID subject = valueUnderNames(code(), first->subject);
+    Representation representation = code().at(subject).representation;
+    if ((representation != Representation::JSValue && representation != Representation::Cell) || (isInLoop && !code().at(code().blockOf(subject)).isInLoop))
+        return std::nullopt;
+
+    LiteralChain chain;
+    chain.comparisons.append(*first);
+    auto blockBehind = [&](BlockID from) -> BlockID {
+        EdgeID way = code().at(from).terminator.notTaken();
+        while (true) {
+            const Edge& edge = code().at(way);
+            const Block& block = code().at(edge.to);
+            if (!edge.arguments().empty() || !block.parameters().empty() || block.isLoopHead || block.isInLoop != isInLoop)
+                return { };
+            if (m_singlePredecessors[edge.to.index()] != from || m_blocksWithOtherJumps.get(edge.to.index()) || code().handlerOf(edge.to) != code().handlerOf(id))
+                return { };
+            if (block.terminator.kind != TerminatorKind::Jump || !code().valuesOf(edge.to).empty())
+                return edge.to;
+            from = edge.to;
+            way = block.terminator.next();
+        }
+    };
+    while (BlockID behind = blockBehind(chain.comparisons.last().block)) {
+        ValueID test = testOfBranch(behind);
+        std::optional<ComparisonWithLiteral> next = findComparisonWithLiteral(code(), types, behind, test);
+        if (!next || valueUnderNames(code(), next->subject) != subject)
+            break;
+        size_t numberOfNames = chain.names.size();
+        bool onlyCompares = std::ranges::all_of(code().valuesOf(behind), [&](ValueID value) {
+            if (value == test)
+                return true;
+            chain.names.append({ behind, value });
+            return opcodesThatNameTheirOperand.contains(opcodeOf(value));
+        });
+        if (!onlyCompares) {
+            chain.names.shrink(numberOfNames);
+            break;
+        }
+        chain.comparisons.append(*next);
+    }
+    if (chain.comparisons.size() < minComparisons)
+        return std::nullopt;
+    return chain;
+}
+
+BlockEdge CodeGenerator::edgeOutOf(BlockID id, uint32_t targetIndex)
+{
+    TerminatorContext context(id, code().at(id).terminator, handlerOf(id));
+    return edgeTo(context, targetIndex);
+}
+
+void CodeGenerator::generateName(BlockID block, ValueID name)
+{
+    generateValue(block, name, code().at(name), false, { });
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -72,7 +72,7 @@ const ExcludedNameList* AssignmentPlanCache::excludedListAt(std::span<UniquedStr
 NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source, uint32_t hash)
 {
     if (!m_sets)
-        m_sets.make();
+        m_sets.makeFromZeros();
     unsigned setIndex = hash % numberOfSets;
     Set& set = (*m_sets)[setIndex];
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -559,7 +559,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     if (extraProperties && ((extraProperties->type() != FinalObjectType && !isClosure) || extraPropertiesBefore->isDictionary()))
         return;
     Vector<AssignmentPlan::FieldStore> fieldStores;
-    Vector<AssignmentPlan::ExtraPropertyStore> extraPropertyStores;
+    Vector<AssignmentPlan::ExtraPropertyStore, 16> extraPropertyStores;
     Vector<UniquedStringImpl*, 8> addedNames;
     Vector<size_t, 8> storesOfAddedNames;
     Vector<UniquedStringImpl*, 8> namesOfFields;
@@ -614,10 +614,10 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             .isDirect = !(field->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize),
             .copiesBits = property.field && property.field->slot.representation() == field->slot.representation(),
             .holdsCell = traits.holdsCell,
-            .hasAbsent = traits.hasAbsent,
+            .hasAbsent = mayBeCreatedByStore(field->slot.representation()),
             .leavesUndefinedAndNullToOtherWay = !!field->holdsRawValueFromBirth,
             .width = traits.width,
-            .absentBits = traits.absentBits,
+            .absentBits = bitsBeforeCreation(field->slot.representation()),
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
         if (const RuntimeType& type = layouts.typeOf(*field); type.primitiveSet().contains(PrimitiveSet::Integer)) {
@@ -668,8 +668,9 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     plan.storesOnlyFieldsThatFit = !fieldStores.isEmpty() && extraPropertyStores.isEmpty() && !extraProperties && std::ranges::all_of(fieldStores, [](const AssignmentPlan::FieldStore& store) {
         return store.sourceAlwaysFits && store.isDirect && store.from->slot.representation() != SlotRepresentation::DeferredClosure;
     });
+    fieldStores.shrinkToFit();
     plan.fieldStores = WTF::move(fieldStores);
-    plan.extraPropertyStores = WTF::move(extraPropertyStores);
+    plan.extraPropertyStores = extraPropertyStores.span();
     plan.storesInSourceOrder = WTF::move(storesInSourceOrder);
     plan.isUsable = true;
 }

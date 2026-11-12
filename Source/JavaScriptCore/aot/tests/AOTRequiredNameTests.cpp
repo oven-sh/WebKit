@@ -201,6 +201,18 @@ static void checkModulesThatPassLinkOnAreLinkedWithWhatLeadsToThem(LoadedProgram
     AOT_TEST_CHECK(modules.status(belowTwo) == ModuleStatus::Linked);
 }
 
+static void checkRecordsAreLinkedWithLeaders(LoadedProgram& program)
+{
+    constexpr ModuleID first { 0u };
+    constexpr ModuleID belowFirst { 1u };
+    Modules& modules = *modulesOf(program.realm());
+    AOT_TEST_CHECK(modules.data(belowFirst).onlyPassesLinkOn() && modules.table().leaderInLink(belowFirst) == first);
+    modules.ensureRecord(belowFirst);
+    AOT_TEST_CHECK(modules.status(belowFirst) == ModuleStatus::Unlinked && modules.status(first) == ModuleStatus::Unlinked);
+    checkModuleLinks(program, first);
+    AOT_TEST_CHECK(modules.status(belowFirst) != ModuleStatus::Unlinked);
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withBarrel)() = runNativeTestWithLoadedProgram<requiredNameTests, programText, body>;
 
@@ -214,6 +226,7 @@ std::span<const NativeTest> requiredNameTests()
         { "required-names/ambiguous-name-of-export-statement-that-may-be-absent-fails-link"_s, withBarrel<checkAmbiguousNameOfExportStatementThatMayBeAbsentFailsLink> },
         { "required-names/ambiguous-name-that-a-star-asks-for-links"_s, withBarrel<checkAmbiguousNameThatStarAsksForLinks> },
         { "required-names/found-name-links"_s, withBarrel<checkFoundNameLinks> },
+        { "required-names/records-are-linked-with-leaders"_s, runNativeTestWithLoadedProgram<requiredNameTests, programOfModulesThatPassLinkOn, checkRecordsAreLinkedWithLeaders> },
         { "required-names/modules-that-pass-the-link-on-are-linked-with-what-leads-to-them"_s, runNativeTestWithLoadedProgram<requiredNameTests, programOfModulesThatPassLinkOn, checkModulesThatPassLinkOnAreLinkedWithWhatLeadsToThem> },
     };
     return tests;

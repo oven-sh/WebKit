@@ -117,6 +117,7 @@ private:
     void strikeCoveredOwners();
     void lookForBirthOfOwner(ValueID, const Operation&);
     void forgetStoresThatAwaitBirth();
+    void awaitBirthsAheadOf(BlockID);
     bool beginLookingForCoveredFences();
     void beginFenceCoverageAtEndOf(BlockID);
     void lookForCoveredFence(ValueID, const Operation&);
@@ -133,7 +134,7 @@ private:
 
     bool beginLookingForBirthsToMove();
     void noteIfBirthMayMove(ValueID, const Operation&);
-    bool isWhereBirthMayMove(ValueID, const Operation&) const;
+    bool canMoveAllocation(ValueID, const Operation&) const;
     bool moveBirthsToWhereCellsAreNeeded();
     SweepTotals sweepAgainBehindMovedBirths(const SweepInputs&, Code&);
 
@@ -202,6 +203,7 @@ private:
     bool m_looksForBirthsToMove { false };
     bool m_hasMovedBirths { false };
     bool m_sweepsAgainBehindMovedBirths { false };
+    Vector<ValueID, 4> m_overwrittenStores;
     Vector<ValueID>& m_birthsThatMayMove;
     struct EnvironmentHandedBack {
         LayoutID layout;
@@ -224,6 +226,7 @@ private:
     Vector<uint32_t>& m_numberCoveredAtHead;
     Vector<ValueID>& m_coveredOwners;
     SweepBits& m_ownersCovered;
+    ValueID m_requiredObject;
     ValueID m_storeWhoseOwnerIsKnown;
     ValueID m_ownerOfThatStore;
     struct StoreThatAwaitsBirth {
@@ -232,6 +235,7 @@ private:
     };
     Vector<StoreThatAwaitsBirth, 8>& m_storesThatAwaitBirth;
     SweepBits& m_birthsAwaited;
+    BlockID m_blockAwaitingAllocations;
     bool m_laterFenceCovers { false };
     bool m_laterFenceCoversAtSomeHead { false };
     SweepBits& m_laterFenceCoversAtHeads;
@@ -277,9 +281,16 @@ bool staysInSweptCodeByItself(const Operation&);
 
 bool objectOfLayoutMayLieInFrame(const PlannedLayout&);
 
-inline ValueID underlyingCellOf(const Code& code, ValueID cell)
+NEVER_INLINE inline ValueID cellBehindNames(const Code& code, ValueID name)
 {
-    return code.valueBehindNames<cellPreservingOpcodes>(cell);
+    return code.valueBehindNames<cellPreservingOpcodes>(name);
+}
+
+ALWAYS_INLINE ValueID underlyingCellOf(const Code& code, ValueID cell)
+{
+    if (!cellPreservingOpcodes.contains(code.at(cell).opcode)) [[likely]]
+        return cell;
+    return cellBehindNames(code, cell);
 }
 
 template<typename Functor>

@@ -31,6 +31,7 @@
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "MarkedSpace.h"
 #include "ObjectAllocationProfileInlines.h"
@@ -145,9 +146,13 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
         }, PropertyWalk::Elements::NeedGenericPath, PropertyWalk::Preparations::AreDone);
         return walkResult == PropertyWalk::Result::Completed;
     }
+    bool isMaterializedError = source->structure()->classInfoForCells() == ErrorInstance::info() && uncheckedDowncast<ErrorInstance>(source)->hasMaterializedErrorInfo();
+    if (isMaterializedError)
+        uncheckedDowncast<ErrorInstance>(source)->materializeErrorInfoIfNeeded(vm);
     Structure* structure = source->structure();
     TypeInfo info = structure->typeInfo();
-    if (source->hasNonReifiedStaticProperties() || info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames() || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
+    bool overridesLookups = !isMaterializedError && (info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames());
+    if (source->hasNonReifiedStaticProperties() || overridesLookups || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
         return false;
     bool symbolsComeLast = !structure->canPerformFastPropertyEnumerationCommon();
     Vector<std::pair<UniquedStringImpl*, PropertyOffset>, 4> symbols;
@@ -532,7 +537,17 @@ static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instanc
     if (!count && isCompiledObject(object) && tryRepeatAssignment(vm, *instance->state, object, JSValue::decode(source), excludedRun) != RepeatedCopy::IsNotDone)
         return;
     ExcludedKeys excluded;
-    if (excludedRun || count) {
+    JSObject* read = nullptr;
+    if (Object* from = !count && isCompiledObject(object) ? compiledObjectOrNull(JSValue::decode(source)) : nullptr) {
+        ExcludedRun run = excludedRunAt(instance, excludedRun);
+        read = PropertyWalk::tryCopyWithGetters(globalObject, from, run.numberPlusOne, run.numberPlusOne ? instance->state->objects->caches->assignmentPlans.excludedNames(run).names() : std::span<UniquedStringImpl* const> { });
+        RETURN_IF_EXCEPTION(scope, void());
+        if (read && (!hasOwnPropertiesToCopy(read) || tryRepeatAssignment(vm, *instance->state, object, read, 0) != RepeatedCopy::IsNotDone))
+            return;
+    }
+    if (read)
+        source = JSValue::encode(read);
+    else if (excludedRun || count) {
         excluded.collect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -591,6 +606,12 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source))) {
+        JSObject* rest = PropertyWalk::tryCopyWithGetters(globalObject, asObject(source), run.numberPlusOne, instance->state->objects->caches->assignmentPlans.excludedNames(run).names());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (rest)
+            return rest;
+    }
     if (!run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
         JSObject* read = PropertyWalk::tryCopyCallingGetters(globalObject, asObject(source), PropertyWalk::NewObjectTakes::Definitions);
         RETURN_IF_EXCEPTION(scope, nullptr);

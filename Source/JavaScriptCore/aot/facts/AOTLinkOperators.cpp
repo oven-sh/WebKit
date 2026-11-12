@@ -103,19 +103,45 @@ std::optional<uint16_t> LinkFlow::primitivesThatOperatorGivesWhateverArrives(Fun
 
 static bool mayGiveCountsInLinkOperators(const SummaryOperator& operation)
 {
-    return operation.opcode == Opcode::Mul || operation.opcode == Opcode::Add || (operation.opcode == Opcode::Mod && operation.writtenDivisor != SummaryOperator::WrittenDivisor::None);
+    static constexpr OpcodeSet countingOperators { Opcode::ToNumeric, Opcode::Mul, Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement, Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::RShift, Opcode::URShift };
+    return countingOperators.contains(operation.opcode) || (operation.opcode == Opcode::Mod && operation.writtenDivisor != SummaryOperator::WrittenDivisor::None);
 }
 
 static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOperator& operation, std::span<const LinkType::Counts, SummaryOperator::mostOperands> counts)
 {
     using Counts = LinkType::Counts;
-    if (counts[0] == Counts::Unknown)
+    if (operation.opcode == Opcode::Sub && counts[0] == Counts::BelowTwoTo31 && counts[1] == Counts::BelowTwoTo31)
+        return Counts::Int32;
+    if (operation.step < 0 && counts[operation.steppedOperand] == Counts::BelowTwoTo31)
+        return Counts::Int32;
+    if (operation.step && LinkType::areExact(counts[operation.steppedOperand]))
+        return operation.step > 0 && LinkType::startsAtZero(counts[operation.steppedOperand]) ? Counts::ExactFromZeroUp : Counts::Exact;
+    switch (operation.opcode) {
+    case Opcode::ToNumeric:
+        return counts[0];
+    case Opcode::URShift:
+        return operation.shiftsRightByConstant || counts[0] == Counts::BelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::BelowTwoTo32;
+    case Opcode::BitAnd:
+        return std::min(counts[0], counts[1]) == Counts::BelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::Unknown;
+    case Opcode::BitOr:
+    case Opcode::BitXor:
+        return std::max(counts[0], counts[1]) == Counts::BelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::Unknown;
+    case Opcode::RShift:
+        return counts[0] == Counts::BelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::Unknown;
+    default:
+        break;
+    }
+    if (operation.opcode == Opcode::Add || operation.opcode == Opcode::Sub) {
+        bool giveFromZeroUp = operation.opcode == Opcode::Add && LinkType::startsAtZero(counts[0]) && LinkType::startsAtZero(counts[1]);
+        if (LinkType::areBelowTwoTo32(counts[0]) && LinkType::areBelowTwoTo32(counts[1]))
+            return giveFromZeroUp ? Counts::ExactFromZeroUp : Counts::Exact;
+        return giveFromZeroUp && std::min(counts[0], counts[1]) <= Counts::BelowTwoTo32 ? Counts::WholeFromZeroUp : Counts::Unknown;
+    }
+    if (!LinkType::startsAtZero(counts[0]))
         return Counts::Unknown;
     switch (operation.opcode) {
     case Opcode::Mul:
         return std::max(counts[0], counts[1]) <= Counts::BelowTwoTo32 ? Counts::WholeFromZeroUp : Counts::Unknown;
-    case Opcode::Add:
-        return std::min(counts[0], counts[1]) <= Counts::BelowTwoTo32 && std::max(counts[0], counts[1]) != Counts::Unknown ? Counts::WholeFromZeroUp : Counts::Unknown;
     case Opcode::Mod:
         return operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::BelowTwoTo32;
     default:
@@ -123,9 +149,27 @@ static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOper
     }
 }
 
+static bool makesEqualityConvertObjects(const LinkType& type)
+{
+    constexpr uint16_t primitives = LinkType::closed(Primitive::All) | Primitive::LiteralSymbol;
+    return type.primitives & primitives & ~Primitive::UndefinedOrNull;
+}
+
 void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& now)
 {
-    if (!typeObservedBefore().isNever() && typeObservedBefore().primitives == now.primitives && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
+    if (const SummaryOperator& compared = summaries.at(observer.function).operators[observer.record]; compared.isConversionByEquality()) {
+        if (!makesEqualityConvertObjects(now) || makesEqualityConvertObjects(typeObservedBefore()))
+            return;
+        const ThinSummary& summary = summaries.at(observer.function);
+        for (const SummaryEdge& edge : std::ranges::equal_range(summary.edges.span(), compared.result, { }, &SummaryEdge::to))
+            addEdge(nodeOf(observer.function, edge.from), nodeOf(observer.function, edge.to), edge.passes);
+        return;
+    }
+    bool isKeyConversion = flowRuleOf(summaries.at(observer.function).operators[observer.record].opcode) == FlowRule::ToPropertyKey;
+    auto widenLiterals = [&](uint16_t primitives) -> uint16_t {
+        return primitives & LinkType::literalString && !isKeyConversion ? primitives | Primitive::String : primitives;
+    };
+    if (!typeObservedBefore().isNever() && widenLiterals(typeObservedBefore().primitives) == widenLiterals(now.primitives) && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
         return;
 
     const SummaryOperator& operation = summaries.at(observer.function).operators[observer.record];
@@ -149,7 +193,7 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             LinkType key;
             key.primitives = primitives & handedOn;
             if (primitives & LinkType::closed(Primitive::All) & ~handedOn)
-                key.primitives |= Primitive::String;
+                key.primitives |= LinkType::literalString;
             return key;
         }
         if (operation.opcode == Opcode::ToThis || operation.opcode == Opcode::ToObject) {
@@ -175,8 +219,8 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             if (!primitives)
                 return { };
             operands.append(primitives);
-            if (asksForCounts && operand.counts != LinkType::Counts::Unknown && !(primitives & ~operand.primitives) && !(primitives & ~LinkType::closed(Primitive::Number)) && !holdsObjectsForLinkOperators(operand))
-                counts[index] = operand.counts;
+            if (asksForCounts && !(primitives & ~operand.primitives) && !(primitives & ~LinkType::closed(Primitive::Number)) && !holdsObjectsForLinkOperators(operand))
+                counts[index] = primitives & Primitive::Number ? operand.counts : LinkType::startsAtZero(operand.counts) ? LinkType::Counts::BelowTwoTo31 : LinkType::Counts::Int32;
         }
 
         prepareOperatorsForSeveralThreads();
@@ -187,11 +231,13 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
         }));
         if (asksForCounts) {
             result.counts = countsThatOperatorGivesInLinkOperators(operation, counts);
-            if (result.counts == LinkType::Counts::BelowTwoTo31)
+            if (result.counts == LinkType::Counts::BelowTwoTo31 || result.counts == LinkType::Counts::Int32)
                 result.primitives = LinkType::int32;
             else if (result.counts == LinkType::Counts::BelowTwoTo32)
                 result.primitives = LinkType::closed(Primitive::Integer);
         }
+        if (result.counts == LinkType::Counts::Unknown && result.hasNumbers() && !(result.primitives & Primitive::Number))
+            result.counts = LinkType::Counts::Int32;
         return result;
     };
     LinkType result = answer(false);

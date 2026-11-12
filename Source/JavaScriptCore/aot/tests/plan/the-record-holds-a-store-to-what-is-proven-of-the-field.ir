@@ -2,7 +2,7 @@
 # Every writer of each field is known, and the objects stay with compiled code. `type`: all that the form of the slot has, or nothing: every value. `doors`: what the record of the layout holds a store to (FieldData::type):
 # Link's proof in the words of the test that the stubs run in line. A number slot loses its marks and keeps every number of its form, so that a store by name needs no test of the type as before; a boxed slot gets a type.
 # RUN: plan layouts mechanisms=all
-# CHECK: slot 0 "count" {{*}}type=undefined|null|{{*}} doors=
+# CHECK: slot 0 "count" Int32 {{*}}type=i32 doors=1
 # CHECK-NOT: doors={{*}}undefined
 # CHECK: slot 1 "ratio" OptionalDouble {{*}}type=undefined|null|number doors=number
 # CHECK: slot 2 "flag" {{*}} doors=boolean

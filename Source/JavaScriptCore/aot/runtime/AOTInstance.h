@@ -124,6 +124,7 @@ struct InstanceHeader {
     uint32_t barrierThreshold;
     uint8_t mutatorShouldBeFenced;
     uint8_t awaitMustSuspend;
+    uint8_t regExpsAreRecompiled;
     uint64_t slimClosureHeaders[numberOfSlimClosureKinds];
     void* closureCells;
     void* singleCharacterStrings;
@@ -131,6 +132,9 @@ struct InstanceHeader {
     int64_t notCellMask;
     JSGlobalObject* globalObject;
     uintptr_t cellCageBase;
+    uint64_t barrierHeaderThreshold;
+    static constexpr unsigned numberOfTypeStrings = 8;
+    JSCell* typeStrings[numberOfTypeStrings];
 };
 
 struct ImageWords {
@@ -154,12 +158,15 @@ struct ImageWords {
     const uint16_t* fieldRecordIndices;
     const uint64_t* classAccessors;
     const uint64_t* data;
-    const FunctionKindData* closureFunctionKinds;
+    const uint16_t* closureFactNumbers;
     const ImageRegExp* regExps;
     const uint8_t* regExpCode;
     const uint16_t* functionSteps;
     const uint32_t* functionStartGroups;
+    const ClosureFacts* closureFacts;
     uint64_t endOfIdentifiers;
+    uint64_t numberOfPlacedConstants;
+    const uint32_t* hashesOfPlacedConstants;
 };
 
 struct LazyStringWords {
@@ -167,9 +174,9 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject };
-static constexpr unsigned numberOfInlineAllocations = 13;
-static_assert(static_cast<unsigned>(InlineAllocation::SmallNullPrototypeObject) + 1 == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject, MapIterator, SetIterator, ArrayIterator };
+static constexpr unsigned numberOfInlineAllocations = 16;
+static_assert(static_cast<unsigned>(InlineAllocation::ArrayIterator) + 1 == numberOfInlineAllocations);
 static constexpr unsigned smallObjectInlineCapacity = 2;
 
 struct InlineAllocationData {
@@ -183,6 +190,7 @@ struct TypedArrayAllocation {
     uint64_t elementSize;
     uint64_t unused;
 };
+void prepareTypedArrayAllocation(Instance*, TypedArrayType);
 
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
@@ -235,6 +243,7 @@ struct RealmWords {
     const ClassInfo* const* instanceClassInfos;
     uint32_t boundFunctionStructureID;
     uint32_t hostFunctionStructureID;
+    uint32_t atomListStructureID;
     EncodedJSValue linkTimeConstants[JSC::numberOfLinkTimeConstants];
     const void* smallIntStrings;
     const void* intStrings;
@@ -248,6 +257,8 @@ struct RealmWords {
     MicrotaskQueue* microtaskQueue;
     JSCell* functionOfEngineOverCompiledFunction;
     JSCell* compiledFunctionUnderFunctionOfEngine;
+    static constexpr unsigned numberOfImmediates = JSValue::ValueUndefined + 1;
+    JSString* stringsOfImmediates[numberOfImmediates];
 };
 
 struct HeapWords {
@@ -269,6 +280,7 @@ struct CollationWords {
 struct NumberWords {
     const double* powersOfTen;
     uint64_t hashSecrets[2];
+    uint64_t keyMultiplierOfTables;
 };
 
 #define FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, writtenOnce) \

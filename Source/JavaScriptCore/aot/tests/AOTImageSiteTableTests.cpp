@@ -264,11 +264,11 @@ namespace {
 
 class CodedPositions {
 public:
-    CodedPositions(const SiteDescription& sites, OwnPosition ofFunctionInFront)
-        : m_ofFunctionInFront(ofFunctionInFront)
+    CodedPositions(const SiteDescription& sites, OwnPosition ofPreviousFunction)
+        : m_ofPreviousFunction(ofPreviousFunction)
     {
         PositionEncoder encoder;
-        encoder.encode(sites, ofFunctionInFront);
+        encoder.encode(sites, ofPreviousFunction);
         PositionCodes codes(encoder.counts());
         m_section = codes.bytes();
         m_place = m_section.size();
@@ -278,11 +278,11 @@ public:
     std::optional<SourcePosition> at(const Image& image, uint32_t function, uint32_t site) const
     {
         const uint8_t* section = m_section.span().data();
-        return decodePosition(image, function, section, section + m_place, m_ofFunctionInFront, CallSiteIndex(site));
+        return decodePosition(image, function, section, section + m_place, m_ofPreviousFunction, CallSiteIndex(site));
     }
 
 private:
-    OwnPosition m_ofFunctionInFront;
+    OwnPosition m_ofPreviousFunction;
     Vector<uint8_t> m_section;
     size_t m_place;
 };
@@ -304,8 +304,8 @@ static void checkEncodedPositions(std::initializer_list<Vector<SitePosition>> ta
     for (const Vector<SitePosition>& positions : tables) {
         SiteDescription sites;
         sites.positions = positions;
-        for (OwnPosition ofFunctionInFront : { OwnPosition { }, OwnPosition::of(sites), OwnPosition { 0xffffffff, OwnPosition::of(sites).source }, OwnPosition { 7, 0xffffffff }, OwnPosition { 0, 1 } }) {
-            checkPositions(any.table(), 0, CodedPositions(sites, ofFunctionInFront), positions);
+        for (OwnPosition ofPreviousFunction : { OwnPosition { }, OwnPosition::of(sites), OwnPosition { 0xffffffff, OwnPosition::of(sites).source }, OwnPosition { 7, 0xffffffff }, OwnPosition { 0, 1 } }) {
+            checkPositions(any.table(), 0, CodedPositions(sites, ofPreviousFunction), positions);
         }
     }
 }
@@ -364,16 +364,16 @@ static Vector<SitePosition> positionsOnOneLine(uint32_t count)
     return positions;
 }
 
-static void checkPrefixCode(const PrefixCode::Counts& counts, unsigned mostBitsOfShortWords)
+static void checkPrefixCode(const PrefixCode::Counts& counts, unsigned maxShortCodeBits)
 {
     PrefixCode code(counts);
     Vector<uint8_t> bytesOfCode;
-    unsigned bitsOfShortWords = code.bitsOfShortWords(mostBitsOfShortWords);
-    code.append(bytesOfCode, bitsOfShortWords);
+    unsigned shortCodeBits = code.shortCodeBits(maxShortCodeBits);
+    code.append(bytesOfCode, shortCodeBits);
     size_t numberOfBytes = std::ranges::count_if(counts, [](uint32_t count) { return count; });
-    AOT_TEST_CHECK(bitsOfShortWords && bitsOfShortWords <= std::min<size_t>(mostBitsOfShortWords, std::max<size_t>(numberOfBytes, 1)));
-    AOT_TEST_CHECK(bytesOfCode.size() == PrefixCode::sizeOfShortWords(bitsOfShortWords) + PrefixCode::maxLength + numberOfBytes);
-    PrefixCodeView view(bytesOfCode.span().data(), 64 - bitsOfShortWords);
+    AOT_TEST_CHECK(shortCodeBits && shortCodeBits <= std::min<size_t>(maxShortCodeBits, std::max<size_t>(numberOfBytes, 1)));
+    AOT_TEST_CHECK(bytesOfCode.size() == PrefixCode::sizeOfShortWords(shortCodeBits) + sizeof(PrefixCode::LongWords) + PrefixCode::maxLength + numberOfBytes);
+    PrefixCodeView view(bytesOfCode.span().data(), 64 - shortCodeBits);
     Vector<uint8_t> written;
     WeakRandom random(1);
     for (unsigned byte = 0; byte < counts.size(); ++byte) {
@@ -394,8 +394,8 @@ static void checkPrefixCode(const PrefixCode::Counts& counts, unsigned mostBitsO
 
 static void checkPrefixCode(const PrefixCode::Counts& counts)
 {
-    for (unsigned mostBitsOfShortWords : { 1u, PrefixCode::bitsOfShortWord, 10u })
-        checkPrefixCode(counts, mostBitsOfShortWords);
+    for (unsigned maxShortCodeBits : { 1u, PrefixCode::bitsOfShortWord, 10u })
+        checkPrefixCode(counts, maxShortCodeBits);
 }
 
 static void testPrefixCodes()

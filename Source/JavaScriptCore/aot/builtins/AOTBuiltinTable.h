@@ -267,6 +267,7 @@ struct BuiltinPlace {
     bool holdsWhatIsThrown { false };
     BuiltinTypeID newValueType { };
     bool isSettled { false };
+    bool isOfElements { false };
     BuiltinNameStretch memberPath { };
     uint16_t firstMemberStep { 0 };
     BuiltinName nativeCell { };
@@ -763,8 +764,9 @@ enum class BuiltinMark : uint8_t {
     AsksOptionsForListedNamesAlone,
     MayLayListenerForUncaughtExceptions,
     IsReportedAsReadOnly,
+    AppliesMethodDecorators,
 };
-static_assert(static_cast<unsigned>(BuiltinMark::IsReportedAsReadOnly) < 64);
+static_assert(static_cast<unsigned>(BuiltinMark::AppliesMethodDecorators) < 64);
 constexpr uint64_t bitOfMark(BuiltinMark mark) { return 1ull << static_cast<unsigned>(mark); }
 
 struct BuiltinMarkedEntry {
@@ -1091,6 +1093,7 @@ public:
     StringView tokenOf(RuntimeModuleID) const;
     String tokenOf(BuiltinOverloadID) const;
     BuiltinID builtinFromToken(StringView) const;
+    BuiltinID makerOfFilledArrays() const;
     BuiltinClassID classFromToken(StringView) const;
     BuiltinSlotID slotFromToken(StringView) const;
     BuiltinLayoutID layoutFromToken(StringView) const;

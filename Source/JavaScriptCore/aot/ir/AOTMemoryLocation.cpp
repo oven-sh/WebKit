@@ -43,6 +43,13 @@ uint64_t maskOf(const Program& program, const MemoryLocation& location)
     return locationMaskIn(program, location);
 }
 
+uint64_t maskOfRead(const Program& program, const MemoryLocation& location)
+{
+    if (location.heap() == AbstractHeap::EnvironmentFields && !program.moduleInstances.isEmpty() && program.isInstanceConstant({ location.environmentLayout(), location.environmentFieldIndex() }))
+        return 0;
+    return locationMaskIn(program, location);
+}
+
 void LocationMasks::add(const MemoryLocation& location)
 {
     add(location.heap(), locationMaskIn(NoLocationBits { }, location));

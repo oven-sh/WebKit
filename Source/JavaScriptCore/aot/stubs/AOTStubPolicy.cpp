@@ -24,6 +24,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
     return {
         .useWideReferences = recorded.useWideReferences(),
         .imageHasWebAssembly = mayHaveWebAssemblyModules(program),
+        .hasModuleInstances = !program.moduleInstances.isEmpty(),
         .hasOneInstance = hasOneInstance,
         .matchesRegExps = matchesRegExps,
         .recordsLastMatch = recordsLastMatch,

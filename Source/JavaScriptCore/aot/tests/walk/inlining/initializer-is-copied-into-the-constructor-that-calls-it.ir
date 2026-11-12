@@ -1,17 +1,12 @@
 # class P { #a = 1; b = 2; #c = 3; d = 4; #e = 5; sum() { .. } }  new P().sum()
 # Only the constructor of its class calls an initializer, so the copy stands in the place of the body, however long the list of fields is. There the object is the one just allocated:
-# each definition, under a private name or a public one, is a store and the order word that lists the key next.
+# it is allocated where the constructor returns, with every definition, under a private name or a public one, in its order.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: CallDirect
 # CHECK-NOT: PrivateDefine
-# CHECK: [[object]]: L0 {{*}} = NewObject layout=L0
-# CHECK: = PutSlotOrAdd [[object]], {{*}}key=#"#"@L0 {{*}}orderWordAfter=
-# CHECK: = PutSlotOrAdd [[object]], {{*}}key=#"#a"@L0 {{*}}orderWordAfter=
-# CHECK: = PutSlotOrAdd [[object]], {{*}}key="b" {{*}}orderWordAfter=
-# CHECK: = PutSlotOrAdd [[object]], {{*}}key=#"#c"@L0 {{*}}orderWordAfter=
-# CHECK: = PutSlotOrAdd [[object]], {{*}}key="d" {{*}}orderWordAfter=
-# CHECK: = PutSlotOrAdd [[object]], {{*}}key=#"#e"@L0 {{*}}orderWordAfter=
+# CHECK: L0 {{*}} = NewObject {{*}}layout=L0 fields=[0, 1, 2, 3, 4, 5]
+# CHECK-NOT: PutSlotOrAdd
 # RUN(WITHHELD): walk f1 mechanisms=-Inlining
 # WITHHELD: = CallDirect {{*}}function=f3
 

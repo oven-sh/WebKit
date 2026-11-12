@@ -15,6 +15,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
+#include "AOTPoisonedCell.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTSlimClosure.h"
 #include "AOTVector.h"
@@ -260,6 +261,66 @@ static void testCollectorTakesLinkBetweenEnvironmentsForNoCell(LoadedProgram& pr
         AOT_TEST_CHECK(environment->at<uint64_t>(offsetOfFirstEnvironmentVariable) == next + tagOfLinkBetweenEnvironmentsHandedBack);
     }
     ensureStillAliveHere(environment);
+}
+
+namespace {
+
+struct VisitRecorder {
+    void appendUnbarriered(JSValue value) { values.append(value); }
+    void markAuxiliary(const void*) { }
+
+    Vector<JSValue, 4> values;
+};
+
+} // anonymous namespace
+
+static void testVisitOfPoisonedObject(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    auto* object = uncheckedDowncast<Object>(allocateObject(program, "Tagged"_s));
+    const CompiledStructure& structure = object->compiledStructure();
+    const LayoutData& layout = structure.layout();
+    JSObject* held = constructEmptyObject(program.realm());
+    for (const FieldData& field : layout.fields()) {
+        if (field.slot.representation() == SlotRepresentation::JSValue && !field.isOutOfLine())
+            object->at<uint64_t>(field.slot.offset) = static_cast<uint64_t>(JSValue::encode(held));
+    }
+    auto holds = [&](const VisitRecorder& recorder) {
+        return recorder.values.contains(JSValue(held));
+    };
+    VisitRecorder before;
+    Object::visitFields(object, structure, before);
+    AOT_TEST_CHECK(holds(before));
+
+    object->setCellState(CellState::PossiblyBlack);
+    AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, object, 0, 0));
+    AOT_TEST_CHECK(object->classInfo() == PoisonedCell::info() && object->cellState() == CellState::PossiblyBlack);
+    object->setCellState(CellState::DefinitelyWhite);
+    VisitRecorder after;
+    Object::visitFields(object, structure, after);
+    AOT_TEST_CHECK(after.values.size() == before.values.size() && !holds(after));
+}
+
+static void testVisitOfPoisonedEnvironment(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    Environment* environment = allocateEnvironment(program);
+    const CompiledStructure& structure = *uncheckedDowncast<CompiledStructure>(environment->structure());
+    JSObject* held = constructEmptyObject(program.realm());
+    environment->at<uint64_t>(offsetOfFirstEnvironmentVariable) = static_cast<uint64_t>(JSValue::encode(held));
+    VisitRecorder before;
+    AOT_TEST_CHECK(Environment::tryVisitFields(environment, structure, before));
+    AOT_TEST_CHECK(before.values.contains(JSValue(held)));
+
+    environment->setCellState(CellState::PossiblyGrey);
+    AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, environment, 0, 0));
+    AOT_TEST_CHECK(environment->classInfo() == PoisonedCell::info() && environment->cellState() == CellState::PossiblyGrey);
+    environment->setCellState(CellState::DefinitelyWhite);
+    VisitRecorder after;
+    AOT_TEST_CHECK(!Environment::tryVisitFields(environment, structure, after));
+    AOT_TEST_CHECK(after.values.isEmpty());
 }
 
 static FunctionID slimFunctionNamed(LoadedProgram& program, ASCIILiteral name)
@@ -555,6 +616,19 @@ static void testHeaderOfAnAllocationComesWithoutACell(LoadedProgram& program)
     AOT_TEST_CHECK(*reinterpret_cast<uint64_t*>(cell) == header && numberOfCellsWithHeader(header) == 1);
 }
 
+static void testFirstObjectHasNoRecord(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    uint32_t number = allocationOf(program, "Tagged"_s);
+    JSCell* first = callOperationFromTest(vm, operationAOTAllocateSlow, &program.instance(), number);
+    AOT_TEST_CHECK(!program.instance().objects.allocationSite(number));
+    JSCell* second = callOperationFromTest(vm, operationAOTAllocateSlow, &program.instance(), number);
+    const AllocationSiteRecord* record = program.instance().objects.allocationSite(number);
+    AOT_TEST_CHECK(record && record->header == *reinterpret_cast<uint64_t*>(second) && first->structureID() == second->structureID());
+    AOT_TEST_CHECK(first->structure() == usualStructure(program, "Tagged"_s));
+}
+
 std::span<const NativeTest> compiledStructureTests()
 {
     static constexpr NativeTest tests[] = {
@@ -563,6 +637,8 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/structure-of-environments"_s, withProgram<testStructureOfEnvironments> },
         { "compiled-structures/mark-in-the-header-of-an-environment-leaves-its-shape"_s, withProgram<testMarkInHeaderOfEnvironmentLeavesItsShape> },
         { "compiled-structures/collector-takes-a-link-between-environments-for-no-cell"_s, withProgram<testCollectorTakesLinkBetweenEnvironmentsForNoCell> },
+        { "compiled-structures/visit-of-poisoned-object"_s, withProgram<testVisitOfPoisonedObject> },
+        { "compiled-structures/visit-of-poisoned-environment"_s, withProgram<testVisitOfPoisonedEnvironment> },
         { "compiled-structures/closure-moved-to-the-heap-marks-the-environment-that-it-holds"_s, withProgram<testClosureMovedToHeapMarksEnvironmentThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-takes-along-the-closures-of-frames-that-it-holds"_s, withProgram<testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-twice-is-one-cell"_s, withProgram<testClosureMovedToHeapTwiceIsOneCell> },
@@ -571,6 +647,7 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/components-of-variant-are-independent"_s, withProgram<testComponentsOfVariantAreIndependent> },
         { "compiled-structures/variant-nobody-holds-lives-as-long-as-its-prototype"_s, withProgram<testVariantNobodyHoldsLivesAsLongAsItsPrototype> },
         { "compiled-structures/header-of-an-allocation-comes-without-a-cell"_s, withProgram<testHeaderOfAnAllocationComesWithoutACell> },
+        { "compiled-structures/first-object-of-an-allocation-has-no-record"_s, withProgram<testFirstObjectHasNoRecord> },
     };
     return tests;
 }

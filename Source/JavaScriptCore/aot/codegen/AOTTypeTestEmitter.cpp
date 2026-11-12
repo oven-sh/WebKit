@@ -388,9 +388,20 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
     }
 
     bool everyOtherPasses = plan.everyNonCellPasses();
+    LBasicBlock continuation = newBlock();
+    if (m_testsNumbersFirst && !everyOtherPasses && (plan.passingPrimitives & Primitive::Number) && verdictOfNumbers(plan) == TypeTestVerdict::AlwaysPasses) {
+        LBasicBlock isNoNumber = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        m_out.branch(isNumber(value).value(), normalEdge(continuation), unlikelyEdge(isNoNumber));
+        m_out.appendToArm(isNoNumber, fork);
+        SetForScope numberWasTested(m_testsNumbersFirst, false);
+        testBoxed(value, plan, failure);
+        m_out.jump(continuation);
+        m_out.appendToJoin(continuation, fork);
+        return;
+    }
     Condition holdsCell = isCell(value);
     LBasicBlock cellCase = newBlock();
-    LBasicBlock continuation = newBlock();
     LBasicBlock otherCase = everyOtherPasses ? continuation : newBlock();
     ScopeFork fork = m_out.forkScope();
     m_out.branch(holdsCell.value(), normalEdge(cellCase), everyOtherPasses ? rareEdge(otherCase) : unlikelyEdge(otherCase));
@@ -595,10 +606,6 @@ Condition TypeTestEmitter::isExactIntegerIn(Number number, Integer truncated, Ra
 {
     ASSERT(range.isSubsetOf(Range::full()));
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    if (range == Range::int32()) {
-        Integer bitsOfLowHalf = conversions.bitsOf(toNumber(low32(truncated)));
-        return equal(bitsOfLowHalf, conversions.bitsOf(number));
-    }
     Integer bitsOfTruncated = conversions.bitsOf(toNumber(truncated));
     Condition isExact = equal(bitsOfTruncated, conversions.bitsOf(number));
     return logicalAnd(isExact, isInRange(truncated, range));
@@ -607,6 +614,8 @@ Condition TypeTestEmitter::isExactIntegerIn(Number number, Integer truncated, Ra
 Condition TypeTestEmitter::isIntegerIn(Number number, Range range)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    if (std::optional<Integer> int32 = range == Range::int32() ? conversions.int32Behind(number) : std::nullopt)
+        return lessThanOrEqual(*int32, integer(std::numeric_limits<int32_t>::max()));
 #if CPU(ARM64)
     if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures()) && range.isSubsetOf(Range::int32())) {
         Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Int32);
@@ -623,6 +632,10 @@ Condition TypeTestEmitter::isIntegerIn(Number number, Range range)
         return logicalAnd(isExactInt32, isInRange(conversions.truncateUnchecked(number), range));
     }
 #endif
+    if (range == Range::int32()) {
+        Word32 word = conversions.truncateToWord(number);
+        return equal(conversions.bitsOf(toNumber(word)), conversions.bitsOf(number));
+    }
     return isExactIntegerIn(number, conversions.truncateUnchecked(number), range);
 }
 

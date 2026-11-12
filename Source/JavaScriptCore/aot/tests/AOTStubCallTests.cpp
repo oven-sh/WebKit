@@ -82,6 +82,7 @@ public:
         instance.closures.closureHeaders[0] = idOf(StructureOf::PlainClosure);
         instance.slimClosureHeaders[0] = idOf(StructureOf::SlimClosure);
         instance.functionTables.closureWords = m_closureWords.data();
+        instance.classes.heirTemplates = m_heirTemplates.data();
         instance.realm.hostFunctionStructureID = idOf(StructureOf::HostFunction);
         instance.realm.boundFunctionStructureID = idOf(StructureOf::BoundFunction);
         instance.realm.functionPrototypeCall = std::bit_cast<JSCell*>(m_functionPrototypeCall.address());
@@ -120,6 +121,7 @@ public:
 private:
     std::array<FakeStructure, numberOfStructures> m_structures;
     std::array<uint64_t, functionWithProperties + 1> m_closureWords { };
+    std::array<HeirTemplate, numberOfSubclassTemplates> m_heirTemplates { };
     FakeObject<64> m_storage;
     FakeObject<16> m_realm;
     FakeObject<16> m_otherRealm;
@@ -615,15 +617,15 @@ public:
         , m_word(calls.runner.closureWord(0))
     {
         Instance& instance = calls.runner.instance();
-        m_tables.at<TableRange>(offsetOfProgramTableRange(ProgramTableIndex::closureCaptureCounts)) = { sizeof(ProgramTables), roomForCounts };
-        instance.image.tables = reinterpret_cast<const ProgramTables*>(m_tables.bytes.data());
+        instance.image.closureFactNumbers = m_factNumbers.data();
+        instance.image.closureFacts = &m_facts;
         instance.closures.slimClosureAllocators[(numberOfCaptures + 1) / 2] = reinterpret_cast<LocalAllocator*>(&allocator);
-        AOT_TEST_CHECK(ClosureWord::closureNumberOf(m_word) < roomForCounts);
+        AOT_TEST_CHECK(ClosureWord::closureNumberOf(m_word) < m_factNumbers.size());
         captureCounts() = CaptureCounts { numberOfReferences, numberOfCaptures }.encoded();
         object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
     }
 
-    uint8_t& captureCounts() { return m_tables.at<uint8_t>(sizeof(ProgramTables) + ClosureWord::closureNumberOf(m_word)); }
+    uint8_t& captureCounts() { return m_facts.captureCounts; }
 
     void initializeEnvironment(Cell& environment)
     {
@@ -658,7 +660,6 @@ public:
     Cell object;
 
 private:
-    static constexpr uint32_t roomForCounts = 16;
 
     bool hasShapeAndHighByte(Cell& environment, uint8_t highByte)
     {
@@ -669,7 +670,8 @@ private:
 
     Calls& m_calls;
     uint64_t m_word;
-    FakeObject<sizeof(ProgramTables) + roomForCounts> m_tables;
+    std::array<uint16_t, 16> m_factNumbers { };
+    ClosureFacts m_facts { };
 };
 
 } // anonymous namespace

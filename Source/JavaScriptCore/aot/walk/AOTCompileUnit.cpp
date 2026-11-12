@@ -170,6 +170,8 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::Request:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
     case NumberSpace::MethodSelector:
     case NumberSpace::RegExp:
         return { };
@@ -216,7 +218,7 @@ static bool isReachedPastBlockInCompileUnit(const Code& code, BlockID reached, B
 
 static bool cellIsUsedBehindOperationInCompileUnit(const Code& code, ValueID cell, ValueID behind)
 {
-    static constexpr OpcodeSet operationsThatOnlyLetCellGo { Opcode::EndCellLifetime, Opcode::ReleaseEnvironment };
+    static constexpr OpcodeSet operationsThatOnlyLetCellGo { Opcode::EndCellLifetime, Opcode::ReleaseArray, Opcode::ReleaseList, Opcode::ReleaseEnvironment };
     BlockID whereCellIsBorn = code.blockOf(cell);
     bool isUsed = false;
     auto look = [&](ValueID operand) {
@@ -299,7 +301,8 @@ static bool isAllocationOfUnitForEffectsAgainstLink(const Code& code, ValueID va
 static String findPartThatLinkHasNotCounted(const Code& code, const Operation& operation, const Effects& counted)
 {
     EffectTraits traits = operation.traits();
-    if (traits.mayThrowByRule() && !counted.mayThrowByRule() && effectRuleOf(operation.opcode) != EffectRule::Operator && !code.at(operation.block()).handler)
+    bool isOperator = effectRuleOf(operation.opcode) == EffectRule::Operator || operation.opcode == Opcode::Strcat;
+    if (traits.mayThrowByRule() && !counted.mayThrowByRule() && !isOperator && !code.at(operation.block()).handler)
         return "may throw"_s;
     if (traits.mayCollect() && !counted.mayCollect)
         return "may collect"_s;
@@ -325,9 +328,15 @@ static String findPartThatLinkHasNotCounted(const Code& code, const Operation& o
 }
 
 struct ClosuresThatCalledParametersHold {
-    bool run(const Operation& operation) const { return frames.get(operation.origin().inlineFrame) || (operation.opcode == Opcode::CallDirect && functions.contains(operation.function())); }
+    bool run(const Operation& operation) const
+    {
+        if (frames.get(operation.origin().inlineFrame) || (operation.opcode == Opcode::CallDirect && functions.contains(operation.function())))
+            return true;
+        return !operation.origin().inlineFrame && builtinCallPositions.contains(operation.origin().position);
+    }
 
     Vector<FunctionID, 4> functions;
+    Vector<uint32_t, 4> builtinCallPositions;
     BitVector frames;
 };
 
@@ -362,9 +371,22 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
             note(operation.testedType());
     }
 
+    const BodyIndex* body = inputs.facts.bodies().find(code.unit().function);
+    for (uint32_t block = 0; body && block < body->numberOfBlocks(); ++block) {
+        for (BodyValue call : body->block(BlockID(block)).values()) {
+            ValueID callee = call.opcode() == Opcode::Call ? body->stripCasts(call.calleeOperand()) : ValueID();
+            if (!callee || !body->isParameter(callee) || body->blockOf(callee) != entryBlock)
+                continue;
+            uint32_t place = callee.index() - body->block(entryBlock).firstParameter().index();
+            if (place < 32 && (parametersCalled >> place & 1))
+                held.builtinCallPositions.append(call.position());
+        }
+    }
+
     std::span<const InlineFrame> copied = code.inlineFrames();
     for (uint32_t frame = 1; frame < copied.size(); ++frame) {
-        if ((!copied[frame].parent && held.functions.contains(copied[frame].callee)) || held.frames.get(copied[frame].parent))
+        bool isOfCalledParameter = !copied[frame].parent && (held.functions.contains(copied[frame].callee) || held.builtinCallPositions.contains(copied[frame].callPosition));
+        if (isOfCalledParameter || held.frames.get(copied[frame].parent))
             held.frames.set(frame);
     }
     return held;
@@ -571,6 +593,8 @@ private:
         uint32_t firstPositional = function.firstParameterIndex();
         uint32_t endOfPositional = firstPositional + function.numberOfPositionalParameters();
         for (uint32_t place = 0; place < function.numberOfEntryParameters(); ++place) {
+            if (m_inputs.plan.promotedEnvironments().isRemoved(callee, place))
+                continue;
             bool isPositional = place >= firstPositional && place < endOfPositional;
             TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place, isPositional);
             if (left == TypeTable::anything || (isUnitOfCallee && !left))
@@ -702,7 +726,7 @@ static bool hasDominatingAccess(const Code& code, ValueID read)
 static bool isDominatedByFirstStore(const WalkInputs& inputs, FunctionID unit, VariableID variable)
 {
     ModuleID module = inputs.program.at(variable).module;
-    if (inputs.program.at(unit).isModuleBody() || inputs.program.at(unit).module != module)
+    if (inputs.program.at(unit).isModuleBody() || isBodyOfWrappedModule(inputs.program, unit) || inputs.program.at(unit).module != module)
         return false;
     BitVector seen;
     Vector<FunctionID, 16> toVisit { unit };
@@ -777,6 +801,8 @@ static String findUnjustifiedSyntheticRead(const WalkInputs& inputs, TypeArena& 
         if (operation.variable().index() >= inputs.program.variables.size() || inputs.plan.variable(operation.variable()).function)
             continue;
         if (operation.isKnownInitialized() && hasDominatingAccess(code, read))
+            continue;
+        if (operation.isKnownInitialized() && inputs.program.at(operation.variable()).flags.contains(VariableFlags::HoldsInstance))
             continue;
         if (isDominatedByFirstStore(inputs, code.unit().function, operation.variable()))
             continue;
@@ -901,6 +927,13 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         WalkerInRoom first = std::exchange(m_walker, makeWalker(RoomOfFormerWalker::IsLeft));
         isWalked = m_walker->walkLastWalksOfLoopsAlone(*first);
     }
+    bool withdrawsSecondCounters = isWalked && m_walker->hasUnprovenSecondCounter();
+    if (withdrawsSecondCounters) {
+        m_types.reset();
+        m_walker = makeWalker(RoomOfFormerWalker::IsTaken);
+        m_walker->refuseSecondCounters();
+        isWalked = m_walker->walk(unit, way);
+    }
     Code& code = m_walker->code();
     if (!isWalked) {
         m_build.diagnostics().append(m_walker->takeReports());
@@ -918,7 +951,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
     }
 
     work.setStep("sweep"_s);
-    SweepTotals swept = Sweep(m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.shouldMisfoldBranchInSweep, inputs.options.shouldDropEdgeInSweep }, code);
+    SweepTotals swept = Sweep(*m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.shouldMisfoldBranchInSweep, inputs.options.shouldDropEdgeInSweep }, code);
 
     if (inputs.options.verifiesCode) {
         work.setStep("verify"_s);
@@ -947,6 +980,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         }
     }
 
+    code.releaseAbandonedBlocks();
     for (const Walker::ArrivalHeld& held : m_walker->arrivalsHeld()) {
         if ((held.kind == Walker::ArrivalHeld::Kind::Anything || held.kind == Walker::ArrivalHeld::Kind::MayBeEnteredByValue) && inputs.facts.linked().entryByValueMayBeClosed(held.callee))
             m_functionsThatUnitMayEnterByValue.append(held.callee);
@@ -955,6 +989,8 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
     m_build.diagnostics().append(m_walker->takeReports());
     Statistics::CountersOfThread counters = m_build.statistics().countersOfCurrentThread();
     counters.count(StatisticID::OperationsSwept, swept.operationsSwept);
+    if (withdrawsSecondCounters)
+        counters.count(StatisticID::SecondCountersWithdrawn);
     counters.count(StatisticID::BranchesFoldedToJumps, swept.branchesThatDecideNothing);
     counters.count(StatisticID::DeadValueProofChecksRemoved, swept.doorsDroppedWithTheirValues);
     if (swept.allocationsSunk)
@@ -1009,7 +1045,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         counters.count(StatisticID::UnsatisfiableProofChecks, doors);
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
-        WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
+        WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts), AOT::hasFlag(m_build.options().reports, Wire::ReportSet::Flow) && AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
         if (unit.role != CodeRole::ParameterGuard)
             counters.count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
         if (!notes.notes.isEmpty())
@@ -1140,7 +1176,7 @@ static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs
     };
     index.body().forEachBlock([&](BodyBlock block) {
         for (BodyValue value : block.values()) {
-            listFunctionsUsedByOperation(inputs.program, index, value, used);
+            listFunctionsUsedByOperation(inputs.program, inputs.facts.linked(), unit.function, index, value, used);
             look(value.opcode() == Opcode::PutModuleVariable ? value.variable() : VariableID());
             if (!isEntryBlock || value.opcode() != Opcode::PutModuleVariable)
                 continue;
@@ -1148,7 +1184,7 @@ static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs
             if (made && (index.isParameter(made) || index.value(made).opcode() != Opcode::Absent))
                 stored.add(value.variable().index());
         }
-        listFunctionsUsedBy(inputs.program, index, block.terminator(), true, true, VariableID(), used);
+        listFunctionsUsedBy(inputs.program, inputs.facts.linked(), unit.function, index, block.terminator(), true, 0, used);
         look(VariableID());
         isEntryBlock = false;
     });
@@ -1207,6 +1243,8 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         Opcode::NewClosure, Opcode::NewRegExp, Opcode::NewClass, Opcode::NewClassToken, Opcode::ResolveHeritage, Opcode::DefineMethod, Opcode::FinishClass,
     };
     if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || (inputs.facts.isTakenToRunOnce(unit.function) && !isBodyWrittenInAnotherFile(inputs.program, unit.function)))
+        return false;
+    if (inputs.facts.beforeEvaluation().holdsIn(unit.function))
         return false;
     if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function))
         return false;
@@ -1310,6 +1348,13 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     RELEASE_ASSERT(m_walker->arrivalsHeld().empty());
     work.setStep("emit"_s);
     const Code& swept = m_walker->code();
+    uint32_t slices = m_walker->foldedSliceCount();
+    Vector<Walker::CountOfUnit, 4> counts(m_walker->countsOfUnit());
+    static constexpr uint32_t mostValuesWithWalker = 1 << 16;
+    if (swept.numberOfValues() > mostValuesWithWalker) {
+        m_walker = makeWalker(RoomOfFormerWalker::IsLeft);
+        m_roomsOfSweep = makeUniqueWithoutFastMallocCheck<RoomsOfSweep>();
+    }
     CompiledCode code = generateCode(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, swept, m_totals);
     std::optional<uint64_t> instructionsAfterEncoding = instructionsOfCompileThreadSoFar(m_build);
     if (instructionsAtStart && instructionsAfterSweep && instructionsAfterEncoding) {
@@ -1328,9 +1373,9 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
 
     Statistics& statistics = m_build.statistics();
     statistics.count(StatisticID::UnitsCompiled);
-    if (uint32_t slices = m_walker->foldedSliceCount())
+    if (slices)
         statistics.count(StatisticID::SlicesFoldedToArrayLiterals, slices);
-    for (const Walker::CountOfUnit& count : m_walker->countsOfUnit())
+    for (const Walker::CountOfUnit& count : counts)
         statistics.count(count.statistic, count.amount);
     if (uint32_t blocks = swept.numberOfBlocksPlacedOtherwise()) [[unlikely]]
         statistics.count(StatisticID::BlocksPlacedOtherwise, blocks);

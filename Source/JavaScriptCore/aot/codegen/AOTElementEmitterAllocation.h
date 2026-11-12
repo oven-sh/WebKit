@@ -35,7 +35,9 @@ public:
     CellPointer allocateArrayOfHolesAtSite(const ValueContext&, Integer length, const ArrayStorageForm& seed, Pointer profile, LBasicBlock slowPath);
     CellPointer bearArrayOfLength(const OperationContext&, const ArrayStorageForm&, Integer length);
     CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);
-    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
+    std::optional<Pointer> emptyArraySiteProfile(Origin);
+    void countEmptyArrayAtSite(const OperationContext&, Pointer profile, CellPointer list);
+    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, std::optional<Pointer> profile, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
     void setLengthOfNewArray(CellPointer, Integer length);
 
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);
@@ -45,6 +47,7 @@ private:
 
     CellPointer newLiteralWithHoles(const ValueContext&);
     std::optional<Integer> takeRoomAskedRightBehind(const ValueContext&);
+    std::optional<EmptyArray> emptyArrayWithPushCapacity(BlockID, ValueID literal);
     ArrayStorage storageThatLiteralNames(ValueID literal, const Operation&);
     struct AppendedBehindSpread {
         uint32_t room { 0 };
@@ -53,7 +56,13 @@ private:
     std::optional<AppendedBehindSpread> findWhatIsAppendedBehindSpread(BlockID, ValueID literal, ValueID spread);
     CellPointer newLiteralWithRoom(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, Integer room);
     CellPointer newLiteralAtSite(const ValueContext&, const ArrayStorageForm& seed, std::span<const uint32_t> site);
-    CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
+    CellPointer newNumberLiteral(const OperationContext&, std::span<const ValueID> elements);
+    CellPointer newLiteralOfRawElements(const OperationContext&, const ArrayStorageForm&, std::span<const Operand> rawElements);
+    Word32 shapeAtSite(Pointer profile);
+    RawElements numbersOf(std::span<const Operand> int32s);
+    std::optional<Pointer> numberLiteralProfile(const OperationContext&);
+    CellPointer newProfiledInt32Literal(const OperationContext&, std::span<const ValueID> elements, std::span<const Operand> int32s, Pointer profile);
+    CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, bool hasPropertyRoom = false);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray = nullptr);
     const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray);

@@ -23,6 +23,7 @@
 namespace JSC {
 
 class CallFrame;
+class IdentifierArena;
 class JSGlobalObject;
 class JSObject;
 class JSString;
@@ -116,6 +117,8 @@ public:
     template<typename Visitor> void visitAggregate(Visitor&);
 
     void didChangeInstances();
+    Instance* findInstanceThatLendsTables() const;
+    void lendTablesOfLivingInstances();
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
@@ -140,6 +143,7 @@ public:
     std::unique_ptr<FunctionTables> functionTables;
     std::unique_ptr<CyclesOfImports> cyclesOfImports;
     std::unique_ptr<ImportersOfModules> importersOfModules;
+    std::optional<Vector<uint32_t>> modulesWithQuery;
     std::unique_ptr<ReexportedNames> reexportedNames;
     PlacesSeenByPlans placesSeenByPlans;
     std::unique_ptr<RegExpLiterals> regExpLiterals;
@@ -165,6 +169,7 @@ public:
     bool somePrivateNameLiesBesideFields { false };
     bool someTextKnowsPrivateNames { false };
     JSObject* classPrototypeBeingDefined { nullptr };
+    JSObject* unobservedClassHolder { nullptr };
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     Modules* modulesWithEagerLoads { nullptr };
     uintptr_t structureIDBase { 0 };
@@ -189,6 +194,9 @@ public:
     bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
+    std::unique_ptr<IdentifierArena> identifiersOfLastSource;
+    size_t lengthOfSourcesSincePrune { 0 };
+    void didParseSource(VM&, size_t length, std::unique_ptr<IdentifierArena>&&);
     CountedFiles countedFiles;
     struct ComputedFunctionName {
         Weak<JSString> name;
@@ -210,6 +218,7 @@ public:
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
+    Vector<JSGlobalObject*> realmsWithBorrowedTables;
     StructuresWithFastIndexing structuresWithFastIndexing;
     PolledInstances polledInstances;
     uint32_t momentOfLoads { 0 };

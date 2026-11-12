@@ -97,6 +97,7 @@ private:
     mutable Vector<uint32_t> m_acceptedStructureIDs;
     Allocator m_allocator;
     size_t m_allocationSize { 0 };
+    uint8_t m_acceptedByConsecutiveWords { 0 };
     bool m_namesEveryFieldOfBirth { false };
 };
 
@@ -108,7 +109,7 @@ public:
     static std::unique_ptr<ObjectBuilderPlan> tryCreatePlan(State&, const LayoutData&, std::span<UniquedStringImpl* const> names);
     static std::unique_ptr<ObjectBuilderPlan> tryCreatePlanOfSmallestRecord(State&, std::span<UniquedStringImpl* const> names, bool (*accepts)(const ObjectBuilderPlan&));
 
-    static JSObject* tryBuild(VM&, const ObjectBuilderPlan&, Structure*, const EncodedJSValue* values);
+    static JSObject* tryBuild(VM&, const ObjectBuilderPlan&, Structure*, const EncodedJSValue* values, const uint8_t* kinds, uint8_t kindsOfAll);
 
 private:
     static bool tryStoreSlow(const ObjectBuilderPlan&, uint8_t* cell, size_t index, JSValue);

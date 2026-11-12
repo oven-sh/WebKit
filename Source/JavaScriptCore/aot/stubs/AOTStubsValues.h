@@ -17,17 +17,17 @@ enum class Equality : uint8_t { Loose, Strict, StrictInFlags };
 
 constexpr StubKey toBoolean() { return StubKey(StubFamily::ToBoolean); }
 constexpr StubKey valueIsTruthy() { return StubKey(StubFamily::ValueIsTruthy); }
+constexpr StubKey isCallableCell() { return StubKey(StubFamily::IsCallableCell); }
+constexpr StubKey typeofString() { return StubKey(StubFamily::TypeOf); }
 constexpr StubKey throwUnlessCallable() { return StubKey(StubFamily::ThrowUnlessCallable); }
 constexpr StubKey checkProofOfKinds() { return StubKey(StubFamily::CheckProofOfKinds); }
 constexpr StubKey checkProofOfType() { return StubKey(StubFamily::CheckProofOfType); }
 constexpr StubKey throwUnlessForwardedCallCanBeMade() { return StubKey(StubFamily::ThrowUnlessForwardedCallCanBeMade); }
 constexpr StubKey equal(bool isStrict) { return StubKey(StubFamily::Equal).withForm(static_cast<uint8_t>(isStrict ? Equality::Strict : Equality::Loose)); }
-constexpr StubKey equalOfNullableStrings(bool isStrict) { return equal(isStrict).withFamily(StubFamily::EqualOfNullableStrings); }
 constexpr StubKey strictEqualInFlags() { return StubKey(StubFamily::Equal).withForm(static_cast<uint8_t>(Equality::StrictInFlags)); }
 
-static_assert(exists(toBoolean()) && exists(valueIsTruthy()) && exists(throwUnlessCallable()) && exists(throwUnlessForwardedCallCanBeMade()) && exists(checkProofOfKinds()) && exists(checkProofOfType()));
+static_assert(exists(toBoolean()) && exists(valueIsTruthy()) && exists(isCallableCell()) && exists(typeofString()) && exists(throwUnlessCallable()) && exists(throwUnlessForwardedCallCanBeMade()) && exists(checkProofOfKinds()) && exists(checkProofOfType()));
 static_assert(exists(equal(false)) && exists(equal(true)) && exists(strictEqualInFlags()));
-static_assert(bodyOf(equalOfNullableStrings(false)) == equal(false) && bodyOf(equalOfNullableStrings(true)) == equal(true));
 static_assert(!exists(equal(true).withForm(static_cast<uint8_t>(Equality::StrictInFlags) + 1)));
 
 constexpr StubSignature signatureWithFlagsResult(std::initializer_list<Reg> operandRegisters, MacroAssembler::ResultCondition trueCondition)

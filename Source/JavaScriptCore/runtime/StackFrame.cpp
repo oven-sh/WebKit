@@ -406,7 +406,7 @@ ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor)
         auto position = AOT::positionOf(compiledFrame->frame);
         fullSourceURL = AOT::sourceProviderURLOf(compiledFrame->frame, position);
         if (!fullSourceURL.isEmpty() && position && position->source)
-            fullSourceURL = AOT::displayPathOf(position->source);
+            fullSourceURL = AOT::displayPathOf(*position);
         hasLineAndColumnInfo = true;
         if (position)
             lineColumn = position->lineColumn;

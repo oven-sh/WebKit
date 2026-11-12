@@ -124,6 +124,13 @@ const TypeTestPlan& OperationEmitter::typeTestPlanFor(TypeID from, Representatio
     return emitter<TypeTestEmitter>().planFor(from, representation, to);
 }
 
+Word32 OperationEmitter::int32InBox(Boxed value)
+{
+    if (const OperationContext* context = emittersCheckProofs() ? generator().contextBeingGenerated() : nullptr)
+        emitter<ThrowEmitter>().requireOrCrash(*context, isInt32(value), value, ProofSource::OtherOperation);
+    return unboxInt32(value);
+}
+
 Condition OperationEmitter::hasType(Operand operand, const TypeTestPlan& plan)
 {
     return emitter<TypeTestEmitter>().emitBoolean(operand, plan);
@@ -258,12 +265,23 @@ std::optional<NumberedImmediate> OperationEmitter::answersAtSite(const Operation
 
 std::optional<NumberedImmediate> OperationEmitter::answersAtSite(Origin origin, PropertyKeyID key, SiteUse use)
 {
+    return isAnsweredAtUse(origin, key, MentionList::firstUseOfSiteAnswers + static_cast<uint32_t>(use));
+}
+
+std::optional<NumberedImmediate> OperationEmitter::presenceTestSiteAnswers(Origin origin, PropertyKeyID key)
+{
+    static_assert(MentionList::useOfPresenceTests > MentionList::firstUseOfSiteAnswers + static_cast<uint32_t>(SiteUse::ReadUnderNameOfField));
+    return isAnsweredAtUse(origin, key, MentionList::useOfPresenceTests);
+}
+
+std::optional<NumberedImmediate> OperationEmitter::isAnsweredAtUse(Origin origin, PropertyKeyID key, uint32_t use)
+{
     if (liesInThread(key))
         return std::nullopt;
     std::optional<Vector<uint32_t, 12>> places = modulesAndPositionsOf(origin);
     if (!places)
         return std::nullopt;
-    return NumberedImmediate { m_mentions.siteCache(WTF::move(*places), key, MentionList::firstUseOfSiteAnswers + static_cast<uint32_t>(use)) };
+    return NumberedImmediate { m_mentions.siteCache(WTF::move(*places), key, use) };
 }
 
 } } } // namespace JSC::AOT::Typed

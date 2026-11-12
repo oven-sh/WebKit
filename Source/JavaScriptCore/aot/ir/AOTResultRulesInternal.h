@@ -18,10 +18,12 @@ TypeID naturalTypeOfOperands(const TypingContext&, Opcode, NaturalTable, Operand
 TypeID numberResultOf(TypeArena&, Opcode, OperandTypes);
 TypeID integerQuotientType(TypeArena&, Range dividends, Range divisors, QuotientRounding);
 TypeID wholeRemainderType(TypeArena&, Range dividends, Range divisors);
+TypeID wholeProductType(TypeArena&, Range multiplicands, Range multipliers);
+std::optional<Range> rangeOfProduct(Range multiplicands, Range multipliers);
 
 inline constexpr OpcodeSet opcodesRefinedBeyondFixedNatural {
     Opcode::URShift, Opcode::ToNumber, Opcode::StrictEq, Opcode::ToBoolean, Opcode::LogicalNot, Opcode::ToString, Opcode::ToPropertyKey,
-    Opcode::ToObject, Opcode::ToThis, Opcode::TypeTest, Opcode::GetTypedArrayElement, Opcode::GetTypedArrayLength, Opcode::GetStringLength, Opcode::DivideIntegers, Opcode::RemainderOfIntegers, Opcode::RemainderByReciprocal, Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::ToInt32,
+    Opcode::ToObject, Opcode::ToThis, Opcode::TypeTest, Opcode::GetTypedArrayElement, Opcode::GetTypedArrayLength, Opcode::GetMirroredLength, Opcode::GetDataViewElement, Opcode::GetStringLength, Opcode::DivideIntegers, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::MultiplyAddIntegers, Opcode::RemainderByReciprocal, Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::ToInt32,
     Opcode::ToUint32, Opcode::ToIntegerOrInfinity, Opcode::ToLength, Opcode::IntegerBound, Opcode::GetSuperBase
 };
 inline const OpcodeSet& opcodesWithNaturalTypeRefinedByOperation() { return opcodesRefinedBeyondFixedNatural; }

@@ -97,6 +97,7 @@ static LValue memoryTestValueOfType(TestProcedure& test, unsigned argument, Type
         return out.bitCast(out.castToInt32(bits), Float);
     case Double:
         return out.bitCast(bits, Double);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -375,9 +376,13 @@ static void checkAddressWithTwoUsesInMemoryTest(MemoryTestSecondUse secondUse)
     compileOrFail(test);
 
     const Liveness& liveness = test.procedure().liveness();
-    AOT_TEST_CHECK(usedTwice->useCount() == 2);
-    AOT_TEST_CHECK(!liveness.isFused(usedTwice));
-    AOT_TEST_CHECK(liveness.isFused(shifted) == (usedTwice == address) && addsScaledIndex(liveness, address) == (usedTwice == address));
+    if (isX86_64() && secondUse == MemoryTestSecondUse::BySecondAccess)
+        AOT_TEST_CHECK(address->useCount() == 1 && liveness.isFused(address));
+    else {
+        AOT_TEST_CHECK(usedTwice->useCount() == 2);
+        AOT_TEST_CHECK(!liveness.isFused(usedTwice));
+        AOT_TEST_CHECK(liveness.isFused(shifted) == (usedTwice == address) && addsScaledIndex(liveness, address) == (usedTwice == address));
+    }
     AOT_TEST_CHECK(test.call<uint64_t>(bytes.middle(), int64_t { 2 }) == answer);
     bytes.expectSameAs(expected, "an address with two uses");
 }
@@ -410,6 +415,28 @@ static void testMemoryExtensionOfIndexIsFusedWhereRegisterHoldsIt()
         uint64_t words[4] = { 10, 11, 12, 13 };
         AOT_TEST_CHECK(test.call<uint64_t>(&words[0], uint64_t { 0xdeadbeef00000001 }) == (upperHalfIsClear ? 12u : 11u));
     }
+}
+
+static void testMemoryAliasedAddresses()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue base = test.argumentGPR(0);
+    LValue other = test.argumentGPR(1);
+    LValue index = out.bitAnd(out.castToInt32(test.argumentGPR(2)), out.constInt32(3));
+    LValue extended = out.zeroExtPtr(index);
+    LValue first = out.load64(out.address(test.heaps().root, out.add(base, out.shl(extended, 3))));
+    LValue second = out.load32(out.address(test.heaps().root, out.add(other, out.shl(extended, 2))));
+    out.ret(out.add(out.add(first, out.zeroExtPtr(second)), extended));
+    compileOrFail(test);
+
+    AOT_TEST_CHECK(extended->opcode() == ZExt32 && extended->useCount() > 1);
+    const Liveness& liveness = test.procedure().liveness();
+    AOT_TEST_CHECK(liveness.isFused(first->child(0)) && liveness.isFused(second->child(0)) && liveness.isFused(extended));
+
+    uint64_t words[4] = { 10, 11, 12, 13 };
+    uint32_t others[4] = { 100, 200, 300, 400 };
+    AOT_TEST_CHECK(test.call<uint64_t>(&words[0], &others[0], uint64_t { 0xdeadbeefdeadbee2 }) == 12 + 300 + 2);
 }
 
 static void testMemoryNumberIsMadeOfLowHalfOfRegister()
@@ -1300,6 +1327,7 @@ std::span<const NativeTest> machineMemoryTests()
         { "machine/memory/table-of-the-image-is-the-base-of-an-indexed-load"_s, Machine::testMemoryTableOfImageIsBaseOfIndexedLoad },
         { "machine/memory/address-with-two-uses-is-not-fused"_s, Machine::testMemoryAddressWithTwoUsesIsNotFused },
         { "machine/memory/extension-of-an-index-is-fused-where-the-register-holds-it"_s, Machine::testMemoryExtensionOfIndexIsFusedWhereRegisterHoldsIt },
+        { "machine/memory/several-addresses-name-one-word"_s, Machine::testMemoryAliasedAddresses },
         { "machine/memory/number-is-made-of-the-low-half-of-a-register"_s, Machine::testMemoryNumberIsMadeOfLowHalfOfRegister },
         { "machine/memory/comparison-with-a-constant-reads-the-load-where-it-lies"_s, Machine::testMemoryComparisonReadsLoadWhereItLies },
         { "machine/memory/bit-test-reads-the-load-where-it-lies"_s, Machine::testMemoryBitTestReadsLoadWhereItLies },

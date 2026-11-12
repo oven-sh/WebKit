@@ -56,7 +56,7 @@ namespace JSC { namespace AOT {
 
 using namespace Typed;
 
-enum class Subcommand : uint8_t { All, Run, Native, List, Command, Print, Compile, WriteOut, FuzzAllocation };
+enum class Subcommand : uint8_t { All, Run, Native, List, Command, Print, Compile, WriteOut, FuzzAllocation, FuzzExecution };
 
 struct SubcommandEntry {
     ASCIILiteral name;
@@ -77,6 +77,7 @@ static constexpr ASCIILiteral commandFlags[] { programOfTagFlag };
 static constexpr ASCIILiteral printFlags[] { wireFlag, programOfTagFlag };
 static constexpr ASCIILiteral compileFlags[] { "--output"_s, programOfTagFlag };
 static constexpr ASCIILiteral fuzzAllocationFlags[] { "--seed"_s, "--count"_s, "--blocks"_s, "--show"_s };
+static constexpr ASCIILiteral fuzzExecutionFlags[] { "--seed"_s, "--count"_s, "--checked"_s, "--unchecked"_s, "--show"_s };
 
 static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
@@ -88,6 +89,7 @@ static constexpr SubcommandEntry subcommandEntries[] {
     { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word | statistic } [mechanisms=<list>] [--program-of-tag]"_s },
     { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
     { "fuzz-allocation"_s, Subcommand::FuzzAllocation, fuzzAllocationFlags, "[--seed=<n>] [--count=<n>] [--blocks=<n>] [--show=<seed>]"_s },
+    { "fuzz-execution"_s, Subcommand::FuzzExecution, fuzzExecutionFlags, "[--seed=<n>] [--count=<n>] [--checked] [--unchecked] [--show=<seed>]"_s },
 };
 
 static const SubcommandEntry* findSubcommand(StringView name)
@@ -525,6 +527,8 @@ int main(int argc, char** argv)
         return runWriteOutSubcommand(arguments);
     case Subcommand::FuzzAllocation:
         return runFuzzAllocationSubcommand(arguments);
+    case Subcommand::FuzzExecution:
+        return runFuzzExecutionSubcommand(arguments);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

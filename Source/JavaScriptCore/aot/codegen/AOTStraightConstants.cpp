@@ -21,6 +21,7 @@
 #include "AOTStringTable.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsAllocation.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsClosures.h"
 #include "AOTStubsConstants.h"
 #include "AOTTypeArena.h"
@@ -54,6 +55,7 @@ static void generateStringConstant(StraightEmitter& emitter, const BodyValue& va
     if (text.empty())
         jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), cell);
     else if (std::optional<uint8_t> character = singleLatin1CharacterInStraightForm(text)) {
+        emitter.recordInlined(text);
         jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(singleCharacterStrings)), cell);
         jit.loadPtr(CCallHelpers::Address(cell, *character * sizeof(JSString*)), cell);
     } else
@@ -179,6 +181,11 @@ static bool tableOfImageHoldsDataInStraightForm(StraightEmitter& emitter, const 
 static void generateData(StraightEmitter& emitter, const BodyValue& value)
 {
     DataID data = value.data();
+    if (const auto* array = emitter.program().at(data).root.tryAs<DataNode::Array>(); array && array->elements.isEmpty()) {
+        emitter.callStub(value, arrayLiteral(0), { });
+        emitter.define(value);
+        return;
+    }
     if (!tableOfImageHoldsDataInStraightForm(emitter, emitter.program().at(data).root) || !constantListsFieldsHeldFilledInSlots(emitter.program(), emitter.facts().linked(), emitter.plan().slots(), data)) {
         emitter.fail(value);
         return;

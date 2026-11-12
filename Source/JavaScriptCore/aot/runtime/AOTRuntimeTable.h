@@ -42,6 +42,8 @@ enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
     v(CallLinkInfoForCall) \
     v(VirtualCallTrampoline) \
     v(ErrorConstructorClassInfo) \
+    v(ArrayConstructorClassInfo) \
+    v(ObjectConstructorClassInfo) \
     v(BooleanConstructorClassInfo) \
     v(CustomGetterClassInfo) \
     v(NumberConstructorClassInfo) \
@@ -144,6 +146,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
 
 #define FOR_EACH_AOT_OPERATION_IN_FAMILY(v) \
     v(SelfCheckOperations, CountExecution) \
+    v(ProxyOperations, FinishAccessThroughProxy) \
     v(ProxyOperations, FinishHasThroughProxy) \
     v(ProxyOperations, FinishSetThroughProxy) \
     v(ProxyOperations, GetWithProxyTrap) \
@@ -242,6 +245,9 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(PromiseOperations, PromiseAll) \
     v(PromiseOperations, PromiseCatch) \
     v(PromiseOperations, PromiseThen) \
+    v(PromiseOperations, NewReactionChain) \
+    v(PromiseOperations, StartReactionChain) \
+    v(PromiseOperations, StartReactionChainOfValue) \
     v(PromiseOperations, RejectPromise) \
     v(PromiseOperations, ResolvePromise) \
     v(PromiseOperations, ResolvePromiseOrReturnResult) \
@@ -253,6 +259,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(MapAndSetOperations, NewSet) \
     v(MapAndSetOperations, NewSetFromIterable) \
     v(MapAndSetOperations, NewSetIterator) \
+    v(MapAndSetOperations, NextSetElement) \
+    v(MapAndSetOperations, ReserveTableCapacity) \
     v(MapAndSetOperations, SetClear) \
     v(MapAndSetOperations, SetNext) \
     v(MapAndSetOperations, TryNewMapFromEntries) \
@@ -268,6 +276,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(PropertyEnumerationOperations, EnumeratorGetByVal) \
     v(PropertyEnumerationOperations, EnumeratorNext) \
     v(PropertyEnumerationOperations, GetPropertyEnumerator) \
+    v(PropertyEnumerationOperations, IsPrototypeOf) \
     v(PropertyEnumerationOperations, ObjectEntries) \
     v(PropertyEnumerationOperations, ObjectValues) \
     v(PropertyEnumerationOperations, OwnPropertyKeys) \
@@ -294,8 +303,12 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayMutationOperations, ArrayOfLengthOrElement) \
     v(ArrayMutationOperations, ArraySpeciesCreate) \
     v(ArrayMutationOperations, ArraySplice) \
+    v(ArrayMutationOperations, ArraySpliceDiscarding) \
     v(ArrayMutationOperations, ArrayUnshift) \
+    v(ArrayMutationOperations, SortByKeys) \
+    v(ArrayMutationOperations, SortKeyArray) \
     v(ArrayMutationOperations, SortNumbers) \
+    v(ArrayMutationOperations, ShiftArrayStart) \
     v(ArrayMutationOperations, SetArrayLength) \
     v(ArrayMutationOperations, SetArrayLengthInSloppyCode) \
     v(ArraySearchOperations, ArrayIndexOfDouble) \
@@ -312,20 +325,24 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayCreationOperations, ArrayPutAtNumber) \
     v(ArrayCreationOperations, ArrayPutNumberAtIndex) \
     v(ArrayCreationOperations, ConvertToDoubleStorage) \
+    v(ArrayCreationOperations, CopyElements) \
+    v(ArrayCreationOperations, CopyElementsDown) \
+    v(ArrayCreationOperations, FillElements) \
     v(ArrayCreationOperations, DestructureIterable) \
+    v(ArrayCreationOperations, GrowFilledArray) \
     v(ArrayCreationOperations, NewArgumentList) \
     v(ArrayCreationOperations, NewArrayAtReviewedSite) \
     v(ArrayCreationOperations, NewArrayFromDoubles) \
     v(ArrayCreationOperations, NewArrayIterator) \
     v(ArrayCreationOperations, NewArrayOfGiven) \
-    v(ArrayCreationOperations, NewArrayOfHoles) \
     v(ArrayCreationOperations, NewArrayOfList) \
-    v(ArrayCreationOperations, NewArrayWithHoles) \
+    v(ArrayCreationOperations, NewArrayOfView) \
     v(ArrayCreationOperations, NewArrayWithHolesAtSite) \
     v(ArrayCreationOperations, NewArrayWithLengthAtReviewedSite) \
     v(ArrayCreationOperations, NewArrayWithIndexingType) \
     v(ArrayCreationOperations, ReadsIteratorOfListUnseen) \
     v(ArrayCreationOperations, ReserveArrayCapacity) \
+    v(ArrayCreationOperations, ReviewArraySite) \
     v(ArrayCreationOperations, ThrowIfTooLongForList) \
     v(ArrayCreationOperations, ThrowNotIterable) \
     v(ArrayCreationOperations, TruncateNewArray) \
@@ -348,12 +365,15 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(StringCreationOperations, NumberToStringWithRadix) \
     v(StringCreationOperations, ObjectToStringOfAnyValue) \
     v(StringCreationOperations, StringOfAnyValue) \
+    v(StringCreationOperations, StringOfCodeUnits) \
     v(StringCreationOperations, StringPad) \
     v(StringCreationOperations, StringRepeat) \
     v(StringCreationOperations, ToString) \
     v(StringComparisonOperations, CompareStrings) \
     v(StringComparisonOperations, NarrowCharactersOfString) \
     v(StringComparisonOperations, StringCodeUnitAt) \
+    v(StringComparisonOperations, TryResolveRope) \
+    v(StringComparisonOperations, StringEqualsCharacters) \
     v(StringComparisonOperations, StringEqualsLiteral) \
     v(StringComparisonOperations, StringEqualsLiteralInRegister) \
     v(StringComparisonOperations, StringsAreEqual) \
@@ -450,6 +470,8 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTRegExpMatchLiteral:
     case Entry::operationAOTRegExpMatchLiteralWithoutObject:
     case Entry::operationAOTRegExpMatchInParts:
+    case Entry::operationAOTRegExpMatchArray:
+    case Entry::operationAOTCopyRegExpMatch:
     case Entry::operationAOTNewRegExpLiteral:
     case Entry::operationAOTSharedRegExpLiteral:
     case Entry::operationAOTCopyOfSharedRegExpLiteral:
@@ -459,6 +481,7 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTStringReplaceRegExp:
     case Entry::operationAOTStringReplaceAllRegExp:
     case Entry::operationAOTStringReplaceRegExpString:
+    case Entry::operationAOTStringLengthWithoutMatches:
     case Entry::operationAOTStringReplaceRegExpWithFunction:
     case Entry::operationAOTStringSplitRegExp:
     case Entry::operationAOTStringMatchRegExp:
@@ -523,7 +546,7 @@ private:
     uint32_t m_compactTableIterationEntry { 0 };
 };
 
-inline constexpr int64_t noOrderOfStringsInPlace = 2;
+inline constexpr int64_t cannotCompareInline = 2;
 
 } } // namespace JSC::AOT
 

@@ -11,6 +11,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
 #include "AOTWalkNumberForms.h"
+#include "AOTWalkResultsInParts.h"
 #include "AOTWalkStrings.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -51,7 +52,7 @@ static ALWAYS_INLINE TypeID typeOfReceiverBehindCheckInWalkTyped(Walker& walker,
     return walker.types().withoutNullish(typeOfReceiver);
 }
 
-static Reference tryHoistNullishCheck(Walker& walker, const BodyValue& access, Reference receiver)
+Reference tryHoistNullishCheck(Walker& walker, const BodyValue& access, Reference receiver)
 {
     if (!walker.isInvariantInSpecializedVersion(receiver))
         return { };
@@ -115,6 +116,11 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
         if (const PropertyKey& key = walker.program().at(access.key()); key.kind == PropertyKeyKind::Text)
             check.setName(key.text);
     }
+    if ((opcode == Opcode::ElemGet || opcode == Opcode::ElemSet) && !isNeverType(rest) && walker.inBoundsPath()) {
+        check.setIsProvenByMirror(isProvenByViewMirror(walker, access, receiver, rest));
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
+    }
     if (walker.splitNullishOffWhatContainerHasJustGiven(receiver, rest, Draft(check)))
         return walker.isUnreachable() || walker.hasFailed();
     if (Reference checked = walker.build(WTF::move(check)); checked && receiver.isValue())
@@ -141,8 +147,11 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
             return true;
     }
     bool mayReadLength = true;
-    if constexpr (opcode == Opcode::PropGet)
+    if constexpr (opcode == Opcode::PropGet) {
+        if (buildLastIndexOfMatch(walker, walked))
+            return true;
         mayReadLength = readsUnderKeyInWalkTyped(value, walker.program().keyOf(BuiltinNames::length));
+    }
     if (mayReadLength && buildTypedOperationOnStrings(walker, value, InputsOfTypedOperation(walker, nullptr)))
         return true;
     if (accessFamiliesOfWalkTyped.contains(opcode) && buildTypedAccess(walker, value))

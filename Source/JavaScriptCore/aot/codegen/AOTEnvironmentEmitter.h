@@ -19,6 +19,7 @@ public:
     void generateMarkEnvironmentEscaped(const ValueContext&);
     void generateReleaseEnvironment(const ValueContext&);
     void markEnvironmentsThatClosureKeeps(const ValueContext& closure);
+    void markEnvironmentsKept(std::span<const ValueID> captures);
 
     Operand closureCapture(CellPointer closure, FunctionID, unsigned index);
     TypedPointer linkToNextCellHandedBack(CellPointer, LayoutID);

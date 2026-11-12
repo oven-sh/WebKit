@@ -5881,10 +5881,12 @@ private:
                                 indexForChecks, SpecAnyIntAsDouble, DoubleRep, originForChecks,
                                 Edge(edge.node(), Int52RepUse));
                         } else {
-                            UseKind useKind;
-                            if (edge->shouldSpeculateNumber())
-                                useKind = NumberUse;
-                            else
+                            // Only arithmetic may convert null, undefined, and booleans to numbers. A SetLocal
+                            // and a DoubleRepRealUse take the value as it is. Their child may be live without a
+                            // number prediction, for example a GetByVal whose value profile is empty.
+                            bool mayConvert = edge.useKind() == DoubleRepUse && node->op() != SetLocal;
+                            UseKind useKind = NumberUse;
+                            if (mayConvert && !edge->shouldSpeculateNumber())
                                 useKind = NotCellNorBigIntUse;
 
                             result = m_insertionSet.insertNode(

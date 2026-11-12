@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyFactsForTables.h"
 #include "AOTBuildContext.h"
 #include "AOTID.h"
@@ -22,7 +23,6 @@
 #include <optional>
 #include <span>
 #include <type_traits>
-#include <wtf/BitVector.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
@@ -200,12 +200,18 @@ struct AnswersAboutModules {
 
     Vector<OptionSet<Answer>> ofModules;
     Vector<VariableID> variablesThatHoldMocks;
+    Vector<VariableID> instanceVariables;
+    Vector<VariableID> instanceGuards;
+    Vector<VariableID> instanceAllocators;
+    Vector<VariableID> severalInstancesVariables;
     Vector<Directory> directories;
     Vector<uint32_t> directoryOf;
     Vector<StringID> pathOrNameOf;
     Vector<uint32_t> modulesOfUncompiledCode;
     Vector<uint32_t> compiledRuntimeFunctions;
 };
+
+class PreparedFunctionSources;
 
 struct TableInputs {
     const Typed::Program& program;
@@ -215,6 +221,7 @@ struct TableInputs {
     const BodyFactsForTables& bodyFacts;
     const CompileOptions& options;
     const BuildContext* build { nullptr };
+    const PreparedFunctionSources* functionSources { nullptr };
     mutable std::optional<AnswersAboutModules> answersAboutModules { };
 };
 
@@ -250,7 +257,9 @@ struct FieldsOfLayoutRecord {
 };
 
 struct FirstTableParts {
+    static constexpr uint32_t startOfTypes = roundUpToMultipleOf<8>(sizeof(ProgramTables));
     Vector<uint32_t> typeOffsets;
+    uint32_t shiftOfTypeNumbers { ProgramTables::shiftOfNearTypeNumbers };
     Vector<uint32_t> dataNodes;
     Vector<uint32_t> tablesInImage;
     Vector<uint64_t> shapeSetWords;
@@ -265,7 +274,9 @@ struct TableEncoder {
     uint32_t stringConstantNumber(StringID) const;
     uint32_t identifierNumber(PropertyKeyID, ASCIILiteral use, RowOwner = { }) const;
     uint32_t identifierNumberOfText(StringID, ASCIILiteral use, RowOwner = { }) const;
+    uint32_t identifierOrStringNumber(StringID) const;
     uint32_t typeOffset(TypeID) const;
+    uint16_t typeNumber(TypeID) const;
     uint32_t dataNodeOf(DataID) const;
     uint32_t entrypointOf(FunctionID, ASCIILiteral use, RowOwner = { }) const;
     std::optional<FunctionID> findEntrypoint(FunctionID) const;
@@ -284,8 +295,8 @@ struct TableEncoder {
     Vector<uint32_t> classesByParent;
     Vector<uint32_t> firstClassBelow;
     BitVector sidesWithClassGuardsHereOrBelow;
-    BitVector classesWithRecordsAllTheWayUp;
-    BitVector classesWhoseClassObjectsFindNoHasInstance;
+    Typed::BitVector classesWithRecordsAllTheWayUp;
+    Typed::BitVector classesWhoseClassObjectsFindNoHasInstance;
     BitVector classesWhosePrivateNamesTextsKnow;
 };
 
@@ -335,6 +346,7 @@ struct ClassRecordParts {
 void askRowsOfClassesForClassRecords(TableEncoder&);
 ClassRecordParts collectClassRecordParts(const TableEncoder&, LayoutID classLayout);
 Vector<ClassBelowWithGuardOfNameData> collectClassesBelowWithGuardsOfNames(const TableEncoder&);
+Vector<AssignedMemberData> collectAssignedMembers(const TableEncoder&);
 void groupClassesByParentInClassRecords(TableEncoder&, std::span<const LayoutID> parentsThatListClasses);
 void appendListsOfClassRecord(TableEncoder&, LayoutID classLayout, const std::array<Vector<uint32_t>, numberOfClassSides>& namedGuards, ClassData&);
 

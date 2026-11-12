@@ -4,10 +4,10 @@
 # LIBRARY: own
 # RUN: bytes f1:Body f2:Body
 # CHECK-LABEL: unit f1:Body
-# CHECK: Call Stub GetGlobalBinding.ScriptsAndGlobalObject
+# CHECK: argument thunk {{*}} GetGlobalBinding.ScriptsAndGlobalObject
 # CHECK-NOT: GetFreeName
 # CHECK-LABEL: unit f2:Body
-# CHECK: Call Stub GetGlobalBinding.ScriptsAndGlobalObject
+# CHECK: argument thunk {{*}} GetGlobalBinding.ScriptsAndGlobalObject
 # CHECK-NOT: GetFreeName
 # RUN(SHELL): run-in-shell globalThis.publish = (readIt, kindOfIt) => { const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } }; const warm = () => { let last; for (let i = 0; i < 200; i++) last = attempt(readIt) + "," + kindOfIt(); print(last); }; warm(); globalThis.counter = 1; warm(); counter = 2; warm(); globalThis.counter = 3; warm(); Object.defineProperty(globalThis, "counter", { value: "defined", writable: true, configurable: true }); warm(); Object.defineProperty(globalThis, "counter", { get() { return "getter"; }, configurable: true }); warm(); delete globalThis.counter; warm(); globalThis.counter = "again"; warm(); for (let i = 0; i < 200; i++) { globalThis.counter = i; if (readIt() !== i) print("wrong"); } warm(); };
 # SHELL: ReferenceError,undefined

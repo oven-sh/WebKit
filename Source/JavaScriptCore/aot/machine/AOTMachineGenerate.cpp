@@ -46,9 +46,13 @@ void prepareForGeneration(Procedure& procedure)
     if (runsChecks && !runCheckBeforeGeneration(procedure, validate))
         return;
 
+    if (procedure.holdsVectors() && !checkVectorsAcrossCalls(procedure)) [[unlikely]]
+        return;
+
     if (procedure.m_roomsThatBuildingLeaves) [[unlikely]]
         procedure.letGoOfWhatBuildingLeaves();
 
+    procedure.separateShiftsOfSums();
     threadJumps(procedure);
     if (procedure.failure())
         return;

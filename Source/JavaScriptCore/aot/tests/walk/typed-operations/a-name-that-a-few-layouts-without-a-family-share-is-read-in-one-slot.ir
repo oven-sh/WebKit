@@ -1,14 +1,14 @@
 # function weigh(e) { if (e.kind === "leaf") return e.value; if (e.kind === "pair") return weigh(e.left) + weigh(e.right); return -weigh(e.inner); }
 # weigh({ kind: "pair", left: { kind: "flip", inner: { kind: "leaf", value: 3 } }, right: { kind: "leaf", value: 4 } })
 # Nothing is written of `e`: three literals meet in the parameter, so Link says a set of three layouts, and no family holds them
-# A pair has three references: narrow they make its cell smaller, so its `kind` is narrow. A flip and a leaf gain nothing by it. The three are read through one set: `kind` is narrow in all
+# A pair has three references, and its cell gets smaller by two narrow ones: `kind` stays wide. A flip and a leaf gain nothing by narrow ones. The three are read through one set: `kind` is wide in all
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: layout L0 CompiledObject
-# PLAN: "kind" Cell32 Inline offset=[[tag]]
-# PLAN: layout L1 CompiledObject
-# PLAN: "kind" Cell32 Inline offset=[[tag]]
+# PLAN: "kind" JSValue Inline offset=[[tag]]
+# PLAN: layout L1 CompiledObject size=32
+# PLAN: "kind" JSValue Inline offset=[[tag]]
 # PLAN: layout L2 CompiledObject
-# PLAN: "kind" Cell32 Inline offset=[[tag]]
+# PLAN: "kind" JSValue Inline offset=[[tag]]
 # so the name has one place in all, the read has a typed form, and each comparison of the tag is a test of the shape: nothing is read, nothing stays closed
 # RUN(WALK): walk f1 mechanisms=all
 # WALK-LABEL: code f1:Body

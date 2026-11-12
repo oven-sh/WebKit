@@ -71,6 +71,7 @@ struct RegExpCode {
     PCRelativeReach reach { PCRelativeReach::Near };
     unsigned analysisLimitHits { 0 };
     bool hasElidedFrame { false };
+    bool isBitParallel { false };
     bool handsLongSearchesOver { false };
 };
 
@@ -86,6 +87,8 @@ public:
     void moveAddressOfData(std::span<const uint8_t>, GPRReg dest) final;
     MacroAssembler::Jump branchTestBuiltInClassTable(MacroAssembler::ResultCondition, GPRReg character, Yarr::CharacterClass::Table) final;
     MacroAssembler::Jump branchTestLatin1Table(MacroAssembler::ResultCondition, GPRReg character, const Yarr::CharacterClass::ByteTable&) final;
+    MacroAssembler::Jump branchTestLatin1Set(MacroAssembler::ResultCondition, GPRReg character, const WTF::BitSet<256>&);
+    uint8_t moveAddressOfLatin1Set(const WTF::BitSet<256>&, GPRReg dest);
     void canonicalizeLatin1(GPRReg character) final;
     bool tryLoadConstant(uint64_t, GPRReg dest) final;
     void callRoutine(const Yarr::SharedRoutine&) final;
@@ -120,6 +123,7 @@ struct CompiledRegExp {
     RegExpRecordForm form { RegExpRecordForm::NoMetadata };
     std::optional<RegExpDeclineReason> reason { };
     std::array<std::unique_ptr<RegExpCode>, 2> code { };
+    std::unique_ptr<RegExpCode> matcher { };
 };
 
 enum class RegExpCodeFor16BitSubjects : uint8_t {
@@ -151,6 +155,7 @@ struct RegExpSectionItem {
     enum class Kind : uint8_t {
         Body,
         DuplicateBody,
+        Matcher,
         Routine,
         Table,
     };
@@ -167,6 +172,7 @@ struct RegExpSection {
     Vector<uint8_t> bytes;
     uint32_t dataOffset { 0 };
     Vector<std::array<uint32_t, 2>> entries;
+    Vector<std::optional<uint32_t>> matchers;
     Vector<RegExpSectionItem> items;
 };
 

@@ -3,9 +3,12 @@
 # function run(n) { let last; for (let i = 0; i < n; i++) { last = scale({ x: i & 1 ? i : "odd" }); last = moved({ x: i & 1 ? i : "odd" }); } return last; }
 # Behind the test the second read of the property is the number that was tested, where no store stands between them.
 # RUN: walk f2 mechanisms=all
-# CHECK: Mul {{*}}form=Numbers
+# CHECK: = GetSlot {{*}}key="x"
+# CHECK-NOT: = GetSlot
+# CHECK: Mul {{*}}form=CheckedIntegers
 # RUN(MOVED): walk f3 mechanisms=all
 # MOVED-NOT: form=Numbers
+# MOVED-NOT: form=CheckedIntegers
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

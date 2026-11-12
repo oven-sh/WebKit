@@ -34,6 +34,7 @@ protected:
         , m_notCellMask(generator.pinned().notCellMask)
         , m_cellCageBase(generator.pinned().cellCageBase)
         , m_wordsOfInt32Elements(generator.pinned().wordsOfInt32Elements)
+        , m_narrowWordsOfIntegers(generator.pinned().narrowWordsOfIntegers)
         , m_owesFenceBehindStores(generator.owesFenceBehindStores())
     {
     }
@@ -159,12 +160,12 @@ protected:
     Integer zeroExtended(Word32 value) { return Integer(m_out.zeroExt(value.value(), Machine::Int64)); }
     Integer zeroExtended(Condition value) { return Integer(m_out.zeroExt(value.value(), Machine::Int64)); }
     Word32 low32(Integer value) { return Word32(m_out.castToInt32(value.value())); }
-    Word32 low32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 low32InWords(Integer value) { return Word32(m_out.lowWord(value.value())); }
     Word32 asWord32(Condition value) { return Word32(value.value()); }
     LValue countTrailingZerosOfNonZero(LValue bits);
 
     Condition isInt32(Boxed value) { return Condition(m_out.aboveOrEqual(value.value(), m_numberTag)); }
+    Condition isNotInt32(Boxed value) { return Condition(m_out.below(value.value(), m_numberTag)); }
     Condition isNumber(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_numberTag)); }
     Condition isCell(Boxed value) { return Condition(m_out.testIsZero64(value.value(), m_notCellMask)); }
     Condition isNotCell(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_notCellMask)); }
@@ -187,6 +188,7 @@ protected:
     Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), undefinedCell32)); }
     Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), minCell32)); }
     std::optional<Word32> narrowWordBehind(OptionalInteger);
+    void noteNarrowWord(OptionalInteger widened, Word32 word) { m_narrowWordsOfIntegers.set(widened.value(), word.value()); }
 
     Boxed boxInt32(Word32 value)
     {
@@ -263,6 +265,7 @@ protected:
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
     UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
+    UncheckedKeyHashMap<LValue, LValue>& m_narrowWordsOfIntegers;
     bool& m_owesFenceBehindStores;
 
 private:

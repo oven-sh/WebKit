@@ -41,6 +41,8 @@ public:
     void generateTryCopyFilledElements(const ValueContext&);
     void generateTryPutElements(const ValueContext&);
     void generateSortNumbers(const ValueContext&);
+    void generateSortByKeys(const ValueContext&);
+    void generateSortKeyArray(const ValueContext&);
     void generateTryFillNewArray(const ValueContext&);
     void generateTruncateNewArray(const ValueContext&);
 
@@ -56,6 +58,7 @@ private:
     Integer positionThatLibraryVouchesFor(const ValueContext&, const ArrayElements&, const ArrayStorageForm&, AccessVouchedFor);
     Integer countThatLibraryVouchesFor(const ValueContext&, Integer count, const ArrayElements& asked, const ArrayElements& vouchedFor, AccessVouchedFor);
     template<typename Functor> void forEachPositionBelow(Integer count, const Functor&);
+    void fillElements(const ArrayStorageForm&, const ArrayElements&, Integer length, Operand filler);
     Condition isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues);
     void newArrayOfForm(const ValueContext&, const ArrayStorageForm&);
     void newArrayOfHoles(const ValueContext&, Integer length, ValueID source, const ArrayStorageForm&, uint32_t flags);

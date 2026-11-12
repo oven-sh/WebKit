@@ -10,8 +10,8 @@
 # RUN: link functions calls fields members layouts mechanisms=all
 # CHECK: function f3 callers-known one-callee {{*}}result=string
 # CHECK: function f4 callers-known one-callee {{*}}result=int[0, 2147483647]
-# CHECK: field L0.0 "a" proven=i32 writers-known
-# CHECK: field L1.0 "b" proven=i32 writers-known
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known
+# CHECK: field L1.0 "b" proven=int[0, 2147483647] writers-known
 # CHECK: on-prototype L0 "m" function=f3
 # CHECK: on-prototype L1 "n" function=f4
 # CHECK: layout L0 {{*}}changes=[]

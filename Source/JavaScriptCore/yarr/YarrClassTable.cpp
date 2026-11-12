@@ -116,6 +116,11 @@ std::expected<ClassTable, ClassTableDecline> buildClassTable(const CharacterClas
     for (auto& run : runs) {
         char32_t end = std::min<char32_t>(run.end, limit - 1);
         for (char32_t character = run.begin; character <= end;) {
+            if (!(character % charactersInBlock) && end - character >= charactersInBlock - 1) {
+                pages[character / charactersInBlock].fill(std::numeric_limits<uint32_t>::max());
+                character += charactersInBlock;
+                continue;
+            }
             auto& word = pages[character / charactersInBlock][character % charactersInBlock / 32];
             if (!(character % 32) && end - character >= 31) {
                 word = std::numeric_limits<uint32_t>::max();
@@ -129,7 +134,12 @@ std::expected<ClassTable, ClassTableDecline> buildClassTable(const CharacterClas
 
     std::map<Block, uint16_t> blockIndexes;
     table.pageBlockIndexes.reserveInitialCapacity(pages.size());
-    for (auto& page : pages) {
+    for (size_t index = 0; index < pages.size(); ++index) {
+        const Block& page = pages[index];
+        if (index && page == pages[index - 1]) {
+            table.pageBlockIndexes.append(table.pageBlockIndexes.last());
+            continue;
+        }
         auto [entry, isNew] = blockIndexes.emplace(page, static_cast<uint16_t>(table.blocks.size()));
         if (isNew)
             table.blocks.append(page);

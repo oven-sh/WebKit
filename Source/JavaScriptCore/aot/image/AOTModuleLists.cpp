@@ -14,6 +14,8 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <utility>
 #include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
@@ -136,6 +138,7 @@ namespace {
 struct NumbersOfImageForModuleLists {
     uint32_t shownString(StringID id) const { return encoder.stringNumber(id); }
     uint32_t nameOfText(StringID text, ASCIILiteral use, ModuleID owner) const { return encoder.identifierNumberOfText(text, use, owner); }
+    uint32_t nameOfExport(StringID text) const { return encoder.identifierOrStringNumber(text); }
 
     uint32_t entryOfBody(FunctionID body, ModuleID owner) const
     {
@@ -166,6 +169,17 @@ struct NumbersOfImageForModuleLists {
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    SlotData slotOfField(LayoutID layout, uint32_t field) const
+    {
+        const Typed::PlacedSlot& slot = encoder.plan.slot(layout, field);
+        if (!slot.hasStorage()) {
+            if (encoder.plan.isInUse(layout))
+                encoder.fail("ExportedFieldWithoutSlot"_s, layout);
+            return { };
+        }
+        return slotAtOffsetForModuleLists(encoder, slot.offset, slot.representation);
     }
 
     bool hasWordOfModuleValue(ModuleID id) const
@@ -204,6 +218,8 @@ struct IDsNotedForModuleLists {
             names.strings.set(id);
             names.modulePathStrings.set(id);
         }
+        for (uint32_t id : namesOfExports)
+            names.strings.set(id);
         for (uint32_t id : textsNamedAsKeys)
             names.textsNamedAsKeys.set(id);
         for (uint32_t id : variables)
@@ -213,6 +229,7 @@ struct IDsNotedForModuleLists {
     }
 
     Vector<uint32_t> strings;
+    Vector<uint32_t> namesOfExports;
     Vector<uint32_t> textsNamedAsKeys;
     Vector<uint32_t> variables;
     Vector<uint32_t> functionsWithClosureCell;
@@ -228,6 +245,12 @@ struct NamesNotedForModuleLists {
     uint32_t nameOfText(StringID text, ASCIILiteral, ModuleID) const
     {
         noted.textsNamedAsKeys.append(text.index());
+        return 0;
+    }
+
+    uint32_t nameOfExport(StringID text) const
+    {
+        noted.namesOfExports.append(text.index());
         return 0;
     }
 
@@ -314,7 +337,7 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
             return;
     }
 
-    BitVector isRead = Typed::modulesThatHostAsksFor(program, true);
+    Typed::BitVector isRead = Typed::modulesThatHostAsksFor(program, true);
     auto read = [&](ModuleID module) {
         if (module)
             isRead.quickSet(module.index());
@@ -336,7 +359,7 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
     };
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         Typed::Module& module = program.modules[index];
-        if (isRead.quickGet(index) || module.kind != ModuleKind::SourceText || module.flags.containsAny(isKnownByPath))
+        if (isRead.quickGet(index) || module.kind != ModuleKind::SourceText || module.flags.containsAny(isKnownByPath) || module.exposesGlobalObject)
             continue;
         if (facts.isPathReadByOperation(ModuleID(index)))
             continue;
@@ -473,7 +496,7 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
     answers.pathOrNameOf = Vector<StringID>(numberOfModules);
     Typed::StronglyConnectedComponents componentsOfRequests;
     BitVector modulesOutsideCyclesOfImports;
-    BitVector functionsCalledByHost;
+    Typed::BitVector functionsCalledByHost;
     Vector<PiecesOfModulePath> piecesOfPaths(numberOfModules);
     Vector<uint8_t> hostEntersCodeOfRuntimeFunction(FillWith { }, numberOfRuntimeFunctions, static_cast<uint8_t>(false));
     Vector<Vector<uint32_t>> variablesThatHoldMocksInRanges(numberOfRangesOfIndices(numberOfVariables));
@@ -501,7 +524,7 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
         { static_cast<unsigned>(variablesThatHoldMocksInRanges.size()), [&](unsigned range) {
             auto [first, end] = boundsOfRangeOfIndices(range, numberOfVariables);
             for (size_t index = first; index < end; ++index) {
-                if (program.variables[index].flags.contains(Typed::VariableFlags::HoldsMock))
+                if (program.variables[index].flags.containsAny({ Typed::VariableFlags::HoldsMock, Typed::VariableFlags::HoldsInstance, Typed::VariableFlags::GuardsInstance, Typed::VariableFlags::AllocatesInstance, Typed::VariableFlags::HasSeveralInstances }))
                     variablesThatHoldMocksInRanges[range].append(static_cast<uint32_t>(index));
             }
         } },
@@ -510,9 +533,19 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
     markModulesNotWorthVisiting(program, componentsOfRequests, answers);
     numberDirectoriesOfModulePaths(modulesOutsideCyclesOfImports, piecesOfPaths.span(), answers);
     answers.variablesThatHoldMocks = Vector<VariableID>(numberOfModules);
+    answers.instanceVariables = Vector<VariableID>(numberOfModules);
+    answers.instanceGuards = Vector<VariableID>(numberOfModules);
+    answers.instanceAllocators = Vector<VariableID>(numberOfModules);
+    answers.severalInstancesVariables = Vector<VariableID>(numberOfModules);
     for (const Vector<uint32_t>& variables : variablesThatHoldMocksInRanges) {
         for (uint32_t index : variables) {
-            VariableID& first = answers.variablesThatHoldMocks[program.variables[index].module.index()];
+            OptionSet<Typed::VariableFlags> flags = program.variables[index].flags;
+            Vector<VariableID>& found = flags.contains(Typed::VariableFlags::HoldsInstance) ? answers.instanceVariables
+                : flags.contains(Typed::VariableFlags::GuardsInstance) ? answers.instanceGuards
+                : flags.contains(Typed::VariableFlags::AllocatesInstance) ? answers.instanceAllocators
+                : flags.contains(Typed::VariableFlags::HasSeveralInstances) ? answers.severalInstancesVariables
+                : answers.variablesThatHoldMocks;
+            VariableID& first = found[program.variables[index].module.index()];
             if (!first)
                 first = VariableID(index);
         }
@@ -553,6 +586,11 @@ static void setDisplayPathInModuleLists(const Typed::Program& program, ModuleID 
     lists.displayPaths.append({ Number24(id.index()), Number24(std::min(numbers.shownString(module.displayPath), Number24::max)) });
 }
 
+static bool mayRunAsOriginal(const Typed::Program& program, const Typed::Module& module)
+{
+    return module.kind == ModuleKind::CommonJs && module.body && program.at(module.body).syntax.contains(Typed::FunctionSyntax::MayRunAsOriginal);
+}
+
 template<typename Numbers>
 static ModuleData createRecordForModuleLists(const TableInputs& inputs, const AnswersAboutModules& answers, ModuleID id, const Numbers& numbers)
 {
@@ -569,7 +607,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     ModuleData entry { };
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
-    entry.bodyThrowsAtLoad = module.flags.contains(ModuleFlags::ThrowsAtLoad);
+    entry.throwsAtLoadOrIsReloadable = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::IsReloadable : ModuleFlags::ThrowsAtLoad);
     entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::IsImportableDuringEvaluation : module.kind == ModuleKind::Data ? ModuleFlags::LoaderReturnsNamespace : ModuleFlags::IsImportedAsNamespace);
     if (isModuleOfHost)
         entry.importedWhileItRunsOrAsNamespace = inputs.plan.hasRequireCacheValue(id);
@@ -591,6 +629,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind != ModuleKind::CommonJs && module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::RunsAgainAfterThrow },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsESModule), Flag::IsImportedAsESModule },
+        { mayRunAsOriginal(inputs.program, module), Flag::MayRunAsOriginal },
         { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::HasUnescapedExports },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::CachesEvaluationError), Flag::CachesEvaluationError },
         { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::BodyMayRunAgain },
@@ -630,6 +669,7 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
         return inputs.plan.variable(moduleExport.variable).isDescribedToRunTime;
     case ModuleExportKind::Namespace:
     case ModuleExportKind::Indirect:
+    case ModuleExportKind::Field:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -653,7 +693,7 @@ Vector<WriterOfExportData> listWritersOfExports(const TableInputs& inputs)
 }
 
 template<typename Numbers>
-static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, const Numbers& numbers, ModuleLists& lists)
+static void appendExportsToModuleLists(const TableInputs& inputs, const AnswersAboutModules& answers, ModuleID id, const Numbers& numbers, ModuleLists& lists)
 {
     const Typed::Program& program = inputs.program;
     uint32_t indexInRecord = 0;
@@ -663,11 +703,13 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
             continue;
         ModuleExportData entry { };
         entry.staysIn = moduleExport.isOmitted || (behind && inputs.facts.linked().exportsThatStayIn.get(behind.index()));
-        entry.name = numbers.nameOfText(moduleExport.name, "an export of"_s, id);
+        entry.name = numbers.nameOfExport(moduleExport.name);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
         entry.isHiddenUntilInitialized = moduleExport.isHiddenUntilInitialized;
+        if ((moduleExport.link || moduleExport.requested) && moduleExport.importName)
+            numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, id);
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
             entry.variable = numbers.slotOfVariable(moduleExport.variable);
@@ -675,18 +717,38 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
             break;
         case ModuleExportKind::Namespace:
             entry.module = moduleExport.module.index();
+            if (moduleExport.importName)
+                numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, id);
             break;
         case ModuleExportKind::Indirect:
             entry.indirectExport = static_cast<uint32_t>(lists.indirectExports.size());
             lists.indirectExports.append({ moduleExport.module.index(), numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, id) });
             break;
+        case ModuleExportKind::Field: {
+            Typed::FieldReference exported { moduleExport.layout, *moduleExport.field };
+            std::span<const Typed::FieldReference> exportedFields = program.exportedFields();
+            entry.exportedField = static_cast<uint32_t>(std::ranges::lower_bound(exportedFields, exported) - exportedFields.begin());
+            entry.isReplaceable = Typed::fieldAt(program, exported).flags.contains(Typed::FieldFlags::IsReplaceable);
+            if (moduleExport.importName)
+                numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, id);
+            break;
+        }
         }
         lists.exports.append(entry);
     }
-    if (variableThatHoldsMock) {
+    const std::pair<VariableID, uint32_t> hiddenVariables[] = {
+        { answers.variablesThatHoldMocks[id.index()], ModuleExportData::kindBitsOfWordOfMock },
+        { answers.instanceVariables[id.index()], ModuleExportData::instanceVariableKindBits },
+        { answers.instanceGuards[id.index()], ModuleExportData::instanceGuardKindBits },
+        { answers.instanceAllocators[id.index()], ModuleExportData::instanceAllocatorKindBits },
+        { answers.severalInstancesVariables[id.index()], ModuleExportData::severalInstancesKindBits },
+    };
+    for (auto [variable, kindBits] : hiddenVariables) {
+        if (!variable)
+            continue;
         ModuleExportData entry { };
-        entry.kindBits = ModuleExportData::kindBitsOfWordOfMock;
-        entry.variable = numbers.slotOfVariable(variableThatHoldsMock);
+        entry.setHiddenKindBits(kindBits);
+        entry.variable = numbers.slotOfVariable(variable);
         lists.exports.append(entry);
     }
 }
@@ -712,7 +774,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
             continue;
         lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
     }
-    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], numbers, lists);
+    appendExportsToModuleLists(inputs, answers, id, numbers, lists);
     for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports) {
         SyntheticExportData entry { };
         entry.name = numbers.nameOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
@@ -824,6 +886,8 @@ static ModuleLists joinModuleListsOfChunks(const ParallelLoops& loops, const Chu
         for (ModuleExportData& entry : part.exports) {
             if (entry.kindBits == static_cast<uint32_t>(ModuleExportKind::Indirect))
                 entry.indirectExport += start.indirectExports;
+            else if (entry.kindBits == static_cast<uint32_t>(ModuleExportKind::Field))
+                entry.exportedField += starts.last().indirectExports;
         }
         for (ExportStatementData& statement : part.exportStatements)
             statement.requiredName += start.requiredNames;
@@ -834,6 +898,90 @@ static ModuleLists joinModuleListsOfChunks(const ParallelLoops& loops, const Chu
         part = { };
     });
     return lists;
+}
+
+template<typename Record>
+static void appendInstanceRecord(ModuleLists& lists, const Record& record)
+{
+    for (IndirectExportData part : std::bit_cast<std::array<IndirectExportData, 2>>(record))
+        lists.indirectExports.append(part);
+}
+
+static Vector<Typed::ModuleLink> sortedLinksOf(const Typed::Program& program, ModuleID module)
+{
+    Vector<Typed::ModuleLink> links(program.linksOfModule(module));
+    std::ranges::stable_sort(links, { }, [](const Typed::ModuleLink& link) {
+        return std::pair { !link.path.isEmpty(), link.target.index() };
+    });
+    return links;
+}
+
+static uint32_t countReexports(const TableInputs& inputs, ModuleID module)
+{
+    return static_cast<uint32_t>(std::ranges::count_if(inputs.program.at(module).exports, [&](const Typed::ModuleExport& moduleExport) {
+        return isExportDescribedInModuleLists(inputs, moduleExport) && (moduleExport.link || moduleExport.requested);
+    }));
+}
+
+static void appendModuleInstances(const TableInputs& inputs, const NumbersOfImageForModuleLists& numbers, ModuleLists& lists)
+{
+    const Typed::Program& program = inputs.program;
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstSteps;
+    auto keyOf = [](ModuleID module, uint32_t field) {
+        return static_cast<uint64_t>(module.index()) << 32 | field;
+    };
+    uint32_t position = static_cast<uint32_t>(lists.indirectExports.size());
+    for (const Typed::ModuleInstance& instance : program.moduleInstances) {
+        std::span<const Typed::ModuleLink> links = program.linksOfModule(instance.module);
+        position += 2 * (1 + static_cast<uint32_t>(links.size()) + countReexports(inputs, instance.module));
+        for (const Typed::ModuleLink& link : sortedLinksOf(program, instance.module)) {
+            if (link.link && !link.path.isEmpty())
+                firstSteps.add(keyOf(instance.module, *link.link), position);
+            position += static_cast<uint32_t>(link.path.size());
+        }
+    }
+    for (const Typed::ModuleInstance& instance : program.moduleInstances) {
+        auto slotOf = [&](uint32_t field) {
+            return numbers.slotOfField(instance.layout, field);
+        };
+        uint32_t end = lists.modules[instance.module.index() + 1].firstExport;
+        ModuleExportData* hidden = nullptr;
+        for (uint32_t index = lists.modules[instance.module.index()].firstExport; index < end; ++index) {
+            if (lists.exports[index].kindBits == ModuleExportData::instanceVariableKindBits)
+                hidden = &lists.exports[index];
+        }
+        RELEASE_ASSERT(hidden);
+        hidden->name = static_cast<uint32_t>(lists.indirectExports.size());
+        RELEASE_ASSERT(hidden->name == lists.indirectExports.size());
+        Vector<Typed::ModuleLink> links = sortedLinksOf(program, instance.module);
+        Vector<ReexportedFieldData> reexports;
+        uint32_t exportIndex = 0;
+        for (const Typed::ModuleExport& moduleExport : program.at(instance.module).exports) {
+            if (!isExportDescribedInModuleLists(inputs, moduleExport))
+                continue;
+            if (moduleExport.link || moduleExport.requested)
+                reexports.append({ exportIndex, moduleExport.link ? slotOf(*moduleExport.link) : SlotData { }, (moduleExport.requested ? moduleExport.requested : moduleExport.module).index(), moduleExport.link.has_value(), numbers.nameOfText(moduleExport.importName, "what another module exports under a name of"_s, instance.module) });
+            ++exportIndex;
+        }
+        appendInstanceRecord(lists, ModuleInstanceData { static_cast<uint32_t>(links.size()), static_cast<uint32_t>(reexports.size()), slotOf(instance.namespaceField), slotOf(instance.deferredNamespaceField) });
+        uint32_t firstStep = static_cast<uint32_t>(lists.indirectExports.size() + 2 * (links.size() + reexports.size()));
+        for (const Typed::ModuleLink& link : links) {
+            appendInstanceRecord(lists, ModuleLinkData { link.target.index(), link.link.has_value(), link.mock.has_value(), !link.path.isEmpty(), link.link ? slotOf(*link.link) : SlotData { }, link.mock ? slotOf(*link.mock) : SlotData { }, firstStep });
+            firstStep += static_cast<uint32_t>(link.path.size());
+        }
+        for (const ReexportedFieldData& reexported : reexports)
+            appendInstanceRecord(lists, reexported);
+        for (const Typed::ModuleLink& link : links) {
+            for (size_t place = 0; place < link.path.size(); ++place) {
+                uint32_t next = static_cast<uint32_t>(lists.indirectExports.size()) + 1;
+                if (place + 1 == link.path.size())
+                    next = link.rest ? firstSteps.get(keyOf(link.path[place], *link.rest)) : LinkPathStepData::noStep;
+                lists.indirectExports.append(std::bit_cast<IndirectExportData>(LinkPathStepData { link.path[place].index(), next }));
+            }
+        }
+    }
+    if (!program.moduleInstances.isEmpty())
+        lists.indirectExports.append(endOfModuleInstances);
 }
 
 static void markExportsBoundByRequiredNames(ModuleLists& lists)
@@ -869,9 +1017,12 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
     });
 
     ModuleLists lists = joinModuleListsOfChunks(loops, chunks, listsOfChunks);
+    for (Typed::FieldReference exported : program.exportedFields())
+        lists.indirectExports.append(std::bit_cast<IndirectExportData>(ExportedFieldData { program.at(exported.layout).module.index(), numbers.slotOfField(exported.layout, exported.field) }));
     ModuleData endRecord { };
     lists.setListStarts(endRecord);
     lists.modules.last() = endRecord;
+    appendModuleInstances(inputs, numbers, lists);
     appendWhatNoModuleOwnsToModuleLists(inputs, answers, numbers, lists);
     for (const ModuleListsOfChunk& listsOfChunk : listsOfChunks) {
         for (uint32_t file : listsOfChunk.modulesWithFacades)

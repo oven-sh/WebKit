@@ -51,12 +51,15 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_IR_HEAP(v) \
     v(AOTInstance_mutableFields, 0, Mutable, RuntimeState) \
     v(AOTInstance_stringCells, 0, PermanentCellOutsideDeclaredEffects, AllocatorState) \
+    v(AOTImage_offsetsOfHeaders, 0, OutsideDeclaredEffects, AllocatorState) \
     v(AOTInstance_constantCells, 0, PermanentCellOutsideDeclaredEffects, AllocatorState) \
     v(AOTInstance_closureCells, 0, PermanentCellOutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_moduleValues, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_globalBindings, 0, Mutable, RuntimeState) \
     v(AOTInstance_siteCaches, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_arrayProfiles, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(AOTInstance_keyOrderRuns, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(AOTCompiledStructure_numberOfExtraKeys, CompiledStructure::offsetOfNumberOfExtraKeys(), OutsideDeclaredEffects, RuntimeState) \
     v(AOTPropertyCaches_front, 0, Mutable, RuntimeState) \
     v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), OutsideDeclaredEffects, RuntimeState) \
     v(AOTClassToken_records, 0, OutsideDeclaredEffects, RuntimeState) \
@@ -151,6 +154,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSSet_storage, (JSSet::offsetOfStorage()), Mutable, CollectionStorage) \
     v(JSPromise_packed, JSPromise::offsetOfPacked(), Mutable, PromiseState) \
     v(JSPromise_slot, JSPromise::offsetOfSlot(), Mutable, PromiseState) \
+    v(Symbol_description, Symbol::offsetOfDescription(), OutsideDeclaredEffects, RuntimeState) \
+    v(Symbol_string, Symbol::offsetOfString(), OutsideDeclaredEffects, RuntimeState) \
     v(WatchpointSet_state, WatchpointSet::offsetOfState(), Mutable, RuntimeState)
 
 #define FOR_EACH_JSC_FIELD_HEAP_UNDER_FIELD_HEAP(v) \
@@ -178,6 +183,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(WeakMapImpl_deleteCount, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfDeleteCount(), Mutable, weakTableStorage) \
     v(WeakMapBucket_value, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfValue(), Mutable, weakTableEntries) \
     v(WeakMapBucket_key, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfKey(), Mutable, weakTableEntries) \
+    v(JSString_word, JSRopeString::offsetOfFiber0(), OutsideDeclaredEffects, JSRopeString_fiber0) \
     v(JSRopeString_flags, JSRopeString::offsetOfFlags(), Mutable, JSRopeString_fiber0) \
     v(VM_heap_barrierThreshold, VM::offsetOfHeapBarrierThreshold(), OutsideDeclaredEffects, VM_heapState) \
     v(VM_heap_mutatorShouldBeFenced, VM::offsetOfHeapMutatorShouldBeFenced(), OutsideDeclaredEffects, VM_heapState)

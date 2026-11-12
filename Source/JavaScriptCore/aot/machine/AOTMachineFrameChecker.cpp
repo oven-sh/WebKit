@@ -522,11 +522,11 @@ bool FrameChecker::checkPlaces()
     spillsInCells.reserve(m_arena, 4 * numberOfSpills);
     for (SpillIndex spill = 0; spill < numberOfSpills; ++spill) {
         const SpillFacts& facts = m_spills[spill];
-        if (facts.width != Width32 && facts.width != Width64)
+        if (facts.width != Width32 && facts.width != Width64 && facts.width != Width128)
             return fail(FailureKind::WrongValueInSpillSlot, facts.value);
         uint32_t byteSize = facts.isPointerBesideNarrowReference ? bytesPerWord : static_cast<uint32_t>(bytesForWidth(facts.width));
         CellRange cells;
-        if (!findCells(m_frame.offsetFromFPOf(spill), byteSize, byteSize, cells))
+        if (!findCells(m_frame.offsetFromFPOf(spill), byteSize, facts.width == Width128 ? bytesPerWord : byteSize, cells))
             return fail(FailureKind::WrongValueInSpillSlot, facts.value);
         if (facts.hasGap() && (facts.beginOfGap <= facts.begin || facts.endOfGap < facts.beginOfGap || facts.end <= facts.endOfGap))
             return fail(FailureKind::WrongValueInSpillSlot, facts.value);

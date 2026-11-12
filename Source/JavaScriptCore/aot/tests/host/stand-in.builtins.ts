@@ -39,6 +39,7 @@ export default b.declarations(
     "decorateParameter",
     "decorateProperty",
     "defineMetadata",
+    "keepInitializerLists",
     "runInitializers",
     "runValueInitializers",
     "setDecoratorMetadata",

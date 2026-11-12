@@ -182,6 +182,7 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
         kind,
         ["fieldIndex", formatUnlessZero(place.index)],
         ["holdsOnlyWhatIsStored", place.holdsOnlyWhatIsStored ? "true" : null],
+        ["isOfElements", place.isOfElements ? "true" : null],
       ]);
     case "NewValue":
       return formatAggregate([

@@ -23,6 +23,7 @@
 #include "AOTStackCheckEmitter.h"
 #include "AOTStubDescriptor.h"
 #include "AOTThrowEmitter.h"
+#include "AOTUnitPlacement.h"
 #include "LinkBuffer.h"
 #include <algorithm>
 #include <array>
@@ -254,7 +255,7 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
     };
     for (const Machine::LinkedTrappingAccess& access : trappingAccesses) {
         for (; !callThrowSites.empty() && codeOffsetOfCallThatThrows(callThrowSites.front()) < access.codeOffset; callThrowSites = callThrowSites.subspan(1))
-            accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(callThrowSites.front()), OptionalIndex { }, callThrowSites.front().words, callThrowSites.front().wordsThatAreMentions);
+            accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(callThrowSites.front()), OptionalIndex { }, ThrowSiteWords(callThrowSites.front().words.span()), callThrowSites.front().wordsThatAreMentions);
         ValueID value = valueOfOrigin(access.origin);
         auto site = std::ranges::lower_bound(traps.trapSites, value, { }, &TrapSite::value);
         if (site == traps.trapSites.end() || site->value != value) {
@@ -268,10 +269,10 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
 #endif
         Vector<uint32_t, 3> words = throwSiteWords(site->throwSite, access.referenceIsNarrow ? Representation::Cell32 : site->representation, static_cast<unsigned>(access.reference));
         uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(site->throwSite, words.size());
-        accesses.appendWithinCapacity(access.codeOffset, OptionalIndex { site->callSite }, WTF::move(words), wordsThatAreMentions);
+        accesses.appendWithinCapacity(access.codeOffset, OptionalIndex { site->callSite }, ThrowSiteWords(words.span()), wordsThatAreMentions);
     }
     for (const CallThrowSite& site : callThrowSites)
-        accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(site), OptionalIndex { }, site.words, site.wordsThatAreMentions);
+        accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(site), OptionalIndex { }, ThrowSiteWords(site.words.span()), site.wordsThatAreMentions);
     if (accesses.size() > 1)
         AOT::sortInLine(accesses, { }, &FaultingAccess::codeOffset);
 }
@@ -631,6 +632,11 @@ static void describeBody(CodeRecords& records, EmittedCode& emitted, CodeBody& b
         Machine::describeConstants(emitted.procedure, body.rareLists.ensure().constants);
     if (!emitted.procedure.jumpTables().empty())
         Machine::describeJumpTables(emitted.procedure, linkBuffer, body.rareLists.ensure().jumpTables);
+    if (!emitted.procedure.shortLoops().empty()) {
+        uint64_t placesOfPrimaryEntry = std::rotr(alignedPlacesInLine(imageFunctionAlignment), static_cast<int>(body.primaryEntryOffset() % imageFunctionAlignment));
+        if (uint64_t places = Machine::describePlacesInLine(emitted.procedure, linkBuffer, placesOfPrimaryEntry); places != UINT64_MAX)
+            body.rareLists.ensure().placesInLine = places;
+    }
 }
 
 static void describeFrameOfUnit(const CodeRecords& records, EmittedCode& emitted, FrameDescription& frame)
@@ -700,7 +706,17 @@ std::optional<FormSaidFalsely> formSaidFalsely()
     return FormSaidFalsely { static_cast<Opcode>(said >> 8 & 0xFFFF), static_cast<Form>(said & 0xFF) };
 }
 
-static bool describedSiteStandsWhereItSays(const Code& code, const SiteOfForm& site)
+static bool describedSiteTakesLoopForms(const Code& code, const FormsSaid& said, const SiteOfForm& site)
+{
+    const Block& block = code.at(site.block);
+    if (block.isInLoop)
+        return true;
+    if ((said.isTrapOfProxy() || code.callsItself()) && block.frequency != BlockFrequency::Rare)
+        return true;
+    return site.value && Operation::opcodesWithHasLeftLoop.contains(site.opcode) && code.at(site.value).hasLeftLoop();
+}
+
+static bool describedSiteStandsWhereItSays(const Code& code, const FormsSaid& said, const SiteOfForm& site)
 {
     if (site.place == Place::Anywhere)
         return true;
@@ -709,7 +725,7 @@ static bool describedSiteStandsWhereItSays(const Code& code, const SiteOfForm& s
     const Block& block = code.at(site.block);
     switch (site.place) {
     case Place::Loop:
-        return block.isInLoop;
+        return describedSiteTakesLoopForms(code, said, site);
     case Place::UnlikelyBlock:
         return block.frequency == BlockFrequency::Unlikely;
     case Place::RareBlock:
@@ -836,7 +852,7 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
         const SiteOfForm& site = sites[index];
         std::optional<Form> named = namedFormOf(site.opcode, site.state, site.place);
         Form form = site.hasSaid ? site.form : named.value_or(formOf(site.opcode));
-        bool isNamed = named == form && !site.hasContradictedItself && describedSiteStandsWhereItSays(code, site);
+        bool isNamed = named == form && !site.hasContradictedItself && describedSiteStandsWhereItSays(code, said, site);
         bool looksOtherwise = operation.hasCodeOutsideRareCode && operation.form != form;
         bool isLongerThanCall = form != Form::Open && operation.bytesOutsideRareCode > describedBytesOfCallFor(code.at(site.value));
         bool differsFromSchema = !isNamed || looksOtherwise || isLongerThanCall;
@@ -1023,6 +1039,8 @@ CompiledCode describeCode(BuildContext& build, const CodeGenerationInputs& input
         measurements.bytesOutsideOperations = describeBytesOutsideOperations(result.body, emitted);
         measurements.ranges = describeRangesOfCode(code, result.body, emitted);
     }
+    if (!records.inlinedStrings.isEmpty())
+        records.inlinedStrings.moveTo(result.measurements.ensure());
     return result;
 }
 

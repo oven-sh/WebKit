@@ -24,6 +24,9 @@
 #include "HandlerInfo.h"
 #include "RegisterAtOffsetList.h"
 #include <algorithm>
+#include <array>
+#include <initializer_list>
+#include <span>
 #include <wtf/BitSet.h>
 
 namespace JSC::AOT {
@@ -91,6 +94,7 @@ struct RareListsOfBody {
     ListOfUnit<uint8_t> bytesOfMadeTexts;
     ListOfUnit<uint32_t> firstsOfMadeTexts;
     ListOfUnit<uint32_t> endsOfMadeTexts;
+    uint64_t placesInLine { UINT64_MAX };
 };
 
 template<>
@@ -108,6 +112,7 @@ void forEachListOfUnitIn(RareListsOfBody& lists, auto& visit)
 
 struct CodeBody {
     uint32_t primaryEntryOffset() const { return entries[0].offset; }
+    uint64_t placesInLine() const { return rareLists->placesInLine; }
     std::optional<uint32_t> offsetOfEntry(uint16_t id) const;
 
     ListOfUnit<uint8_t> bytes;
@@ -229,20 +234,44 @@ struct SiteHandler {
     HandlerType type;
 };
 
+class ThrowSiteWords {
+public:
+    ThrowSiteWords() = default;
+    ThrowSiteWords(std::initializer_list<uint32_t> words)
+        : ThrowSiteWords(std::span<const uint32_t>(words.begin(), words.size()))
+    {
+    }
+    explicit ThrowSiteWords(std::span<const uint32_t> words)
+        : m_size(static_cast<uint8_t>(words.size()))
+    {
+        RELEASE_ASSERT(words.size() <= m_words.size());
+        std::ranges::copy(words, m_words.begin());
+    }
+
+    size_t size() const { return m_size; }
+    bool isEmpty() const { return !m_size; }
+    std::span<const uint32_t> span() const { return std::span(m_words).first(m_size); }
+    uint32_t operator[](size_t index) const { return span()[index]; }
+    uint32_t& operator[](size_t index) { return std::span(m_words).first(m_size)[index]; }
+    void removeAt(size_t index)
+    {
+        RELEASE_ASSERT(index < m_size);
+        std::ranges::copy(span().subspan(index + 1), m_words.begin() + index);
+        --m_size;
+    }
+
+private:
+    std::array<uint32_t, 3> m_words { };
+    uint8_t m_size { 0 };
+};
+
 struct FaultingAccess {
     uint32_t codeOffset;
     OptionalIndex callSite;
-    ListOfUnit<uint32_t, 3> throwSite;
+    ThrowSiteWords throwSite;
     uint8_t wordsThatAreMentions { 0 };
 };
-
-template<>
-inline constexpr bool holdsListsOfUnit<FaultingAccess> = true;
-
-void forEachListOfUnitIn(FaultingAccess& access, auto& visit)
-{
-    visit(access.throwSite);
-}
+static_assert(sizeof(FaultingAccess) == 28);
 
 struct RareListsOfSites {
     ListOfUnit<SiteConstructionStart> constructionStarts;
@@ -315,6 +344,8 @@ struct MeasurementsOfCode {
     ListOfUnit<BytesOfForm> bytesByForm;
     ListOfUnit<BytesOutsideOperations> bytesOutsideOperations;
     ListOfUnit<RangeOfCode> ranges;
+    ListOfUnit<uint8_t> bytesOfInlinedStrings;
+    ListOfUnit<uint32_t> endsOfInlinedStrings;
     uint32_t bytesInInlineFrames { 0 };
     uint32_t bytesInInlineFramesOfLibrary { 0 };
     uint32_t bytesInFramesOfBuiltins { 0 };
@@ -328,6 +359,8 @@ void forEachListOfUnitIn(MeasurementsOfCode& measurements, auto& visit)
     visit(measurements.bytesByForm);
     visit(measurements.bytesOutsideOperations);
     visit(measurements.ranges);
+    visit(measurements.bytesOfInlinedStrings);
+    visit(measurements.endsOfInlinedStrings);
 }
 
 constexpr unsigned rankInCodeOf(Typed::CodeRole role)

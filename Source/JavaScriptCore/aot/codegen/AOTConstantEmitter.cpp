@@ -20,6 +20,7 @@
 #include "AOTOperatorEmitter.h"
 #include "AOTPureOperations.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStringEmitter.h"
 #include "AOTStringTable.h"
 #include "AOTStubCalls.h"
 #include "AOTStubCatalog.h"
@@ -163,6 +164,9 @@ void ConstantEmitter::generateData(const ValueContext& value)
     case DataEncoding::CopyOnWriteArray:
     case DataEncoding::TreeWithOwnStorage:
         break;
+    case DataEncoding::SharedObject:
+        defineCell(value, sharedObjectOfData(value));
+        return;
     }
     if (value->encoding() == DataEncoding::CopyOnWriteArray) {
         defineCell(value, generator().takesOpenForm(value, StateOfKnowledge::CopyOnWriteArray) ? newCopyOnWriteArray(value) : newCopyOnWriteArrayByStub(value));
@@ -172,6 +176,21 @@ void ConstantEmitter::generateData(const ValueContext& value)
     uint32_t request = mentionOfDataRequest(m_mentions, data, value->encoding());
     m_out.noteForm(Form::Runtime, StateOfKnowledge::ReadOnlyTree);
     defineCell(value, callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { numberOf(request) }));
+}
+
+CellPointer ConstantEmitter::sharedObjectOfData(const ValueContext& value)
+{
+    DataID data = value->data();
+    uint32_t request = mentionOfDataRequest(m_mentions, data, DataEncoding::SharedObject);
+    LBasicBlock isUnmade = newBlock();
+    Join<CellPointer> objects(m_out);
+    LValue object = m_out.load64(instanceWord(m_heaps.AOTInstance_constantCells, m_mentions.add(NumberSpace::DataStorage, data)));
+    branchUnless(Condition(m_out.notNull(object)), isUnmade);
+    objects.add(CellPointer(object));
+
+    m_out.appendTo(isUnmade);
+    objects.add(callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { numberOf(request) }, { .isOnRarePath = true }));
+    return objects.finish();
 }
 
 CellPointer ConstantEmitter::newCopyOnWriteArray(const ValueContext& value)
@@ -313,13 +332,54 @@ bool ConstantEmitter::loadsStringConstantByStub(const OperationContext& context,
     return !text.empty() && !singleLatin1CharacterOf(text) && formOfConstantsWithCellsAt(context).form == Form::Closed;
 }
 
+bool ConstantEmitter::tryStoreStringConstantByStub(const OperationContext& context, ValueID string, CellPointer object, uint64_t offset, const TypedPointer& word)
+{
+    const Operation& constant = operationAt(string);
+    if (constant.opcode != Opcode::String || m_code.useCountOf(string) != 1 || !isWordOfStoreStringConstant(offset) || !loadsStringConstantByStub(context, constant.string()))
+        return false;
+    StringID id = constant.string();
+    if (constant.isAtom() && !hasCellOfVM(types().bytesOf(id)))
+        m_mentions.add(NumberSpace::AtomOfString, id);
+    const NumberedImmediate number { m_mentions.add(NumberSpace::StringCell, id) };
+    FormAtPlace named = formOfConstantsWithCellsAt(context);
+    m_out.noteFormOf(constantsWithCells, named.form, StateOfKnowledge::Always, named.place);
+
+    const StubKey stub = storeStringConstant(offset);
+    RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
+    const StubCatalog& catalog = inputs().stubCatalog;
+    Effects effects = catalog.effectsOf(stub);
+    RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect);
+    effects.reads = { };
+    effects.writes = { };
+    const GPRReg immediate = *catalog.summaryOf(stub).signature.immediate;
+    RegisterSet clobbered = catalog.clobberedByRegisterVariantsOf(stub);
+    clobbered.add(immediate, IgnoreVectors);
+    clobbered.merge(RegisterSet::macroClobberedGPRs());
+    RegisterSet clobberedEarly = RegisterSet::macroClobberedGPRs();
+    clobberedEarly.add(immediate, IgnoreVectors);
+
+    Machine::PatchOperation* patch = m_out.patchpoint(Machine::Void);
+    patch->append(object.value(), Machine::ValueRep(Machine::ValueRep::SomeRegister));
+    patch->clobberEarly(clobberedEarly);
+    patch->clobberLate(clobbered);
+    calls.applyEffects(patch, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None);
+    addHeapWrittenByMakerOfCell(m_proc, patch, *word.heap());
+    patch->setGenerator([records = &m_records, stub, number](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        records->stubCalls.call(jit, stub.withOperandRegister(params[0].gpr()), number, OptionalIndex { });
+    });
+    return true;
+}
+
 CellPointer ConstantEmitter::stringConstant(const OperationContext& context, StringID id)
 {
     std::span<const uint8_t> text = types().bytesOf(id);
     if (text.empty())
         return emptyString();
-    if (std::optional<uint8_t> character = singleLatin1CharacterOf(text))
+    if (std::optional<uint8_t> character = singleLatin1CharacterOf(text)) {
+        emitter<StringEmitter>().recordInlined(id);
         return singleCharacterString(word32(*character));
+    }
 
     uint32_t mention = m_mentions.add(NumberSpace::StringCell, id);
     bool isNarrow = !m_options.recorded.useWideReferences();

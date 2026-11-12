@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
@@ -23,7 +24,6 @@
 #include <algorithm>
 #include <ranges>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>

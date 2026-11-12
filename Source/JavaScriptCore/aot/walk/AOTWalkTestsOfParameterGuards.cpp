@@ -89,7 +89,7 @@ TypeID withoutOmittedNullish(Walker& walker, FunctionID id, uint32_t entryParame
     return type && declared ? withoutOmittedNullishForTestsOfGuards(walker.types(), type, *declared) : type;
 }
 
-static TypeID withoutUndefinedOfElements(Walker& walker, FunctionID id, uint32_t entryParameter, TypeID seen)
+static TypeID withoutElementUndefined(Walker& walker, FunctionID id, uint32_t entryParameter, TypeID seen)
 {
     TypeArena& types = walker.types();
     const DeclaredType* declared = walker.program().at(id).declaredEntryParameter(entryParameter);
@@ -113,7 +113,7 @@ static bool everyArrivalInSightFitsForTestsOfGuards(Walker& walker, FunctionID i
         return false;
     if (type.isAnything())
         return true;
-    seen = types.intersectionOf(withoutUndefinedOfElements(walker, id, entryParameter, seen), tested);
+    seen = types.intersectionOf(withoutElementUndefined(walker, id, entryParameter, seen), tested);
     if (types.withOnlyObjects(tested) == types.withOnlyObjects(narrower))
         seen = types.withoutObjects(seen);
     return types.isSubset(seen, narrower);

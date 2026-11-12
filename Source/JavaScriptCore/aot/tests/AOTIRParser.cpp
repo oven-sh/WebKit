@@ -269,6 +269,12 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::Modules:
         parseProgramRecord<Wire::Module, Module>(*this, &Program::modules);
         break;
+    case ProgramList::ModuleInstances:
+        parseProgramRecord<Wire::ModuleInstance, ModuleInstance>(*this, &Program::moduleInstances);
+        break;
+    case ProgramList::ModuleLinks:
+        parseProgramRecord<Wire::ModuleLink, ModuleLink>(*this, &Program::moduleLinks);
+        break;
     case ProgramList::ModuleFailures:
         parseProgramRecord<Wire::ModuleFailure, ModuleFailure>(*this, &Program::moduleFailures);
         break;

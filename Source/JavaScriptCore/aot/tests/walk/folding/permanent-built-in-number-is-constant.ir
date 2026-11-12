@@ -1,0 +1,51 @@
+# If a number that the language itself locks in a built-in were read where it stands, every Math.PI off another name for Math would ask a site.
+# function area(r: number) { return r * Math.PI; }  function least(x: number) { return x < Number.MAX_VALUE ? x : Number.POSITIVE_INFINITY; }
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK-NOT: PropGet
+# CHECK: Mul
+# RUN(LEAST): walk f2 mechanisms=all
+# LEAST: code f2:Body
+# LEAST-NOT: PropGet
+# LEAST: Less
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 6.283185307179586 1.5 Infinity
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=2
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f2
+    v4 = Double number=1.5
+    v5 = Call v3, -, v4
+    v6 = Builtin builtin=Number
+    v7 = PropGet v6 key="POSITIVE_INFINITY"
+    v8 = Call v3, -, v7
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -, v2, v5, v8
+    Return v11
+}
+function f1 name="area" module=m0 position=10 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=Math
+    v2 = PropGet v1 key="PI"
+    v3 = Mul v0, v2
+    Return v3
+}
+function f2 name="least" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=Number
+    v2 = PropGet v1 key="MAX_VALUE"
+    v3 = Less v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v4 = PropGet v1 key="POSITIVE_INFINITY"
+    Return v4
+}

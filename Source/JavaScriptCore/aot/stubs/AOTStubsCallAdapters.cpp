@@ -459,14 +459,17 @@ void generateStartModule(StubAssembler& jit)
     Jump callsStart = branchIfStepIs(Operation::CallStart);
     Jump callsBody = branchIfStepIs(Operation::CallBody);
     begins.append(branchIfStepIs(Operation::BeginOrReturn));
-    Jump finishes = branchIfStepIs(Operation::Finish);
+    Jump finishesAndReturns = branchIfStepIs(Operation::FinishAndReturn);
+    Jump callsStartUnlessStopped = branchIfStepIs(Operation::CallStartUnlessStopped);
     returns.append(branchIfStepIs(Operation::Return));
     Jump abandonsOnThrow = branchIfStepIs(Operation::AbandonOnThrow);
     begins.append(branchIfStepIs(Operation::Begin));
     Jump mayStopLoading = branchIfStepIs(Operation::ReturnIfLoadingStops);
+    Jump finishes = branchIfStepIs(Operation::Finish);
     jit.breakpoint();
 
     callsStart.link(&jit);
+    Label startsModule = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
     jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
     jit.branch32(CCallHelpers::Above, status, inRecord).linkTo(takesNextStep, &jit);
@@ -534,28 +537,51 @@ void generateStartModule(StubAssembler& jit)
     branchIfStepIs(Operation::Begin).linkTo(takesNextStep, &jit);
     returns.append(jit.jump());
 
+    auto finish = [&] {
+        JumpList hasFinished;
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
+        Jump storesOverAnyStatus = jit.branchTest32(CCallHelpers::Zero, step, flagOfStep);
+        jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
+        hasFinished.append(jit.branch32(CCallHelpers::Equal, status, inRecord));
+        storesOverAnyStatus.link(&jit);
+        jit.move(TrustedImm32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), status);
+        jit.store8(status, BaseIndex(table, operand, CCallHelpers::TimesOne));
+        hasFinished.append(jit.jump());
+        return hasFinished;
+    };
     finishes.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
-    Jump storesOverAnyStatus = jit.branchTest32(CCallHelpers::Zero, step, flagOfStep);
-    jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
-    jit.branch32(CCallHelpers::Equal, status, inRecord).linkTo(takesNextStep, &jit);
-    storesOverAnyStatus.link(&jit);
-    jit.move(TrustedImm32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), status);
-    jit.store8(status, BaseIndex(table, operand, CCallHelpers::TimesOne));
-    jit.jump().linkTo(takesNextStep, &jit);
+    finish().linkTo(takesNextStep, &jit);
+    finishesAndReturns.link(&jit);
+    returns.append(finish());
 
     abandonsOnThrow.link(&jit);
     jit.add32(TrustedImm32(1), operand);
     jit.store64(operand, moduleToAbandon);
     jit.jump().linkTo(takesNextStep, &jit);
 
+    auto branchUnlessLoadingStops = [&](Label continuation) {
+        jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone))).linkTo(continuation, &jit);
+        jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), table);
+        jit.load64(Address(table, MicrotaskQueue::offsetOfStart()), status);
+        jit.branch64(CCallHelpers::Equal, status, Address(table, MicrotaskQueue::offsetOfEnd())).linkTo(continuation, &jit);
+    };
+    auto loadOperandOfStep = [&](int32_t stepsBack) {
+        jit.load32(Address(nextStep, -stepsBack * static_cast<int32_t>(sizeof(ModuleStartStepData))), operand);
+        jit.and32(TrustedImm32(static_cast<int32_t>(ModuleStartStepData::operationMask)), operand, operation);
+        jit.urshift32(TrustedImm32(ModuleStartStepData::operandShift), operand);
+    };
     mayStopLoading.link(&jit);
-    jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone))).linkTo(takesNextStep, &jit);
-    jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), table);
-    jit.load64(Address(table, MicrotaskQueue::offsetOfStart()), status);
-    jit.branch64(CCallHelpers::Equal, status, Address(table, MicrotaskQueue::offsetOfEnd())).linkTo(takesNextStep, &jit);
+    branchUnlessLoadingStops(takesNextStep);
+    Jump asksAboutOperand = jit.jump();
+    callsStartUnlessStopped.link(&jit);
+    branchUnlessLoadingStops(startsModule);
+    loadOperandOfStep(2);
+    asksAboutOperand.link(&jit);
     callStatusOperation(Entry::operationAOTStopLoadingBehindFile, hasThrown);
-    jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR).linkTo(takesNextStep, &jit);
+    returns.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR));
+    loadOperandOfStep(1);
+    branchIfStepIs(Operation::CallStartUnlessStopped).linkTo(startsModule, &jit);
+    jit.jump().linkTo(takesNextStep, &jit);
 
     returns.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
@@ -647,10 +673,10 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.and32(TrustedImm32(static_cast<int32_t>(~ConstructEntrypointData::allocatesThis)), function);
     Address place = emitLocateRememberedConstructWord(jit, word, half);
     jit.load64(BaseIndex(first, function, CCallHelpers::TimesEight), wordOfConstruct);
-    Jump isNotMadeYet = jit.branchTest64(CCallHelpers::Zero, wordOfConstruct);
+    Jump isNotCreated = jit.branchTest64(CCallHelpers::Zero, wordOfConstruct);
     jit.store64(word, place.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfCall)));
     jit.store64(wordOfConstruct, place.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfConstruct)));
-    isNotMadeYet.link(&jit);
+    isNotCreated.link(&jit);
     jit.and64(TrustedImm64(static_cast<int64_t>(~(1ULL << ClosureWord::takesNewTargetBit))), word);
     jit.jump().linkTo(continuation, &jit);
 
@@ -673,16 +699,29 @@ static void emitLoadConstructReceiver(StubAssembler& jit, GPRReg word, GPRReg ba
     doesNotTakeNewTarget.link(&jit);
 }
 
-static void emitSelectConstructResult(StubAssembler& jit, ptrdiff_t offsetOfThis)
+static void emitSelectConstructResult(StubAssembler& jit, ptrdiff_t offsetOfThis, StubFrameKind frameKind)
 {
     constexpr GPRReg result = GPRInfo::returnValueGPR;
+    const GPRReg shapeWord = operationArgumentGPR(1);
+    const Address thisInFrame(fp, static_cast<int32_t>(offsetOfThis));
+    RELEASE_ASSERT(noOverlap(result, shapeWord, instanceGPR));
     JumpList isNotObject;
+    JumpList done;
     isNotObject.append(jit.branchIfNotCell(result, DoNotHaveTagRegisters));
     isNotObject.append(jit.branchIfNotObject(result));
-    Jump isObject = jit.jump();
+    done.append(jit.jump());
     isNotObject.link(&jit);
-    jit.load64(Address(fp, static_cast<int32_t>(offsetOfThis)), result);
-    isObject.link(&jit);
+    jit.load64(thisInFrame, result);
+    done.append(jit.branchIfNotCell(result, DoNotHaveTagRegisters));
+    jit.load32(Address(result, offsetOfShapeWord), shapeWord);
+    jit.and32(TrustedImm32(static_cast<int32_t>(compiledObjectShapeBit | shapeWordIsUnmarked)), shapeWord);
+    done.append(jit.branch32(CCallHelpers::NotEqual, shapeWord, TrustedImm32(static_cast<int32_t>(compiledObjectShapeBit))));
+    jit.move(result, operationArgumentGPR(1));
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTTryFinishBirth, jit.reuseScratch(StubRegister::Operation));
+    jit.bindReturnLabel(frameKind);
+    jit.load64(thisInFrame, result);
+    done.link(&jit);
 }
 
 void generateEnterClosureForConstruct(StubAssembler& jit)
@@ -716,7 +755,7 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     emitLoadConstructReceiver(jit, word, base);
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::ConstructAdapter);
-    emitSelectConstructResult(jit, offsetOfConstructThis);
+    emitSelectConstructResult(jit, offsetOfConstructThis, StubFrameKind::ConstructAdapterMakesThis);
     emitAdapterEpilogue(jit);
 
     createThisThrew.link(&jit);
@@ -803,7 +842,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     takesNewTarget.link(&jit);
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::PlainFunctionConstruct);
-    emitSelectConstructResult(jit, offsetOfThis);
+    emitSelectConstructResult(jit, offsetOfThis, StubFrameKind::PlainFunctionConstructMakesThis);
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);
     jit.returnToCaller();

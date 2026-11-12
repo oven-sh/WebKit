@@ -1,0 +1,32 @@
+# function read(s: unknown) { return typeof s === "symbol" ? s.toString() : ""; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: PropGet
+# CHECK: = CallInline {{*}}inlineBuiltin=SymbolToString
+
+module m0 path="string-of-a-symbol-is-read-out-of-its-cell.ts" displayPath="string-of-a-symbol-is-read-out-of-its-cell.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Builtin builtin=GlobalThis @81
+    v2 = Convert v1 declared={type=builtin(GlobalThis) flags=[IsExpected]} @81
+    PropSet v2, v0 key="read" @81
+    v4 = Undefined @81
+    Return v4 @81
+}
+function f1 name="read" module=m0 position=7 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|symbol):
+    v1 = TypeTest v0 testedType=symbol @35
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @35
+  b1(v2):
+    v3 = NarrowByTest v0, v2 @35
+    v4 = PropGet v3 key="toString" @59
+    v5 = Call v4, v3 calleeKey="toString" calleeName="s.toString" @61
+    Jump -> next b3(v5) @59
+  b2(v6):
+    v7 = String string="" @75
+    Jump -> next b3(v7) @75
+  b3(v8):
+    Return v8 @75
+}

@@ -48,6 +48,7 @@ struct CallOptions {
     bool followsThrow { false };
     bool convertsNoCells { false };
     bool callerSuspendsAtReturn { false };
+    bool callerDelegates { false };
     bool rejectsOnThrow { false };
     bool returnsWord32 { false };
 };
@@ -98,6 +99,7 @@ protected:
     template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
     Boxed boxed(ValueID id) const { return in<Boxed>(id); }
+    Word32 int32InBox(Boxed);
     Integer integerOf(ValueID);
 
     void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
@@ -143,6 +145,8 @@ protected:
     std::optional<Pointer> siteCacheAddress(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersAtSite(const OperationContext&, PropertyKeyID, SiteUse);
     std::optional<NumberedImmediate> answersAtSite(Origin, PropertyKeyID, SiteUse);
+    std::optional<NumberedImmediate> presenceTestSiteAnswers(Origin, PropertyKeyID);
+    std::optional<NumberedImmediate> isAnsweredAtUse(Origin, PropertyKeyID, uint32_t use);
 
     COLD void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 

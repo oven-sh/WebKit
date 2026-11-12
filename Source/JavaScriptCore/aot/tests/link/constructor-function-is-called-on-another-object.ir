@@ -3,8 +3,8 @@
 # Both arrive at `this`, and neither escapes: every writer of `x` is known in both, and the literal's holds what the function stores beside what it was made with.
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee cycle=
-# CHECK: field L0.0 "x" proven=i32 writers-known
-# CHECK: field L1.0 "x" proven=i32|string writers-known
+# CHECK: field L0.0 "x" proven=int[0, 2147483647] writers-known
+# CHECK: field L1.0 "x" proven=int[0, 2147483647]|string writers-known
 # CHECK: layout L0 {{*}}changes=[]
 # CHECK: layout L1 {{*}}changes=[]
 

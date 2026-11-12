@@ -443,6 +443,18 @@ bool JSObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject
 }
 #endif // ASSERT_ENABLED
 
+#if ENABLE(AOT)
+// No structure below a typed array tells of it.
+static bool inheritsFromTypedArray(JSObject* object)
+{
+    for (JSValue next = object->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        if (isTypedArrayType(asObject(next)->type()))
+            return true;
+    }
+    return false;
+}
+#endif
+
 // The result holds only until user code runs. [[GetOwnProperty]] on it can add a trap to, or revoke, a skipped
 // proxy, so callers walk again afterwards and define through the original receiver if the walk ends elsewhere.
 static ALWAYS_INLINE JSObject* skipProxiesForwardingOwnPropertyDefinition(JSObject* receiver)
@@ -470,11 +482,11 @@ bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyNam
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    // The receiver is a proxy for this object, and its handler forwards defineProperty to it. If an element can be set quickly, nothing on the prototype chain intercepts the store, so the store ends in the object just as it would without the proxy.
+    // The receiver is a proxy for this object, and its handler forwards defineProperty to it. An element that is there is the object's own. Where none is there and one can be set quickly, nothing on the prototype chain but a typed array intercepts the store, so the store ends in the object.
     if (std::optional<uint32_t> index = vm.hasCompiledCode() ? parseIndex(propertyName) : std::nullopt; index && !object->structure()->hasImmutableIndexedProperties()) {
         JSObject* defineTarget = AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver);
         RETURN_IF_EXCEPTION(scope, false);
-        if (defineTarget == object && object->trySetIndexQuickly(vm, *index, value))
+        if (defineTarget == object && (object->canGetIndexQuickly(*index) || !inheritsFromTypedArray(object)) && object->trySetIndexQuickly(vm, *index, value))
             return true;
     }
 #endif
@@ -722,7 +734,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver. A put of the value the property holds changes nothing and
     // succeeds, like a definition that changes nothing: `Object.assign = Object.assign || polyfill`.
-    if (structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, this)) [[unlikely]] {
+    if (!isThisValueAltered(slot, this) && structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
         bool holdsValue = holdsInWritableProperty(globalObject, this, propertyName, value);
         RETURN_IF_EXCEPTION(scope, false);
         StoreToLockedProto store = holdsValue ? StoreToLockedProto::ChangesNothing : classifyStoreToLockedProto(vm, this, propertyName, value);

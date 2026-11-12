@@ -874,7 +874,10 @@ static void allocatorRotatesPhisBySwapping()
     AllocationTestText text(test);
     Block* sourceOfBackEdge = allocationTestSourceOfBackEdge(test.procedure().order(), loop);
     AOT_ALLOCATION_TEST_CHECK(test, sourceOfBackEdge);
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("swap"_s) == length - 1 && text.count("swap"_s, nullptr, sourceOfBackEdge) == length - 1);
+    bool rotatesThroughScratch = length > 2 && (type == Double || !isX86_64());
+    unsigned swaps = rotatesThroughScratch ? 0 : length - 1;
+    AOT_ALLOCATION_TEST_CHECK(test, text.count("swap"_s) == swaps && text.count("swap"_s, nullptr, sourceOfBackEdge) == swaps);
+    AOT_ALLOCATION_TEST_CHECK(test, !rotatesThroughScratch || text.count("move"_s, nullptr, sourceOfBackEdge) == length + 1);
     AOT_ALLOCATION_TEST_CHECK(test, !text.count("save"_s) && !text.count("reload"_s));
     for (const Step& step : test.procedure().allocation().steps()) {
         if (step.kind == StepKind::Swap)
@@ -3582,6 +3585,119 @@ static void allocatorReadsPinnedConstantWhereItLies()
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(argument) == argument + static_cast<uint64_t>(tag));
 }
 
+template<bool loopHasCall>
+static void allocatorHoldsComparedConstant()
+{
+    constexpr int64_t tag = JSValue::NumberTag;
+    constexpr unsigned numberOfWords = loopHasCall ? 9 : 4;
+    std::optional<PinnedConstant> pinned = findPinnedConstant(static_cast<uint64_t>(tag));
+    AOT_TEST_CHECK(pinned);
+
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue buffer = test.argumentGPR(0);
+    LValue constant = out.constInt64(tag);
+    LBasicBlock head = out.newBlock();
+    LBasicBlock latch = out.newBlock();
+    LBasicBlock other = out.newBlock();
+    LBasicBlock exit = out.newBlock();
+    out.jump(normalEdge(head));
+
+    out.appendTo(head);
+    Vector<LBasicBlock, 8> comparing;
+    for (unsigned word = 0; word < numberOfWords; ++word)
+        comparing.append(out.newBlock());
+    out.branch(out.load64(allocationTestWordAt(test, buffer, numberOfWords)), normalEdge(comparing[0]), normalEdge(exit));
+    for (unsigned word = 0; word < numberOfWords; ++word) {
+        out.appendTo(comparing[word]);
+        out.branch(out.aboveOrEqual(out.load64(allocationTestWordAt(test, buffer, word)), constant), normalEdge(word + 1 < numberOfWords ? comparing[word + 1] : latch), normalEdge(other));
+    }
+
+    out.appendTo(other);
+    out.store64(constant, allocationTestWordAt(test, buffer, numberOfWords + 1));
+    out.jump(normalEdge(latch));
+
+    out.appendTo(latch);
+    if constexpr (loopHasCall)
+        allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~file.calleeSaved);
+    out.store64(out.sub(out.load64(allocationTestWordAt(test, buffer, numberOfWords)), 1), allocationTestWordAt(test, buffer, numberOfWords));
+    out.jump(normalEdge(head));
+
+    out.appendTo(exit);
+    out.ret(buffer);
+
+    int64_t wordOfTag = pinned->offset.value_or(0) / static_cast<int64_t>(sizeof(uint64_t));
+    int64_t numberOfWordsEachWay = std::abs(wordOfTag) + 1;
+    Vector<uint64_t> wordsAroundInstance(FillWith { }, static_cast<size_t>(2 * numberOfWordsEachWay), uint64_t { 0 });
+    wordsAroundInstance[static_cast<size_t>(numberOfWordsEachWay + wordOfTag)] = static_cast<uint64_t>(tag);
+    compileOrFail(test, &wordsAroundInstance[static_cast<size_t>(numberOfWordsEachWay)]);
+
+    AllocationTestText text(test);
+    const Order& order = test.procedure().order();
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(head).isLoopHead && order.of(latch).loop == order.of(head).loop);
+    Reg held = allocationTestRegisterAtHead(test, head, constant);
+    AOT_ALLOCATION_TEST_CHECK(test, held.isSet() == pinned->offset.has_value());
+    AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s, constant) == (pinned->offset ? 1u : 0u));
+    if (pinned->offset) {
+        AOT_ALLOCATION_TEST_CHECK(test, !loopHasCall || (maskOf(held) & file.calleeSaved));
+        for (const Step& step : test.procedure().allocation().steps()) {
+            for (const Location& source : step.sources)
+                AOT_ALLOCATION_TEST_CHECK(test, step.kind != StepKind::Execute || source.kind() != Location::InstanceWord);
+        }
+        for (LBasicBlock block : comparing)
+            AOT_ALLOCATION_TEST_CHECK(test, !text.count("materialize"_s, constant, block) && allocationTestRegisterAtHead(test, block, constant) == held);
+    }
+
+    std::array<uint64_t, 64> words { };
+    for (unsigned below = 0; below <= numberOfWords; ++below) {
+        for (unsigned word = 0; word < numberOfWords; ++word)
+            words[word] = word == below ? static_cast<uint64_t>(tag) - 1 : static_cast<uint64_t>(tag) + word;
+        words[numberOfWords] = 3;
+        words[numberOfWords + 1] = 0;
+        test.call<uint64_t>(words.data());
+        AOT_ALLOCATION_TEST_CHECK(test, !words[numberOfWords] && words[numberOfWords + 1] == (below < numberOfWords ? static_cast<uint64_t>(tag) : 0));
+    }
+}
+
+static void allocatorSkipsRarelyComparedConstant()
+{
+    constexpr int64_t tag = JSValue::NumberTag;
+    std::optional<PinnedConstant> pinned = findPinnedConstant(static_cast<uint64_t>(tag));
+    AOT_TEST_CHECK(pinned);
+    for (unsigned numberOfWords : { 2u, 3u }) {
+        TestProcedure test;
+        Output& out = test.out();
+        RegisterFile file = registerFileFor(test.procedure().traits());
+        LValue buffer = test.argumentGPR(1);
+        LValue constant = out.constInt64(tag);
+        LBasicBlock head = out.newBlock();
+        LBasicBlock latch = out.newBlock();
+        LBasicBlock exit = out.newBlock();
+        LValue left = out.phiIn(head, Int64);
+        out.upsilon(test.argumentGPR(0), left);
+        out.jump(normalEdge(head));
+        out.appendTo(head);
+        LBasicBlock next = out.newBlock();
+        out.branch(left, normalEdge(next), normalEdge(exit));
+        for (unsigned word = 0; word < numberOfWords; ++word) {
+            out.appendTo(next);
+            next = word + 1 < numberOfWords ? out.newBlock() : latch;
+            out.branch(out.aboveOrEqual(out.load64(allocationTestWordAt(test, buffer, word)), constant), normalEdge(next), normalEdge(exit));
+        }
+        out.appendTo(latch);
+        if (numberOfWords == 3)
+            allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~file.calleeSaved);
+        out.upsilon(out.sub(left, 1), left);
+        out.jump(normalEdge(head));
+        out.appendTo(exit);
+        out.ret(left);
+        prepareOrFail(test);
+        AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, head, constant));
+        AOT_ALLOCATION_TEST_CHECK(test, !AllocationTestText(test).count("materialize"_s, constant));
+    }
+}
+
 static constexpr Origin allocationTestOriginOfExtension(7);
 
 static ProcedureTraits allocationTestTraitsThatNoteOrigins()
@@ -3633,6 +3749,206 @@ static void allocatorExtendsCountOfLoop()
     AOT_ALLOCATION_TEST_CHECK(test, count->has(OperationFlag::UpperHalfMayBeSet) == !startsAtConstant);
     AOT_ALLOCATION_TEST_CHECK(test, !allocationTestBytesWrittenFor(test, allocationTestOriginOfExtension) == startsAtConstant);
     AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0xfffffff000000004 }, uint64_t { 0xfffffff000000001 }) == 6);
+}
+
+template<bool joinTakesArgument>
+static void allocatorExtendsForwardedPhiCount()
+{
+    TestProcedure test(allocationTestTraitsThatNoteOrigins());
+    Output& out = test.out();
+    LBasicBlock whenSet = out.newBlock();
+    LBasicBlock whenClear = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LBasicBlock loop = out.newBlock();
+    LBasicBlock behindLoop = out.newBlock();
+    LValue end = out.castToInt32(test.argumentGPR(0));
+    LValue word = out.castToInt32(test.argumentGPR(1));
+    LValue start = out.phiIn(join, Int32);
+    LValue count = out.phiIn(loop, Int32);
+    LValue sum = out.phiIn(loop, Int64);
+    out.branch(out.notZero32(word), normalEdge(whenSet), normalEdge(whenClear));
+
+    out.appendTo(whenSet);
+    out.upsilon(out.constInt32(2), start);
+    out.jump(normalEdge(join));
+
+    out.appendTo(whenClear);
+    out.upsilon(joinTakesArgument ? word : out.constInt32(1), start);
+    out.jump(normalEdge(join));
+
+    out.appendTo(join);
+    out.upsilon(start, count);
+    out.upsilon(out.constInt64(0), sum);
+    out.jump(normalEdge(loop));
+
+    out.appendTo(loop);
+    LValue nextCount = out.add(count, out.constInt32(1));
+    out.setOrigin(allocationTestOriginOfExtension);
+    LValue extended = out.zeroExtPtr(count);
+    out.setOrigin(Origin());
+    LValue nextSum = out.add(sum, out.opaque(extended));
+    out.upsilon(nextCount, count);
+    out.upsilon(nextSum, sum);
+    out.branch(out.notEqual(nextCount, end), normalEdge(loop), normalEdge(behindLoop));
+
+    out.appendTo(behindLoop);
+    out.ret(nextSum);
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, start->has(OperationFlag::UpperHalfMayBeSet) == joinTakesArgument && count->has(OperationFlag::UpperHalfMayBeSet) == joinTakesArgument);
+    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestBytesWrittenFor(test, allocationTestOriginOfExtension) == !joinTakesArgument);
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0xfffffff000000004 }, uint64_t { 0xfffffff000000000 }) == 6);
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0xfffffff000000004 }, uint64_t { 0xfffffff000000001 }) == 5);
+}
+
+template<bool isReturned>
+static void allocatorFreesZeroExtension()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LBasicBlock next = out.newBlock();
+    LBasicBlock below = out.newBlock();
+    LBasicBlock notBelow = out.newBlock();
+    LValue buffer = test.argumentGPR(0);
+    LValue word = out.add(out.castToInt32(test.argumentGPR(1)), out.constInt32(1));
+    LValue extended = out.zeroExtPtr(word);
+    auto elementAt = [&](unsigned offset) {
+        return out.address(test.heaps().argumentBuffer, out.add(buffer, out.shl(extended, 3)), static_cast<ptrdiff_t>(offset * sizeof(uint64_t)));
+    };
+    LValue first = out.load64(elementAt(0));
+    LValue sum = out.sub(out.add(extended, first), out.mul(extended, extended));
+    allocationTestAppendCall(test, nullptr);
+    out.jump(normalEdge(next));
+
+    out.appendTo(next);
+    LValue second = out.load64(elementAt(1));
+    out.store64(out.bitXor(second, extended), elementAt(2));
+    LValue counter = out.load64(allocationTestWordAt(test, buffer, 8));
+    out.store64(out.add(counter, extended), allocationTestWordAt(test, buffer, 8));
+    out.branch(out.below(extended, out.load64(allocationTestWordAt(test, buffer, 9))), normalEdge(below), normalEdge(notBelow));
+
+    out.appendTo(below);
+    out.ret(out.add(out.add(sum, second), extended));
+    out.appendTo(notBelow);
+    out.ret(isReturned ? extended : out.add(extended, sum));
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, extended->opcode() == ZExt32 && namesWord(extended) && extended->useCount() > 1);
+    AOT_ALLOCATION_TEST_CHECK(test, extended->has(OperationFlag::HasOpaqueReader) == isReturned && test.procedure().liveness().isFused(extended) == !isReturned);
+
+    for (uint64_t limit : { 0u, 3u, 100u }) {
+        for (uint32_t index : { 0u, 1u, 3u, 5u }) {
+            std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+            words[9] = limit;
+            std::array<uint64_t, 64> expected = words;
+            uint64_t sumOfFirst = index + expected[index] - static_cast<uint64_t>(index) * index;
+            uint64_t secondWord = expected[index + 1];
+            expected[index + 2] = secondWord ^ index;
+            expected[8] += index;
+            uint64_t answer = index < limit ? sumOfFirst + secondWord + index : isReturned ? index : index + sumOfFirst;
+            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(words.data(), 0xfffe000000000000 | static_cast<uint32_t>(index - 1)) == answer);
+            AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+        }
+    }
+}
+
+static void encoderReadsConstantsInPlace()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue number = out.bitCast(test.argumentGPR(0), Double);
+    LValue wide = test.argumentGPR(1);
+    LValue sum = out.doubleSub(out.doubleAdd(number, out.constDouble(2.25)), out.constDouble(0.3));
+    LValue quotient = out.doubleDiv(out.doubleMul(sum, out.constDouble(-1.7)), out.constDouble(365.2425));
+    LValue isLess = out.lessThan(wide, out.constInt64(0x123456789abcdef));
+    LValue isAbove = out.above(wide, out.constInt64(0x7edcba9876543210));
+    out.ret(out.add(out.bitCast(quotient, Int64), out.zeroExtPtr(out.add(isLess, out.shl(isAbove, 1)))));
+    compileOrFail(test);
+
+    if (isX86_64())
+        AOT_ALLOCATION_TEST_CHECK(test, !AllocationTestText(test).count("materialize"_s));
+    for (double value : { 0.0, -2.25, 1e300, 365.0, -1.0 / 3 }) {
+        volatile double expected = value + 2.25;
+        expected = expected - 0.3;
+        expected = expected * -1.7;
+        expected = expected / 365.2425;
+        for (uint64_t word : { uint64_t { 0 }, uint64_t { 0x123456789abcdef }, uint64_t { 0x123456789abcdee }, uint64_t { 0x7edcba9876543211 }, ~uint64_t { 0 } }) {
+            uint64_t flags = (static_cast<int64_t>(word) < 0x123456789abcdef) + 2 * (word > 0x7edcba9876543210);
+            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(std::bit_cast<uint64_t>(value), word) == std::bit_cast<uint64_t>(static_cast<double>(expected)) + flags);
+        }
+    }
+}
+
+template<bool isSelectPredicate>
+static void allocatorFreesTruncation()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LBasicBlock next = out.newBlock();
+    LValue value = out.mul(test.argumentGPR(0), test.argumentGPR(1));
+    LValue low = out.castToInt32(value);
+    LValue sum = out.add(low, out.constInt32(5));
+    allocationTestAppendCall(test, nullptr);
+    out.jump(normalEdge(next));
+
+    out.appendTo(next);
+    LValue chosen = isSelectPredicate ? out.select(low, sum, out.constInt32(9)) : out.select(out.lessThan(low, out.constInt32(0)), low, sum);
+    LValue mixed = out.bitXor(out.shl(low, 3), out.sub(out.constInt32(100), low));
+    LValue wide = out.add(out.zeroExtPtr(low), out.signExt32To64(low));
+    LValue scaled = out.add(out.add(value, out.shl(out.signExt32To64(low), 2)), out.shl(out.zeroExtPtr(low), 3));
+    out.ret(out.add(out.add(out.zeroExtPtr(out.add(chosen, mixed)), wide), scaled));
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, low->opcode() == Trunc && test.procedure().liveness().isFused(low) == !isSelectPredicate);
+    for (uint64_t left : { uint64_t { 0 }, uint64_t { 0xffffffff }, uint64_t { 0x123456789abcdef }, uint64_t { 0x100000000 } }) {
+        for (uint64_t right : { uint64_t { 1 }, uint64_t { 0xfffffffffffffff9 }, uint64_t { 0x80000001 } }) {
+            uint64_t product = left * right;
+            uint32_t word = static_cast<uint32_t>(product);
+            bool takesFirst = isSelectPredicate ? word : word >> 31;
+            uint32_t arm = isSelectPredicate ? (takesFirst ? word + 5 : 9) : (takesFirst ? word : word + 5);
+            uint32_t expected = arm + ((word << 3) ^ (100 - word));
+            uint64_t extended = static_cast<uint64_t>(word) + static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(word)));
+            uint64_t scaledSum = product + (static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(word))) << 2) + (static_cast<uint64_t>(word) << 3);
+            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(left, right) == expected + extended + scaledSum);
+        }
+    }
+}
+
+static void allocatorExtendsVariableShiftFree()
+{
+    TestProcedure test(allocationTestTraitsThatNoteOrigins());
+    Output& out = test.out();
+    LValue shifted = out.shl(out.castToInt32(test.argumentGPR(0)), out.castToInt32(test.argumentGPR(1)));
+    LValue extended = out.zeroExtPtr(shifted);
+    out.ret(out.add(out.mul(extended, extended), extended));
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, extended->opcode() == ZExt32 && clearsUpperHalf(shifted) && test.procedure().liveness().isFused(extended));
+    for (uint64_t word : { uint64_t { 0xfffe000000000003 }, uint64_t { 0xffffffffffffffff }, uint64_t { 0x180000001 } }) {
+        for (uint64_t amount : { uint64_t { 0xfffe000000000000 }, uint64_t { 1 }, uint64_t { 0xfffe00000000001f } }) {
+            uint64_t expected = static_cast<uint32_t>(static_cast<uint32_t>(word) << (amount & 31));
+            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(word, amount) == expected * expected + expected);
+        }
+    }
+}
+
+static void allocatorMasksWithoutCopy()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue word = out.add(out.castToInt32(test.argumentGPR(0)), out.constInt32(1));
+    LValue low = out.bitAnd(word, out.constInt32(0xff));
+    LValue half = out.bitAnd(word, out.constInt32(0xffff));
+    LValue twice = out.shl(word, 1);
+    out.ret(out.zeroExtPtr(out.bitXor(out.add(out.add(low, half), twice), word)));
+    compileOrFail(test);
+
+    if (isX86_64())
+        AOT_ALLOCATION_TEST_CHECK(test, !AllocationTestText(test).count("move"_s, word));
+    for (uint64_t argument : { uint64_t { 0xfffe000000000000 }, uint64_t { 0xffffffff }, uint64_t { 0x12345678 }, uint64_t { 0x80000000 } }) {
+        uint32_t sum = static_cast<uint32_t>(argument) + 1;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(argument) == static_cast<uint32_t>(((sum & 0xff) + (sum & 0xffff) + (sum << 1)) ^ sum));
+    }
 }
 
 static const Step& allocationTestExecuteStepOf(TestProcedure& test, const Operation* operation)
@@ -3974,7 +4290,19 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/what-the-return-register-holds-at-a-return-goes-without-a-store"_s, Machine::allocatorStoresNothingForRegisterThatReturnTakes },
         { "machine-allocation/rare-arm-costs-the-hot-path-nothing-for-numbers"_s, Machine::allocatorKeepsRareArmOffHotPath<double> },
         { "machine-allocation/pinned-constant-is-read-where-it-lies"_s, Machine::allocatorReadsPinnedConstantWhereItLies },
+        { "machine-allocation/compared-constant-is-held"_s, Machine::allocatorHoldsComparedConstant<false> },
+        { "machine-allocation/compared-constant-is-held-across-calls"_s, Machine::allocatorHoldsComparedConstant<true> },
+        { "machine-allocation/rarely-compared-constant-is-not-held"_s, Machine::allocatorSkipsRarelyComparedConstant },
         { "machine-allocation/zero-extension-of-a-count-that-starts-at-a-truncated-word-is-an-instruction"_s, Machine::allocatorExtendsCountOfLoop<false> },
+        { "machine-allocation/free-extension-of-variable-shift"_s, Machine::allocatorExtendsVariableShiftFree },
+        { "machine-allocation/masks-without-copy"_s, Machine::allocatorMasksWithoutCopy },
+        { "machine-allocation/free-truncation"_s, Machine::allocatorFreesTruncation<false> },
+        { "machine-allocation/truncation-tested-by-select"_s, Machine::allocatorFreesTruncation<true> },
+        { "machine-allocation/constants-read-in-place"_s, Machine::encoderReadsConstantsInPlace },
+        { "machine-allocation/free-zero-extension"_s, Machine::allocatorFreesZeroExtension<false> },
+        { "machine-allocation/returned-zero-extension"_s, Machine::allocatorFreesZeroExtension<true> },
+        { "machine-allocation/zero-extension-of-a-count-that-starts-at-a-join-of-constants-is-no-instruction"_s, Machine::allocatorExtendsForwardedPhiCount<false> },
+        { "machine-allocation/zero-extension-of-a-count-that-starts-at-a-join-with-a-truncated-word-is-an-instruction"_s, Machine::allocatorExtendsForwardedPhiCount<true> },
     };
     return tests;
 }

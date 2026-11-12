@@ -304,7 +304,7 @@ String CompiledFrame::sourceURL() const
     if (FunctionDescription(function).isHelperOfCompiler()) [[unlikely]]
         return compilerHelpersModule;
     auto position = findPosition(*this);
-    return position && position->source ? sourceURLOf(position->source) : String();
+    return position && position->source ? sourceURLOf(position->shown()) : String();
 }
 
 LineColumn CompiledFrame::lineColumn() const
@@ -312,7 +312,7 @@ LineColumn CompiledFrame::lineColumn() const
     if (instance->vm->aotState().image->isObfuscated())
         return obfuscatedPositionOf(TraceFrame { code, function, callSite, !!inlineFrame, false });
     auto position = findPosition(*this);
-    return position ? position->lineColumn : LineColumn { };
+    return position ? position->shown().lineColumn : LineColumn { };
 }
 
 SourceOrigin CompiledFrame::sourceOrigin() const
@@ -358,6 +358,11 @@ std::optional<ModuleID> CompiledFrame::evaluatingModule() const
 {
     if (FunctionDescription(function).codeType() != ModuleCode && !functionKindData(function).isCommonJSModule)
         return std::nullopt;
+    return sourceModule();
+}
+
+std::optional<ModuleID> CompiledFrame::sourceModule() const
+{
     auto position = findPosition(*this);
     return position && position->source ? std::optional(position->source) : std::nullopt;
 }
@@ -374,6 +379,22 @@ void forEachEvaluatingModuleOnStack(VM& vm, CallFrame* callFrame, const ScopedLa
         }
         return IterationStatus::Continue;
     });
+}
+
+std::optional<ModuleID> Modules::callingModule() const
+{
+    VM& vm = *m_instance.vm;
+    std::optional<ModuleID> module;
+    if (!vm.topCallFrame)
+        return module;
+    StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) {
+        if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame())
+                module = visitor->compiledFrame().sourceModule();
+        }
+        return IterationStatus::Done;
+    });
+    return module;
 }
 
 bool Modules::isHostRequestStale() const
@@ -589,6 +610,14 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         enterFrame(cursor, *site);
         if (!site->isStubReturnSite()) [[likely]]
             return site;
+        const Instance* instance = m_instance;
+        if (!instance) [[unlikely]] {
+            instance = tryFindInstance();
+            site = findReturnSiteInRun(*m_cache, *m_image, cursor);
+            RELEASE_ASSERT(site && site->isStubReturnSite());
+        }
+        if (instance)
+            cursor.isAmongFramesThatWait |= cursor.callFrame == std::bit_cast<const CallFrame*>(frameWithAwaitingCallers(*instance));
         switch (site->stubFrameKind) {
         case StubFrameKind::InHostCallFrame:
             RELEASE_ASSERT_NOT_REACHED();
@@ -808,6 +837,12 @@ bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)
 std::span<const uint8_t> compiledCodeOf(VM& vm)
 {
     return vm.hasCompiledCode() ? vm.aotState().image->code() : std::span<const uint8_t> { };
+}
+
+bool isCallStubReturnSite(VM& vm, const void* returnPC)
+{
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(returnPC);
+    return site && site->isStubReturnSite() && entersCallee(site->stubFrameKind);
 }
 
 bool isTopFrameCompiled(VM& vm)
@@ -1034,6 +1069,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CallSiteCache);
 
 CallSiteCache::CallSiteCache() = default;
 
+void CallSiteCache::Entry::findHandler(const Image& image) const
+{
+    handler = image.handlerAt(code.index(), site.callSite);
+    mayHaveHandler = false;
+}
+
 static uint16_t countShownFrames(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, const CallSiteRecord& site, ShownFrameFilter filter, bool innermostIsTailDeleted)
 {
     uint16_t count = 0;
@@ -1071,7 +1112,7 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     ReturnSiteInfo returnSite = image.returnSiteInfoAt(location.function, location.offset);
     if (returnSite.site)
         entry.site = *returnSite.site;
-    entry.handler = returnSite.handler;
+    entry.mayHaveHandler = returnSite.mayHaveHandler;
     entry.frame = returnSite.frame;
     FunctionDescription root(image.rootFunctionOf(location.function));
     entry.rejectsOnThrow = root.rejectsOnThrow() && (returnSite.site || !root.makesPromiseOfCall());
@@ -1086,10 +1127,15 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     entry.namesConstructedCallee = returnSite.hasConstructedCallees && image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
     entry.namesTailCallingBuiltin = entry.site.calledBuiltin && leavesByTailCall(entry.site.calledBuiltin);
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
-    entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());
-    entry.shownFrameCountOnTop = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);
+    auto countFrames = [&](ShownFrameFilter filter, bool innermostIsTailDeleted) -> uint16_t {
+        if (!entry.site.inlineFrame && !entry.site.calledBuiltin)
+            return filter.shows(entry.innermostVisibility, innermostIsTailDeleted);
+        return countShownFrames(image, reader, entry.code, entry.site, filter, innermostIsTailDeleted);
+    };
+    entry.shownFrameCount = countFrames(ShownFrameFilter(true), entry.site.isTailCall());
+    entry.shownFrameCountOnTop = std::min<uint16_t>(countFrames(ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);
     if (entry.site.isTailCall())
-        entry.shownFrameCountOnTopBehindTailCall = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), true), CallSiteCache::Entry::tooManyFramesToCount);
+        entry.shownFrameCountOnTopBehindTailCall = std::min<uint16_t>(countFrames(ShownFrameFilter(false), true), CallSiteCache::Entry::tooManyFramesToCount);
     return entry;
 }
 

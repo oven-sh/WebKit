@@ -119,6 +119,12 @@ bool isClassOfPrimitives(BuiltinClassID builtinClass)
     });
 }
 
+bool isPrototypeOfPrimitives(const BuiltinTable& table, BuiltinID builtin)
+{
+    const Builtin& entry = table.at(table.canonicalID(builtin));
+    return entry.kind == BuiltinKind::Prototype && entry.instanceClass && isClassOfPrimitives(entry.instanceClass);
+}
+
 TypeID typeOfValuesThatLookUpAsInstancesOf(TypeArena& types, BuiltinClassID builtinClass)
 {
     static constexpr uint16_t primitivesWithClassOfTheirOwn[] { Primitive::String, Primitive::Symbol, Primitive::BigInt, Primitive::Number, Primitive::Boolean };

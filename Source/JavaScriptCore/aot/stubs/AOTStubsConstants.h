@@ -19,6 +19,8 @@ enum class ConstantAtSite : uint8_t { String, Key, BuiltinCell };
 
 constexpr StubKey createConstant(CreatedConstant constant) { return StubKey(StubFamily::CreateConstant).withForm(static_cast<uint8_t>(constant)); }
 constexpr StubKey builtinCell() { return StubKey(StubFamily::BuiltinCell); }
+constexpr bool isWordOfStoreStringConstant(uint64_t offset) { return !(offset % sizeof(uint64_t)) && offset / sizeof(uint64_t) <= StubKey::maxCount; }
+constexpr StubKey storeStringConstant(uint64_t offset) { return StubKey(StubFamily::StoreStringConstant).withCount(static_cast<unsigned>(offset / sizeof(uint64_t))); }
 constexpr StubKey createConstantAtSite(ConstantAtSite constant) { return StubKey(StubFamily::CreateConstantAtSite).withForm(static_cast<uint8_t>(constant)); }
 
 inline constexpr int32_t offsetOfNumberBehindCall = static_cast<int32_t>(ThrowSiteWord::sizeOfWordBehindCall - sizeof(uint32_t));
@@ -32,6 +34,7 @@ struct LazyHeaderRegisters {
 };
 
 void loadStringConstantsAndJump(StubAssembler&, std::span<const GPRReg> numbers, StubKey target);
+void loadStringConstantsAndContinue(StubAssembler&, std::span<const GPRReg> numbers, const ScopedLambda<void()>& body);
 
 void createLazyHeader(StubAssembler&, const LazyHeaderRegisters&, unsigned longestTextWithoutHeader, JumpList& cannot);
 

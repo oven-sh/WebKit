@@ -278,6 +278,42 @@ static void testOtherPrototype(LoadedProgram& program)
     AOT_TEST_CHECK(isInheritedFrom(program, inherited, PropertyAnswerKind::Value, prototype, label) && dependsOnlyOn(inherited, prototype));
 }
 
+static void testDictionaryOnChain(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    Identifier label = Identifier::fromString(vm, "label"_s);
+    Identifier removed = Identifier::fromString(vm, "removed"_s);
+    Identifier other = Identifier::fromString(vm, "other"_s);
+    JSObject* prototype = constructEmptyObject(realm);
+    prototype->putDirect(vm, removed, jsNumber(1));
+    prototype->putDirect(vm, label, jsNumber(7));
+    prototype->didBecomePrototype(vm);
+    JSObject* object = constructEmptyObject(realm, prototype);
+
+    auto findsBoth = [&] {
+        PropertyAnswer inherited = readAndClassify(program, object, label);
+        PropertyAnswer absent = readAndClassify(program, object, other);
+        return isInheritedFrom(program, inherited, PropertyAnswerKind::Value, prototype, label) && dependsOnlyOn(inherited, prototype) && isAbsent(absent) && dependsOnlyOn(absent, prototype);
+    };
+    for (unsigned times = 0; times < 2; ++times) {
+        prototype->convertToDictionary(vm);
+        AOT_TEST_CHECK(findsBoth() && prototype->structure()->isCacheableDictionary());
+        prototype->flattenDictionaryObject(vm);
+        AOT_TEST_CHECK(findsBoth());
+    }
+
+    prototype->convertToUncacheableDictionary(vm);
+    AOT_TEST_CHECK(findsBoth() && prototype->structure()->isUncacheableDictionary());
+    AOT_TEST_CHECK(presenceAfterRead(program, object, other) == Presence::Absent);
+    AOT_TEST_CHECK(program.state().chainDependents->hasDependents(prototype));
+    AOT_TEST_CHECK(JSCell::deleteProperty(prototype, realm, removed));
+    PropertyOffset offsetBefore = prototype->getDirectOffset(vm, label);
+    prototype->flattenDictionaryObject(vm);
+    AOT_TEST_CHECK(prototype->getDirectOffset(vm, label) != offsetBefore && !program.state().chainDependents->hasDependents(prototype));
+    AOT_TEST_CHECK(findsBoth());
+}
+
 static void testOtherBase(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -871,6 +907,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/underscore-proto-and-index"_s, withProgram<testUnderscoreProtoAndIndex> },
         { "property-lookup/dictionary"_s, withProgram<testDictionary> },
         { "property-lookup/other-prototype"_s, withProgram<testOtherPrototype> },
+        { "property-lookup/dictionary-on-chain"_s, withProgram<testDictionaryOnChain> },
         { "property-lookup/other-base"_s, withProgram<testOtherBase> },
         { "property-lookup/length-of-typed-arrays"_s, withProgram<testLengthOfTypedArrays> },
         { "property-lookup/last-index-of-regexps"_s, withProgram<testLastIndexOfRegExps> },

@@ -35,20 +35,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewBigInt64, JSCell*, (Instance* instance, 
     OPERATION_RETURN(scope, result);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTByteLengthOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedEncoding))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTByteLengthOfAnyValue);
-    JSValue value = JSValue::decode(encodedValue);
-    JSValue encoding = JSValue::decode(encodedEncoding);
-    if (value.isString() && !encoding.isString()) {
-        auto view = asString(value)->view(globalObject);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        size_t length = view->is8Bit() ? operationAOTStringUTF8Length8(view->span8().data(), view->length()) : operationAOTStringUTF8Length16(view->span16().data(), view->length());
-        OPERATION_RETURN(scope, JSValue::encode(jsNumber(length)));
-    }
-    OPERATION_RETURN(scope, encodedJSValue());
-}
-
 enum class BytesAreRead : uint8_t { AsUTF8, AsASCII, AsLatin1 };
 
 static std::optional<BytesAreRead> wayToRead(JSValue encoding)
@@ -65,6 +51,23 @@ static std::optional<BytesAreRead> wayToRead(JSValue encoding)
     if (equal(name, "latin1"_s) || equal(name, "binary"_s))
         return BytesAreRead::AsLatin1;
     return std::nullopt;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTByteLengthOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedEncoding))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTByteLengthOfAnyValue);
+    JSValue value = JSValue::decode(encodedValue);
+    JSValue encoding = JSValue::decode(encodedEncoding);
+    std::optional<BytesAreRead> way = encoding.isString() ? wayToRead(encoding) : BytesAreRead::AsUTF8;
+    if (value.isString() && way) {
+        if (*way != BytesAreRead::AsUTF8)
+            OPERATION_RETURN(scope, JSValue::encode(jsNumber(asString(value)->length())));
+        auto view = asString(value)->view(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        size_t length = view->is8Bit() ? operationAOTStringUTF8Length8(view->span8().data(), view->length()) : operationAOTStringUTF8Length16(view->span16().data(), view->length());
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(length)));
+    }
+    OPERATION_RETURN(scope, encodedJSValue());
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedEncoding, EncodedJSValue encodedStart, EncodedJSValue encodedEnd))

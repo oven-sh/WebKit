@@ -113,6 +113,10 @@ public:
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
     static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
+    static void leaveTestToNext(Block* first, unsigned leavingSuccessor);
+    static void readWordWhereRequested(Block* asked, Operation* word);
+    static void compareEarlierReadWord(Operation* comparison, Operation* word);
+    static void mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value);
     static void askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high);
     struct CaseOfEquality {
         int64_t value;
@@ -122,6 +126,8 @@ public:
     static void askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond);
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
+    static void passTestToJoin(Block* from, Block* join, const Operation* phi, bool isInverted);
+    static void moveTestToLatch(Block* header, Block* latch, Operation* test, unsigned successorInLoop);
     static bool isUnsplit(const Block* from, const BlockPlace& placeOfTarget)
     {
         return from->numSuccessors() > 1 && from->last()->opcode() != Patch && placeOfTarget.predecessors.size() > 1;
@@ -133,6 +139,22 @@ public:
         if (from->numSuccessors() <= 2)
             return from->successor(from->successor(0).block() == target ? 0 : 1);
         return from->successor(successorIndexOfPredecessorWithManySuccessors(target, &predecessors[numberOfPredecessor]));
+    }
+    bool isRareEdgeFromPredecessor(const Block* target, size_t numberOfPredecessor) const
+    {
+        const BlockPlace& place = of(target);
+        uint32_t regionOfFrom = of(place.predecessors[numberOfPredecessor]).rareRegion;
+        return (regionOfFrom != noRareRegion && regionOfFrom != place.rareRegion) || edgeFromPredecessor(target, numberOfPredecessor).isRare();
+    }
+    bool hasBackEdgeOutsideRareRegions(const Loop& loop) const
+    {
+        const Block* head = blocksInOrder()[loop.firstBlock];
+        std::span<Block* const> predecessors = of(head).predecessors;
+        for (size_t index = predecessors.size(); index-- && of(predecessors[index]).orderIndex >= loop.firstBlock;) {
+            if (!isRareEdgeFromPredecessor(head, index))
+                return true;
+        }
+        return false;
     }
     uint32_t mostBlocks() const { return m_mostBlocks; }
     uint32_t mostOperations() const { return m_mostOperations; }

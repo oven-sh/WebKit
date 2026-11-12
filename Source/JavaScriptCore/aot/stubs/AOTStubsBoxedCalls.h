@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTOperationData.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubWords.h"
 #include "AOTStubsCalls.h"
@@ -66,8 +67,46 @@ constexpr std::optional<BoxedCallForm> formAskedBehind(BoxedCallForm form)
     default: return std::nullopt;
     }
 }
+constexpr std::optional<HostResult> checkedResultOf(BoxedCallForm form)
+{
+    switch (form) {
+    case BoxedCallForm::ArrayIncludes:
+    case BoxedCallForm::ArrayIsArray:
+    case BoxedCallForm::IsNaN:
+    case BoxedCallForm::MapDelete:
+    case BoxedCallForm::MapHas:
+    case BoxedCallForm::ObjectHasOwnProperty:
+    case BoxedCallForm::ObjectIs:
+    case BoxedCallForm::ObjectIsExtensible:
+    case BoxedCallForm::ObjectIsFrozen:
+    case BoxedCallForm::ObjectIsSealed:
+    case BoxedCallForm::RegExpTest:
+    case BoxedCallForm::SetDelete:
+    case BoxedCallForm::SetHas:
+    case BoxedCallForm::StringEndsWith:
+    case BoxedCallForm::StringIncludes:
+    case BoxedCallForm::StringIsWellFormed:
+    case BoxedCallForm::StringStartsWith:
+    case BoxedCallForm::WeakMapHas:
+    case BoxedCallForm::WeakSetHas:
+        return HostResult::Boolean;
+    case BoxedCallForm::StringCharAt:
+    case BoxedCallForm::StringSlice:
+    case BoxedCallForm::StringSubstr:
+    case BoxedCallForm::StringSubstring:
+    case BoxedCallForm::StringToLowerCase:
+    case BoxedCallForm::StringToUpperCase:
+    case BoxedCallForm::StringTrim:
+    case BoxedCallForm::StringTrimEnd:
+    case BoxedCallForm::StringTrimStart:
+        return HostResult::String;
+    default:
+        return std::nullopt;
+    }
+}
 bool servesCallsByName(BoxedCallForm, unsigned count);
 bool fetchesFunctionOnlyToLeave(BoxedCallForm, unsigned count);
+StubKey hostCallLeftTo(BoxedCallForm, unsigned count);
 constexpr StubKey weakMapSet() { return StubKey(StubFamily::WeakMapSet); }
 constexpr StubKey stringStartsWith() { return StubKey(StubFamily::StringStartsWith); }
 constexpr StubKey stringIndexOf() { return StubKey(StubFamily::StringIndexOf); }
@@ -88,7 +127,7 @@ static_assert(descriptorOf(StubFamily::CallMethodOfAnyReceiverThatMayBeUnread).n
 static_assert(descriptorOf(StubFamily::CallMethodThatMayBeUnreadInTailPosition).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::ReadMethodAtSiteUnlessReceiverFindsIt).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).minCount == BoxedCallEntry::minArgumentCount && descriptorOf(StubFamily::CallBoxedBuiltin).maxCount == BoxedCallEntry::maxArgumentCount);
-static_assert(numberOfBuiltinBoxedStubs * 3 <= StubWords::numberOfBoxedCallEntries * 2);
+static_assert(numberOfBuiltinBoxedStubs * 4 <= StubWords::numberOfBoxedCallEntries * 3);
 
 } } // namespace JSC::AOT
 

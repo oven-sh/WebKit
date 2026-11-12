@@ -54,10 +54,7 @@ public:
     JSString* leftContext(JSGlobalObject*, JSObject* owner);
     JSString* rightContext(JSGlobalObject*, JSObject* owner);
 
-    JSString* input()
-    {
-        return m_reified ? m_reifiedInput.get() : m_lastInput.get();
-    }
+    JSString* input(JSGlobalObject*, JSObject* owner);
 
     DECLARE_VISIT_AGGREGATE;
 
@@ -66,15 +63,28 @@ public:
     static constexpr ptrdiff_t offsetOfLastRegExp() { return OBJECT_OFFSETOF(RegExpCachedResult, m_lastRegExp); }
     static constexpr ptrdiff_t offsetOfLastInput() { return OBJECT_OFFSETOF(RegExpCachedResult, m_lastInput); }
     static constexpr ptrdiff_t offsetOfResult() { return OBJECT_OFFSETOF(RegExpCachedResult, m_result); }
-    static constexpr ptrdiff_t offsetOfReified() { return OBJECT_OFFSETOF(RegExpCachedResult, m_reified); }
+    static constexpr ptrdiff_t offsetOfReified() { return OBJECT_OFFSETOF(RegExpCachedResult, m_state); }
     static constexpr ptrdiff_t offsetOfOneCharacterMatch() { return OBJECT_OFFSETOF(RegExpCachedResult, m_oneCharacterMatch); }
+    static constexpr ptrdiff_t offsetOfInputStart() { return OBJECT_OFFSETOF(RegExpCachedResult, m_inputStart); }
+    static constexpr ptrdiff_t offsetOfInputLength() { return OBJECT_OFFSETOF(RegExpCachedResult, m_inputLength); }
+
+    enum class State : uint8_t {
+        Lazy,
+        Reified,
+        // The input is a substring of m_lastInput, and m_result has offsets in m_lastInput. Code compiled ahead of time records this.
+        LazyWithSubstringInput,
+    };
 
     MatchResult result() const { return m_result; }
 
 private:
+    void resolveSubstringInput(JSGlobalObject*, JSObject* owner);
+
     MatchResult m_result { 0, 0 };
-    bool m_reified { false };
+    State m_state { State::Lazy };
     bool m_oneCharacterMatch { false };
+    unsigned m_inputStart { 0 };
+    unsigned m_inputLength { 0 };
     WriteBarrier<JSString> m_lastInput;
     WriteBarrier<RegExp> m_lastRegExp;
     WriteBarrier<JSArray> m_reifiedResult;

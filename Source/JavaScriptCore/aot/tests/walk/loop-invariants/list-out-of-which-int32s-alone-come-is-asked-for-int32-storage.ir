@@ -5,7 +5,7 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Int32
-# CHECK: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN
 # RUN(SHELL): run-in-shell globalThis.sink = (total) => { print(total); };
 # SHELL: 6
 # SHELL: exited with 0

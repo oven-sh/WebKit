@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
@@ -20,18 +21,72 @@
 #include "NumberPrototype.h"
 #include "ParseInt.h"
 #include <array>
+#include <bit>
 #include <charconv>
+#include <climits>
 #include <wtf/Float16.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/dtoa.h>
 
 namespace JSC { namespace AOT {
+
+static JSString* stringOfInt32WithRadix(VM& vm, int32_t value, uint32_t radix)
+{
+    static constexpr std::array<Latin1Character, 36> digits { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z' };
+    static constexpr unsigned maxDigitsInWord = sizeof(uint64_t);
+    static constexpr unsigned maxWords = sizeof(uint32_t) * CHAR_BIT / maxDigitsInWord;
+    uint32_t left = static_cast<uint32_t>(value);
+    if (value < 0 || radix == 10) [[unlikely]]
+        return int32ToString(vm, value, radix);
+    if (left < radix)
+        return vm.smallStrings.singleCharacterString(digits[left]);
+
+    std::array<uint64_t, maxWords> words;
+    unsigned numberOfWords = 0;
+    unsigned digitsInWord = 0;
+    auto takeDigits = [&](NOESCAPE const auto& takeDigit) ALWAYS_INLINE_LAMBDA {
+        do {
+            uint64_t word = 0;
+            digitsInWord = 0;
+            do
+                word = word << CHAR_BIT | digits[takeDigit()];
+            while (++digitsInWord < maxDigitsInWord && left);
+            words[numberOfWords++] = word;
+        } while (left);
+    };
+    if (std::has_single_bit(radix)) {
+        unsigned bitsOfDigit = std::countr_zero(radix);
+        takeDigits([&] {
+            uint32_t digit = left & (radix - 1);
+            left >>= bitsOfDigit;
+            return digit;
+        });
+    } else {
+        takeDigits([&] {
+            uint32_t digit = left % radix;
+            left /= radix;
+            return digit;
+        });
+    }
+
+    std::span<Latin1Character> characters;
+    Ref impl = StringImpl::createUninitialized((numberOfWords - 1) * maxDigitsInWord + digitsInWord, characters);
+    uint64_t firstDigits = words[--numberOfWords];
+    if (digitsInWord == 1)
+        characters[0] = static_cast<Latin1Character>(firstDigits);
+    else
+        WTF::copySmallMemory<sizeof(uint16_t), maxDigitsInWord>(byteCast<uint8_t>(characters.data()), reinterpret_cast<const uint8_t*>(&firstDigits), digitsInWord);
+    for (characters = characters.subspan(digitsInWord); numberOfWords; characters = characters.subspan(maxDigitsInWord))
+        WTF::unalignedStore<uint64_t>(characters.data(), words[--numberOfWords]);
+    return jsNontrivialString(vm, String { WTF::move(impl) });
+}
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNumberToStringWithRadix, JSCell*, (Instance* instance, double value, int32_t radix))
 {
     RELEASE_ASSERT(radix >= 2 && radix <= 36);
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberToStringWithRadix);
     if (int32_t integer = truncateDoubleToInt32(value); integer == value)
-        OPERATION_RETURN(scope, int32ToString(vm, integer, radix));
+        OPERATION_RETURN(scope, stringOfInt32WithRadix(vm, integer, radix));
     OPERATION_RETURN(scope, numberToString(vm, value, radix));
 }
 
@@ -39,7 +94,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInt32ToStringWithRadix, JSCell*, (
 {
     RELEASE_ASSERT(radix >= 2 && radix <= 36);
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInt32ToStringWithRadix);
-    OPERATION_RETURN(scope, int32ToString(vm, value, radix));
+    OPERATION_RETURN(scope, stringOfInt32WithRadix(vm, value, radix));
 }
 
 #define AOT_DEFINE_MATH_FUNCTION(capitalizedName, lowerName) \
@@ -120,6 +175,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberOfAnyValue);
     JSValue value = JSValue::decode(encodedValue);
+    if (value.isCell() && value.asCell()->type() == CompiledObjectType) {
+        value = primitiveIfKnown(instance, value, PreferNumber);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
     if (value.isString()) {
         auto view = asString(value)->view(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -129,7 +188,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance
         }
         OPERATION_RETURN(scope, JSValue::encode(jsNumber(jsToNumber(view))));
     }
-    JSValue numeric = value.toNumeric(globalObject);
+    JSValue numeric = timeIfDate(value).toNumeric(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (numeric.isNumber())
         OPERATION_RETURN(scope, JSValue::encode(numeric));

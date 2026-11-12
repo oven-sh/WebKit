@@ -429,7 +429,8 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         else $vm.toCacheableDictionary(object);
         return object;
     };
-    const namesOf = object => { const own = Object.keys(object); let names = ""; for (let k = 0; k < own.length; k++) names += "," + own[k]; return names; };
+    // Object.keys() would flatten the dictionary.
+    const namesOf = object => { let names = ""; for (const name in object) names += Object.hasOwn(object, name) ? "," + name : ""; return names; };
     const added = (object, key = "added") => {
         const namesBefore = namesOf(object);
         return { object, key, isRight: value => object[key] === value && Object.hasOwn(object, key) && namesOf(object) === namesBefore + "," + key };

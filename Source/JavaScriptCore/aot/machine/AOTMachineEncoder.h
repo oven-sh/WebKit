@@ -191,6 +191,10 @@ public:
 
     template<FrameCoverage> void encodeBlocksUnder();
     template<FrameCoverage> ALWAYS_INLINE void encodeBlockUnder(Block*);
+    void noteShortLoopsEndingWith(const Block*);
+    static bool isCall(const PatchOperation&);
+    MacroAssembler::Label m_lastCall;
+    bool m_mayEndLoop { false };
     void encodeSteps(uint32_t begin, uint32_t end);
     void encodeExecute(const Step&);
     ALWAYS_INLINE void encodeExecuteInline(const Step&);
@@ -203,7 +207,7 @@ public:
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
     void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
-    void noteFrameState(bool isSetUp)
+    ALWAYS_INLINE void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
         if (m_frameRangeIsOpen != isSetUp) [[unlikely]]
@@ -220,7 +224,7 @@ public:
     void runLatePaths();
     void linkPendingJumps();
     void findBlocksWithoutCode();
-    void findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn);
+    void removeRepeatedMoveBlocks(std::span<const uint32_t> layoutIndexesOfMoveBlocks, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn);
     const Block* blockEnteredThrough(const Block* block) const { return m_blocksEntered[block->index()]; }
     void placeColdCodeNearItsJumps();
     bool hasCode(const Block* block) const { return blockEnteredThrough(block) == block; }
@@ -241,6 +245,7 @@ public:
         const MacroAssembler::Label* label = labelOf(target);
         if (label->isSet()) {
             jump.linkTo(*label, &m_jit);
+            m_mayEndLoop = true;
             return;
         }
         if (m_pendingJumps.size() < m_pendingJumps.capacity()) [[likely]] {
@@ -375,7 +380,9 @@ public:
     void encodeSwitchThroughTable(Block*, GPRReg value, int64_t firstValue, uint64_t numberOfEntries);
     void encodeBinarySearch(Block*, GPRReg value, Width, std::span<const int64_t> values, unsigned firstSuccessor);
     void encodeReturn(const Step&);
+    void noteReturnThatJumpsMayCopy();
     Test resolveTest(const Operation* user, LeafCursor&);
+    static bool isEndOfExactIntegers(const Operation* value) { return value->hasInt64() && (value->asInt64() == 1ll << 53 || value->asInt64() == -(1ll << 53)); }
 
     MacroAssembler::JumpList branchOn(const Test&, bool whenItHolds);
 #if CPU(X86_64)
@@ -394,7 +401,10 @@ public:
     void materializeBitsInFPR(uint64_t bits, Width, FPRReg destination);
     bool blockHasWrittenNumberRegisterInFrontOf(const Step&, FPRReg);
     bool writesNumberRegister(const Step&, FPRReg) const;
-    bool numberRegisterMayBeWrittenShortlyInFrontOf(const Step&, FPRReg) const;
+    bool wasNumberRegisterWrittenRecently(const Step&, FPRReg) const;
+    void zeroDestinationOf(const Step&, FPRReg destination);
+    bool startsNumberChain(const Step&) const;
+    bool isNumberRegisterChainedAcrossIterations(const Step&, FPRReg) const;
 
     void encodeLoad(const Step&);
     void encodeStore(const Step&);
@@ -467,12 +477,20 @@ public:
     const Block* m_blockWhoseWrittenNumberRegistersAreNoted { nullptr };
     const Step* m_firstStepNotLookedAtForNumberRegisters { nullptr };
     RegisterMask m_numberRegistersWrittenInBlock { 0 };
+    std::array<const Step*, 8> m_stepsWithZeroedDestination { };
+    unsigned m_numberOfZeroedDestinations { 0 };
 };
 
 inline bool encodedMoveIsWide(Width width)
 {
     RELEASE_ASSERT(width == Width32 || width == Width64);
     return width == Width64;
+}
+
+inline bool isEncodedMoveOfVector(Width width, [[maybe_unused]] Reg reg)
+{
+    RELEASE_ASSERT(width != Width128 || reg.isFPR());
+    return width == Width128;
 }
 
 inline void checkRegisterOfEncodedMove(Reg reg)
@@ -512,6 +530,10 @@ ALWAYS_INLINE void checkMemoryOfEncodedMove(const Encoder& encoder, Location mem
 
 ALWAYS_INLINE void loadForEncodedMove(CCallHelpers& jit, MacroAssembler::Address source, Width width, Reg destination)
 {
+    if (isEncodedMoveOfVector(width, destination)) [[unlikely]] {
+        jit.loadVector(source, destination.fpr());
+        return;
+    }
     bool isWide = encodedMoveIsWide(width);
     willWriteRegisterOfEncodedMove(jit, destination);
     if (destination.isGPR()) {
@@ -529,6 +551,10 @@ ALWAYS_INLINE void loadForEncodedMove(CCallHelpers& jit, MacroAssembler::Address
 
 ALWAYS_INLINE void storeForEncodedMove(CCallHelpers& jit, Reg source, Width width, MacroAssembler::Address destination)
 {
+    if (isEncodedMoveOfVector(width, source)) [[unlikely]] {
+        jit.storeVector(source.fpr(), destination);
+        return;
+    }
     bool isWide = encodedMoveIsWide(width);
     checkRegisterOfEncodedMove(source);
     if (source.isGPR()) {
@@ -552,11 +578,15 @@ ALWAYS_INLINE void Encoder::encodeMove(const Step& step)
     Reg destination = step.destination.reg();
     checkRegisterOfEncodedMove(source);
     RELEASE_ASSERT(bankOf(source) == bankOf(destination));
-    bool isWide = encodedMoveIsWide(step.width);
     if (source == destination)
         return;
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    if (isEncodedMoveOfVector(step.width, source)) [[unlikely]] {
+        m_jit.moveVector(source.fpr(), destination.fpr());
+        return;
+    }
+    bool isWide = encodedMoveIsWide(step.width);
     willWriteRegisterOfEncodedMove(m_jit, destination);
     if (destination.isFPR()) {
         m_jit.moveDouble(source.fpr(), destination.fpr());
@@ -694,6 +724,7 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
         std::span<MacroAssembler::Label*> labels = m_arena.createSpan<MacroAssembler::Label*>(block->numSuccessors());
         for (unsigned index = 0; index < block->numSuccessors(); ++index)
             labels[index] = labelOf(block->successor(index).block());
+        m_mayEndLoop = true;
         parameters.m_successorLabels = labels;
     }
 }
@@ -707,6 +738,8 @@ ALWAYS_INLINE void Encoder::encodePatch(const Step& step, PatchOperation* patch)
 
     PatchParameters parameters(*this, patch);
     fillParameters<false>(parameters, step, patch);
+    if (isX86_64() && isCall(*patch))
+        m_lastCall = m_jit.labelIgnoringWatchpoints();
     patch->generator()->run(m_jit, parameters);
 }
 

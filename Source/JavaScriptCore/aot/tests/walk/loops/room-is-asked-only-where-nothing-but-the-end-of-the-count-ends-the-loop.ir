@@ -8,6 +8,7 @@
 # RUN(NAME): walk f2 mechanisms=all
 # NAME-LABEL: code f2:Body
 # NAME-NOT: ReserveArrayCapacity
+# NAME: isLoopHead=true
 # RUN(CUT): walk f3 mechanisms=all
 # CUT-LABEL: code f3:Body
 # CUT-NOT: ReserveArrayCapacity

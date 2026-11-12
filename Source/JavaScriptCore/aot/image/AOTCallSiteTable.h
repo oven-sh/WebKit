@@ -166,8 +166,13 @@ std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, Call
 
 static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
 
+static constexpr uint32_t firstLineOfEvaluatedStrings = 1u << 30;
+static constexpr unsigned lineInEvaluatedStringBits = 16;
+
 struct SourcePosition {
     friend bool operator==(const SourcePosition&, const SourcePosition&) = default;
+
+    SourcePosition shown() const;
 
     const LineColumn& startOfExpression() const { return constructionStart.line && !startIsForCallers && !startIsWhereWritten ? constructionStart : lineColumn; }
 
@@ -176,7 +181,20 @@ struct SourcePosition {
     LineColumn constructionStart { 0, 0 };
     bool startIsForCallers { false };
     bool startIsWhereWritten { false };
+    bool isInEvaluatedString { false };
 };
+
+inline SourcePosition SourcePosition::shown() const
+{
+    if (lineColumn.line < firstLineOfEvaluatedStrings) [[likely]]
+        return *this;
+    constexpr uint32_t mask = (1u << lineInEvaluatedStringBits) - 1;
+    SourcePosition result = *this;
+    result.lineColumn.line &= mask;
+    result.constructionStart.line &= mask;
+    result.isInEvaluatedString = true;
+    return result;
+}
 
 static constexpr unsigned sitesBetweenPositionCheckpoints = 128;
 

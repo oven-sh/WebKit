@@ -56,7 +56,8 @@ enum class IdenticalValues : bool { Skip, Append };
 ALWAYS_INLINE bool isCompiledObject(const JSCell* cell) { return cell->type() == CompiledObjectType; }
 JS_EXPORT_PRIVATE bool wouldHaveArrayStorage(JSObject* compiledObject);
 JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
-JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
+JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
+Result forEachOwnDescriptor(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath, Preparations = Preparations::NeedGenericPath);
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreatedAfterPreparing(JSGlobalObject*, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
 struct GetterWalkHooks {
@@ -67,12 +68,15 @@ struct GetterWalkHooks {
 };
 bool hasGetterToCall(JSObject* compiledObject);
 enum class NewObjectTakes : bool { Definitions, Stores };
+bool tryListCallingGetters(JSGlobalObject*, JSObject* compiledObject, MarkedArgumentBuffer* keys, MarkedArgumentBuffer& values);
+JSObject* tryCopyWithGetters(JSGlobalObject*, JSObject* compiledObject, uint32_t excludedRunNumberPlusOne = 0, std::span<UniquedStringImpl* const> excludedNames = { });
 JSObject* tryCopyCallingGetters(JSGlobalObject*, JSObject* compiledObject, NewObjectTakes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut = nullptr, JSObject* unseenTarget = nullptr);
 Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks = { });
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);
 JS_EXPORT_PRIVATE void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject* function);
 JS_EXPORT_PRIVATE bool hasOwnEnumerableProperty(JSGlobalObject*, JSObject* compiledObject);
 JSCellButterfly* tryGetCachedOwnKeys(VM&, JSObject*, Filter);
+bool keepsSymbolsInExtraProperties(JSObject*, JSObject*& extraProperties);
 Presence hasOwnProperty(JSObject*, UniquedStringImpl*);
 const CachedPropertyList* tryGetOwnPropertyList(VM&, JSObject* compiledObject, JSObject*& extraProperties);
 Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
@@ -91,9 +95,11 @@ JS_EXPORT_PRIVATE unsigned countPrivateFieldsOfCompiledClasses(JSGlobalObject*, 
 JS_EXPORT_PRIVATE bool matchPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches);
 void prepareForFreeze(JSObject* compiledObject);
 void setIntegrity(VM&, JSObject*, Integrity);
+bool tryFreezeFields(VM&, JSObject*);
 Presence testIntegrity(JSObject*, Integrity);
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);
 bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source);
+bool tryAssignThroughCaches(JSGlobalObject*, JSObject* target, JSObject* source);
 bool wouldPerformFastPut(VM&, JSObject* target);
 JS_EXPORT_PRIVATE void didBecomePrototype(VM&, JSObject*);
 JS_EXPORT_PRIVATE void didPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);

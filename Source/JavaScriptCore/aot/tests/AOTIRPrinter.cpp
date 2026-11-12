@@ -187,6 +187,12 @@ static void printLinesOfProgramList(IRPrinter& printer, ProgramList list)
     case ProgramList::Modules:
         printLinesOfList(printer, list, program.modules);
         return;
+    case ProgramList::ModuleInstances:
+        printLinesOfList(printer, list, program.moduleInstances);
+        return;
+    case ProgramList::ModuleLinks:
+        printLinesOfList(printer, list, program.moduleLinks);
+        return;
     case ProgramList::ModuleFailures:
         printLinesOfList(printer, list, program.moduleFailures);
         return;
@@ -756,6 +762,9 @@ void MemoryLocation::dump(PrintStream& out, const Program& program) const
     case AbstractHeap::RuntimeState:
     case AbstractHeap::CalleesInFrames:
     case AbstractHeap::ArrayLengths:
+    case AbstractHeap::ArrayCapacity:
+    case AbstractHeap::LoweredArrayLengths:
+    case AbstractHeap::ClassObjects:
         RELEASE_ASSERT_NOT_REACHED();
     }
     out.print("]"_s);

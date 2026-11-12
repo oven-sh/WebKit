@@ -18,6 +18,7 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsPropertyExtraProperties.h"
 
 namespace JSC { namespace AOT {
 
@@ -66,15 +67,30 @@ static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegiste
     if (!known)
         ownedScratch.emplace(jit);
     const GPRReg limit = known ? r.scratch : ownedScratch->gpr();
-    RELEASE_ASSERT(known ? noOverlap(r.object, r.slotKey, r.entry, r.words, r.scratch, layout, known->fieldIndex) : noOverlap(r.object, r.slotKey, r.entry, r.words, r.scratch, limit));
-    static_assert(sizeof(KeyOrderData) == sizeof(uint16_t) && !OBJECT_OFFSETOF(KeyOrderData, length) && sizeof(FieldData) == 1 << 4);
+    RELEASE_ASSERT(known ? noOverlap(r.object, r.slotKey, r.entry, r.words, r.scratch, layout, known->offsetOfRecord) : noOverlap(r.object, r.slotKey, r.entry, r.words, r.scratch, limit));
+    static_assert(sizeof(KeyOrderData) == sizeof(uint16_t) && !OBJECT_OFFSETOF(KeyOrderData, length));
     static_assert(OBJECT_OFFSETOF(FieldData, flags) == sizeof(uint32_t) && std::endian::native == std::endian::little);
     const Address tables(instanceGPR, AOT_INSTANCE_OFFSET(image.tables));
     JumpList doesNotApply;
     JumpList isListed;
 
     jit.load32(Address(r.object, offsetOfOrderWord), r.words);
-    doesNotApply.append(jit.branchTest32(CCallHelpers::NonZero, r.words, TrustedImm32(static_cast<int32_t>(~orderAndCountMask))));
+    Jump hasNoFlags = jit.branchTest32(CCallHelpers::Zero, r.words, TrustedImm32(static_cast<int32_t>(~orderAndCountMask)));
+    doesNotApply.append(jit.branchTest32(CCallHelpers::Zero, r.words, TrustedImm32(orderWordHasExtraProperties)));
+    loadStructure(jit, r.object, r.entry);
+    doesNotApply.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.entry, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+    jit.load16(Address(r.entry, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
+    Jump hasNoExtraKeys = jit.branchTest32(CCallHelpers::Zero, r.scratch);
+    doesNotApply.append(jit.branch32(CCallHelpers::NotEqual, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys)));
+    jit.load32(Address(r.entry, CompiledStructure::offsetOfExtraPropertiesSlot()), r.entry);
+    jit.and32(TrustedImm32(SlotData::maxOffset), r.entry);
+    doesNotApply.append(jit.branchTest32(CCallHelpers::Zero, r.entry));
+    loadExtraProperties(jit, r.object, r.entry, r.entry, doesNotApply);
+    jit.load32(Address(r.entry, JSCell::structureIDOffset()), r.entry);
+    doesNotApply.append(jit.branch32(CCallHelpers::NotEqual, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements)), r.entry));
+    hasNoExtraKeys.link(&jit);
+    jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask)), r.words);
+    hasNoFlags.link(&jit);
     if (!known) {
         loadStructure(jit, r.object, layout);
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
@@ -90,13 +106,13 @@ static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegiste
     jit.load16(Address(r.entry), limit);
     doesNotApply.append(jit.branch32(CCallHelpers::AboveOrEqual, r.words, limit));
     jit.load16(BaseIndex(r.entry, r.words, CCallHelpers::TimesTwo, sizeof(KeyOrderData)), r.entry);
-    if (known)
-        doesNotApply.append(jit.branch32(CCallHelpers::NotEqual, r.entry, known->fieldIndex));
-    else {
+    if (known) {
+        loadOffsetOfFieldRecord(jit, r.entry, r.entry);
+        doesNotApply.append(jit.branch32(CCallHelpers::NotEqual, r.entry, known->offsetOfRecord));
+    } else {
         jit.load16(Address(layout, OBJECT_OFFSETOF(LayoutData, numberOfFields)), limit);
         doesNotApply.append(jit.branch32(CCallHelpers::AboveOrEqual, r.entry, limit));
-        jit.lshift32(TrustedImm32(4), r.entry);
-        jit.addPtr(layout, r.entry);
+        addOffsetOfField(jit, layout, r.entry, r.entry);
         jit.load32(Address(r.entry, sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot)), r.words);
         jit.and32(TrustedImm32(SlotData::maxOffset), r.words);
         Jump isInCell = jit.branchTest32(CCallHelpers::Zero, Address(r.entry, sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(fieldIsOutOfLine));
@@ -161,35 +177,102 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     isListed.link(&jit);
 }
 
-enum class HalfOfKeyOrderRuns : bool { OfIndex, Other };
+enum class KeyOrderRunKind : uint8_t { OfOrder, WithExtraKeys, OfCreation };
 
-static void locateKeyOrderRun(StubAssembler& jit, GPRReg wordsBefore, GPRReg keys, GPRReg run, HalfOfKeyOrderRuns half = HalfOfKeyOrderRuns::OfIndex)
+static void locateKeyOrderRun(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg wordsBefore, GPRReg keys, GPRReg run, KeyOrderRunKind kind = KeyOrderRunKind::OfOrder)
 {
-    static_assert(indexOfKeyOrderRun(3ull << 32 | 5, 9ull << 32 | 16) == (3 ^ 5 ^ 16));
+    static_assert(indexOfKeyOrderRun(3ull << 32 | 5, 9ull << 32 | 16) == (3 ^ 5 ^ 16) * multiplierOfKeyOrderRun >> (32 - logNumberOfKeyOrderRuns));
     jit.urshift64(wordsBefore, TrustedImm32(32), run);
     jit.xor32(wordsBefore, run);
     jit.xor32(keys, run);
-    if (half == HalfOfKeyOrderRuns::Other)
-        jit.xor32(TrustedImm32(numberOfKeyOrderRuns / 2), run);
-    jit.and32(TrustedImm32(numberOfKeyOrderRuns - 1), run);
-    jit.lshift32(TrustedImm32(logSizeOfKeyOrderRun), run);
+    if (kind == KeyOrderRunKind::OfCreation)
+        jit.xor32(Address(r.object, JSCell::structureIDOffset()), run);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(multiplierOfKeyOrderRun)), run, run);
+    jit.urshift32(TrustedImm32(32 - logNumberOfKeyOrderRuns - logSizeOfKeyOrderRun), run);
+    jit.and32(TrustedImm32((numberOfKeyOrderRuns - 1) << logSizeOfKeyOrderRun), run);
+    if (kind == KeyOrderRunKind::WithExtraKeys)
+        jit.xor32(TrustedImm32(numberOfKeyOrderRuns / 2 << logSizeOfKeyOrderRun), run);
+    if (kind == KeyOrderRunKind::OfCreation)
+        jit.xor32(TrustedImm32(numberOfKeyOrderRuns / 4 << logSizeOfKeyOrderRun), run);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.keyOrderRuns)), run);
 }
+
+static void locateLatestRun(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg shapeWord, GPRReg run, KeyOrderRunKind kind)
+{
+    if (shapeWord == run)
+        jit.xor32(r.slotKey, run);
+    else
+        jit.xor32(shapeWord, r.slotKey, run);
+    if (kind == KeyOrderRunKind::OfCreation)
+        jit.xor32(Address(r.object, JSCell::structureIDOffset()), run);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(multiplierOfKeyOrderRun)), run, run);
+    jit.urshift32(TrustedImm32(32 - logNumberOfLatestRuns - logSizeOfKeyOrderRun), run);
+    jit.and32(TrustedImm32((numberOfLatestRuns - 1) << logSizeOfKeyOrderRun), run);
+    if (kind == KeyOrderRunKind::OfCreation)
+        jit.xor32(TrustedImm32(numberOfLatestRuns / 2 << logSizeOfKeyOrderRun), run);
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.keyOrderRuns)), run);
+}
+
+static Address memberOfLatestRun(GPRReg run, ptrdiff_t offset) { return Address(run, offsetOfLatestRuns + static_cast<int32_t>(offset)); }
+
+static void branchUnlessLatestRun(StubAssembler& jit, const KeyOrderRegisters& r, KeyOrderRunKind kind, JumpList& isNotLatest)
+{
+    static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && std::endian::native == std::endian::little);
+    const GPRReg run = r.entry;
+    RELEASE_ASSERT(noOverlap(r.object, r.slotKey, run, r.words, r.scratch));
+    jit.load32(Address(r.object, offsetOfShapeWord), r.words);
+    locateLatestRun(jit, r, r.words, run, kind);
+    jit.load32(Address(r.object, offsetOfOrderWord), r.scratch);
+    jit.lshift64(TrustedImm32(32), r.words);
+    jit.or64(r.scratch, r.words);
+    isNotLatest.append(jit.branch64(CCallHelpers::NotEqual, memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
+}
+
+static void rememberLatestRun(StubAssembler& jit, const KeyOrderRegisters& r, KeyOrderRunKind kind)
+{
+    const GPRReg run = r.entry;
+    jit.urshift64(r.words, TrustedImm32(32), run);
+    locateLatestRun(jit, r, run, run, kind);
+    jit.store64(r.words, memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
+    jit.store32(r.scratch, memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndCountAfter()));
+    if (kind == KeyOrderRunKind::OfOrder)
+        jit.store64(r.slotKey, memberOfLatestRun(run, KeyOrderRun::offsetOfSlotKeys()));
+}
+
+static void listFieldNotRemembered(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known);
 
 void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& hasNoTransition, std::optional<FieldOfLayout> known)
 {
     const GPRReg run = r.entry;
     const Address orderWord(r.object, offsetOfOrderWord);
+    JumpList isListed;
+    JumpList isNotLatest;
+    branchUnlessLatestRun(jit, r, KeyOrderRunKind::OfOrder, isNotLatest);
+    isNotLatest.append(jit.branch64(CCallHelpers::NotEqual, memberOfLatestRun(run, KeyOrderRun::offsetOfSlotKeys()), r.slotKey));
+    jit.load32(memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
+    jit.store32(r.scratch, orderWord);
+    isListed.append(jit.jump());
+
+    isNotLatest.link(&jit);
     JumpList isNotRemembered;
-    jit.load64(orderWord, r.words);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), r.slotKey));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
     jit.store32(r.scratch, orderWord);
-    JumpList isListed;
+    rememberLatestRun(jit, r, KeyOrderRunKind::OfOrder);
     isListed.append(jit.jump());
 
+    isNotRemembered.link(&jit);
+    listFieldNotRemembered(jit, r, hasNoTransition, known);
+    isListed.link(&jit);
+}
+
+static void listFieldNotRemembered(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& hasNoTransition, std::optional<FieldOfLayout> known)
+{
+    const GPRReg run = r.entry;
+    const Address orderWord(r.object, offsetOfOrderWord);
+    JumpList isListed;
     const GPRReg keys = r.scratch;
     auto loadKeysBesideExtraKeys = [&](JumpList& hasNone) {
         static_assert(CompiledStructure::unknownNumberOfExtraKeys <= slotKeyMask);
@@ -203,10 +286,9 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
         jit.lshift64(TrustedImm32(2 * bitsPerSlotKey), keys);
         jit.or64(r.slotKey, keys);
     };
-    isNotRemembered.link(&jit);
     JumpList isNotRememberedBesideExtraKeys;
     loadKeysBesideExtraKeys(isNotRememberedBesideExtraKeys);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run, HalfOfKeyOrderRuns::Other);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::WithExtraKeys);
     isNotRememberedBesideExtraKeys.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
     isNotRememberedBesideExtraKeys.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), keys));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
@@ -226,7 +308,7 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
     });
     hasNoTransition.append(jit.branchTest32(CCallHelpers::Zero, isStepTaken));
     Jump hasFlags = jit.branchTest32(CCallHelpers::NonZero, r.words, TrustedImm32(static_cast<int32_t>(~orderAndCountMask)));
-    locateKeyOrderRun(jit, r.words, r.slotKey, run);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run);
     jit.store64(r.words, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(r.slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(orderWord, r.scratch);
@@ -235,7 +317,7 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
 
     hasFlags.link(&jit);
     loadKeysBesideExtraKeys(isListed);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run, HalfOfKeyOrderRuns::Other);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::WithExtraKeys);
     jit.store64(r.words, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(keys, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(orderWord, r.scratch);
@@ -243,10 +325,80 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
     isListed.link(&jit);
 }
 
-void listCreatedFieldAndReturn(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg value, std::optional<FieldOfLayout> known)
+static void loadCreationRunKeys(StubAssembler& jit, const KeyOrderRegisters& r)
+{
+    static_assert(keysOfRunOfCreation(24, 3) == (3ull << 32 | 24));
+    jit.load32(Address(r.object, JSCell::structureIDOffset()), r.scratch);
+    jit.lshift64(TrustedImm32(32), r.scratch);
+    jit.or64(r.slotKey, r.scratch);
+}
+
+void loadOrderAfterRememberedCreation(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& isNotRemembered)
+{
+    RELEASE_ASSERT(noOverlap(r.object, r.slotKey, r.entry, r.words, r.scratch));
+    const GPRReg run = r.entry;
+    auto branchUnlessCreationIsRemembered = [&](int32_t offsetOfRun, JumpList& isOther) {
+        auto member = [&](ptrdiff_t offset) {
+            return Address(run, offsetOfRun + static_cast<int32_t>(offset));
+        };
+        loadCreationRunKeys(jit, r);
+        isOther.append(jit.branch64(CCallHelpers::NotEqual, member(KeyOrderRun::offsetOfSlotKeys()), r.scratch));
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.creationGeneration)), r.scratch);
+        isOther.append(jit.branch32(CCallHelpers::NotEqual, member(KeyOrderRun::offsetOfCreationGeneration()), r.scratch));
+        jit.load32(member(KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
+    };
+    JumpList isNotLatest;
+    branchUnlessLatestRun(jit, r, KeyOrderRunKind::OfCreation, isNotLatest);
+    branchUnlessCreationIsRemembered(offsetOfLatestRuns, isNotLatest);
+    Jump isLatest = jit.jump();
+
+    isNotLatest.link(&jit);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::OfCreation);
+    isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
+    branchUnlessCreationIsRemembered(0, isNotRemembered);
+    rememberLatestRun(jit, r, KeyOrderRunKind::OfCreation);
+    loadCreationRunKeys(jit, r);
+    jit.store64(r.scratch, memberOfLatestRun(run, KeyOrderRun::offsetOfSlotKeys()));
+    jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.creationGeneration)), r.scratch);
+    jit.store32(r.scratch, memberOfLatestRun(run, KeyOrderRun::offsetOfCreationGeneration()));
+    jit.load32(memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
+    isLatest.link(&jit);
+    if (!jit.options().checksWalk)
+        return;
+    const GPRReg structure = run;
+    Jump mayNotBeRemembered = jit.branchTest32(CCallHelpers::NonZero, r.words, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot)));
+    loadStructure(jit, r.object, structure);
+    Jump isRemembered = jit.branchTest32(CCallHelpers::Zero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits));
+    mayNotBeRemembered.link(&jit);
+    jit.breakpoint();
+    isRemembered.link(&jit);
+}
+
+static void rememberCreation(StubAssembler& jit, const KeyOrderRegisters& r)
+{
+    const GPRReg run = r.entry;
+    Jump hasNoExtraProperties = jit.branchTest32(CCallHelpers::Zero, r.words, TrustedImm32(orderWordHasExtraProperties));
+    loadStructure(jit, r.object, r.scratch);
+    jit.load16(Address(r.scratch, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
+    Jump dependsOnObject = jit.branch32(CCallHelpers::Equal, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys));
+    hasNoExtraProperties.link(&jit);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::OfCreation);
+    jit.store64(r.words, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
+    loadCreationRunKeys(jit, r);
+    jit.store64(r.scratch, Address(run, KeyOrderRun::offsetOfSlotKeys()));
+    jit.load32(Address(r.object, offsetOfOrderWord), r.scratch);
+    jit.store32(r.scratch, Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()));
+    jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.creationGeneration)), r.scratch);
+    jit.store32(r.scratch, Address(run, KeyOrderRun::offsetOfCreationGeneration()));
+    dependsOnObject.link(&jit);
+}
+
+void listCreatedFieldAndReturn(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg value, std::optional<FieldOfLayout> known, CreationChecksChain asksChain)
 {
     JumpList hasNoTransition;
     listCreatedField(jit, r, hasNoTransition, known);
+    if (asksChain == CreationChecksChain::Yes)
+        rememberCreation(jit, r);
     returnAfterStoring(jit, r.object, value);
 
     hasNoTransition.link(&jit);
@@ -318,21 +470,30 @@ void generateDidCreateField(StubAssembler& jit)
     JumpList hasNoTransition;
 
     RELEASE_ASSERT(noOverlap(object, slotKey, wordsBefore, run, scratch));
+    const KeyOrderRegisters before { object, slotKey, run, wordsBefore, scratch };
+    JumpList isNotLatest;
     JumpList isNotRemembered;
     JumpList mayHaveFlags;
-    jit.load64(Address(object, offsetOfOrderWord), wordsBefore);
-    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
+    branchUnlessLatestRun(jit, before, KeyOrderRunKind::OfOrder, isNotLatest);
+    isNotLatest.append(jit.branch64(CCallHelpers::NotEqual, memberOfLatestRun(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
+    jit.load32(memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndCountAfter()), scratch);
+    jit.store32(scratch, Address(object, offsetOfOrderWord));
+    jit.returnToCaller();
+
+    isNotLatest.link(&jit);
+    locateKeyOrderRun(jit, before, wordsBefore, slotKey, run);
     mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), wordsBefore));
     mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), scratch);
     jit.store32(scratch, Address(object, offsetOfOrderWord));
+    rememberLatestRun(jit, before, KeyOrderRunKind::OfOrder);
     jit.returnToCaller();
 
     mayHaveFlags.link(&jit);
     Jump hasExtraProperties = jit.branchTest32(CCallHelpers::NonZero, wordsBefore, TrustedImm32(orderWordHasExtraProperties));
     jit.move(wordsBefore, scratch);
     jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), wordsBefore);
-    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
+    locateKeyOrderRun(jit, before, wordsBefore, slotKey, run);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), wordsBefore));
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
     jit.and32(TrustedImm32(static_cast<int32_t>(~orderAndCountMask)), scratch);
@@ -341,12 +502,13 @@ void generateDidCreateField(StubAssembler& jit)
     jit.returnToCaller();
 
     hasExtraProperties.link(&jit);
-    listCreatedField(jit, keyOrder, hasNoTransition, std::nullopt);
+    jit.move(wordsBefore, words);
+    listFieldNotRemembered(jit, keyOrder, hasNoTransition, std::nullopt);
     jit.returnToCaller();
 
     isNotRemembered.link(&jit);
     appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
+    locateKeyOrderRun(jit, before, wordsBefore, slotKey, run);
     jit.store64(wordsBefore, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(Address(object, offsetOfOrderWord), scratch);

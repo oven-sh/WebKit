@@ -27,6 +27,7 @@
 #include "ScopedArguments.h"
 #include "StructureArrayStorageInlines.h"
 #include "StructureRareDataInlines.h"
+#include "Symbol.h"
 #include <bit>
 
 namespace JSC { namespace AOT {
@@ -44,8 +45,9 @@ struct SharedHeap {
 
 static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSCell_header, { IRHeap::NamedProperties, IRHeap::PrototypeLinks, IRHeap::ArrayStorage } },
-    { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
-    { &AOTHeaps::Butterfly_publicLength, { IRHeap::ArrayLengths } },
+    { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties, IRHeap::ArrayCapacity } },
+    { &AOTHeaps::Butterfly_publicLength, { IRHeap::ArrayLengths, IRHeap::ArrayCapacity } },
+    { &AOTHeaps::Butterfly_vectorLength, { IRHeap::ArrayCapacity } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_shapeWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
@@ -59,7 +61,7 @@ static unsigned bucketIndexOf(ElementBase base)
 {
     LocationMasks masks;
     masks.add(MemoryLocation::elements(base));
-    uint64_t mask = masks.maskOf(IRHeap::Elements) & ~Typed::markOfElementsThatMayHoldCells;
+    uint64_t mask = masks.maskOf(IRHeap::Elements) & ~Typed::cellHoldingElementsMask;
     RELEASE_ASSERT(std::popcount(mask) == 1);
     return std::countr_zero(mask);
 }
@@ -168,7 +170,7 @@ const Machine::AbstractHeap& AOTHeaps::at(const Program& program, const MemoryLo
 
     uint64_t mask = Typed::maskOf(program, location);
     if (heap == IRHeap::Elements)
-        mask &= ~Typed::markOfElementsThatMayHoldCells;
+        mask &= ~Typed::cellHoldingElementsMask;
     if (std::popcount(mask) != 1)
         return entire(heap);
 
@@ -188,7 +190,7 @@ void AOTHeaps::appendHeaps(const LocationMasks& masks, HeapList& list) const
             return;
         }
         if (heap == IRHeap::Elements)
-            mask &= ~Typed::markOfElementsThatMayHoldCells;
+            mask &= ~Typed::cellHoldingElementsMask;
         for (uint64_t remainingBits = mask; remainingBits; remainingBits &= remainingBits - 1)
             list.append(&bucketOf(heap, std::countr_zero(remainingBits)));
         for (const Machine::AbstractHeap* fieldHeap : m_fieldHeapsBelow[static_cast<size_t>(heap)])
@@ -209,7 +211,7 @@ bool AOTHeaps::mayConvertCells(const Typed::Effects& effectsOfCall)
 
 bool AOTHeaps::mayReplaceStorageOfArrays(const Typed::Effects& effectsOfCall)
 {
-    constexpr Typed::AbstractHeapSet heapsWrittenWithStorage { IRHeap::ArrayStorage, IRHeap::Elements, IRHeap::NamedProperties, IRHeap::PrototypeLinks };
+    constexpr Typed::AbstractHeapSet heapsWrittenWithStorage { IRHeap::ArrayStorage, IRHeap::ArrayCapacity, IRHeap::Elements, IRHeap::NamedProperties, IRHeap::PrototypeLinks };
     return effectsOfCall.mayRunOtherCode() || effectsOfCall.writes.containsAny(heapsWrittenWithStorage) || effectsOfCall.reads.contains(IRHeap::NamedProperties);
 }
 

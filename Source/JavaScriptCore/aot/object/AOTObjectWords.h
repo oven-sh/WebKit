@@ -9,7 +9,9 @@
 
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
+#include "LocalAllocator.h"
 #include "Structure.h"
+#include <array>
 #include <span>
 #include <stddef.h>
 #include <stdint.h>
@@ -36,6 +38,20 @@ struct AllocationSiteRecord {
     static constexpr unsigned sizeShift = 5;
 };
 static_assert(sizeof(AllocationSiteRecord) == 1u << AllocationSiteRecord::sizeShift);
+
+struct GrownCells {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(GrownCells);
+
+    static constexpr uintptr_t isArmed = 1;
+    static constexpr ptrdiff_t offsetOfAllocatorAndMark() { return 0; }
+    static constexpr ptrdiff_t offsetOfRecord() { return offsetof(GrownCells, record); }
+
+    uintptr_t allocatorAndMark { 0 };
+    uint8_t bytesBeforeFreeList[LocalAllocator::offsetOfFreeList() - sizeof(uintptr_t)] { };
+    FreeList freeList { 0 };
+    AllocationSiteRecord record;
+};
+static_assert(alignof(LocalAllocator) > GrownCells::isArmed);
 static_assert(std::is_trivially_default_constructible_v<AllocationSiteRecord> && std::is_standard_layout_v<AllocationSiteRecord>);
 
 ALWAYS_INLINE uint64_t cellHeaderFor(Structure* structure)
@@ -75,21 +91,38 @@ struct alignas(32) KeyOrderRun {
     static constexpr ptrdiff_t offsetOfOrderAndShapeWordsBefore() { return 0; }
     static constexpr ptrdiff_t offsetOfSlotKeys() { return 8; }
     static constexpr ptrdiff_t offsetOfOrderAndCountAfter() { return 16; }
+    static constexpr ptrdiff_t offsetOfCreationGeneration() { return 20; }
 
     uint64_t orderAndShapeWordsBefore;
     uint64_t slotKeys;
     uint32_t orderAndCountAfter;
+    uint32_t creationGeneration;
 };
 
 static constexpr uint64_t keysOfRunBesideExtraKeys(uint32_t slotKey, uint32_t numberOfExtraKeys) { return slotKey | static_cast<uint64_t>(numberOfExtraKeys | 1u << bitsPerSlotKey) << (2 * bitsPerSlotKey); }
 static_assert(keysOfRunBesideExtraKeys(24, 3) == 0x0001000300000018ull && noSlotKey == 0);
+static constexpr uint64_t keysOfRunOfCreation(uint32_t slotKey, uint32_t structureID) { return slotKey | static_cast<uint64_t>(structureID) << 32; }
+static constexpr uint32_t removalRunMark = 1u << (bitsPerSlotKey + 4);
+static constexpr uint64_t removalRunKey(uint16_t offsetInCell) { return offsetInCell | removalRunMark; }
 
-static constexpr uint32_t numberOfKeyOrderRuns = 2048;
+static constexpr unsigned logNumberOfKeyOrderRuns = 11;
+static constexpr uint32_t numberOfKeyOrderRuns = 1u << logNumberOfKeyOrderRuns;
 static constexpr unsigned logSizeOfKeyOrderRun = 5;
-static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun && !(numberOfKeyOrderRuns & (numberOfKeyOrderRuns - 1)));
+static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun);
+static constexpr uint32_t multiplierOfKeyOrderRun = 0x9e3779b1;
 static constexpr uint32_t indexOfKeyOrderRun(uint64_t orderAndShapeWordsBefore, uint64_t slotKeys)
 {
-    return (static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys)) % numberOfKeyOrderRuns;
+    uint32_t folded = static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys);
+    return folded * multiplierOfKeyOrderRun >> (32 - logNumberOfKeyOrderRuns);
+}
+
+static constexpr unsigned logNumberOfLatestRuns = 9;
+static constexpr uint32_t numberOfLatestRuns = 1u << logNumberOfLatestRuns;
+static constexpr uint32_t sizeOfKeyOrderRunTable = numberOfKeyOrderRuns + numberOfLatestRuns;
+static constexpr int32_t offsetOfLatestRuns = numberOfKeyOrderRuns << logSizeOfKeyOrderRun;
+static constexpr uint32_t indexOfLatestRun(uint32_t shapeWord, uint32_t slotKey)
+{
+    return numberOfKeyOrderRuns + ((shapeWord ^ slotKey) * multiplierOfKeyOrderRun >> (32 - logNumberOfLatestRuns));
 }
 
 struct KeyListCacheEntry {
@@ -101,6 +134,7 @@ struct KeyListCacheEntry {
 static constexpr uint32_t numberOfKeyLists = 1024;
 static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord) % numberOfKeyLists; }
 static constexpr uint32_t keyListWordOfStructure(uint32_t structureID) { return structureID >> 1; }
+static constexpr uint32_t structureEnumerableKeysWord(uint32_t structureID) { return structureID >> 1 | 1; }
 
 struct EnumeratorCacheEntry {
     uint32_t orderWord;
@@ -202,16 +236,19 @@ struct PlaceOfPrototypeProperty {
 };
 constexpr unsigned numberOfPlacesOfPrototypeProperties = 256;
 constexpr uint32_t multiplierOfPlaceOfPrototypeProperty = 0x9E3779B1;
-constexpr unsigned shiftOfProductOfPlaceOfPrototypeProperty = 24;
-constexpr uint32_t indexOfPlaceOfPrototypeProperty(uint32_t structureID) { return (structureID * multiplierOfPlaceOfPrototypeProperty) >> shiftOfProductOfPlaceOfPrototypeProperty; }
-static_assert(numberOfPlacesOfPrototypeProperties == 1u << (32 - shiftOfProductOfPlaceOfPrototypeProperty));
+constexpr unsigned shiftOfProductOfPlaceOfPrototypeProperty = 25;
+constexpr uint32_t indexOfPlaceOfPrototypeProperty(uint32_t structureID) { return (structureID * multiplierOfPlaceOfPrototypeProperty) >> shiftOfProductOfPlaceOfPrototypeProperty << 1; }
+static_assert(numberOfPlacesOfPrototypeProperties == 2u << (32 - shiftOfProductOfPlaceOfPrototypeProperty));
 
 struct PrototypeOfClassObject {
     JSCell* classObject;
     JSCell* prototype;
 };
-constexpr unsigned numberOfPrototypesOfClassObjects = 32;
+constexpr unsigned numberOfPrototypesOfClassObjects = 256;
 constexpr unsigned shiftOfClassObjectForPrototype = 4;
+constexpr unsigned classObjectProductShift = 25;
+constexpr uint32_t productOfClassObject(uint64_t bitsOfClassObject) { return static_cast<uint32_t>(bitsOfClassObject >> shiftOfClassObjectForPrototype) * multiplierOfPlaceOfPrototypeProperty; }
+static_assert(numberOfPrototypesOfClassObjects == 2u << (32 - classObjectProductShift));
 
 struct InstanceBelowPrototype {
     JSCell* prototype;
@@ -231,6 +268,36 @@ struct InstancesBelowPrototypes {
 
 struct FieldData;
 
+struct HeirTemplate {
+    static constexpr size_t maxWords = 11;
+    static constexpr uint32_t isOfViews = UINT32_MAX;
+    static constexpr uint32_t takesNoArguments = 1u << 31;
+
+    JSCell* newTarget;
+    JSCell* parent;
+    const uint8_t* allocators;
+    uint32_t propertyRoom;
+    uint32_t allocationsUntilReview;
+    uint32_t allocationStructureID;
+    uint32_t numberOfWords;
+    union {
+        struct {
+            uint64_t header;
+            uint64_t hole;
+        };
+        struct {
+            uint64_t headerOfViews;
+            uint64_t typedArrayType;
+        };
+        std::array<uint64_t, maxWords> words;
+    };
+};
+constexpr size_t numberOfSubclassTemplates = 16;
+constexpr unsigned subclassTemplateShift = 7;
+constexpr unsigned templateSubclassShift = 4;
+inline size_t subclassTemplateIndex(const JSCell* newTarget) { return std::bit_cast<uintptr_t>(newTarget) >> templateSubclassShift & (numberOfSubclassTemplates - 1); }
+static_assert(sizeof(HeirTemplate) == 1u << subclassTemplateShift && std::is_trivially_default_constructible_v<HeirTemplate>);
+
 struct PrivateFieldPlace {
     uint64_t layouts;
     uint32_t declaredField;
@@ -247,9 +314,11 @@ constexpr uint32_t layoutHasNoPlaceForPrivateField = 1u << 31;
 struct StructuresOfHeir {
     static constexpr unsigned numberThatPass = 4;
     static constexpr unsigned numberRefused = 2;
+    static constexpr uint32_t asksElements = 1;
 
     static constexpr ptrdiff_t offsetOfOneThatPasses(unsigned index) { return offsetof(StructuresOfHeir, thatPass) + index * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfOneRefused(unsigned index) { return offsetof(StructuresOfHeir, refused) + index * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfPrototypeWithoutElements() { return offsetof(StructuresOfHeir, prototypeWithoutElements); }
     static constexpr ptrdiff_t offsetOfDisplacementOfField(unsigned field) { return sizeof(StructuresOfHeir) + field * sizeof(int32_t); }
     static constexpr size_t sizeWithDisplacementsOfFields(size_t numberOfFields) { return sizeof(StructuresOfHeir) + numberOfFields * sizeof(int32_t); }
 
@@ -271,16 +340,18 @@ struct StructuresOfHeir {
 
     uint32_t thatPass[numberThatPass];
     uint32_t refused[numberRefused];
+    uint32_t prototypeWithoutElements;
 };
-static_assert(sizeof(StructuresOfHeir) == (StructuresOfHeir::numberThatPass + StructuresOfHeir::numberRefused) * sizeof(uint32_t) && !StructuresOfHeir::offsetOfOneThatPasses(0));
+static_assert(alignof(StructuresOfHeir) > StructuresOfHeir::asksElements);
+static_assert(sizeof(StructuresOfHeir) == (StructuresOfHeir::numberThatPass + StructuresOfHeir::numberRefused + 1) * sizeof(uint32_t) && !StructuresOfHeir::offsetOfOneThatPasses(0));
 static_assert(std::is_trivially_default_constructible_v<StructuresOfHeir> && std::is_standard_layout_v<StructuresOfHeir>);
 
 struct ClassWords {
     JSCell** classPrototypes;
-    uint8_t* structuresOfHeirs;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
     PrivateFieldPlace* privateFieldPlaces;
+    HeirTemplate* heirTemplates;
     InstancesBelowPrototypes instancesBelowPrototypes;
 };
 

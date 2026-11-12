@@ -12,6 +12,10 @@
 
 namespace JSC { namespace AOT {
 
+inline constexpr uint32_t sizeOfCodeLine = 64;
+
+constexpr uint64_t alignedPlacesInLine(size_t alignment) { return UINT64_MAX / ((1ull << alignment) - 1); }
+
 struct CopyableUnit {
     size_t size;
     size_t alignment;
@@ -33,6 +37,7 @@ struct UnitPlacementInputs {
     std::span<const size_t> sizes;
     std::span<const size_t> alignedOffsets;
     std::span<const size_t> alignments;
+    std::span<const uint64_t> placesInLine;
     const BitVector& fallsIntoNext;
     std::span<const CopyableUnit> copyables;
     std::span<const CopyableUse> uses;

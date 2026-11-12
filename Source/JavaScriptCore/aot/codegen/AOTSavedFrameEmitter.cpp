@@ -14,15 +14,19 @@
 #include "AOTBuildContext.h"
 #include "AOTCallEmitter.h"
 #include "AOTCellAllocationEmitter.h"
+#include "AOTConstantEmitter.h"
+#include "AOTEnvironmentEmitter.h"
 #include "AOTFrameMapEmitter.h"
 #include "AOTGenerator.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRFunction.h"
+#include "AOTReactionChain.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrame.h"
 #include "AOTSort.h"
 #include "AOTStubCatalog.h"
+#include "AOTStubsCoroutines.h"
 #include "AOTTypeTestEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "FunctionRareData.h"
@@ -38,7 +42,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(awaitConditionsOnState.size() == 2);
-static_assert(awaitConditionsOnState[0].word == AwaitConditionWord { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue), sizeof(void*), false });
+static_assert(awaitConditionsOnState[0].word == AwaitConditionWord { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(coroutines.resumableFrame), sizeof(void*), false });
 static_assert(awaitConditionsOnState[0].test == AwaitConditionTest::EqualsFramePointer);
 static_assert(awaitConditionsOnState[1].word == AwaitConditionWord { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfStart(), sizeof(size_t), false });
 static_assert(awaitConditionsOnState[1].other == AwaitConditionWord { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfEnd(), sizeof(size_t), false });
@@ -70,6 +74,27 @@ LValue SavedFrameEmitter::driverAsPassed(ValueID driver)
     if (representationOf(driver) == Representation::Cell)
         return in<CellPointer>(driver).value();
     return in<Boxed>(driver).value();
+}
+
+enum class UseOfCallResult : bool { Other, AwaitAlone };
+static void emitSiteWordMove(CCallHelpers& jit, UseOfCallResult use, uint64_t word, GPRReg siteWord)
+{
+    if (word >> 32) {
+        jit.move(CCallHelpers::TrustedImm64(word), siteWord);
+        return;
+    }
+#if CPU(X86_64)
+    if (use == UseOfCallResult::AwaitAlone) {
+        RELEASE_ASSERT(siteWord == gprOf(resumeModeRegister));
+        for (uint8_t byte : moveIntoSiteWordOfAwaitedCall)
+            jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+        jit.m_assembler.buffer().putInt(static_cast<int32_t>(word));
+        return;
+    }
+#else
+    UNUSED_PARAM(use);
+#endif
+    jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(word)), siteWord);
 }
 
 StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key, std::initializer_list<LValue> operands, ValueID driverID, RunsCodeOfAwaited runsCodeOfAwaited)
@@ -129,10 +154,12 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     if (hasMode)
         patch->resultConstraints.append(Machine::ValueRep::reg(signature.secondResult));
 
+    const bool isInLoop = generator().isInLoop(value.block());
+    const UseOfCallResult useOfCallResult = key == awaitCallBySavingFrame() || (key == awaitBySavingFrame() && awaitsOnlyResultOfCall(value)) ? UseOfCallResult::AwaitAlone : UseOfCallResult::Other;
     Origin originOfSuspension = value.origin();
     originOfSuspension.isTailCall = false;
     uint32_t site = calls.addSite(value, { .origin = originOfSuspension, .callerHasLeft = runsCodeOfAwaited == RunsCodeOfAwaited::BehindFunction });
-    patch->setGenerator([records = &m_records, build = &build(), subject = subjectOf(value), operation = nameOf(value.opcode()), key, site, firstRoot = roots.firstChild, slotOfKeptWords = roots.slotOfKeptWords, tracedWordsInSlot = roots.numberOfTracedWordsInSlot, kindsOfRoots, driverChild, frameLiesOnHeap, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    patch->setGenerator([records = &m_records, build = &build(), subject = subjectOf(value), operation = nameOf(value.opcode()), key, site, firstRoot = roots.firstChild, slotOfKeptWords = roots.slotOfKeptWords, tracedWordsInSlot = roots.numberOfTracedWordsInSlot, kindsOfRoots, driverChild, frameLiesOnHeap, isInLoop, useOfCallResult, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         FrameMapEmitter::Roots rootsOfSite { firstRoot, Vector<FrameSlotKind, 8>(kindsOfRoots), slotOfKeptWords, tracedWordsInSlot };
         std::optional<uint64_t> word = frameLiesOnHeap ? FrameMapEmitter::siteWordOfFrameOnHeap(params) : FrameMapEmitter::siteWordFor(records->frameMaps, params, rootsOfSite, driverChild);
@@ -147,13 +174,18 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
             jit.breakpoint();
             return;
         }
-        if (*word >> 32)
-            jit.move(CCallHelpers::TrustedImm64(*word), siteWordGPR);
-        else
-            jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), siteWordGPR);
+        emitSiteWordMove(jit, useOfCallResult, *word, siteWordGPR);
         if (params.value()->leavesMoveOutOfResultToCallee())
             records->stubCalls.enterNextStubInFront(params.value()->registerThatCalleeFillsOutOfResult(), params.value()->registerThatCalleeMovesIntoResult());
         records->stubCalls.call(jit, key, OptionalIndex { site });
+#if CPU(X86_64)
+        if (isInLoop) {
+            for (uint8_t byte : leaveFunctionIfCarryIsSet)
+                jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+        }
+#else
+        UNUSED_PARAM(isInLoop);
+#endif
     });
     calls.finishCallPatchpoint(value, patch, site, request);
     StubCallResult result = hasMode ? StubCallResult { m_out.extract(patch, 0), m_out.extract(patch, 1) } : StubCallResult { patch, nullptr };
@@ -201,6 +233,15 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     return result;
 }
 
+bool SavedFrameEmitter::awaitsOnlyResultOfCall(const ValueContext& await) const
+{
+    if (await->opcode != Opcode::AwaitBySavingFrame)
+        return false;
+    ValueID awaited = await->awaitedOperand();
+    const Operation& call = m_code.at(awaited);
+    return !m_code.isConstant(awaited) && call.opcode == Opcode::Call && call.representation == Representation::JSValue && call.block() == await.block() && m_code.useCountOf(awaited) == 1;
+}
+
 // A saved frame resumes at another address, so the register is read where the address is needed. The result must not live across a suspension.
 Pointer SavedFrameEmitter::framePointerAtThisPoint()
 {
@@ -219,8 +260,8 @@ void SavedFrameEmitter::generateAwaitMayContinue(const ValueContext& value)
     const Machine::AbstractHeap& queueWords = m_heaps.entire(AbstractHeap::RuntimeState);
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock isFrameOfLastJob = newBlock();
-        Pointer frameThatMayContinue(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue))));
-        branch(equal(frameThatMayContinue, framePointerAtThisPoint()), { BlockEdge(isFrameOfLastJob, targets.taken.edgeClass()), targets.notTaken });
+        Pointer resumableFrame(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.resumableFrame))));
+        branch(equal(resumableFrame, framePointerAtThisPoint()), { BlockEdge(isFrameOfLastJob, targets.taken.edgeClass()), targets.notTaken });
 
         m_out.appendToContinuation(isFrameOfLastJob);
         LValue queue = m_out.loadPtr(mutableInstanceField(offsetOfMicrotaskQueue));
@@ -236,8 +277,10 @@ void SavedFrameEmitter::generateAwaitBySavingFrame(const ValueContext& value)
     ValueID driver = value->promiseOperand();
     switch (kindOfFunction()) {
     case CoroutineKind::AsyncFunction: {
-        AwaitedOperand form = m_plan.moduleEvaluation().isBodyResumedByJobOfLoader(function()) ? AwaitedOperand::ValueInModuleBody : AwaitedOperand::Value;
-        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, RunsCodeOfAwaited::BehindFunction).first));
+        bool isResumedByJobOfLoader = m_plan.moduleEvaluation().isBodyResumedByJobOfLoader(function());
+        RELEASE_ASSERT(!value->awaitsResolution() || !isResumedByJobOfLoader);
+        AwaitedOperand form = isResumedByJobOfLoader ? AwaitedOperand::ValueInModuleBody : value->awaitsResolution() ? AwaitedOperand::Resolution : AwaitedOperand::Value;
+        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, value->readsThenInFrame() ? RunsCodeOfAwaited::InFrameOfFunction : RunsCodeOfAwaited::BehindFunction).first));
         return;
     }
     case CoroutineKind::AsyncGenerator:
@@ -317,6 +360,920 @@ void SavedFrameEmitter::generateAsyncGeneratorYield(const ValueContext& value)
 static constexpr ptrdiff_t offsetOfWordInHeapFrame(uint32_t index)
 {
     return SavedFrame::offsetOfWords() + static_cast<ptrdiff_t>(index) * static_cast<ptrdiff_t>(sizeof(uint64_t));
+}
+
+struct InstructionOfLeafStep {
+    enum class Kind : uint8_t {
+        LoadDouble, LoadInt64, LoadInt32, LoadBoxedInt32, LoadBoxedNumber, StoreDouble, StoreInt64, StoreInt32, Double, Int64,
+        MoveDouble, MoveInt64, AddDouble, SubDouble, MulDouble, DivDouble, AddInt64, SubInt64, AddInt64ToDouble, SubInt64ToDouble,
+        Int64ToDouble, DoubleToInt64, Int32ToInt64, BranchDouble, BranchInt64, Jump, Label, GiveWay, BoxDouble, BoxInt64, Return,
+        LoadNumber, LoadSentNumber, AddNumbers, SubNumbers, MulNumbers, ReturnNumber
+    };
+
+    Kind kind;
+    uint8_t result { 0 };
+    uint8_t left { 0 };
+    uint8_t right { 0 };
+    uint8_t condition { 0 };
+    uint32_t label { 0 };
+    int64_t bits { 0 };
+    bool rightIsConstant { false };
+};
+
+struct LeafStepOfGenerator {
+    std::span<const InstructionOfLeafStep> instructions;
+    uint32_t numberOfLabels { 0 };
+    MacroAssembler::Label* start { nullptr };
+};
+
+static constexpr std::array leafGPRs { gprOf(StubRegister::T9), gprOf(StubRegister::T11), gprOf(StubRegister::T13) };
+static constexpr GPRReg scratchOfLeafStep = gprOf(StubRegister::T14);
+static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
+static_assert(areDistinctOnEveryISA(leafStepGeneratorRegister, StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
+static constexpr uint8_t numberOfLeafFPRs = 7;
+static constexpr GPRReg frameOfLeafStep = gprOf(leafStepFrameRegister);
+static constexpr GPRReg statusOfLeafStep = gprOf(resumeModeRegister);
+static constexpr GPRReg leafStepSentValue = gprOf(StubRegister::A2);
+static FPRReg leafFPR(uint8_t place) { return FPRInfo::toArgumentRegister(place); }
+
+static void emitLeafStep(CCallHelpers& jit, StubCalls& stubCalls, const LeafStepOfGenerator& step)
+{
+    using Kind = InstructionOfLeafStep::Kind;
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    const GPRReg result = GPRInfo::returnValueGPR;
+    const FPRReg scratch = leafFPR(numberOfLeafFPRs);
+    const FPRReg otherScratch = FPRInfo::nonPreservedNonArgumentFPR0;
+    Vector<MacroAssembler::Label, 8> labels(step.numberOfLabels);
+    Vector<std::pair<MacroAssembler::Jump, uint32_t>, 8> jumps;
+    MacroAssembler::JumpList givesWay;
+    auto frameWord = [&](const InstructionOfLeafStep& instruction) {
+        return CCallHelpers::Address(frameOfLeafStep, static_cast<int32_t>(instruction.bits));
+    };
+    auto numberTag = CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(numberTag));
+    auto returnYielded = [&] {
+        jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(GeneratorStepStatus::Yielded)), statusOfLeafStep);
+        jit.ret();
+    };
+    auto returnInt32 = [&] {
+        jit.zeroExtend32ToWord(result, result);
+        jit.load64(numberTag, scratchOfLeafStep);
+        jit.or64(scratchOfLeafStep, result);
+        returnYielded();
+    };
+    auto returnDouble = [&](FPRReg number) {
+        jit.load64(numberTag, scratchOfLeafStep);
+        jit.moveDoubleTo64(number, result);
+        jit.sub64(scratchOfLeafStep, result);
+        returnYielded();
+    };
+    auto giveWayUnlessNumber = [&](GPRReg value) {
+        jit.load64(numberTag, scratchOfLeafStep);
+        givesWay.append(jit.branchTest64(MacroAssembler::Zero, value, scratchOfLeafStep));
+    };
+    auto toDouble = [&](GPRReg number, FPRReg converted) {
+        MacroAssembler::Jump isInt32 = jit.branch64(MacroAssembler::AboveOrEqual, number, scratchOfLeafStep);
+        jit.add64(scratchOfLeafStep, number, result);
+        jit.move64ToDouble(result, converted);
+        MacroAssembler::Jump isConverted = jit.jump();
+        isInt32.link(&jit);
+        jit.convertInt32ToDouble(number, converted);
+        isConverted.link(&jit);
+    };
+    auto calculateWithNumbers = [&](const InstructionOfLeafStep& instruction) {
+        const GPRReg left = leafGPRs[instruction.left];
+        const GPRReg right = leafGPRs[instruction.right];
+        const GPRReg calculated = leafGPRs[instruction.result];
+        jit.load64(numberTag, scratchOfLeafStep);
+        MacroAssembler::JumpList goesByDoubles;
+        goesByDoubles.append(jit.branch64(MacroAssembler::Below, left, scratchOfLeafStep));
+        goesByDoubles.append(jit.branch64(MacroAssembler::Below, right, scratchOfLeafStep));
+        jit.move(left, result);
+        switch (instruction.kind) {
+        case Kind::AddNumbers:
+            goesByDoubles.append(jit.branchAdd32(MacroAssembler::Overflow, right, result));
+            break;
+        case Kind::SubNumbers:
+            goesByDoubles.append(jit.branchSub32(MacroAssembler::Overflow, right, result));
+            break;
+        case Kind::MulNumbers:
+            goesByDoubles.append(jit.branchMul32(MacroAssembler::Overflow, right, result));
+            goesByDoubles.append(jit.branchTest32(MacroAssembler::Zero, result));
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        jit.zeroExtend32ToWord(result, result);
+        jit.or64(scratchOfLeafStep, result);
+        jit.move(result, calculated);
+        MacroAssembler::Jump isCalculated = jit.jump();
+
+        goesByDoubles.link(&jit);
+        toDouble(left, scratch);
+        toDouble(right, otherScratch);
+        switch (instruction.kind) {
+        case Kind::AddNumbers: jit.addDouble(scratch, otherScratch, scratch); break;
+        case Kind::SubNumbers: jit.subDouble(scratch, otherScratch, scratch); break;
+        case Kind::MulNumbers: jit.mulDouble(scratch, otherScratch, scratch); break;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+        givesWay.append(jit.branchDouble(MacroAssembler::DoubleNotEqualOrUnordered, scratch, scratch));
+        jit.moveDoubleTo64(scratch, calculated);
+        jit.sub64(scratchOfLeafStep, calculated);
+        isCalculated.link(&jit);
+    };
+    auto right = [&](const InstructionOfLeafStep& instruction) {
+        if (!instruction.rightIsConstant)
+            return leafGPRs[instruction.right];
+        jit.move(CCallHelpers::TrustedImm64(instruction.bits), scratchOfLeafStep);
+        return scratchOfLeafStep;
+    };
+    *step.start = jit.label();
+    for (const InstructionOfLeafStep& instruction : step.instructions) {
+        switch (instruction.kind) {
+        case Kind::LoadDouble: jit.loadDouble(frameWord(instruction), leafFPR(instruction.result)); break;
+        case Kind::LoadInt64: jit.load64(frameWord(instruction), leafGPRs[instruction.result]); break;
+        case Kind::LoadInt32:
+            jit.load32(frameWord(instruction), leafGPRs[instruction.result]);
+            jit.signExtend32To64(leafGPRs[instruction.result], leafGPRs[instruction.result]);
+            break;
+        case Kind::LoadBoxedInt32:
+            jit.load64(frameWord(instruction), leafGPRs[instruction.result]);
+            jit.load64(numberTag, scratchOfLeafStep);
+            givesWay.append(jit.branch64(MacroAssembler::Below, leafGPRs[instruction.result], scratchOfLeafStep));
+            jit.signExtend32To64(leafGPRs[instruction.result], leafGPRs[instruction.result]);
+            break;
+        case Kind::LoadBoxedNumber: {
+            jit.load64(frameWord(instruction), result);
+            jit.load64(numberTag, scratchOfLeafStep);
+            MacroAssembler::Jump isInt32 = jit.branch64(MacroAssembler::AboveOrEqual, result, scratchOfLeafStep);
+            givesWay.append(jit.branchTest64(MacroAssembler::Zero, result, scratchOfLeafStep));
+            jit.add64(scratchOfLeafStep, result);
+            jit.move64ToDouble(result, leafFPR(instruction.result));
+            MacroAssembler::Jump isLoaded = jit.jump();
+            isInt32.link(&jit);
+            jit.convertInt32ToDouble(result, leafFPR(instruction.result));
+            isLoaded.link(&jit);
+            break;
+        }
+        case Kind::StoreDouble: jit.storeDouble(leafFPR(instruction.left), frameWord(instruction)); break;
+        case Kind::StoreInt64: jit.store64(leafGPRs[instruction.left], frameWord(instruction)); break;
+        case Kind::StoreInt32: jit.store32(leafGPRs[instruction.left], frameWord(instruction)); break;
+        case Kind::Double:
+            jit.move(CCallHelpers::TrustedImm64(instruction.bits), result);
+            jit.move64ToDouble(result, leafFPR(instruction.result));
+            break;
+        case Kind::Int64: jit.move(CCallHelpers::TrustedImm64(instruction.bits), leafGPRs[instruction.result]); break;
+        case Kind::MoveDouble: jit.moveDouble(leafFPR(instruction.left), leafFPR(instruction.result)); break;
+        case Kind::MoveInt64: jit.move(leafGPRs[instruction.left], leafGPRs[instruction.result]); break;
+        case Kind::AddDouble: jit.addDouble(leafFPR(instruction.left), leafFPR(instruction.right), leafFPR(instruction.result)); break;
+        case Kind::SubDouble: jit.subDouble(leafFPR(instruction.left), leafFPR(instruction.right), leafFPR(instruction.result)); break;
+        case Kind::MulDouble: jit.mulDouble(leafFPR(instruction.left), leafFPR(instruction.right), leafFPR(instruction.result)); break;
+        case Kind::DivDouble: jit.divDouble(leafFPR(instruction.left), leafFPR(instruction.right), leafFPR(instruction.result)); break;
+        case Kind::AddInt64: jit.add64(leafGPRs[instruction.left], right(instruction), leafGPRs[instruction.result]); break;
+        case Kind::SubInt64:
+            jit.move(leafGPRs[instruction.left], result);
+            jit.sub64(right(instruction), result);
+            jit.move(result, leafGPRs[instruction.result]);
+            break;
+        case Kind::AddInt64ToDouble:
+            jit.add64(leafGPRs[instruction.left], right(instruction), result);
+            jit.convertInt64ToDouble(result, leafFPR(instruction.result));
+            break;
+        case Kind::SubInt64ToDouble:
+            jit.move(leafGPRs[instruction.left], result);
+            jit.sub64(right(instruction), result);
+            jit.convertInt64ToDouble(result, leafFPR(instruction.result));
+            break;
+        case Kind::DoubleToInt64: jit.truncateDoubleToInt64(leafFPR(instruction.left), leafGPRs[instruction.result]); break;
+        case Kind::Int64ToDouble: jit.convertInt64ToDouble(leafGPRs[instruction.left], leafFPR(instruction.result)); break;
+        case Kind::Int32ToInt64: jit.signExtend32To64(leafGPRs[instruction.left], leafGPRs[instruction.result]); break;
+        case Kind::BranchDouble:
+            jumps.append({ jit.branchDouble(static_cast<MacroAssembler::DoubleCondition>(instruction.condition), leafFPR(instruction.left), leafFPR(instruction.right)), instruction.label });
+            break;
+        case Kind::BranchInt64:
+            jumps.append({ jit.branch64(static_cast<MacroAssembler::RelationalCondition>(instruction.condition), leafGPRs[instruction.left], right(instruction)), instruction.label });
+            break;
+        case Kind::Jump: jumps.append({ jit.jump(), instruction.label }); break;
+        case Kind::Label: labels[instruction.label] = jit.label(); break;
+        case Kind::GiveWay: givesWay.append(jit.jump()); break;
+        case Kind::BoxDouble: {
+            const FPRReg number = leafFPR(instruction.left);
+            jit.truncateDoubleToInt32(number, result);
+            jit.convertInt32ToDouble(result, scratch);
+            jit.moveDoubleTo64(scratch, scratchOfLeafStep);
+            jit.moveDoubleTo64(number, leafGPRs[0]);
+            MacroAssembler::Jump isNotInt32 = jit.branch64(MacroAssembler::NotEqual, scratchOfLeafStep, leafGPRs[0]);
+            returnInt32();
+            isNotInt32.link(&jit);
+            MacroAssembler::Jump isNumber = jit.branchDouble(MacroAssembler::DoubleEqualAndOrdered, number, number);
+            jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), result);
+            returnYielded();
+            isNumber.link(&jit);
+            returnDouble(number);
+            break;
+        }
+        case Kind::BoxInt64: {
+            const GPRReg integer = leafGPRs[instruction.left];
+            jit.signExtend32To64(integer, result);
+            MacroAssembler::Jump isNotInt32 = jit.branch64(MacroAssembler::NotEqual, result, integer);
+            returnInt32();
+            isNotInt32.link(&jit);
+            jit.convertInt64ToDouble(integer, scratch);
+            returnDouble(scratch);
+            break;
+        }
+        case Kind::Return:
+            jit.load64(frameWord(instruction), result);
+            returnYielded();
+            break;
+        case Kind::LoadNumber:
+            jit.load64(frameWord(instruction), leafGPRs[instruction.result]);
+            giveWayUnlessNumber(leafGPRs[instruction.result]);
+            break;
+        case Kind::LoadSentNumber:
+            jit.move(leafStepSentValue, leafGPRs[instruction.result]);
+            giveWayUnlessNumber(leafGPRs[instruction.result]);
+            break;
+        case Kind::AddNumbers:
+        case Kind::SubNumbers:
+        case Kind::MulNumbers:
+            calculateWithNumbers(instruction);
+            break;
+        case Kind::ReturnNumber:
+            jit.move(leafGPRs[instruction.left], result);
+            returnYielded();
+            break;
+        }
+    }
+    givesWay.link(&jit);
+    jit.move(gprOf(leafStepGeneratorRegister), gprOf(StubRegister::A0));
+    stubCalls.tailCall(jit, resumeSteppedGenerator());
+    for (auto [jump, label] : jumps)
+        jump.linkTo(labels[label], &jit);
+}
+
+class LeafStepPlanner {
+public:
+    LeafStepPlanner(SavedFrameEmitter& emitter, ValueID yield)
+        : m_emitter(emitter)
+        , m_code(emitter.m_code)
+        , m_yield(yield)
+        , m_blockOfYield(emitter.m_code.blockOf(yield))
+    {
+    }
+
+    LeafStepOfGenerator* plan()
+    {
+        EdgeID first = edgeOfNext();
+        if (!first || !order(m_code.at(first).to) || !m_placesOfBlocks.contains(m_blockOfYield.index()))
+            return nullptr;
+        enterAlong(m_code.at(first));
+        for (size_t place = 0; place < m_blocks.size() && !m_fails; ++place)
+            planBlock(place);
+        if (m_fails)
+            return nullptr;
+        Vector<InstructionOfLeafStep, 32> all;
+        all.appendVector(m_loads);
+        appendInLikelyOrder(all);
+        std::span<InstructionOfLeafStep> kept = m_emitter.m_proc.arena().createSpan<InstructionOfLeafStep>(all.size());
+        std::ranges::copy(all, kept.begin());
+        auto* step = m_emitter.m_proc.arena().create<LeafStepOfGenerator>();
+        step->instructions = kept;
+        step->numberOfLabels = m_blocks.size() + 1;
+        step->start = m_emitter.m_proc.arena().create<MacroAssembler::Label>();
+        return step;
+    }
+
+private:
+    using Kind = InstructionOfLeafStep::Kind;
+    struct Place {
+        bool isDouble { false };
+        uint8_t number { 0 };
+    };
+    struct Comparison {
+        bool isDouble { false };
+        uint8_t condition { 0 };
+        Place left;
+        ValueID right;
+    };
+    static constexpr unsigned maxBlocks = 12;
+    static constexpr unsigned maxInstructions = 40;
+
+    EdgeID edgeOfNext()
+    {
+        std::span<const ValueID> values = m_code.valuesOf(m_blockOfYield);
+        size_t place = std::ranges::find(values, m_yield) - values.begin();
+        ValueID mode;
+        for (ValueID id : values.subspan(place + 1)) {
+            const Operation& read = m_code.at(id);
+            if (!m_code.isNeeded(id))
+                continue;
+            if (read.opcode != Opcode::ResultAt || read.resultsOperand() != m_yield)
+                return { };
+            if (read.index() == static_cast<uint32_t>(YieldResult::Mode))
+                mode = id;
+        }
+        const Terminator& end = m_code.at(m_blockOfYield).terminator;
+        if (!mode || end.kind != TerminatorKind::Switch || end.operands()[0] != mode)
+            return { };
+        for (int64_t written : end.cases()) {
+            if (written == static_cast<int64_t>(ResumeMode::Next))
+                return { };
+        }
+        return end.otherwise();
+    }
+
+    bool isPlanned(ValueID id)
+    {
+        const Operation& operation = m_code.at(id);
+        Representation representation = operation.representation;
+        auto operandIs = [&](uint32_t index, Representation asked) {
+            ValueID operand = operation.operand(index);
+            return m_emitter.representationOf(operand) == asked;
+        };
+        auto operandIsNumber = [&](uint32_t index) { return operandIs(index, Representation::Double) || isLoadedBoxed(operation.operand(index)); };
+        switch (operation.opcode) {
+        case Opcode::LoopHint:
+            return true;
+        case Opcode::Narrowed:
+            return representation == m_emitter.representationOf(operation.operand(0)) && isNumeric(representation);
+        case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div:
+            if (operation.form() == OperatorForm::Generic)
+                return operation.opcode != Opcode::Div && representation == Representation::JSValue && operandIs(0, Representation::JSValue) && operandIs(1, Representation::JSValue);
+            if (operation.form() == OperatorForm::Numbers)
+                return representation == Representation::Double && operandIsNumber(0) && operandIsNumber(1);
+            if ((operation.opcode != Opcode::Add && operation.opcode != Opcode::Sub) || !operandIs(0, Representation::Int64) || !operandIs(1, Representation::Int64))
+                return false;
+            return operation.form() == OperatorForm::CheckedIntegers ? representation == Representation::Double : operation.form() == OperatorForm::Integers && representation == Representation::Int64;
+        case Opcode::Unbox:
+            return (representation == Representation::Int64 || representation == Representation::Double) && isLoadedBoxed(operation.operand(0));
+        case Opcode::NumberToInteger:
+            return representation == Representation::Int64 && operandIs(0, Representation::Double);
+        case Opcode::Increment: case Opcode::Decrement:
+            if (operation.form() == OperatorForm::Numbers)
+                return representation == Representation::Double && operandIs(0, Representation::Double);
+            if (operation.form() == OperatorForm::CheckedIntegers)
+                return isNumeric(representation) && representation != Representation::Int32 && operandIs(0, Representation::Int64);
+            return operation.form() == OperatorForm::Integers && representation == Representation::Int64 && operandIs(0, Representation::Int64);
+        case Opcode::IntegerToNumber:
+            return representation == Representation::Double && operandIs(0, Representation::Int64);
+        case Opcode::WidenInteger:
+            return representation == Representation::Int64 && operandIs(0, Representation::Int32);
+        case Opcode::Less: case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::StrictEq: {
+            if (m_code.useCountOf(id) != 1 || !isConditionOfItsBlock(id))
+                return false;
+            if (operation.form() == OperatorForm::Numbers)
+                return operandIsNumber(0) && operandIsNumber(1);
+            return operation.form() == OperatorForm::Integers && operandIs(0, Representation::Int64) && operandIs(1, Representation::Int64);
+        }
+        case Opcode::Box:
+            return m_code.useCountOf(id) == 1 && id == m_code.at(m_yield).valueOperand() && (operandIs(0, Representation::Double) || operandIs(0, Representation::Int64));
+        default:
+            return false;
+        }
+    }
+
+    bool isLoadedBoxed(ValueID id) const { return !m_code.isConstant(id) && m_emitter.representationOf(id) == Representation::JSValue && m_emitter.isKeptInHeapFrame(id) && m_emitter.formKeptInHeapFrame(id) == Representation::JSValue; }
+
+    bool isSentValue(ValueID id) const
+    {
+        if (m_code.isConstant(id))
+            return false;
+        const Operation& read = m_code.at(id);
+        return read.opcode == Opcode::ResultAt && read.resultsOperand() == m_yield && read.index() == static_cast<uint32_t>(YieldResult::Sent);
+    }
+
+    static bool isNumeric(Representation representation) { return representation == Representation::Double || representation == Representation::Int64 || representation == Representation::Int32; }
+
+    bool isConditionOfItsBlock(ValueID id)
+    {
+        const Terminator& end = m_code.at(m_code.blockOf(id)).terminator;
+        return end.kind == TerminatorKind::Branch && end.operands()[0] == id;
+    }
+
+    bool isPlannedBlock(BlockID block)
+    {
+        if (m_code.handlerOf(block))
+            return false;
+        for (ValueID id : m_code.valuesOf(block)) {
+            if (id == m_yield)
+                return true;
+            if (m_code.isNeeded(id) && !isPlanned(id))
+                return false;
+        }
+        TerminatorKind kind = m_code.at(block).terminator.kind;
+        if (kind == TerminatorKind::Branch) {
+            ValueID condition = m_code.at(block).terminator.operands()[0];
+            return !m_code.isConstant(condition) && m_code.blockOf(condition) == block;
+        }
+        return kind == TerminatorKind::Jump;
+    }
+
+    bool order(BlockID start)
+    {
+        enum class State : uint8_t { Open, Done };
+        HashMap<uint32_t, State, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> states;
+        Vector<BlockID, 12> postorder;
+        bool isAcyclic = true;
+        auto visit = [&](auto& self, BlockID block) -> void {
+            if (!isAcyclic || states.size() > maxBlocks) {
+                isAcyclic = false;
+                return;
+            }
+            states.set(block.index(), State::Open);
+            if (block != m_blockOfYield) {
+                m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                    if (!isPlannedBlock(edge.to))
+                        return;
+                    auto found = states.find(edge.to.index());
+                    if (found == states.end())
+                        self(self, edge.to);
+                    else if (found->value == State::Open)
+                        isAcyclic = false;
+                });
+            }
+            states.set(block.index(), State::Done);
+            postorder.append(block);
+        };
+        if (!isPlannedBlock(start))
+            return false;
+        visit(visit, start);
+        if (!isAcyclic)
+            return false;
+        for (size_t place = postorder.size(); place--;) {
+            m_placesOfBlocks.add(postorder[place].index(), static_cast<uint32_t>(m_blocks.size()));
+            m_blocks.append(postorder[place]);
+            m_entries.append(0);
+        }
+        for (BlockID block : m_blocks) {
+            if (block == m_blockOfYield)
+                continue;
+            m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                if (auto place = m_placesOfBlocks.find(edge.to.index()); place != m_placesOfBlocks.end())
+                    ++m_entries[place->value];
+            });
+        }
+        ++m_entries[0];
+        return m_entries[0] == 1;
+    }
+
+    Place newPlace(bool isDouble)
+    {
+        uint8_t& next = isDouble ? m_nextFPR : m_nextGPR;
+        if (next == (isDouble ? numberOfLeafFPRs : leafGPRs.size())) {
+            m_fails = true;
+            return { isDouble, 0 };
+        }
+        return { isDouble, next++ };
+    }
+
+    void append(InstructionOfLeafStep instruction)
+    {
+        m_instructions.append(instruction);
+        m_fails |= m_instructions.size() > maxInstructions;
+    }
+
+    Place placeOf(ValueID id)
+    {
+        if (auto found = m_places.find(id.index()); found != m_places.end())
+            return found->value;
+        Representation representation = m_emitter.representationOf(id);
+        if (isLoadedBoxed(id) && !m_isMadeOnWay.get(id.index())) {
+            Place place = newPlace(true);
+            m_places.set(id.index(), place);
+            m_loads.append({ .kind = Kind::LoadBoxedNumber, .result = place.number, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+            return place;
+        }
+        if (!isNumeric(representation)) {
+            m_fails = true;
+            return { };
+        }
+        bool isDouble = representation == Representation::Double;
+        Place place = newPlace(isDouble);
+        m_places.set(id.index(), place);
+        if (m_code.isConstant(id)) {
+            const Operation& constant = m_code.at(id);
+            if (constant.opcode != Opcode::Integer && constant.opcode != Opcode::Double) {
+                m_fails = true;
+                return place;
+            }
+            double number = constant.opcode == Opcode::Integer ? static_cast<double>(constant.integer()) : constant.number();
+            if (!isDouble && constant.opcode != Opcode::Integer) {
+                m_fails = true;
+                return place;
+            }
+            m_loads.append({ .kind = isDouble ? Kind::Double : Kind::Int64, .result = place.number, .bits = isDouble ? std::bit_cast<int64_t>(number) : constant.integer() });
+            return place;
+        }
+        if (!m_emitter.isKeptInHeapFrame(id) || m_emitter.formKeptInHeapFrame(id) != representation || m_isMadeOnWay.get(id.index())) {
+            m_fails = true;
+            return place;
+        }
+        Kind kind = isDouble ? Kind::LoadDouble : representation == Representation::Int64 ? Kind::LoadInt64 : Kind::LoadInt32;
+        m_loads.append({ .kind = kind, .result = place.number, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+        return place;
+    }
+
+    uint8_t placeOfNumber(ValueID id)
+    {
+        if (auto found = m_placesOfNumbers.find(id.index()); found != m_placesOfNumbers.end())
+            return found->value;
+        uint8_t place = newPlace(false).number;
+        m_placesOfNumbers.set(id.index(), place);
+        if (m_code.isConstant(id)) {
+            const Operation& constant = m_code.at(id);
+            if (constant.opcode != Opcode::Integer || constant.integer() != static_cast<int32_t>(constant.integer()))
+                m_fails = true;
+            else
+                m_loads.append({ .kind = Kind::Int64, .result = place, .bits = static_cast<int64_t>(JSValue::encode(jsNumber(static_cast<int32_t>(constant.integer())))) });
+        } else if (isSentValue(id))
+            m_loads.append({ .kind = Kind::LoadSentNumber, .result = place });
+        else if (isLoadedBoxed(id) && !m_isMadeOnWay.get(id.index()))
+            m_loads.append({ .kind = Kind::LoadNumber, .result = place, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+        else
+            m_fails = true;
+        return place;
+    }
+
+    void defineNumber(ValueID id, uint8_t place)
+    {
+        m_placesOfNumbers.set(id.index(), place);
+        m_isMadeOnWay.set(id.index());
+    }
+
+    InstructionOfLeafStep withRight(InstructionOfLeafStep instruction, ValueID right)
+    {
+        if (m_code.isConstant(right) && m_code.at(right).opcode == Opcode::Integer && m_emitter.representationOf(right) != Representation::Double) {
+            instruction.rightIsConstant = true;
+            instruction.bits = m_code.at(right).integer();
+        } else
+            instruction.right = placeOf(right).number;
+        return instruction;
+    }
+
+    void define(ValueID id, Place place)
+    {
+        m_places.set(id.index(), place);
+        m_isMadeOnWay.set(id.index());
+    }
+
+    static bool endsWay(Kind kind) { return kind == Kind::Jump || kind == Kind::GiveWay || kind == Kind::BoxDouble || kind == Kind::BoxInt64 || kind == Kind::Return || kind == Kind::ReturnNumber; }
+
+    void appendInLikelyOrder(Vector<InstructionOfLeafStep, 32>& all)
+    {
+        const uint32_t numberOfBlocks = m_blocks.size();
+        Vector<std::span<const InstructionOfLeafStep>, 13> parts(numberOfBlocks + 1);
+        for (size_t first = 0; first < m_instructions.size();) {
+            RELEASE_ASSERT(m_instructions[first].kind == Kind::Label);
+            size_t end = first + 1;
+            while (end < m_instructions.size() && m_instructions[end].kind != Kind::Label)
+                ++end;
+            parts[m_instructions[first].label] = m_instructions.span().subspan(first, end - first);
+            first = end;
+        }
+        BitVector isPlaced;
+        auto mayFollow = [&](uint32_t label) { return label < numberOfBlocks && !isPlaced.get(label); };
+        for (uint32_t start = 0; start < numberOfBlocks; ++start) {
+            for (std::optional<uint32_t> next = isPlaced.get(start) ? std::nullopt : std::optional(start); next;) {
+                std::span<const InstructionOfLeafStep> part = parts[*next];
+                isPlaced.set(*next);
+                const InstructionOfLeafStep last = part.back();
+                const uint32_t behind = *next + 1;
+                next = std::nullopt;
+                const bool isBranch = last.kind == Kind::BranchDouble || last.kind == Kind::BranchInt64;
+                const bool isBranchAheadOfEnd = part.size() > 1 && (last.kind == Kind::Jump || last.kind == Kind::GiveWay) && (part[part.size() - 2].kind == Kind::BranchDouble || part[part.size() - 2].kind == Kind::BranchInt64);
+                const InstructionOfLeafStep branch = isBranch ? last : isBranchAheadOfEnd ? part[part.size() - 2] : InstructionOfLeafStep { };
+                if ((isBranch || isBranchAheadOfEnd) && mayFollow(branch.label)) {
+                    InstructionOfLeafStep inverted = branch;
+                    inverted.condition = branch.kind == Kind::BranchDouble ? static_cast<uint8_t>(MacroAssembler::invert(static_cast<MacroAssembler::DoubleCondition>(branch.condition))) : static_cast<uint8_t>(MacroAssembler::invert(static_cast<MacroAssembler::RelationalCondition>(branch.condition)));
+                    inverted.label = isBranch ? behind : last.kind == Kind::Jump ? last.label : numberOfBlocks;
+                    all.append(part.first(part.size() - (isBranch ? 1 : 2)));
+                    all.append(inverted);
+                    next = branch.label;
+                    continue;
+                }
+                if (last.kind == Kind::Jump && mayFollow(last.label)) {
+                    all.append(part.first(part.size() - 1));
+                    next = last.label;
+                    continue;
+                }
+                all.append(part);
+                if (endsWay(last.kind))
+                    continue;
+                if (mayFollow(behind))
+                    next = behind;
+                else
+                    all.append({ .kind = behind < numberOfBlocks ? Kind::Jump : Kind::GiveWay, .label = behind });
+            }
+        }
+        all.append(parts[numberOfBlocks]);
+    }
+
+    void enterAlong(const Edge& edge)
+    {
+        const Block& to = m_code.at(edge.to);
+        uint32_t entries = m_entries[m_placesOfBlocks.get(edge.to.index())];
+        std::span<const ValueID> parameters = to.parameters();
+        std::span<const ValueID> arguments = edge.arguments();
+        Vector<std::pair<ValueID, Place>, 4> entered;
+        Vector<std::pair<ValueID, uint8_t>, 4> numbersEntered;
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            if (!m_code.isNeeded(parameters[index]))
+                continue;
+            if (m_emitter.representationOf(parameters[index]) == Representation::JSValue && m_emitter.representationOf(arguments[index]) == Representation::JSValue && entries == 1) {
+                numbersEntered.append({ parameters[index], placeOfNumber(arguments[index]) });
+                continue;
+            }
+            if (!isNumeric(m_emitter.representationOf(parameters[index])) || m_emitter.representationOf(parameters[index]) != m_emitter.representationOf(arguments[index])) {
+                m_fails = true;
+                return;
+            }
+            entered.append({ parameters[index], placeOf(arguments[index]) });
+        }
+        for (auto [parameter, arriving] : numbersEntered)
+            defineNumber(parameter, arriving);
+        for (auto [parameter, arriving] : entered) {
+            if (entries == 1) {
+                define(parameter, arriving);
+                continue;
+            }
+            auto found = m_placesOfParameters.find(parameter.index());
+            Place own = found != m_placesOfParameters.end() ? found->value : newPlace(arriving.isDouble);
+            m_placesOfParameters.set(parameter.index(), own);
+            append({ .kind = own.isDouble ? Kind::MoveDouble : Kind::MoveInt64, .result = own.number, .left = arriving.number });
+        }
+    }
+
+    void goAlong(const Edge& edge, size_t placeBehind)
+    {
+        auto found = m_placesOfBlocks.find(edge.to.index());
+        if (found == m_placesOfBlocks.end()) {
+            append({ .kind = Kind::GiveWay });
+            return;
+        }
+        enterAlong(edge);
+        if (found->value != placeBehind)
+            append({ .kind = Kind::Jump, .label = found->value });
+    }
+
+    void planBlock(size_t number)
+    {
+        BlockID block = m_blocks[number];
+        append({ .kind = Kind::Label, .label = static_cast<uint32_t>(number) });
+        if (m_entries[number] > 1) {
+            for (ValueID parameter : m_code.at(block).parameters()) {
+                if (auto own = m_placesOfParameters.find(parameter.index()); own != m_placesOfParameters.end())
+                    define(parameter, own->value);
+            }
+        }
+        for (ValueID id : m_code.valuesOf(block)) {
+            if (id == m_yield) {
+                planYield();
+                return;
+            }
+            if (m_code.isNeeded(id) && !m_fails)
+                planOperation(id);
+        }
+        const Terminator& end = m_code.at(block).terminator;
+        if (end.kind == TerminatorKind::Jump) {
+            goAlong(m_code.at(end.next()), number + 1);
+            return;
+        }
+        auto comparison = m_comparisons.find(end.operands()[0].index());
+        if (comparison == m_comparisons.end()) {
+            m_fails = true;
+            return;
+        }
+        const Comparison& asked = comparison->value;
+        const Edge& taken = m_code.at(end.taken());
+        const Edge& notTaken = m_code.at(end.notTaken());
+        auto branchTo = [&](uint32_t label) {
+            append(withRight({ .kind = asked.isDouble ? Kind::BranchDouble : Kind::BranchInt64, .left = asked.left.number, .condition = asked.condition, .label = label }, asked.right));
+        };
+        auto isPlain = [&](const Edge& edge) {
+            auto found = m_placesOfBlocks.find(edge.to.index());
+            return found != m_placesOfBlocks.end() && (m_code.at(edge.to).parameters().empty() || m_entries[found->value] == 1);
+        };
+        if (m_placesOfBlocks.contains(taken.to.index())) {
+            if (!isPlain(taken)) {
+                m_fails = true;
+                return;
+            }
+            enterAlong(taken);
+            branchTo(m_placesOfBlocks.get(taken.to.index()));
+            goAlong(notTaken, number + 1);
+            return;
+        }
+        branchTo(static_cast<uint32_t>(m_blocks.size()));
+        goAlong(notTaken, number + 1);
+    }
+
+    void planOperation(ValueID id)
+    {
+        const Operation& operation = m_code.at(id);
+        auto operand = [&](uint32_t index) { return placeOf(operation.operand(index)); };
+        auto buildInstruction = [&](InstructionOfLeafStep instruction, bool isDouble) {
+            Place result = newPlace(isDouble);
+            instruction.result = result.number;
+            append(instruction);
+            define(id, result);
+        };
+        auto build = [&](Kind kind, bool isDouble, Place left, ValueID right = { }) {
+            InstructionOfLeafStep instruction { .kind = kind, .left = left.number };
+            buildInstruction(right ? withRight(instruction, right) : instruction, isDouble);
+        };
+        switch (operation.opcode) {
+        case Opcode::LoopHint:
+            return;
+        case Opcode::Narrowed:
+            define(id, operand(0));
+            return;
+        case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: {
+            if (operation.form() == OperatorForm::Generic) {
+                uint8_t left = placeOfNumber(operation.operand(0));
+                uint8_t right = placeOfNumber(operation.operand(1));
+                uint8_t calculated = newPlace(false).number;
+                append({ .kind = operation.opcode == Opcode::Add ? Kind::AddNumbers : operation.opcode == Opcode::Sub ? Kind::SubNumbers : Kind::MulNumbers, .result = calculated, .left = left, .right = right });
+                defineNumber(id, calculated);
+                return;
+            }
+            bool isDouble = operation.form() == OperatorForm::Numbers;
+            Place left = operand(0);
+            ValueID right = operation.operand(1);
+            if (operation.form() == OperatorForm::CheckedIntegers) {
+                build(operation.opcode == Opcode::Add ? Kind::AddInt64ToDouble : Kind::SubInt64ToDouble, true, left, right);
+                return;
+            }
+            Kind kind = operation.opcode == Opcode::Add ? (isDouble ? Kind::AddDouble : Kind::AddInt64) : operation.opcode == Opcode::Sub ? (isDouble ? Kind::SubDouble : Kind::SubInt64) : operation.opcode == Opcode::Mul ? Kind::MulDouble : Kind::DivDouble;
+            build(kind, isDouble, left, right);
+            return;
+        }
+        case Opcode::Increment: case Opcode::Decrement: {
+            bool isDouble = operation.form() == OperatorForm::Numbers;
+            Place stepped = operand(0);
+            int64_t one = operation.opcode == Opcode::Increment ? 1 : -1;
+            if (isDouble) {
+                Place place = newPlace(true);
+                m_loads.append({ .kind = Kind::Double, .result = place.number, .bits = std::bit_cast<int64_t>(static_cast<double>(one)) });
+                buildInstruction({ .kind = Kind::AddDouble, .left = stepped.number, .right = place.number }, true);
+                return;
+            }
+            bool toDouble = operation.representation == Representation::Double;
+            buildInstruction({ .kind = toDouble ? Kind::AddInt64ToDouble : Kind::AddInt64, .left = stepped.number, .bits = one, .rightIsConstant = true }, toDouble);
+            if (operation.form() == OperatorForm::CheckedIntegers && !toDouble) {
+                auto passes = one > 0 ? MacroAssembler::GreaterThan : MacroAssembler::LessThan;
+                append({ .kind = Kind::BranchInt64, .left = placeOf(id).number, .condition = static_cast<uint8_t>(passes), .label = static_cast<uint32_t>(m_blocks.size()), .bits = one * maxExactInteger, .rightIsConstant = true });
+            }
+            return;
+        }
+        case Opcode::IntegerToNumber:
+            build(Kind::Int64ToDouble, true, operand(0));
+            return;
+        case Opcode::NumberToInteger:
+            build(Kind::DoubleToInt64, false, operand(0));
+            return;
+        case Opcode::Unbox: {
+            ValueID boxed = operation.operand(0);
+            if (m_isMadeOnWay.get(boxed.index())) {
+                m_fails = true;
+                return;
+            }
+            bool isDouble = operation.representation == Representation::Double;
+            Place place = newPlace(isDouble);
+            m_loads.append({ .kind = isDouble ? Kind::LoadBoxedNumber : Kind::LoadBoxedInt32, .result = place.number, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[boxed.index()] - 1) });
+            define(id, place);
+            return;
+        }
+        case Opcode::WidenInteger:
+            build(Kind::Int32ToInt64, false, operand(0));
+            return;
+        case Opcode::Less: case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::StrictEq: {
+            bool isDouble = operation.form() == OperatorForm::Numbers;
+            Place left = operand(0);
+            ValueID right = operation.operand(1);
+            if (isDouble)
+                placeOf(right);
+            auto condition = [&](MacroAssembler::DoubleCondition ofDoubles, MacroAssembler::RelationalCondition ofIntegers) {
+                return isDouble ? static_cast<uint8_t>(ofDoubles) : static_cast<uint8_t>(ofIntegers);
+            };
+            uint8_t asked = operation.opcode == Opcode::Less ? condition(MacroAssembler::DoubleLessThanAndOrdered, MacroAssembler::LessThan)
+                : operation.opcode == Opcode::LessEq ? condition(MacroAssembler::DoubleLessThanOrEqualAndOrdered, MacroAssembler::LessThanOrEqual)
+                : operation.opcode == Opcode::Greater ? condition(MacroAssembler::DoubleGreaterThanAndOrdered, MacroAssembler::GreaterThan)
+                : operation.opcode == Opcode::GreaterEq ? condition(MacroAssembler::DoubleGreaterThanOrEqualAndOrdered, MacroAssembler::GreaterThanOrEqual)
+                : condition(MacroAssembler::DoubleEqualAndOrdered, MacroAssembler::Equal);
+            m_comparisons.set(id.index(), Comparison { isDouble, asked, left, right });
+            return;
+        }
+        case Opcode::Box:
+            m_boxed = operand(0);
+            return;
+        default:
+            m_fails = true;
+        }
+    }
+
+    void planYield()
+    {
+        auto keep = [&](ValueID id) {
+            if (!id || m_fails || !m_emitter.isKeptInHeapFrame(id) || !m_isMadeOnWay.get(id.index()))
+                return;
+            if (auto number = m_placesOfNumbers.find(id.index()); number != m_placesOfNumbers.end() && m_emitter.formKeptInHeapFrame(id) == Representation::JSValue) {
+                append({ .kind = Kind::StoreInt64, .left = number->value, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+                return;
+            }
+            auto found = m_places.find(id.index());
+            Representation representation = m_emitter.formKeptInHeapFrame(id);
+            if (found == m_places.end() || !isNumeric(representation) || representation != m_emitter.representationOf(id)) {
+                m_fails = true;
+                return;
+            }
+            Kind kind = representation == Representation::Double ? Kind::StoreDouble : representation == Representation::Int64 ? Kind::StoreInt64 : Kind::StoreInt32;
+            append({ .kind = kind, .left = found->value.number, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+        };
+        for (ValueID live : m_code.liveAt(m_yield))
+            keep(live);
+        for (ValueID held : heldOperandsOf(m_code.at(m_yield)))
+            keep(held);
+        ValueID yielded = m_code.at(m_yield).valueOperand();
+        if (m_boxed)
+            append({ .kind = m_boxed->isDouble ? Kind::BoxDouble : Kind::BoxInt64, .left = m_boxed->number });
+        else if (auto number = m_placesOfNumbers.find(yielded.index()); number != m_placesOfNumbers.end() && !m_code.isConstant(yielded))
+            append({ .kind = Kind::ReturnNumber, .left = number->value });
+        else if (!m_code.isConstant(yielded) && m_emitter.isKeptInHeapFrame(yielded) && !m_isMadeOnWay.get(yielded.index()) && m_emitter.formKeptInHeapFrame(yielded) == Representation::JSValue)
+            append({ .kind = Kind::Return, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[yielded.index()] - 1) });
+        else
+            m_fails = true;
+        append({ .kind = Kind::Label, .label = static_cast<uint32_t>(m_blocks.size()) });
+        append({ .kind = Kind::GiveWay });
+    }
+
+    SavedFrameEmitter& m_emitter;
+    const Code& m_code;
+    ValueID m_yield;
+    BlockID m_blockOfYield;
+    Vector<BlockID, 12> m_blocks;
+    Vector<uint32_t, 12> m_entries;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfBlocks;
+    HashMap<uint32_t, Place, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
+    HashMap<uint32_t, Place, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfParameters;
+    HashMap<uint32_t, Comparison, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_comparisons;
+    HashMap<uint32_t, uint8_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfNumbers;
+    BitVector m_isMadeOnWay;
+    std::optional<Place> m_boxed;
+    Vector<InstructionOfLeafStep, 8> m_loads;
+    Vector<InstructionOfLeafStep, 32> m_instructions;
+    uint8_t m_nextFPR { 0 };
+    uint8_t m_nextGPR { 0 };
+    bool m_fails { false };
+};
+
+void SavedFrameEmitter::findLeafSteps()
+{
+    if (kindOfFunction() != CoroutineKind::Generator)
+        return;
+    for (const LiveAtSuspension& record : m_code.suspensions()) {
+        if (record.suspension == m_firstYield || opcodeOf(record.suspension) != Opcode::YieldBySavingFrame)
+            continue;
+        if (LeafStepOfGenerator* step = LeafStepPlanner(*this, record.suspension).plan()) {
+            m_leafSteps.append({ record.suspension, step });
+            build().statistics().count(StatisticID::GeneratorLeafSteps);
+        }
+    }
+}
+
+const LeafStepOfGenerator* SavedFrameEmitter::leafStepOf(ValueID yield) const
+{
+    for (auto [planned, step] : m_leafSteps) {
+        if (planned == yield)
+            return step;
+    }
+    return nullptr;
+}
+
+LValue SavedFrameEmitter::addressOfLeafStep(const LeafStepOfGenerator* step)
+{
+    Machine::PatchOperation* patch = m_out.patchpoint(Machine::pointerType());
+    patch->effects = Machine::Effects::none();
+    patch->setGenerator([step, stubCalls = &m_records.stubCalls](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        MacroAssembler::Label site = jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Far);
+        params.addLatePath([step, stubCalls](CCallHelpers& jit) {
+            emitLeafStep(jit, *stubCalls, *step);
+        });
+        jit.addLinkTask([site, step](LinkBuffer& linkBuffer) {
+            RELEASE_ASSERT(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), *step->start));
+        });
+    });
+    return patch;
+}
+
+void SavedFrameEmitter::storeLeafStep(ValueID yield)
+{
+    if (m_leafSteps.isEmpty())
+        return;
+    LValue named = m_out.int64Zero;
+    if (const LeafStepOfGenerator* step = leafStepOf(yield))
+        named = m_out.add(m_out.sub(addressOfLeafStep(step), loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code)).value()), m_numberTag);
+    m_out.store64(named, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfAsyncContext()));
 }
 
 void SavedFrameEmitter::findHeapWordsAliveAtSuspensions()
@@ -619,6 +1576,7 @@ bool SavedFrameEmitter::layOutHeapFrame()
     findWordsNeededAtStartsOfBlocks();
     m_numberOfWordsInHeapFrame = std::max(nextRaw, 1u);
     if (!m_keepsWordsInMachineFrame) {
+        findLeafSteps();
         m_slotOfHeapFrame = m_proc.addStackSlot(sizeof(uint64_t));
         if (m_everyWayBackLeadsToWhatDominates) {
             m_suspensionsInFrontOfPlaces = arena.createSpan<uint32_t>(order.size() + 1);
@@ -1528,6 +2486,7 @@ void SavedFrameEmitter::yieldOutOfHeapFrame(const ValueContext& value)
     } else {
         m_out.storePtr(resumeAddress, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfResumeAddress()));
         m_out.store32(suspendedAtYield, stateOf(generatorCell));
+        storeLeafStep(value.id());
     }
     clearWordsOfWhatIsDeadAcross(value);
     Operand returned = yielded;
@@ -1549,6 +2508,43 @@ GeneratorFunctionOrigin SavedFrameEmitter::originOfGeneratorFunction(FunctionID 
     return m_plan.functionKind(m_program, conventions().closureEntryOf(function)).isInRuntimeModule ? GeneratorFunctionOrigin::Library : GeneratorFunctionOrigin::Program;
 }
 
+Word32 SavedFrameEmitter::loadGeneratorStructureID(CellPointer closure, LBasicBlock otherwise)
+{
+    constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
+    branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), otherwise);
+    Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+    branchUnless(isNotZero(structureID), otherwise);
+    return structureID;
+}
+
+void SavedFrameEmitter::branchUnlessUnmodifiedAsyncGenerator(CellPointer generator, LBasicBlock otherwise)
+{
+    branchUnless(Condition(m_out.isNull(m_out.loadPtr(generator.value(), m_heaps.JSObject_butterfly))), otherwise);
+    Boxed prototype(m_out.load64(loadStructure(generator).value(), m_heaps.Structure_prototype));
+    branchUnless(isCell(prototype), otherwise);
+    branchUnless(equal(loadStructureID(unboxCell(prototype)), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyAsyncGeneratorPrototypeStructureID))), otherwise);
+}
+
+void SavedFrameEmitter::branchUnlessGeneratorsPlain(CellPointer function, LBasicBlock otherwise)
+{
+    LBasicBlock hasMadeNone = newBlock();
+    LBasicBlock makesPlainGenerators = newBlock();
+    Pointer structure = decodeStructureID(loadGeneratorStructureID(function, hasMadeNone));
+    Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
+    Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
+    branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_classInfo), classInfo), otherwise);
+    CellPointer prototype(m_out.load64(structure.value(), m_heaps.Structure_prototype));
+    branchUnless(equal(loadStructureID(prototype), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), otherwise);
+    m_out.jump(makesPlainGenerators);
+
+    m_out.appendTo(hasMadeNone);
+    branchUnless(equal(loadStructureID(function), loadImmutable32(AOT_INSTANCE_OFFSET(closures.closureHeaders) + closureStructureOfGeneratorFunctions(false) * sizeof(uint64_t))), otherwise);
+    m_out.jump(makesPlainGenerators);
+
+    m_out.appendTo(makesPlainGenerators);
+}
+
 CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin origin, LBasicBlock slowPath)
 {
     std::optional<Word32> structureID;
@@ -1559,12 +2555,7 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
         branchUnless(isNotZero(*structureID), slowPath);
         structure = decodeStructureID(*structureID);
     } else if (closure) {
-        constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
-        Pointer taggedRareData = loadField<Pointer>(*closure, m_heaps.JSFunction_executableOrRareData);
-        branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
-        structureID = Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
-        branchUnless(isNotZero(*structureID), slowPath);
-
+        structureID = loadGeneratorStructureID(*closure, slowPath);
         structure = decodeStructureID(*structureID);
         Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
         Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
@@ -1627,7 +2618,54 @@ void SavedFrameEmitter::generateNewAsyncGenerator(const ValueContext& value)
 
 void SavedFrameEmitter::generateTakeGeneratorPrototype(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::TakeGeneratorPrototype, { in<CellPointer>(value->generatorOperand()), boxCell(in<CellPointer>(value->calleeOperand())) });
+    constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+    CellPointer generator = in<CellPointer>(value->generatorOperand());
+    CellPointer closure = in<CellPointer>(value->calleeOperand());
+    LBasicBlock slowPath = newBlock();
+    LBasicBlock continuation = newBlock();
+    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
+    branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
+    Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+    branchUnless(equal(structureID, loadStructureID(generator)), slowPath);
+    m_out.jump(continuation);
+
+    m_out.appendTo(slowPath);
+    callVoidOperation(value, RuntimeOperation::TakeGeneratorPrototype, { generator, boxCell(closure) }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void SavedFrameEmitter::generateIsCallDelegated(const ValueContext& value)
+{
+    ValueID callee = value->calleeOperand();
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        const Machine::AbstractHeap& frameWords = m_heaps.entire(AbstractHeap::InternalFields);
+        Pointer returnAddress(m_out.loadPtr(m_out.address(frameWords, framePointerAtThisPoint().value(), CallFrame::returnPCOffset())));
+        Word32 mark(m_out.load32(m_out.address(frameWords, returnAddress.value(), offsetOfDelegationMark)));
+        branchUnless(equal(mark, word32(delegationMark)), targets.notTaken.block());
+
+        constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+        Pointer taggedRareData = loadField<Pointer>(in<CellPointer>(callee), m_heaps.JSFunction_executableOrRareData);
+        branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), targets.notTaken.block());
+        Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+        branchUnless(isNotZero(structureID), targets.notTaken.block());
+        CellPointer prototype(m_out.load64(decodeStructureID(structureID).value(), m_heaps.Structure_prototype));
+        branch(equal(loadStructureID(prototype), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), targets);
+    });
+}
+
+void SavedFrameEmitter::generateGiveDelegatedResult(const ValueContext& value)
+{
+    m_out.store64(in<Boxed>(value->valueOperand()).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.delegatedResult)));
+    define(value, Boxed(m_out.int64Zero));
+}
+
+void SavedFrameEmitter::generateCallDelegate(const ValueContext& value)
+{
+    Boxed returned = emitter<CallEmitter>().callDelegate(value);
+    Condition hasCompleted(m_out.isZero64(returned.value()));
+    LValue result = m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.delegatedResult)));
+    defineResults(value, { Boxed(m_out.select(hasCompleted.value(), result, returned.value())), hasCompleted });
 }
 
 TypedPointer SavedFrameEmitter::stateOf(CellPointer generator)
@@ -1639,6 +2677,10 @@ void SavedFrameEmitter::generateReturnAsyncResult(const ValueContext& value)
 {
     Boxed promise = in<Boxed>(value->promiseOperand());
     Boxed result = in<Boxed>(value->valueOperand());
+    if (value.returnCall()) {
+        emitter<CallEmitter>().returnAsyncResult(promise, result);
+        return;
+    }
     define(value, Boxed(callStub(value, returnAsyncResult(), { promise.value(), result.value() }, { .callerHasLeft = true }).first));
 }
 
@@ -1751,6 +2793,51 @@ void SavedFrameEmitter::generatePromiseAllOfElements(const ValueContext& value)
         elements.append(in<Boxed>(element));
     Pointer buffer = argumentBuffer(elements.span());
     define(value, callOperation<CellPointer>(value, RuntimeOperation::PromiseAll, { word32(static_cast<int32_t>(elements.size())), buffer, word32(static_cast<int32_t>(value->directCalls())) }));
+}
+
+void SavedFrameEmitter::generateStartReactionChain(const ValueContext& value)
+{
+    std::span<const uint32_t> handlers = value->handlers();
+    std::span<const ValueID> captures = value->capturesOperands();
+    const unsigned numberOfHandlers = handlers.size() / 2;
+    RELEASE_ASSERT(numberOfHandlers && numberOfHandlers <= ReactionChain::maxHandlers && captures.size() <= ReactionChain::maxWords);
+    std::array<uint64_t, ReactionChain::maxHandlers / ReactionChain::handlersPerWord> bits { };
+    uint32_t description = 0;
+    for (unsigned handler = 0; handler < numberOfHandlers; ++handler) {
+        FunctionID function(handlers[2 * handler]);
+        if (!conventions().exists(conventions().closureEntryOf(function))) {
+            fail(value, InternalErrorKind::OpcodeWithoutCode);
+            return;
+        }
+        uint32_t mention = m_mentions.add(NumberSpace::ClosureFunction, function, handler ? 0 : static_cast<int32_t>(ReactionChain::description(numberOfHandlers, captures.size())));
+        if (!handler)
+            description = mention;
+        bits[handler / ReactionChain::handlersPerWord] |= static_cast<uint64_t>(handlers[2 * handler + 1]) << ReactionChain::bitsOfHandler * (handler % ReactionChain::handlersPerWord);
+    }
+
+    emitter<EnvironmentEmitter>().markEnvironmentsKept(captures);
+    Vector<LValue, 8> operands;
+    operands.append(m_out.wideNumber(description));
+    operands.append(m_out.constInt64(static_cast<int64_t>(bits[0])));
+    operands.append(in<CellPointer>(value->promiseOperand()).value());
+    Vector<LValue, 4> words;
+    for (ValueID capture : captures)
+        words.append(emitter<ConstantEmitter>().wordKeptOnHeap(value, capture));
+    const size_t numberInRegisters = std::min<size_t>(words.size(), ReactionChain::maxWordsInRegisters);
+    operands.append(words.span().first(numberInRegisters));
+    CellPointer chain(callStub(value, newReactionChain(captures.size()), operands.span()).first);
+    const Machine::AbstractHeap& chainWords = m_heaps.entire(AbstractHeap::InternalFields);
+    if (bits[1] || numberInRegisters < words.size()) {
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            if (bits[1])
+                m_out.store64(m_out.constInt64(static_cast<int64_t>(bits[1])), m_out.address(chainWords, chain.value(), ReactionChain::offsetOfHandlers() + sizeof(uint64_t)));
+            for (size_t word = numberInRegisters; word < words.size(); ++word)
+                m_out.store64(words[word], m_out.address(chainWords, chain.value(), ReactionChain::offsetOfWords() + word * sizeof(uint64_t)));
+        }
+        emitter<BarrierEmitter>().fenceAfterInitialization(value);
+    }
+    callStub(value, startReactionChain(value->receiverIsValue() ? ReactionChainReceiver::FulfilledValue : ReactionChainReceiver::Promise), { in<Boxed>(value->receiverOperand()).value(), chain.value() });
 }
 
 } } } // namespace JSC::AOT::Typed

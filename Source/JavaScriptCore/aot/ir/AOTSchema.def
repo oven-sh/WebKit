@@ -108,9 +108,13 @@ heap AllocatorState
 heap RuntimeState ordered
 heap CalleesInFrames observable ordered
 heap ArrayLengths observable ordered perObject
+heap ArrayCapacity ordered perObject
+heap LoweredArrayLengths ordered perObject
+heap ClassObjects ordered
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
-effects Allocates = reads(AllocatorState) writes(AllocatorState) collects
+effects Allocates = reads(AllocatorState) writes(AllocatorState, ClassObjects) collects
+effects AllocatesCells = reads(AllocatorState) writes(AllocatorState) collects
 effects AllocatesWithoutCollecting = reads(AllocatorState) writes(AllocatorState)
 effects UsesRuntime = reads(RuntimeState) writes(RuntimeState)
 effects AppendsToBuilder = reads(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
@@ -121,7 +125,8 @@ effects GrowsArray = reads(ArrayStorage, Elements[Array], AllocatorState) writes
 opaque IteratorState Enumerator Exception ClassToken
 opaque Cursor KeyOrder engine directCallsOnly
 opaque StringBuilder engine
-opaque FlatString CodeAddress Reciprocal engine functionLocal
+opaque FlatString CodeAddress PropertyAddress Reciprocal MatchRecord engine functionLocal
+opaque ElementWord engine functionLocal
 opaque BuilderCursor ViewVector ArrayStoragePointer engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText

@@ -37,17 +37,37 @@ Reference wordInPlaceOfRemovedCapture(Walker& walker, FunctionID function, uint3
     return walker.unspecifiedConstant(walker.program().provenTypeOf(walker.program().at(function).captures[capture]));
 }
 
-Reference valueNoLongerCaptured(Walker& walker, FunctionID function, uint32_t capture, Origin origin)
+static std::optional<uint32_t> findLoopForPromotedCapture(const Walker& walker, FunctionID function, Reference closure)
+{
+    if (!closure || !closure.isValue() || walker.isUnreachable() || !walker.has(Mechanism::LoopInvariants))
+        return std::nullopt;
+    const Type& type = walker.types().at(walker.typeOf(closure));
+    if (type.primitives || singleFunctionOf(walker.types(), type) != function || walker.code().at(walker.currentBlock()).frequency == BlockFrequency::Rare)
+        return std::nullopt;
+    return walker.outermostLoopToMakeTextInFrontOf(singleElementSpan(closure), Effects::none());
+}
+
+Reference valueNoLongerCaptured(Walker& walker, FunctionID function, uint32_t capture, Origin origin, Reference closure)
 {
     const RemovedCapture* removed = walker.plan().promotedEnvironments().findRemoved(function, capture);
     RELEASE_ASSERT(removed);
-    if (!removed->variable)
-        return wordInPlaceOfRemovedCapture(walker, function, capture);
+    if (!removed->variable) {
+        Reference word = wordInPlaceOfRemovedCapture(walker, function, capture);
+        TypeID scope = walker.program().provenTypeOf(walker.program().at(function).captures[capture]);
+        std::optional<uint32_t> loop = walker.isInTrialVisit() && walker.types().at(scope).environment ? findLoopForPromotedCapture(walker, function, closure) : std::nullopt;
+        if (loop)
+            walker.noteScopeAllocatedBefore(scope, *loop);
+        return word;
+    }
     origin.isTailCall = false;
     Draft read(Opcode::GetModuleVariable, origin);
     read.setVariable(removed->variable);
     walker.chooseConservativeFields(read);
-    return walker.build(WTF::move(read));
+    std::optional<uint32_t> loop = findLoopForPromotedCapture(walker, function, closure);
+    if (!loop)
+        return walker.build(WTF::move(read));
+    walker.count(StatisticID::PromotedCaptureReadsHoisted);
+    return walker.buildInFrontOfOpenLoop(*loop, WTF::move(read));
 }
 
 void takeWhatIsNoLongerCaptured(Walker& walker)

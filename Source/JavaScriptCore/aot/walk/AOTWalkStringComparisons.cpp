@@ -253,6 +253,85 @@ static Reference lengthSharedByComparisonsForStringComparisons(Walker& walker, c
     return isBuilt ? length[0] : Reference();
 }
 
+namespace {
+
+struct SubjectForStringComparisons {
+    ValueID value;
+    PropertyKeyID key;
+
+    explicit operator bool() const { return !!value; }
+    friend bool operator==(const SubjectForStringComparisons&, const SubjectForStringComparisons&) = default;
+};
+
+} // anonymous namespace
+
+static ValueID valueBeforeNarrowings(const BodyIndex& index, ValueID value)
+{
+    for (value = index.stripCasts(value); value && index.isParameter(value);) {
+        ValueID narrowed = index.valueNarrowedInto(value);
+        if (!narrowed)
+            break;
+        value = index.stripCasts(narrowed);
+    }
+    return value;
+}
+
+static SubjectForStringComparisons findSubjectComparedWithText(const BodyIndex& index, ValueID test)
+{
+    if (!test || index.isParameter(test) || (index.opcodeOf(test) != Opcode::StrictEq && index.opcodeOf(test) != Opcode::Eq))
+        return { };
+    BodyValue comparison = index.value(test);
+    for (uint32_t side = 0; side < 2; ++side) {
+        ValueID written = index.stripCasts(comparison.operand(1 - side));
+        if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::String)
+            continue;
+        ValueID subject = valueBeforeNarrowings(index, comparison.operand(side));
+        if (subject && !index.isParameter(subject) && index.opcodeOf(subject) == Opcode::PropGet && !index.value(subject).isFreeName())
+            return { valueBeforeNarrowings(index, index.value(subject).objectOperand()), index.value(subject).key() };
+        return { subject, { } };
+    }
+    return { };
+}
+
+static ValueID branchConditionTest(const BodyIndex& index, BlockID block)
+{
+    BodyTerminator terminator = index.terminator(block);
+    if (terminator.kind() != TerminatorKind::Branch)
+        return { };
+    ValueID test = terminator.operand(0);
+    while (test && !index.isParameter(test) && (index.opcodeOf(test) == Opcode::LogicalNot || index.opcodeOf(test) == Opcode::ToBoolean))
+        test = index.value(test).operand(0);
+    return test;
+}
+
+static bool isInComparisonChain(const BodyIndex& index, ValueID comparison)
+{
+    static constexpr unsigned minComparisons = 3;
+    BlockID block = index.blockOf(comparison);
+    SubjectForStringComparisons subject = findSubjectComparedWithText(index, comparison);
+    if (!subject || branchConditionTest(index, block) != comparison)
+        return false;
+    unsigned comparisons = 1;
+    for (BlockID behind = block; comparisons < minComparisons;) {
+        std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(behind);
+        if (!edge || !(findSubjectComparedWithText(index, branchConditionTest(index, edge->from)) == subject))
+            break;
+        behind = edge->from;
+        ++comparisons;
+    }
+    for (BlockID inFront = block; inFront && comparisons < minComparisons;) {
+        BlockID next;
+        for (BodyTarget target : index.terminator(inFront).targets()) {
+            std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(target.block());
+            if (edge && edge->from == inFront && findSubjectComparedWithText(index, branchConditionTest(index, target.block())) == subject)
+                next = target.block();
+        }
+        comparisons += !!next;
+        inFront = next;
+    }
+    return comparisons >= minComparisons;
+}
+
 static bool compareSubjectWithTextForStringComparisons(Walker& walker, const BodyValue& value, uint32_t placeOfSubject, StringID text, std::optional<uint32_t> narrowed, Origin origin)
 {
     TypeArena& types = walker.types();
@@ -286,7 +365,10 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
         return false;
 
     Reference flat = isString ? flatStringInSight(walker, subject) : Reference();
-    Reference length = walker.isInLoop() ? lengthSharedByComparisonsForStringComparisons(walker, value, subject, text, origin) : Reference();
+    std::optional<uint32_t> loop = walker.innermostOpenLoop();
+    bool isAllocatedInIteration = loop && !walker.standsInFrontOfOpenLoop(*loop, subject);
+    bool sharesLength = walker.isInLoop() && !(isAllocatedInIteration && isInComparisonChain(walker.currentBodyIndex(), value.id()));
+    Reference length = sharesLength ? lengthSharedByComparisonsForStringComparisons(walker, value, subject, text, origin) : Reference();
     if (walker.isUnreachable())
         return true;
     if (length && !types.at(walker.typeOf(length)).integers.contains(lengthOfTextForStrings(walker, text))) {
@@ -425,7 +507,7 @@ bool buildRelationOnStrings(Walker& walker, const BodyValue& value, const Inputs
         order.setStringOperand(placeOfText ? left : right);
         order.setCodeUnit(*unit);
         if (Reference built = walker.build(WTF::move(order)))
-            walker.bind(value.id(), buildOperatorForStrings(walker, placeOfText ? opcode : relationWithSidesSwappedForStrings(opcode), built, zero, origin));
+            walker.bind(value.id(), buildOperatorForStrings(walker, placeOfText ? opcode : relationWithOperandsSwappedForStrings(opcode), built, zero, origin));
         return true;
     }
 
@@ -441,7 +523,7 @@ bool buildRelationOnStrings(Walker& walker, const BodyValue& value, const Inputs
         if (!order)
             return true;
     }
-    walker.bind(value.id(), buildOperatorForStrings(walker, isSwapped ? relationWithSidesSwappedForStrings(opcode) : opcode, order, zero, origin));
+    walker.bind(value.id(), buildOperatorForStrings(walker, isSwapped ? relationWithOperandsSwappedForStrings(opcode) : opcode, order, zero, origin));
     return true;
 }
 

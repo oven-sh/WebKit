@@ -20,6 +20,10 @@ constexpr StubKey getByValAtConstantIndex() { return StubKey(StubFamily::GetByVa
 constexpr StubKey putByVal(bool indexIsInteger, ECMAMode mode) { return StubKey(indexIsInteger ? StubFamily::PutByValAtIndex : StubFamily::PutByVal).withForm(static_cast<uint8_t>(mode.isStrict() ? ElementStoreMode::Strict : ElementStoreMode::Sloppy)); }
 constexpr StubKey putByValAtConstantIndex(ECMAMode mode) { return StubKey(StubFamily::PutByValAtConstantIndex).withForm(static_cast<uint8_t>(mode.isStrict() ? ElementStoreMode::Strict : ElementStoreMode::Sloppy)); }
 
+constexpr bool isKnownIndex(int64_t index) { return index >= 0 && index <= static_cast<int64_t>(StubKey::maxCount); }
+constexpr StubKey getByValAtKnownIndex(unsigned index) { return StubKey(StubFamily::GetByValAtKnownIndex).withCount(index); }
+constexpr StubKey putByValAtKnownIndex(unsigned index, ECMAMode mode) { return StubKey(StubFamily::PutByValAtKnownIndex).withForm(static_cast<uint8_t>(mode.isStrict() ? ElementStoreMode::Strict : ElementStoreMode::Sloppy)).withCount(index); }
+
 enum class ExpectedElements : uint8_t { Int32Array, Uint8Array, Float64Array };
 inline constexpr uint8_t numberOfExpectedElements = 3;
 
@@ -31,9 +35,11 @@ constexpr StubKey putByValExpecting(bool indexIsInteger, ECMAMode mode, Expected
 
 inline constexpr unsigned maxBytesMovedByStub = 16;
 constexpr StubKey moveFewBytes() { return StubKey(StubFamily::MoveFewBytes); }
-constexpr StubKey moveElementsDown() { return StubKey(StubFamily::MoveElementsDown); }
+constexpr StubKey shiftArrayStart() { return StubKey(StubFamily::ShiftArrayStart); }
+constexpr StubKey shiftFewElements(bool holdsDoubles) { return StubKey(StubFamily::ShiftFewElements).withForm(holdsDoubles); }
 
-static_assert(exists(getByVal(false)) && exists(getByVal(true)) && exists(getByValAtConstantIndex()) && exists(moveFewBytes()) && exists(moveElementsDown()));
+static_assert(exists(getByVal(false)) && exists(getByVal(true)) && exists(getByValAtConstantIndex()) && exists(moveFewBytes()) && exists(shiftArrayStart()));
+static_assert(exists(getByValAtKnownIndex(0)) && exists(getByValAtKnownIndex(StubKey::maxCount)) && exists(StubKey(StubFamily::PutByValAtKnownIndex).withForm(static_cast<uint8_t>(ElementStoreMode::Sloppy)).withCount(StubKey::maxCount)));
 static_assert(exists(getByValExpecting(true, ExpectedElements::Float64Array)) && !exists(StubKey(StubFamily::GetByValExpecting).withForm(numberOfExpectedElements)));
 static_assert(exists(StubKey(StubFamily::PutByValAtIndexExpecting).withForm(2 * numberOfExpectedElements - 1)) && !exists(StubKey(StubFamily::PutByValExpecting).withForm(2 * numberOfExpectedElements)));
 static_assert(exists(StubKey(StubFamily::PutByVal).withForm(static_cast<uint8_t>(ElementStoreMode::Sloppy))) && !exists(StubKey(StubFamily::PutByVal).withForm(2)));

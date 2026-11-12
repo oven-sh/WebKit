@@ -160,6 +160,7 @@ static void moveSumToResultOfTestPatch(CCallHelpers& jit, GPRReg sum, const Valu
     case Double:
         jit.move64ToDouble(sum, result.fpr());
         return;
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -322,6 +323,7 @@ static Operation* seedOfTestValues(Output& out, Operation* seed, Type type)
         return out.doubleToFloat(seedOfTestValues(out, seed, Double));
     case Double:
         return seed->type() == Float ? out.floatToDouble(seed) : out.intToDouble(seed);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -339,6 +341,7 @@ static Operation* addendOfTestValue(Output& out, Type type, unsigned index)
         return out.constFloat(static_cast<float>(index) + 1.5f);
     case Double:
         return out.constDouble(index + 1.5);
+    case Vector128:
     case Void:
     case Tuple:
         break;

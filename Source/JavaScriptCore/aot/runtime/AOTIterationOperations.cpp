@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
@@ -24,6 +25,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "ArrayIteratorPrototype.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "ArrayConstructor.h"
@@ -36,6 +38,7 @@
 #include "JSCInlines.h"
 #include "JSMapIterator.h"
 #include "JSPropertyNameEnumeratorInlines.h"
+#include "JSRegExpStringIterator.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"
 #include <array>
@@ -58,6 +61,8 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject* globalObject, JSValue va
     PropertyWalk::materializeLazyProperties(vm, object);
     if (object->structure()->isDictionary()) [[unlikely]]
         flattenForListing(vm, object);
+    if (object->type() == FinalObjectType)
+        RELEASE_AND_RETURN(scope, Object::enumeratorOfFinalObject(globalObject, object));
     RELEASE_AND_RETURN(scope, JSC::propertyNameEnumerator(globalObject, object));
 }
 
@@ -71,6 +76,10 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject* globalObject, JSPropertyNameEnum
         return { nullptr, end };
     JSObject* base = value.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+    if (position >= indexedLength && Object::areEnumeratedNamesFixed(globalObject, base, enumerator)) {
+        if (JSString* name = enumerator->propertyNameAtIndex(static_cast<uint32_t>(position - indexedLength)))
+            return { name, position };
+    }
     uint32_t index = 0;
     JSPropertyNameEnumerator::Flag mode = JSPropertyNameEnumerator::InitMode;
     if (position > indexedLength) {
@@ -149,7 +158,7 @@ public:
     bool open(JSValue iterable, WordingOfIteration);
     bool tryOpenUnseen(JSValue iterable);
     bool step(JSValue&);
-    bool tryStepToEndUnseen(MarkedArgumentBuffer& values);
+    bool tryDrainUnobserved(MarkedArgumentBuffer& values);
     void close();
 
 private:
@@ -304,7 +313,7 @@ bool IterationInRunTime::step(JSValue& value)
     return true;
 }
 
-bool IterationInRunTime::tryStepToEndUnseen(MarkedArgumentBuffer& values)
+bool IterationInRunTime::tryDrainUnobserved(MarkedArgumentBuffer& values)
 {
     if (m_stepper != Stepper::ArrayIterator)
         return false;
@@ -774,58 +783,149 @@ static bool tryAppendElementsOfArguments(JSGlobalObject* globalObject, JSArray* 
 }
 
 template<typename View>
-static bool tryListElementsOfView(JSArrayBufferView* view, Vector<EncodedJSValue, 64>& values)
+static void copyElementsOfView(JSArrayBufferView* view, EncodedJSValue* __restrict numbers, size_t length)
 {
-    size_t length = view->length();
-    if (!values.tryReserveInitialCapacity(length))
-        return false;
-    values.grow(length);
     const auto* __restrict elements = uncheckedDowncast<View>(view)->typedVector();
-    EncodedJSValue* __restrict numbers = values.mutableSpan().data();
     for (size_t index = 0; index < length; ++index)
         numbers[index] = JSValue::encode(View::Adaptor::toJSValue(nullptr, elements[index]));
-    return true;
 }
 
-static bool tryListNumbersOfView(JSArrayBufferView* view, Vector<EncodedJSValue, 64>& values)
+void copyNumbersOfView(JSArrayBufferView* view, EncodedJSValue* numbers, size_t length)
 {
     switch (view->type()) {
     case Int8ArrayType:
-        return tryListElementsOfView<JSInt8Array>(view, values);
+        return copyElementsOfView<JSInt8Array>(view, numbers, length);
     case Uint8ArrayType:
-        return tryListElementsOfView<JSUint8Array>(view, values);
+        return copyElementsOfView<JSUint8Array>(view, numbers, length);
     case Uint8ClampedArrayType:
-        return tryListElementsOfView<JSUint8ClampedArray>(view, values);
+        return copyElementsOfView<JSUint8ClampedArray>(view, numbers, length);
     case Int16ArrayType:
-        return tryListElementsOfView<JSInt16Array>(view, values);
+        return copyElementsOfView<JSInt16Array>(view, numbers, length);
     case Uint16ArrayType:
-        return tryListElementsOfView<JSUint16Array>(view, values);
+        return copyElementsOfView<JSUint16Array>(view, numbers, length);
     case Int32ArrayType:
-        return tryListElementsOfView<JSInt32Array>(view, values);
+        return copyElementsOfView<JSInt32Array>(view, numbers, length);
     case Uint32ArrayType:
-        return tryListElementsOfView<JSUint32Array>(view, values);
+        return copyElementsOfView<JSUint32Array>(view, numbers, length);
     case Float16ArrayType:
-        return tryListElementsOfView<JSFloat16Array>(view, values);
+        return copyElementsOfView<JSFloat16Array>(view, numbers, length);
     case Float32ArrayType:
-        return tryListElementsOfView<JSFloat32Array>(view, values);
+        return copyElementsOfView<JSFloat32Array>(view, numbers, length);
     case Float64ArrayType:
-        return tryListElementsOfView<JSFloat64Array>(view, values);
+        return copyElementsOfView<JSFloat64Array>(view, numbers, length);
     default:
-        return false;
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
 static bool tryAppendNumbersOfView(JSGlobalObject* globalObject, JSArray* target, JSArrayBufferView* view)
 {
-    if (view->isOutOfBounds() || !view->isIteratorProtocolFastAndNonObservable() || static_cast<uint64_t>(target->length()) + view->length() > MAX_STORAGE_VECTOR_LENGTH)
+    VM& vm = globalObject->vm();
+    if (view->type() < Int8ArrayType || view->type() > Float64ArrayType || view->isOutOfBounds() || !view->isIteratorProtocolFastAndNonObservable())
         return false;
-    Vector<EncodedJSValue, 64> values;
-    if (!tryListNumbersOfView(view, values))
+    uint64_t newLength = static_cast<uint64_t>(target->length()) + view->length();
+    if (newLength > MAX_STORAGE_VECTOR_LENGTH)
         return false;
+    if (!view->length())
+        return true;
     bool holdsInt32Alone = view->type() >= Int8ArrayType && view->type() <= Int32ArrayType;
+    if (IndexingType mode = target->indexingMode(); holdsInt32Alone && (mode == ArrayWithInt32 || mode == ArrayWithContiguous)) {
+        unsigned start = target->length();
+        if (!target->ensureLength(vm, static_cast<unsigned>(newLength)))
+            return false;
+        copyNumbersOfView(view, target->butterfly()->indexingPayload<EncodedJSValue>() + start, view->length());
+        return true;
+    }
+    Vector<EncodedJSValue, 64> values;
+    if (!values.tryReserveInitialCapacity(view->length()))
+        return false;
+    values.grow(view->length());
+    copyNumbersOfView(view, values.mutableSpan().data(), values.size());
     std::optional<IndexingType> kind = holdsInt32Alone ? hasDouble(target->indexingType()) ? ArrayWithDouble : ArrayWithInt32 : findIndexingTypeOfValues(target, values.span());
     RELEASE_ASSERT(kind);
-    return values.isEmpty() || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), *kind, values.span());
+    return target->appendMemcpy(globalObject, vm, target->length(), *kind, values.span());
+}
+
+template<typename View>
+static bool copyFractionsOfView(JSArrayBufferView* view, double* __restrict numbers)
+{
+    size_t length = view->length();
+    const auto* __restrict elements = uncheckedDowncast<View>(view)->typedVector();
+    bool holdsNaN = false;
+    for (size_t index = 0; index < length; ++index) {
+        double number = static_cast<double>(elements[index]);
+        holdsNaN |= number != number;
+        numbers[index] = number;
+    }
+    return !holdsNaN;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfView, JSCell*, (Instance* instance, JSCell* cell, uint32_t roomAndKind))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfView);
+    JSArrayBufferView* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTNewArrayOfView);
+    if (view->isOutOfBounds() || !view->isIteratorProtocolFastAndNonObservable() || globalObject->isHavingABadTime())
+        OPERATION_RETURN(scope, nullptr);
+    uint64_t length = view->length();
+    uint64_t room = length + (roomAndKind >> 1);
+    if (room >= MAX_STORAGE_VECTOR_LENGTH)
+        OPERATION_RETURN(scope, nullptr);
+    JSType type = view->type();
+    bool holdsFractions = !(roomAndKind & 1) && (type == Float32ArrayType || type == Float64ArrayType);
+    IndexingType kind = holdsFractions ? ArrayWithDouble : !(roomAndKind & 1) && type <= Int32ArrayType ? ArrayWithInt32 : ArrayWithContiguous;
+    JSArray* array = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(kind), static_cast<unsigned>(length), static_cast<unsigned>(room) | 1, 0, NewElements::WrittenByCaller);
+    if (!array)
+        OPERATION_RETURN(scope, nullptr);
+    bool isFilled = true;
+    if (type == Float64ArrayType && holdsFractions)
+        isFilled = copyFractionsOfView<JSFloat64Array>(view, array->butterfly()->indexingPayload<double>());
+    else if (holdsFractions)
+        isFilled = copyFractionsOfView<JSFloat32Array>(view, array->butterfly()->indexingPayload<double>());
+    else
+        copyNumbersOfView(view, array->butterfly()->indexingPayload<EncodedJSValue>(), length);
+    OPERATION_RETURN(scope, isFilled ? array : nullptr);
+}
+
+static JSArray* unmodifiedIteratedArray(JSGlobalObject* globalObject, JSArrayIterator* iterator)
+{
+    VM& vm = globalObject->vm();
+    JSArray* array = dynamicDowncast<JSArray>(iterator->iteratedObject());
+    if (!array || iterator->index() || iterator->structure() != globalObject->arrayIteratorStructure())
+        return nullptr;
+    if (!globalObject->arrayIteratorProtocolWatchpointSet().isStillValid() || !globalObject->mapIteratorProtocolWatchpointSet().isStillValid())
+        return nullptr;
+    JSObject* prototype = globalObject->arrayIteratorPrototype();
+    bool mayHaveIterator = !prototype->structure()->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(vm.propertyNames->iteratorSymbol.impl()));
+    if (mayHaveIterator && prototype->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
+        return nullptr;
+    return iterator->kind() == IterationKind::Keys || isReadByIndexUnseen(array) ? array : nullptr;
+}
+
+static bool isSteppedByOwnNext(Instance& instance, JSGlobalObject* globalObject, JSRegExpStringIterator* iterator)
+{
+    VM& vm = globalObject->vm();
+    if (iterator->structure() != globalObject->regExpStringIteratorStructure())
+        return false;
+    JSObject* prototype = iterator->structure()->storedPrototypeObject();
+    JSObject* prototypeAbove = prototype->structure()->storedPrototypeObject();
+    auto isOwn = [&](JSValue method, BuiltinID builtin) {
+        return method && method.isCell() && method.asCell() == instance.state->builtinCells->findObject(builtin);
+    };
+    return isOwn(prototype->getDirect(vm, vm.propertyNames->next), Builtins::RegExpStringIteratorPrototypeNext) && !prototype->getDirect(vm, vm.propertyNames->iteratorSymbol)
+        && prototypeAbove && isOwn(prototypeAbove->getDirect(vm, vm.propertyNames->iteratorSymbol), Builtins::IteratorPrototypeSymbolIterator);
+}
+
+static void appendMatches(JSGlobalObject* globalObject, JSArray* target, JSRegExpStringIterator* iterator)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    while (!iterator->isDone()) {
+        JSValue match = iterator->nextImpl(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (match.isNull())
+            return;
+        target->push(globalObject, match);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSArray* target, JSValue iterable)
@@ -863,6 +963,24 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
                 RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, list));
             }
         } else if (!isJSArray(cell)) {
+            auto* iterator = cell->type() == JSArrayIteratorType ? uncheckedDowncast<JSArrayIterator>(cell) : nullptr;
+            if (JSArray* array = iterator ? unmodifiedIteratedArray(globalObject, iterator) : nullptr) {
+                switch (iterator->kind()) {
+                case IterationKind::Values:
+                    iterator->setIndex(JSArrayIterator::doneIndex);
+                    RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, array));
+                case IterationKind::Keys:
+                    if (!tryAppendKeysOfArray(vm, target, array))
+                        break;
+                    iterator->setIndex(JSArrayIterator::doneIndex);
+                    return;
+                case IterationKind::Entries:
+                    if (!tryAppendEntriesOfArray(globalObject, target, array))
+                        break;
+                    iterator->setIndex(JSArrayIterator::doneIndex);
+                    return;
+                }
+            }
             if (cell->type() == JSMapIteratorType && uncheckedDowncast<JSMapIterator>(cell)->kind() == IterationKind::Entries && tryAppendPairsLeftIn(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
                 return;
             if (cell->type() == JSMapIteratorType && tryAppendMembersOfIteratorNobodyStepped(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
@@ -873,6 +991,8 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
                 return;
             if (cell->type() == JSSetType && uncheckedDowncast<JSSet>(cell)->isIteratorProtocolFastAndNonObservable())
                 RELEASE_AND_RETURN(scope, appendMembersOfSet(globalObject, target, uncheckedDowncast<JSSet>(cell)));
+            if (cell->type() == JSRegExpStringIteratorType && isSteppedByOwnNext(instance, globalObject, uncheckedDowncast<JSRegExpStringIterator>(cell)))
+                RELEASE_AND_RETURN(scope, appendMatches(globalObject, target, uncheckedDowncast<JSRegExpStringIterator>(cell)));
             if (cell->type() == ClonedArgumentsType) {
                 bool isAppended = tryAppendElementsOfArguments(globalObject, target, uncheckedDowncast<ClonedArguments>(cell));
                 RETURN_IF_EXCEPTION(scope, void());
@@ -908,7 +1028,7 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     if (!isOpen)
         return;
     MarkedArgumentBuffer values;
-    for (bool hasMore = !iteration.tryStepToEndUnseen(values); hasMore;) {
+    for (bool hasMore = !iteration.tryDrainUnobserved(values); hasMore;) {
         JSValue value;
         hasMore = iteration.step(value);
         RETURN_IF_EXCEPTION(scope, void());

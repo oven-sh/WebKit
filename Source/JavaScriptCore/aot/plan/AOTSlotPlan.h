@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTID.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
@@ -23,7 +24,6 @@
 #include <optional>
 #include <span>
 #include <mutex>
-#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -305,9 +305,18 @@ struct PlannedVariable {
     VariableEncoding encoding { VariableEncoding::Plain };
     SlotRepresentation representation { SlotRepresentation::JSValue };
     bool isDescribedToRunTime { false };
+    bool hasViewMirror { false };
+    VariableID firstViewOfBuffer;
+    VariableID firstViewOfElementSize;
+    uint64_t locationsOfViewsOfBuffer { 0 };
     FunctionID function;
     uint64_t initialWord { 0 };
 };
+
+constexpr int32_t viewMirrorVectorOffset = 8;
+constexpr int32_t viewMirrorLengthOffset = 16;
+constexpr int32_t bufferLengthOffsetInViewMirror = 24;
+constexpr unsigned viewMirrorVariableSize = 32;
 
 enum class MemberCreation : uint8_t {
     AtDefinition,
@@ -351,6 +360,7 @@ struct SlotPlanParts {
     BitVector layoutsWithoutDirectInstances;
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
+    BitVector keysOfAccessors;
     Vector<uint32_t> firstModuleThatWritesFieldUnder;
     Vector<uint32_t> modulesThatWriteFields;
 };
@@ -396,6 +406,7 @@ bool constantListsFieldsHeldFilledInSlots(const Program&, const LinkTables&, con
 
 class SlotPlan {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SlotPlan);
+    friend class FactMisstater;
 public:
     SlotPlan() = default;
     explicit SlotPlan(SlotPlanParts&& parts)
@@ -443,7 +454,7 @@ public:
     JS_EXPORT_PRIVATE FieldAccess fieldAccess(const Program&, PropertyKeyID, LayoutSetID, std::span<const LayoutID> members, bool isStore) const;
     bool storeMayListKey(const FieldAccess& access) const
     {
-        return canLeaveSlot(access.slot.representation) && !access.membersWithField.isEmpty();
+        return mayBeCreatedByStore(access.slot.representation) && !access.membersWithField.isEmpty();
     }
     JS_EXPORT_PRIVATE std::optional<uint32_t> recordOfStoredField(const Program&, PropertyKeyID, std::span<const LayoutID> receivers) const;
     JS_EXPORT_PRIVATE StoredFieldForm formOfStoredField(const Program&, PropertyKeyID, std::span<const LayoutID> receivers) const;
@@ -456,6 +467,7 @@ public:
     const ClassCreationPlan& classCreation(LayoutID id) const { return id.index() < m_parts.classCreation.size() ? m_parts.classCreation[id.index()] : m_unplannedClass; }
 
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
+    bool someLayoutHasAccessor(PropertyKeyID key) const { return m_parts.keysOfAccessors.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
     bool someLayoutHasField(PropertyKeyID key) const
     {

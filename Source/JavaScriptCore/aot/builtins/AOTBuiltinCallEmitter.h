@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTOperationData.h"
 #include "AOTVector.h"
 #include "PropertyOffset.h"
 #include <optional>
@@ -27,6 +28,8 @@ public:
     void generateCallBuiltin(const ValueContext&);
     void generateDivideIntegers(const ValueContext&);
     void generateRemainderOfIntegers(const ValueContext&);
+    void generateMultiplyIntegers(const ValueContext&);
+    void generateMultiplyAddIntegers(const ValueContext&);
     void generateReciprocalOfDivisor(const ValueContext&);
     void generateRemainderByReciprocal(const ValueContext&);
     void generateWholeDivisor(const ValueContext&);
@@ -42,18 +45,34 @@ public:
     void generateFormatNumberWithPattern(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
     void generateNewArrayOfGiven(const ValueContext&);
-    CellPointer sharedRegExpLiteral(const ValueContext& at, const Operation& literal);
+    CellPointer sharedRegExpLiteral(const ValueContext& at, const Operation& literal, uint32_t parameters = 0);
     void generateSharedRegExpLiteral(const ValueContext&);
     bool canShareRegExpLiteral(const Operation& literal) const;
+    bool onlyCountsMatches(ValueID literal) const;
     void generateGetBuiltinValue(const ValueContext&);
     void generateGetWatchedBuiltinValue(const ValueContext&);
     void generateGetWatchedBuiltinValueOrAbsent(const ValueContext&);
     void generateInitializeBuiltin(const ValueContext&);
 
-    Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
+    struct ExpectedResult {
+        std::optional<HostResult> result { };
+        bool isCheckedByCallee { false };
+    };
+    Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments, ExpectedResult* = nullptr);
+    std::optional<HostResult> hostResultAsWritten(const ValueContext&);
+    void createStaticCallee(const ValueContext&);
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
     Boxed builtinValue(const OperationContext&, BuiltinCellKey, RuntimeOperation fills = RuntimeOperation::FillBuiltinValue, const ValueContext* heldAgainstItsRow = nullptr);
     void stopUnlessNativeResultIsAsWritten(const ValueContext&, Boxed result, BuiltinID called, bool constructs);
+
+    struct DivisionOfSameOperands {
+        ValueID division;
+        bool isAhead { false };
+    };
+    std::optional<DivisionOfSameOperands> findDivisionOfSameOperands(const ValueContext& remainder);
+    bool isEmittedWithBlock(BlockID block, BlockID later);
+    Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);
+    void noteQuotient(ValueID division, Integer quotient) { m_quotientsOfDivisions.set(division.index(), quotient.value()); }
 
 private:
     Boxed callCustomGetter(const OperationContext&, BuiltinOverloadID, Boxed receiver, bool receiverIsMatched);
@@ -66,7 +85,7 @@ private:
     Boxed callDirectFunction(const ValueContext&, uint32_t number);
     PropertyKeyID keyOf(const BuiltinOverload&) const;
     CellPointer calleeOf(const OperationContext&, const BuiltinOverload&);
-    Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);
+    void findDivisions();
     Integer roundedQuotient(QuotientRounding, Integer dividend, Range dividends, Integer divisor, Range divisors);
     Integer remainderByConstant(Integer dividend, Range dividends, int64_t magnitudeOfDivisor);
     void holdOperandsOfDivisionToToldRanges(const ValueContext&, Integer dividend, Range dividends, Integer divisor, Range divisors);
@@ -77,6 +96,19 @@ private:
         LValue lowHalf { nullptr };
     };
     LowHalfOfRemainder m_lowHalfOfLastRemainder;
+    using HashOfOperations = DefaultHash<uint32_t>;
+    using TraitsOfOperations = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
+    struct PlacedDivision {
+        ValueID division;
+        uint32_t block { 0 };
+        uint32_t place { 0 };
+    };
+    using OperandsOfDivision = std::pair<uint32_t, uint64_t>;
+    OperandsOfDivision operandsOfDivision(ValueID dividend, ValueID divisor);
+    HashMap<OperandsOfDivision, Vector<PlacedDivision, 1>> m_divisionsByOperands;
+    HashMap<uint32_t, uint32_t, HashOfOperations, TraitsOfOperations> m_placesOfRemainders;
+    HashMap<uint32_t, LValue, HashOfOperations, TraitsOfOperations> m_quotientsOfDivisions;
+    bool m_hasFoundDivisions { false };
     LValue lowHalfOfProductWithReciprocal(LValue reciprocal, LValue dividend);
     Word32 int32BitsOf(ValueID number, bool givesOnlyLowestBits);
 };

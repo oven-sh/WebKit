@@ -117,6 +117,80 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+StubSignature signatureOfStoreWideningIntegers(StubKey)
+{
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) });
+}
+
+void generateStoreWideningIntegers(StubAssembler& jit)
+{
+    const GPRReg array = jit.operand(0);
+    const GPRReg value = jit.operand(1);
+    const GPRReg position = jit.operand(2);
+    const GPRReg result = jit.result();
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
+    const GPRReg length = jit.allocateScratch(StubRegister::T11);
+    constexpr FPRReg number = CCallHelpers::fpTempRegister;
+    JumpList isLeft;
+    RELEASE_ASSERT(noOverlap(array, value, position, result, scratch, butterfly, length));
+
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), scratch);
+    isLeft.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(Int32Shape)));
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), length);
+    isLeft.append(jit.branch64(CCallHelpers::AboveOrEqual, position, length));
+    auto includePosition = [&] {
+        jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+        Jump isInsideLength = jit.branch64(CCallHelpers::Below, position, length);
+        jit.add32(TrustedImm32(1), position, length);
+        jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
+        isInsideLength.link(&jit);
+    };
+
+    Jump isNoNumber = jit.branchIfNotNumber(value);
+    isLeft.append(jit.branchIfInt32(value));
+    unboxDouble(jit, value, scratch, number);
+    Jump isNaN = jit.branchIfNaN(number);
+    jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
+    isLeft.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
+    jit.load32(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithDouble)), scratch);
+    isLeft.append(jit.branchTest32(CCallHelpers::Zero, scratch));
+    jit.store32(scratch, Address(array, JSCell::structureIDOffset()));
+    jit.store8(TrustedImm32(ArrayWithDouble), Address(array, JSCell::indexingTypeAndMiscOffset()));
+    Label convertNext = jit.label();
+    jit.sub32(TrustedImm32(1), length);
+    const BaseIndex element(butterfly, length, CCallHelpers::TimesEight);
+    jit.load64(element, scratch);
+    Jump isHole = jit.branchTest64(CCallHelpers::Zero, scratch);
+    jit.convertInt32ToDouble(scratch, number);
+    jit.storeDouble(number, element);
+    Jump isConverted = jit.jump();
+    isHole.link(&jit);
+    jit.move(TrustedImm64(static_cast<int64_t>(PNaNAsBits)), scratch);
+    jit.store64(scratch, element);
+    isConverted.link(&jit);
+    jit.branchTest32(CCallHelpers::NonZero, length).linkTo(convertNext, &jit);
+    unboxDouble(jit, value, scratch, number);
+    jit.storeDouble(number, BaseIndex(butterfly, position, CCallHelpers::TimesEight));
+    includePosition();
+    jit.move(TrustedImm32(1), result);
+    jit.returnToCaller();
+
+    isNoNumber.link(&jit);
+    isNaN.link(&jit);
+    widenStorageOfIntegersForAnyValue(jit, array, scratch, isLeft);
+    jit.store64(value, BaseIndex(butterfly, position, CCallHelpers::TimesEight));
+    includePosition();
+    jit.move(TrustedImm32(1), result);
+    emitElementBarrierAndReturn(jit, array, value);
+
+    isLeft.link(&jit);
+    jit.move(TrustedImm32(0), result);
+    jit.returnToCaller();
+}
+
 StubSignature signatureOfSetArrayLength(StubKey)
 {
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
@@ -146,7 +220,7 @@ void generateSetArrayLength(StubAssembler& jit)
 
     isShorterOrLonger.link(&jit);
     callsOperation.append(jit.branch32(CCallHelpers::Below, length, jit.operand(1)));
-    callsOperation.append(jit.branch32(CCallHelpers::Above, Address(butterfly, Butterfly::offsetOfVectorLength()), TrustedImm32((MarkedSpace::largeCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue))));
+    callsOperation.append(jit.branch32(CCallHelpers::Above, Address(butterfly, Butterfly::offsetOfVectorLength()), TrustedImm32(ListWhoseLengthIsStoredWithoutRunTime::mostElementsOfVector)));
     jit.move(TrustedImm64(0), hole);
     Jump holeIsEmptyValue = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ArrayWithDouble - ArrayWithUndecided));
     jit.move(TrustedImm64(static_cast<int64_t>(PNaNAsBits)), hole);

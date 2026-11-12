@@ -393,6 +393,16 @@ function formatSymbolConstants(builtins: readonly ModelBuiltin[]): string[] {
   });
 }
 
+function formatNumberConstants(builtins: readonly ModelBuiltin[]): string[] {
+  return builtins.flatMap(builtin => {
+    const { constant } = builtin;
+    if (constant === null || constant.constant !== "Number") return [];
+    const bits = new DataView(new ArrayBuffer(8));
+    bits.setFloat64(0, constant.value);
+    return [`(${formatBuiltinId(builtin)}, f64::from_bits(0x${bits.getBigUint64(0).toString(16).padStart(16, "0")}))`];
+  });
+}
+
 function emitNames(model: TableModel): string {
   return [
     emitTexts(
@@ -411,6 +421,7 @@ function emitNames(model: TableModel): string {
       "static SYMBOL_CONSTANTS: &[(BuiltinId, BuiltinName, WellKnownSymbol)]",
       formatSymbolConstants(model.builtins),
     ),
+    emitSlice("static NUMBER_CONSTANTS: &[(BuiltinId, f64)]", formatNumberConstants(model.builtins)),
   ].join("");
 }
 
@@ -439,7 +450,7 @@ function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
   for (const { result, flow } of model.overloads) {
     add(result.properties.map(property => property.name));
     for (const { to } of flow.transfers) {
-      if (to.place === "ResultField") add(namesOfResultField(result, to.index));
+      if (to.place === "ResultField" && !to.isOfElements) add(namesOfResultField(result, to.index));
     }
     for (const { action, key } of flow.propertyActions) {
       if (key.key === "Names" && storingActions.includes(action)) add(key.names);

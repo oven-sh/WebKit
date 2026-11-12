@@ -1,0 +1,81 @@
+# const table = {}; function on(path, handle) { table[path] = handle; }
+# const held = { b: 1 }; on("/a", held); on("/b", held);
+# A store under an unknown text may be a store under `__proto__`, and what is stored there becomes the prototype of the table: the table goes, and all that it holds goes with it.
+# No text that is handed over here names a member of Object.prototype: a register of routes, of classes by their names and of handlers by their events is filled so.
+# RUN: link fields layouts variables mechanisms=all
+# CHECK: field L1.0 "b" proven=1 writers-known
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: variable g0 proven=L0
+# The second table is filled under `__proto__` too, the third under a value that nobody knows.
+# RUN(GOES): link fields mechanisms=all
+# GOES-NOT: field L3.0 "b" proven
+# GOES-NOT: field L5.0 "b" proven
+
+layout L0 module=m0 ownFieldCount=0
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 ownFieldCount=0
+layout L3 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 ownFieldCount=0
+layout L5 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="table" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="third" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L2
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g1
+    v6 = NewObject layout=L4
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g2
+    v9 = Integer integer=1
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = NewClosure function=f1
+    v13 = String string="/a"
+    v14 = Call v12, -, v13, v11 calleeName="on"
+    v15 = String string="/b"
+    v16 = Call v12, -, v15, v11 calleeName="on"
+    v17 = NewObject -, v9 layout=L3 fields=[0]
+    v18 = FinishObject v17
+    v19 = NewClosure function=f2
+    v20 = Call v19, -, v13, v18 calleeName="second"
+    v21 = String string="__proto__"
+    v22 = Call v19, -, v21, v18 calleeName="second"
+    v23 = NewObject -, v9 layout=L5 fields=[0]
+    v24 = FinishObject v23
+    v25 = NewClosure function=f3
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="text"
+    v28 = Call v25, -, v27, v24 calleeName="third"
+    v29 = PropGet v11 key="b"
+    v30 = PropGet v18 key="b"
+    v31 = PropGet v24 key="b"
+    Return v29
+}
+function f1 name="on" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    ElemSet v2, v0, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f2 name="second" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    ElemSet v2, v0, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f3 name="third" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g2
+    ElemSet v2, v0, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}

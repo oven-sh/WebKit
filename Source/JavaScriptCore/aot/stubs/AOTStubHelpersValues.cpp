@@ -155,6 +155,65 @@ void boxExactInt32(StubAssembler& jit, GPRReg integer, GPRReg result)
     boxInt32(jit, integer, result);
 }
 
+#if CPU(X86_64)
+static constexpr int32_t bitsThatNoInt32Sets = (1 << 22) - 1;
+static_assert(!((std::bit_cast<uint64_t>(static_cast<double>(std::numeric_limits<int32_t>::max())) | PNaNAsBits) & bitsThatNoInt32Sets));
+
+template<typename LoadNumber>
+static void returnBoxOfBits(StubAssembler& jit, GPRReg bits, FPRReg number, GPRReg integer, FPRReg scratch, GPRReg result, const LoadNumber& loadNumber)
+{
+    ASSERT(noOverlap(number, scratch));
+    Jump mayBeInt32 = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(bitsThatNoInt32Sets));
+    Label isNoInt32 = jit.label();
+    subtractNumberTag(jit, bits);
+    jit.move(bits, result);
+    jit.returnToCaller();
+
+    mayBeInt32.link(&jit);
+    loadNumber();
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg bitsOfInteger = ownedScratch;
+    RELEASE_ASSERT(noOverlap(bits, integer, bitsOfInteger));
+    jit.truncateDoubleToInt32(number, integer);
+    jit.convertInt32ToDouble(integer, scratch);
+    jit.moveDoubleTo64(scratch, bitsOfInteger);
+    jit.branch64(CCallHelpers::NotEqual, bitsOfInteger, bits).linkTo(isNoInt32, &jit);
+    boxInt32(jit, integer, result);
+    jit.returnToCaller();
+}
+#endif
+
+void returnBoxedNumber(StubAssembler& jit, PureDouble number, GPRReg integer, FPRReg scratch, GPRReg result)
+{
+#if CPU(X86_64)
+    jit.moveDoubleTo64(number.fpr(), result);
+    returnBoxOfBits(jit, result, number.fpr(), integer, scratch, result, [] { });
+#else
+    JumpList isNoInt32;
+    branchIfNotExactInt32(jit, number.fpr(), integer, isNoInt32, scratch);
+    boxInt32(jit, integer, result);
+    jit.returnToCaller();
+    isNoInt32.link(&jit);
+    boxDouble(jit, number, result);
+    jit.returnToCaller();
+#endif
+}
+
+void returnBoxOfDoubleElement(StubAssembler& jit, BaseIndex element, FPRReg number, GPRReg bits, GPRReg integer, FPRReg scratch, JumpList& isHole, GPRReg result)
+{
+#if CPU(X86_64)
+    jit.load64(element, bits);
+    returnBoxOfBits(jit, bits, number, integer, scratch, result, [&] {
+        jit.move64ToDouble(bits, number);
+        PureDouble::branchIfNaN(jit, number, isHole);
+    });
+#else
+    UNUSED_PARAM(bits);
+    jit.loadDouble(element, number);
+    returnBoxedNumber(jit, PureDouble::branchIfNaN(jit, number, isHole), integer, scratch, result);
+#endif
+}
+
 void decodeCell32(StubAssembler& jit, GPRReg word, GPRReg result)
 {
 #if CPU(ARM64)

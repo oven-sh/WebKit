@@ -331,6 +331,8 @@ public:
     void keepEverything() { m_keepsEverything = true; }
     void clear()
     {
+        if (m_recent.slots.isEmpty() && m_older.slots.isEmpty())
+            return;
         m_recent = { };
         m_older = { };
         m_numberOfIDsMoved = 0;

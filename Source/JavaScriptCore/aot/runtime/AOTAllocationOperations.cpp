@@ -56,7 +56,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlowFromTemplate, JSCell*,
         vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
     State& state = *instance->state;
     JSCell* cell = state.objects->structures.allocateAsCompiledCodeDoes(vm, allocation);
-    const AllocationData& row = state.tables.allocations()[allocation];
+    const AllocationData row = state.tables.allocations()[allocation];
     size_t offsetOfBody = row.shape < state.tables.firstEnvironmentShape ? offsetOfFirstField : offsetOfFirstEnvironmentVariable;
     memcpySpan(std::span { reinterpret_cast<uint8_t*>(cell) + offsetOfBody, row.size() - offsetOfBody }, std::span { body, row.size() - offsetOfBody });
     OPERATION_RETURN(scope, newCellForCompiledCode(vm, cell));
@@ -318,6 +318,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewTemplateObject, JSCell*, (Instance* inst
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     cooked->putDirect(vm, vm.propertyNames->raw, raw, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     objectConstructorFreeze(globalObject, cooked);
+    RELEASE_ASSERT(cooked->getDirect(firstOutOfLineOffset) == raw);
     instance->state->modules->didMakeTemplateObject(ModuleID(module), offsetOfCell);
     OPERATION_RETURN(scope, cooked);
 }

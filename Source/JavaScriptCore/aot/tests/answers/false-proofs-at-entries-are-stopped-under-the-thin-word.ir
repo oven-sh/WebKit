@@ -59,8 +59,8 @@
 # OPERAND-NOT: went on
 # OPERAND: crashed with
 # RUN(FIELD): run-in-shell mechanisms=all globalThis.which = 4;
-# FIELD: bun: internal AOT error: object mutation check failed
-# FIELD-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that this never happens
+# FIELD: bun: internal AOT error: type check failed
+# FIELD-NEXT: found string in a property
 # FIELD-NOT: went on
 # FIELD: crashed with
 # RUN(VARIABLE): run-in-shell mechanisms=all globalThis.which = 5;

@@ -163,16 +163,30 @@ public:
         return buildAsItStands(WTF::move(narrowed));
     }
 
-    Reference boxed(Reference value)
+    Reference narrowedByLess(Reference value, Reference test, bool isLess)
+    {
+        if (m_hasStopped || !test.isValue() || !value.isRecord())
+            return value;
+        Draft narrowed = draft(Opcode::Narrowed);
+        narrowed.setValueOperand(value);
+        narrowed.setTestOperand(test);
+        narrowed.setOperandIndex(OperandIndex::Less::left);
+        narrowed.setIsOnTakenEdge(isLess);
+        return build(WTF::move(narrowed));
+    }
+
+    Reference boxed(Reference value) { return converted(value, Representation::JSValue); }
+
+    Reference converted(Reference value, Representation representation)
     {
         if (m_hasStopped)
             return { };
         Representation held = m_walker.representationOf(value);
-        if (isSameWord(held, Representation::JSValue))
+        if (isSameWord(held, representation))
             return value;
-        std::optional<ConversionPath> path = findConversion(m_walker.types(), m_walker.typeOf(value), held, Representation::JSValue);
+        std::optional<ConversionPath> path = findConversion(m_walker.types(), m_walker.typeOf(value), held, representation);
         if (!path) {
-            m_walker.fail("what an arm of a replacement gives has no boxed form"_s);
+            m_walker.fail("what an arm of a replacement gives has no such form"_s);
             m_hasStopped = true;
             return { };
         }
@@ -217,7 +231,7 @@ private:
 class ArmsOfReplacements {
     WTF_MAKE_NONCOPYABLE(ArmsOfReplacements);
 public:
-    ArmsOfReplacements(BuilderOfReplacements& builder, Reference condition, uint32_t numberOfResults)
+    ArmsOfReplacements(BuilderOfReplacements& builder, Reference condition, uint32_t numberOfResults, bool recordsOutcome = false)
         : m_builder(builder)
     {
         if (builder.hasStopped())
@@ -228,7 +242,7 @@ public:
         m_join = walker.addBlock();
         for (uint32_t index = 0; index < numberOfResults; ++index)
             m_results.append(walker.addParameter(m_join, { }, Representation::JSValue));
-        walker.branch(condition, firstArm, m_secondArm);
+        walker.branch(condition, firstArm, m_secondArm, recordsOutcome);
         walker.continueIn(firstArm);
     }
 
@@ -319,6 +333,7 @@ static void buildIteratorResultAsReplacement(Walker& walker, const BodyValue& cr
     Reference result = builder.build(WTF::move(object));
     if (!builder.hasStopped())
         walker.bind(creation.id(), result);
+    walker.loopsOverGenerators().hasStepsWrittenByHand |= !!walker.depthOfCopies();
 }
 
 static Reference buildKindTestForReplacement(BuilderOfReplacements& builder, Reference kind, JSC::IterationKind tested)
@@ -380,12 +395,12 @@ static Reference buildTestOfPositionInIteratedObjectForReplacement(BuilderOfRepl
     return arms.result();
 }
 
-static const Operation* findMakerOfArrayIteratorForReplacement(const Code& code, Reference iterator)
+static const Operation* findMakerOfIteratorForReplacement(const Code& code, Reference iterator, InlineBuiltin maker)
 {
     while (iterator && iterator.isValue()) {
         const Operation& operation = code.at(iterator.id());
         if (operation.opcode == Opcode::CallInline)
-            return operation.inlineBuiltin() == InlineBuiltin::ArrayIterator && operation.receiverOperand() ? &operation : nullptr;
+            return operation.inlineBuiltin() == maker && operation.receiverOperand() ? &operation : nullptr;
         if (!cellPreservingOpcodes.contains(operation.opcode))
             return nullptr;
         iterator = Reference::value(operation.operand(0));
@@ -393,23 +408,25 @@ static const Operation* findMakerOfArrayIteratorForReplacement(const Code& code,
     return nullptr;
 }
 
-static Reference buildValueAtPositionOfArrayIteratorForReplacement(BuilderOfReplacements& builder, Reference iterator, Reference iterated, Reference position, bool walksList = false)
+static Reference buildValueAtPositionOfArrayIteratorForReplacement(BuilderOfReplacements& builder, Reference iterator, Reference iterated, Reference position, bool walksList = false, const std::optional<PassedTest>& insideLength = std::nullopt)
 {
     auto readElement = [&] {
         Draft read = builder.draft(walksList ? Opcode::GetArrayElement : Opcode::ElemGet);
         if (walksList) {
             read.setArrayOperand(iterated);
             read.setPositionOperand(position);
-            read.setArrayStorage(ArrayStorage::Contiguous);
+            read.setArrayStorage(ArrayStorage::Other);
             read.setLevel(KnowledgeLevel::Expected);
             read.setKeyIsIntegral(true);
+            if (insideLength)
+                read.setIsInBounds(*insideLength);
         } else {
             read.setObjectOperand(iterated);
             read.setPropertyOperand(position);
         }
         return builder.build(WTF::move(read));
     };
-    if (const Operation* maker = findMakerOfArrayIteratorForReplacement(builder.walker().code(), iterator)) {
+    if (const Operation* maker = findMakerOfIteratorForReplacement(builder.walker().code(), iterator, InlineBuiltin::ArrayIterator)) {
         switch (static_cast<JSC::IterationKind>(builder.walker().program().builtins().at(maker->overload()).code.implementation.inlineParameters[0])) {
         case JSC::IterationKind::Keys:
             return position;
@@ -433,28 +450,93 @@ static Reference buildValueAtPositionOfArrayIteratorForReplacement(BuilderOfRepl
     return byKeys.result();
 }
 
+static bool branchesOnDone(Walker& walker, const BodyValue& step)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyTerminator end = index.terminator(index.blockOf(step.id()));
+    ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+    while (condition && !index.isParameter(condition) && index.opcodeOf(condition) == Opcode::ToBoolean)
+        condition = index.value(condition).operand(0);
+    if (!condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
+        return false;
+    auto asked = index.value(condition).as<Opcode::ResultAt>();
+    return asked.resultsOperand() == step.id() && asked.index() == static_cast<uint32_t>(StepArrayIteratorResult::Done);
+}
+
+static void buildThreadedArrayStep(BuilderOfReplacements& builder, const BodyValue& step, Reference iterator, Reference list, Reference index, Reference isFinished)
+{
+    Walker& walker = builder.walker();
+    BlockID finished = walker.addBlock();
+    BlockID unfinished = walker.addBlock();
+    BlockID inside = walker.addBlock();
+    BlockID outside = walker.addBlock();
+    auto endWith = [&](Reference done, Reference value) {
+        if (builder.goesOnBehindArmThatLeft() || builder.hasStopped())
+            return;
+        bindStepForReplacement(builder, step, done, value);
+        if (!builder.hasStopped() && !walker.threadBranchAfter(step))
+            walker.fail("a way of a step did not walk the end of its block"_s);
+    };
+    walker.branchOnTest(isFinished, finished, unfinished);
+    walker.continueIn(finished);
+    endWith(builder.boolean(true), builder.undefined());
+
+    walker.continueIn(unfinished);
+    Reference position = builder.narrowedByLess(index, isFinished, false);
+    Draft read = builder.draft(Opcode::GetArrayLength);
+    read.setArrayOperand(list);
+    Reference length = builder.build(WTF::move(read));
+    Reference isInside = builder.applyOperator(Opcode::Less, position, length);
+    if (builder.hasStopped())
+        return;
+    walker.branchOnTest(isInside, inside, outside);
+    walker.continueIn(outside);
+    builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.integer(JSArrayIterator::doneIndex));
+    endWith(builder.boolean(true), builder.undefined());
+
+    walker.continueIn(inside);
+    Reference narrowed = builder.narrowedByLess(position, isInside, true);
+    std::optional<PassedTest> insideLength = builder.hasStopped() ? std::nullopt : walker.boundsProofAfterComparison(list, narrowed, length, isInside);
+    builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.applyOperator(Opcode::Add, narrowed, builder.integer(1)));
+    Reference value = buildValueAtPositionOfArrayIteratorForReplacement(builder, iterator, list, narrowed, true, insideLength);
+    endWith(builder.boolean(false), value);
+}
+
 static void buildStepOfArrayIteratorAsReplacement(Walker& walker, const BodyValue& step)
 {
     BuilderOfReplacements builder(walker, step);
     Reference iterator = builder.proveOrTrap(walker.referenceOf(step.as<Opcode::StepArrayIterator>().iteratorOperand()), TypeTable::object);
-    Reference index = builder.proveOrTrap(builder.getInternalField(iterator, JSArrayIterator::Field::Index), TypeTable::integer);
+    Reference index = builder.converted(builder.proveOrTrap(builder.getInternalField(iterator, JSArrayIterator::Field::Index), TypeTable::integer), Representation::Int64);
 
-    ArmsOfReplacements byFinished(builder, builder.applyOperator(Opcode::StrictEq, index, builder.integer(JSArrayIterator::doneIndex)), 2);
+    static_assert(JSArrayIterator::doneIndex == -1);
+    Reference isFinished = builder.applyOperator(Opcode::Less, index, builder.integer(0));
+    TypeID lists = walker.types().builtinClass(BuiltinClasses::Array);
+    const Operation* maker = findMakerOfIteratorForReplacement(walker.code(), iterator, InlineBuiltin::ArrayIterator);
+    Reference walked = maker ? Reference::value(maker->receiverOperand()) : Reference();
+    bool walksKnownList = walked && walker.typeOf(walked) && walker.types().isSubset(walker.typeOf(walked), lists);
+    if (!builder.hasStopped() && walksKnownList && walker.has(Mechanism::Folding) && isFinished.isValue() && branchesOnDone(walker, step) && walker.canThreadBranchAfter(step)) {
+        buildThreadedArrayStep(builder, step, iterator, walked, index, isFinished);
+        return;
+    }
+    ArmsOfReplacements byFinished(builder, isFinished, 2);
     byFinished.endFirstArm({ builder.boolean(true), builder.undefined() });
+    index = builder.narrowedByLess(index, isFinished, false);
 
     auto stepOverList = [&](Reference list) -> std::pair<Reference, Reference> {
-        Draft length = builder.draft(Opcode::GetArrayLength);
-        length.setArrayOperand(list);
-        ArmsOfReplacements byRange(builder, builder.applyOperator(Opcode::Less, index, builder.build(WTF::move(length))), 2);
-        builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.applyOperator(Opcode::Add, index, builder.integer(1)));
-        byRange.endFirstArm({ builder.boolean(false), buildValueAtPositionOfArrayIteratorForReplacement(builder, iterator, list, index, true) });
+        Draft read = builder.draft(Opcode::GetArrayLength);
+        read.setArrayOperand(list);
+        Reference length = builder.build(WTF::move(read));
+        Reference isInside = builder.applyOperator(Opcode::Less, index, length);
+        ArmsOfReplacements byRange(builder, isInside, 2, true);
+        Reference inside = builder.narrowedByLess(index, isInside, true);
+        std::optional<PassedTest> insideLength = builder.hasStopped() ? std::nullopt : walker.boundsProofAfterComparison(list, inside, length, isInside);
+        builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.applyOperator(Opcode::Add, inside, builder.integer(1)));
+        byRange.endFirstArm({ builder.boolean(false), buildValueAtPositionOfArrayIteratorForReplacement(builder, iterator, list, inside, true, insideLength) });
         builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.integer(JSArrayIterator::doneIndex));
         byRange.endSecondArm({ builder.boolean(true), builder.undefined() });
         return { byRange.result(0), byRange.result(1) };
     };
-    TypeID lists = walker.types().builtinClass(BuiltinClasses::Array);
-    const Operation* maker = findMakerOfArrayIteratorForReplacement(walker.code(), iterator);
-    if (Reference walked = maker ? Reference::value(maker->receiverOperand()) : Reference(); walked && walker.typeOf(walked) && walker.types().isSubset(walker.typeOf(walked), lists)) {
+    if (walksKnownList) {
         auto [done, value] = stepOverList(walked);
         byFinished.endSecondArm({ done, value });
         bindStepForReplacement(builder, step, byFinished.result(0), byFinished.result(1));
@@ -542,17 +624,26 @@ static Reference buildValueOfCollectionIteratorKindForReplacement(BuilderOfRepla
     return byEntries.result();
 }
 
-static Reference buildValueOfFoundEntryForReplacement(BuilderOfReplacements& builder, CollectionSteppedByReplacement kindOfCollection, Reference iterator, Reference collection, Reference found)
+static Reference buildValueOfFoundEntryForReplacement(BuilderOfReplacements& builder, CollectionSteppedByReplacement kindOfCollection, Reference iterator, Reference table, Reference found, std::optional<JSC::IterationKind> kind)
 {
     Reference entry = builder.resultAt(found, static_cast<uint32_t>(MapNextResult::Entry));
     Reference key = builder.resultAt(found, static_cast<uint32_t>(MapNextResult::Key));
     Reference value = kindOfCollection == CollectionSteppedByReplacement::Map ? builder.resultAt(found, static_cast<uint32_t>(MapNextResult::Value)) : key;
     builder.putInternalField(iterator, JSSetIterator::Field::Entry, builder.applyOperator(Opcode::Add, entry, builder.integer(1)));
 
-    Draft current = builder.draft(Opcode::CollectionTable);
-    current.setCollectionOperand(collection);
-    putTableOfCollectionIteratorForReplacement(builder, iterator, builder.build(WTF::move(current)));
+    putTableOfCollectionIteratorForReplacement(builder, iterator, table);
 
+    if (kind) {
+        switch (*kind) {
+        case JSC::IterationKind::Keys:
+            return key;
+        case JSC::IterationKind::Values:
+            return value;
+        case JSC::IterationKind::Entries:
+            return buildPairForReplacement(builder, key, value);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     return buildValueOfCollectionIteratorKindForReplacement(builder, builder.getInternalField(iterator, JSSetIterator::Field::Kind), key, value);
 }
 
@@ -560,26 +651,57 @@ static void buildStepOfCollectionIteratorAsReplacement(Walker& walker, const Bod
 {
     BuilderOfReplacements builder(walker, step);
     Reference iterator = builder.proveOrTrap(walker.referenceOf(step.operand(0)), TypeTable::object);
+    if (kindOfCollection == CollectionSteppedByReplacement::Set && !findMakerOfIteratorForReplacement(walker.code(), iterator, InlineBuiltin::SetIterator)) {
+        Draft next = builder.draft(Opcode::NextSetElement);
+        next.setIteratorOperand(iterator);
+        Reference element = builder.build(WTF::move(next));
+        Draft isMark = builder.draft(Opcode::IsCollectionIteratorClosedMark);
+        isMark.setTableOperand(element);
+        ArmsOfReplacements byMark(builder, builder.build(WTF::move(isMark)), 2);
+        byMark.endFirstArm({ builder.boolean(true), builder.undefined() });
+        byMark.endSecondArm({ builder.boolean(false), buildValueOfCollectionIteratorKindForReplacement(builder, builder.getInternalField(iterator, JSSetIterator::Field::Kind), element, element) });
+        bindStepForReplacement(builder, step, byMark.result(0), byMark.result(1));
+        return;
+    }
 
     Draft read = builder.draft(Opcode::GetCollectionIteratorTable);
     read.setObjectOperand(iterator);
     Reference table = builder.build(WTF::move(read));
-    Draft test = builder.draft(Opcode::IsCollectionIteratorClosedMark);
-    test.setTableOperand(table);
+    bool isFirstStep = table && table.isValue() && walker.code().at(table.id()).opcode == Opcode::CollectionTable;
+    std::optional<ArmsOfReplacements> byFinished;
+    if (!isFirstStep) {
+        Draft test = builder.draft(Opcode::IsCollectionIteratorClosedMark);
+        test.setTableOperand(table);
+        byFinished.emplace(builder, builder.build(WTF::move(test)), 2);
+        byFinished->endFirstArm({ builder.boolean(true), builder.undefined() });
+    }
 
-    ArmsOfReplacements byFinished(builder, builder.build(WTF::move(test)), 2);
-    byFinished.endFirstArm({ builder.boolean(true), builder.undefined() });
-
-    Reference collection = builder.proveOrTrap(builder.getInternalField(iterator, JSSetIterator::Field::IteratedObject), walker.types().builtinClass(classOfCollectionSteppedByReplacement(kindOfCollection)));
+    TypeID collections = walker.types().builtinClass(classOfCollectionSteppedByReplacement(kindOfCollection));
+    Reference collection;
+    std::optional<JSC::IterationKind> kind;
+    if (const Operation* maker = findMakerOfIteratorForReplacement(walker.code(), iterator, kindOfCollection == CollectionSteppedByReplacement::Map ? InlineBuiltin::MapIterator : InlineBuiltin::SetIterator)) {
+        kind = static_cast<JSC::IterationKind>(walker.program().builtins().at(maker->overload()).code.implementation.inlineParameters[0]);
+        ValueID iterated = maker->receiverOperand();
+        collection = walker.code().isConstant(iterated) ? Reference::constant(iterated) : Reference::value(iterated);
+    }
+    if (!collection || !walker.typeOf(collection) || !walker.types().isSubset(walker.typeOf(collection), collections))
+        collection = builder.proveOrTrap(builder.getInternalField(iterator, JSSetIterator::Field::IteratedObject), collections);
     Reference entry = builder.proveOrTrap(builder.getInternalField(iterator, JSSetIterator::Field::Entry), TypeTable::integer);
     Reference found = buildNextEntryForReplacement(builder, kindOfCollection, collection, table, entry);
+    Draft current = builder.draft(Opcode::CollectionTable);
+    current.setCollectionOperand(collection);
+    Reference tableBehindStep = builder.build(WTF::move(current));
     ArmsOfReplacements byEntry(builder, builder.resultAt(found, static_cast<uint32_t>(MapNextResult::HasEntry)), 2);
-    byEntry.endFirstArm({ builder.boolean(false), buildValueOfFoundEntryForReplacement(builder, kindOfCollection, iterator, collection, found) });
+    byEntry.endFirstArm({ builder.boolean(false), buildValueOfFoundEntryForReplacement(builder, kindOfCollection, iterator, tableBehindStep, found, kind) });
     putTableOfCollectionIteratorForReplacement(builder, iterator, builder.build(builder.draft(Opcode::CollectionIteratorClosedMark)));
     byEntry.endSecondArm({ builder.boolean(true), builder.undefined() });
 
-    byFinished.endSecondArm({ byEntry.result(0), byEntry.result(1) });
-    bindStepForReplacement(builder, step, byFinished.result(0), byFinished.result(1));
+    if (!byFinished) {
+        bindStepForReplacement(builder, step, byEntry.result(0), byEntry.result(1));
+        return;
+    }
+    byFinished->endSecondArm({ byEntry.result(0), byEntry.result(1) });
+    bindStepForReplacement(builder, step, byFinished->result(0), byFinished->result(1));
 }
 
 static void buildCallOfModuleStepAsReplacement(BuilderOfReplacements& builder, const ModuleStep& step, BuiltinID calledBuiltin)
@@ -817,11 +939,16 @@ static bool layAccessorsOfLiteralTogether(Walker& walker, const BodyValue& value
         }
         return { };
     };
-    if (neighbor(value.id(), 1))
+    ValueID next = neighbor(value.id(), 1);
+    ValueID earlier = neighbor(value.id(), -1);
+    if (next && next.index() - block.firstValue().index() < walker.endOfStretchBeingWalked()) {
+        walker.noteAccessorDefinedByNext(value.id(), earlier);
         return true;
+    }
+    walker.noteAccessorDefinedItself(value.id(), earlier);
 
     Vector<ValueID, valuesInRowOfAccessors> group { value.id() };
-    while (ValueID earlier = neighbor(group.last(), -1))
+    for (; walker.isAccessorDefinedByNext(earlier); earlier = neighbor(earlier, -1))
         group.append(earlier);
     group.reverse();
 
@@ -996,10 +1123,54 @@ Walker::KeyOfAccess Walker::compareKeyOfAccessWithSymbol(const BodyValue& writte
     return KeyOfAccess::IsSymbol;
 }
 
+bool Walker::armHoldsKeyOf(ValueID access) const
+{
+    if (!m_accessWhoseKeyArmHolds || m_depthOfCopiesAroundKeyHeldByArm != depthOfCopies())
+        return false;
+    if (m_accessWhoseKeyArmHolds == access)
+        return true;
+    const BodyIndex& index = currentBodyIndex();
+    BlockID block = index.blockOf(m_accessWhoseKeyArmHolds);
+    if (!index.isInBlock(access, block) || access.index() < m_accessWhoseKeyArmHolds.index() || access.index() - index.block(block).firstValue().index() >= m_endOfKeyHeldByArm)
+        return false;
+    static constexpr OpcodeSet accesses { Opcode::ElemGet, Opcode::ElemSet };
+    return accesses.contains(index.opcodeOf(access)) && index.stripCasts(index.value(access).propertyOperand()) == index.stripCasts(index.value(m_accessWhoseKeyArmHolds).propertyOperand());
+}
+
+static TypeID namesOfComputedLiteral(Walker& walker, const BodyValue& definition)
+{
+    if (definition.as<Opcode::ElemDefine>().calledBuiltin())
+        return { };
+    Reference object = walker.referenceOf(definition.objectOperand());
+    if (!object || !object.isValue() || walker.code().isConstant(object.id()) || walker.code().at(object.id()).opcode != Opcode::NewObject)
+        return { };
+    const Program& program = walker.program();
+    LayoutID layout = walker.code().at(object.id()).layout();
+    if (program.at(layout).kind != LayoutKind::Record || walker.plan().slots().layout(layout).appendedKeys.isEmpty())
+        return { };
+    Vector<PropertyKeyID, 8> names;
+    for (const Field& field : program.at(layout).fields)
+        names.append(field.key);
+    names.appendVector(walker.plan().slots().layout(layout).appendedKeys);
+    if (names.isEmpty() || names.size() > std::min(mostTextsToldApart, maxComputedLiteralNames))
+        return { };
+    TypeArena& types = walker.types();
+    TypeID texts;
+    for (PropertyKeyID name : names) {
+        if (!name || liesInThread(name) || program.at(name).kind != PropertyKeyKind::Text || !program.at(name).text || program.nameClassOf(name) != NameClass::Ordinary)
+            return { };
+        TypeID text = types.stringLiteral(program.at(name).text);
+        texts = texts ? types.unionOf(texts, text) : text;
+    }
+    return texts;
+}
+
 Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& written)
 {
-    static constexpr size_t mostTextsToldApart = 4;
-    if (!has(Mechanism::TypedOperations) || written.opcode() == Opcode::ElemDefine || isUnreachable() || armHoldsKeyOf(written.id()))
+    if (!has(Mechanism::TypedOperations) || isUnreachable() || armHoldsKeyOf(written.id()))
+        return KeyOfAccess::IsAnyValue;
+    TypeID namesOfLiteral = written.opcode() == Opcode::ElemDefine && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses) ? namesOfComputedLiteral(*this, written) : TypeID();
+    if (written.opcode() == Opcode::ElemDefine && !namesOfLiteral)
         return KeyOfAccess::IsAnyValue;
     Reference key = referenceOf(written.propertyOperand());
     TypeID proven = key ? typeOf(key) : TypeID();
@@ -1011,34 +1182,63 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     Type type = m_types.at(proven);
     if (!(type.primitives & Primitive::AnyString))
         return KeyOfAccess::IsAnyValue;
-    bool textsAreOnlyExpected = false;
-    if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses)) {
-        TypeID expected = findExpectation(*this, written.propertyOperand()).type;
-        if (!expected || m_types.withoutNullish(expected) == TypeID(TypeTable::string))
-            expected = textsThatNamesOfHolderSayOfKey(*this, written);
-        TypeID present = expected ? m_types.withoutNullish(expected) : TypeID();
+    if (!namesOfLiteral && !m_versionedLoops.isEmpty() && canAccessAtKeyedAddress(*this, written))
+        return KeyOfAccess::IsAnyValue;
+    bool looksUpCallee = !namesOfLiteral && canRestartIteration() && canBuildIterationGuard() && canLookUpCallee(*this, written);
+    if (looksUpCallee && !holdsWrittenTextsAlone(type) && !isStaticMethodCallee(*this, written) && isInvariantInSpecializedVersion(key, IterationPurity::KnownEffectsOnly) && canHoistKeyedLookup(Opcode::GetValueUnderKeyOrAbsent))
+        return KeyOfAccess::IsAnyValue;
+    auto isHolderOfLayouts = [&] {
         auto saysLayouts = [&](TypeID said) {
             TypeID objects = said ? m_types.withoutNullish(said) : TypeID();
             return objects && !isNeverType(objects) && m_types.at(objects).hasObjects() && !m_types.at(objects).hasUnboundedUnknown();
         };
         Reference holder = referenceOf(written.objectOperand());
-        bool holderIsOfLayouts = holder && (saysLayouts(typeOf(holder)) || saysLayouts(findExpectation(*this, written.objectOperand()).type));
+        return holder && (saysLayouts(typeOf(holder)) || saysLayouts(findExpectation(*this, written.objectOperand()).type));
+    };
+    bool textsAreOnlyExpected = false;
+    bool holderIsOfLayouts = false;
+    if (namesOfLiteral && !holdsWrittenTextsAlone(type)) {
+        if (!m_types.isSubset(namesOfLiteral, proven))
+            return KeyOfAccess::IsAnyValue;
+        type = m_types.at(namesOfLiteral);
+        textsAreOnlyExpected = true;
+        holderIsOfLayouts = true;
+    }
+    if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses)) {
+        TypeID expected = findExpectation(*this, written.propertyOperand()).type;
+        auto withoutNothing = [&](TypeID type) {
+            return canRestartIteration() ? m_types.withoutPrimitives(type, Primitive::UndefinedOrNull | Primitive::Absent) : m_types.withoutNullish(type);
+        };
+        if (!expected || withoutNothing(expected) == TypeID(TypeTable::string) || (looksUpCallee && !holdsWrittenTextsAlone(m_types.at(m_types.withoutNullish(expected)))))
+            expected = textsThatNamesOfHolderSayOfKey(*this, written, looksUpCallee);
+        TypeID present = expected ? withoutNothing(expected) : TypeID();
+        holderIsOfLayouts = isHolderOfLayouts();
         const BodyIndex& body = currentBodyIndex();
         ValueID definition = body.stripCasts(written.propertyOperand());
         bool isKeyOfForIn = definition && !body.isParameter(definition) && body.opcodeOf(definition) == Opcode::ResultAt && !body.isParameter(body.value(definition).operand(0)) && body.opcodeOf(body.value(definition).operand(0)) == Opcode::ForInStep;
-        if (holderIsOfLayouts && !isKeyOfForIn && present && !isNeverType(present) && holdsWrittenTextsAlone(m_types.at(present)) && m_types.isSubset(present, proven)) {
+        if ((holderIsOfLayouts || looksUpCallee) && !isKeyOfForIn && present && !isNeverType(present) && holdsWrittenTextsAlone(m_types.at(present)) && m_types.isSubset(present, proven)) {
             type = m_types.at(present);
             textsAreOnlyExpected = true;
         }
     }
     if (!holdsWrittenTextsAlone(type))
         return KeyOfAccess::IsAnyValue;
-    if (uint32_t numberOfTexts = m_types.at(type.stringLiterals).size(); numberOfTexts < (textsAreOnlyExpected ? 1 : 2) || numberOfTexts > mostTextsToldApart)
+    const BodyIndex& index = currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(written.id()));
+    uint32_t begin = written.id().index() - block.firstValue().index();
+    uint32_t limit = limitOfStretchOfArms(*this, block);
+    ValueID user = written.opcode() == Opcode::ElemGet ? index.onlyUsingValue(written.id()) : ValueID();
+    uint32_t placeOfUser = user && block.holds(user) ? user.index() - block.firstValue().index() : limit;
+    bool isCalled = placeOfUser < limit && index.opcodeOf(user) == Opcode::Call && index.value(user).as<Opcode::Call>().calleeOperand() == written.id();
+    for (uint32_t place = begin + 1; isCalled && place < placeOfUser; ++place)
+        isCalled = !opcodesThatCallDirectlyTakes.contains(index.opcodeOf(ValueID(block.firstValue().index() + place)));
+    size_t mostTexts = isCalled ? maxDistinguishedCallees : textsAreOnlyExpected && isKeyPassedIntoLoop(*this, written) ? mostTextsOfPassedKey : mostTextsToldApart;
+    if (uint32_t numberOfTexts = m_types.at(type.stringLiterals).size(); numberOfTexts < (textsAreOnlyExpected ? 1 : 2) || numberOfTexts > mostTexts)
         return KeyOfAccess::IsAnyValue;
     Vector<StringID, mostTextsToldApart> texts;
     bool everyTextIsName = true;
     m_types.at(type.stringLiterals).forEach([&](StringID text) {
-        everyTextIsName = everyTextIsName && texts.size() < mostTextsToldApart && nameOfTextThatAccessMayGoBy(*this, written, text);
+        everyTextIsName = everyTextIsName && texts.size() < mostTexts && nameOfTextThatAccessMayGoBy(*this, written, text);
         if (everyTextIsName)
             texts.append(text);
     });
@@ -1047,14 +1247,28 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     if (texts.size() == 1 && !textsAreOnlyExpected)
         return KeyOfAccess::IsAnyValue;
 
-    const BodyIndex& index = currentBodyIndex();
-    BodyBlock block = index.block(index.blockOf(written.id()));
-    uint32_t begin = written.id().index() - block.firstValue().index();
-    uint32_t end = begin + 1;
+    uint32_t end = isCalled ? placeOfUser + 1 : begin + 1;
+    if (namesOfLiteral) {
+        static constexpr OpcodeSet constants { Opcode::Integer, Opcode::Double, Opcode::String, Opcode::Boolean, Opcode::Undefined, Opcode::Null };
+        ValueID literal = index.stripCasts(written.objectOperand());
+        for (uint32_t place = end; place < std::min(limit, endOfStretchBeingWalked()); ++place) {
+            BodyValue next = index.value(ValueID(block.firstValue().index() + place));
+            bool isOfLiteral = (next.opcode() == Opcode::PropDefine || next.opcode() == Opcode::FinishObject) && index.stripCasts(next.operand(0)) == literal;
+            if (isOfLiteral)
+                end = place + 1;
+            else if (!constants.contains(next.opcode()))
+                break;
+        }
+    }
     if (textsAreOnlyExpected) {
         ValueID rootOfKey = index.stripCasts(written.propertyOperand());
-        uint32_t limit = limitOfStretchOfArms(*this, block);
-        for (uint32_t place = end; place < limit; ++place) {
+        bool hasLaterUse = false;
+        for (ValueID name = written.propertyOperand(); !hasLaterUse; name = index.value(name).operand(0)) {
+            hasLaterUse = !index.hasOneUse(name);
+            if (name == rootOfKey)
+                break;
+        }
+        for (uint32_t place = end; hasLaterUse && place < limit; ++place) {
             BodyValue later = index.value(ValueID(block.firstValue().index() + place));
             if ((later.opcode() == Opcode::ElemGet || later.opcode() == Opcode::ElemSet) && index.stripCasts(later.propertyOperand()) == rootOfKey)
                 end = place + 1;
@@ -1067,11 +1281,16 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         return typeOf(referenceOf(input));
     };
     for (StringID text : texts) {
-        if (!textsAreOnlyExpected && typedFormOf(*this, accessByName(written, nameOfTextThatAccessMayGoBy(*this, written, text)), TypesOfInputs(typeOfInput)) == TypedForm::None)
+        if (!textsAreOnlyExpected && !isCalled && typedFormOf(*this, accessByName(written, nameOfTextThatAccessMayGoBy(*this, written, text)), TypesOfInputs(typeOfInput)) == TypedForm::None && !isHolderOfLayouts())
             return KeyOfAccess::IsAnyValue;
     }
 
     Origin origin = originOf(written);
+    if (textsAreOnlyExpected && !holderIsOfLayouts) {
+        guardExpectedType(*this, written.objectOperand(), expectedReceiverType(*this, written), origin);
+        if (isUnreachable() || hasFailed())
+            return KeyOfAccess::ArmsHaveWalkedAccess;
+    }
     StretchInArms stretch = stretchInArms(block.id(), begin, end);
     ArmsThatMeet built;
     ValueID nameOfKey = written.propertyOperand();
@@ -1080,6 +1299,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     Reference definitionBoundBefore = referenceBoundTo(definitionOfKey);
     auto walkArmWith = [&](Reference narrowed) {
         SetForScope accessWhoseKeyArmHolds(m_accessWhoseKeyArmHolds, written.id());
+        SetForScope endOfKeyHeldByArm(m_endOfKeyHeldByArm, textsAreOnlyExpected ? end : 0u);
         SetForScope depthOfThatArm(m_depthOfCopiesAroundKeyHeldByArm, depthOfCopies());
         rememberedExpectationOf(written.id()) = { };
         bind(definitionOfKey, narrowed);
@@ -1105,7 +1325,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     Reference left = key;
     static_assert(OperandIndex::StringEqualsLiteral::string == OperandIndex::ValueEqualsLiteral::value);
     size_t numberOfTests = textsAreOnlyExpected ? texts.size() : texts.size() - 1;
-    bool comparesInFront = textsAreOnlyExpected && isInvariantInSpecializedVersion(key) && tryHoistEntryTest();
+    bool comparesInFront = isInvariantInSpecializedVersion(key) && tryHoistEntryTest();
     if (textsAreOnlyExpected && !comparesInFront && texts.size() >= 2) {
         Vector<BlockID, mostTextsToldApart> underNames;
         for (size_t place = 0; place < texts.size(); ++place)
@@ -1128,7 +1348,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     for (size_t place = 0; place < numberOfTests && !isUnreachable() && !hasFailed(); ++place) {
         Draft test(textsAreOnlyExpected ? Opcode::ValueEqualsLiteral : Opcode::StringEqualsLiteral, origin);
         chooseConservativeFields(test);
-        test.setOperand(0, left);
+        test.setOperand(0, comparesInFront ? key : left);
         test.setLiteral(texts[place]);
         Reference passes;
         {
@@ -1146,7 +1366,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         if (hasFailed())
             return KeyOfAccess::ArmsHaveWalkedAccess;
         continueIn(failed);
-        if (!comparesInFront)
+        if (!comparesInFront || !textsAreOnlyExpected)
             left = narrowedBy(left, passes, false);
         if (!left)
             return KeyOfAccess::ArmsHaveWalkedAccess;
@@ -1194,10 +1414,27 @@ static bool mayHaveGlobalBindingForReplacement(const Program& program, const Bod
     return !mayBeElementKey(nameClass) && nameClass != NameClass::Proto;
 }
 
-static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
+LocationMasks readsOfOwnKeyLookup(const Program& program)
 {
-    Reference object = walker.referenceOf(access.objectOperand());
-    TypeID typeOfObject = object ? walker.typeOf(object) : TypeID();
+    LocationMasks reads = declaredBoundInTable(Opcode::GetOwnValueUnderKeyOrAbsent).reads;
+    reads.add(program, MemoryLocation::objectField(program.keyOf(BuiltinNames::__proto__)));
+    return reads;
+}
+
+void narrowGlobalAccessEffects(const Program& program, Opcode opcode, PropertyKeyID key, Effects& effects)
+{
+    MemoryLocation property = MemoryLocation::objectField(key);
+    if (opcode == Opcode::GetGlobalProperty) {
+        effects.reads.add(program, property);
+        return;
+    }
+    RELEASE_ASSERT(opcode == Opcode::PutGlobalBinding);
+    effects.writes.remove(AbstractHeapSet { AbstractHeap::NamedProperties });
+    effects.writes.add(program, property);
+}
+
+static bool hasGlobalBinding(const Walker& walker, const BodyValue& access, TypeID typeOfObject)
+{
     if (!typeOfObject || holdsOnlyPrimitives(typeOfObject))
         return false;
     const Type& type = walker.types().recordOf(typeOfObject);
@@ -1205,9 +1442,136 @@ static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
     if (!named)
         return false;
     const Program& program = walker.program();
-    if (program.builtins().canonicalID(named) != program.builtins().canonicalID(Builtins::GlobalThis))
+    if (program.builtins().canonicalID(named) != program.builtins().canonicalID(Builtins::GlobalThis) || !mayHaveGlobalBindingForReplacement(program, access))
         return false;
-    if (!mayHaveGlobalBindingForReplacement(program, access))
+    if (access.opcode() == Opcode::PropGet)
+        return true;
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID holder = index.stripCasts(access.objectOperand());
+    if (!index.isParameter(holder) && index.opcodeOf(holder) == Opcode::Builtin)
+        return walker.plan().globalName(access.key()).isStoredThroughBinding;
+    BuiltinName name = program.builtinNameOf(access.key());
+    return !name || !program.builtins().findGlobal(name);
+}
+
+bool mayUseGlobalBindingInIterations(const Walker& walker, const BodyValue& access, TypeID typeOfObject)
+{
+    if (access.opcode() == Opcode::PropGet && access.isForTypeOf())
+        return false;
+    if (BuiltinName name = access.isFreeName() ? walker.program().builtinNameOf(access.key()) : BuiltinName(); name && walker.program().builtins().findGlobal(name))
+        return false;
+    return hasGlobalBinding(walker, access, typeOfObject);
+}
+
+GlobalAddress buildGlobalAddress(Walker& walker, const BodyValue& access, Origin origin)
+{
+    Reference address;
+    Reference test;
+    bool isInPreheader = walker.canHoistGlobalAddress();
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, isInPreheader, Walker::IterationPurity::KnownEffectsOnly);
+        Draft lookup(Opcode::GetGlobalPropertyAddress, origin);
+        lookup.setKey(access.key());
+        lookup.setPrecedesStore(access.opcode() == Opcode::PropSet);
+        lookup.setSeesScriptBindings(access.isFreeName());
+        address = walker.build(WTF::move(lookup));
+        if (!address || walker.hasFailed())
+            return { };
+        Draft question(Opcode::IsPropertyFiled, origin);
+        question.setAddressOperand(address);
+        test = walker.build(WTF::move(question));
+        if (!test || walker.hasFailed())
+            return { };
+    }
+    walker.recordSpeculation();
+    if (isInPreheader && walker.tryBranchInPreheader(test, true, Walker::IterationPurity::KnownEffectsOnly))
+        return { address, true };
+    BlockID leaves = walker.addBlock(BlockFrequency::Rare);
+    BlockID goesOn = walker.addBlock();
+    walker.branch(test, goesOn, leaves);
+    walker.continueIn(leaves);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(goesOn);
+    return { walker.isUnreachable() || walker.hasFailed() ? Reference() : address };
+}
+
+bool readFiledGlobal(Walker& walker, const BodyValue& read)
+{
+    Reference object = walker.referenceOf(read.objectOperand());
+    if (read.isForTypeOf() || !object || !hasGlobalBinding(walker, read, walker.typeOf(object)))
+        return false;
+    const Type& typeOfObject = walker.types().at(walker.typeOf(object));
+    BuiltinID holder = typeOfObject.isObject() ? singleBuiltinOf(walker.types(), typeOfObject) : BuiltinID();
+    if (holder && findConstantMemberFrom(walker.program(), walker.facts(), holder, read.key()))
+        return false;
+    Origin origin = walker.originOf(read);
+    origin.isTailCall = false;
+    Draft lookup(Opcode::GetGlobalPropertyAddress, origin);
+    lookup.setKey(read.key());
+    lookup.setSeesScriptBindings(read.isFreeName());
+    Reference address = walker.build(WTF::move(lookup));
+    if (!address)
+        return walker.isUnreachable() || walker.hasFailed();
+    Draft question(Opcode::IsPropertyFiled, origin);
+    question.setAddressOperand(address);
+    Reference isFiled = walker.build(WTF::move(question));
+    if (!isFiled)
+        return walker.isUnreachable() || walker.hasFailed();
+    walker.recordSpeculation();
+    BlockID passed = walker.addBlock();
+    walker.branch(isFiled, passed, walker.blockWhereCopyLeavesForCall());
+    walker.continueIn(passed);
+    if (walker.isUnreachable())
+        return true;
+    Draft property(Opcode::GetGlobalProperty, origin);
+    property.setAddressOperand(address);
+    property.setKey(read.key());
+    walker.bind(read.id(), walker.build(WTF::move(property)));
+    return true;
+}
+
+static bool storeThroughBindingInIteration(Walker& walker, const BodyValue& access)
+{
+    if (BuiltinName name = walker.program().builtinNameOf(access.key()); name && walker.program().builtins().findGlobal(name))
+        return false;
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.has(Mechanism::TypedOperations) || !walker.canBuildIterationGuardAfterStores() || !walker.canRecordUndoableStore() || walker.hasUninlinedCallInIterations())
+        return false;
+    Reference stored = walker.referenceOf(access.valueOperand());
+    if (!stored)
+        return false;
+    Origin origin = walker.originOf(access);
+    origin.isTailCall = false;
+    Reference address = buildGlobalAddress(walker, access, origin).address;
+    if (!address)
+        return true;
+    Reference before;
+    if (walker.canRecordUndoableStore()) {
+        Draft read(Opcode::GetGlobalProperty, origin);
+        read.setAddressOperand(address);
+        read.setKey(access.key());
+        before = walker.build(WTF::move(read));
+        if (!before || walker.hasFailed())
+            return true;
+    }
+    Draft store(Opcode::PutGlobalBinding, origin);
+    walker.chooseConservativeFields(store);
+    store.setAddressOperand(address);
+    store.setKey(access.key());
+    store.setValueOperand(stored);
+    store.inputValueGiven = access.id();
+    if (before)
+        walker.recordUndoableGlobalStore(access.key(), address, before);
+    walker.build(WTF::move(store));
+    walker.takePendingUndoableStore();
+    return true;
+}
+
+static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
+{
+    Reference object = walker.referenceOf(access.objectOperand());
+    if (!object || !hasGlobalBinding(walker, access, walker.typeOf(object)))
         return false;
 
     PropertyKeyID key = access.key();
@@ -1225,9 +1589,11 @@ static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
         return true;
     }
 
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID holder = index.stripCasts(access.objectOperand());
-    if (index.isParameter(holder) || index.opcodeOf(holder) != Opcode::Builtin || !walker.plan().globalName(key).isStoredThroughBinding)
+    if (storeThroughBindingInIteration(walker, access))
+        return true;
+    ValueID holder = walker.currentBodyIndex().stripCasts(access.objectOperand());
+    bool namesBuiltin = !walker.currentBodyIndex().isParameter(holder) && walker.currentBodyIndex().opcodeOf(holder) == Opcode::Builtin;
+    if (!namesBuiltin && !walker.isInLoop() && walker.program().at(walker.unit().function).isModuleBody())
         return false;
     Draft store(Opcode::SetGlobalBinding, written.origin());
     walker.chooseConservativeFields(store);

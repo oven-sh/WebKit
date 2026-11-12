@@ -67,8 +67,7 @@ static bool takesBoxedValueOfIteratorResult(const PlacedSlot& slot)
 
 static bool staysEmptyInZeroedIteratorResult(const PlacedSlot& slot)
 {
-    SlotTraits traits = traitsOf(slot.representation);
-    return slot.storage != SlotStorage::Inline || !traits.hasAbsent || !traits.absentBits;
+    return slot.storage != SlotStorage::Inline || !bitsBeforeCreation(slot.representation);
 }
 
 static void generateCreateIteratorResult(StraightEmitter& emitter, const BodyValue& value)

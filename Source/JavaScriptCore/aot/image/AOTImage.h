@@ -76,8 +76,8 @@ struct CodeLocation {
 
 struct ReturnSiteInfo {
     std::optional<CallSiteRecord> site;
-    std::optional<HandlerRecord> handler;
     ImageFrame frame { };
+    bool mayHaveHandler { false };
     bool hasConstructedCallees { false };
 };
 
@@ -158,6 +158,7 @@ public:
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
     bool setsMainModulePath() const { return header().has(ImageFlag::SetsMainModulePath); }
     bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
+    bool hasReloadableModules() const { return header().has(ImageFlag::HasReloadableModules); }
     bool letsGlobalObjectGo() const { return header().has(ImageFlag::LetsGlobalObjectGo); }
     bool showsEntriesOfRequireCache() const { return header().has(ImageFlag::ShowsEntriesOfRequireCache); }
 
@@ -191,6 +192,7 @@ public:
     std::optional<uint32_t> imageFunctionFromClosureWord(FunctionID) const;
     std::optional<uint32_t> imageFunctionOf(FunctionID) const;
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
+    std::span<const uint32_t> frameMapWordsAt(const void* returnAddress) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
     bool hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
     bool hasFrameAtReturnOffset(uint32_t function, const SideTableFrame&, uint32_t returnOffset) const;
@@ -231,6 +233,8 @@ private:
     FunctionStarts m_functionStarts;
     const uint32_t* m_codeGranules;
     ImageText m_text;
+    static constexpr unsigned frameMapCacheBits = 8;
+    mutable std::array<std::atomic<uint64_t>, 1u << frameMapCacheBits> m_frameMapCache { };
     mutable std::once_flag m_didSortFunctionsByID;
     mutable Vector<uint32_t> m_functionsByID;
 };

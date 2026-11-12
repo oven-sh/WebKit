@@ -92,6 +92,12 @@ static ALWAYS_INLINE PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walk
     return onlyValueOfTypeInFolding(walker.types(), walker.typeOf(reference));
 }
 
+Reference Walker::onlyValueOfType(TypeID type)
+{
+    PrimitiveKnownToFolding value = onlyValueOfTypeInFolding(types(), type);
+    return value ? constant(value) : Reference();
+}
+
 Reference Walker::constant(PrimitiveKnownToFolding primitive)
 {
     Draft constant(Opcode::Undefined);
@@ -374,6 +380,11 @@ static PrimitiveKnownToFolding evaluateInFolding(const Program& program, TypeRea
     }
     case Opcode::ToNumber:
     case Opcode::ToNumeric:
+        if (left.isText()) {
+            Vector<char16_t> buffer;
+            return PrimitiveKnownToFolding::number(jsToNumber(viewOfProgramString(texts.bytesOf(left.asText()), buffer)));
+        }
+        [[fallthrough]];
     case Opcode::Negate:
     case Opcode::Increment:
     case Opcode::Decrement:
@@ -504,6 +515,39 @@ std::optional<uint32_t> onlyTargetKnownToFolding(Walker& walker, const BodyTermi
     return onlyTargetWith(walker.types(), terminator, primitiveHeldInFolding(walker, operand));
 }
 
+std::optional<uint32_t> onlyTargetOfWrittenConstants(Walker& walker, const BodyTerminator& terminator)
+{
+    if (!goesByOneOperand(terminator.kind()) || !terminator.operand(0) || walker.facts().summaries().at(walker.currentFunction()).blocksNeverEntered.span().empty())
+        return std::nullopt;
+    const BodyIndex& index = walker.currentBodyIndex();
+    UncheckedKeyHashMap<unsigned, PrimitiveKnownToFolding, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> found;
+    ValueID unvisited;
+    auto findPrimitive = [&](ValueID value) -> PrimitiveKnownToFolding {
+        if (index.isParameter(value) || !operationsThatConstantsMayDecide.contains(index.opcodeOf(value)))
+            return { };
+        if (auto known = found.find(value.index()); known != found.end())
+            return known->value;
+        unvisited = value;
+        return { };
+    };
+    PrimitiveKnownToFolding known = findPrimitive(terminator.operand(0));
+    Vector<ValueID, 8> pending;
+    if (unvisited)
+        pending.append(unvisited);
+    while (!pending.isEmpty()) {
+        ValueID current = pending.last();
+        unvisited = { };
+        known = primitiveMadeOfConstants(walker.program(), index.value(current), scopedLambda<PrimitiveKnownToFolding(ValueID)>(findPrimitive));
+        if (unvisited) {
+            pending.append(unvisited);
+            continue;
+        }
+        found.set(current.index(), known);
+        pending.removeLast();
+    }
+    return onlyTargetWith(walker.types(), terminator, known);
+}
+
 static TypingContext typingForFolding(Walker& walker)
 {
     return { walker.program(), walker.types(), PositionTypes::knowingNothing() };
@@ -526,7 +570,19 @@ static bool areOneClassObjectInFolding(Walker& walker, TypeID left, TypeID right
     Type type = walker.types().at(left);
     FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
     LayoutID classLayout = constructor ? classOfClassObject(walker.program(), constructor) : LayoutID();
+    if (!classLayout)
+        classLayout = classOfConstructorFunction(walker.program(), constructor);
     return classLayout && walker.facts().isEvaluatedAtMostOnce(classLayout);
+}
+
+static bool isComparedWithItselfInFolding(Walker& walker, const BodyValue& equality, TypeID type)
+{
+    static constexpr OpcodeSet namesOfOneValue { Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::Narrowed };
+    Reference left = walker.referenceOf(equality.operand(0));
+    Reference right = walker.referenceOf(equality.operand(1));
+    if (!left.isValue() || !right.isValue() || walker.types().isUninformative(type) || walker.types().at(type).mayBeNaN())
+        return false;
+    return walker.code().valueBehindNames<namesOfOneValue>(left.id()) == walker.code().valueBehindNames<namesOfOneValue>(right.id());
 }
 
 struct PartsJudgedInFolding {
@@ -632,6 +688,8 @@ static ALWAYS_INLINE std::optional<bool> answerThatTypesDecideInFolding(Walker& 
     }
 
     if (test.opcode() == Opcode::StrictEq && areOneClassObjectInFolding(walker, typesOfOperands[0], typesOfOperands[1]))
+        return true;
+    if ((test.opcode() == Opcode::StrictEq || test.opcode() == Opcode::Eq) && numberOfOperands == 2 && isComparedWithItselfInFolding(walker, test, typesOfOperands[0]))
         return true;
 
     if (neitherSideOfTestIsRuledOutInFolding(types, test, std::span<const TypeID>(typesOfOperands.data(), numberOfOperands)))
@@ -787,9 +845,20 @@ static const Operation* findTemplateObject(const Walker& walker, Reference objec
     return made.opcode == Opcode::NewTemplateObject ? &made : nullptr;
 }
 
+static const Operation* findTemplateObjectWithRaw(const Walker& walker, Reference object)
+{
+    if (!object || !object.isValue())
+        return nullptr;
+    const Operation& read = walker.code().at(underlyingCellOf(walker.code(), object.id()));
+    return read.opcode == Opcode::GetTemplateObjectRaw ? findTemplateObject(walker, Reference::value(read.templateObjectOperand())) : nullptr;
+}
+
 static Reference partOfTemplateObject(Walker& walker, Reference object, Reference index)
 {
     const Operation* made = index.isConstant() ? findTemplateObject(walker, object) : nullptr;
+    bool isOfRaw = !made && index.isConstant();
+    if (isOfRaw)
+        made = findTemplateObjectWithRaw(walker, object);
     if (!made)
         return { };
     const Operation& key = walker.code().at(index.id());
@@ -800,7 +869,7 @@ static Reference partOfTemplateObject(Walker& walker, Reference object, Referenc
         parts.append(part);
     if (key.integer() < 0 || static_cast<uint64_t>(key.integer()) >= parts.size())
         return { };
-    StringID cooked = parts[key.integer()].cooked;
+    StringID cooked = isOfRaw ? parts[key.integer()].raw : parts[key.integer()].cooked;
     Draft constant(cooked ? Opcode::String : Opcode::Undefined);
     if (cooked)
         constant.setString(cooked);
@@ -812,7 +881,10 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     if (read.isFreeName())
         return { };
     Reference object = walker.referenceOf(read.objectOperand());
-    if (const Operation* made = walker.program().nameClassOf(read.key()) == NameClass::Length ? findTemplateObject(walker, object) : nullptr) {
+    const Operation* made = walker.program().nameClassOf(read.key()) == NameClass::Length ? findTemplateObject(walker, object) : nullptr;
+    if (!made && walker.program().nameClassOf(read.key()) == NameClass::Length)
+        made = findTemplateObjectWithRaw(walker, object);
+    if (made) {
         int64_t numberOfParts = 0;
         for ([[maybe_unused]] TemplateString part : made->templateStrings())
             ++numberOfParts;
@@ -820,6 +892,8 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
         length.setInteger(numberOfParts);
         return walker.constant(WTF::move(length));
     }
+    if (Reference lastIndex = findLastIndexOfMatch(walker, object, read.key()))
+        return lastIndex;
     if (!walker.state().mayHoldPlaceOf(object))
         return propertyOfResultTakenInParts(walker, object, read.key());
     TypeID type = typeToJudgeByInFolding(walker, object);
@@ -882,6 +956,11 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
     case Opcode::PropGet:
         if (Reference earlier = walker.currentBodyIndex().opcodes().contains(Opcode::NarrowByField) ? walker.tagReadInFrontOfTest(value) : Reference())
             return earlier;
+        if (Reference object = !value.isFreeName() && value.key() == walker.program().keyOf(BuiltinNames::raw) ? walker.referenceOf(value.objectOperand()) : Reference(); findTemplateObject(walker, object)) {
+            Draft raw(Opcode::GetTemplateObjectRaw, walker.originOf(value));
+            raw.setTemplateObjectOperand(object);
+            return walker.build(WTF::move(raw));
+        }
         return answerOfNamedReadInFolding(walker, value.as<Opcode::PropGet>());
     case Opcode::ElemGet:
         return elementAnsweredByStateInFolding(walker, value);
@@ -927,9 +1006,16 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     FieldReference field;
     const Code& code = walker.code();
     const Operation& read = code.at(checked.id());
+    bool meetsFirstRead = false;
     if (read.opcode == Opcode::GetModuleVariable)
         variable = read.variable();
-    else if (read.opcode == Opcode::GetEnvironmentField) {
+    else if (read.opcode == Opcode::Parameter) {
+        const BodyIndex& index = walker.currentBodyIndex();
+        ValueID written = index.stripCasts(check.operand(0));
+        if (written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::GetModuleVariable && walker.state().variable(index.value(written).variable()) == checked)
+            variable = index.value(written).variable();
+        meetsFirstRead = !!variable;
+    } else if (read.opcode == Opcode::GetEnvironmentField) {
         ValueID holder = read.operand(OperandIndex::GetEnvironmentField::environment);
         environment = code.isConstant(holder) ? Reference::constant(holder) : Reference::value(holder);
         field = FieldReference { read.layout(), read.field() };
@@ -947,6 +1033,8 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
 
     if (variable)
         noteValueOfStableBinding(walker, variable, passed);
+    if (meetsFirstRead)
+        noteObjectOfVariablePutOff(walker, variable, passed);
     if (environment)
         noteValueOfStableBinding(walker, environment, field, passed);
     WalkState& state = walker.state();
@@ -961,10 +1049,10 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     return true;
 }
 
-static Reference answerWhetherInstanceIsUnlocked(Walker& walker, const BodyValue& value)
+static Reference foldIsUnlockedInstance(Walker& walker, const BodyValue& value)
 {
     auto asked = value.as<Opcode::IsUnlockedInstance>();
-    if (instancesMayBeLocked(walker.program(), walker.facts().linked(), asked.testedType()))
+    if (hasLockableInstances(walker.program(), walker.facts().linked(), asked.testedType()))
         return walker.constant(PrimitiveKnownToFolding::boolean(false));
     Reference object = walker.referenceOf(asked.valueOperand());
     TypeID type = typeToJudgeByInFolding(walker, object);
@@ -977,7 +1065,7 @@ static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyVa
 {
     Opcode opcode = value.opcode();
     if (opcode == Opcode::IsUnlockedInstance)
-        return answerWhetherInstanceIsUnlocked(walker, value);
+        return foldIsUnlockedInstance(walker, value);
     if (readsOfFolding.contains(opcode))
         return answerOfReadInFolding(walker, value);
     if (passThroughChecks.contains(opcode))
@@ -1016,10 +1104,28 @@ static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyVa
 constinit const OpcodeSet opcodesThatFoldOperationTakes = opcodesOfFolding;
 static_assert(opcodesThatFoldOperationTakesInChains == opcodesOfFolding);
 
+Reference tryHoistNullishCheck(Walker&, const BodyValue& access, Reference receiver);
+
+static bool hoistNullishCheckInFolding(Walker& walker, const BodyValue& check)
+{
+    Reference checked = walker.referenceOf(check.operand(0));
+    TypeID type = typeToJudgeByInFolding(walker, checked);
+    if (!type || !checked.isValue() || isNeverType(walker.types().withoutNullish(type)))
+        return false;
+    Reference passed = tryHoistNullishCheck(walker, check, checked);
+    if (!passed)
+        return false;
+    walker.state().noteCheckedName(checked, passed);
+    walker.bind(check.id(), passed);
+    return true;
+}
+
 static NEVER_INLINE bool buildWhereNoAnswerIsKnownToFolding(Walker& walker, const BodyValue& value)
 {
     if (value.opcode() == Opcode::CheckInitialized)
         return buildCheckOfCellInFolding(walker, value);
+    if (value.opcode() == Opcode::RequireObjectCoercible)
+        return hoistNullishCheckInFolding(walker, value);
     return !walker.has(Mechanism::TypedOperations) && buildTypedAccess(walker, value);
 }
 
@@ -1034,7 +1140,7 @@ bool foldOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
     ASSERT(opcodesOfFolding.contains(value.opcode()));
     if (Reference answer = storesThatStateFollowsForFolding.contains(value.opcode()) ? Reference() : answerKnownToFolding(walker, value))
         return bindAnswerKnownToFolding(walker, value, answer);
-    if (value.opcode() != Opcode::CheckInitialized && !placesThatStateFollowsForFolding.contains(value.opcode()))
+    if (value.opcode() != Opcode::CheckInitialized && value.opcode() != Opcode::RequireObjectCoercible && !placesThatStateFollowsForFolding.contains(value.opcode()))
         return false;
     return buildWhereNoAnswerIsKnownToFolding(walker, value);
 }

@@ -83,7 +83,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
 
     exit.isDefinition = reason == SlotExitReason::Redefinition;
     exit.attributes = static_cast<uint8_t>(leaving.attributes);
-    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot())
+    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !compiledStructure().extraPropertiesSlot())
         return;
     Structure* extraStructure = extra->structure();
     if (structure()->mayBePrototype() || extraStructure->isDictionary())
@@ -96,7 +96,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     exit.extraPropertiesAfter = extraStructure->id();
     exit.orderWordAfter = orderWord();
     exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
-    exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    exit.offsetOfExtraPropertiesWord = compiledStructure().extraPropertiesSlot()->offset;
     SlotTraits traits = traitsOf(field.slot.representation());
     if (!exit.isDefinition && !field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
         exit.absentBits = traits.absentBits;
@@ -184,10 +184,10 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
     if (!isUndone || attributes || field.isPrivate() || field.isAccessor() || structure()->mayBePrototype() || orderWord() != back.orderWord)
         return true;
-    if (!layout().extraPropertiesSlot() || orderOf(orderWord()) >= layout().numberOfOrders)
+    if (!compiledStructure().extraPropertiesSlot() || orderOf(orderWord()) >= layout().numberOfOrders)
         return true;
     back.markedCopyOfField.flags |= fieldRecordIsCopyInFieldReturn;
-    back.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    back.offsetOfExtraPropertiesWord = compiledStructure().extraPropertiesSlot()->offset;
     back.structureAfter = structureID();
     back.extraPropertiesAfter = extra->structureID();
     state().propertyCaches->remember(back);
@@ -217,14 +217,14 @@ bool Object::tryRepeat(VM& vm, const FieldReturn& back, JSValue value)
 
 bool Object::mayBearMark() const
 {
-    return std::ranges::any_of(layout().fields(), [](const FieldData& field) {
+    return std::ranges::any_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [](const FieldData& field) {
         return field.isFilledAtBirth || field.holdsRawValueFromBirth;
     });
 }
 
 bool Object::hasEveryFieldOfBirth() const
 {
-    return std::ranges::all_of(layout().fields() | std::views::reverse, [&](const FieldData& field) {
+    return std::ranges::all_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [&](const FieldData& field) {
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
             return slot && !slotHoldsMarker(field.slot.representation(), slot);
@@ -292,9 +292,6 @@ static void createField(VM& vm, Object& object, const FieldData& field, Object::
     object.moveFieldToExtraProperties(vm, field, created, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
 }
 
-// A definition that gives a value and changes no attribute hands the value to the setter of a custom value, as a definition on an ordinary
-// object does (validateAndApplyPropertyDescriptor()). The setter of an extra property gets the object: the extra properties are nobody's holder.
-// Answers nothing where the definition is for the extra properties to apply.
 static std::optional<bool> tryHandValueToSetterOfExtraProperty(JSGlobalObject* globalObject, Object* object, PropertyName name, const PropertyDescriptor& descriptor)
 {
     JSObject* extra = object->extraProperties();
@@ -314,7 +311,6 @@ static std::optional<bool> tryHandValueToSetterOfExtraProperty(JSGlobalObject* g
     if (!setter || changesAttribute)
         return std::nullopt;
     JSGlobalObject* realm = object->structure()->realm();
-    // A definition of the value that the property has changes nothing.
     if (GetValueFunc getter = custom->getter()) {
         JSValue current = JSValue::decode(getter(realm, JSValue::encode(object), name));
         RETURN_IF_EXCEPTION(scope, false);
@@ -687,7 +683,7 @@ bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueO
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
 
-    if (!followsEarlierObject || attributes & PropertyAttribute::CustomAccessorOrValue || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || isInFrame())
+    if (!followsEarlierObject || attributes & PropertyAttribute::CustomAccessorOrValue || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !compiledStructure().extraPropertiesSlot() || isInFrame())
         return true;
     Structure* extraStructure = extra->structure();
     if (orderWord() != (added.orderWordBefore | orderWordHasExtraProperties) || structure()->mayBePrototype() || extraStructure->isDictionary() || extraStructure->transitionPropertyName() != name.uid())
@@ -787,6 +783,16 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, nullptr);
     didChangeIndexedProperties(vm, *this, interceptedIndexedAccesses);
     countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
+}
+
+bool Object::tryFreezeFields(VM& vm)
+{
+    const LayoutData& layout = this->layout();
+    if (orderWord() & (orderWordHasExtraProperties | orderWordIntegrityBits) || mayBePrototype() || layout.hasFieldsWithSymbolKeys || layout.impossibleMutations().contains(ObjectMutation::ChangeIntegrity))
+        return false;
+    at<uint32_t>(offsetOfOrderWord) |= orderWordIntegrityBits;
+    countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
+    return true;
 }
 
 bool Object::testIntegrity(VM& vm, Integrity integrity) const
@@ -1056,10 +1062,24 @@ static bool putOutsideDataSlot(JSGlobalObject* globalObject, Object* object, Pro
     return true;
 }
 
-static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
+static bool hasNoTraps(VM& vm, State& state, JSObject* handler, std::initializer_list<const Identifier*> traps)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    for (const Identifier* trap : { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) {
+    Object* compiledWithFieldsAlone = compiledObjectOrNull(handler);
+    if (compiledWithFieldsAlone && !compiledWithFieldsAlone->hasFlagsInOrderWord()) {
+        JSObject* above = handler->realm()->objectPrototype();
+        Structure* structureAbove = above->structure();
+        bool inheritsNoTrap = handler->getPrototypeDirect() == JSValue(above) && std::ranges::all_of(traps, [&](const Identifier* trap) {
+            return structureAbove->isImmutablePropertyForReader(trap->impl());
+        });
+        if (inheritsNoTrap) {
+            return std::ranges::all_of(traps, [&](const Identifier* trap) {
+                const FieldData* field = compiledWithFieldsAlone->fieldNamed(state, trap->impl());
+                return !field || !compiledWithFieldsAlone->isInSlot(*field);
+            });
+        }
+    }
+    for (const Identifier* trap : traps) {
         UniquedStringImpl* uid = trap->impl();
         if (const Slot* filed = state.propertyCaches->findByKey(handler->structure(), uid, SlotAccess::Read)) {
             if (filed->kind == Slot::Kind::Absent)
@@ -1096,23 +1116,19 @@ JSObject* RuntimeHooks::proxyDefinePropertyTarget(VM& vm, JSValue receiver)
     Object* compiled = compiledHandler ? compiledHandler : compiledObjectOrNull(proxy->target());
     if (!compiled)
         return nullptr;
-    State& state = compiled->state();
-    auto handlerHasTrapsOnlyInSlots = [&] {
-        if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
-            return false;
-        JSObject* above = handler->realm()->objectPrototype();
-        Structure* structureAbove = above->structure();
-        return handler->getPrototypeDirect() == JSValue(above)
-            && structureAbove->isImmutablePropertyForReader(vm.propertyNames->defineProperty.impl())
-            && structureAbove->isImmutablePropertyForReader(vm.propertyNames->getOwnPropertyDescriptor.impl());
-    };
-    if (!handlerHasTrapsOnlyInSlots())
-        return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
-    auto hasEmptySlot = [&](const Identifier& trap) {
-        const FieldData* field = compiledHandler->fieldNamed(state, trap.impl());
-        return !field || !compiledHandler->isInSlot(*field);
-    };
-    return hasEmptySlot(vm.propertyNames->defineProperty) && hasEmptySlot(vm.propertyNames->getOwnPropertyDescriptor) ? proxy->target() : nullptr;
+    return hasNoTraps(vm, compiled->state(), handler, { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) ? proxy->target() : nullptr;
+}
+
+JSObject* RuntimeHooks::proxyOwnKeysTarget(VM& vm, JSObject* object, bool asksDescriptors)
+{
+    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(object);
+    Object* handler = proxy->handler().isObject() ? compiledObjectOrNull(asObject(proxy->handler())) : nullptr;
+    JSObject* target = proxy->target();
+    if (!handler || !(compiledObjectOrNull(target) || target->type() == FinalObjectType || target->type() == ArrayType))
+        return nullptr;
+    State& state = handler->state();
+    bool listsTarget = asksDescriptors ? hasNoTraps(vm, state, handler, { &vm.propertyNames->ownKeys, &vm.propertyNames->getOwnPropertyDescriptor }) : hasNoTraps(vm, state, handler, { &vm.propertyNames->ownKeys });
+    return listsTarget ? target : nullptr;
 }
 
 static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)

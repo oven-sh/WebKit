@@ -196,7 +196,7 @@ public:
             members("slot"_s, place.slot);
             break;
         case BuiltinPlaceKind::ResultField:
-            members("index"_s, place.fieldIndex, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored);
+            members("index"_s, place.fieldIndex, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored, "isOfElements"_s, place.isOfElements);
             break;
         case BuiltinPlaceKind::NewValue:
             members("type"_s, place.newValueType, "holdsWhatIsThrown"_s, place.holdsWhatIsThrown);

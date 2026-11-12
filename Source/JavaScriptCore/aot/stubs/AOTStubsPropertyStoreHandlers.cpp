@@ -69,7 +69,6 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::Absent:
     case Slot::Kind::Getter:
     case Slot::Kind::CustomGetter:
-    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::InheritedField:
     case Slot::Kind::FieldOrInheritedField:
@@ -100,6 +99,7 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::FieldCreation:
     case Slot::Kind::ExtraPropertyAddition:
         return !isPacked;
+    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldOrInheritedAccessor:
         return !isDefinition && !isPacked;
     }
@@ -269,6 +269,12 @@ void generateStoreSlot(StubAssembler& jit)
         loadValueBySlot(jit, slot, receiver, T10, T11, T10);
         callSetter(T10);
         break;
+    case Slot::Kind::FieldGetter:
+        slot.loadFirstPayloadWord(jit, T10);
+        jit.load64(BaseIndex(receiver, T10, CCallHelpers::TimesOne), T10);
+        uncached.append(jit.branchTest64(CCallHelpers::Zero, T10));
+        callSetter(T10);
+        break;
     case Slot::Kind::CustomSetter: {
         const GPRReg accessorIndex = traits.form == SlotForm::Slot ? jit.clobberOperand(payloadOperand) : jit.allocateScratch(slotPayloadRegister);
         const GPRReg uid = T14;
@@ -378,7 +384,7 @@ void generateStoreSlot(StubAssembler& jit)
         Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
         computeFieldAddress(jit, field, false, isAbsent);
         Label hasAddress = jit.label();
-        branchOnFieldPresence(jit, field, T10, uncached, isAbsent);
+        branchOnFieldPresence(jit, field, T10, uncached, isAbsent, uncached);
 
         isOutOfLine.link(&jit);
         loadExtensionWordOffset(jit, receiver, field.extensionWordOffset);
@@ -440,48 +446,83 @@ void generateStoreSlot(StubAssembler& jit)
         const GPRReg newStructureID = T10;
         const GPRReg oldCapacity = T11;
         const GPRReg newCapacity = T14;
+        const GPRReg storage = clobberNameRegister();
+        const GPRReg spare = allocateSpareRegister();
         const Address butterfly(receiver, JSObject::butterflyOffset());
         JumpList cannot;
 
         Jump hasIndexingHeader;
         if (traits.form == SlotForm::Slot)
             hasIndexingHeader = slot.branchIfFlag(jit, Slot::storageHasIndexingHeader);
-        slot.loadSecondPayloadWord(jit, newCapacity);
-        Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
-        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, butterfly));
-        jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
-        Jump hasCapacities = jit.jump();
-
-        isFirstStorage.link(&jit);
-        cannot.append(jit.branchTestPtr(CCallHelpers::NonZero, butterfly));
+        Jump hasStorage = jit.branchTestPtr(CCallHelpers::NonZero, butterfly);
         CCallHelpers::Label hasNoStorage = jit.label();
         branchUnlessOrdinaryFunction(newStructureID);
-        jit.move(TrustedImm32(0), oldCapacity);
+        slot.loadFirstPayloadWord(jit, newStructureID);
+        AssemblyHelpers::FreeListRefill refill = createOutOfLineStorage(jit, {
+            .object = receiver,
+            .newStructureID = newStructureID,
+            .oldCapacity = oldCapacity,
+            .newCapacity = newCapacity,
+            .storage = storage,
+            .scratch = spare,
+            .addedValue = value,
+        }, cannot);
+        jit.jumpToStub(writeBarrier());
+        emitLateRefill(jit, refill, cannot);
 
-        hasCapacities.link(&jit);
+        hasStorage.link(&jit);
+        slot.loadSecondPayloadWord(jit, newCapacity);
+        cannot.append(jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
+        jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
         slot.loadFirstPayloadWord(jit, newStructureID);
         growOutOfLineStorage(jit, {
             .object = receiver,
             .newStructureID = newStructureID,
             .oldCapacity = oldCapacity,
             .newCapacity = newCapacity,
-            .storage = clobberNameRegister(),
-            .scratch = allocateSpareRegister(),
+            .storage = storage,
+            .scratch = spare,
             .addedValue = value,
         }, cannot);
         jit.jumpToStub(writeBarrier());
 
         if (hasIndexingHeader.isSet()) {
             static_assert(propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
-            const GPRReg distanceToButterfly = oldCapacity;
+            const GPRReg oldButterfly = oldCapacity;
+            const GPRReg scratch = newStructureID;
             hasIndexingHeader.link(&jit);
             slot.loadSecondPayloadWord(jit, newCapacity);
-            cannot.append(jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
-            jit.loadPtr(butterfly, distanceToButterfly);
-            jit.branchTestPtr(CCallHelpers::Zero, distanceToButterfly).linkTo(hasNoStorage, &jit);
-            jit.subPtr(receiver, distanceToButterfly);
-            cannot.append(jit.branch64(CCallHelpers::NotEqual, distanceToButterfly, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
+            Jump keepsPristineFlag = slot.branchUnlessFlag(jit, Slot::clearsPristineFlag);
+            const Address flagsOfCell(receiver, JSCell::typeInfoFlagsOffset());
+            jit.load8(flagsOfCell, scratch);
+            jit.and32(TrustedImm32(static_cast<int32_t>(~IsPristine & 0xff)), scratch);
+            jit.store8(scratch, flagsOfCell);
+            Jump keepsStorage = jit.branchTest32(CCallHelpers::Zero, newCapacity);
+
+            keepsPristineFlag.link(&jit);
+            jit.loadPtr(butterfly, oldButterfly);
+            jit.branchTestPtr(CCallHelpers::Zero, oldButterfly).linkTo(hasNoStorage, &jit);
+            cannot.append(slot.branchUnlessFlag(jit, Slot::copiesElements));
+            Jump hasStorageAlready = jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity));
+            jit.move(oldButterfly, scratch);
+            jit.subPtr(receiver, scratch);
+            Jump hasNoRoom = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray))));
+            keepsStorage.link(&jit);
             emitAdditionInStorage();
+
+            hasNoRoom.link(&jit);
+            hasStorageAlready.link(&jit);
+            growStorageWithElements(jit, {
+                .object = receiver,
+                .newStructureID = operands.payload,
+                .butterfly = oldButterfly,
+                .newCapacity = newCapacity,
+                .storage = storage,
+                .allocator = spare,
+                .scratch = scratch,
+                .addedValue = value,
+            }, cannot);
+            jit.jumpToStub(writeBarrier());
         }
 
         linkToSlotCannot(jit, cannot, table, SlotFinisher::GrowStorage, slot);
@@ -532,9 +573,26 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::Uncacheable:
-        if (slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define) {
+        if (traits.operation != SlotOperation::Define) {
             static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
-            uncached.append(jit.branchTest64(CCallHelpers::Zero, operands.payload));
+            if (slot.form() == SlotForm::PackedSlot)
+                loadProxySlotKey(jit, slot.form(), operands.header, jit.allocateScratch(slotPayloadRegister), uncached);
+            else {
+                const GPRReg storage = T14;
+                const GPRReg held = T10;
+                Jump isProxy = jit.branchTest64(CCallHelpers::NonZero, operands.payload);
+                uncached.append(slot.branchUnlessFlag(jit, Slot::isOwn));
+                slot.loadOwnWordIndex(jit, T11);
+                jit.move(receiver, storage);
+                Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+                jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), storage);
+                isInline.link(&jit);
+                jit.load64(BaseIndex(storage, T11, CCallHelpers::TimesEight), held);
+                uncached.append(jit.branch64(CCallHelpers::NotEqual, held, value));
+                jit.returnToCaller();
+
+                isProxy.link(&jit);
+            }
             jit.move(value, T10);
             jit.move(TrustedImm32(traits.operation == SlotOperation::StoreStrict), T14);
             jit.jumpToStub(throughProxy(TrapOfProxy::Set));
@@ -546,7 +604,6 @@ void generateStoreSlot(StubAssembler& jit)
     case Slot::Kind::Absent:
     case Slot::Kind::Getter:
     case Slot::Kind::CustomGetter:
-    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::InheritedField:
     case Slot::Kind::FieldOrInheritedField:
@@ -623,6 +680,25 @@ static Entry entryFor(const Entry (&byMode)[numberOfModes], PutMode mode)
     return byMode[static_cast<size_t>(mode)];
 }
 
+void storeToReplacedMemberAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg value, GPRReg place, GPRReg word)
+{
+    auto wordOf = [&](ptrdiff_t offset) {
+        return Address(place, static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches.replacedMembers) + offset));
+    };
+    JumpList isNoReplacedMember;
+    jit.and32(TrustedImm32(ReplacedMember::numberOfPlaces - 1), identifierNumber, place);
+    jit.lshift32(TrustedImm32(ReplacedMember::sizeShift), place);
+    jit.addPtr(instanceGPR, place);
+    isNoReplacedMember.append(jit.branchPtr(CCallHelpers::NotEqual, wordOf(OBJECT_OFFSETOF(ReplacedMember, holder)), receiver));
+    isNoReplacedMember.append(jit.branch32(CCallHelpers::NotEqual, wordOf(OBJECT_OFFSETOF(ReplacedMember, name)), identifierNumber));
+    jit.load32(wordOf(OBJECT_OFFSETOF(ReplacedMember, structureID)), word);
+    isNoReplacedMember.append(jit.branch32(CCallHelpers::NotEqual, Address(receiver, JSCell::structureIDOffset()), word));
+    jit.loadPtr(wordOf(OBJECT_OFFSETOF(ReplacedMember, word)), word);
+    jit.store64(value, Address(word));
+    returnAfterStoring(jit, receiver, value);
+    isNoReplacedMember.link(&jit);
+}
+
 static void storeToGlobalObjectThroughItsProxyAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg value)
 {
     const GPRReg uid = jit.allocateScratch(StubRegister::T10);
@@ -635,6 +711,7 @@ static void storeToGlobalObjectThroughItsProxyAndReturn(StubAssembler& jit, GPRR
     const GPRReg wordIndex = uid;
     const GPRReg storage = structureID;
     RELEASE_ASSERT(noOverlap(receiver, identifierNumber, value, uid, structureID, header, payload, entry, instanceGPR));
+    storeToReplacedMemberAndReturn(jit, receiver, identifierNumber, value, uid, structureID);
     JumpList isLeftToOperation;
     isLeftToOperation.append(jit.branchIfNotCell(receiver));
     isLeftToOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(GlobalProxyType)));
