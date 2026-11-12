@@ -34,6 +34,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DebugHeap.h>
+#include <wtf/FailureAction.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashTraits.h>
 #include <wtf/Lock.h>
@@ -620,7 +621,7 @@ static_assert(std::is_trivial_v<StatusBytes>);
             if (newTableSize <= tableSize())
                 return;
             invalidateIterators(this);
-            rehash(newTableSize, nullptr);
+            rehash<FailureAction::Crash>(newTableSize, nullptr);
         }
 
         void reserveInitialCapacity(unsigned keyCount)
@@ -765,10 +766,11 @@ static_assert(std::is_trivial_v<StatusBytes>);
         bool shouldShrink() const { return shouldShrink(keyCount(), tableSize()); }
         ValueType* expand(ValueType* entry = nullptr);
         bool tryExpand(unsigned numberOfKeys);
-        void shrink() { rehash(tableSize() / 2, nullptr); }
+        // A shrink only gives memory back, so its request may fail. A refused shrink leaves the table as it is, and the next removal asks again.
+        void shrink() { rehash<FailureAction::Report>(tableSize() / 2, nullptr); }
         void shrinkToBestSize();
 
-        ValueType* rehash(Checked<unsigned> newTableSize, ValueType* entry);
+        template<FailureAction> ValueType* rehash(Checked<unsigned> newTableSize, ValueType* entry);
         ValueType* reinsert(const ReinsertTable&, ValueType&&);
 
         const StatusByte* statusByteFor(const ValueType* pos) const { return m_table ? statusBytes().data() + (pos - m_table) : nullptr; }
@@ -1340,7 +1342,7 @@ static_assert(std::is_trivial_v<StatusBytes>);
         else
             newSize = oldSize * 2;
 
-        ALWAYS_INLINE_CALLEE return rehash(newSize, entry);
+        ALWAYS_INLINE_CALLEE return rehash<FailureAction::Crash>(newSize, entry);
     }
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
@@ -1415,12 +1417,14 @@ static_assert(std::is_trivial_v<StatusBytes>);
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
     void HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>::shrinkToBestSize()
     {
-        rehash(computeBestTableSize(keyCount()), nullptr);
+        rehash<FailureAction::Report>(computeBestTableSize(keyCount()), nullptr);
     }
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
+    template<FailureAction action>
     auto HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>::rehash(Checked<unsigned> newTableSize, ValueType* entry) -> ValueType*
     {
+        static_assert(action == FailureAction::Crash || action == FailureAction::Report);
         internalCheckTableConsistencyExceptSize();
 
         ValueType* oldTable = m_table;
@@ -1437,7 +1441,14 @@ static_assert(std::is_trivial_v<StatusBytes>);
 #endif
 
         unsigned oldKeyCount = keyCount();
-        ValueType* table = allocateTable(newTableSize);
+        ValueType* table;
+        if constexpr (action == FailureAction::Crash)
+            table = allocateTable(newTableSize);
+        else {
+            table = tryAllocateTable(newTableSize);
+            if (!table) [[unlikely]]
+                return entry;
+        }
         m_table = table;
         setTableSize(newTableSize);
         setHashShift(hashShiftForSize(newTableSize));
@@ -1571,7 +1582,6 @@ static_assert(std::is_trivial_v<StatusBytes>);
     {
         checkTableConsistencyExceptSize();
         ASSERT(!m_table || !shouldExpand());
-        ASSERT(!shouldShrink());
     }
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>

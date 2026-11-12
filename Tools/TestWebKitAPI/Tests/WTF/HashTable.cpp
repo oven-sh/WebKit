@@ -142,6 +142,43 @@ struct TrackedTraits : GenericHashTraits<Tracked> { };
 
 using TrackedTable = HashTable<int, Tracked, TrackedExtractor, DefaultHash<int>, TrackedTraits, HashTraits<int>>;
 
+// Counts the requests of a table. A request that may fail finds no memory while refusesTryMalloc is set.
+struct CountingMalloc : FastMalloc {
+    static void* malloc(size_t size)
+    {
+        ++mallocCount;
+        return FastMalloc::malloc(size);
+    }
+
+    static void* tryMalloc(size_t size)
+    {
+        ++tryMallocCount;
+        return refusesTryMalloc ? nullptr : FastMalloc::tryMalloc(size);
+    }
+
+    static void free(void* pointer)
+    {
+        ++freeCount;
+        FastMalloc::free(pointer);
+    }
+
+    static void reset(bool refuses = false)
+    {
+        mallocCount = 0;
+        tryMallocCount = 0;
+        freeCount = 0;
+        refusesTryMalloc = refuses;
+    }
+
+    static inline unsigned mallocCount;
+    static inline unsigned tryMallocCount;
+    static inline unsigned freeCount;
+    static inline bool refusesTryMalloc;
+};
+
+using CountedIntTable = HashTable<int, int, TestIdentityExtractor, DefaultHash<int>, HashTraits<int>, HashTraits<int>, CountingMalloc>;
+using CountedTrackedTable = HashTable<int, Tracked, TrackedExtractor, DefaultHash<int>, TrackedTraits, HashTraits<int>, CountingMalloc>;
+
 struct MoveOnlyKey {
     explicit MoveOnlyKey(int value)
         : value(value)
@@ -506,6 +543,276 @@ TEST(WTF_HashTable, SameSizeRehashClearsTombstones)
     for (int key : keys)
         EXPECT_EQ(table.contains(key), !removed.contains(key));
     table.checkTableConsistency();
+}
+
+TEST(WTF_HashTable, ShrinkIsOneRequestThatMayFail)
+{
+    CountingMalloc::reset();
+    CountedIntTable table;
+    IntTable twin;
+    for (int i = 1; i <= 1000; ++i) {
+        table.add(i);
+        twin.add(i);
+    }
+    unsigned grownCapacity = table.capacity();
+    EXPECT_EQ(grownCapacity, twin.capacity());
+    // Growth asks malloc(), which may not fail.
+    EXPECT_GT(CountingMalloc::mallocCount, 0u);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 0u);
+
+    CountingMalloc::reset();
+    auto isAbove100 = [](int value) {
+        return value > 100;
+    };
+    table.removeIf(isAbove100);
+    twin.removeIf(isAbove100);
+    EXPECT_LT(table.capacity(), grownCapacity);
+    EXPECT_EQ(table.capacity(), twin.capacity());
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 1u);
+    EXPECT_EQ(CountingMalloc::mallocCount, 0u);
+    EXPECT_EQ(CountingMalloc::freeCount, 1u);
+    table.checkTableConsistency();
+
+    CountingMalloc::reset();
+    unsigned shrinkCount = 0;
+    for (int i = 100; i > 1; --i) {
+        unsigned capacity = table.capacity();
+        table.remove<ShouldValidateKey::Yes>(i);
+        twin.remove<ShouldValidateKey::Yes>(i);
+        EXPECT_EQ(table.capacity(), twin.capacity());
+        if (table.capacity() != capacity) {
+            EXPECT_EQ(table.capacity(), capacity / 2);
+            ++shrinkCount;
+        }
+    }
+    EXPECT_EQ(table.capacity(), 8u);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, shrinkCount);
+    EXPECT_EQ(CountingMalloc::mallocCount, 0u);
+    EXPECT_EQ(CountingMalloc::freeCount, shrinkCount);
+    EXPECT_TRUE(table.contains(1));
+    table.checkTableConsistency();
+}
+
+TEST(WTF_HashTable, ShrinkThatFindsNoMemoryLeavesTable)
+{
+    CountingMalloc::reset();
+    CountedIntTable table;
+    // The same operations on a table that always finds memory.
+    IntTable twin;
+    for (int i = 1; i <= 1000; ++i) {
+        table.add(i);
+        twin.add(i);
+    }
+    unsigned capacity = table.capacity();
+    auto isAbove100 = [](int value) {
+        return value > 100;
+    };
+    auto isAbove1000 = [](int value) {
+        return value > 1000;
+    };
+
+    CountingMalloc::reset(true);
+    EXPECT_TRUE(table.removeIf(isAbove100));
+    twin.removeIf(isAbove100);
+    EXPECT_EQ(table.capacity(), capacity);
+    EXPECT_LT(twin.capacity(), capacity);
+    EXPECT_EQ(table.size(), 100u);
+    EXPECT_EQ(Layout(table).deletedCount(), 900u);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 1u);
+    EXPECT_EQ(CountingMalloc::mallocCount, 0u);
+    EXPECT_EQ(CountingMalloc::freeCount, 0u);
+    for (int i = 1; i <= 1000; ++i)
+        EXPECT_EQ(table.contains(i), i <= 100);
+    unsigned visited = 0;
+    for (int value : table) {
+        EXPECT_LE(value, 100);
+        ++visited;
+    }
+    EXPECT_EQ(visited, 100u);
+    table.checkTableConsistency();
+
+    // Every remove() of a table that is below its smallest load asks again.
+    for (int i = 100; i > 98; --i) {
+        table.remove<ShouldValidateKey::Yes>(i);
+        twin.remove<ShouldValidateKey::Yes>(i);
+    }
+    EXPECT_EQ(table.capacity(), capacity);
+    EXPECT_EQ(table.size(), 98u);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 3u);
+    EXPECT_EQ(CountingMalloc::freeCount, 0u);
+    table.checkTableConsistency();
+
+    // The table takes keys as before. Once the deleted slots fill it, add() makes a table of the same size with malloc(), which may not fail.
+    CountingMalloc::reset(true);
+    int key = 1000;
+    while (!CountingMalloc::mallocCount) {
+        table.add(++key);
+        twin.add(key);
+    }
+    EXPECT_EQ(table.capacity(), capacity);
+    EXPECT_EQ(table.size(), twin.size());
+    EXPECT_EQ(Layout(table).deletedCount(), 0u);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 0u);
+    for (int i = 1; i <= key; ++i)
+        EXPECT_EQ(table.contains(i), i <= 98 || i > 1000);
+    table.checkTableConsistency();
+
+    // It is still below its smallest load. With memory the next removeIf() shrinks it, whatever it removes.
+    EXPECT_TRUE(table.removeIf(isAbove1000));
+    twin.removeIf(isAbove1000);
+    EXPECT_EQ(table.capacity(), capacity);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 1u);
+    CountingMalloc::reset();
+    EXPECT_FALSE(table.removeIf([](int) {
+        return false;
+    }));
+    EXPECT_EQ(table.capacity(), twin.capacity());
+    EXPECT_EQ(table.size(), 98u);
+    EXPECT_EQ(Layout(table).deletedCount(), 0u);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 1u);
+    EXPECT_EQ(CountingMalloc::mallocCount, 0u);
+    EXPECT_EQ(CountingMalloc::freeCount, 1u);
+    for (int i = 1; i <= 98; ++i)
+        EXPECT_TRUE(table.contains(i));
+    table.checkTableConsistency();
+}
+
+TEST(WTF_HashTable, ShrinkThatFindsNoMemoryKeepsLifetimesBalanced)
+{
+    Tracked::liveCount = 0;
+    CountingMalloc::reset();
+    {
+        CountedTrackedTable table;
+        for (int i = 1; i <= 1000; ++i)
+            table.add(Tracked { i });
+        unsigned capacity = table.capacity();
+
+        CountingMalloc::reset(true);
+        table.removeIf([](Tracked& value) {
+            return value.key > 10;
+        });
+        EXPECT_EQ(Tracked::liveCount, 10);
+        for (int i = 10; i > 5; --i)
+            table.remove<ShouldValidateKey::Yes>(i);
+        EXPECT_EQ(Tracked::liveCount, 5);
+        EXPECT_EQ(table.capacity(), capacity);
+        EXPECT_EQ(CountingMalloc::tryMallocCount, 6u);
+        table.checkTableConsistency();
+
+        CountingMalloc::reset();
+        table.remove<ShouldValidateKey::Yes>(5);
+        EXPECT_EQ(table.capacity(), capacity / 2);
+        EXPECT_EQ(Tracked::liveCount, 4);
+        for (int i = 1; i <= 4; ++i) {
+            auto it = table.find(i);
+            ASSERT_TRUE(it != table.end());
+            EXPECT_EQ(it->magic, Tracked::aliveMagic);
+        }
+        table.checkTableConsistency();
+    }
+    EXPECT_EQ(Tracked::liveCount, 0);
+}
+
+TEST(WTF_HashTable, RemovalMakesNoRequestThatMayNotFail)
+{
+    CountingMalloc::reset();
+    CountedIntTable table;
+    for (int i = 1; i <= 1000; ++i)
+        table.add(i);
+    unsigned capacity = table.capacity();
+
+    // More than a quarter of the slots hold deleted keys and more than a sixth hold keys: no shrink is due.
+    CountingMalloc::reset();
+    for (int i = 1000; i > 400; --i)
+        table.remove<ShouldValidateKey::Yes>(i);
+    EXPECT_GT(4 * Layout(table).deletedCount(), capacity);
+    EXPECT_GE(6 * table.size(), capacity);
+    table.remove<ShouldValidateKey::Yes>(400);
+    EXPECT_TRUE(table.removeIf([](int value) {
+        return value == 399;
+    }));
+    auto taken = table.takeIf<0>([](int value) {
+        return value == 398;
+    });
+    EXPECT_EQ(taken.size(), 1u);
+    EXPECT_EQ(table.size(), 397u);
+    EXPECT_EQ(table.capacity(), capacity);
+    EXPECT_EQ(CountingMalloc::mallocCount, 0u);
+
+    // Below a sixth a shrink is due. Each of the three asks once, with a request that may fail.
+    for (int i = 397; i > 342; --i)
+        table.remove<ShouldValidateKey::Yes>(i);
+    EXPECT_EQ(table.capacity(), capacity);
+    CountingMalloc::reset(true);
+    table.remove<ShouldValidateKey::Yes>(342);
+    EXPECT_TRUE(table.removeIf([](int value) {
+        return value == 341;
+    }));
+    taken = table.takeIf<0>([](int value) {
+        return value == 340;
+    });
+    EXPECT_EQ(taken.size(), 1u);
+    EXPECT_EQ(table.size(), 339u);
+    EXPECT_EQ(table.capacity(), capacity);
+    EXPECT_EQ(CountingMalloc::tryMallocCount, 3u);
+    EXPECT_EQ(CountingMalloc::mallocCount, 0u);
+    table.checkTableConsistency();
+    CountingMalloc::reset();
+}
+
+TEST(WTF_HashTable, RandomOperationsStayConsistentWhileShrinksFindNoMemory)
+{
+    for (int keyRange : { 10, 100, 3000 }) {
+        CountingMalloc::reset();
+        std::mt19937 random(keyRange);
+        std::uniform_int_distribution<int> keys(1, keyRange);
+        std::uniform_int_distribution<int> operations(0, 99);
+        CountedIntTable table;
+        std::unordered_set<int> reference;
+        unsigned refusedCount = 0;
+        for (unsigned step = 0; step < 30000; ++step) {
+            // Memory comes and goes in runs, so that a table stays below its smallest load across many operations.
+            if (!(step % 64))
+                CountingMalloc::refusesTryMalloc = operations(random) < 75;
+            unsigned capacity = table.capacity();
+            unsigned mallocCount = CountingMalloc::mallocCount;
+            unsigned tryMallocCount = CountingMalloc::tryMallocCount;
+            int key = keys(random);
+            int operation = operations(random);
+            if (operation < 40)
+                EXPECT_EQ(table.add(key).isNewEntry, reference.insert(key).second);
+            else if (operation < 90) {
+                table.remove<ShouldValidateKey::Yes>(key);
+                reference.erase(key);
+                ASSERT_EQ(CountingMalloc::mallocCount, mallocCount);
+            } else if (operation < 98)
+                EXPECT_EQ(table.contains(key), reference.contains(key));
+            else {
+                int modulus = 2 + key % 5;
+                table.removeIf([&](int value) {
+                    return !!(value % modulus);
+                });
+                std::erase_if(reference, [&](int value) {
+                    return !!(value % modulus);
+                });
+                ASSERT_EQ(CountingMalloc::mallocCount, mallocCount);
+            }
+            ASSERT_EQ(table.size(), reference.size());
+            if (CountingMalloc::refusesTryMalloc && CountingMalloc::tryMallocCount != tryMallocCount) {
+                ASSERT_EQ(table.capacity(), capacity);
+                ++refusedCount;
+            }
+            if (!(step % 499))
+                table.checkTableConsistency();
+        }
+        EXPECT_GT(refusedCount, 0u);
+        table.checkTableConsistency();
+        std::unordered_set<int> contents;
+        for (int value : table)
+            contents.insert(value);
+        EXPECT_EQ(contents, reference);
+    }
+    CountingMalloc::reset();
 }
 
 TEST(WTF_HashTable, RemoveIfAndTakeIf)

@@ -97,6 +97,10 @@ public:
         m_map.clear();
     }
 
+    // Counts the entries that an eden collection has nulled out, too.
+    unsigned size() const { return m_map.size(); }
+    unsigned capacity() const { return m_map.capacity(); }
+
     inline iterator find(const KeyType& key);
 
     inline const_iterator find(const KeyType& key) const;
