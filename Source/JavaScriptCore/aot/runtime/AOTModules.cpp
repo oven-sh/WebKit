@@ -3130,8 +3130,12 @@ bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<Module
         for (const ModuleRequestData& request : m_table.imports(importer)) {
             if (request.isHoisted || (moduleLoadedBy(request) != module && moduleLoadedBy(request) != moduleWithExportsOf(module)))
                 continue;
-            if (data(importer).needsEvaluation() && !keepsStatus)
+            if (data(importer).needsEvaluation() && !keepsStatus) {
+                // One that has begun its body has run its imports, and keeps them.
+                if (hasEnteredBody(importer))
+                    break;
                 return true;
+            }
             if (!passed)
                 passed = modulesThatWerePassedWithoutStatus();
             if (!passed->quickGet(index))
@@ -9610,6 +9614,11 @@ Modules& ModuleRecord::modules() const
 bool ModuleRecord::isMocked() const
 {
     return modules().isMockedThroughStarExports(m_module);
+}
+
+bool ModuleRecord::hasEnteredBody() const
+{
+    return modules().hasEnteredBody(m_module);
 }
 
 unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, ModuleEvaluationStack& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)

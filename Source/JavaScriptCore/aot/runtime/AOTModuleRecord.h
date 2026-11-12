@@ -52,6 +52,7 @@ public:
 
     ModuleID module() const { return m_module; }
     bool isMocked() const;
+    bool hasEnteredBody() const;
     JSGlobalObject* instanceRealm() const;
     bool isOf(const Instance& instance) const { return &m_instance == &instance; }
 

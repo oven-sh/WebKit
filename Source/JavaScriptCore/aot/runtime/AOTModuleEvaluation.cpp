@@ -3273,6 +3273,50 @@ void Modules::recordEvaluationIfNothingIsLeftToRun(ModuleID module)
     setStatus(module, ModuleStatus::Evaluated);
 }
 
+// Whether `module` has begun its body, so that every module it imports with a statement has run. No status says so, and no
+// compiled body stores it: this goes by what is left to run, and says false where that does not tell.
+bool Modules::hasEnteredBody(ModuleID module) const
+{
+    if (status(module) != ModuleStatus::Evaluating)
+        return false;
+    // A module that evaluation passes over has no status: what it imports stands for it.
+    bool importsHaveRun = true;
+    BitVector seen(m_table.size());
+    seen.quickSet(module.index());
+    Vector<ModuleID, 16> passedOver { module };
+    while (importsHaveRun && !passedOver.isEmpty()) {
+        for (const ModuleRequestData& request : m_table.imports(passedOver.takeLast())) {
+            if (request.isHoisted || request.isDeferred)
+                continue;
+            ModuleID imported = moduleLoadedBy(request);
+            if (seen.quickSet(imported.index()))
+                continue;
+            bool keepsStatus = keepsStatusOfRunBeforeLoadThatRuns(imported);
+            if (status(imported) == ModuleStatus::Evaluated && !keepsStatus)
+                continue;
+            if (keepsStatus || !isPassedOverByEvaluation(data(imported))) {
+                importsHaveRun = false;
+                break;
+            }
+            passedOver.append(imported);
+        }
+    }
+    if (importsHaveRun)
+        return true;
+    // In an import cycle a module imports one that is evaluated after it. The walk of the cycle holds a frame of the module
+    // until it calls the body, and leaves the record being evaluated until the root of the cycle is done.
+    ModuleRecord* record = recordIfExists(module);
+    if (!record || record->status() != CyclicModuleRecord::Status::Evaluating || record->pendingAsyncDependencies().value_or(1))
+        return false;
+    for (const EvaluationInProgress* evaluation = m_innermostEvaluation; evaluation; evaluation = evaluation->outer) {
+        for (const EvaluationFrame& frame : evaluation->frames) {
+            if (frame.module == module)
+                return false;
+        }
+    }
+    return true;
+}
+
 bool Modules::isLeftToStartsOfImporters(ModuleID module) const
 {
     return status(module) == ModuleStatus::Linked && isPassedOverByEvaluation(data(module));

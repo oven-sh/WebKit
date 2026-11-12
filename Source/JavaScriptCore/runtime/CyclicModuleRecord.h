@@ -86,6 +86,15 @@ public:
         return status() == Status::Evaluated;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether this module has begun its body, so that every module it imports with a statement has run. [[Status]] does not
+    // say: a module is EVALUATING while its imports run, while its body runs, and after its body until the root of its import
+    // cycle is done. A source text module answers by the state of its body. A compiled module answers only while it is
+    // EVALUATING, by what its module table shows (AOT::Modules::hasEnteredBody()), and false where that does not tell.
+    // Every other record answers false.
+    JS_EXPORT_PRIVATE bool hasEnteredBody() const;
+#endif
+
     void setStatus(Status newStatus) { m_status = newStatus; }
     void setEvaluationError(VM&, JSValue);
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }

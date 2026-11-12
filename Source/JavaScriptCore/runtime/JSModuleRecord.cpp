@@ -228,6 +228,14 @@ bool JSModuleRecord::isTopLevelExecutionFinished() const
     return !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool JSModuleRecord::hasEnteredBody() const
+{
+    // Interpreter::executeModuleProgram() moves the state on from Init where it enters the body, and nothing moves it back.
+    return internalField(Field::State).get() != jsNumber(std::to_underlying(State::Init));
+}
+#endif
+
 void JSModuleRecord::didFinishWithExecutable(VM& vm)
 {
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();

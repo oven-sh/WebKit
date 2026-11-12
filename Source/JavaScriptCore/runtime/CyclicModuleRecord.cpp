@@ -79,6 +79,17 @@ void CyclicModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(CyclicModuleRecord);
 
 #if USE(BUN_JSC_ADDITIONS)
+bool CyclicModuleRecord::hasEnteredBody() const
+{
+#if ENABLE(AOT)
+    if (inherits<AOT::ModuleRecord>())
+        return uncheckedDowncast<AOT::ModuleRecord>(this)->hasEnteredBody();
+#endif
+    return inherits<JSModuleRecord>() && uncheckedDowncast<JSModuleRecord>(this)->hasEnteredBody();
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
 // Options::validatePrelinkedModuleInfo(): does the bundler's resolution agree with what ResolveExport just computed by name?
 static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedModuleGraph& graph, PrelinkedModuleGraph::ResolutionKind kind, uint32_t resolvedModule, uint32_t resolvedLocalSid, const AbstractModuleRecord::Resolution& actual)
 {

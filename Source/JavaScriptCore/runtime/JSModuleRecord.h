@@ -73,6 +73,9 @@ public:
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
 
     bool isTopLevelExecutionFinished() const;
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasEnteredBody() const;
+#endif
 
     void execute(JSGlobalObject*, JSPromise* = nullptr);
     void executeAsync(JSGlobalObject*);
