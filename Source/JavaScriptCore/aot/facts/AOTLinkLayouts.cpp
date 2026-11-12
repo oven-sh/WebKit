@@ -2681,6 +2681,8 @@ bool LinkFlow::constructionKeepsThis(LayoutID made) const
     RowOfConstructorsInLinkLayouts row(*this, made);
     if (!row.followConstructorOf(made, true))
         return false;
+    if (!answersOwnThis(program.at(made).constructor))
+        return false;
     auto mayRunAccessor = [&](PropertyKeyID key) {
         size_t stepsLeft = program.layouts.size();
         for (LayoutID current = made; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
@@ -4700,11 +4702,51 @@ WriterOfLinkLayouts::Traits WriterOfLinkLayouts::traitsOfStoreOfMaker(FunctionID
     return isConstructing ? Traits { Trait::FillsObjectBeingConstructed } : Traits { };
 }
 
+static bool isStoredInEveryElementInLinkLayouts(const BodyIndex& index, ValueID store, ValueID read)
+{
+    if (index.hasIrreducibleFlow() || index.isParameter(read) || index.opcodeOf(read) != Opcode::ElemGet)
+        return false;
+    LoopID loop = index.loopOf(index.blockOf(read));
+    if (!loop || !index.isInLoop(index.blockOf(store), loop))
+        return false;
+    BlockID head = index.loop(loop).head;
+    BodyBlock blockOfHead = index.block(head);
+    ValueID counter = index.stripCasts(index.value(read).propertyOperand());
+    if (!counter || !index.isParameter(counter) || index.blockOf(counter) != head)
+        return false;
+    uint32_t position = 0;
+    while (position < blockOfHead.numberOfParameters() && blockOfHead.parameter(position) != counter)
+        ++position;
+    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyTarget target : index.terminator(member).targets()) {
+            if (target.block() != head)
+                continue;
+            ValueID stepped = position < target.arguments().size() ? index.stripCasts(target.arguments()[position]) : ValueID();
+            if (!index.dominates(index.blockOf(store), member) || !stepped || index.isParameter(stepped) || !steps.contains(index.opcodeOf(stepped)) || index.stripCasts(index.value(stepped).operand(0)) != counter)
+                return false;
+        }
+    }
+    BodyTerminator end = index.terminator(head);
+    ValueID condition = end.kind() == TerminatorKind::Branch ? index.stripCasts(end.operand(0)) : ValueID();
+    static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+    if (!condition || index.isParameter(condition) || !relations.contains(index.opcodeOf(condition)))
+        return false;
+    ValueID left = index.stripCasts(index.value(condition).operand(0));
+    ValueID right = index.stripCasts(index.value(condition).operand(1));
+    ValueID bound = left == counter ? right : right == counter ? left : ValueID();
+    static constexpr OpcodeSet numbers { Opcode::Integer, Opcode::Double };
+    return bound && (index.isParameter(bound) || !numbers.contains(index.opcodeOf(bound)));
+}
+
 void WriterOfLinkLayouts::noteLateFieldsFilledByAccess(FunctionID id, const ThinSummary& summary, const SummaryAccess& access, PropertyKeyID key, const LinkType& subject)
 {
     const SummaryNode& stored = summary.nodes[access.subject];
     bool isHandedIn = stored.kind == SummaryNode::Kind::Parameter;
-    if (!key || access.kind != SummaryAccess::Kind::Store || access.isPartOfConstruction || (!isHandedIn && stored.kind != SummaryNode::Kind::ResultOfAccess && stored.kind != SummaryNode::Kind::ResultOfCall))
+    if (!key || access.kind != SummaryAccess::Kind::Store || access.isPartOfConstruction || (!isHandedIn && stored.kind != SummaryNode::Kind::ResultOfAccess))
+        return;
+    const BodyIndex* body = isHandedIn ? nullptr : bodiesLookedAt(m_flow.looks).find(id);
+    if (!isHandedIn && (!body || !isStoredInEveryElementInLinkLayouts(*body, access.site, summary.accesses[stored.first].site)))
         return;
     if (subject.objects != LinkType::Objects::Layout || findField(m_program, subject.layout, key))
         return;

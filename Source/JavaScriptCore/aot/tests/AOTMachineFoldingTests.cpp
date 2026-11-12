@@ -760,7 +760,7 @@ static void testMachineFoldingOfIntegerComparisons()
         { "Equal(a, SExt32(i))"_s, [](FoldingTest& v) { return v.make(Equal, v.make(IToD, v.i), v.make(IToD, v.a)); } },
         { "GreaterEqual(a, Const64(4503599627370496))"_s, [](FoldingTest& v) { return v.make(GreaterEqual, v.make(IToD, v.a), 0x1p52); } },
         { "LessThan(IToD(a), ConstDouble(9007199254740992))"_s, [](FoldingTest& v) { return v.make(LessThan, v.make(IToD, v.a), 0x1p53); } },
-        { "Equal(IToD(a), IToD(b))"_s, [](FoldingTest& v) { return v.make(Equal, v.make(IToD, v.a), v.make(IToD, v.b)); } },
+        { "Equal(IToD(a), IToD(b))"_s, [](FoldingTest& v) { LValue left = v.make(IToD, v.a); return v.make(Equal, left, v.make(IToD, v.b)); } },
 
         { "Const32(1)"_s, [](FoldingTest& v) { return v.make(LessThan, v.int64(-1), 1); } },
         { "Const32(0)"_s, [](FoldingTest& v) { return v.make(Below, v.int64(-1), 1); } },

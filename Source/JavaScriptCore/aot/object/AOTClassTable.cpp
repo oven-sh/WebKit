@@ -488,7 +488,7 @@ bool ClassTable::structureTellsInstancesOf(const LayoutData& classLayout, JSCell
         return false;
     if (isArray) {
         bool namesElement = false;
-        structure->forEachProperty(*m_state.instance.vm, [&](const auto& entry) {
+        structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
             namesElement |= isCanonicalNumericIndexString(entry.key());
             return !namesElement;
         });
@@ -534,7 +534,7 @@ bool ClassTable::rememberStructureOfInstances(VM& vm, JSCell* cell, const Layout
     return tells;
 }
 
-bool ClassTable::rememberPrototypeWithoutElements(VM& vm, JSCell* cell, uint32_t offsetOfStructures)
+bool ClassTable::rememberPrototypeWithoutElements(JSCell* cell, uint32_t offsetOfStructures)
 {
     JSObject* prototype = cell->structure()->storedPrototypeObject();
     Structure* structure = prototype->structure();
@@ -543,7 +543,7 @@ bool ClassTable::rememberPrototypeWithoutElements(VM& vm, JSCell* cell, uint32_t
     if (structure->storedPrototype() != JSValue(m_state.instance.globalObject->arrayPrototype()))
         return false;
     bool namesElement = false;
-    structure->forEachProperty(vm, [&](const auto& entry) {
+    structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         namesElement |= isCanonicalNumericIndexString(entry.key());
         return !namesElement;
     });

@@ -285,7 +285,7 @@ NEVER_INLINE void ParallelMoveResolver::groupMovesBySource()
     std::span<Reader> readers = m_arena.createSpan<Reader>(numberOfMoves);
     for (uint32_t index = 0; index < numberOfMoves; ++index) {
         const PendingMove& move = m_moves[index];
-        ASSERT(move.width == Width32 || move.width == Width64);
+        ASSERT(move.width == Width32 || move.width == Width64 || move.width == Width128);
         ASSERT(!move.destination.isRegister() || bankOf(move.destination.reg()) == bankOf(move.value->type()));
         ASSERT(!move.source.isRegister() || bankOf(move.source.reg()) == bankOf(move.value->type()));
         ASSERT(!move.source.isImmediate() || move.value->hasNoPosition());

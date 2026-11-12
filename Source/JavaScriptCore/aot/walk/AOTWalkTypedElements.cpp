@@ -152,12 +152,16 @@ static std::optional<int64_t> findConstantPosition(Walker& walker, Reference key
     return walker.code().at(key.id()).integer();
 }
 
-static Vector<WalkState::ElementOfObject, 8> listOtherConstantElements(Walker& walker, Reference base, int64_t stored)
+static bool isReadOfBody(const AccessOfTypedElements&);
+
+static Vector<WalkState::ElementOfObject, 8> listOtherConstantElements(const AccessOfTypedElements& access, int64_t stored)
 {
+    Walker& walker = access.walker;
     Vector<WalkState::ElementOfObject, 8> elements;
-    for (const WalkState::ElementOfObject& element : walker.state().listElementsOf(base)) {
+    std::optional<uint32_t> loop = isReadOfBody(access) ? walker.loopReadingConstantsAfter(access.value) : std::nullopt;
+    for (const WalkState::ElementOfObject& element : walker.state().listElementsOf(access.base)) {
         std::optional<int64_t> position = findConstantPosition(walker, element.index);
-        if (position && *position != stored)
+        if (position && *position != stored && (!loop || walker.readsElementAfter(*loop, access.value, *position)))
             elements.append(element);
     }
     return elements;
@@ -3599,7 +3603,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
     Vector<WalkState::ElementOfObject, 8> preservedElements;
     Vector<Walker::CarriedElementNote, 2> preservedNotes;
     if (storedConstant) {
-        preservedElements = listOtherConstantElements(walker, access.base, *storedConstant);
+        preservedElements = listOtherConstantElements(access, *storedConstant);
         preservedNotes = walker.listCarriedElementNotes(access.base, *storedConstant);
     }
     Reference store = walker.build(WTF::move(put));

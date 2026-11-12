@@ -133,7 +133,7 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     bool structureTellsInstancesOf(const LayoutData&, JSCell*, std::span<int32_t> displacementsOfFields) const;
     bool rememberStructureOfInstances(VM&, JSCell*, const LayoutData&, uint32_t offsetOfStructures);
-    bool rememberPrototypeWithoutElements(VM&, JSCell*, uint32_t offsetOfStructures);
+    bool rememberPrototypeWithoutElements(JSCell*, uint32_t offsetOfStructures);
     void forgetStructuresOfHeirs();
     bool prototypeAwaitsFirstTouch(const LayoutData& classLayout) const { return m_classesWhosePrototypeAwaitsFirstTouch.get(m_tables.rankOfClass(classLayout.index)); }
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);

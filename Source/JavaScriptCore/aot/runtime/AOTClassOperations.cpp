@@ -97,7 +97,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberStructureOfClass, size_t, 
     offsetOfStructures &= ~StructuresOfHeir::asksElements;
     bool isRemembered = classes.rememberStructureOfInstances(vm, cell, classLayoutAt(classes, classIndex), offsetOfStructures);
     if (asksElements)
-        isRemembered = isRemembered && classes.rememberPrototypeWithoutElements(vm, cell, offsetOfStructures);
+        isRemembered = isRemembered && classes.rememberPrototypeWithoutElements(cell, offsetOfStructures);
     countEvent(vm, isRemembered ? RuntimeCounterID::BuiltinSubclassStructuresAccepted : RuntimeCounterID::BuiltinSubclassStructuresRejected);
     return isRemembered;
 }

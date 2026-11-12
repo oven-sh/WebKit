@@ -1597,9 +1597,14 @@ void Walker::restoreCarriedElementNotes(std::span<const CarriedElementNote> note
         noteKnown(*this, KnownNote::CarriedElement, note.array, note.parameter, 0, LocationMasks(elementGuardHeaps), note.noted);
 }
 
-static Vector<Walker::ElementRecurrence> findElementRecurrences(Walker& walker, const BodyIndex& index)
+static auto keyOfRecurrence(const Walker::RecurringAccess& access)
 {
-    Vector<Walker::ElementRecurrence> found;
+    return std::tuple { access.loop, access.counterPosition, access.offset };
+}
+
+static Walker::ElementRecurrences findElementRecurrences(Walker& walker, const BodyIndex& index)
+{
+    Walker::ElementRecurrences found;
     if (!index.holdsAnyOf(OpcodeSet { Opcode::ElemSet }) || !index.holdsAnyOf(OpcodeSet { Opcode::ElemGet }))
         return found;
     struct Position {
@@ -1652,8 +1657,6 @@ static Vector<Walker::ElementRecurrence> findElementRecurrences(Walker& walker, 
     };
     Vector<Access, 8> reads;
     Vector<Access, 4> stores;
-    Vector<Access, 8> readsAtConstants;
-    Vector<Access, 4> storesAtConstants;
     auto constantPositionOf = [&](ValueID key) -> std::optional<int64_t> {
         ValueID written = index.stripCasts(key);
         if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::Integer)
@@ -1661,8 +1664,11 @@ static Vector<Walker::ElementRecurrence> findElementRecurrences(Walker& walker, 
         int64_t position = index.value(written).as<Opcode::Integer>().integer();
         return position >= 0 && position <= std::numeric_limits<uint16_t>::max() ? std::optional(position) : std::nullopt;
     };
-    auto isReadBeforeStore = [&](ValueID store, ValueID read) {
-        return read.index() < store.index() || !index.dominates(index.blockOf(store), index.blockOf(read));
+    auto addAtConstant = [&](uint32_t loop, const BodyValue& operation) {
+        std::optional<int64_t> constant = constantPositionOf(operation.propertyOperand());
+        if (constant)
+            (operation.opcode() == Opcode::ElemGet ? found.reads : found.stores).append({ loop, Walker::noCounter, static_cast<int32_t>(*constant), operation.id() });
+        return constant.has_value();
     };
     for (uint32_t number = 0; number < index.numberOfLoops(); ++number) {
         LoopID loop(number);
@@ -1671,20 +1677,12 @@ static Vector<Walker::ElementRecurrence> findElementRecurrences(Walker& walker, 
         BlockID head = index.loop(loop).head;
         reads.shrink(0);
         stores.shrink(0);
-        readsAtConstants.shrink(0);
-        storesAtConstants.shrink(0);
         for (BlockID member : index.membersOf(loop)) {
             for (BodyValue operation : index.block(member).values()) {
                 if (operation.opcode() != Opcode::ElemGet && operation.opcode() != Opcode::ElemSet)
                     continue;
-                if (std::optional<int64_t> constant = constantPositionOf(operation.propertyOperand())) {
-                    Access access { { { }, *constant }, operation.id() };
-                    if (operation.opcode() == Opcode::ElemGet)
-                        readsAtConstants.append(access);
-                    else
-                        storesAtConstants.append(access);
+                if (addAtConstant(number, operation))
                     continue;
-                }
                 Position position = positionOf(head, operation.propertyOperand());
                 if (!position.counter)
                     continue;
@@ -1694,19 +1692,14 @@ static Vector<Walker::ElementRecurrence> findElementRecurrences(Walker& walker, 
                     stores.append({ position, operation.id() });
             }
         }
-        for (const Access& store : storesAtConstants) {
-            for (const Access& read : readsAtConstants) {
-                if (read.position.offset == store.position.offset && isReadBeforeStore(store.id, read.id))
-                    found.append({ store.id, read.id, Walker::noCounter, static_cast<int32_t>(read.position.offset) });
-            }
-        }
         if (reads.isEmpty() || stores.isEmpty())
             continue;
-        auto keyOf = [](const Access& access) { return std::tuple { access.position.counter.index(), access.position.offset, access.id.index() }; };
-        std::ranges::sort(reads, { }, keyOf);
+        auto placeOf = [&](ValueID counter) { return counter.index() - index.block(head).firstParameter().index(); };
+        for (const Access& read : reads)
+            found.reads.append({ number, placeOf(read.position.counter), static_cast<int32_t>(read.position.offset), read.id });
         for (const Access& store : stores) {
             ValueID counter = store.position.counter;
-            uint32_t place = counter.index() - index.block(head).firstParameter().index();
+            uint32_t place = placeOf(counter);
             std::optional<int64_t> step;
             bool isStepped = std::ranges::all_of(walker.incomingEdgesOf(index, head), [&](const BodyIncomingEdge& edge) {
                 if (!index.isInLoop(edge.from, loop))
@@ -1717,47 +1710,28 @@ static Vector<Walker::ElementRecurrence> findElementRecurrences(Walker& walker, 
             });
             if (!isStepped || !step)
                 continue;
-            int64_t offset = store.position.offset - *step;
-            for (auto read = std::ranges::lower_bound(reads, std::tuple { counter.index(), offset, 0u }, { }, keyOf); read != reads.end() && read->position.counter == counter && read->position.offset == offset; ++read) {
-                if (isReadBeforeStore(store.id, read->id))
-                    found.append({ store.id, read->id, place, static_cast<int32_t>(read->position.offset) });
-            }
+            found.stores.append({ number, place, static_cast<int32_t>(store.position.offset - *step), store.id });
         }
     }
-    readsAtConstants.shrink(0);
-    storesAtConstants.shrink(0);
     for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
         if (index.loopOf(BlockID(number)))
             continue;
         for (BodyValue operation : index.block(BlockID(number)).values()) {
-            if (operation.opcode() != Opcode::ElemGet && operation.opcode() != Opcode::ElemSet)
-                continue;
-            std::optional<int64_t> constant = constantPositionOf(operation.propertyOperand());
-            if (!constant)
-                continue;
-            Access access { { { }, *constant }, operation.id() };
-            if (operation.opcode() == Opcode::ElemGet)
-                readsAtConstants.append(access);
-            else
-                storesAtConstants.append(access);
+            if (operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet)
+                addAtConstant(index.numberOfLoops(), operation);
         }
     }
-    for (const Access& store : storesAtConstants) {
-        for (const Access& read : readsAtConstants) {
-            if (read.position.offset == store.position.offset && isReadBeforeStore(store.id, read.id))
-                found.append({ store.id, read.id, Walker::noCounter, static_cast<int32_t>(read.position.offset) });
-        }
-    }
-    std::ranges::sort(found, { }, [](const Walker::ElementRecurrence& recurrence) { return std::pair { recurrence.store.index(), recurrence.read.index() }; });
+    std::ranges::sort(found.stores, { }, [](const Walker::RecurringAccess& store) { return store.id.index(); });
+    std::ranges::sort(found.reads, { }, [](const Walker::RecurringAccess& read) { return std::pair { keyOfRecurrence(read), read.id.index() }; });
     return found;
 }
 
-std::span<const Walker::ElementRecurrence> Walker::elementRecurrences()
+const Walker::ElementRecurrences& Walker::elementRecurrences()
 {
     const BodyIndex& index = currentBodyIndex();
     return m_elementRecurrences.ensure(&index, [&] {
         return findElementRecurrences(*this, index);
-    }).iterator->value.span();
+    }).iterator->value;
 }
 
 std::optional<uint32_t> Walker::openLoopOfElement(ValueID access) const
@@ -1845,10 +1819,10 @@ Reference Walker::buildCarriedElement(const BodyValue& read, Reference array, It
     size_t slot = requests.findIf([&](const CarriedResult& requested) { return requested.isElement && !requested.isStruck && requested.site == read.id() && requested.copiedCallee == copiedCallee; });
     if (slot >= loop.carriedResultCount || loop.carriedSlotsBuilt.contains(static_cast<uint32_t>(slot)))
         return { };
-    std::span<const ElementRecurrence> recurrences = elementRecurrences();
-    auto recurrence = std::ranges::find(recurrences, read.id(), &ElementRecurrence::read);
-    bool isAtConstant = recurrence != recurrences.end() && recurrence->counterPosition == noCounter;
-    if (recurrence == recurrences.end() || (!isAtConstant && !isCounterOfIteration(loop, recurrence->counterPosition)))
+    const Vector<RecurringAccess>& reads = elementRecurrences().reads;
+    auto recurrence = std::ranges::find(reads, read.id(), &RecurringAccess::id);
+    bool isAtConstant = recurrence != reads.end() && recurrence->counterPosition == noCounter;
+    if (recurrence == reads.end() || (!isAtConstant && !isCounterOfIteration(loop, recurrence->counterPosition)))
         return { };
     size_t placeOfParameter = m_code.at(loop.head).parameters().size() - loop.carriedResultCount + slot;
     Reference headerParameter = Reference::value(m_code.at(loop.head).parameters()[placeOfParameter]);
@@ -1920,13 +1894,82 @@ Reference Walker::buildCarriedElement(const BodyValue& read, Reference array, It
     return headerParameter;
 }
 
+static Walker::ConstantElementReads findConstantElementReads(const Program& program, const BodyIndex& index)
+{
+    static constexpr OpcodeSet operationsWithoutElementReads = allNumericOperators | allRelations | allEqualities | inputIdentityOpcodes
+        | OpcodeSet { Opcode::Integer, Opcode::Double, Opcode::Boolean, Opcode::Undefined, Opcode::Null, Opcode::ElemSet, Opcode::LoopHint, Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::CheckInitialized, Opcode::TypeTest };
+    Walker::ConstantElementReads reads;
+    for (uint32_t number = 0; number < index.numberOfLoops(); ++number) {
+        LoopID loop(number);
+        if (index.loop(loop).parent || index.loop(loop).numberOfLoopsWithin != 1)
+            continue;
+        BlockID head = index.loop(loop).head;
+        for (BlockID member : index.membersOf(loop)) {
+            for (BodyValue operation : index.block(member).values()) {
+                if (operationsWithoutElementReads.contains(operation.opcode()))
+                    continue;
+                if (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operation.key() == program.keyOf(BuiltinNames::length))
+                    continue;
+                ValueID key = operation.opcode() == Opcode::ElemGet ? index.stripCasts(operation.propertyOperand()) : ValueID();
+                if (key && !index.isParameter(key) && index.opcodeOf(key) == Opcode::Integer)
+                    reads.atConstants.append({ number, index.value(key).as<Opcode::Integer>().integer(), operation.id().index() });
+                else if (!key || !index.isParameter(key) || index.blockOf(key) != head)
+                    reads.others.append({ number, operation.id().index() });
+            }
+        }
+    }
+    std::ranges::sort(reads.atConstants);
+    std::ranges::sort(reads.others);
+    return reads;
+}
+
+const Walker::ConstantElementReads& Walker::constantElementReads()
+{
+    const BodyIndex& index = currentBodyIndex();
+    return m_constantElementReads.ensure(&index, [&] {
+        return findConstantElementReads(program(), index);
+    }).iterator->value;
+}
+
+std::optional<uint32_t> Walker::loopReadingConstantsAfter(const BodyValue& store)
+{
+    std::optional<uint32_t> place = m_frames.size() == 1 ? openLoopOfElement(store.id()) : std::nullopt;
+    if (!place)
+        return std::nullopt;
+    LoopID loop = m_openLoops[*place].loop;
+    const BodyLoop& record = currentBodyIndex().loop(loop);
+    if (record.parent || record.numberOfLoopsWithin != 1)
+        return std::nullopt;
+    const ConstantElementReads& reads = constantElementReads();
+    auto other = std::ranges::upper_bound(reads.others, std::pair { loop.index(), store.id().index() });
+    return other != reads.others.end() && other->first == loop.index() ? std::nullopt : place;
+}
+
+bool Walker::readsElementAfter(uint32_t openLoop, const BodyValue& store, int64_t position)
+{
+    const OpenLoop& loop = m_openLoops[openLoop];
+    const ConstantElementReads& reads = constantElementReads();
+    auto read = std::ranges::upper_bound(reads.atConstants, ConstantElementReads::AtConstant { loop.loop.index(), position, store.id().index() });
+    if (read != reads.atConstants.end() && read->loop == loop.loop.index() && read->position == position)
+        return true;
+    if (!loop.carriedResultCount)
+        return false;
+    const Vector<CarriedResult>& requests = m_carriedResultRequests.find(loop.carriedResultsSummary)->value;
+    return std::ranges::any_of(requests.span().first(loop.carriedResultCount), [&](const CarriedResult& request) {
+        return request.isElement && !request.isStruck && request.constantPosition && *request.constantPosition == position;
+    });
+}
+
 void Walker::carryStoredElement(const BodyValue& store, Reference array, Reference stored)
 {
     if (!stored || !stored.isValue() || !array || !array.isValue() || hasFailed() || isUnreachable())
         return;
-    std::span<const ElementRecurrence> recurrences = elementRecurrences();
-    auto recurrence = std::ranges::lower_bound(recurrences, store.id().index(), { }, [](const ElementRecurrence& each) { return each.store.index(); });
-    if (recurrence == recurrences.end() || recurrence->store != store.id())
+    const ElementRecurrences& recurrences = elementRecurrences();
+    auto recurrence = std::ranges::lower_bound(recurrences.stores, store.id().index(), { }, [](const RecurringAccess& each) { return each.id.index(); });
+    if (recurrence == recurrences.stores.end() || recurrence->id != store.id())
+        return;
+    std::span<const RecurringAccess> reads = std::ranges::equal_range(recurrences.reads, keyOfRecurrence(*recurrence), { }, keyOfRecurrence);
+    if (reads.empty())
         return;
     std::optional<uint32_t> place = openLoopOfElement(store.id());
     if (!place || !isInvariantInLoop(*place, array))
@@ -1939,25 +1982,27 @@ void Walker::carryStoredElement(const BodyValue& store, Reference array, Referen
     FunctionID copiedCallee = loop.frame == m_frames.size() - 1 ? FunctionID() : currentFunction();
     BlockID inputHead = m_frames[loop.frame].index->loop(loop.loop).head;
     ValueID root = underlyingCellOf(m_code, array.id());
-    for (; recurrence != recurrences.end() && recurrence->store == store.id(); ++recurrence) {
-        ValueID object = index.value(recurrence->read).objectOperand();
+    auto found = std::ranges::find_if(reads, [&](const RecurringAccess& each) {
+        if (each.id.index() > store.id().index() && index.dominates(index.blockOf(store.id()), index.blockOf(each.id)))
+            return false;
+        ValueID object = index.value(each.id).objectOperand();
         Reference read = copiedCallee ? Reference() : arrayNameAtHeader(*this, inputHead, object);
         if (!read)
             read = referenceOf(object);
-        if (read && read.isValue() && underlyingCellOf(m_code, read.id()) == root)
-            break;
-    }
-    if (recurrence == recurrences.end() || recurrence->store != store.id())
+        return read && read.isValue() && underlyingCellOf(m_code, read.id()) == root;
+    });
+    if (found == reads.end())
         return;
+    ValueID recurringRead = found->id;
 
     bool isInt32 = m_types.isSubset(type, TypeTable::int32);
-    auto isForRead = [&](const CarriedResult& requested) { return requested.isElement && requested.site == recurrence->read && requested.copiedCallee == copiedCallee; };
+    auto isForRead = [&](const CarriedResult& requested) { return requested.isElement && requested.site == recurringRead && requested.copiedCallee == copiedCallee; };
     Representation form = isInt32 ? Representation::Int32 : Representation::Double;
     auto request = [&] {
         if (m_trialVisits.isEmpty() || m_trialVisits.last().frameIndex != loop.frame || m_trialVisits.last().inputHead != inputHead)
             return;
         Vector<CarriedResult>& requests = m_carriedResultRequests.add(m_trialVisits.last().summaryIndex, Vector<CarriedResult> { }).iterator->value;
-        CarriedResult requested { recurrence->read, TypeID(isInt32 ? TypeTable::int32 : TypeTable::number), true, false, form };
+        CarriedResult requested { recurringRead, TypeID(isInt32 ? TypeTable::int32 : TypeTable::number), true, false, form };
         requested.copiedCallee = copiedCallee;
         if (recurrence->counterPosition == noCounter)
             requested.constantPosition = recurrence->offset;

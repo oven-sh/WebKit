@@ -213,7 +213,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySetOfAnyValue, EncodedJSValue, (I
 template<typename View>
 static JSArrayBufferView* plainSubarray(JSGlobalObject* globalObject, View* view, JSValue begin, JSValue end)
 {
-    if (!isFixed(view) || view->realm() != globalObject || !speciesWatchpointIsValid(globalObject, view)) [[unlikely]]
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!isFixed(view) || view->realm() != globalObject) [[unlikely]]
+        return nullptr;
+    bool hasOwnSpecies = !speciesWatchpointIsValid(globalObject, view);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (hasOwnSpecies) [[unlikely]]
         return nullptr;
     int64_t length = view->lengthRaw();
     auto placeOf = [&](JSValue position, int64_t otherwise) {
@@ -228,7 +233,7 @@ static JSArrayBufferView* plainSubarray(JSGlobalObject* globalObject, View* view
     if (!buffer) [[unlikely]]
         return nullptr;
     Structure* structure = globalObject->typedArrayStructure(View::TypedArrayStorageType, false);
-    return View::create(globalObject, structure, WTF::move(buffer), view->byteOffsetRaw() + (static_cast<size_t>(first) << logElementSize(View::TypedArrayStorageType)), static_cast<size_t>(last - first));
+    RELEASE_AND_RETURN(scope, View::create(globalObject, structure, WTF::move(buffer), view->byteOffsetRaw() + (static_cast<size_t>(first) << logElementSize(View::TypedArrayStorageType)), static_cast<size_t>(last - first)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySubarrayOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedBegin, EncodedJSValue encodedEnd))

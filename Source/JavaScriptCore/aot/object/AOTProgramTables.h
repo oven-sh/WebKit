@@ -15,6 +15,7 @@
 #include "AOTPagedBitSet.h"
 #include "AOTRuntimeType.h"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <compare>
 #include <iterator>
@@ -326,6 +327,11 @@ struct ProgramTables {
     }
     NEVER_INLINE const FunctionRecordData& unsharedRecordOfFunction(uint32_t function) const
     {
+        static constinit std::atomic<const ProgramTables*> checkedTables { nullptr };
+        if (checkedTables.load(std::memory_order_relaxed) != this) [[unlikely]] {
+            RELEASE_ASSERT(areUnsharedRecordsConsistent());
+            checkedTables.store(this, std::memory_order_relaxed);
+        }
         return findRequiredEntry(unsharedFunctionRecords(), function, &UnsharedFunctionRecordData::function).record;
     }
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }

@@ -1,8 +1,8 @@
 # class Point { constructor() { this.x = 1; } }  class Holder { constructor() { this.held = new Point(); } }  function prepare(h) { h.held.a = 0.5; h.held.b = 1.5; .. h.held.f = 5.5; return h.held.a; }
-# Six reads of one name off one object give one object. If each counted by itself, no function would fill all the late fields of Point.
+# Six reads of one name off one object give one object. The others of its class need no room for what it gets: the names lie in the extension. A loop that fills every element gives them room.
 # RUN: plan layouts mechanisms=all
-# CHECK: slot {{*}} "a" appended {{*}} Inline
-# CHECK: slot {{*}} "f" appended {{*}} Inline
+# CHECK: slot {{*}} "a" appended {{*}} OutOfLine
+# CHECK: slot {{*}} "f" appended {{*}} OutOfLine
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
 # SHELL: 0.5 5.5
 # SHELL: exited with 0
