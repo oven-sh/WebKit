@@ -35,13 +35,13 @@ static_assert(std::ranges::none_of(allMembersOf<Opcode>, [](Opcode opcode) { ret
 
 static constexpr uint8_t wireFlagsInByteOf(Opcode opcode) { return static_cast<uint8_t>(wireFlagsOf(opcode)); }
 static constexpr uint8_t mayBeTakenByFewUsesMarkOfOpcode = 1 << 0;
-static constexpr uint8_t mayNameIterationsMarkOfOpcode = 1 << 1;
+static constexpr uint8_t isFiledInBodyIndexMarkOfOpcode = 1 << 1;
 static constexpr uint8_t namesVariableOrLoadsModuleMarkOfOpcode = 1 << 2;
 static constexpr bool mayBeTakenByFewUsesInVerifiedBody(Opcode opcode) { return opcodesWithoutResultInVerifiedBodies.contains(opcode) || definitionsThatFewOperandsTakeInVerifiedBodies.contains(opcode); }
 
 static constexpr uint8_t marksOfOpcodeInVerifiedBody(Opcode opcode)
 {
-    return (mayBeTakenByFewUsesInVerifiedBody(opcode) ? mayBeTakenByFewUsesMarkOfOpcode : 0) | (opcodesThatMayNameIterationsInBodyIndex.contains(opcode) ? mayNameIterationsMarkOfOpcode : 0)
+    return (mayBeTakenByFewUsesInVerifiedBody(opcode) ? mayBeTakenByFewUsesMarkOfOpcode : 0) | (opcodesFiledInBodyIndex.contains(opcode) ? isFiledInBodyIndexMarkOfOpcode : 0)
         | (namesVariableOrLoadsModule(opcode) ? namesVariableOrLoadsModuleMarkOfOpcode : 0);
 }
 
@@ -279,11 +279,11 @@ ALWAYS_INLINE void BodyVerifier::verifyWordsOfValue(CheckedBodyWords<report>& wo
     if (opcodeWord & Wire::WrittenPositionFollows)
         words.skip(1);
     if constexpr (report == WordsReport::No) {
-        if ((marks & (mayNameIterationsMarkOfOpcode | namesVariableOrLoadsModuleMarkOfOpcode) || opcodeWord & Wire::WrittenPositionFollows) && !words.hasFailed()) [[unlikely]] {
+        if ((marks & (isFiledInBodyIndexMarkOfOpcode | namesVariableOrLoadsModuleMarkOfOpcode) || opcodeWord & Wire::WrittenPositionFollows) && !words.hasFailed()) [[unlikely]] {
             BodyValue operation = BodyValue::operation(&m_body.words()[offsetOfHead], &m_body.unit(), value);
             if (marks & namesVariableOrLoadsModuleMarkOfOpcode)
                 m_scratch.mentionsInCode->noteWhatValueNames(operation);
-            if (marks & mayNameIterationsMarkOfOpcode || opcodeWord & Wire::WrittenPositionFollows)
+            if (marks & isFiledInBodyIndexMarkOfOpcode || opcodeWord & Wire::WrittenPositionFollows)
                 m_builderOfIndex->fileWhatFewOperationsBring(operation, block);
         }
     }

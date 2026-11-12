@@ -467,26 +467,9 @@ static Reference buildParsedIntegerOfFractionInNumberBuiltins(Walker& walker, co
     return !arms.isEmpty() && walker.joinArms(arms.span(), walker.addBlock(), met) ? met[0] : Reference();
 }
 
-static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallByOneRow& call)
+static Reference buildParseOfProvenNumber(Walker& walker, const CallByOneRow& call, Reference number, bool parsesInteger)
 {
-    const BuiltinTable& table = walker.program().builtins();
-    BuiltinID builtin = table.canonicalID(call.builtin);
-    bool parsesInteger = builtin == table.canonicalID(Builtins::ParseInt);
-    if ((!parsesInteger && builtin != table.canonicalID(Builtins::ParseFloat)) || call.call.opcode() != Opcode::Call || call.isForwarded || !walker.has(Mechanism::Folding))
-        return { };
-    std::span<const ValueID> arguments = argumentsWrittenInNumberBuiltins(call.call);
-    if (arguments.empty() || !arguments[0])
-        return { };
-    Reference number = walker.referenceOf(arguments[0]);
     Type type = typeOfBuiltInNumberBuiltins(walker, number);
-    if (!type.isNumber())
-        return { };
-    if (parsesInteger && arguments.size() > 1) {
-        PrimitiveKnownToFolding radix = arguments[1] ? primitiveKnownInNumberForms(walker, walker.referenceOf(arguments[1])) : PrimitiveKnownToFolding();
-        bool isDecimal = radix.kind() == PrimitiveKnownToFolding::Kind::Undefined || (radix.kind() == PrimitiveKnownToFolding::Kind::Number && (!radix.asNumber() || radix.asNumber() == 10));
-        if (!isDecimal)
-            return { };
-    }
     if (type.isInteger())
         return number;
     if (PrimitiveKnownToFolding known = primitiveKnownInNumberForms(walker, number); known.kind() == PrimitiveKnownToFolding::Kind::Number) {
@@ -498,6 +481,82 @@ static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallBy
     const BodyIndex& index = walker.currentBodyIndex();
     bool standsInLoop = walker.isInLoop() || index.loopDepthOf(index.blockOf(call.call.id()));
     return standsInLoop && walker.opensGuesses() && number.isValue() ? buildParsedIntegerOfFractionInNumberBuiltins(walker, call, number) : Reference();
+}
+
+static Reference buildParseBehindTest(Walker& walker, const CallByOneRow& call, Reference value, TypeID tested, bool parsesInteger)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BlockID inputBlock = index.blockOf(call.call.id());
+    uint32_t place = call.call.id().index() - index.block(inputBlock).firstValue().index();
+
+    Draft question(Opcode::TypeTest, call.origin);
+    question.setValueOperand(value);
+    question.setTestedType(tested);
+    Reference isNumber = walker.build(WTF::move(question));
+    if (!isNumber)
+        return { };
+    BlockID holdsNumber = walker.addBlock();
+    BlockID holdsOther = walker.addBlock(walker.types().at(walker.typeOf(value)).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) ? BlockFrequency::Rare : BlockFrequency::Normal);
+    walker.branch(isNumber, holdsNumber, holdsOther);
+
+    Vector<Walker::JoinArm, 2> arms;
+    auto walkAsWritten = [&] {
+        if (walker.isUnreachable() || walker.hasFailed())
+            return;
+        Walker::ClosedArm closedArm(walker);
+        walker.walkStretch(inputBlock, place, place + 1);
+        if (!walker.isUnreachable() && !walker.hasFailed())
+            arms.append(Walker::JoinArm { walker.currentBlock(), { walker.referenceOf(call.call.id()) } });
+    };
+    walker.continueIn(holdsNumber);
+    if (!walker.isUnreachable()) {
+        Draft narrowed(Opcode::Narrowed, call.origin);
+        narrowed.setValueOperand(value);
+        narrowed.setTestOperand(isNumber);
+        narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+        narrowed.setIsOnTakenEdge(true);
+        Reference number = walker.build(WTF::move(narrowed));
+        Reference parsed = number ? buildParseOfProvenNumber(walker, call, number, parsesInteger) : Reference();
+        if (parsed && !walker.hasFailed() && !walker.isUnreachable())
+            arms.append(Walker::JoinArm { walker.currentBlock(), { parsed } });
+        else
+            walkAsWritten();
+    }
+    walker.continueIn(holdsOther);
+    walkAsWritten();
+    if (walker.hasFailed())
+        return { };
+    std::array<Reference, 1> met;
+    return !arms.isEmpty() && walker.joinArms(arms.span(), walker.addBlock(), met) ? met[0] : Reference();
+}
+
+static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallByOneRow& call)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID builtin = table.canonicalID(call.builtin);
+    bool parsesInteger = builtin == table.canonicalID(Builtins::ParseInt);
+    if ((!parsesInteger && builtin != table.canonicalID(Builtins::ParseFloat)) || call.call.opcode() != Opcode::Call || call.isForwarded || !walker.has(Mechanism::Folding))
+        return { };
+    std::span<const ValueID> arguments = argumentsWrittenInNumberBuiltins(call.call);
+    if (arguments.empty() || !arguments[0])
+        return { };
+    Reference value = walker.referenceOf(arguments[0]);
+    Type type = typeOfBuiltInNumberBuiltins(walker, value);
+    bool isNumber = type.isNumber();
+    const BodyIndex& index = walker.currentBodyIndex();
+    bool standsInLoop = walker.isInLoop() || index.loopDepthOf(index.blockOf(call.call.id()));
+    bool mayBeNumber = !isNumber && !index.isUnused(call.call.id()) && walker.opensGuesses() && value && value.isValue() && type.isJavaScriptValue() && walker.types().overlap(walker.typeOf(value), TypeTable::number);
+    bool asksWhole = standsInLoop && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+    TypeID tested = asksWhole ? TypeTable::number : TypeTable::int32;
+    if (!isNumber && (!mayBeNumber || !walker.types().overlap(walker.typeOf(value), tested)))
+        return { };
+    if (parsesInteger && arguments.size() > 1) {
+        PrimitiveKnownToFolding radix = arguments[1] ? primitiveKnownInNumberForms(walker, walker.referenceOf(arguments[1])) : PrimitiveKnownToFolding();
+        bool isDecimal = radix.kind() == PrimitiveKnownToFolding::Kind::Undefined || (radix.kind() == PrimitiveKnownToFolding::Kind::Number && (!radix.asNumber() || radix.asNumber() == 10));
+        if (!isDecimal)
+            return { };
+    }
+    return isNumber ? buildParseOfProvenNumber(walker, call, value, parsesInteger) : buildParseBehindTest(walker, call, value, tested, parsesInteger);
 }
 
 Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)

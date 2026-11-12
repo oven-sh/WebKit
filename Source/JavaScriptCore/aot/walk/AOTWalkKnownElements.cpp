@@ -48,11 +48,11 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
     std::optional<PassedTest> below = fromZeroUp ? findUpperBoundProof(position, length) : std::nullopt;
     if (below)
         return boundsProofFromChecks(list, position, length, *fromZeroUp, *below);
-    if (std::optional<PassedTest> lowered = fromZeroUp ? findLoweredCounterProof(list, position, length) : std::nullopt)
+    if (std::optional<PassedTest> lowered = length ? findLoweredCounterProof(list, position, length) : std::nullopt)
         return lowered;
     if (std::optional<PassedTest> stepped = fromZeroUp ? findSteppedKeyProof(list, position, length) : std::nullopt)
         return stepped;
-    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : std::nullopt;
+    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : showPositionInsideBehindStartOfCounter(list, position, length);
 }
 
 std::optional<PassedTest> Walker::findElementFoundAfter(Reference list, Reference position)
@@ -77,29 +77,40 @@ std::optional<PassedTest> Walker::findElementFoundAfter(Reference list, Referenc
     return std::nullopt;
 }
 
-static bool isTermTestedAsIndex(const Code& code, const Operation& narrowed, bool isWholePosition)
+static bool isSumInKnownElements(const Code& code, ValueID value)
 {
     static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    while (valuePreservingOpcodes.contains(code.at(value).opcode))
+        value = code.at(value).operand(0);
+    return sums.contains(code.at(value).opcode);
+}
+
+static bool isTermTestedAsIndex(const Code& code, const Operation& narrowed, bool isWholePosition, bool lengthIsSum)
+{
     if (!narrowed.testOperand())
         return false;
     const Operation& test = code.at(narrowed.testOperand());
     if (!allRelations.contains(test.opcode) || test.form() != OperatorForm::Integers || narrowed.operandIndex() > 1)
         return false;
-    if (!isWholePosition)
-        return true;
-    ValueID bound = test.operand(1 - narrowed.operandIndex());
-    while (valuePreservingOpcodes.contains(code.at(bound).opcode))
-        bound = code.at(bound).operand(0);
-    return sums.contains(code.at(bound).opcode);
+    return !isWholePosition || lengthIsSum || isSumInKnownElements(code, test.operand(1 - narrowed.operandIndex()));
 }
 
 std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length)
 {
     if (!list.isRecord() || !position.isValue() || !length.isRecord())
         return std::nullopt;
+    bool lengthIsSum = isSumInKnownElements(m_code, length.id());
+    GroundsOfPosition groundsByLength { .view = list.id(), .position = position.id(), .length = length.id() };
+    if (lengthIsSum && m_inputs.options.shouldSkipBoundsProof) {
+        PassedTest taken;
+        taken.m_groundsOfPosition = groundsByLength;
+        return taken;
+    }
+    if (std::optional<PassedTest> shown = lengthIsSum ? showPositionInside(groundsByLength) : std::nullopt)
+        return shown;
     for (ValueID term = position.id(); term && !m_code.isConstant(term);) {
         const Operation& record = m_code.at(term);
-        bool isTermTested = record.opcode == Opcode::Narrowed && !record.narrowsTermOfOperand() && isTermTestedAsIndex(m_code, record, term == position.id());
+        bool isTermTested = record.opcode == Opcode::Narrowed && !record.narrowsTermOfOperand() && isTermTestedAsIndex(m_code, record, term == position.id(), lengthIsSum);
         if (isTermTested || (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand())) {
             GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowResult = record.isOnTakenEdge() };
             std::optional<PassedTest> shown = m_inputs.options.shouldSkipBoundsProof ? findPassedTest(referenceTo(grounds.isBelow), grounds.isBelowResult) : showPositionInside(grounds);
@@ -378,6 +389,12 @@ static Reference constantOfElement(Walker& walker, const DataNode& element)
     }
 }
 
+Reference elementOfConstantArray(Walker& walker, DataID data, uint32_t position)
+{
+    const auto* array = walker.program().at(data).root.tryAs<DataNode::Array>();
+    return array && position < array->elements.size() ? constantOfElement(walker, array->elements[position]) : Reference();
+}
+
 Reference elementWrittenInListMadeInSight(Walker& walker, const WalkState& state, Reference list, uint32_t position)
 {
     if (!list || !list.isValue() || !findKnown(walker, state, KnownNote::StorageOfListMadeInSight, list))
@@ -389,12 +406,19 @@ Reference elementWrittenInListMadeInSight(Walker& walker, const WalkState& state
 
 static constexpr uint32_t mostElementsCompared = 12;
 
-static Reference buildMembershipAmong(Walker& walker, std::span<const Reference> elements, Reference sought, Origin origin)
+static Reference buildSearchAmong(Walker& walker, std::span<const Reference> elements, Reference sought, AnswerOfSearch answer, Origin origin)
 {
     Vector<Walker::JoinArm, mostElementsCompared + 1> arms;
-    auto addArm = [&](bool isFound) {
-        arms.append({ walker.currentBlock(), { walker.constant(PrimitiveKnownToFolding::boolean(isFound)) } });
+    auto addArm = [&](std::optional<uint32_t> place) {
+        if (answer == AnswerOfSearch::Membership) {
+            arms.append({ walker.currentBlock(), { walker.constant(PrimitiveKnownToFolding::boolean(place.has_value())) } });
+            return;
+        }
+        Draft number(Opcode::Integer, origin);
+        number.setInteger(place ? static_cast<int64_t>(*place) : -1);
+        arms.append({ walker.currentBlock(), { walker.constant(WTF::move(number)) } });
     };
+    uint32_t place = 0;
     for (Reference element : elements) {
         Reference isEqual = buildOperatorForStrings(walker, Opcode::StrictEq, sought, element, origin);
         if (!isEqual || walker.isUnreachable())
@@ -404,13 +428,14 @@ static Reference buildMembershipAmong(Walker& walker, std::span<const Reference>
         walker.branch(isEqual, found, next);
         walker.continueIn(found);
         if (!walker.isUnreachable())
-            addArm(true);
+            addArm(place);
         walker.continueIn(next);
         if (walker.isUnreachable())
             break;
+        ++place;
     }
     if (!walker.isUnreachable())
-        addArm(false);
+        addArm(std::nullopt);
     if (walker.hasFailed() || arms.isEmpty())
         return { };
     Reference met;
@@ -420,7 +445,7 @@ static Reference buildMembershipAmong(Walker& walker, std::span<const Reference>
     return met;
 }
 
-Reference buildMembershipInWrittenList(Walker& walker, DataID data, Reference sought, Origin origin)
+Reference buildSearchInWrittenList(Walker& walker, DataID data, Reference sought, AnswerOfSearch answer, Origin origin)
 {
     const auto* list = walker.program().at(data).root.tryAs<DataNode::Array>();
     if (!list || !sought || walker.isUnreachable() || list->elements.size() > mostElementsComparedInLoop)
@@ -433,10 +458,10 @@ Reference buildMembershipInWrittenList(Walker& walker, DataID data, Reference so
         elements.append(element);
     }
     origin.isTailCall = false;
-    return buildMembershipAmong(walker, elements.span(), sought, origin);
+    return buildSearchAmong(walker, elements.span(), sought, answer, origin);
 }
 
-Reference buildMembershipInListMadeInSight(Walker& walker, Reference list, Reference sought, Origin origin)
+Reference buildSearchInListMadeInSight(Walker& walker, Reference list, Reference sought, AnswerOfSearch answer, Origin origin)
 {
     if (!list || !list.isValue() || !sought || walker.isUnreachable())
         return { };
@@ -454,7 +479,7 @@ Reference buildMembershipInListMadeInSight(Walker& walker, Reference list, Refer
 
     checkLengthOfListMadeInSight(walker, list, *length, origin);
     origin.isTailCall = false;
-    return buildMembershipAmong(walker, elements.span(), sought, origin);
+    return buildSearchAmong(walker, elements.span(), sought, answer, origin);
 }
 
 void checkLengthOfListMadeInSight(Walker& walker, Reference list, uint32_t length, Origin origin)

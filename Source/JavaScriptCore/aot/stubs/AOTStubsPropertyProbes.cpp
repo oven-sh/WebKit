@@ -468,7 +468,7 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     computeFieldAddress(jit, field, false, otherwise);
     JumpList isPresent;
     JumpList isAbsentInObjectWithEveryFieldInItsSlot;
-    branchOnFieldPresence(jit, field, T10, isPresent, isAbsentInObjectWithEveryFieldInItsSlot);
+    branchOnFieldPresence(jit, field, T10, isPresent, isAbsentInObjectWithEveryFieldInItsSlot, otherwise);
 
     static_assert(!uncreatedDeferredClosure);
     isPresent.link(&jit);
@@ -1433,7 +1433,7 @@ void CachedSlot::loadOwnWordIndex(StubAssembler& jit, GPRReg result) const
         jit.signExtend32ToPtr(m_payload, result);
         return;
     }
-    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition || payload == SlotPayload::Removal);
+    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition || payload == SlotPayload::Removal || (payload == SlotPayload::Key && m_form == SlotForm::Slot));
     if (payload == SlotPayload::Holder && m_form == SlotForm::PackedSlot)
         jit.signExtend32ToPtr(m_header, result);
     else
@@ -1546,6 +1546,16 @@ void CachedSlot::loadVariableBase(StubAssembler& jit, GPRReg receiver, GPRReg re
     hasBase.link(&jit);
 }
 
+void loadKeyOfProxySlot(StubAssembler& jit, SlotForm form, GPRReg header, GPRReg key, JumpList& isForNoProxies)
+{
+    RELEASE_ASSERT(noOverlap(header, key));
+    if (form == SlotForm::PackedSlot)
+        jit.zeroExtend32ToWord(header, key);
+    isForNoProxies.append(jit.branchTest64(CCallHelpers::Zero, key));
+    if (form == SlotForm::PackedSlot)
+        decodeCell32(jit, key, key);
+}
+
 void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
 {
     if (m_form == SlotForm::Slot) {
@@ -1554,8 +1564,13 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     }
     RELEASE_ASSERT(result != m_header);
     switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::Key: {
+        JumpList hasNoKey;
+        loadKeyOfProxySlot(jit, m_form, m_header, result, hasNoKey);
+        hasNoKey.link(&jit);
+        return;
+    }
     case SlotPayload::None:
-    case SlotPayload::Key:
         jit.move(TrustedImm32(0), result);
         return;
     case SlotPayload::Holder: {

@@ -37,11 +37,17 @@ enum class KnownNote : uint8_t {
     HolderOfBuiltinHasNoAddedNames,
     RoomOfViewIsAsInFrontOfLoop,
     VectorOfView,
+    MirroredLengthOfView,
+    MirroredVectorOfView,
+    MirroredLengthOfBuffer,
+    MirroredVectorOfBuffer,
     NoExtraPropertyUnderKey,
     IsOfNoneOfLayouts,
     StorageOfListMadeInSight,
     PlaceOfKeyInMap,
+    KeyIsAbsentFromMap,
     VariableIsAsInFrontOfLoop,
+    LoopBoundElementUnchanged,
     NeverLiesBelow,
     NeverAbove,
     LengthOfViewIsFoundAbove,
@@ -49,8 +55,12 @@ enum class KnownNote : uint8_t {
     ElementReadUnderNumber,
     StructureOfClassIsSeen,
     ArrayNameOfInstance,
+    SubclassOfArrayName,
+    ElementsOfSubclassAreSeen,
     ValueOfFieldOfHeir,
     LoopAppendsToLiteral,
+    StaticFieldInVariable,
+    StaticFieldValue,
     LengthEqualsInitialCounter,
     FinalLiteralLength,
     CapacityForRemainingIterations,
@@ -67,8 +77,18 @@ enum class KnownNote : uint8_t {
     FieldArrayInPreheader,
     HoistedUnknownField,
     CarriedResult,
+    CarriedElement,
+    CarriedField,
+    WordOfNumber,
     WideSum,
     LowBitsOfWideSum,
+    PositionBelowLength,
+    LastIndexOfRegExp,
+    NumberOfText,
+    ElementOfPresenceTest,
+};
+inline constexpr AbstractHeapSet elementGuardHeaps {
+    AbstractHeap::ArrayStorage, AbstractHeap::Elements, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::ShapeWords
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
@@ -107,6 +127,9 @@ bool writerEndsNoGuard(const Walker&, const Draft&);
 bool allocatesNewCell(const Operation&);
 std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker&, const Draft&, const Effects&);
 std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker&, const TerminatorDraft&, const Effects&);
+bool writesReceiverArrayAlone(const Walker&, const Draft& call, const Effects&);
+bool writesReceiverArrayAlone(const TerminatorDraft&, const Effects&);
+void endWhatIsWrittenInFreshArray(Walker&, Reference array, const Effects&);
 bool mayBeSameObject(Walker&, Reference, Reference);
 bool isOfLayoutAlone(Walker&, Reference, LayoutID);
 
@@ -144,7 +167,8 @@ struct WrittenListOfVariable {
 };
 WrittenListOfVariable writtenListThatVariableHolds(Walker&, VariableID);
 WrittenListOfVariable writtenListReadBy(Walker&, ValueID input);
-Reference buildMembershipInWrittenList(Walker&, DataID, Reference sought, Origin);
+enum class AnswerOfSearch : uint8_t { Membership, Place };
+Reference buildSearchInWrittenList(Walker&, DataID, Reference sought, AnswerOfSearch, Origin);
 WrittenListOfVariable literalArrayInInstance(Walker&, FieldReference);
 bool isReadOutOfVariableOfFileThatStays(Walker&, ValueID input);
 void noteStorageOfWrittenList(Walker&, Reference list, const WrittenListOfVariable&);
@@ -152,7 +176,8 @@ bool nameStorageOfListMadeInSight(Walker&, Draft& read);
 std::optional<uint32_t> lengthOfListMadeInSight(Walker&, Reference list);
 std::optional<uint32_t> lengthOfListMadeInSight(const Walker&, const WalkState&, Reference list);
 Reference elementWrittenInListMadeInSight(Walker&, Reference list, uint32_t position);
-Reference buildMembershipInListMadeInSight(Walker&, Reference list, Reference sought, Origin);
+Reference elementOfConstantArray(Walker&, DataID, uint32_t position);
+Reference buildSearchInListMadeInSight(Walker&, Reference list, Reference sought, AnswerOfSearch, Origin);
 Reference elementWrittenInListMadeInSight(Walker&, const WalkState&, Reference list, uint32_t position);
 void checkLengthOfListMadeInSight(Walker&, Reference list, uint32_t length, Origin);
 struct WhatListWasMadeWith {

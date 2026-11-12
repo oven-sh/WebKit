@@ -140,6 +140,11 @@ ALWAYS_INLINE unsigned UnlinkedMetadataTable::addValueProfile()
 {
     ASSERT(!m_isFinalized);
     m_hasMetadata = true;
+    // Nobody reads them where compiled code runs and no JIT: all operations share one.
+    if (Options::runsCompiledImage()) {
+        m_numValueProfiles = 1;
+        return 1;
+    }
     // Preinecrement because we want the first value profile's offset to be 1, since it's negative indexed.
     return ++m_numValueProfiles;
 }

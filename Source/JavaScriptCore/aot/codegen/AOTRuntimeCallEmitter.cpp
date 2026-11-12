@@ -915,7 +915,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RELEASE_ASSERT(!branchesOnFlags || resultKind == StubResult::Flags);
 
     std::optional<Effects> effectsOfCalleeSayingLess;
-    if (m_options.understatedEffects) [[unlikely]] {
+    if (generator().watchesCalls()) [[unlikely]]
+        generator().zeroCountsAtCall(*request.effectsOfCallee);
+    if (generator().watchesCalls() && m_options.understatedEffects) [[unlikely]] {
         effectsOfCalleeSayingLess = *request.effectsOfCallee;
         UnderstatedEffects row = UnderstatedEffects::decode(m_options.understatedEffects);
         if (request.entry)
@@ -990,9 +992,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Machine::PatchOperation* patchpoint = m_out.patchpoint(type);
     patchpoint->effects.terminal = !returns;
-    patchpoint->setNeedsFrameRecord(shape->needsFrameRecord);
-    patchpoint->setFindsOperandsInFrameWithoutRecord(true);
-    patchpoint->setRunsWithoutFrame(!hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
+    patchpoint->describeNewCall(shape->needsFrameRecord, !hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
     RELEASE_ASSERT(!patchpoint->runsWithoutFrame() || !calleeMayCollect);
 
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
@@ -1050,7 +1050,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     const ThrowSite* throwSite = options.throwSite ? m_proc.arena().create<ThrowSite>(*options.throwSite) : nullptr;
     const OperationCall* preservingCall = request.preservingCall ? m_proc.arena().create<OperationCall>(*request.preservingCall) : nullptr;
-    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides });
+    patchpoint->makeGenerator<CallGenerator>(&m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides);
     if (mayBeShared)
         m_out.recordPurePatch(patchpoint);
 
@@ -1191,7 +1191,7 @@ RuntimeCallEmitter::DeedsInFrontOfQuietCall RuntimeCallEmitter::countDeedOf(cons
     count->effects.writesLocalState = true;
     count->setRunsWithoutFrame(true);
     count->clobber(RegisterSet::macroClobberedGPRs());
-    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex || context.opcode() == Opcode::PutOwnInt32Index || context.opcode() == Opcode::RestoreArrayStore || context.opcode() == Opcode::PutPropertyOfHeir || context.opcode() == Opcode::PutGlobalBinding || context.opcode() == Opcode::PutKeyedProperty) && context->undoesIterationStore() ? -1 : 1;
+    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex || context.opcode() == Opcode::PutOwnInt32Index || context.opcode() == Opcode::RestoreArrayStore || context.opcode() == Opcode::RestoreElementWord || context.opcode() == Opcode::PutPropertyOfHeir || context.opcode() == Opcode::PutGlobalBinding || context.opcode() == Opcode::PutKeyedProperty) && context->undoesIterationStore() ? -1 : 1;
     count->setGenerator([all, loud, step, runsOtherCode = traits.mayRunOtherCode()](CCallHelpers& jit, const Machine::PatchParameters&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.add64(CCallHelpers::TrustedImm32(step), CCallHelpers::Address(instanceGPR, all));
@@ -1444,7 +1444,7 @@ void RuntimeCallEmitter::keepWordsOfVariablesThatUnitStores(WatchOfEffects& watc
             if (operation.opcode != Opcode::PutModuleVariable || !operation.block())
                 continue;
             PlannedVariable planned = m_plan.variable(operation.variable());
-            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && !m_variablesThatUnitStores->contains(operation.variable()))
+            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && !m_plan.deferredDefinitions().findDeferred(operation.variable()) && !m_variablesThatUnitStores->contains(operation.variable()))
                 m_variablesThatUnitStores->append(operation.variable());
         }
     }
@@ -1647,6 +1647,8 @@ Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const Operatio
             computedEffects->mayThrow = false;
     }
 
+    if (generator().watchesCalls()) [[unlikely]]
+        generator().zeroCountsAtCall(request.effects);
     Machine::PatchOperation* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);

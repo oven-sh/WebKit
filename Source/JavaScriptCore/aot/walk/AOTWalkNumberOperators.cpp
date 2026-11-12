@@ -12,6 +12,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTRepresentationRules.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkNumberGuesses.h"
 #include "JSGlobalObjectFunctions.h"
 #include <array>
@@ -387,8 +388,39 @@ static bool isIdentityElementOfBitOperator(Opcode opcode, uint32_t operandIndex,
     }
 }
 
+static Reference stripSumWithZero(const Walker& walker, Reference number)
+{
+    auto nameOf = [&](ValueID operand) {
+        return walker.code().isConstant(operand) ? Reference::constant(operand) : Reference::value(operand);
+    };
+    while (number.isValue() && !walker.code().isConstant(number.id())) {
+        const Operation& sum = walker.code().at(number.id());
+        if (sum.opcode == Opcode::Unbox && walker.types().at(walker.typeOf(nameOf(sum.valueOperand()))).isNumber()) {
+            number = nameOf(sum.valueOperand());
+            continue;
+        }
+        if (sum.opcode != Opcode::Add || sum.form() != OperatorForm::Numbers)
+            break;
+        uint32_t term = integerKnownInNumberForms(walker, nameOf(sum.operand(1))) == std::optional<int64_t>(0) ? 0 : 1;
+        if (term && integerKnownInNumberForms(walker, nameOf(sum.operand(0))) != std::optional<int64_t>(0))
+            break;
+        Reference other = nameOf(sum.operand(term));
+        if (!walker.types().at(walker.typeOf(other)).isNumber())
+            break;
+        number = other;
+    }
+    return number;
+}
+
 static Reference buildConversionInNumberOperators(Walker& walker, Opcode conversion, Reference number, Origin origin)
 {
+    if (conversion == Opcode::ToInt32 && number && number.isValue()) {
+        bool isSumWithZero = !walker.code().isConstant(number.id()) && walker.code().at(number.id()).opcode == Opcode::Add;
+        if (isSumWithZero)
+            number = stripSumWithZero(walker, number);
+        if (std::optional<uint64_t> word = findKnown(walker, KnownNote::WordOfNumber, number))
+            return Reference::fromBits(static_cast<uint32_t>(*word));
+    }
     Draft draft(conversion, origin);
     walker.chooseConservativeFields(draft);
     draft.setValueOperand(number);
@@ -569,8 +601,10 @@ static bool standsInFrontOfLoopAroundInNumberOperators(Walker& walker, const Bod
     if (!loop || !reference.isValue())
         return false;
     BodyBlock head = index.block(index.loop(loop).head);
-    if (!head.numberOfParameters())
-        return false;
+    if (!head.numberOfParameters()) {
+        std::optional<uint32_t> open = walker.innermostOpenLoop();
+        return open && walker.standsInFrontOfOpenLoop(*open, reference);
+    }
     Reference first = walker.referenceBoundTo(head.parameter(0));
     if (!first.isValue())
         return false;
@@ -583,6 +617,8 @@ static bool standsInFrontOfLoopAroundInNumberOperators(Walker& walker, const Bod
     BlockID block = code.blockOf(reference.id());
     return block && block.index() < parameter.block().index();
 }
+
+Reference roundBoundBeforeLoop(Walker&, Opcode relation, Origin, Reference bound, bool boundIsOnLeft);
 
 static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const BodyValue& relation, const OperandsInNumberOperators& operands)
 {
@@ -615,6 +651,14 @@ static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const Bo
         if (!standsInFrontOfLoopAroundInNumberOperators(walker, relation, number.reference))
             return false;
 
+        std::array<Reference, 2> compared { operands[0].reference, operands[1].reference };
+        bool canCheckBound = number.type.primitives & Primitive::Integer && walker.has(Mechanism::Guesses) && walker.opensGuesses() && walker.isInvariantInSpecializedVersion(number.reference, Walker::IterationPurity::KnownEffectsOnly);
+        if (Reference integer = canCheckBound ? roundBoundBeforeLoop(walker, relation.opcode(), originInFrontOfNumberOperator(walker, relation), number.reference, !numberIndex) : Reference()) {
+            compared[numberIndex] = integer;
+            return buildOnOperandsInNumberOperators(walker, relation, compared);
+        }
+        if (walker.hasFailed())
+            return true;
         Draft bound(Opcode::IntegerBound, originInFrontOfNumberOperator(walker, relation));
         walker.chooseConservativeFields(bound);
         bound.setNumberOperand(number.reference);
@@ -623,12 +667,78 @@ static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const Bo
         Reference rounded = walker.build(WTF::move(bound));
         if (!rounded)
             return true;
-        std::array<Reference, 2> compared { operands[0].reference, operands[1].reference };
         if (walker.code().blockOf(rounded.id()) != walker.currentBlock())
             compared[numberIndex] = rounded;
         return buildOnOperandsInNumberOperators(walker, relation, compared);
     }
     return false;
+}
+
+int64_t tightenBoundOfSteppedCounter(Walker& walker, const BodyIndex& index, Opcode relation, ValueID counter, int64_t bound)
+{
+    constexpr int64_t greatest = std::numeric_limits<int32_t>::max();
+    if ((relation != Opcode::Less && relation != Opcode::LessEq) || !counter || !index.isParameter(counter) || std::abs(bound) > greatest)
+        return bound;
+    BlockID head = index.blockOf(counter);
+    LoopID loop = index.loopOf(head);
+    if (!loop || index.loop(loop).head != head)
+        return bound;
+    uint32_t place = counter.index() - index.block(head).firstParameter().index();
+    auto writtenInteger = [&](ValueID value) -> std::optional<int64_t> {
+        value = index.stripCasts(value);
+        if (!value || index.isParameter(value) || index.opcodeOf(value) != Opcode::Integer)
+            return std::nullopt;
+        int64_t integer = index.value(value).as<Opcode::Integer>().integer();
+        return std::abs(integer) <= greatest ? std::optional(integer) : std::nullopt;
+    };
+    std::optional<int64_t> start;
+    std::optional<int64_t> step;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, head)) {
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID passed = place < arguments.size() ? index.stripCasts(arguments[place]) : ValueID();
+        if (!passed || index.isParameter(passed))
+            return bound;
+        std::optional<int64_t>& known = index.isInLoop(edge.from, loop) ? step : start;
+        std::optional<int64_t> found;
+        if (&known == &start)
+            found = writtenInteger(passed);
+        else if (index.opcodeOf(passed) == Opcode::Add && index.stripCasts(index.value(passed).operand(0)) == counter)
+            found = writtenInteger(index.value(passed).operand(1));
+        if (!found || known.value_or(*found) != *found)
+            return bound;
+        known = found;
+    }
+    int64_t last = bound - (relation == Opcode::Less);
+    if (!start || !step || *step < 2 || last < *start)
+        return bound;
+    return *start + (last - *start) / *step * *step + (relation == Opcode::Less);
+}
+
+static bool loopStoresBeyondCounter(const BodyIndex& index, ValueID counter)
+{
+    LoopID loop = index.loopOf(index.blockOf(counter));
+    return loop && std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
+        return std::ranges::any_of(index.block(member).values(), [&](BodyValue operation) {
+            ValueID key = operation.opcode() == Opcode::ElemSet ? index.stripCasts(operation.propertyOperand()) : ValueID();
+            return key && !index.isParameter(key) && index.opcodeOf(key) == Opcode::Add && index.stripCasts(index.value(key).operand(0)) == counter;
+        });
+    });
+}
+
+static bool buildRelationOfSteppedCounter(Walker& walker, const BodyValue& relation, const OperandsInNumberOperators& operands)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!walker.has(Mechanism::LoopInvariants) || !operands[0].type.isInteger() || !operands[1].reference.isConstant())
+        return false;
+    ValueID counter = index.stripCasts(operands[0].written);
+    std::optional<int64_t> bound = integerKnownInNumberForms(walker, operands[1].reference);
+    int64_t tight = bound ? tightenBoundOfSteppedCounter(walker, index, relation.opcode(), counter, *bound) : 0;
+    if (!bound || tight == *bound || !loopStoresBeyondCounter(index, counter))
+        return false;
+    Draft lesser(Opcode::Integer, originInFrontOfNumberOperator(walker, relation));
+    lesser.setInteger(tight);
+    std::array<Reference, 2> compared { operands[0].reference, walker.constant(WTF::move(lesser)) };
+    return buildOnOperandsInNumberOperators(walker, relation, compared);
 }
 
 static_assert(opcodesThatBuildNumberFormTakes == (opcodesOfNumberOperators));
@@ -647,10 +757,136 @@ static Reference buildProductWithoutNegativeZero(Walker& walker, const BodyValue
     Range multiplicands = operands[0].type.integers;
     Range multipliers = operands[1].type.integers;
     bool mayBeNegativeZero = (multiplicands.minimum < 0 && multipliers.contains(0)) || (multipliers.minimum < 0 && multiplicands.contains(0));
-    if (!mayBeNegativeZero || !isSignOfZeroIgnored(walker, value.id()))
+    if (!mayBeNegativeZero)
+        return { };
+    bool isSignIgnored = isSignOfZeroIgnored(walker, value.id()) || (walker.isInLoop() && isZeroSignUnused(walker, value.id()));
+    bool canGuard = walker.isInLoop() && walker.canBuildIterationGuard() && isTermOfRemainder(walker.currentBodyIndex(), value.id());
+    if (!isSignIgnored && !canGuard)
         return { };
     walker.chooseConservativeFields(product);
-    return walker.build(WTF::move(product));
+    Reference whole = walker.build(WTF::move(product));
+    if (isSignIgnored || !whole || !whole.isValue() || walker.isUnreachable())
+        return whole;
+    Origin origin = walker.originOf(value);
+    origin.isTailCall = false;
+    Reference isNotZero = buildOperatorInNumberForms(walker, Opcode::ToBoolean, whole, { }, origin);
+    if (!isNotZero)
+        return { };
+    BlockID isZero = walker.addBlock(BlockFrequency::Unlikely);
+    BlockID restarts = walker.addBlock(BlockFrequency::Rare);
+    BlockID passed = walker.addBlock();
+    walker.branch(isNotZero, passed, isZero);
+    walker.continueIn(isZero);
+    for (const OperandInNumberOperators& factor : operands) {
+        if (walker.isUnreachable() || factor.type.integers.minimum >= 0)
+            continue;
+        Reference isFromZeroUp = buildOperatorInNumberForms(walker, Opcode::GreaterEq, factor.reference, integerInNumberForms(walker, 0), origin);
+        if (!isFromZeroUp)
+            return { };
+        BlockID next = walker.addBlock();
+        walker.branch(isFromZeroUp, next, restarts);
+        walker.continueIn(next);
+    }
+    if (!walker.isUnreachable())
+        walker.jumpTo(passed);
+    walker.continueIn(restarts);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(passed);
+    walker.recordSpeculation();
+    return walker.isUnreachable() || walker.hasFailed() ? Reference() : whole;
+}
+
+static bool buildIntegerRemainder(Walker& walker, const BodyValue& value, const OperandsInNumberOperators& operands)
+{
+    TypeArena& types = walker.types();
+    Type dividend = operands[0].type;
+    Type divisor = operands[1].type;
+    Reference divisorReference = operands[1].reference;
+    if (std::optional<uint64_t> noted = divisorReference.isValue() && divisor.isInteger() && divisor.integers.contains(0) ? findKnown(walker, KnownNote::PositionBelowLength, divisorReference) : std::nullopt) {
+        divisorReference = Reference::fromBits(static_cast<uint32_t>(*noted));
+        divisor = types.at(walker.typeOf(divisorReference));
+    }
+    bool divisorMayBeZero = divisor.isInteger() && divisor.integers.contains(0);
+    if (!dividend.isInteger() || !divisor.isInteger() || (dividend.integers.minimum >= 0 && !divisorMayBeZero && divisorReference == operands[1].reference) || !dividend.integers.isSubsetOf(Range::exact()) || !divisor.integers.isSubsetOf(Range::exact()) || divisor.integers.isSubsetOf(Range::one(1)))
+        return false;
+    bool isSignIgnored = dividend.integers.minimum >= 0 || isSignOfZeroIgnored(walker, value.id()) || (walker.isInLoop() && isZeroSignUnused(walker, value.id()));
+    bool canGuard = walker.isInLoop() && walker.canBuildIterationGuard();
+    if (!isSignIgnored && !canGuard)
+        return false;
+    int64_t magnitude = divisor.integers.isSingleValue() ? std::abs(divisor.integers.minimum) : 0;
+    if (isSignIgnored && magnitude && !(magnitude & (magnitude - 1)) && isOnlyComparedWithIntegers(walker, value.id()))
+        return false;
+    Origin origin = walker.originOf(value);
+    origin.isTailCall = false;
+    if (divisorMayBeZero) {
+        if (!walker.isInLoop())
+            return false;
+        Reference isNotZero = buildOperatorInNumberForms(walker, Opcode::ToBoolean, divisorReference, { }, origin);
+        if (!isNotZero || walker.isUnreachable())
+            return false;
+        auto isShown = [&](Reference test, bool answer) {
+            PrimitiveKnownToFolding known = test ? primitiveKnownInNumberForms(walker, test) : PrimitiveKnownToFolding();
+            if (known.kind() == PrimitiveKnownToFolding::Kind::Boolean)
+                return known.asBoolean() == answer;
+            return test && test.isValue() && !!walker.findPassedTest(test, answer);
+        };
+        bool isKnown = isShown(isNotZero, true);
+        if (!isKnown) {
+            Reference isZero = buildOperatorInNumberForms(walker, Opcode::StrictEq, operands[1].reference, integerInNumberForms(walker, 0), origin);
+            if (walker.isUnreachable())
+                return false;
+            isKnown = isShown(isZero, false);
+        }
+        if (!isKnown && (!canGuard || isShown(isNotZero, false)))
+            return false;
+        if (!isKnown) {
+            BlockID passed = walker.addBlock();
+            BlockID restarts = walker.addBlock(BlockFrequency::Rare);
+            walker.branch(isNotZero, passed, restarts);
+            walker.continueIn(restarts);
+            if (!walker.isUnreachable())
+                walker.restartIteration();
+            walker.continueIn(passed);
+            walker.recordSpeculation();
+            if (walker.isUnreachable() || walker.hasFailed())
+                return true;
+        }
+    }
+    Draft whole(Opcode::RemainderOfIntegers, origin);
+    walker.chooseConservativeFields(whole);
+    whole.setDividendOperand(operands[0].reference);
+    whole.setDivisorOperand(divisorReference);
+    const Type& remainders = types.at(walker.resultTypeOf(whole));
+    if (!remainders.isInteger() || remainders.integers.isSingleValue())
+        return walker.isUnreachable() || walker.hasFailed();
+    Reference remainder = walker.build(WTF::move(whole));
+    if (!remainder || !remainder.isValue() || walker.isUnreachable())
+        return false;
+    if (!isSignIgnored) {
+        BlockID isZero = walker.addBlock(BlockFrequency::Unlikely);
+        BlockID restarts = walker.addBlock(BlockFrequency::Rare);
+        BlockID passed = walker.addBlock();
+        Reference isNotZero = buildOperatorInNumberForms(walker, Opcode::ToBoolean, remainder, { }, origin);
+        if (!isNotZero)
+            return false;
+        walker.branch(isNotZero, passed, isZero);
+        walker.continueIn(isZero);
+        if (!walker.isUnreachable()) {
+            Reference isFromZeroUp = buildOperatorInNumberForms(walker, Opcode::GreaterEq, operands[0].reference, integerInNumberForms(walker, 0), origin);
+            if (!isFromZeroUp)
+                return false;
+            walker.branch(isFromZeroUp, passed, restarts);
+            walker.continueIn(restarts);
+            if (!walker.isUnreachable())
+                walker.restartIteration();
+        }
+        walker.continueIn(passed);
+        walker.recordSpeculation();
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
+    }
+    return bindInNumberOperators(walker, value, remainder);
 }
 
 bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
@@ -695,6 +931,8 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (opcode == Opcode::Mul) {
         if (Reference product = buildProductWithoutNegativeZero(walker, value, operands))
             return bindInNumberOperators(walker, value, product);
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
     }
     if (opcode == Opcode::Pow && operands[0].type.isNumber() && isKnownIntegerInNumberOperators(operands[1].known, 2))
         return bindInNumberOperators(walker, value, buildOperatorInNumberForms(walker, Opcode::Mul, operands[0].reference, operands[0].reference, walker.originOf(value)));
@@ -702,7 +940,7 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (allBitwiseOperators.contains(opcode))
         return buildBitOperator(walker, value, operands);
     if (opcode == Opcode::Mod)
-        return buildNumberRemainderWithItsTest(walker, value);
+        return buildIntegerRemainder(walker, value, operands) || buildNumberRemainderWithItsTest(walker, value);
 
     InputsOfTypedOperation inputs(walker, nullptr);
     if (allEqualities.contains(opcode)) {
@@ -712,6 +950,8 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
     }
 
     if (allRelations.contains(opcode)) {
+        if (buildRelationOfSteppedCounter(walker, value, operands))
+            return true;
         if (buildRelationWithNumberRoundedInFrontOfLoop(walker, value, operands))
             return true;
         if (buildComparisonOfWholeRemainders(walker, value, operands))

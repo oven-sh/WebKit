@@ -24,6 +24,7 @@ public:
 
     bool add(ValueID, int64_t times);
     bool takeAwayWhatIsFromZeroUp(ValueID, bool testResult = true);
+    bool subtractPosition(ValueID boundsTest, bool testResult);
     bool isFromZeroUp() const;
 
 private:
@@ -50,6 +51,7 @@ struct SecondCounter {
     ValueID stepped;
     Range steps;
     bool counterRises { true };
+    bool isSpeculated { false };
 };
 
 struct EnteringCounters {

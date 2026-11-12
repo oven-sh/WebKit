@@ -80,16 +80,17 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
             jit.returnToCaller();
         }
     };
-    auto branchIfSlotIsAbsent = [&](const SlotTraits& traits) {
-        switch (traits.width) {
+    auto branchIfSlotIsAbsent = [&](SlotRepresentation representation) {
+        const uint64_t bits = bitsBeforeCreation(representation);
+        switch (widthOf(representation)) {
         case 1:
-            return jit.branch8(CCallHelpers::Equal, slot, TrustedImm32(static_cast<int32_t>(traits.absentBits)));
+            return jit.branch8(CCallHelpers::Equal, slot, TrustedImm32(static_cast<int32_t>(bits)));
         case 4:
-            return jit.branch32(CCallHelpers::Equal, slot, TrustedImm32(static_cast<int32_t>(traits.absentBits)));
+            return jit.branch32(CCallHelpers::Equal, slot, TrustedImm32(static_cast<int32_t>(bits)));
         case 8:
-            if (!traits.absentBits)
+            if (!bits)
                 return jit.branchTest64(CCallHelpers::Zero, slot);
-            return jit.branch64(CCallHelpers::Equal, slot, TrustedImm64(static_cast<int64_t>(traits.absentBits)));
+            return jit.branch64(CCallHelpers::Equal, slot, TrustedImm64(static_cast<int64_t>(bits)));
         }
         RELEASE_ASSERT_NOT_REACHED();
     };
@@ -266,8 +267,8 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     };
     auto storeWithRepresentation = [&](SlotRepresentation representation) {
         const SlotTraits traits = traitsOf(representation);
-        if (end == FieldStoreEnd::ReturnAfterBarrier && traits.hasAbsent)
-            exits.wasAbsent.append(branchIfSlotIsAbsent(traits));
+        if (end == FieldStoreEnd::ReturnAfterBarrier && mayBeCreatedByStore(representation))
+            exits.wasAbsent.append(branchIfSlotIsAbsent(representation));
         switch (traits.valueKind) {
         case SlotValueKind::Boxed:
             jit.store64(value, slot);
@@ -363,7 +364,7 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         typeIsNotAccepted.link(&jit);
         unpackRepresentation();
         jumpIfSlotHoldsValueAsMarker(isAdmitted);
-        branchOnFieldPresence(jit, r.field, r.scratch, exits.cannot, exits.wasAbsentAndIsNotAccepted);
+        branchOnFieldPresence(jit, r.field, r.scratch, exits.cannot, exits.wasAbsentAndIsNotAccepted, exits.cannot);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

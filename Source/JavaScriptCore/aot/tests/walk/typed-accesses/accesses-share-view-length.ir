@@ -1,12 +1,12 @@
 # var view = new Int32Array(4); function sum(i, j) { return (view[i] + view[j]) | 0; }
-# Both reads go to the view of one variable and nothing in between runs other code: its length is read once, outside loops too.
+# Both reads go to the view of one variable and nothing in between runs other code: its length is read once, off the mirror of the variable.
 # LIBRARY: own
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: [[length]]: {{*}} = GetTypedArrayLength
-# CHECK: = GetTypedArrayElement {{*}}, [[length]] typedArrayType
-# CHECK-NOT: = GetTypedArrayLength
-# CHECK: = GetTypedArrayElement {{*}}, [[length]] typedArrayType
+# CHECK: = GetMirroredLength {{*}} variable=g0
+# CHECK: [[length]]: {{*}} = NarrowInteger
+# CHECK: = IsBelowLength {{*}}, [[length]]
+# CHECK: = IsBelowLength {{*}}, [[length]]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 variable g0 name="view" module=m0 declared={type=anything} initialization=Undefined

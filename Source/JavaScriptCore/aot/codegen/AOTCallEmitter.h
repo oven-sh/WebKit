@@ -61,12 +61,13 @@ public:
     const ArgumentLocations& ownLocations();
 
     Boxed callValue(const OperationContext&, const ValueCall&, const CallOptions& = { });
+    Boxed callDelegate(const ValueContext&);
     void defineResultOfCallByValue(const ValueContext&, Boxed result);
     static CallPosition positionOf(const OperationContext& context) { return context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
     Boxed callByConvention(const OperationContext&, const ConventionCall&, const CallOptions& = { });
     Boxed callAddressByConvention(const OperationContext&, Pointer address, const ConventionCall&, const CallOptions& = { });
     Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
-    Boxed superConstructWithArray(const OperationContext&, Boxed parent, Boxed newTarget, CellPointer list);
+    Boxed constructWithArray(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, CellPointer list);
     Operand callDirect(const OperationContext&, CodeUnit, std::span<const Operand> arguments, const CallOptions& = { });
     Vector<Operand, 2> callEntry(const OperationContext&, CodeUnit, uint16_t entry, const ArgumentLocations&, std::span<const Operand> arguments, const CallOptions& = { });
     void tailCallEntry(const OperationContext&, CodeUnit, uint16_t entry, const ArgumentLocations&, std::span<const Operand> arguments);

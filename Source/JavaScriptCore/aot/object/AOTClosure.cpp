@@ -25,6 +25,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeCheckFailure.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
@@ -295,7 +296,7 @@ bool mayHaveLazyProperty(VM& vm, JSCell* cell, UniquedStringImpl* uid, LookupPos
     auto* closure = uncheckedDowncast<Closure>(cell);
     if (!closure->kind().isConstructor)
         return false;
-    return !closure->classData() || !closure->getDirect(vm, vm.propertyNames->prototype);
+    return !closure->classData() || !closure->getDirect(vm, vm.propertyNames->prototype) || closure->mayHoldStaticFieldInVariable(uid);
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(closurePrototypeProperty);
@@ -328,10 +329,14 @@ const LayoutData* Closure::classData() const
 
 bool Closure::isLazyClassObject() const
 {
-    if (!kind().isConstructor || getDirect(vm(), vm().propertyNames->prototype))
-        return false;
     const LayoutData* classLayout = classData();
-    if (!classLayout)
+    return classLayout && isLazyClassObjectOf(*classLayout);
+}
+
+bool Closure::isLazyClassObjectOf(const LayoutData& layout) const
+{
+    const LayoutData* classLayout = &layout;
+    if (!classLayout->createsClassObjectOnMutation || getDirect(vm(), vm().propertyNames->prototype))
         return false;
     const ClassTable& classes = state().objects->classes;
     return classLayout->createsClassObjectOnMutation && (classLayout->createsPrototypeBeforeClassObject || classes.classPrototypeIfExists(*classLayout) || classes.prototypeAwaitsFirstTouch(*classLayout));
@@ -346,16 +351,38 @@ bool Closure::hasStructureOfNewClosure(VM& vm) const
     return structureID() == ofNewClosure->id();
 }
 
-static NEVER_INLINE void createClassObject(Closure* classObject)
+bool Closure::hasStaticFieldsLeft() const
 {
-    State& state = classObject->state();
-    state.objects->classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::ClassObject);
+    const ClassTable& classes = state().objects->classes;
+    if (!classes.leavesSomeStaticFields())
+        return false;
+    const LayoutData* classLayout = classData();
+    return classLayout && classes.hasStaticFieldsLeft(*classLayout) && StaticFields::areReadInVariables(*this);
 }
 
-void Closure::ensureClassObject(VM&)
+bool Closure::mayHoldStaticFieldInVariable(UniquedStringImpl* uid) const
+{
+    return (hasStaticFieldsLeft() || isLazyClassObject()) && state().objects->classes.staticField(*classData(), uid);
+}
+
+static NEVER_INLINE void createClassObject(Closure* classObject, ClassTable::StaticFieldsOfPart staticFields)
+{
+    State& state = classObject->state();
+    state.objects->classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::ClassObject, staticFields);
+}
+
+void Closure::ensureClassObject(VM& vm)
 {
     if (isLazyClassObject())
-        createClassObject(this);
+        createClassObject(this, ClassTable::StaticFieldsOfPart::MoveToProperties);
+    else if (hasStaticFieldsLeft()) [[unlikely]]
+        StaticFields::moveToProperties(vm, *this);
+}
+
+void Closure::ensureStaticMethods(VM&)
+{
+    if (isLazyClassObject())
+        createClassObject(this, ClassTable::StaticFieldsOfPart::StayInVariables);
 }
 
 static Structure* structureSharedWithClassesInheritingFrom(VM& vm, const Closure& classObject, JSObject* parent)
@@ -411,6 +438,7 @@ static JSObject* createPrototypeObjectOfFunction(VM& vm, JSGlobalObject* globalO
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->constructor, static_cast<unsigned>(PropertyAttribute::DontEnum), offset);
     JSObject* prototype = constructEmptyObject(vm, structure);
     prototype->putDirectOffset(vm, offset, function);
+    countEvent(vm, RuntimeCounterID::PrototypeObjectsOfFunctionsCreated);
     return prototype;
 }
 
@@ -425,12 +453,28 @@ bool Closure::ensurePrototypeProperty(VM& vm)
         return false;
     JSGlobalObject* globalObject = state().instance.globalObject;
     JSObject* prototype;
-    if (kind().isGenerator)
+    FunctionRareData* rareData = kind().isGenerator ? this->rareData() : nullptr;
+    if (Structure* structureOfGenerators = rareData ? rareData->internalFunctionAllocationStructure() : nullptr)
+        prototype = structureOfGenerators->storedPrototypeObject();
+    else if (kind().isGenerator)
         prototype = constructEmptyObject(globalObject, kind().isAsync ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
     else
         prototype = createPrototypeObjectOfFunction(vm, globalObject, this);
     putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     state().objects->classes.didCreatePrototypePropertyOf(this);
+    state().objects->closures.didGivePrototypePropertyTo(vm, this);
+    return true;
+}
+
+bool Closure::tryCreatePrototypeProperty(VM& vm, JSValue value)
+{
+    if (classData() || kind().isConstructor || kind().isGenerator || !FunctionTables::hasPrototypePropertyAtCreation(kind()))
+        return false;
+    if (!structure()->isStructureExtensible() || getDirect(vm, vm.propertyNames->prototype) || !state().objects->classes.definesNoClassOf(state().objects->classes.functionOfOwnClosure(*this)))
+        return false;
+    if (FunctionRareData* rareData = this->rareData())
+        rareData->clear("Store to prototype property of a function");
+    putDirect(vm, vm.propertyNames->prototype, value, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     state().objects->closures.didGivePrototypePropertyTo(vm, this);
     return true;
 }
@@ -645,14 +689,18 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     Closure* closure = uncheckedDowncast<Closure>(object);
     if (JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot))
         return true;
-    if (closure->isLazyClassObject()) {
+    const LayoutData* classLayout = closure->classData();
+    bool isLazyClassObject = classLayout && closure->isLazyClassObjectOf(*classLayout);
+    if (classLayout && !classLayout->staticFields().empty()) {
         if (JSValue value = StaticFields::tryRead(*closure, propertyName.uid())) {
             slot.setValue(closure, static_cast<unsigned>(PropertyAttribute::None), value);
             return true;
         }
+    }
+    if (isLazyClassObject) {
         if (propertyName != vm.propertyNames->prototype && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && !closure->state().objects->classes.hasStaticMethodNamed(*closure->classData(), propertyName.uid()))
             return false;
-        closure->ensureClassObject(vm);
+        closure->ensureStaticMethods(vm);
         if (JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot))
             return true;
     }
@@ -666,6 +714,21 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
         return true;
     }
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+}
+
+bool Closure::mayHoldOwnProperties(VM& vm, std::span<UniquedStringImpl* const> names) const
+{
+    for (UniquedStringImpl* name : names) {
+        if (isValidOffset(structure()->get(vm, PropertyName(name))))
+            return true;
+    }
+    const LayoutData* classLayout = classData();
+    if (!classLayout || (classLayout->staticMethods().empty() && classLayout->staticFields().empty()))
+        return false;
+    const ClassTable& classes = state().objects->classes;
+    return std::ranges::any_of(names, [&](UniquedStringImpl* name) {
+        return classes.hasStaticMethodNamed(*classLayout, name) || classes.staticField(*classLayout, name);
+    });
 }
 
 bool Closure::isNameThatBuiltinFunctionsRefuse(VM& vm, UniquedStringImpl* uid)
@@ -747,11 +810,20 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
         bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && name != vm.propertyNames->hasInstanceSymbol);
         return typeError(globalObject, scope, isTold, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
     }
+    if (name == vm.propertyNames->prototype && slot.thisValue() == JSValue(closure) && closure->tryCreatePrototypeProperty(vm, value)) {
+        slot.disableCaching();
+        return true;
+    }
     ClassTable& classes = closure->state().objects->classes;
     const LayoutData* classLayout = closure->classData();
     bool isStoreToClassObject = classLayout && slot.thisValue() == JSValue(closure);
     if (isStoreToClassObject && StaticFields::tryStore(*closure, name.uid(), value))
         return true;
+    if (isStoreToClassObject && StaticFields::tryCreateByStore(vm, *closure, name, value)) {
+        holdClosureToLackingNameSlowCase(vm, closure, name.uid());
+        slot.disableCaching();
+        return true;
+    }
     if (slot.thisValue() == JSValue(closure) && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
         return true;
     closure->ensureClassObject(vm);

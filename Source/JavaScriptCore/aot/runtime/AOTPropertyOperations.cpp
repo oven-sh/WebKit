@@ -116,7 +116,10 @@ static bool tryReplaceValueThatIsNoCellOnObjectOfSomeChain(VM& vm, JSValue base,
     PropertyOffset offset = structure->get(vm, uid, attributes);
     if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid) || isWriteJudgedByWriter(structure, uid))
         return false;
-    if (object->getDirect(offset).isCell())
+    JSValue held = object->getDirect(offset);
+    if (held == value)
+        return true;
+    if (held.isCell())
         return false;
     structure->didReplaceProperty(offset);
     object->putDirectOffset(vm, offset, value);
@@ -138,7 +141,7 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         RELEASE_AND_RETURN(scope, putAndCache({ instance, identifier, name }, base.asCell(), value, mode));
     PutPropertySlot slot(base, mode == PutMode::Strict, PutPropertySlot::PutById);
     if (Object* object = compiledObjectOrNull(base)) {
-        if (const FieldReturn* back = instance->state->propertyCaches->findFieldReturn(object->structureID(), name); back && object->tryRepeat(vm, *back, value))
+        if (tryRepeatFieldExit(instance, base, name, value, mode))
             return;
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
@@ -203,6 +206,23 @@ static NEVER_INLINE bool deleteAndFile(Instance* instance, JSObject* object, Pro
     }
     caches.cache(filed, answer.didFlatten ? PropertyAnswer::uncacheable(access) : answer);
     return deleted;
+}
+
+static uint64_t orderAndShapeWordsOf(const Object& object)
+{
+    return WTF::unalignedLoad<uint64_t>(reinterpret_cast<const uint8_t*>(&object) + offsetOfOrderWord);
+}
+
+static void rememberOrderBehindRemoval(Instance& instance, Object& object, UniquedStringImpl* uid, StructureID structureBefore, uint64_t wordsBefore)
+{
+    uint32_t orderWordBefore = static_cast<uint32_t>(wordsBefore);
+    if (object.structureID() != structureBefore || orderWordBefore & ~orderAndCountMask || object.orderWord() == orderWordBefore || object.compiledStructure().hasOutOfLineKeyOrder())
+        return;
+    const FieldData* field = object.fieldNamed(object.state(), uid);
+    if (!field || field->isOutOfLine() || field->isPrivate() || !absentPatternOf(field->slot.representation()) || field->slot.offset > UINT16_MAX)
+        return;
+    uint64_t key = keyOfRunOfRemoval(static_cast<uint16_t>(field->slot.offset));
+    instance.objects.keyOrderRuns[indexOfKeyOrderRun(wordsBefore, key)] = { wordsBefore, key, object.orderWord(), 0 };
 }
 
 static ALWAYS_INLINE size_t deleteNamedProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName property, bool isStrict, Instance* instanceThatFiles)
@@ -292,7 +312,16 @@ static ALWAYS_INLINE size_t deleteByName(Instance* instance, JSCell* base, Uniqu
         if (object == base)
             instanceThatFiles = instance;
     }
-    RELEASE_AND_RETURN(scope, deleteNamedProperty(globalObject, object, name, isStrict, instanceThatFiles));
+    Object* compiled = compiledObjectOrNull(object);
+    if (!compiled)
+        RELEASE_AND_RETURN(scope, deleteNamedProperty(globalObject, object, name, isStrict, instanceThatFiles));
+    StructureID structureBefore = compiled->structureID();
+    uint64_t wordsBefore = orderAndShapeWordsOf(*compiled);
+    size_t deleted = deleteNamedProperty(globalObject, object, name, isStrict, instanceThatFiles);
+    RETURN_IF_EXCEPTION(scope, 0);
+    if (deleted)
+        rememberOrderBehindRemoval(*instance, *compiled, uid, structureBefore, wordsBefore);
+    return deleted;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByName, size_t, (Instance* instance, JSCell* base, UniquedStringImpl* uid))

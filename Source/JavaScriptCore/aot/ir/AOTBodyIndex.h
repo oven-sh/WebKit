@@ -535,6 +535,11 @@ struct ConstructionStartInModule {
     ConstructionStart start;
 };
 
+struct EvaluationOfClass {
+    const BodyIndex* index;
+    ValueID value;
+};
+
 class BodyIndexTable {
     WTF_MAKE_NONCOPYABLE(BodyIndexTable);
 public:
@@ -558,6 +563,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE Vector<ConstructionStartInModule> takeConstructionStarts();
+    JS_EXPORT_PRIVATE Vector<EvaluationOfClass> takeEvaluationsOfClasses();
     JS_EXPORT_PRIVATE uint64_t valuesGoneOver() const;
 
     JS_EXPORT_PRIVATE size_t sizeInBytes() const;

@@ -60,6 +60,7 @@ public:
     void generateInstanceOf(const ValueContext&);
     bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
+    void branchOnPrototypeAbove(ValueID object, CellPointer prototype, LBasicBlock slowPath, BranchTargets);
     void generateTryFindInPrototypeChain(const ValueContext&);
     void generateHasDefaultHasInstance(const ValueContext&);
     void generateToBoolean(const ValueContext&);

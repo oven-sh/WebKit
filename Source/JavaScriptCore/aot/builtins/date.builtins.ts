@@ -314,7 +314,7 @@ export default b.declarations(
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
-        uses: { this: [b.runs(b.calls("toString", "valueOf"))], hint: b.inspected },
+        uses: { this: [b.runs("ToPrimitive")], hint: b.inspected },
         implementation: b.hostCall,
       },
     },

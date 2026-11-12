@@ -29,6 +29,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+std::optional<uint32_t> orderWordWithFieldListedNext(const Walker&, LayoutID, PropertyKeyID, uint32_t orderWord);
+
 namespace {
 
 enum class MemberOfDescriptor : uint8_t { Enumerable, Configurable, Value, Writable, Get, Set };
@@ -352,6 +354,25 @@ static std::optional<Vector<PropertyOfFreshObject, 8>> nestedLiteralProperties(W
     return properties;
 }
 
+static std::optional<uint32_t> orderWordBehindDefinitionOnFreshObject(Walker& walker, const Draft& definition)
+{
+    Reference root = rootOfObjectInWrittenDescriptors(walker, definition.objectOperand());
+    if (!walker.has(Mechanism::TypedOperations) || !root || !root.isValue() || walker.code().isConstant(root.id()) || !walker.state().isFresh(root))
+        return std::nullopt;
+    const Operation& made = walker.code().at(root.id());
+    std::optional<uint32_t> orderWord = walker.state().orderWordOf(root);
+    if (made.opcode != Opcode::NewObject || made.prototypeOperand() || !orderWord)
+        return std::nullopt;
+    auto typeOfPart = [&](Reference part) {
+        return part ? walker.typeOf(part) : TypeID();
+    };
+    std::optional<FieldAccess> created = fieldCreatedInSlotBy(AccessContext { walker.program(), WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() }, {
+        walker.typeOf(definition.objectOperand()), walker.typeOf(definition.computedKeyOperand()),
+        typeOfPart(definition.valueOperand()), typeOfPart(definition.getterOperand()), typeOfPart(definition.setterOperand()), definition.descriptorFlags()
+    });
+    return created ? orderWordWithFieldListedNext(walker, made.layout(), created->key, *orderWord) : std::nullopt;
+}
+
 static std::optional<BuiltinOverloadID> findUniqueBuiltinOverload(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call)
@@ -626,6 +647,30 @@ bool expandObjectCreateAtDefinitionOfItsOpcodes(Walker& walker, const BodyValue&
     return true;
 }
 
+static LayoutID layoutOfLikelyEdges(Walker& walker, Reference object)
+{
+    const Code& code = walker.code();
+    Reference root = rootOfObjectInWrittenDescriptors(walker, object);
+    if (!root || !root.isValue() || code.isConstant(root.id()) || code.at(root.id()).opcode != Opcode::Parameter)
+        return { };
+    const Block& join = code.at(code.blockOf(root.id()));
+    if (join.isLoopHead || join.isHandlerBlock() || join.isEntry || !join.firstEdgeIn())
+        return { };
+    size_t place = join.placeOfParameter(root.id());
+    LayoutID found;
+    for (EdgeID edge = join.firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+        if (code.at(code.at(edge).from).frequency == BlockFrequency::Rare)
+            continue;
+        std::span<const ValueID> arguments = code.at(edge).arguments();
+        TypeID brought = place < arguments.size() ? code.at(arguments[place]).type : TypeID();
+        LayoutID layout = brought ? singleLayoutOf(walker.types(), walker.types().at(brought)) : LayoutID();
+        if (!layout || (found && found != layout))
+            return { };
+        found = layout;
+    }
+    return found;
+}
+
 bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (walker.isUnreachable() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis) || call.argumentsOperands().size() != numberOfArgumentsOfDescriptorCall)
@@ -700,20 +745,87 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         return true;
     }
 
-    Draft definition(Opcode::DefineOwnProperty, origin);
-    walker.chooseConservativeFields(definition);
-    definition.expected = written.expected;
-    definition.inputValueGiven = written.inputValueGiven;
-    definition.setObjectOperand(operands->object);
-    definition.setComputedKeyOperand(key);
-    if (descriptor->value)
-        definition.setValueOperand(descriptor->value);
-    if (descriptor->getter)
-        definition.setGetterOperand(descriptor->getter);
-    if (descriptor->setter)
-        definition.setSetterOperand(descriptor->setter);
-    definition.setDescriptorFlags(descriptor->flags);
-    if (Reference object = walker.build(WTF::move(definition)))
+    OptionSet<PropertyDescriptorFlags> flags = descriptor->flags;
+    TypeID receiver = written.thisValueOperand() ? walker.typeOf(written.thisValueOperand()) : TypeID();
+    if (receiver && walker.types().at(receiver).isObject() && singleBuiltinOf(walker.types(), walker.types().at(receiver)) == BuiltinID(Builtins::ObjectDefineProperties))
+        flags.add(PropertyDescriptorFlags::IsOfPropertyMap);
+    auto buildDefinition = [&](Reference object) {
+        Draft definition(Opcode::DefineOwnProperty, origin);
+        walker.chooseConservativeFields(definition);
+        definition.expected = written.expected;
+        definition.inputValueGiven = written.inputValueGiven;
+        definition.setObjectOperand(object);
+        definition.setComputedKeyOperand(key);
+        if (descriptor->value)
+            definition.setValueOperand(descriptor->value);
+        if (descriptor->getter)
+            definition.setGetterOperand(descriptor->getter);
+        if (descriptor->setter)
+            definition.setSetterOperand(descriptor->setter);
+        definition.setDescriptorFlags(flags);
+        std::optional<uint32_t> orderWord = orderWordBehindDefinitionOnFreshObject(walker, definition);
+        if (!orderWord)
+            return walker.build(WTF::move(definition));
+        definition.setOrderWordAfter(OrderWord(*orderWord));
+        WalkState& state = walker.state();
+        Reference root = rootOfObjectInWrittenDescriptors(walker, object);
+        OptionSet<CellFact> kept = state.cellFacts(root) & CellFact::HasLayoutPrototype;
+        Reference built = walker.build(WTF::move(definition));
+        if (!walker.isUnreachable() && state.isFresh(root)) {
+            state.noteOrderWord(root, *orderWord);
+            state.recordCellFacts(root, kept);
+        }
+        return built ? object : Reference();
+    };
+
+    TypeArena& types = walker.types();
+    auto typeOfPart = [&](Reference part) {
+        return part ? walker.typeOf(part) : TypeID();
+    };
+    auto fillsSlotOf = [&](TypeID object) {
+        return !!fieldCreatedInSlotBy(AccessContext { walker.program(), WalkFacts(walker.facts()), walker.plan(), types, walker.currentFunction() }, {
+            object, walker.typeOf(key), typeOfPart(descriptor->value), typeOfPart(descriptor->getter), typeOfPart(descriptor->setter), flags
+        });
+    };
+    LayoutID likely;
+    if (walker.has(Mechanism::TypedOperations) && !fillsSlotOf(provenOfObject)) {
+        TypeID withoutNullish = types.withoutNullish(provenOfObject);
+        likely = types.at(withoutNullish).hasOnlyLayouts() ? singleLayoutOf(types, types.at(withoutNullish)) : layoutOfLikelyEdges(walker, operands->object);
+    }
+    if (likely && fillsSlotOf(types.forLayout(likely)) && types.overlap(provenOfObject, types.forLayout(likely))) {
+        BlockID inSlot = walker.addBlock();
+        BlockID byRunTime = walker.addBlock(BlockFrequency::Rare);
+        BlockID behind = walker.addBlock();
+        walker.letGuessFailUnasked(byRunTime, origin);
+        Draft test(Opcode::ShapeTest, origin);
+        test.setObjectOperand(operands->object);
+        test.setLayouts(types.at(types.forLayout(likely)).layouts);
+        Reference hasShape = walker.build(WTF::move(test));
+        if (!hasShape)
+            return true;
+        walker.branch(hasShape, inSlot, byRunTime);
+        walker.continueIn(inSlot);
+        if (!walker.isUnreachable()) {
+            Draft narrowed(Opcode::Narrowed, origin);
+            narrowed.setValueOperand(operands->object);
+            narrowed.setTestOperand(hasShape);
+            narrowed.setOperandIndex(OperandIndex::ShapeTest::object);
+            narrowed.setIsOnTakenEdge(true);
+            if (Reference object = walker.build(WTF::move(narrowed)))
+                buildDefinition(object);
+            walker.jumpTo(behind);
+        }
+        walker.continueIn(byRunTime);
+        if (!walker.isUnreachable()) {
+            buildDefinition(operands->object);
+            walker.jumpTo(behind);
+        }
+        walker.continueIn(behind);
+        if (!walker.isUnreachable() && !walker.hasFailed())
+            walker.bind(call.id(), operands->object);
+        return true;
+    }
+    if (Reference object = buildDefinition(operands->object))
         walker.bind(call.id(), object);
     return true;
 }

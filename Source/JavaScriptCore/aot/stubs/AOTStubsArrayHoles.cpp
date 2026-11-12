@@ -408,7 +408,7 @@ void generateNewArrayOfList(StubAssembler& jit)
 
     JumpList isNotServed;
     isNotServed.append(jit.branchIfNotCell(iterable));
-    isNotServed.append(jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
+    Jump isNoArray = jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType));
     loadPristineArrayKind(jit, iterable, relativeShape, IndexingShapeMask);
     jit.sub32(TrustedImm32(Int32Shape), relativeShape);
     isNotServed.append(jit.branch32(CCallHelpers::Above, relativeShape, TrustedImm32(ContiguousShape - Int32Shape)));
@@ -437,7 +437,28 @@ void generateNewArrayOfList(StubAssembler& jit)
     JumpList isFilled;
     isFilled.append(jit.branchTest32(CCallHelpers::Zero, count));
     jit.move(TrustedImm32(0), position);
+    auto copyPairs = [&](const auto& leaveUnlessTaken) {
+        const GPRReg next = relativeShape;
+        constexpr int32_t distanceToNext = sizeof(EncodedJSValue);
+        JumpList leaves;
+        jit.sub32(TrustedImm32(1), count);
+        leaves.append(jit.branch32(CCallHelpers::AboveOrEqual, position, count));
+        Label copyPair = jit.label();
+        jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
+        jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight, distanceToNext), next);
+        leaveUnlessTaken(element, leaves);
+        leaveUnlessTaken(next, leaves);
+        jit.store64(element, BaseIndex(storage, position, CCallHelpers::TimesEight));
+        jit.store64(next, BaseIndex(storage, position, CCallHelpers::TimesEight, distanceToNext));
+        jit.add32(TrustedImm32(2), position);
+        jit.branch32(CCallHelpers::Below, position, count).linkTo(copyPair, &jit);
+        leaves.link(&jit);
+        jit.add32(TrustedImm32(1), count);
+    };
     if (!isContiguous) {
+        copyPairs([&](GPRReg value, JumpList& leaves) { leaves.append(jit.branchIfNotInt32(value)); });
+        jit.move(TrustedImm32(0), relativeShape);
+        isFilled.append(jit.branch32(CCallHelpers::AboveOrEqual, position, count));
         Label copyWholeNumber = jit.label();
         jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
         Jump isNoWholeNumber = jit.branchIfNotInt32(element);
@@ -446,8 +467,10 @@ void generateNewArrayOfList(StubAssembler& jit)
         jit.branch32(CCallHelpers::Below, position, count).linkTo(copyWholeNumber, &jit);
         isFilled.append(jit.jump());
         isNoWholeNumber.link(&jit);
-        jit.move(TrustedImm32(ContiguousShape - Int32Shape), relativeShape);
     }
+    copyPairs([&](GPRReg value, JumpList& leaves) { leaves.append(jit.branchTest64(CCallHelpers::Zero, value)); });
+    jit.move(TrustedImm32(ContiguousShape - Int32Shape), relativeShape);
+    isFilled.append(jit.branch32(CCallHelpers::AboveOrEqual, position, count));
     Label copy = jit.label();
     jit.load64(BaseIndex(source, position, CCallHelpers::TimesEight), element);
     Jump isHole = jit.branchTest64(CCallHelpers::Zero, element);
@@ -514,21 +537,31 @@ void generateNewArrayOfList(StubAssembler& jit)
     jit.move(TrustedImm64(JSValue::ValueUndefined), element);
     jit.jump().linkTo(behindHoleToBox, &jit);
 
+    isNoArray.link(&jit);
+    static_assert(Int8ArrayType < Float64ArrayType && Float64ArrayType < BigInt64ArrayType);
+    jit.load8(Address(iterable, JSCell::typeInfoTypeOffset()), count);
+    jit.sub32(TrustedImm32(Int8ArrayType), count);
+    Jump isView = jit.branch32(CCallHelpers::BelowOrEqual, count, TrustedImm32(Float64ArrayType - Int8ArrayType));
     isNotServed.link(&jit);
     jit.move(TrustedImm32(0), array);
     jit.returnToCaller();
 
+    auto callOperationWithKind = [&](Entry operation) {
+        jit.lshift32(TrustedImm32(1), capacity);
+        if (isContiguous)
+            jit.or32(TrustedImm32(1), capacity);
+        jit.callOperationAndReturn(operation, {
+            .returns = OperationCall::Returns::Value,
+            .saves = OperationCall::Saves::CallerSavedRegisters,
+            .checksException = false,
+            .secondArgumentIn = iterable,
+            .thirdArgumentIn = capacity,
+        });
+    };
     callsOperation.link(&jit);
-    jit.lshift32(TrustedImm32(1), capacity);
-    if (isContiguous)
-        jit.or32(TrustedImm32(1), capacity);
-    jit.callOperationAndReturn(Entry::operationAOTNewArrayOfList, {
-        .returns = OperationCall::Returns::Value,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = iterable,
-        .thirdArgumentIn = capacity,
-    });
+    callOperationWithKind(Entry::operationAOTNewArrayOfList);
+    isView.link(&jit);
+    callOperationWithKind(Entry::operationAOTNewArrayOfView);
 }
 
 void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
@@ -548,6 +581,7 @@ void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
         return emitArrayOfHoles(jit, ArrayWithInt32, HoleArrayOperand::None, 3);
     case EmptyArray::ContiguousCapacity1:
     case EmptyArray::ContiguousCapacity3:
+    case EmptyArray::ContiguousCapacity5:
     case EmptyArray::ContiguousCapacity7:
     case EmptyArray::ContiguousCapacity9:
     case EmptyArray::ContiguousCapacity13:
@@ -571,11 +605,11 @@ StubSignature signatureOfNewEmptyArrayAtSite(StubKey)
 
 void generateNewEmptyArrayWithCapacity(StubAssembler& jit)
 {
-    static_assert(arrayLiteralVectorLength(0) == 5);
+    static_assert(arrayLiteralVectorLength(0) == 3);
     const GPRReg requestedCapacity = jit.operand(0);
     jit.linkToStub(jit.branch64(CCallHelpers::BelowOrEqual, requestedCapacity, TrustedImm32(1)), newEmptyArray(EmptyArray::ContiguousCapacity1));
-    jit.linkToStub(jit.branch64(CCallHelpers::BelowOrEqual, requestedCapacity, TrustedImm32(3)), newEmptyArray(EmptyArray::ContiguousCapacity3));
     jit.linkToStub(jit.branch64(CCallHelpers::BelowOrEqual, requestedCapacity, TrustedImm32(arrayLiteralVectorLength(0))), arrayLiteral(0));
+    jit.linkToStub(jit.branch64(CCallHelpers::BelowOrEqual, requestedCapacity, TrustedImm32(5)), newEmptyArray(EmptyArray::ContiguousCapacity5));
     jit.linkToStub(jit.branch64(CCallHelpers::Above, requestedCapacity, TrustedImm32((1 << (32 - holeArrayCapacityShift)) - 1)), arrayLiteral(0));
     jit.linkToStub(branchIfHavingABadTime(jit), arrayLiteral(0));
     emitArrayOfHoles(jit, ArrayWithContiguous, HoleArrayOperand::Capacity);
@@ -617,13 +651,55 @@ static constexpr IndexingType indexingShapeOf(ArrayElementKind kind)
     return indexingTypeOf(kind) & IndexingShapeMask;
 }
 
-static void emitJumpToEmptyContiguousArrayStub(StubAssembler& jit, bool kindIsWritten, GPRReg capacity)
+static void emitReuseOfReleasedArray(StubAssembler& jit, ArrayElementKind kind, GPRReg capacity, GPRReg butterfly)
 {
+    const GPRReg array = jit.result();
+    const GPRReg scratch = jit.reuseScratch(StubRegister::T13);
+    const Address releasedArray(instanceGPR, AOT_INSTANCE_OFFSET(arrays.releasedArray));
+    RELEASE_ASSERT(noOverlap(array, capacity, butterfly, scratch));
+
+    jit.load64(releasedArray, array);
+    Jump hasReleasedArray = jit.branchTest64(CCallHelpers::NonZero, array);
+    Label isNotServed = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        constexpr int32_t extraCapacity = 16;
+        hasReleasedArray.link(&jit);
+        jit.load64(Address(array), scratch);
+        jit.branch64(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfNewArrayHeader(indexingTypeOf(kind)))).linkTo(isNotServed, &jit);
+        jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+        jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), scratch);
+        jit.sub32(capacity, scratch);
+        jit.add32(TrustedImm32(extraCapacity), capacity);
+        Jump doesNotFit = jit.branch32(CCallHelpers::Above, scratch, capacity);
+        jit.move(TrustedImm64(0), scratch);
+        jit.store64(scratch, releasedArray);
+        jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), capacity);
+        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, capacity);
+        jit.store32(TrustedImm32(0), Address(butterfly, Butterfly::offsetOfPublicLength()));
+        if (kind == ArrayElementKind::Double)
+            jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), scratch);
+        Label clear = jit.label();
+        jit.store64(scratch, BaseIndex(butterfly, capacity, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(EncodedJSValue))));
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), capacity).linkTo(clear, &jit);
+        isEmpty.link(&jit);
+        fenceAfterAllocation(jit);
+        jit.returnToCaller();
+
+        doesNotFit.link(&jit);
+        jit.sub32(TrustedImm32(extraCapacity), capacity);
+        jit.jump().linkTo(isNotServed, &jit);
+    });
+}
+
+static void emitJumpToEmptyContiguousArrayStub(StubAssembler& jit, bool kindIsWritten, GPRReg capacity, GPRReg scratch)
+{
+    emitReuseOfReleasedArray(jit, ArrayElementKind::Contiguous, capacity, scratch);
     if (!kindIsWritten) {
         jit.linkToStub(jit.branchTest32(CCallHelpers::Zero, capacity), arrayLiteral(0));
         jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(3)), newEmptyArrayWithCapacity());
     }
     jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(arrayLiteralVectorLength(0))), arrayLiteral(0));
+    jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(5)), newEmptyArray(EmptyArray::ContiguousCapacity5));
     jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(7)), newEmptyArray(EmptyArray::ContiguousCapacity7));
     jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(9)), newEmptyArray(EmptyArray::ContiguousCapacity9));
     jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(13)), newEmptyArray(EmptyArray::ContiguousCapacity13));
@@ -638,6 +714,7 @@ static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, 
     if (kind != ArrayElementKind::Double)
         jit.linkToStub(branchIfHavingABadTime(jit), arrayLiteral(0));
     jit.zeroExtend8To32(shapeAndCapacity, capacity);
+    emitReuseOfReleasedArray(jit, kind, capacity, shapeAndCapacity);
     Jump hasDefaultCapacity = jit.branchTest32(CCallHelpers::Zero, capacity);
     switch (kind) {
     case ArrayElementKind::Int32:
@@ -690,7 +767,7 @@ void generateNewEmptyArrayAtSite(StubAssembler& jit)
     }
     if (!kindIsWritten)
         jit.zeroExtend8To32(shapeAndCapacity, capacity);
-    emitJumpToEmptyContiguousArrayStub(jit, kindIsWritten, capacity);
+    emitJumpToEmptyContiguousArrayStub(jit, kindIsWritten, capacity, shapeAndCapacity);
 
     isDueForReview.link(&jit);
     jit.move(TrustedImm32(indexingTypeOf(seed)), scratch);

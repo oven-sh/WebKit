@@ -11,6 +11,7 @@
 #include "AOTBody.h"
 #include "AOTBuildContext.h"
 #include "AOTCurrentWork.h"
+#include "AOTFieldGetters.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTThreads.h"
@@ -77,6 +78,11 @@ BodyFactsForTables collectBodyFactsForTables(const Typed::Program& program, cons
     facts.functionsThatOnlyReturn = BitVector(numberOfFunctions);
     for (uint32_t function : functionsThatOnlyReturn)
         facts.functionsThatOnlyReturn.quickSet(function);
+    Vector<uint32_t> fieldGetters = findIndicesInParallel(loops, static_cast<unsigned>(numberOfFunctions), [&](unsigned index) {
+        return !!Typed::fieldReturnedByGetter(program, program.functions[index]);
+    });
+    for (uint32_t getter : fieldGetters)
+        facts.fieldsReturnedByGetters.append({ FunctionID(getter), Typed::fieldReturnedByGetter(program, program.functions[getter]) });
     facts.functionsWithFrames = findFunctionsWithFramesForTables(functions, numberOfFunctions, loops);
     return facts;
 }

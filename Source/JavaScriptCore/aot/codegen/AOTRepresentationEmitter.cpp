@@ -122,6 +122,11 @@ void RepresentationEmitter::generate(const ValueContext& value)
         define(value, get(converted));
         return;
     }
+    if (generator().isCarriedUnboxed(converted)) [[unlikely]] {
+        RELEASE_ASSERT(value.opcode() == Opcode::Unbox && value.representation() == generator().carriedRepresentationOf(converted));
+        define(value, Operand(value.representation(), generator().wordOf(converted)));
+        return;
+    }
     if (std::optional<Boxed> boxed = generator().findBoxed(converted)) [[unlikely]] {
         RELEASE_ASSERT(value.opcode() == Opcode::Box && value.representation() == Representation::JSValue);
         define(value, *boxed);

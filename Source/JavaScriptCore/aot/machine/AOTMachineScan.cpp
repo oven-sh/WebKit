@@ -243,10 +243,16 @@ static NEVER_INLINE void listScannedReadFromOutsideLoops(BackwardScan& scan, Ope
     loopOfLastListedRead = at.loop;
 }
 
-static NEVER_INLINE bool scannedLeafWithoutPositionNeedsRegister(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
+static NEVER_INLINE bool scannedLeafWithoutPositionNeedsRegister(BackwardScan& scan, const Operation* user, unsigned childIndex, const Operation* leaf)
 {
+    const Liveness& liveness = scan.m_liveness;
     if (leaf->opcode() == ArgumentReg || user->as<PatchOperation>())
         return false;
+    bool isTested = isComparison(user->opcode()) || (user->opcode() == BitAnd && liveness.isFused(user));
+    if (std::optional<unsigned> held = isTested ? heldConstantIndex(*leaf) : std::nullopt) {
+        uint8_t& comparisons = scan.m_loopStates[scan.m_placeOfReads.loop].comparisonsWithHeldConstants[*held];
+        return comparisons < fewestHeldConstantReads && ++comparisons == fewestHeldConstantReads;
+    }
     if ((leaf->hasInt64() || leaf->hasDouble()) && findPinnedConstant(static_cast<uint64_t>(leaf->constantBits())))
         return false;
     if (isX86_64() && !childIndex && !liveness.isFused(user) && !leaf->type().isFloat()) {
@@ -273,8 +279,8 @@ static ALWAYS_INLINE const Block* blockThatScannedBlockBranchesOff(const Backwar
 static ALWAYS_INLINE Position headOfBlockPassedOnEveryPathToScannedBlock(const BackwardScan& scan, const BlockPlace& place, const Block* origin)
 {
     const Block* passed = origin;
-    if (!passed && place.predecessors.size() == 1)
-        passed = place.predecessors.front();
+    if (!passed && !place.predecessors.empty())
+        passed = place.predecessors.back();
     return passed ? scan.m_places[passed->index()].head : noPosition;
 }
 
@@ -863,7 +869,7 @@ static ALWAYS_INLINE void readLeafOfScannedOperation(BackwardScan& scan, const O
     readValueInScannedBlock<KindOfScannedRead::ByOperation, regionsHaveKinds>(scan, leaf, read, early, hint, readsUpperHalf);
     if (userIsPatch)
         return;
-    if (scan.m_placeOfReads.countsForLoops && leaf->hasNoPosition() && scannedLeafWithoutPositionNeedsRegister(scan.m_liveness, user, childIndex, leaf)) [[unlikely]]
+    if (scan.m_placeOfReads.countsForLoops && leaf->hasNoPosition() && scan.m_loopOfLastListedRead[leaf->index()] != scan.m_placeOfReads.loop && scannedLeafWithoutPositionNeedsRegister(scan, user, childIndex, leaf)) [[unlikely]]
         listScannedReadFromOutsideLoops(scan, leaf, scan.m_placeOfReads);
 }
 

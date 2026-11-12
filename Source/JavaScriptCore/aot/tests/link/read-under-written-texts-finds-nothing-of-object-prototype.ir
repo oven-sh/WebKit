@@ -1,0 +1,72 @@
+# const listeners = {}; function on(type, list) { listeners[type] = list; } function find(type) { return listeners[type]; }
+# on("move", held); find("move"); find("stop");
+# A read under an unknown text may find a member of Object.prototype, or the prototype under `__proto__`. A text that is written in the program says what it is: none of these names any.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 {{*}}result=undefined|L1
+# With one more caller, who hands over a value that nobody knows, anything may be found.
+# CHECK: function f4
+# CHECK-NOT: result=undefined|L3
+
+layout L0 module=m0 ownFieldCount=0
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 ownFieldCount=0
+layout L3 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="listeners" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="others" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L2
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g1
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = String string="move"
+    v11 = Call v9, -, v10, v8 calleeName="on"
+    v12 = NewClosure function=f2
+    v13 = Call v12, -, v10 calleeName="find"
+    v14 = String string="stop"
+    v15 = Call v12, -, v14 calleeName="find"
+    v16 = NewObject -, v6 layout=L3 fields=[0]
+    v17 = FinishObject v16
+    v18 = NewClosure function=f3
+    v19 = Call v18, -, v10, v17 calleeName="on"
+    v20 = NewClosure function=f4
+    v21 = Call v20, -, v10 calleeName="find"
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="text"
+    v24 = Call v20, -, v23 calleeName="find"
+    Return v6
+}
+function f1 name="on" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    ElemSet v2, v0, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f2 name="find" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    Return v2
+}
+function f3 name="on" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    ElemSet v2, v0, v1 mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f4 name="find" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = ElemGet v1, v0
+    Return v2
+}

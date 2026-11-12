@@ -361,6 +361,12 @@ static uint32_t sharedStorageOfDataRequest(const TableEncoder& encoder, DataID d
         return DataRequest::noSharedStorage;
     case Typed::DataEncoding::TreeWithOwnStorage:
         return DataRequest::rootHasOwnStorage;
+    case Typed::DataEncoding::SharedObject:
+        if (!encoder.program.at(data).root.tryAs<Typed::DataNode::Object>() || !hasWordForDataOfRequest(statics.dataStorageOffsets, data)) {
+            failForDataOfRequest(encoder, "constant data that is to be one object is none, or has no word for it"_s, data);
+            return DataRequest::noSharedStorage;
+        }
+        return statics.dataStorageOffsets[data.index()];
     case Typed::DataEncoding::CopyOnWriteArray: {
         const auto* array = encoder.program.at(data).root.tryAs<Typed::DataNode::Array>();
         if (!array) {

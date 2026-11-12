@@ -763,6 +763,8 @@ void MemoryLocation::dump(PrintStream& out, const Program& program) const
     case AbstractHeap::CalleesInFrames:
     case AbstractHeap::ArrayLengths:
     case AbstractHeap::ArrayCapacity:
+    case AbstractHeap::LoweredArrayLengths:
+    case AbstractHeap::ClassObjects:
         RELEASE_ASSERT_NOT_REACHED();
     }
     out.print("]"_s);

@@ -205,7 +205,7 @@ ALWAYS_INLINE void ParallelMoveResolver::groupMovesOfSmallSetBySource()
     uint32_t numberOfMovesIntoRegisters = 0;
     for (uint32_t index = 0; index < numberOfMoves; ++index) {
         const PendingMove& move = moves[index];
-        ASSERT(move.width == Width32 || move.width == Width64);
+        ASSERT(move.width >= Width32);
         ASSERT(!move.destination.isRegister() || bankOf(move.destination.reg()) == bankOf(move.value->type()));
         ASSERT(!move.source.isRegister() || bankOf(move.source.reg()) == bankOf(move.value->type()));
         ASSERT(!move.source.isImmediate() || move.value->hasNoPosition());
@@ -650,8 +650,7 @@ static NEVER_INLINE void resolveTwoParallelMoves(Arena& arena, std::span<Pending
         return;
     }
 
-    ASSERT(first.width == Width32 || first.width == Width64);
-    ASSERT(second.width == Width32 || second.width == Width64);
+    ASSERT(first.width >= Width32 && second.width >= Width32);
     ASSERT(bankOf(first.destination.reg()) == bankOf(first.value->type()) && bankOf(first.source.reg()) == bankOf(first.value->type()));
     ASSERT(bankOf(second.destination.reg()) == bankOf(second.value->type()) && bankOf(second.source.reg()) == bankOf(second.value->type()));
     const PendingMove& lower = destinationOfSecond < destinationOfFirst ? second : first;

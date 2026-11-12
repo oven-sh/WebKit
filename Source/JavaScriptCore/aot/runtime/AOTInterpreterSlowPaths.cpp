@@ -18,11 +18,13 @@
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
 #include "AOTObjectWords.h"
+#include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "BytecodeStructs.h"
+#include "ClonedArguments.h"
 #include "CodeBlock.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
@@ -62,6 +64,12 @@ static JSValue getById(Instance&, JSCell* base, const Identifier&);
 static Instance* interpreterInstance(JSGlobalObject* realm)
 {
     Instance* instance = realm->aotInstance();
+    return instance && instance->state ? instance : nullptr;
+}
+
+static Instance* instanceOfTables(JSGlobalObject* realm)
+{
+    Instance* instance = realm->aotInstanceOfTables();
     return instance && instance->state ? instance : nullptr;
 }
 
@@ -125,6 +133,7 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
     case Slot::Kind::CustomGetter:
         return callCustomGetter(instance, slot, base, ident);
     case Slot::Kind::Field:
+    case Slot::fieldOfGetter:
         return readField(instance, slot, *uncheckedDowncast<Object>(base));
     case Slot::Kind::InheritedField:
         return getById(instance, slot.holder, ident);
@@ -139,7 +148,6 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
     case Slot::Kind::Transition:
     case Slot::Kind::CustomSetter:
     case Slot::Kind::FieldGetter:
-    case Slot::Kind::FieldCreation:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::FieldOrInheritedAccessor:
     case Slot::Kind::FieldOrInheritedField:
@@ -177,6 +185,15 @@ static JSValue getById(Instance& instance, JSCell* base, const Identifier& ident
 
 enum class CacheOfOperation : bool { None, HoldsOwnValues };
 
+static void prepareAccessorForCall(JSObject* accessor)
+{
+    if (accessor->type() != JSFunctionType)
+        return;
+    ExecutableBase* executable = uncheckedDowncast<JSFunction>(accessor)->executable();
+    if (executable->hasJITCodeForCall())
+        executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
+}
+
 static std::optional<JSValue> tryGetFromOrdinaryObject(Instance& instance, JSCell* base, const Identifier& ident, CacheOfOperation cache)
 {
     auto scope = DECLARE_THROW_SCOPE(*instance.vm);
@@ -185,8 +202,11 @@ static std::optional<JSValue> tryGetFromOrdinaryObject(Instance& instance, JSCel
         return std::nullopt;
     if (cache == CacheOfOperation::HoldsOwnValues && slot->kind == Slot::Kind::Value && slot->has(Slot::isOwn))
         return std::nullopt;
-    JSValue value = readBySlot(instance, *slot, base, ident);
+    GetterSetter* pair = slot->kind == Slot::Kind::Getter ? accessorPairInStorage(*slot, base) : nullptr;
+    JSValue value = pair ? pair->callGetter(instance.globalObject, base) : readBySlot(instance, *slot, base, ident);
     RETURN_IF_EXCEPTION(scope, JSValue());
+    if (pair)
+        prepareAccessorForCall(pair->getter());
     if (!value)
         return std::nullopt;
     return value;
@@ -262,6 +282,27 @@ std::optional<JSValue> tryGetById(JSGlobalObject* globalObject, JSCell* base, co
     return tryGetByName(globalObject, base, ident, CacheOfOperation::HoldsOwnValues);
 }
 
+void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PutPropertySlot& slot)
+{
+    Instance* instance = instanceOfTables(globalObject);
+    UniquedStringImpl* uid = ident.impl();
+    if (!instance || uid->isSymbol() || base->type() != FinalObjectType)
+        return;
+    Structure* structure = base->structure();
+    bool isAddition = slot.type() == PutPropertySlot::NewProperty;
+    if ((isAddition || structure != structureBefore) && (structureBefore->isDictionary() || structure->isDictionary() || (structureBefore->outOfLineCapacity() && structure->outOfLineCapacity() != structureBefore->outOfLineCapacity())))
+        return;
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    if (!caches.findByKey(structureBefore, uid, SlotAccess::Store) && caches.shouldFile(structureBefore->id(), uid, SlotAccess::Store))
+        caches.cache({ structureBefore, { uid, std::nullopt }, SlotAccess::Store }, classifyStore({ instance->globalObject, base, structureBefore, uid, slot, slot.isStrictMode() ? PutMode::Strict : PutMode::Sloppy, std::nullopt }));
+    if (!slot.isCacheableSetter())
+        return;
+    if (const Slot* filed = caches.findByKey(base->structure(), uid, SlotAccess::Store); filed && filed->kind == Slot::Kind::Setter) {
+        if (GetterSetter* pair = accessorPairInStorage(*filed, base))
+            prepareAccessorForCall(pair->setter());
+    }
+}
+
 bool isClassWithLazyMembers(VM& vm, JSCell* cell)
 {
     Closure* closure = uncheckedDowncast<Closure>(cell);
@@ -286,13 +327,13 @@ std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject* globalObje
     if (slot->kind != Slot::Kind::Field || slot->has(Slot::isOutOfLine))
         return invalidOffset;
     uint32_t offset = slot->fieldSlot().offset;
-    static_assert(SlotData::maxOffset < static_cast<uint32_t>(extraPropertyInSiteCache));
+    static_assert(SlotData::maxOffset < static_cast<uint32_t>(fieldInSiteCache));
     switch (slot->fieldSlot().representation()) {
     case SlotRepresentation::JSValue: {
         if (offset < sizeof(JSObjectWithButterfly) || offset % sizeof(EncodedJSValue))
             return invalidOffset;
         uint32_t property = (offset - sizeof(JSObjectWithButterfly)) / sizeof(EncodedJSValue);
-        return property < static_cast<uint32_t>(firstOutOfLineOffset) ? static_cast<PropertyOffset>(property) : invalidOffset;
+        return fieldInSiteCache + static_cast<PropertyOffset>(property);
     }
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
@@ -318,10 +359,10 @@ std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject* globalObje
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void didGetById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot)
+void didGetById(JSGlobalObject* globalObject, JSCell* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, bool isFiledBesideCache)
 {
-    Instance* instance = interpreterInstance(globalObject);
-    if (!instance || structureBefore->isDictionary() || slot.isCacheableValue() || (isJSArray(base) && ident == instance->vm->propertyNames->length))
+    Instance* instance = base->isObject() ? instanceOfTables(globalObject) : interpreterInstance(globalObject);
+    if (!instance || (!isFiledBesideCache && ((structureBefore->isDictionary() && !slot.isCacheableGetter() && !slot.isUnset()) || slot.isCacheableValue())) || (isJSArray(base) && ident == instance->vm->propertyNames->length))
         return;
     PropertyCaches& caches = *instance->state->propertyCaches;
     UniquedStringImpl* uid = ident.impl();
@@ -362,6 +403,69 @@ bool tryPutById(JSGlobalObject* globalObject, JSCell* base, const Identifier& id
     if (!instance)
         return false;
     putById(*instance, base, ident, value, isStrict);
+    return true;
+}
+
+std::optional<JSValue> tryGetFromContext(JSGlobalObject* realm, const Identifier& ident)
+{
+    JSObject* contextified = realm->contextifiedObject();
+    if (!contextified || (contextified->type() != CompiledObjectType && contextified->type() != FinalObjectType))
+        return std::nullopt;
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance* tables = instanceOfTables(realm);
+    if (!tables)
+        return std::nullopt;
+    Instance& instance = *tables;
+    UniquedStringImpl* uid = ident.impl();
+    PropertyCaches& caches = *instance.state->propertyCaches;
+    const Slot* slot = caches.findByKey(contextified->structure(), uid, SlotAccess::Read);
+    if (!slot) {
+        if (!caches.shouldFile(contextified->structureID(), uid, SlotAccess::Read) || !hasOnlyOrdinaryLookupsOnChain(contextified))
+            return std::nullopt;
+        hasPropertyAndCache(&instance, contextified, { uid, std::nullopt });
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        slot = caches.findByKey(contextified->structure(), uid, SlotAccess::Read);
+        if (!slot)
+            return std::nullopt;
+    }
+    if (slot->kind == Slot::Kind::Absent) {
+        unsigned attributes = 0;
+        PropertyOffset offset = realm->structure()->get(vm, uid, attributes);
+        if (!isValidOffset(offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+            return std::nullopt;
+        return realm->getDirect(offset);
+    }
+    if (slot->kind != Slot::Kind::Value && slot->kind != Slot::Kind::FarValue && slot->kind != Slot::Kind::Field && slot->kind != Slot::Kind::ExtraProperty && slot->kind != Slot::Kind::Constant)
+        return std::nullopt;
+    JSValue value = readBySlot(instance, *slot, contextified, ident);
+    RETURN_IF_EXCEPTION(scope, JSValue());
+    if (!value || value.isUndefined())
+        return std::nullopt;
+    return value == contextified ? JSValue(realm->globalThis()) : value;
+}
+
+bool tryPutToContext(JSGlobalObject* realm, const Identifier& ident, JSValue value, PutPropertySlot& slot)
+{
+    JSObject* contextified = realm->contextifiedObject();
+    if (!contextified || contextified->structure()->mayBePrototype())
+        return false;
+    JSObject* holder = contextified;
+    if (Object* compiled = compiledObjectOrNull(contextified))
+        holder = extraPropertiesIfCreated(*compiled);
+    else if (contextified->type() != FinalObjectType)
+        return false;
+    if (!holder)
+        return false;
+    VM& vm = realm->vm();
+    unsigned attributes = 0;
+    Structure* structure = holder->structure();
+    PropertyOffset offset = structure->get(vm, ident.impl(), attributes);
+    if (!isValidOffset(offset) || attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || structure->isImmutableProperty(ident.impl()) || structure->mayBePrototype())
+        return false;
+    structure->didReplaceProperty(offset);
+    holder->putDirectOffset(vm, offset, value);
+    JSGlobalObject::put(realm, realm, ident, value, slot);
     return true;
 }
 
@@ -540,26 +644,73 @@ void checkSymbolTableOffsets(SymbolTable& table)
     RELEASE_ASSERT(table.singleton().isStillValid() || !isThin || singleton == SymbolTableOffsets::invalidatedSingleton);
 }
 
-void fuseReadsOfClosureVariables(CodeBlock& codeBlock)
+void didCreateFunction(JSGlobalObject* globalObject, FunctionExecutable* executable, JSFunction* function)
+{
+    if (!executable->singleton().hasBeenInvalidated())
+        return;
+    Instance* instance = instanceOfTables(globalObject);
+    VM& vm = globalObject->vm();
+    if (!instance || function->structure()->realm() != globalObject)
+        return;
+    Allocator allocator = allocatorForConcurrently<JSFunction>(vm, sizeof(JSFunction), AllocatorForMode::EnsureAllocator);
+    if (!allocator)
+        return;
+    uint64_t header = function->structureID().bits() | static_cast<uint64_t>(std::bit_cast<uint32_t>(function->structure()->typeInfoBlob())) << 32;
+    instance->state->propertyCaches->remember(FunctionBirth { executable, header, allocator.localAllocator() });
+}
+
+void didCreateClonedArguments(JSGlobalObject* globalObject)
+{
+    if (Instance* instance = instanceOfTables(globalObject))
+        instance->propertyCaches.clonedArgumentsAllocator = allocatorForConcurrently<ClonedArguments>(globalObject->vm(), sizeof(ClonedArguments), AllocatorForMode::EnsureAllocator).localAllocator();
+}
+
+void rememberSwitchTarget(JSGlobalObject* globalObject, const JSInstruction* instruction, const StringImpl& atom, int32_t offset)
+{
+    ASSERT(atom.isAtom());
+    if (Instance* instance = instanceOfTables(globalObject))
+        instance->state->propertyCaches->remember(StringSwitchTarget { &atom, instruction, offset });
+}
+
+void fuseReadsOfVariables(CodeBlock& codeBlock, std::span<const JSInstruction* const> resolutions)
 {
     static_assert(ClosureVar < 1u << FusedClosureVariableRead::typeBits);
-    for (const auto& instruction : codeBlock.instructions()) {
-        if (instruction->width() != OpcodeSize::Narrow || !instruction->is<OpResolveScope>())
+    for (const JSInstruction* instruction : resolutions) {
+        if (instruction->width() != OpcodeSize::Narrow)
             continue;
         auto resolution = instruction->as<OpResolveScope>();
         auto& metadata = resolution.metadata(&codeBlock);
-        const JSInstruction* next = instruction.ptr() + instruction->size();
-        if (metadata.m_resolveType != ClosureVar || next->width() != OpcodeSize::Narrow || !next->is<OpGetFromScope>())
+        const JSInstruction* next = instruction + instruction->size();
+        if (next->width() != OpcodeSize::Narrow || !next->is<OpGetFromScope>())
             continue;
         auto read = next->as<OpGetFromScope>();
         auto& metadataOfRead = read.metadata(&codeBlock);
-        if (read.m_scope != resolution.m_dst || metadataOfRead.m_getPutInfo.resolveType() != ClosureVar || metadataOfRead.m_operand > FusedClosureVariableRead::maxOffset)
+        if (read.m_scope != resolution.m_dst || metadataOfRead.m_getPutInfo.resolveType() != metadata.m_resolveType)
             continue;
-        size_t bytesToSkip = next->size();
+        using Kind = FusedClosureVariableRead::Kind;
+        if (metadata.m_resolveType != ClosureVar) {
+            ASSERT(metadata.m_resolveType == GlobalVar || metadata.m_resolveType == GlobalLexicalVar);
+            uint64_t address = metadataOfRead.m_operand;
+            if (!address || address >> (64 - FusedClosureVariableRead::offsetShift))
+                continue;
+            Kind kind = read.m_dst == resolution.m_dst ? Kind::ReadGlobalIntoScopeRegister : Kind::ReadGlobal;
+            static_assert(OBJECT_OFFSETOF(OpResolveScope::Metadata, m_localScopeDepth) == OBJECT_OFFSETOF(OpResolveScope::Metadata, m_resolveType) + sizeof(uint32_t));
+            metadata.m_resolveType = static_cast<ResolveType>(metadata.m_resolveType | kind << FusedClosureVariableRead::typeBits | static_cast<uint32_t>(address << FusedClosureVariableRead::offsetShift));
+            metadata.m_localScopeDepth = static_cast<uint32_t>(address >> (32 - FusedClosureVariableRead::offsetShift));
+            continue;
+        }
+        if (metadataOfRead.m_operand > FusedClosureVariableRead::maxOffset)
+            continue;
         const JSInstruction* afterRead = next + next->size();
-        if (afterRead->width() == OpcodeSize::Narrow && afterRead->is<OpCheckTdz>() && afterRead->as<OpCheckTdz>().m_targetVirtualRegister == read.m_dst)
-            bytesToSkip += afterRead->size();
-        metadata.m_resolveType = static_cast<ResolveType>(ClosureVar | bytesToSkip << FusedClosureVariableRead::typeBits | metadataOfRead.m_operand << FusedClosureVariableRead::offsetShift);
+        bool isChecked = afterRead->width() == OpcodeSize::Narrow && afterRead->is<OpCheckTdz>() && afterRead->as<OpCheckTdz>().m_targetVirtualRegister == read.m_dst;
+        if (isChecked)
+            afterRead += afterRead->size();
+        Kind kind = isChecked ? Kind::ReadAndCheck : Kind::Read;
+        if (read.m_dst == resolution.m_dst)
+            kind = isChecked ? Kind::ReadIntoScopeRegisterAndCheck : Kind::ReadIntoScopeRegister;
+        if (metadata.m_localScopeDepth)
+            kind = static_cast<Kind>(kind - Kind::Read + Kind::ReadOuter);
+        metadata.m_resolveType = static_cast<ResolveType>(ClosureVar | kind << FusedClosureVariableRead::typeBits | metadataOfRead.m_operand << FusedClosureVariableRead::offsetShift);
     }
 }
 

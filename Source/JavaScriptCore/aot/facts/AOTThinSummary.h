@@ -144,9 +144,11 @@ public:
     static constexpr WrittenUnit fromBits(uint32_t bits)
     {
         WrittenUnit unit;
-        unit.m_bits = bits;
+        if (bits >> payloadBits)
+            unit.m_bits = bits;
         return unit;
     }
+    static constexpr uint32_t literalString = 1;
 
     constexpr uint32_t bits() const { return m_bits; }
     constexpr explicit operator bool() const { return !!m_bits; }
@@ -158,7 +160,8 @@ public:
     friend constexpr bool operator==(WrittenUnit, WrittenUnit) = default;
 
 private:
-    static constexpr uint32_t payloadLimit = 1u << 30;
+    static constexpr unsigned payloadBits = 30;
+    static constexpr uint32_t payloadLimit = 1u << payloadBits;
 
     constexpr WrittenUnit(Kind kind, uint32_t payload)
         : m_bits(static_cast<uint32_t>(kind) << 30 | payload)
@@ -207,11 +210,13 @@ struct SummaryCall {
     bool liesOnNoWayToReturn : 1 { false };
     bool passesOnGatheredArguments : 1 { false };
     bool appliesGatheredArguments : 1 { false };
+    bool sharesArgumentsObject : 1 { false };
     bool expectsCalleeItself : 1 { false };
     bool isMadeByHost : 1 { false };
     bool passesLiteral : 1 { false };
     bool continuesConstruction : 1 { false };
     bool describesPrototypeInSight : 1 { false };
+    bool passesWrittenParts : 1 { false };
     uint16_t lengthOfWrittenList : 13 { 0 };
     FunctionID function;
     BuiltinID builtin;
@@ -239,6 +244,7 @@ struct SummaryAccess {
     bool isPartOfConstruction : 1 { false };
     bool subjectIsAnsweredBySuperCall : 1 { false };
     bool storesObjectMadeForIt : 1 { false };
+    bool storesConstructedObject : 1 { false };
     bool standsForObjectMadeAtSite : 1 { false };
     bool liesOnNoWayToReturn : 1 { false };
     bool keyIsSurelyIndex : 1 { false };
@@ -252,6 +258,7 @@ struct SummaryAccess {
     bool laysTextNumberOrBooleanThatIsWritten : 1 { false };
     bool subjectIsMadeInBody : 1 { false };
     bool isSpelledByCopy : 1 { false };
+    bool storesExport : 1 { false };
     bool keyIsNameThatLoopOverSubjectGave : 1 { false };
     bool isCopySpelledByLoop : 1 { false };
     bool readsPrototypeOfHeritage : 1 { false };
@@ -304,6 +311,18 @@ struct SummaryOperator {
     bool isConversionByEquality() const { return opcode == Opcode::Eq; }
 };
 
+struct SummaryParameterTest {
+    uint32_t parameter { 0 };
+    TypeID tested;
+    bool holds { false };
+};
+
+struct SummaryReturn {
+    uint32_t node { 0 };
+    uint32_t firstTest { 0 };
+    uint32_t numberOfTests { 0 };
+};
+
 struct SummaryMember {
     LayoutID classLayout;
     ClassSide side { ClassSide::Prototype };
@@ -313,6 +332,8 @@ struct SummaryMember {
     PropertyKeyID key;
     uint32_t value { 0 };
 };
+
+bool canHoldAccessors(const Program&, LayoutID);
 
 struct SummaryChange {
     enum class Kind : uint8_t {
@@ -345,6 +366,10 @@ struct SummaryChange {
     bool laysAccessorAsWritten { false };
     bool laysNewValueOfNativeCode { false };
     bool laysTextNumberOrBooleanThatIsWritten { false };
+    bool definesValueWithAttributes { false };
+    bool getterLeavesOnlyThroughLink { false };
+    bool accessorLeavesOnlyThroughLink { false };
+    bool fillsObjectBeingMade { false };
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };
     bool laysValueInSight { false };
@@ -407,6 +432,7 @@ enum class SummaryTrait : uint16_t {
     OnlyPassesOnGatheredArguments = 1 << 8,
     HoldsInt32Promise = 1 << 9,
     NeverReturns = 1 << 10,
+    SuspendsAfterStart = 1 << 11,
 };
 
 struct OtherNameOfObjectBeingMade {
@@ -448,6 +474,7 @@ struct SummaryUnitInVariable {
 };
 
 bool isBodyOfWrappedModule(const Program&, FunctionID);
+bool isModuleOfBundle(const Program&, ModuleID);
 
 struct SummaryClassInVariable {
     VariableID variable;
@@ -527,6 +554,7 @@ struct SummaryWithoutLists {
     bool someResultIsReadAsKey { false };
     bool mayReadPathOfAnyModule { true };
     bool makesObjects { false };
+    bool hasClosures { false };
 
     bool has(SummaryTrait trait) const { return traits.contains(trait); }
 };
@@ -761,7 +789,11 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<SummaryStoreOnPrototype, 63> storesOnPrototypes;
         SummaryList<SummaryPlaceInBody, 64> firstUsesOfVariables;
         SummaryList<uint32_t, 65> nodesHandedToEvals;
+        SummaryList<SummaryReturn, 66> returnStatements;
+        SummaryList<SummaryParameterTest, 67> parameterTests;
     };
+
+    std::span<const SummaryParameterTest> testsOf(const SummaryReturn& statement) const LIFETIME_BOUND { return parameterTests.span().subspan(statement.firstTest, statement.numberOfTests); }
 
     const SummaryWrittenAccessor& writtenAccessorOf(uint32_t access) const LIFETIME_BOUND
     {
@@ -895,6 +927,8 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<SummaryStoreOnPrototype> storesOnPrototypes;
     Vector<SummaryPlaceInBody> firstUsesOfVariables;
     Vector<uint32_t> nodesHandedToEvals;
+    Vector<SummaryReturn> returnStatements;
+    Vector<SummaryParameterTest> parameterTests;
     uint64_t layoutsOfOwnWrites { 0 };
     Effects ownEffects;
     std::optional<Effects> ownEffectsOfOperators;

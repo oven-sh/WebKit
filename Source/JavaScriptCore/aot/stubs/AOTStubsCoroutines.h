@@ -17,6 +17,7 @@
 namespace JSC { namespace AOT {
 
 enum class PromiseHandler : uint8_t { OnFulfilled, OnRejected };
+enum class ReactionChainReceiver : uint8_t { Promise, FulfilledValue };
 enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueInModuleBody, Resolution };
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
 enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator };
@@ -29,6 +30,8 @@ constexpr StubKey newPromise() { return StubKey(StubFamily::NewPromise); }
 constexpr StubKey newPromiseBeforeBody(unsigned argument) { return StubKey(StubFamily::NewPromiseBeforeBody).withForm(static_cast<uint8_t>(argument)); }
 constexpr StubKey returnFulfilledPromise() { return StubKey(StubFamily::ReturnFulfilledPromise); }
 constexpr StubKey promiseThen(PromiseHandler handler) { return StubKey(StubFamily::PromiseThen).withForm(static_cast<uint8_t>(handler)); }
+constexpr StubKey newReactionChain(unsigned numberOfWords) { return StubKey(StubFamily::NewReactionChain).withCount(numberOfWords); }
+constexpr StubKey startReactionChain(ReactionChainReceiver receiver) { return StubKey(StubFamily::StartReactionChain).withForm(static_cast<uint8_t>(receiver)); }
 constexpr StubKey resolveReturnedPromise() { return StubKey(StubFamily::ResolveReturnedPromise); }
 constexpr StubKey returnAsyncResult() { return StubKey(StubFamily::ReturnAsyncResult); }
 constexpr StubKey returnAsyncResultInTailPosition(RegistersSavedInAsyncFrame saved, AsyncResult result = AsyncResult::Any) { return StubKey(StubFamily::ReturnAsyncResultInTailPosition).withForm(static_cast<uint8_t>(static_cast<unsigned>(result) * numberOfSetsSavedInAsyncFrame + static_cast<unsigned>(saved))); }
@@ -83,6 +86,15 @@ static_assert(gprOf(resumeModeRegister) == X86Registers::r10);
 inline constexpr std::array<uint8_t, 4> leaveFunctionIfCarryIsSet { 0x73, 0x02, 0xc9, 0xc3 };
 #endif
 
+#if CPU(X86_64)
+inline constexpr std::array<uint8_t, 4> headOfDelegationMark { 0x0f, 0x1f, 0x84, 0x00 };
+inline constexpr int32_t delegationMark = 0x64656c67;
+inline constexpr ptrdiff_t offsetOfDelegationMark = sizeof(headOfDelegationMark);
+#else
+inline constexpr int32_t delegationMark = static_cast<int32_t>(0xd2800000u | 0x6c67u << 5 | 31u);
+inline constexpr ptrdiff_t offsetOfDelegationMark = 0;
+#endif
+
 constexpr JSGenerator::ResumeMode engineResumeModeOf(ResumeMode mode)
 {
     switch (mode) {
@@ -118,6 +130,7 @@ struct NewSavedFrameRegisters { GPRReg saved, count, allocator, scratch; };
 struct JobRegisters { GPRReg queue, slot, next, scratch; };
 struct HeadJobRegisters { GPRReg queue, slot, word; };
 struct PromiseAllJobRegisters { GPRReg context, values, value, index; };
+struct ReactionChainRegisters { GPRReg chain, promise, target, handler, argument; };
 struct ResolveThenableRegisters { GPRReg promise, promiseToResolve, other; };
 struct YieldDeliveryRegisters { GPRReg yielded, producer, driver, consumerFrame, word, other; };
 struct GeneratorJobRegisters { GPRReg queue, slot, word, driver, saved, mode, value; };
@@ -143,8 +156,16 @@ void emitFulfillPromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg oth
 void emitQueueResolutionWithFulfillment(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& isNotQueued);
 void emitResolvePromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
 void emitRunResolveThenableJob(StubAssembler&, GPRReg head, const ResolveThenableRegisters&, const JobRegisters&, JumpList& isLeftToJobLoop);
-void emitRunResolveWithoutHandlerJob(StubAssembler&, GPRReg head, GPRReg promise, GPRReg value, const JobRegisters&, JumpList& isLeftToJobLoop);
-void emitRunPromiseAllResolveJob(StubAssembler&, const HeadJobRegisters&, const PromiseAllJobRegisters&, GPRReg scratch, JumpList& isLeftToJobLoop);
+[[nodiscard]] Label emitRunResolveWithoutHandlerJob(StubAssembler&, GPRReg head, GPRReg promise, GPRReg value, const JobRegisters&, JumpList& isNoPromise, JumpList& isLeftToJobLoop);
+void emitQueueResolutionWithPromise(StubAssembler&, GPRReg promise, GPRReg resolution, GPRReg other, const JobRegisters&, JumpList& needsEngine);
+void emitTakeReactionChainStepJob(StubAssembler&, const HeadJobRegisters&, const ReactionChainRegisters&, JumpList& isForOtherStatus, JumpList& isLeftToJobLoop);
+void emitBranchIfReactionChainGoesOn(StubAssembler&, GPRReg chain, GPRReg index, GPRReg scratch, JumpList& goesOn);
+void emitAdvanceReactionChain(StubAssembler&, GPRReg chain);
+void emitResolveReactionChain(StubAssembler&, GPRReg chain, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
+void emitRunSettleReactionChainJob(StubAssembler&, GPRReg head, GPRReg chain, GPRReg value, GPRReg structureID, const JobRegisters&, JumpList& isLeftToJobLoop);
+void emitBranchIfRaceIsSettled(StubAssembler&, GPRReg head, GPRReg promise, GPRReg scratch, JumpList& isSettled, JumpList& isLeftToJobLoop);
+void emitNewSettledResult(StubAssembler&, GPRReg head, GPRReg word);
+void emitRunPromiseAllResolveJob(StubAssembler&, const HeadJobRegisters&, const PromiseAllJobRegisters&, GPRReg scratch, JumpList& isLeftToJobLoop, Address element);
 
 void emitDeliverYieldToSuspendedConsumer(StubAssembler&, const YieldDeliveryRegisters&, JumpList& slowPath);
 void emitAwaitYieldedValue(StubAssembler&, const AwaitRegisters&, const JobRegisters&, JumpList& isLeftToEngine);

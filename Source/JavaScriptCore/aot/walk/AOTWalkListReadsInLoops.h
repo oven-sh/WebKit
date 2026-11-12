@@ -24,11 +24,14 @@ struct HoistedArrayGuard {
     bool takesInstancesBelow { false };
     bool isAskedForItsStorageAlone { false };
     bool onlyHoldsRows { false };
+    LayoutID subclass;
     WrittenListOfVariable written;
     bool hasAlternateStorage { false };
     ArrayStorage alternateStorage { ArrayStorage::Contiguous };
     bool alternateTakesAnyKind { false };
     bool keepsStorageWithoutAlternate { false };
+    bool holdsIndices { false };
+    bool prefersInt32s { false };
     bool keepsDoublesWithoutAlternate { false };
     bool isStepped { false };
     ArrayStorage expectedStorage { ArrayStorage::Other };
@@ -48,6 +51,7 @@ bool loopTakesInstancesBelowViewForItsLength(Walker&, BlockID inputHead, Referen
 bool lengthOfViewTakesInstancesBelow(Walker&, TypeID typeOfView);
 Reference buildTestOfViewOrInstanceBelow(Walker&, Reference view, Origin);
 void noteThatLengthOfViewIsFoundAbove(Walker&, Reference view);
+void noteThatLengthOfSubclassIsFoundAbove(Walker&, Reference view, LayoutID subclass);
 void noteThatViewKeepsItsLength(Walker&, Reference view, Reference test);
 void askAgainWhetherLengthOfViewIsFoundAbove(Walker&, Reference view, Origin);
 std::optional<HoistedArrayGuard> findHoistedArrayGuard(Walker&, const BodyValue& read);
@@ -57,6 +61,10 @@ std::optional<HoistedArrayGuard> findHoistedArrayGuard(Walker&, Reference list);
 std::optional<HoistedArrayGuard> findRowHolderGuard(Walker&, const BodyValue& read);
 std::optional<HoistedArrayGuard> findListTestedForStoresInFrontOfLoop(Walker&, Reference list);
 std::optional<HoistedArrayGuard> tryGuardNumericArrayInIteration(Walker&, const BodyValue& read, Reference list);
+std::optional<HoistedArrayGuard> tryGuardInlineeArrayInIteration(Walker&, const BodyValue& read, Reference list);
+std::optional<HoistedArrayGuard> tryGuardArrayInRecursion(Walker&, const BodyValue& read, Reference list);
+bool isElementUsedNumerically(Walker&, const BodyIndex&, ValueID read);
+std::optional<ArrayStorage> predictStorageInRecursion(Walker&, const BodyValue& read, TypeID list);
 bool isExpectedToBeListOfNumbers(Walker&, TypeID expected);
 bool turnsReadRowsOfNumbersThatTheyFind(Walker&, BlockID inputHead, std::span<const HoistedArrayGuard>, std::span<const HoistedSpeculation>);
 bool isFreshAllocation(Walker&, Reference name);
@@ -80,13 +88,22 @@ struct WhatReadsFromInFrontOfLoopFind {
     BitVector refused;
 };
 bool readsListFoundByReadFromInFront(const Program&, const BodyIndex&, const BodyValue& operation, uint32_t firstValueOfLoop, WhatReadsFromInFrontOfLoopFind&);
+inline constexpr Range steppedPositions { 0, static_cast<int64_t>(UINT32_MAX) - 1 };
+ValueID iterableThatGivesPosition(Walker&, const BodyIndex&, ValueID key);
+bool rowLeavesLists(Walker&, BlockID inputHead, std::span<const HoistedArrayGuard>, std::span<const HoistedSpeculation>, std::span<const Reference> entering);
 void hoistLeadingInitializationChecks(Walker&, BlockID inputHead);
 void readListsOfStableBindingsInFrontOfLoop(Walker&, BlockID inputHead);
 Reference fieldValueInPreheader(Walker&, const BodyIndex&, ValueID read, uint32_t firstValueOfLoop);
 void readFieldArraysInPreheader(Walker&, BlockID inputHead);
 void readRowArraysInPreheader(Walker&, BlockID inputHead);
+bool isRowKeyInvariant(const BodyIndex&, ValueID key, uint32_t firstValueOfLoop, unsigned depth);
+Reference buildHoistedRowKey(Walker&, const BodyIndex&, ValueID key, uint32_t firstValueOfLoop, unsigned depth);
 Reference nameOfListThatEntersLoopAround(Walker&, const BodyIndex&, const BodyValue& access);
 std::optional<uint64_t> findArrayGuard(Walker&, const WalkState&, Reference array);
+bool isTermOfRemainder(const BodyIndex&, ValueID term);
+bool hasRemainderTerms(Walker&, BlockID inputHead);
+bool isTermOfStartOfCounter(const BodyIndex&, ValueID term);
+Reference arrayNameAtHeader(Walker&, BlockID inputHead, ValueID array);
 void noteJoinedArrayGuard(Walker&, Reference joined, uint64_t guard);
 struct ChosenArray {
     Reference name;
@@ -97,6 +114,7 @@ void forEachElementAccessInInlinedCallee(Walker&, const BodyValue& call, NOESCAP
 bool copyOfCalleeReadsUnderKeyWhatNobodyKnows(Walker&, const BodyValue& call, uint32_t firstValueOfLoop);
 ValueID readOfVariableThatFindsReceiverInLoop(const Program&, const BodyIndex&, const BodyValue& access, uint32_t firstValueOfLoop);
 bool storesListedNumberIntoView(Walker&, const BodyIndex&, const BodyValue& store, TypeID holder, uint32_t firstValueOfLoop, std::span<const HoistedArrayGuard>, std::span<const HoistedSpeculation>, std::span<const Reference> proofs);
+bool isServedUnderListedElement(Walker&, const BodyIndex&, const BodyValue& operation, const TypesOfInputs& typeInRow, uint32_t firstValueOfLoop, std::span<const HoistedArrayGuard>, std::span<const HoistedSpeculation>, std::span<const Reference> proofs);
 bool guardRowInIteration(Walker&, Reference row, Origin);
 TypeID seenUnderVariableKey(Walker&, const BodyValue& read);
 bool rowsHoldIntegers(Walker&, const BodyValue& access);
@@ -104,12 +122,13 @@ bool storesNumberIntoRow(Walker&, const BodyIndex&, const BodyValue& store, Type
 bool storesIntoListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& store, uint32_t firstValueOfLoop, std::span<const HoistedArrayGuard>);
 void nameKindOfListTestedInFrontOfLoop(Draft& read, const HoistedArrayGuard&);
 void takeStorageAndLengthFromInFrontOfLoop(Walker&, Draft& read, const HoistedArrayGuard&);
+void takeObjectStorageFromInFrontOfLoop(Walker&, Draft& read);
 bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position);
 Reference storageOfListFromInFrontOfLoop(Walker&, const HoistedArrayGuard&, Origin);
 
 bool isUnbuiltListOfNumbers(Walker&, ValueID unbuiltList);
 bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const HoistedArrayGuard&);
-bool guardElementPresenceInIteration(Walker&, Draft& read, Reference list, Reference position, const HoistedArrayGuard&);
+bool guardElementPresenceInIteration(Walker&, Draft& read, Reference list, Reference position, const HoistedArrayGuard&, ValueID relationFailedByHole = { });
 bool turnTakesElementForKeyInListReadsInLoops(Walker&, ValueID element);
 bool hasOnlyOtherArrayReads(Walker&, BlockID inputHead, ValueID made);
 bool readsNumericArray(Walker&, BlockID inputHead);
@@ -153,7 +172,11 @@ struct ListsReadInLoop {
     bool areLeftAsTheyAre { false };
     bool areTested { false };
     bool someListIsTakenUnderCounterAskedInFront { false };
+    bool hasConditionalArray { false };
     BlockID alternateStorageEntry;
+    Vector<std::pair<uint32_t, uint32_t>, 4> distinctAllocations { };
+    Reference counterBound { };
+    Reference clampedCounterBound { };
 };
 
 template<typename Entry, Reference Entry::* nameOfEntry>
@@ -194,9 +217,16 @@ using SpeculationLookupByName = FirstIndexByName<HoistedSpeculation, &HoistedSpe
 void reserveRoomOfListsThatLoopFills(Walker&, BlockID inputHead, std::span<const Reference> entering);
 Reference literalThatCallPushesOntoInEveryTurn(Walker&, const BodyValue& call, BlockID inputHead);
 Reference untouchedLiteralOfPush(Walker&, const BodyValue& call, LoopID);
+Reference listOfFieldPushedOnto(Walker&, const BodyValue& call);
+Reference listOfFieldPoppedFrom(Walker&, const BodyValue& call);
 bool callsArrayPush(Walker&, const BodyValue& call, Reference list);
+bool callsArrayMethod(Walker&, const BodyValue& call, Reference list, BuiltinName, BuiltinID);
 bool isUntouchedLiteral(const BodyIndex&, ValueID array, LoopID);
 bool storesUnderSteppedCounter(Walker&, const BodyIndex&, const BodyValue& store);
+bool storesFromInitialLength(Walker&, const BodyIndex&, const BodyValue& store);
+bool storesFromLengthOfRow(Walker&, const BodyIndex&, const BodyValue& store);
+bool readsTruncatedElement(Walker&, const BodyValue& read);
+bool hasWideTruncatedReads(Walker&, BlockID inputHead, const LoopPreview&);
 ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses);
 void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const HoistedSpeculation>, std::span<const Reference> proofs, BlockID& genericStart, Origin);
 

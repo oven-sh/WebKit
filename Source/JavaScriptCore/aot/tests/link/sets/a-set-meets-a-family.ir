@@ -1,11 +1,11 @@
 # If a set that meets a declared family stayed apart from it, a store through the parameter would miss the fields of the one or of the other. No declared family holds all, so the set is taken apart, and its members and the family are lost and united, as two strangers and a family were before there were sets
-# abstract class Shape { }  class A, B, C, D, E extends Shape  function same(s) { return s; }  function put(o) { o.x = null; }  same(a); same(b); same(c); same(d);  put({ x: "s", p: "s" });  put({ x: "s", q: "s" });  put(same(e));
+# abstract class Shape { }  class A, B, C, D, E extends Shape  let kept; function same(s) { kept = s; return kept; }  function put(o) { o.x = null; }  same(a); same(b); same(c); same(d);  put({ x: "s", p: "s" });  put({ x: "s", q: "s" });  put(same(e));
 # Five members meet at `same`, so what it returns is typed as their family. That has the longer way to `put`, where the two strangers are a set by then.
 # RUN: link families functions fields mechanisms=all
 # CHECK: family F{{*}} [L3, L4, L5, L6, L7]
-# CHECK: function f1 callers-known one-callee {{*}}result=L3|L4|L5|L6|L7 returns=
+# CHECK: function f1 callers-known one-callee {{*}}result={{*}}L3|L4|L5|L6|L7 returns=
 # CHECK: function f2 callers-known one-callee
-# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L3|L4|L5|L6|L7
+# CHECK-NEXT: parameter 0 {{*}}proven={{*}}L0|L1|L3|L4|L5|L6|L7
 # CHECK: field L0.0 "x" proven=null|string writers-known
 # CHECK: field L1.0 "x" proven=null|string writers-known
 # CHECK: field L3.0 "x" proven=null|string writers-known
@@ -23,6 +23,7 @@ layout L5 name="C" module=m0 fields=[{key="x" declared={type=anything} flags=[Is
 layout L6 name="D" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
 layout L7 name="E" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
 module m0 path="main.ts" displayPath="main.ts" body=f0
+variable g0 name="kept0" module=m0 declared={type=anything} initialization=Undefined
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -56,7 +57,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 }
 function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    Return v0
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    Return v2
 }
 function f2 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

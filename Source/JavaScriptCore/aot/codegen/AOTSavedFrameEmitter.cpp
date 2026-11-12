@@ -14,15 +14,19 @@
 #include "AOTBuildContext.h"
 #include "AOTCallEmitter.h"
 #include "AOTCellAllocationEmitter.h"
+#include "AOTConstantEmitter.h"
+#include "AOTEnvironmentEmitter.h"
 #include "AOTFrameMapEmitter.h"
 #include "AOTGenerator.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRFunction.h"
+#include "AOTReactionChain.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrame.h"
 #include "AOTSort.h"
 #include "AOTStubCatalog.h"
+#include "AOTStubsCoroutines.h"
 #include "AOTTypeTestEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "FunctionRareData.h"
@@ -362,7 +366,8 @@ struct InstructionOfLeafStep {
     enum class Kind : uint8_t {
         LoadDouble, LoadInt64, LoadInt32, LoadBoxedInt32, LoadBoxedNumber, StoreDouble, StoreInt64, StoreInt32, Double, Int64,
         MoveDouble, MoveInt64, AddDouble, SubDouble, MulDouble, DivDouble, AddInt64, SubInt64, AddInt64ToDouble, SubInt64ToDouble,
-        Int64ToDouble, DoubleToInt64, Int32ToInt64, BranchDouble, BranchInt64, Jump, Label, GiveWay, BoxDouble, BoxInt64, Return
+        Int64ToDouble, DoubleToInt64, Int32ToInt64, BranchDouble, BranchInt64, Jump, Label, GiveWay, BoxDouble, BoxInt64, Return,
+        LoadNumber, LoadSentNumber, AddNumbers, SubNumbers, MulNumbers, ReturnNumber
     };
 
     Kind kind;
@@ -386,6 +391,7 @@ static constexpr GPRReg scratchOfLeafStep = gprOf(StubRegister::T14);
 static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
 static constexpr uint8_t numberOfLeafFPRs = 7;
 static constexpr GPRReg frameOfLeafStep = gprOf(StubRegister::T10);
+static constexpr GPRReg sentValueOfLeafStep = gprOf(StubRegister::A2);
 static FPRReg leafFPR(uint8_t place) { return FPRInfo::toArgumentRegister(place); }
 
 static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
@@ -394,6 +400,7 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
     AllowMacroScratchRegisterUsage allowScratch(jit);
     const GPRReg result = GPRInfo::returnValueGPR;
     const FPRReg scratch = leafFPR(numberOfLeafFPRs);
+    const FPRReg otherScratch = FPRInfo::nonPreservedNonArgumentFPR0;
     Vector<MacroAssembler::Label, 8> labels(step.numberOfLabels);
     Vector<std::pair<MacroAssembler::Jump, uint32_t>, 8> jumps;
     MacroAssembler::JumpList givesWay;
@@ -412,6 +419,61 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
         jit.moveDoubleTo64(number, result);
         jit.sub64(scratchOfLeafStep, result);
         jit.ret();
+    };
+    auto giveWayUnlessNumber = [&](GPRReg value) {
+        jit.load64(numberTag, scratchOfLeafStep);
+        givesWay.append(jit.branchTest64(MacroAssembler::Zero, value, scratchOfLeafStep));
+    };
+    auto toDouble = [&](GPRReg number, FPRReg converted) {
+        MacroAssembler::Jump isInt32 = jit.branch64(MacroAssembler::AboveOrEqual, number, scratchOfLeafStep);
+        jit.add64(scratchOfLeafStep, number, result);
+        jit.move64ToDouble(result, converted);
+        MacroAssembler::Jump isConverted = jit.jump();
+        isInt32.link(&jit);
+        jit.convertInt32ToDouble(number, converted);
+        isConverted.link(&jit);
+    };
+    auto calculateWithNumbers = [&](const InstructionOfLeafStep& instruction) {
+        const GPRReg left = leafGPRs[instruction.left];
+        const GPRReg right = leafGPRs[instruction.right];
+        const GPRReg calculated = leafGPRs[instruction.result];
+        jit.load64(numberTag, scratchOfLeafStep);
+        MacroAssembler::JumpList goesByDoubles;
+        goesByDoubles.append(jit.branch64(MacroAssembler::Below, left, scratchOfLeafStep));
+        goesByDoubles.append(jit.branch64(MacroAssembler::Below, right, scratchOfLeafStep));
+        jit.move(left, result);
+        switch (instruction.kind) {
+        case Kind::AddNumbers:
+            goesByDoubles.append(jit.branchAdd32(MacroAssembler::Overflow, right, result));
+            break;
+        case Kind::SubNumbers:
+            goesByDoubles.append(jit.branchSub32(MacroAssembler::Overflow, right, result));
+            break;
+        case Kind::MulNumbers:
+            goesByDoubles.append(jit.branchMul32(MacroAssembler::Overflow, right, result));
+            goesByDoubles.append(jit.branchTest32(MacroAssembler::Zero, result));
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        jit.zeroExtend32ToWord(result, result);
+        jit.or64(scratchOfLeafStep, result);
+        jit.move(result, calculated);
+        MacroAssembler::Jump isCalculated = jit.jump();
+
+        goesByDoubles.link(&jit);
+        toDouble(left, scratch);
+        toDouble(right, otherScratch);
+        switch (instruction.kind) {
+        case Kind::AddNumbers: jit.addDouble(scratch, otherScratch, scratch); break;
+        case Kind::SubNumbers: jit.subDouble(scratch, otherScratch, scratch); break;
+        case Kind::MulNumbers: jit.mulDouble(scratch, otherScratch, scratch); break;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+        givesWay.append(jit.branchDouble(MacroAssembler::DoubleNotEqualOrUnordered, scratch, scratch));
+        jit.moveDoubleTo64(scratch, calculated);
+        jit.sub64(scratchOfLeafStep, calculated);
+        isCalculated.link(&jit);
     };
     auto right = [&](const InstructionOfLeafStep& instruction) {
         if (!instruction.rightIsConstant)
@@ -518,6 +580,23 @@ static void emitLeafStep(CCallHelpers& jit, const LeafStepOfGenerator& step)
             jit.load64(frameWord(instruction), result);
             jit.ret();
             break;
+        case Kind::LoadNumber:
+            jit.load64(frameWord(instruction), leafGPRs[instruction.result]);
+            giveWayUnlessNumber(leafGPRs[instruction.result]);
+            break;
+        case Kind::LoadSentNumber:
+            jit.move(sentValueOfLeafStep, leafGPRs[instruction.result]);
+            giveWayUnlessNumber(leafGPRs[instruction.result]);
+            break;
+        case Kind::AddNumbers:
+        case Kind::SubNumbers:
+        case Kind::MulNumbers:
+            calculateWithNumbers(instruction);
+            break;
+        case Kind::ReturnNumber:
+            jit.move(leafGPRs[instruction.left], result);
+            jit.ret();
+            break;
         }
     }
     givesWay.link(&jit);
@@ -613,6 +692,8 @@ private:
         case Opcode::Narrowed:
             return representation == m_emitter.representationOf(operation.operand(0)) && isNumeric(representation);
         case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div:
+            if (operation.form() == OperatorForm::Generic)
+                return operation.opcode != Opcode::Div && representation == Representation::JSValue && operandIs(0, Representation::JSValue) && operandIs(1, Representation::JSValue);
             if (operation.form() == OperatorForm::Numbers)
                 return representation == Representation::Double && operandIsNumber(0) && operandIsNumber(1);
             if ((operation.opcode != Opcode::Add && operation.opcode != Opcode::Sub) || !operandIs(0, Representation::Int64) || !operandIs(1, Representation::Int64))
@@ -647,6 +728,14 @@ private:
     }
 
     bool isLoadedBoxed(ValueID id) const { return !m_code.isConstant(id) && m_emitter.representationOf(id) == Representation::JSValue && m_emitter.isKeptInHeapFrame(id) && m_emitter.formKeptInHeapFrame(id) == Representation::JSValue; }
+
+    bool isSentValue(ValueID id) const
+    {
+        if (m_code.isConstant(id))
+            return false;
+        const Operation& read = m_code.at(id);
+        return read.opcode == Opcode::ResultAt && read.resultsOperand() == m_yield && read.index() == static_cast<uint32_t>(YieldResult::Sent);
+    }
 
     static bool isNumeric(Representation representation) { return representation == Representation::Double || representation == Representation::Int64 || representation == Representation::Int32; }
 
@@ -779,6 +868,33 @@ private:
         return place;
     }
 
+    uint8_t placeOfNumber(ValueID id)
+    {
+        if (auto found = m_placesOfNumbers.find(id.index()); found != m_placesOfNumbers.end())
+            return found->value;
+        uint8_t place = newPlace(false).number;
+        m_placesOfNumbers.set(id.index(), place);
+        if (m_code.isConstant(id)) {
+            const Operation& constant = m_code.at(id);
+            if (constant.opcode != Opcode::Integer || constant.integer() != static_cast<int32_t>(constant.integer()))
+                m_fails = true;
+            else
+                m_loads.append({ .kind = Kind::Int64, .result = place, .bits = static_cast<int64_t>(JSValue::encode(jsNumber(static_cast<int32_t>(constant.integer())))) });
+        } else if (isSentValue(id))
+            m_loads.append({ .kind = Kind::LoadSentNumber, .result = place });
+        else if (isLoadedBoxed(id) && !m_isMadeOnWay.get(id.index()))
+            m_loads.append({ .kind = Kind::LoadNumber, .result = place, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+        else
+            m_fails = true;
+        return place;
+    }
+
+    void defineNumber(ValueID id, uint8_t place)
+    {
+        m_placesOfNumbers.set(id.index(), place);
+        m_isMadeOnWay.set(id.index());
+    }
+
     InstructionOfLeafStep withRight(InstructionOfLeafStep instruction, ValueID right)
     {
         if (m_code.isConstant(right) && m_code.at(right).opcode == Opcode::Integer && m_emitter.representationOf(right) != Representation::Double) {
@@ -802,15 +918,22 @@ private:
         std::span<const ValueID> parameters = to.parameters();
         std::span<const ValueID> arguments = edge.arguments();
         Vector<std::pair<ValueID, Place>, 4> entered;
+        Vector<std::pair<ValueID, uint8_t>, 4> numbersEntered;
         for (size_t index = 0; index < parameters.size(); ++index) {
             if (!m_code.isNeeded(parameters[index]))
                 continue;
+            if (m_emitter.representationOf(parameters[index]) == Representation::JSValue && m_emitter.representationOf(arguments[index]) == Representation::JSValue && entries == 1) {
+                numbersEntered.append({ parameters[index], placeOfNumber(arguments[index]) });
+                continue;
+            }
             if (!isNumeric(m_emitter.representationOf(parameters[index])) || m_emitter.representationOf(parameters[index]) != m_emitter.representationOf(arguments[index])) {
                 m_fails = true;
                 return;
             }
             entered.append({ parameters[index], placeOf(arguments[index]) });
         }
+        for (auto [parameter, arriving] : numbersEntered)
+            defineNumber(parameter, arriving);
         for (auto [parameter, arriving] : entered) {
             if (entries == 1) {
                 define(parameter, arriving);
@@ -908,6 +1031,14 @@ private:
             define(id, operand(0));
             return;
         case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: {
+            if (operation.form() == OperatorForm::Generic) {
+                uint8_t left = placeOfNumber(operation.operand(0));
+                uint8_t right = placeOfNumber(operation.operand(1));
+                uint8_t calculated = newPlace(false).number;
+                append({ .kind = operation.opcode == Opcode::Add ? Kind::AddNumbers : operation.opcode == Opcode::Sub ? Kind::SubNumbers : Kind::MulNumbers, .result = calculated, .left = left, .right = right });
+                defineNumber(id, calculated);
+                return;
+            }
             bool isDouble = operation.form() == OperatorForm::Numbers;
             Place left = operand(0);
             ValueID right = operation.operand(1);
@@ -988,6 +1119,10 @@ private:
         auto keep = [&](ValueID id) {
             if (!id || m_fails || !m_emitter.isKeptInHeapFrame(id) || !m_isMadeOnWay.get(id.index()))
                 return;
+            if (auto number = m_placesOfNumbers.find(id.index()); number != m_placesOfNumbers.end() && m_emitter.formKeptInHeapFrame(id) == Representation::JSValue) {
+                append({ .kind = Kind::StoreInt64, .left = number->value, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[id.index()] - 1) });
+                return;
+            }
             auto found = m_places.find(id.index());
             Representation representation = m_emitter.formKeptInHeapFrame(id);
             if (found == m_places.end() || !isNumeric(representation) || representation != m_emitter.representationOf(id)) {
@@ -1004,6 +1139,8 @@ private:
         ValueID yielded = m_code.at(m_yield).valueOperand();
         if (m_boxed)
             append({ .kind = m_boxed->isDouble ? Kind::BoxDouble : Kind::BoxInt64, .left = m_boxed->number });
+        else if (auto number = m_placesOfNumbers.find(yielded.index()); number != m_placesOfNumbers.end() && !m_code.isConstant(yielded))
+            append({ .kind = Kind::ReturnNumber, .left = number->value });
         else if (!m_code.isConstant(yielded) && m_emitter.isKeptInHeapFrame(yielded) && !m_isMadeOnWay.get(yielded.index()) && m_emitter.formKeptInHeapFrame(yielded) == Representation::JSValue)
             append({ .kind = Kind::Return, .bits = offsetOfWordInHeapFrame(m_emitter.m_wordsOfKeptValues[yielded.index()] - 1) });
         else
@@ -1022,6 +1159,7 @@ private:
     HashMap<uint32_t, Place, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
     HashMap<uint32_t, Place, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfParameters;
     HashMap<uint32_t, Comparison, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_comparisons;
+    HashMap<uint32_t, uint8_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfNumbers;
     BitVector m_isMadeOnWay;
     std::optional<Place> m_boxed;
     Vector<InstructionOfLeafStep, 8> m_loads;
@@ -2312,6 +2450,43 @@ GeneratorFunctionOrigin SavedFrameEmitter::originOfGeneratorFunction(FunctionID 
     return m_plan.functionKind(m_program, conventions().closureEntryOf(function)).isInRuntimeModule ? GeneratorFunctionOrigin::Library : GeneratorFunctionOrigin::Program;
 }
 
+Word32 SavedFrameEmitter::loadStructureIDOfGenerators(CellPointer closure, LBasicBlock otherwise)
+{
+    constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
+    branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), otherwise);
+    Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+    branchUnless(isNotZero(structureID), otherwise);
+    return structureID;
+}
+
+void SavedFrameEmitter::branchUnlessUnmodifiedAsyncGenerator(CellPointer generator, LBasicBlock otherwise)
+{
+    branchUnless(Condition(m_out.isNull(m_out.loadPtr(generator.value(), m_heaps.JSObject_butterfly))), otherwise);
+    Boxed prototype(m_out.load64(loadStructure(generator).value(), m_heaps.Structure_prototype));
+    branchUnless(isCell(prototype), otherwise);
+    branchUnless(equal(loadStructureID(unboxCell(prototype)), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyAsyncGeneratorPrototypeStructureID))), otherwise);
+}
+
+void SavedFrameEmitter::branchUnlessGeneratorsPlain(CellPointer function, LBasicBlock otherwise)
+{
+    LBasicBlock hasMadeNone = newBlock();
+    LBasicBlock makesPlainGenerators = newBlock();
+    Pointer structure = decodeStructureID(loadStructureIDOfGenerators(function, hasMadeNone));
+    Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
+    Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
+    branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_classInfo), classInfo), otherwise);
+    CellPointer prototype(m_out.load64(structure.value(), m_heaps.Structure_prototype));
+    branchUnless(equal(loadStructureID(prototype), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), otherwise);
+    m_out.jump(makesPlainGenerators);
+
+    m_out.appendTo(hasMadeNone);
+    branchUnless(equal(loadStructureID(function), loadImmutable32(AOT_INSTANCE_OFFSET(closures.closureHeaders) + closureStructureOfGeneratorFunctions(false) * sizeof(uint64_t))), otherwise);
+    m_out.jump(makesPlainGenerators);
+
+    m_out.appendTo(makesPlainGenerators);
+}
+
 CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin origin, LBasicBlock slowPath)
 {
     std::optional<Word32> structureID;
@@ -2322,12 +2497,7 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
         branchUnless(isNotZero(*structureID), slowPath);
         structure = decodeStructureID(*structureID);
     } else if (closure) {
-        constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
-        Pointer taggedRareData = loadField<Pointer>(*closure, m_heaps.JSFunction_executableOrRareData);
-        branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
-        structureID = Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
-        branchUnless(isNotZero(*structureID), slowPath);
-
+        structureID = loadStructureIDOfGenerators(*closure, slowPath);
         structure = decodeStructureID(*structureID);
         Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
         Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
@@ -2390,7 +2560,54 @@ void SavedFrameEmitter::generateNewAsyncGenerator(const ValueContext& value)
 
 void SavedFrameEmitter::generateTakeGeneratorPrototype(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::TakeGeneratorPrototype, { in<CellPointer>(value->generatorOperand()), boxCell(in<CellPointer>(value->calleeOperand())) });
+    constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+    CellPointer generator = in<CellPointer>(value->generatorOperand());
+    CellPointer closure = in<CellPointer>(value->calleeOperand());
+    LBasicBlock slowPath = newBlock();
+    LBasicBlock continuation = newBlock();
+    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
+    branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
+    Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+    branchUnless(equal(structureID, loadStructureID(generator)), slowPath);
+    m_out.jump(continuation);
+
+    m_out.appendTo(slowPath);
+    callVoidOperation(value, RuntimeOperation::TakeGeneratorPrototype, { generator, boxCell(closure) }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void SavedFrameEmitter::generateIsCallDelegated(const ValueContext& value)
+{
+    ValueID callee = value->calleeOperand();
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        const Machine::AbstractHeap& frameWords = m_heaps.entire(AbstractHeap::InternalFields);
+        Pointer returnAddress(m_out.loadPtr(m_out.address(frameWords, framePointerAtThisPoint().value(), CallFrame::returnPCOffset())));
+        Word32 mark(m_out.load32(m_out.address(frameWords, returnAddress.value(), offsetOfDelegationMark)));
+        branchUnless(equal(mark, word32(delegationMark)), targets.notTaken.block());
+
+        constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+        Pointer taggedRareData = loadField<Pointer>(in<CellPointer>(callee), m_heaps.JSFunction_executableOrRareData);
+        branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), targets.notTaken.block());
+        Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+        branchUnless(isNotZero(structureID), targets.notTaken.block());
+        CellPointer prototype(m_out.load64(decodeStructureID(structureID).value(), m_heaps.Structure_prototype));
+        branch(equal(loadStructureID(prototype), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), targets);
+    });
+}
+
+void SavedFrameEmitter::generateGiveDelegatedResult(const ValueContext& value)
+{
+    m_out.store64(in<Boxed>(value->valueOperand()).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.delegatedResult)));
+    define(value, Boxed(m_out.int64Zero));
+}
+
+void SavedFrameEmitter::generateCallDelegate(const ValueContext& value)
+{
+    Boxed returned = emitter<CallEmitter>().callDelegate(value);
+    Condition hasCompleted(m_out.isZero64(returned.value()));
+    LValue result = m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.delegatedResult)));
+    defineResults(value, { Boxed(m_out.select(hasCompleted.value(), result, returned.value())), hasCompleted });
 }
 
 TypedPointer SavedFrameEmitter::stateOf(CellPointer generator)
@@ -2518,6 +2735,51 @@ void SavedFrameEmitter::generatePromiseAllOfElements(const ValueContext& value)
         elements.append(in<Boxed>(element));
     Pointer buffer = argumentBuffer(elements.span());
     define(value, callOperation<CellPointer>(value, RuntimeOperation::PromiseAll, { word32(static_cast<int32_t>(elements.size())), buffer, word32(static_cast<int32_t>(value->directCalls())) }));
+}
+
+void SavedFrameEmitter::generateStartReactionChain(const ValueContext& value)
+{
+    std::span<const uint32_t> handlers = value->handlers();
+    std::span<const ValueID> captures = value->capturesOperands();
+    const unsigned numberOfHandlers = handlers.size() / 2;
+    RELEASE_ASSERT(numberOfHandlers && numberOfHandlers <= ReactionChain::maxHandlers && captures.size() <= ReactionChain::maxWords);
+    std::array<uint64_t, ReactionChain::maxHandlers / ReactionChain::handlersPerWord> bits { };
+    uint32_t description = 0;
+    for (unsigned handler = 0; handler < numberOfHandlers; ++handler) {
+        FunctionID function(handlers[2 * handler]);
+        if (!conventions().exists(conventions().closureEntryOf(function))) {
+            fail(value, InternalErrorKind::OpcodeWithoutCode);
+            return;
+        }
+        uint32_t mention = m_mentions.add(NumberSpace::ClosureFunction, function, handler ? 0 : static_cast<int32_t>(ReactionChain::description(numberOfHandlers, captures.size())));
+        if (!handler)
+            description = mention;
+        bits[handler / ReactionChain::handlersPerWord] |= static_cast<uint64_t>(handlers[2 * handler + 1]) << ReactionChain::bitsOfHandler * (handler % ReactionChain::handlersPerWord);
+    }
+
+    emitter<EnvironmentEmitter>().markEnvironmentsKept(captures);
+    Vector<LValue, 8> operands;
+    operands.append(m_out.wideNumber(description));
+    operands.append(m_out.constInt64(static_cast<int64_t>(bits[0])));
+    operands.append(in<CellPointer>(value->promiseOperand()).value());
+    Vector<LValue, 4> words;
+    for (ValueID capture : captures)
+        words.append(emitter<ConstantEmitter>().wordKeptOnHeap(value, capture));
+    const size_t numberInRegisters = std::min<size_t>(words.size(), ReactionChain::maxWordsInRegisters);
+    operands.append(words.span().first(numberInRegisters));
+    CellPointer chain(callStub(value, newReactionChain(captures.size()), operands.span()).first);
+    const Machine::AbstractHeap& chainWords = m_heaps.entire(AbstractHeap::InternalFields);
+    if (bits[1] || numberInRegisters < words.size()) {
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            if (bits[1])
+                m_out.store64(m_out.constInt64(static_cast<int64_t>(bits[1])), m_out.address(chainWords, chain.value(), ReactionChain::offsetOfHandlers() + sizeof(uint64_t)));
+            for (size_t word = numberInRegisters; word < words.size(); ++word)
+                m_out.store64(words[word], m_out.address(chainWords, chain.value(), ReactionChain::offsetOfWords() + word * sizeof(uint64_t)));
+        }
+        emitter<BarrierEmitter>().fenceAfterInitialization(value);
+    }
+    callStub(value, startReactionChain(value->receiverIsValue() ? ReactionChainReceiver::FulfilledValue : ReactionChainReceiver::Promise), { in<Boxed>(value->receiverOperand()).value(), chain.value() });
 }
 
 } } } // namespace JSC::AOT::Typed

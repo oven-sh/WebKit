@@ -537,6 +537,7 @@ public:
         RegisterMask registersTakenByPatches { 0 };
         ArenaVector<Operation*> valuesReadFromOutside;
         uint16_t phisReadOnlyBehindLoop[numberOfBanks] { 0, 0 };
+        uint8_t comparisonsWithHeldConstants[numberOfHeldConstants] { 0, 0 };
         Position endOfLastExitingBlock { 0 };
         static constexpr uint32_t notLookedFor = noLoop - 1;
         uint32_t nearestLoopAroundOfOtherRegion { notLookedFor };

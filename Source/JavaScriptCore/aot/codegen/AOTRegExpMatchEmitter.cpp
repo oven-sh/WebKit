@@ -8,79 +8,19 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLatin1Test.h"
 #include "AOTStringEmitter.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <wtf/ASCIICType.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned maxRangesCompared = 2;
 static constexpr unsigned maxCharactersUnrolled = 4;
 static constexpr unsigned planesOfTable = 8;
-static constexpr int32_t caseBit = 0x20;
-
-namespace {
-
-struct CharacterRange {
-    unsigned first;
-    unsigned last;
-};
-
-using CharacterRanges = Vector<CharacterRange, maxRangesCompared + 1>;
-
-struct CharacterTest {
-    CharacterRanges ranges;
-    bool isFolded { false };
-    bool isInverted { false };
-    bool usesTable { false };
-};
-
-} // anonymous namespace
-
-static CharacterRanges rangesOf(const Latin1Set& set, bool isIn)
-{
-    CharacterRanges ranges;
-    for (unsigned first = set.findBit(0, isIn); first < 256 && ranges.size() <= maxRangesCompared;) {
-        unsigned end = set.findBit(first, !isIn);
-        ranges.append({ first, end - 1 });
-        first = end < 256 ? set.findBit(end, isIn) : 256;
-    }
-    return ranges;
-}
-
-static bool holdsBothCases(const Latin1Set& set)
-{
-    for (unsigned character = 0; character < 256; ++character) {
-        if (set.get(character) != set.get(character ^ caseBit))
-            return false;
-    }
-    return true;
-}
-
-static CharacterTest testOf(const Latin1Set& set)
-{
-    CharacterTest test { .ranges = rangesOf(set, true) };
-    if (test.ranges.size() > 1 && holdsBothCases(set)) {
-        Latin1Set folded;
-        for (unsigned character = 0; character < 256; ++character) {
-            if (character & caseBit && set.get(character))
-                folded.set(character);
-        }
-        CharacterRanges ranges = rangesOf(folded, true);
-        if (ranges.size() == 1)
-            return { .ranges = WTF::move(ranges), .isFolded = true };
-    }
-    auto isCheap = [](const CharacterRanges& ranges) {
-        return ranges.size() <= 1 || (ranges.size() == 2 && ranges[0].first == ranges[0].last && ranges[1].first == ranges[1].last);
-    };
-    if (isCheap(test.ranges))
-        return test;
-    CharacterRanges others = rangesOf(set, false);
-    if (isCheap(others))
-        return { .ranges = WTF::move(others), .isInverted = true };
-    return { .usesTable = true };
-}
+static constexpr unsigned maxChoices = 8;
+static constexpr unsigned maxAlternativesRepeated = 6;
 
 static bool isSubset(const Latin1Set& part, const Latin1Set& whole)
 {
@@ -102,12 +42,12 @@ static bool isLiteral(const RegExpMatchNode& node)
     if (count == 1)
         return true;
     unsigned first = node.characters.findBit(0, true);
-    return count == 2 && isASCIIAlpha(first) && node.characters.get(first ^ caseBit);
+    return count == 2 && isASCIIAlpha(first) && node.characters.get(first ^ caseBitOfLatin1);
 }
 
 void RegExpMatchEmitter::addSetOfTable(const Latin1Set& set)
 {
-    if (testOf(set).usesTable && !m_setsOfTable.contains(set))
+    if (Latin1Test::of(set).usesTable && !m_setsOfTable.contains(set))
         m_setsOfTable.append(set);
 }
 
@@ -144,10 +84,15 @@ RegExpMatchEmitter::RegExpMatchEmitter(CodeGenerator& generator, const RegExpMat
     , m_start(characters.value())
     , m_end(m_out.add(characters.value(), zeroExtended(length).value()))
 {
-    for (unsigned character = 0; character < 256; ++character) {
-        if (isASCIIAlphanumeric(character) || character == '_')
-            m_wordCharacters.set(character);
-    }
+    static constexpr Latin1Set wordCharacters = [] {
+        Latin1Set characters;
+        for (unsigned character = 0; character < 256; ++character) {
+            if (isASCIIAlphanumeric(character) || character == '_')
+                characters.set(character);
+        }
+        return characters;
+    }();
+    m_wordCharacters = wordCharacters;
     m_newlines.set('\n');
     m_newlines.set('\r');
 
@@ -158,8 +103,9 @@ RegExpMatchEmitter::RegExpMatchEmitter(CodeGenerator& generator, const RegExpMat
     for (size_t first = 0; first < m_setsOfTable.size(); first += planesOfTable) {
         std::array<uint8_t, 256> table { };
         for (size_t plane = 0; plane < planesOfTable && first + plane < m_setsOfTable.size(); ++plane) {
-            for (unsigned character = 0; character < table.size(); ++character)
-                table[character] |= m_setsOfTable[first + plane].get(character) << plane;
+            m_setsOfTable[first + plane].forEachSetBit([&](size_t character) {
+                table[character] |= 1 << plane;
+            });
         }
         m_tables.append(m_out.addConstantData(table, ConstantKind::Unlabeled));
     }
@@ -211,7 +157,7 @@ Condition RegExpMatchEmitter::isInTable(LValue character, const Latin1Set& set)
 
 void RegExpMatchEmitter::branchOnCharacter(LValue character, const Latin1Set& set, LBasicBlock isIn, LBasicBlock isOut)
 {
-    CharacterTest test = testOf(set);
+    Latin1Test test = Latin1Test::of(set);
     if (test.usesTable) {
         m_out.branch(isInTable(character, set).value(), normalEdge(isIn), normalEdge(isOut));
         return;
@@ -223,7 +169,7 @@ void RegExpMatchEmitter::branchOnCharacter(LValue character, const Latin1Set& se
         return;
     }
     if (test.isFolded)
-        character = m_out.bitOr(character, caseBit);
+        character = m_out.bitOr(character, caseBitOfLatin1);
     for (size_t index = 0; index < test.ranges.size(); ++index) {
         auto [first, last] = test.ranges[index];
         if (!first && last == 255) {
@@ -259,8 +205,8 @@ void RegExpMatchEmitter::emitLiterals(std::span<const Node> nodes, State& state,
         bool hasBothCases = node.characters.count() == 2;
         unsigned character = node.characters.findBit(0, true);
         for (unsigned count = 0; count < node.minimum; ++count) {
-            characters.append(static_cast<uint8_t>(hasBothCases ? character | caseBit : character));
-            caseBits.append(hasBothCases ? caseBit : 0);
+            characters.append(static_cast<uint8_t>(hasBothCases ? character | caseBitOfLatin1 : character));
+            caseBits.append(hasBothCases ? caseBitOfLatin1 : 0);
         }
     }
     for (size_t position = 0; position < characters.size();) {
@@ -288,6 +234,7 @@ void RegExpMatchEmitter::emitLiterals(std::span<const Node> nodes, State& state,
     }
     state.offset += characters.size();
     state.available -= characters.size();
+    state.next = std::nullopt;
     state.previous = nodes.back().characters;
 }
 
@@ -313,7 +260,7 @@ void RegExpMatchEmitter::emitFixedCharacters(const Node& node, State& state, LBa
         m_out.branch(m_out.equal(next, limit), normalEdge(isMatched), normalEdge(loop));
         m_out.appendTo(isMatched);
     } else {
-        for (unsigned index = state.isFirstCharacterTested && m_plan.firstCharacters && node.characters == *m_plan.firstCharacters ? 1 : 0; index < count; ++index) {
+        for (unsigned index = state.next && isSubset(*state.next, node.characters) ? 1 : 0; index < count; ++index) {
             LBasicBlock isIn = newBlock();
             branchOnCharacter(loadCharacter(state, index), node.characters, isIn, fails);
             m_out.appendTo(isIn);
@@ -321,6 +268,7 @@ void RegExpMatchEmitter::emitFixedCharacters(const Node& node, State& state, LBa
     }
     state.offset += count;
     state.available -= count;
+    state.next = std::nullopt;
     state.previous = node.characters;
 }
 
@@ -334,8 +282,8 @@ void RegExpMatchEmitter::emitRun(const Node& node, std::span<const Node> rest, u
     State behind = WTF::move(state);
     behind.offset = 0;
     behind.available = 0;
+    behind.next = std::nullopt;
     behind.previous = std::nullopt;
-    behind.isFirstCharacterTested = false;
 
     if (!node.isGreedy) {
         LBasicBlock test = newBlock();
@@ -450,16 +398,106 @@ RegExpMatchEmitter::State RegExpMatchEmitter::finish(const Join& join, const Bou
     return joined;
 }
 
-void RegExpMatchEmitter::emitAlternatives(std::span<const Sequence> alternatives, bool mayBeLeftOut, unsigned minimumLengthAfter, const State& state, LBasicBlock fails, const Continuation& matches, const Continuation& isLeftOut)
+void RegExpMatchEmitter::emitAlternativesInOrder(std::span<const Sequence> alternatives, uint64_t chosen, unsigned minimumLengthAfter, const State& state, LBasicBlock fails, const Continuation& matches)
 {
-    for (size_t index = 0; index < alternatives.size(); ++index) {
-        bool isLast = index + 1 == alternatives.size() && !mayBeLeftOut;
-        LBasicBlock next = isLast ? fails : newBlock();
+    while (chosen) {
+        const size_t index = std::countr_zero(chosen);
+        chosen &= chosen - 1;
+        LBasicBlock next = chosen ? newBlock() : fails;
         emitSequence(alternatives[index].span(), minimumLengthAfter, State(state), next, matches);
-        if (isLast || !next->numberOfIncomingEdges())
+        if (!chosen || !next->numberOfIncomingEdges())
             return;
         m_out.appendTo(next);
     }
+}
+
+void RegExpMatchEmitter::emitChoiceOfAlternatives(std::span<const Sequence> alternatives, std::span<const Latin1Set> beginnings, unsigned minimumLengthAfter, const State& state, LBasicBlock fails, const Continuation& matches)
+{
+    struct Choice {
+        uint64_t alternatives;
+        Latin1Set characters { };
+    };
+    Vector<Choice, maxChoices + 1> choices;
+    Latin1Set others;
+    for (unsigned character = 0; character < 256 && choices.size() <= maxChoices; ++character) {
+        if (state.next && !state.next->get(character))
+            continue;
+        uint64_t chosen = 0;
+        for (size_t index = 0; index < beginnings.size(); ++index)
+            chosen |= static_cast<uint64_t>(beginnings[index].get(character)) << index;
+        if (!chosen) {
+            others.set(character);
+            continue;
+        }
+        size_t place = choices.findIf([&](const Choice& choice) { return choice.alternatives == chosen; });
+        if (place == notFound) {
+            place = choices.size();
+            choices.append({ .alternatives = chosen });
+        }
+        choices[place].characters.set(character);
+    }
+    unsigned numberEmitted = 0;
+    for (const Choice& choice : choices)
+        numberEmitted += std::popcount(choice.alternatives);
+    if (choices.isEmpty() || choices.size() > maxChoices || numberEmitted > alternatives.size() + maxAlternativesRepeated) {
+        emitAlternativesInOrder(alternatives, ~uint64_t(0) >> (64 - alternatives.size()), minimumLengthAfter, state, fails, matches);
+        return;
+    }
+
+    State chosen = state;
+    if (!chosen.available) {
+        unsigned length = std::numeric_limits<unsigned>::max();
+        for (const Sequence& alternative : alternatives)
+            length = std::min(length, minimumLengthOf(alternative.span()));
+        length += minimumLengthAfter;
+        continueIf(m_out.aboveOrEqual(m_out.sub(m_end, chosen.base), static_cast<int64_t>(chosen.offset) + length), fails);
+        chosen.available = length;
+    }
+    if (choices.size() == 1 && others.isEmpty()) {
+        chosen.next = choices[0].characters;
+        emitAlternativesInOrder(alternatives, choices[0].alternatives, minimumLengthAfter, chosen, fails, matches);
+        return;
+    }
+    std::array<uint8_t, 256> table { };
+    Vector<SwitchTarget, maxChoices> targets;
+    Vector<LBasicBlock, maxChoices> blocks;
+    for (size_t index = 0; index < choices.size(); ++index) {
+        choices[index].characters.forEachSetBit([&](size_t character) {
+            table[character] = static_cast<uint8_t>(index + 1);
+        });
+        blocks.append(newBlock());
+        targets.append(SwitchTarget { static_cast<int64_t>(index + 1), normalEdge(blocks.last()) });
+    }
+    LValue character = loadCharacter(chosen, 0);
+    LValue constant = m_out.relocatable(SymbolSpace::Constant, m_out.addConstantData(table, ConstantKind::Unlabeled));
+    LValue choice = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTImage_tables, m_out.add(constant, m_out.zeroExtPtr(character))));
+    m_out.switchOn(choice, targets.span(), normalEdge(fails));
+    for (size_t index = 0; index < choices.size(); ++index) {
+        m_out.appendTo(blocks[index]);
+        chosen.next = choices[index].characters;
+        emitAlternativesInOrder(alternatives, choices[index].alternatives, minimumLengthAfter, chosen, fails, matches);
+    }
+}
+
+void RegExpMatchEmitter::emitAlternatives(std::span<const Sequence> alternatives, std::span<const Latin1Set> beginnings, bool mayBeLeftOut, unsigned minimumLengthAfter, const State& state, LBasicBlock fails, const Continuation& matches, const Continuation& isLeftOut)
+{
+    LBasicBlock none = mayBeLeftOut ? newBlock() : fails;
+    if (beginnings.empty()) {
+        for (size_t index = 0; index < alternatives.size(); ++index) {
+            const bool isLast = index + 1 == alternatives.size();
+            LBasicBlock next = isLast ? none : newBlock();
+            emitSequence(alternatives[index].span(), minimumLengthAfter, State(state), next, matches);
+            if (isLast)
+                break;
+            if (!next->numberOfIncomingEdges())
+                return;
+            m_out.appendTo(next);
+        }
+    } else
+        emitChoiceOfAlternatives(alternatives, beginnings, minimumLengthAfter, state, none, matches);
+    if (!mayBeLeftOut || !none->numberOfIncomingEdges())
+        return;
+    m_out.appendTo(none);
     State leftOut = state;
     isLeftOut(leftOut, fails);
 }
@@ -487,7 +525,7 @@ void RegExpMatchEmitter::emitGroup(const Node& node, std::span<const Node> rest,
         auto isLeftOut = [&](State& inner, LBasicBlock) {
             addTo(join, inner);
         };
-        emitAlternatives(node.alternatives.span(), mayBeLeftOut, minimumLengthAfterGroup, state, fails, matches, isLeftOut);
+        emitAlternatives(node.alternatives.span(), node.beginnings.span(), mayBeLeftOut, minimumLengthAfterGroup, state, fails, matches, isLeftOut);
         emitSequence(rest, minimumLengthAfter, finish(join, state.bounds), fails, next);
         return;
     }
@@ -499,7 +537,7 @@ void RegExpMatchEmitter::emitGroup(const Node& node, std::span<const Node> rest,
     auto isLeftOut = [&](State& inner, LBasicBlock innerFails) {
         emitSequence(rest, minimumLengthAfter, WTF::move(inner), innerFails, next);
     };
-    emitAlternatives(node.alternatives.span(), mayBeLeftOut, minimumLengthAfterGroup, state, fails, matches, isLeftOut);
+    emitAlternatives(node.alternatives.span(), { }, mayBeLeftOut, minimumLengthAfterGroup, state, fails, matches, isLeftOut);
 }
 
 void RegExpMatchEmitter::emitGroupLoop(const Node& node, std::span<const Node> rest, unsigned minimumLengthAfter, State&& state, LBasicBlock fails, const Continuation& next)
@@ -525,8 +563,8 @@ void RegExpMatchEmitter::emitGroupLoop(const Node& node, std::span<const Node> r
     behind.base = position;
     behind.offset = 0;
     behind.available = 0;
+    behind.next = std::nullopt;
     behind.previous = std::nullopt;
-    behind.isFirstCharacterTested = false;
     for (size_t index = 0; index < changed.size(); ++index)
         behind.bounds[changed[index]] = m_out.phi(Machine::Int64, none[index]);
 
@@ -543,7 +581,7 @@ void RegExpMatchEmitter::emitGroupLoop(const Node& node, std::span<const Node> r
             m_out.addIncomingToPhi(behind.bounds[index], m_out.anchor(inner.bounds[index] ? inner.bounds[index] : m_out.int64Zero));
         m_out.jump(loop);
     };
-    emitAlternatives(node.alternatives.span(), false, 0, iteration, ends, matches, matches);
+    emitAlternatives(node.alternatives.span(), node.beginnings.span(), false, 0, iteration, ends, matches, matches);
 
     m_out.appendTo(ends);
     if (node.minimum)
@@ -558,7 +596,9 @@ void RegExpMatchEmitter::emitLookahead(const Node& node, State& state, LBasicBlo
     auto matches = [&](State&, LBasicBlock) {
         m_out.jump(isNegative ? fails : continuation);
     };
-    emitAlternatives(node.alternatives.span(), false, 0, state, isNegative ? continuation : fails, matches, matches);
+    State beginning = state;
+    beginning.next = std::nullopt;
+    emitAlternatives(node.alternatives.span(), node.beginnings.span(), false, 0, beginning, isNegative ? continuation : fails, matches, matches);
     m_out.appendTo(continuation);
 }
 
@@ -674,7 +714,6 @@ void RegExpMatchEmitter::emitSequence(std::span<const Node> nodes, unsigned mini
             emitLookahead(node, state, fails);
             break;
         }
-        state.isFirstCharacterTested = false;
     }
     next(state, fails);
 }
@@ -682,6 +721,16 @@ void RegExpMatchEmitter::emitSequence(std::span<const Node> nodes, unsigned mini
 bool RegExpMatchEmitter::isSearched(Begin begin) const
 {
     return m_plan.isSearched && begin != Begin::AtPlace;
+}
+
+bool RegExpMatchEmitter::testsFirstCharacterAtPlace() const
+{
+    if (!m_plan.firstCharacters || m_plan.firstCharacters->count() == 256)
+        return false;
+    if (m_plan.alternatives.size() > 1)
+        return true;
+    const Sequence& only = m_plan.alternatives[0];
+    return only.isEmpty() || !isFixed(only.first());
 }
 
 LValue RegExpMatchEmitter::addressAt(Word32 index)
@@ -720,17 +769,24 @@ RegExpMatchEmitter::Bounds RegExpMatchEmitter::match(LBasicBlock misses, Begin w
             LBasicBlock tries = newBlock();
             branchOnCharacter(loadCharacterAt(begin), *m_plan.firstCharacters, tries, fails);
             m_out.appendTo(tries);
-            state.isFirstCharacterTested = true;
+            state.next = m_plan.firstCharacters;
         }
         state.base = begin;
         state.available = m_plan.minimumLength;
+    } else if (where == Begin::AtPlace && testsFirstCharacterAtPlace()) {
+        continueIf(m_out.aboveOrEqual(m_out.sub(m_end, first), static_cast<int64_t>(m_plan.minimumLength)), misses);
+        LBasicBlock tries = newBlock();
+        branchOnCharacter(loadCharacterAt(begin), *m_plan.firstCharacters, tries, misses);
+        m_out.appendTo(tries);
+        state.available = m_plan.minimumLength;
+        state.next = m_plan.firstCharacters;
     }
 
     Join found = createJoin(1, m_plan.numberOfGroups);
     auto matches = [&](State& inner, LBasicBlock) {
         addTo(found, inner);
     };
-    emitAlternatives(m_plan.alternatives.span(), false, 0, state, fails, matches, matches);
+    emitAlternatives(m_plan.alternatives.span(), m_plan.beginnings.span(), false, 0, state, fails, matches, matches);
 
     if (loop && fails->numberOfIncomingEdges()) {
         LBasicBlock advances = newBlock();

@@ -151,75 +151,70 @@ static BuiltinID builtinWrittenAsHeritageForFacts(TypeReader types, BodyValue he
     return written ? singleBuiltinOf(types, types.at(written)) : BuiltinID();
 }
 
-static Vector<ClassBelowBuiltinClass> findClassesBelowBuiltinClassesForFacts(const Program& program, const BodyIndexTable& bodies, const ParallelLoops& loops)
+static BuiltinClassID builtinClassPassedToMixin(const Program& program, TypeReader types, const BodyIndex& index, ValueID heritage)
 {
-    static constexpr OpcodeSet evaluationsOfClasses { Opcode::NewClass };
-    TypeReader types(program);
-    Vector<ClassBelowBuiltinClass> classes = collectInParallel<ClassBelowBuiltinClass>(loops, static_cast<unsigned>(program.functions.size()), [&](unsigned number, Vector<ClassBelowBuiltinClass>& found) {
-        const BodyIndex* index = bodies.find(FunctionID(number));
-        if (!index || !index->holdsAnyOf(evaluationsOfClasses))
-            return;
-        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
-            for (BodyValue value : index->block(BlockID(block)).values()) {
-                if (value.opcode() != Opcode::NewClass)
-                    continue;
-                BodyOperation<Opcode::NewClass> newClass = value.as<Opcode::NewClass>();
-                ValueID heritage = newClass.heritageOperand();
-                if (!heritage || writtenBaseOf(program.at(newClass.layout())))
-                    continue;
-                BuiltinID builtin = builtinWrittenAsHeritageForFacts(types, index->value(heritage));
-                if (!builtin)
-                    continue;
-                if (BuiltinClassID builtinClass = classMadeByHeritage(program.builtins(), builtin))
-                    found.append(ClassBelowBuiltinClass { newClass.layout(), builtinClass });
-            }
-        }
-    });
-    AOT::sort(classes);
-    removeRepeatedElements(classes);
-    return classes;
+    if (!heritage || index.isParameter(heritage) || index.opcodeOf(heritage) != Opcode::Call)
+        return { };
+    for (ValueID argument : index.value(heritage).as<Opcode::Call>().argumentsOperands()) {
+        if (!argument || index.isParameter(argument))
+            continue;
+        BuiltinID builtin = builtinWrittenAsHeritageForFacts(types, index.value(argument));
+        if (BuiltinClassID builtinClass = builtin ? classMadeByHeritage(program.builtins(), builtin) : BuiltinClassID(); builtinClass == BuiltinClasses::Array)
+            return builtinClass;
+    }
+    return { };
 }
 
-static Vector<ClassBelowBuiltinClass> findMixedSubclasses(const Program& program, const BodyIndexTable& bodies, const ParallelLoops& loops)
+static BuiltinClassID builtinClassPassedToMixinOf(const Program& program, TypeReader types, const BodyIndex& index, ValueID heritage)
 {
-    static constexpr OpcodeSet evaluationsOfClasses { Opcode::NewClass };
-    TypeReader types(program);
-    Vector<ClassBelowBuiltinClass> classes = collectInParallel<ClassBelowBuiltinClass>(loops, static_cast<unsigned>(program.functions.size()), [&](unsigned number, Vector<ClassBelowBuiltinClass>& found) {
-        const BodyIndex* index = bodies.find(FunctionID(number));
-        if (!index || !index->holdsAnyOf(evaluationsOfClasses))
-            return;
-        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
-            for (BodyValue value : index->block(BlockID(block)).values()) {
-                if (value.opcode() != Opcode::NewClass)
-                    continue;
-                BodyOperation<Opcode::NewClass> newClass = value.as<Opcode::NewClass>();
-                ValueID heritage = newClass.heritageOperand() ? index->stripCasts(newClass.heritageOperand()) : ValueID();
-                if (!heritage || index->isParameter(heritage) || index->opcodeOf(heritage) != Opcode::Call || !writtenBaseOf(program.at(newClass.layout())))
-                    continue;
-                for (ValueID argument : index->value(heritage).as<Opcode::Call>().argumentsOperands()) {
-                    if (!argument || index->isParameter(argument))
-                        continue;
-                    BuiltinID builtin = builtinWrittenAsHeritageForFacts(types, index->value(argument));
-                    if (BuiltinClassID builtinClass = builtin ? classMadeByHeritage(program.builtins(), builtin) : BuiltinClassID(); builtinClass == BuiltinClasses::Array) {
-                        found.append(ClassBelowBuiltinClass { newClass.layout(), builtinClass });
-                        break;
-                    }
-                }
-            }
+    heritage = index.stripCasts(heritage);
+    if (!index.isParameter(heritage))
+        return builtinClassPassedToMixin(program, types, index, heritage);
+    BlockID joined = index.blockOf(heritage);
+    uint32_t place = heritage.index() - index.block(joined).firstParameter().index();
+    for (uint32_t from = 0; from < index.numberOfBlocks(); ++from) {
+        for (BodyTarget target : index.terminator(BlockID(from)).targets()) {
+            if (target.block() != joined || place >= target.arguments().size() || !target.arguments()[place])
+                continue;
+            if (BuiltinClassID builtinClass = builtinClassPassedToMixin(program, types, index, index.stripCasts(target.arguments()[place])))
+                return builtinClass;
         }
-    });
-    AOT::sort(classes);
-    removeRepeatedElements(classes);
-    return classes;
+    }
+    return { };
 }
 
-static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable& bodies, const ParallelLoops& loops)
+static void noteSubclassesForFacts(Program& program, BodyIndexTable& bodies)
+{
+    Vector<ClassBelowBuiltinClass> classes;
+    Vector<ClassBelowBuiltinClass> mixedSubclasses;
+    TypeReader types(program);
+    for (const EvaluationOfClass& evaluation : bodies.takeEvaluationsOfClasses()) {
+        const BodyIndex& index = *evaluation.index;
+        BodyOperation<Opcode::NewClass> newClass = index.value(evaluation.value).as<Opcode::NewClass>();
+        ValueID heritage = newClass.heritageOperand();
+        if (!heritage)
+            continue;
+        bool isBelowWrittenClass = !!writtenBaseOf(program.at(newClass.layout()));
+        BuiltinClassID builtinClass;
+        if (isBelowWrittenClass)
+            builtinClass = builtinClassPassedToMixinOf(program, types, index, heritage);
+        else if (BuiltinID builtin = builtinWrittenAsHeritageForFacts(types, index.value(heritage)))
+            builtinClass = classMadeByHeritage(program.builtins(), builtin);
+        if (builtinClass)
+            (isBelowWrittenClass ? mixedSubclasses : classes).append(ClassBelowBuiltinClass { newClass.layout(), builtinClass });
+    }
+    AOT::sort(classes);
+    removeRepeatedElements(classes);
+    AOT::sort(mixedSubclasses);
+    removeRepeatedElements(mixedSubclasses);
+    noteSubclassesOfBuiltinClasses(program, classes.span());
+    noteSubclassesOfMixins(program, mixedSubclasses.span());
+}
+
+static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable& bodies)
 {
     program.setConstructionStarts(bodies.takeConstructionStarts());
-    Vector<ClassBelowBuiltinClass> classes = findClassesBelowBuiltinClassesForFacts(program, bodies, loops);
-    noteSubclassesOfBuiltinClasses(program, classes.span());
-    Vector<ClassBelowBuiltinClass> mixedSubclasses = findMixedSubclasses(program, bodies, loops);
-    noteSubclassesOfMixins(program, mixedSubclasses.span());
+    noteSubclassesForFacts(program, bodies);
 }
 
 static void fillFunctionTablesForFacts(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
@@ -268,6 +263,12 @@ static void layKeysThatHeldAloneAppendsOver(const Program& program, LinkTables& 
     if (held.appendedKeys.isEmpty())
         return;
     linked.layoutsFillingLateFieldsTogether.merge(held.layoutsFillingLateFieldsTogether);
+    linked.initialNames.appendVector(held.initialNames);
+    linked.computedLiterals.merge(held.computedLiterals);
+    linked.sortInitialNames();
+    linked.lateFieldsStoredThroughThis.appendVector(held.lateFieldsStoredThroughThis);
+    std::ranges::sort(linked.lateFieldsStoredThroughThis);
+    linked.lateFieldsStoredThroughThis.shrink(linked.lateFieldsStoredThroughThis.size() - std::ranges::unique(linked.lateFieldsStoredThroughThis).size());
     linked.firstKeyAppendedByHeldAloneOfLayout.reserveInitialCapacity(numberOfLayouts + 1);
     for (size_t index = 0; index < numberOfLayouts; ++index) {
         linked.firstKeyAppendedByHeldAloneOfLayout.append(static_cast<uint32_t>(linked.keysAppendedByHeldAlone.size()));
@@ -661,7 +662,7 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
         FunctionID id(number);
         bool runsAtMostOnce = loaderEntersOnce(id) || (number < linked.functions.size() && linked.functions[number].runsAtMostOnce);
         ModuleID module = program.at(id).module;
-        bool runsOncePerInstance = module && program.at(module).body == id && program.findModuleInstance(module);
+        bool runsOncePerInstance = module && program.at(module).body == id;
         if (summaries.at(id).classesEvaluated.isEmpty() || (!runsAtMostOnce && !runsOncePerInstance))
             continue;
         const BodyIndex* index = bodies.find(id);
@@ -718,6 +719,10 @@ static void fillAssignedMembers(const Program& program, const LinkTables& held, 
         const Layout& layout = program.at(id);
         return layout.kind == LayoutKind::Instance && layout.constructor && !layout.isDerived() && !layout.has(LayoutFlags::IsConstructorFunction) && !layout.has(LayoutFlags::IsOfCreatedObject);
     };
+    auto isConstructorFunction = [&](LayoutID id) {
+        const Layout& layout = program.at(id);
+        return layout.kind == LayoutKind::Instance && layout.constructor && layout.has(LayoutFlags::IsConstructorFunction) && !layout.isDerived() && !layout.has(LayoutFlags::IsOfCreatedObject);
+    };
     auto findAssignment = [&](LayoutID classLayout, PropertyKeyID key) -> const LinkedAssignment* {
         auto found = std::ranges::equal_range(held.lastAssignments, std::pair { classLayout, key }, { }, &LinkedAssignment::place);
         return found.empty() ? nullptr : &found.front();
@@ -749,7 +754,19 @@ static void fillAssignedMembers(const Program& program, const LinkTables& held, 
         tables.assignedMembers.append({ name.layout, name.key, assigned });
     }
     for (const LinkedNameOnPrototype& name : held.namesOnPrototypes) {
-        if (!name.key || !isDefinedByClass(name.layout) || !held.membersUnder(name.layout, ClassSide::Prototype, name.key).empty())
+        if (!name.key || !held.membersUnder(name.layout, ClassSide::Prototype, name.key).empty())
+            continue;
+        if (isConstructorFunction(name.layout)) {
+            AssignedMember assigned;
+            assigned.holdsValue = !name.expected && !name.expectedGetter && !name.expectedSetter && !name.mayHoldAccessor;
+            bool holdsClosure = name.expected && !name.expectedGetter && !name.expectedSetter && !name.mayHoldAccessor && !program.at(name.expected).captures.isEmpty();
+            if (holdsClosure)
+                assigned.method = name.expected;
+            if (assigned.holdsValue || holdsClosure)
+                tables.assignedMembers.append({ name.layout, name.key, assigned });
+            continue;
+        }
+        if (!isDefinedByClass(name.layout))
             continue;
         if (!name.expected && std::ranges::binary_search(held.accessorsAssignedToClasses, placeOf(name), { }, placeOf))
             continue;
@@ -1026,7 +1043,7 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildConte
     std::unique_ptr<BodyIndexTable> bodies = indexBodiesForFacts(program, loops, { });
     if (build.diagnostics().hasErrors())
         return;
-    updateProgramBehindIndexesForFacts(program, *bodies, loops);
+    updateProgramBehindIndexesForFacts(program, *bodies);
     mechanisms = withoutMechanismsMissingDependencies(mechanisms);
     ThinSummaries summaries = scanBodies(program, build.diagnostics(), loops, mechanisms);
     if (build.diagnostics().hasErrors())
@@ -1165,17 +1182,27 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
     parts.linked.namesReadAsIntegers = namesReadAsIntegersIn(*looks);
     parts.linked.fieldsReadForArithmetic = fieldsReadForArithmeticIn(*looks);
     parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
+    parts.linked.fieldsFilledByInitializers = fieldsFilledByInitializersIn(*looks);
+    parts.linked.initializerMethods = initializerMethodsIn(*looks, program);
     parts.linked.functionsCalledInLoops = functionsCalledInLoopsIn(*looks, program, *parts.summaries, parts.linked, parts.held, parts.linked.keysCalledInLoops, parts.linked.elementsAreCalledInLoops);
     parts.linked.functionsCalledInLoopsOfOwnFile = functionsCalledInLoopsOfOwnFileIn(*looks, program, *parts.summaries, parts.linked, parts.held);
-    parts.linked.functionsInElements = functionsInElementsIn(program, *parts.summaries, parts.linked);
-    parts.linked.functionsCalledByValueInLoops = functionsCalledByValueInLoopsIn(program, *parts.summaries, parts.linked);
+    parts.linked.functionsCalledByValueInLoops = functionsCalledByValueInLoopsIn(program, *parts.summaries, parts.linked, parts.linked.functionsInElements);
+    parts.linked.keysOfAccessorsOrStaticFields = parts.linked.keysOfAccessorsExpectedInFields;
+    parts.linked.keysOfAccessorsOrStaticFields.merge(parts.linked.keysOfStaticFields);
+    parts.linked.functionsCalledByComparators = functionsCalledByComparatorsIn(program, *parts.summaries, parts.linked, parts.held);
     markLiteralsStoredByCallees(*parts.summaries, parts.linked, parts.held);
-    parts.linked.functionsDoneInIterations = functionsDoneInIterationsIn(program, *parts.summaries, parts.linked, parts.held);
+    FunctionsDoneInIterations iterations = findFunctionsDoneInIterations(program, *parts.summaries, parts.linked, parts.held);
+    parts.linked.functionsDoneInIterations = WTF::move(iterations.functions);
+    parts.linked.functionsDoneInNestedIterations = WTF::move(iterations.inNestedIterations);
     parts.linked.constructorsCalledInLoops = constructorsCalledInLoopsIn(program, *parts.summaries, parts.linked, parts.held);
+    if (program.someClassExtendsMixin)
+        parts.linked.mixedClassesConstructed = mixedClassesConstructedIn(program, *parts.summaries, parts.linked, parts.held);
     parts.linked.fieldsUsedInProducts = fieldsUsedInProductsIn(*looks, parts.linked.functionsCalledInLoops);
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
-    build.statistics().count(StatisticID::FieldTypesEnforced, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+    EnforcedFieldCounts enforcedFields = fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables);
+    build.statistics().count(StatisticID::FieldTypesEnforced, enforcedFields.seen);
+    build.statistics().count(StatisticID::FieldTypesOfFamily, enforcedFields.ofFamily);
     if (parts.mechanisms.contains(Mechanism::Guesses))
         parts.tables.layoutsThatStayWithCompiledCode = layoutsThatStayWithCompiledCodeForFacts(program, parts.linked);
     steps.didFinish("tables of fields"_s);
@@ -1396,7 +1423,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
             parts.bodies = indexBodiesForFacts(program, build.parallelLoops(), WTF::move(indexesOfVerifier));
             if (hasFailed())
                 return;
-            updateProgramBehindIndexesForFacts(program, *parts.bodies, build.parallelLoops());
+            updateProgramBehindIndexesForFacts(program, *parts.bodies);
             stepsOfLane.didFinish("mocks, indexes of bodies"_s);
         },
     });
@@ -1522,6 +1549,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         [&] { fillTablesOfLayoutsAndClassesForFacts(program, build, parts); },
         [&] { fillTablesOfFunctionsForFacts(program, request, build, parts); },
     });
+    parts.layoutsByNames.leaveOutFewSparseRecords(program, setsDeclaredInProgram.span());
     for (size_t layout = 0; layout < parts.linked.layouts.size() && layout < parts.tables.classes.size(); ++layout) {
         if (parts.tables.classes[layout].evaluations != ExecutionCount::AtMostOnce)
             parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = false;
@@ -1544,7 +1572,7 @@ AssignedMember findAssignedMember(const Program& program, const Facts& facts, La
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = classLayout; current && stepsLeft; --stepsLeft) {
         const Layout& layout = program.at(current);
-        if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction) || layout.has(LayoutFlags::IsOfCreatedObject) || !facts.isEvaluatedAtMostOnce(current))
+        if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsOfCreatedObject) || !facts.isEvaluatedAtMostOnce(current))
             return { };
         auto assigned = std::ranges::equal_range(members, std::pair { current, key }, { }, &AssignedMemberOfClass::place);
         if (!assigned.empty())

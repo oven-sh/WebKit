@@ -188,9 +188,13 @@ void emitDequeueHeadJob(StubAssembler& jit, GPRReg queue, GPRReg scratch)
     hasMarkedNone.link(&jit);
     jit.load64(Address(queue, MicrotaskQueue::offsetOfStart()), scratch);
     jit.add64(TrustedImm32(1), scratch);
+#if CPU(X86_64)
+    jit.and64(Address(queue, MicrotaskQueue::offsetOfCapacityMask()), scratch);
+#else
     jit.load64(Address(queue, MicrotaskQueue::offsetOfCapacityMask()), queue);
     jit.and64(queue, scratch);
     jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), queue);
+#endif
     jit.store64(scratch, Address(queue, MicrotaskQueue::offsetOfStart()));
 }
 
@@ -198,7 +202,7 @@ void emitDequeueHeadJobAndPrefetch(StubAssembler& jit, GPRReg queue, GPRReg scra
 {
     emitDequeueHeadJob(jit, queue, scratch);
 #if CPU(X86_64)
-    constexpr int32_t jobsInBetween = 2;
+    constexpr int32_t jobsInBetween = 5;
     constexpr int32_t bytesPerCacheLine = 64;
     jit.add64(TrustedImm32(jobsInBetween), scratch);
     jit.and64(Address(queue, MicrotaskQueue::offsetOfCapacityMask()), scratch);

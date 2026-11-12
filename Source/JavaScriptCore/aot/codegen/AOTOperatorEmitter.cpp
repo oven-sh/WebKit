@@ -17,10 +17,12 @@
 #include "AOTStringEmitter.h"
 #include "AOTStubsPrimitiveFastPaths.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTStubsValues.h"
 #include "AOTTypeTable.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include "PureNaN.h"
+#include "TypeofType.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -101,7 +103,7 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
 {
     ValueID left = value->leftOperand();
     ValueID right = value->rightOperand();
-    if (op == ArithmeticOperator::Mod && generator().isProductLeftToRemainder(left)) [[unlikely]]
+    if (op == ArithmeticOperator::Mod && generator().isProductLeftToRemainder(left) && !generator().isGenerated(left)) [[unlikely]]
         return remainderOfProduct(value);
     if (isArithmeticOnLikelyBigInts(value)) [[unlikely]]
         return arithmeticOnLikelyBigInts(value, op);
@@ -130,6 +132,17 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
             Operand x = termOfBoxedSum(left);
             Operand y = termOfBoxedSum(right);
             return sumOfBoxedNumbers(op, x, typeOf(left), y, typeOf(right), emitter<CastEmitter>().takeNumberChecksOf(value.id()).span());
+        }
+        if (generator().isCarriedSum(value.id())) [[unlikely]] {
+            auto integerOf = [&](ValueID term) {
+                return Integer(generator().integerOfCarriedSum(asNumericOperand(term, &value).value(), typeOf(term).integers.minimum >= 0));
+            };
+            Integer x = integerOf(left);
+            Integer y = integerOf(right);
+            Integer sum = op == ArithmeticOperator::Add ? add(x, y) : sub(x, y);
+            if (emittersCheckProofs())
+                emitter<ThrowEmitter>().requireOrCrash(value, belowOrEqual(add(sum, integer(maxExactInteger)), integer(2 * maxExactInteger)), std::nullopt, ProofSource::RememberedFact);
+            return toNumber(sum);
         }
         if (handsOnBitsOfNaN(value.value()) && (generator().holdsAnyNaN(left) || generator().holdsAnyNaN(right))) {
             Number x = asNumericOperandWithAnyNaN(left);
@@ -194,7 +207,7 @@ const BigIntValues& OperatorEmitter::bigIntValues()
     if (!m_bigIntValues) {
         bool mayUseFrame = !generator().keepsValuesInHeapFrame() && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::DisableFrameCells);
         m_bigIntValues.emplace(m_code, types(), !mayUseFrame ? BigIntValues::FrameUse::Never : unitRunsInIterations() ? BigIntValues::FrameUse::Everywhere : BigIntValues::FrameUse::InLoops);
-        if (!m_bigIntValues->copiesInUnlikelyBlocks().empty())
+        if (m_bigIntValues->hasCopies())
             generator().noteCopiesOfBigInts();
     }
     return *m_bigIntValues;
@@ -761,6 +774,8 @@ Operand OperatorEmitter::unaryOnCheckedIntegers(const ValueContext& value, Unary
 
 Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, ValueID id)
 {
+    if (op == UnaryOperator::BitNot && representationOf(id) == Representation::Int64)
+        return bitXor(low32InWords(in<Integer>(id)), -1);
     Number operand = asNumericOperand(id);
     switch (op) {
     case UnaryOperator::Negate:
@@ -867,7 +882,18 @@ void OperatorEmitter::generateLogicalNot(const ValueContext& value)
 
 void OperatorEmitter::generateTypeOf(const ValueContext& value)
 {
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::TypeOf, { in<Boxed>(value->valueOperand()) }));
+    auto stringOf = [&](TypeofType type) {
+        return CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(typeStrings) + static_cast<ptrdiff_t>(type) * sizeof(JSCell*)).value());
+    };
+    Boxed operand = in<Boxed>(value->valueOperand());
+    const Type& type = typeOf(value->valueOperand());
+    if (type.hasOnlyPrimitives(Primitive::Undefined | Primitive::AnyString) && generator().usesLoopForms(value.block()))
+        return define(value, select(isCell(operand), stringOf(TypeofType::String), stringOf(TypeofType::Undefined)));
+    if (type.hasOnlyPrimitives(Primitive::Number | Primitive::AnyString) && generator().usesLoopForms(value.block()))
+        return define(value, select(isCell(operand), stringOf(TypeofType::String), stringOf(TypeofType::Number)));
+    if (type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) && generator().usesLoopForms(value.block()))
+        return define(value, select(isNumber(operand), stringOf(TypeofType::Number), stringOf(TypeofType::Undefined)));
+    define(value, CellPointer(callStub(value, typeofString(), { operand.value() }).first));
 }
 
 template<typename T, typename Functor>

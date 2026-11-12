@@ -48,6 +48,19 @@ extern "C" {
     void llint_aot_is_integer_thunk();
     void llint_aot_is_array_thunk();
     void llint_aot_array_push_thunk();
+    void llint_aot_char_at_thunk();
+    void llint_aot_from_char_code_thunk();
+    void llint_aot_has_own_property_thunk();
+    void llint_aot_math_floor_thunk();
+    void llint_aot_math_imul_thunk();
+    void llint_aot_math_max_thunk();
+    void llint_aot_math_min_thunk();
+    void llint_aot_math_clz32_thunk();
+    void llint_aot_math_abs_thunk();
+    void llint_aot_math_sqrt_thunk();
+    void llint_aot_math_ceil_thunk();
+    void llint_aot_math_trunc_thunk();
+    void llint_aot_math_round_thunk();
 #endif
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToNative(void*, VM*, ProtoCallFrame*);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryCustomGetter(JSGlobalObject*, EncodedJSValue, PropertyName, void*);

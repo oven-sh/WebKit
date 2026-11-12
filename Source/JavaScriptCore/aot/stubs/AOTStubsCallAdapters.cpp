@@ -699,16 +699,29 @@ static void emitLoadConstructReceiver(StubAssembler& jit, GPRReg word, GPRReg ba
     doesNotTakeNewTarget.link(&jit);
 }
 
-static void emitSelectConstructResult(StubAssembler& jit, ptrdiff_t offsetOfThis)
+static void emitSelectConstructResult(StubAssembler& jit, ptrdiff_t offsetOfThis, StubFrameKind frameKind)
 {
     constexpr GPRReg result = GPRInfo::returnValueGPR;
+    const GPRReg shapeWord = operationArgumentGPR(1);
+    const Address thisInFrame(fp, static_cast<int32_t>(offsetOfThis));
+    RELEASE_ASSERT(noOverlap(result, shapeWord, instanceGPR));
     JumpList isNotObject;
+    JumpList done;
     isNotObject.append(jit.branchIfNotCell(result, DoNotHaveTagRegisters));
     isNotObject.append(jit.branchIfNotObject(result));
-    Jump isObject = jit.jump();
+    done.append(jit.jump());
     isNotObject.link(&jit);
-    jit.load64(Address(fp, static_cast<int32_t>(offsetOfThis)), result);
-    isObject.link(&jit);
+    jit.load64(thisInFrame, result);
+    done.append(jit.branchIfNotCell(result, DoNotHaveTagRegisters));
+    jit.load32(Address(result, offsetOfShapeWord), shapeWord);
+    jit.and32(TrustedImm32(static_cast<int32_t>(compiledObjectShapeBit | shapeWordIsUnmarked)), shapeWord);
+    done.append(jit.branch32(CCallHelpers::NotEqual, shapeWord, TrustedImm32(static_cast<int32_t>(compiledObjectShapeBit))));
+    jit.move(result, operationArgumentGPR(1));
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTTryFinishBirth, jit.reuseScratch(StubRegister::Operation));
+    jit.bindReturnLabel(frameKind);
+    jit.load64(thisInFrame, result);
+    done.link(&jit);
 }
 
 void generateEnterClosureForConstruct(StubAssembler& jit)
@@ -742,7 +755,7 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     emitLoadConstructReceiver(jit, word, base);
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::ConstructAdapter);
-    emitSelectConstructResult(jit, offsetOfConstructThis);
+    emitSelectConstructResult(jit, offsetOfConstructThis, StubFrameKind::ConstructAdapterMakesThis);
     emitAdapterEpilogue(jit);
 
     createThisThrew.link(&jit);
@@ -829,7 +842,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     takesNewTarget.link(&jit);
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::PlainFunctionConstruct);
-    emitSelectConstructResult(jit, offsetOfThis);
+    emitSelectConstructResult(jit, offsetOfThis, StubFrameKind::PlainFunctionConstructMakesThis);
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);
     jit.returnToCaller();

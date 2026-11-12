@@ -555,6 +555,7 @@ private:
 
         GROUP14_OP_PSLLD = 6,
         GROUP14_OP_PSLLQ = 6,
+        GROUP14_OP_PSLLW = 6,
 
         GROUP16_OP_PREFETCHT0 = 1,
         GROUP14_OP_PSRAQ = 4,
@@ -2585,6 +2586,15 @@ public:
         m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, OP3_PSHUFB_VdqWdq, (RegisterID)vd, (RegisterID)vn);
     }
 
+    void palignr_i8rr(uint8_t bytes, XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/palignr
+        // 66 0F 3A 0F /r ib PALIGNR xmm1, xmm2/m128, imm8 | SSSE3
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_3A, OP3_PALIGNR_VdqWdqIb, (RegisterID)vd, (RegisterID)vn);
+        m_formatter.immediate8(bytes);
+    }
+
     void pshuflw_i8rr(uint8_t controlBits, XMMRegisterID vn, XMMRegisterID vd)
     {
         // https://www.felixcloutier.com/x86/pshuflw
@@ -4124,6 +4134,13 @@ public:
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.twoByteOp(OP2_PSLLDQ_UdqIb, GROUP14_OP_PSLLDQ, (RegisterID)dst);
         m_formatter.immediate8(bytes);
+    }
+
+    void psllw_i8r(uint8_t shift, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PSRLW_UdqIb, GROUP14_OP_PSLLW, (RegisterID)dst);
+        m_formatter.immediate8(shift);
     }
 
     void psrlw_i8r(uint8_t shift, XMMRegisterID dst)

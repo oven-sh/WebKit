@@ -145,12 +145,17 @@ ALWAYS_INLINE BuiltinClassID builtinClassOfInstances(const Layout& layout) { ret
 
 ALWAYS_INLINE bool isKnownByStructureOfClass(const Layout& layout)
 {
-    constexpr OptionSet<FieldFlags> flagsOfWhatIsNoPlainProperty { FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden };
     if (layout.kind != LayoutKind::Instance || !builtinClassOfInstances(layout) || (layout.base && !layout.mixedBuiltinBase) || !isDefinedByClass(layout) || layout.isDerived())
         return false;
     return std::ranges::all_of(layout.fields, [&](const Field& field) {
-        return field.key && !field.form.contains(FieldForm::IsAccessor) && !field.flags.containsAny(flagsOfWhatIsNoPlainProperty);
+        bool isBrand = field.flags.containsAny({ FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods });
+        return field.key && !field.form.contains(FieldForm::IsAccessor) && (isBrand || !field.flags.contains(FieldFlags::IsHidden));
     });
+}
+
+inline bool isToldByStructureOfClass(const Field& field)
+{
+    return field.flags.contains(FieldFlags::IsRequired) && !field.flags.containsAny({ FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden });
 }
 
 struct ClassBelowBuiltinClass {

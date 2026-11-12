@@ -537,7 +537,17 @@ static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instanc
     if (!count && isCompiledObject(object) && tryRepeatAssignment(vm, *instance->state, object, JSValue::decode(source), excludedRun) != RepeatedCopy::IsNotDone)
         return;
     ExcludedKeys excluded;
-    if (excludedRun || count) {
+    JSObject* read = nullptr;
+    if (Object* from = !count && isCompiledObject(object) ? compiledObjectOrNull(JSValue::decode(source)) : nullptr) {
+        ExcludedRun run = excludedRunAt(instance, excludedRun);
+        read = PropertyWalk::tryCopyCallingGettersAsBefore(globalObject, from, run.numberPlusOne, run.numberPlusOne ? instance->state->objects->caches->assignmentPlans.excludedNames(run).names() : std::span<UniquedStringImpl* const> { });
+        RETURN_IF_EXCEPTION(scope, void());
+        if (read && (!hasOwnPropertiesToCopy(read) || tryRepeatAssignment(vm, *instance->state, object, read, 0) != RepeatedCopy::IsNotDone))
+            return;
+    }
+    if (read)
+        source = JSValue::encode(read);
+    else if (excludedRun || count) {
         excluded.collect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -596,6 +606,12 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source))) {
+        JSObject* rest = PropertyWalk::tryCopyCallingGettersAsBefore(globalObject, asObject(source), run.numberPlusOne, instance->state->objects->caches->assignmentPlans.excludedNames(run).names());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (rest)
+            return rest;
+    }
     if (!run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
         JSObject* read = PropertyWalk::tryCopyCallingGetters(globalObject, asObject(source), PropertyWalk::NewObjectTakes::Definitions);
         RETURN_IF_EXCEPTION(scope, nullptr);

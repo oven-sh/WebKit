@@ -13,6 +13,7 @@
 #include "AOTElementAccessEmitter.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRepresentationRules.h"
+#include "AOTResolvedCallEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringTable.h"
 #include "AOTStubsStrings.h"
@@ -215,8 +216,95 @@ CharacterView StringEmitter::viewWithoutResolving(const OperationContext& contex
     return viewOfSource({ joinedCharacters, joinedLength, joinedFlags }, string);
 }
 
+CellPointer StringEmitter::makeSubstring(const OperationContext& context, const OwnedCharacters& characters)
+{
+    return substring(context, characters.owner, { characters.start, add(characters.start, characters.source.length) });
+}
+
+CellPointer StringEmitter::makeCarriedSubstring(const ValueContext& cut, const CodeGenerator::CarriedSubstring& carried)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    CellPointer whole = in<CellPointer>(carried.string);
+    Word32 start(carried.start);
+    Word32 length(carried.length);
+    LBasicBlock isPart = newBlock();
+    Join<CellPointer> join(m_out);
+    Condition isWhole = logicalAnd(isZero(start), equal(length, lengthOf(whole)));
+    LBasicBlock isAll = newBlock();
+    m_out.branch(isWhole.value(), normalEdge(isAll), normalEdge(isPart));
+    m_out.appendTo(isAll);
+    join.add(whole);
+    m_out.appendTo(isPart);
+    join.add(CellPointer(callStub(cut, AOT::substring(), { whole.value(), zeroExtended(start).value(), zeroExtended(add(start, length)).value() }).first));
+    return join.finish();
+}
+
+OwnedCharacters StringEmitter::loadCharacters(const OperationContext& context, CellPointer string, std::optional<SubstringBounds> bounds)
+{
+    LBasicBlock flat = newBlock();
+    LBasicBlock rope = newBlock();
+    LBasicBlock substring = newBlock();
+    LBasicBlock unresolved = newBlock();
+    LBasicBlock continuation = newBlock();
+    Vector<ValueFromBlock, 3> characters;
+    Vector<ValueFromBlock, 3> lengths;
+    Vector<ValueFromBlock, 3> implFlags;
+    Vector<ValueFromBlock, 3> owners;
+    Vector<ValueFromBlock, 3> starts;
+    auto join = [&](Pointer impl, CellPointer owner, std::optional<Integer> offset, Word32 lengthOfString) {
+        Word32 flags = flagsInImpl(impl);
+        Pointer firstOfOwner = loadField<Pointer>(impl, m_heaps.StringImpl_data);
+        if (bounds)
+            offset = offset ? Integer(m_out.add(offset->value(), zeroExtended(bounds->start).value())) : zeroExtended(bounds->start);
+        Condition is8Bit = hasBits(flags, StringImpl::flagIs8Bit());
+        characters.append(m_out.anchor(offset ? select(is8Bit, offsetBy(firstOfOwner, *offset, 0), offsetBy(firstOfOwner, *offset, 1)).value() : firstOfOwner.value()));
+        lengths.append(m_out.anchor(bounds ? bounds->length.value() : lengthOfString.value()));
+        implFlags.append(m_out.anchor(flags.value()));
+        owners.append(m_out.anchor(owner.value()));
+        starts.append(m_out.anchor(offset ? low32(*offset).value() : m_out.constInt32(0)));
+        m_out.jump(continuation);
+    };
+    auto lengthInImpl = [&](Pointer impl) {
+        return bounds ? bounds->length : loadField<Word32>(impl, m_heaps.StringImpl_length);
+    };
+    Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(flat), normalEdge(rope));
+
+    m_out.appendToArm(flat, fork);
+    join(fiber, string, std::nullopt, lengthInImpl(fiber));
+
+    m_out.appendToArm(rope, fork);
+    m_out.branch(m_out.testNonZeroPtr(fiber.value(), JSRopeString::isSubstringInPointer), normalEdge(substring), unlikelyEdge(unresolved));
+
+    m_out.appendToContinuation(substring);
+    using CompactFibers = JSRopeString::CompactFibers;
+    static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
+    const Machine::AbstractHeap& storage = m_heaps.entire(AbstractHeap::StringStorage);
+    LValue lower = m_out.zeroExtPtr(m_out.load32(m_out.address(storage, string.value(), JSRopeString::offsetOfFiber1Lower())));
+    LValue upper = m_out.zeroExtPtr(m_out.load16ZeroExt32(m_out.address(storage, string.value(), JSRopeString::offsetOfFiber2())));
+    LValue offset = m_out.lShr(m_out.load64(m_out.address(storage, string.value(), JSRopeString::offsetOfFiber2())), CompactFibers::shiftOfFiber2InUpperWord);
+    CellPointer base(m_out.bitOr(lower, m_out.shl(upper, CompactFibers::widthOfFiber1LowerInLengthWord)));
+    join(loadField<Pointer>(base, m_heaps.JSString_value), base, Integer(offset), bounds ? bounds->length : loadField<Word32>(string, m_heaps.JSRopeString_length));
+
+    m_out.appendTo(unresolved);
+    CellPointer resolved(callStub(context, flattenString(), { string.value() }).first);
+    Pointer implOfResolved = loadField<Pointer>(resolved, m_heaps.JSString_value);
+    join(implOfResolved, resolved, std::nullopt, lengthInImpl(implOfResolved));
+
+    m_out.appendToJoin(continuation, fork);
+    Pointer joinedCharacters(m_out.phi(machineTypeOf(Pointer::representation), characters));
+    Word32 joinedLength(m_out.phi(machineTypeOf(Word32::representation), lengths));
+    Word32 joinedFlags(m_out.phi(machineTypeOf(Word32::representation), implFlags));
+    CellPointer joinedOwner(m_out.phi(machineTypeOf(CellPointer::representation), owners));
+    Word32 joinedStart(m_out.phi(machineTypeOf(Word32::representation), starts));
+    return { { joinedCharacters, joinedLength, joinedFlags }, joinedOwner, joinedStart };
+}
+
 CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID string)
 {
+    if (const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(string)) [[unlikely]]
+        return viewOfCharacters(emitter<ResolvedCallEmitter>().loadCarriedSubstring(context, *carried, false));
     std::optional<FlatStringCell> flat = flatStringByType(string);
     if (!flat)
         return viewOfString(context, in<CellPointer>(string));
@@ -271,6 +359,8 @@ Word32 StringEmitter::lengthOf(CellPointer string)
 
 Word32 StringEmitter::lengthOf(ValueID string)
 {
+    if (const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(string)) [[unlikely]]
+        return Word32(carried->length);
     std::optional<FlatStringCell> flat = flatStringByType(string);
     if (!flat)
         return lengthOf(in<CellPointer>(string));
@@ -589,9 +679,16 @@ void StringEmitter::generateSubstring(const ValueContext& value)
     CellPointer string = in<CellPointer>(value->stringOperand());
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
+    const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(value->stringOperand());
     if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.checksBounds()) {
         elements.stopUnlessInside(value, belowOrEqual(start, end));
-        elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(string)));
+        elements.stopUnlessInside(value, belowOrEqual(end, carried ? Word32(carried->length) : lengthOf(string)));
+    }
+    if (carried) [[unlikely]] {
+        OwnedCharacters characters = emitter<ResolvedCallEmitter>().loadCarriedSubstring(value, *carried);
+        Word32 startInOwner = add(characters.start, start);
+        define(value, generator().carrySubstring(value.id(), startInOwner.value(), sub(end, start).value()) ? characters.owner : substring(value, characters.owner, { startInOwner, add(characters.start, end) }));
+        return;
     }
     define(value, substring(value, string, { start, end }));
 }

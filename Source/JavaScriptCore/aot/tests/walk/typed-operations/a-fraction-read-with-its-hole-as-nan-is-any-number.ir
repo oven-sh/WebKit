@@ -10,11 +10,11 @@
 # RUN(WHOLE): walk f3 mechanisms=all
 # WHOLE-LABEL: code f3:Body
 # WHOLE-NOT: : number @Double = GetArrayElement
-# An equality reads the element or undefined as it is: the word stays.
+# An equality reads the element as it is: the word stays. The list has no holes, so that its doubles are any numbers and never undefined.
 # RUN(AGAINST): walk f4 mechanisms=all
 # AGAINST-LABEL: code f4:Body
 # AGAINST: fractional {{*}}= GetArrayElement
-# AGAINST-NOT: : number @Double = GetArrayElement
+# AGAINST: : number @Double = GetArrayElement {{*}}arrayStorage=Double
 # RUN(SHELL): run-in-shell globalThis.sink = (...said) => { print(said.join(" ")); };
 # SHELL: 7 8 10 1
 # SHELL: exited with 0

@@ -113,6 +113,8 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     }
     case NumberSpace::EnvironmentHandedBack:
         return placedOffsetAt(statics.environmentHandedBackOffsets, key[0]);
+    case NumberSpace::HeirLookedAt:
+        return placedOffsetAt(statics.structuresOfHeirOffsets, key[0]);
     case NumberSpace::Name:
     case NumberSpace::NameOfText:
     case NumberSpace::String:
@@ -128,7 +130,6 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     case NumberSpace::DataElements:
     case NumberSpace::ClassGuard:
     case NumberSpace::ClassRank:
-    case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
     case NumberSpace::Allocation:
@@ -184,6 +185,8 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
         std::optional<uint32_t> number = numbers.numberOf(space, key);
         if (!number || *number >= sizes.numberOfSiteCaches)
             return std::nullopt;
+        if (ImageNumbers::isPlaceWithSiteAnswers(key))
+            return static_cast<int64_t>(InstanceLayout::offsetOfIndexOfSiteAnswers(sizes, *number));
         return static_cast<int64_t>(InstanceLayout::offsetOfSiteCache(sizes, *number));
     }
     case NumberSpace::Variable:
@@ -196,6 +199,7 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::ArrayProfile:
     case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
+    case NumberSpace::HeirLookedAt:
         return byteOfStatics(offsetOfMentionedWordInStatics(numbers, space, key));
     case NumberSpace::CardOfVariable:
         return cardOfStatics(offsetOfMentionedWordInStatics(numbers, NumberSpace::Variable, key));
@@ -229,7 +233,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::RequireEdge:
     case NumberSpace::DataElements:
     case NumberSpace::ClassRank:
-    case NumberSpace::HeirLookedAt:
     case NumberSpace::ClosureFunction:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
@@ -306,6 +309,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     case NumberSpace::ArrayProfile:
     case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
+    case NumberSpace::HeirLookedAt:
         return offsetOfMentionedWordInStatics(*this, space, key);
     case NumberSpace::DataElements: {
         if (key[0] >= m_nodesOfData.size() || !m_nodesOfData[key[0]])
@@ -344,12 +348,6 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> ImageNumbers::numberOfInL
     }
     case NumberSpace::ClassRank:
         return rankOfClass(LayoutID(key[0]));
-    case NumberSpace::HeirLookedAt: {
-        std::optional<uint32_t> place = placeAmongNumberedThings(heirsLookedAt(), LayoutID(key[0]), std::identity { });
-        if (!place)
-            return std::nullopt;
-        return m_offsetsOfStructuresOfHeirs[*place];
-    }
     case NumberSpace::ClosureFunction: {
         std::optional<uint32_t> unit = unitIndexOfClosureEntry(key[0]);
         if (!unit)
@@ -514,7 +512,6 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numbers.regExpRequests().all().size();
     count += numbers.functions().numberOfFunctions();
     count += numbers.numberOfClosureCells();
-    count += numbers.heirsLookedAt().size();
     count += numbers.keyCells().size();
     count += numbers.builtinCells().size();
     count += numbers.bigIntConstants().size();
@@ -535,6 +532,7 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numberPlaced(statics.arrayProfileOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.readGroupCacheOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.environmentHandedBackOffsets, PlacedStatics::noOffset);
+    count += numberPlaced(statics.structuresOfHeirOffsets, PlacedStatics::noOffset);
     count += numberPlaced(numbers.originsOfMethodSelectors(), PlacedStatics::noOffset);
     count += numberPlaced(statics.classGuardBits, noClassGuardBit);
     count += statics.classGuardsOfNames.size();

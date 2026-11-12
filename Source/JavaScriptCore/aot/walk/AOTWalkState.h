@@ -504,9 +504,10 @@ public:
     }
     std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::cellFacts) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
 
-    enum class AskerOfGuardOfReads : uint8_t { EveryRead, ReadBehindLookAtObject, AssignedMember };
+    enum class AskerOfGuardOfReads : uint8_t { EveryRead, ReadBehindLookAtObject, AssignedMember, PrototypeLink };
     static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side, AskerOfGuardOfReads asker = AskerOfGuardOfReads::EveryRead) { return classLayout.index() << 3 | static_cast<uint32_t>(asker) << 1 | static_cast<uint32_t>(side); }
     static LayoutID classOfGuardedSide(uint32_t number) { return LayoutID(number >> 3); }
+    static AskerOfGuardOfReads askerOfGuardedSide(uint32_t number) { return static_cast<AskerOfGuardOfReads>(number >> 1 & 3); }
     void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
     {
         if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()), test)) {
@@ -526,6 +527,7 @@ public:
     bool memberAboveIsUnchanged(LayoutID classLayout, PropertyKeyID key) const { return guardOfReadsHolds(classLayout, key) || !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype, AskerOfGuardOfReads::ReadBehindLookAtObject), key.bits()); }
     Reference assignedMemberTest(LayoutID classLayout, PropertyKeyID key) const { return valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype, AskerOfGuardOfReads::AssignedMember), key.bits()); }
     bool isMemberAssigned(LayoutID classLayout, PropertyKeyID key) const { return !!assignedMemberTest(classLayout, key); }
+    bool isPrototypeLinkUnchanged(LayoutID classLayout, ClassSide side) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side, AskerOfGuardOfReads::PrototypeLink), PropertyKeyID().bits()); }
     bool mayHoldGuards() const { return mayHoldPlaceOf(Reference()) && m_held->mayHoldGuards(); }
     bool someGuardHoldsOf(LayoutID classLayout) const { return mayHoldPlaceOf(Reference()) && m_held->someGuardHoldsOf(classLayout); }
     void noteThatGuardsHaveBegun(LayoutID classLayout)
@@ -632,6 +634,11 @@ public:
     void setRestartPoint(uint32_t restartPoint) { m_marks.restartMark = restartPoint; }
     void clearRestartMark() { m_marks.restartMark = 0; }
     uint32_t restartMark() const { return m_marks.restartMark; }
+    void forbidRestart()
+    {
+        if (m_marks.restartMark)
+            m_marks.restartMark = restartPointOf(m_marks.restartMark) | irreversibleWritesBit;
+    }
     void setRestartMarkForTesting(uint32_t mark) { m_marks.restartMark = mark; }
     void restoreRestartMark(uint32_t mark) { m_marks.restartMark = mark; }
     bool isInlineeEffectFree(uint32_t inlineeRestartPoint) const { return m_marks.restartMark && m_marks.restartMark <= inlineeRestartPoint; }

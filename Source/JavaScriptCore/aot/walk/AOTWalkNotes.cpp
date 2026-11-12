@@ -22,7 +22,7 @@ static constexpr OpcodeSet allocationsInWalkNotes = opcodesWhere([](Opcode opcod
     return interpretedOf(opcode) == Interpretation::Allocation;
 });
 
-static constexpr OpcodeSet cachedLookupsInWalkNotes { Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedValueOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetValueUnderKeyOrAbsent, Opcode::GetCachedGetter };
+static constexpr OpcodeSet cachedLookupsInWalkNotes { Opcode::GetValueAtSiteOrAbsent, Opcode::HasPropertyOrAbsent, Opcode::GetKeyedValueOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetValueUnderKeyOrAbsent, Opcode::GetCachedGetter };
 
 static AccessKind kindOfCallInWalkNote(const Operation& call)
 {

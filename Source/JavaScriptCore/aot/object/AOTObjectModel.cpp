@@ -195,14 +195,14 @@ static bool isInstanceOfBuiltinClass(JSCell* cell, BuiltinClassID id)
 RuntimeLayoutTable::RuntimeLayoutTable(State& state)
     : m_state(state)
     , m_tables(state.tables)
-    , m_cachedFields(state.tableArena.allocate<CachedField>(numberOfCachedFields))
+    , m_cachedFields(state.tableArena.allocate<CachedField>(maxCachedFields))
 {
     state.instance.shapeSets = m_tables.shapeSetBits().data();
 }
 
 RuntimeLayoutTable::~RuntimeLayoutTable()
 {
-    for (auto& cached : std::span { m_cachedFields, numberOfCachedFields }) {
+    for (auto& cached : cachedFields()) {
         if (cached.name)
             cached.name->deref();
     }
@@ -212,7 +212,7 @@ const FieldData* RuntimeLayoutTable::field(VM& vm, const LayoutData& layout, Uni
 {
     if (name->isSymbol() && !layout.hasFieldsWithSymbolKeys && !static_cast<SymbolImpl*>(name)->isPrivate())
         return nullptr;
-    CachedField& cached = m_cachedFields[(layout.shape * 0x9e3779b1u ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(name) >> 4)) % numberOfCachedFields];
+    CachedField& cached = placeOfCachedField(layout.shape, name);
     if (cached.shape == layout.shape && cached.name == name) [[likely]]
         return cached.field;
     const FieldData* found = findField(vm, layout, name);
@@ -221,7 +221,25 @@ const FieldData* RuntimeLayoutTable::field(VM& vm, const LayoutData& layout, Uni
     if (cached.name)
         cached.name->deref();
     cached = { layout.shape, name, found };
+    if (++m_fieldsCachedSinceGrowth > m_maskOfCachedFields / 2 && m_maskOfCachedFields + 1 < maxCachedFields) [[unlikely]]
+        growCachedFields();
     return found;
+}
+
+NEVER_INLINE void RuntimeLayoutTable::growCachedFields()
+{
+    Vector<CachedField> previous(cachedFields());
+    zeroSpan(cachedFields());
+    m_maskOfCachedFields = std::min(4 * m_maskOfCachedFields + 3, maxCachedFields - 1);
+    m_fieldsCachedSinceGrowth = 0;
+    for (const CachedField& cached : previous) {
+        if (!cached.name)
+            continue;
+        CachedField& place = placeOfCachedField(cached.shape, cached.name);
+        if (place.name)
+            place.name->deref();
+        place = cached;
+    }
 }
 
 const FieldData* RuntimeLayoutTable::findField(VM& vm, const LayoutData& layout, UniquedStringImpl* name)
@@ -425,7 +443,6 @@ struct StructureTable::VariantMaps {
 
     static constexpr uint32_t keyMayBePrototype = 1u << 31;
     static constexpr uint32_t keyHasUnnamedExtraProperties = 1u << 30;
-    static constexpr uint32_t keyHasOtherPrototype = 1u << 29;
     static constexpr uint32_t keyHasSpareWordBit = 1u << 28;
     static constexpr unsigned recentIndexBits = 7;
     static constexpr unsigned requestedIndexBits = 12;
@@ -438,8 +455,6 @@ struct StructureTable::VariantMaps {
             shapeAndFlags |= keyMayBePrototype;
         if (variant.hasExtraProperties && !variant.extraPropertiesStructure)
             shapeAndFlags |= keyHasUnnamedExtraProperties;
-        if (variant.hasOtherPrototype)
-            shapeAndFlags |= keyHasOtherPrototype;
         if (variant.hasSpareWord)
             shapeAndFlags |= keyHasSpareWordBit;
         uint32_t keyOrder = variant.outOfLineKeyOrder ? 1 | computeHash(*variant.outOfLineKeyOrder) : 0;
@@ -450,9 +465,14 @@ struct StructureTable::VariantMaps {
 
     static bool describes(const Variant& variant, const CompiledStructure& structure)
     {
+        return structure.hasOtherPrototype() == variant.hasOtherPrototype && describesBesideOtherPrototype(variant, structure);
+    }
+
+    static bool describesBesideOtherPrototype(const Variant& variant, const CompiledStructure& structure)
+    {
         if (structure.layout().shape != variant.layout->shape || structure.storedPrototype() != variant.prototype)
             return false;
-        if (structure.hasOtherPrototype() != variant.hasOtherPrototype || structure.mayBePrototype() != variant.mayBePrototype || structure.hasSpareWord() != variant.hasSpareWord)
+        if (structure.mayBePrototype() != variant.mayBePrototype || structure.reportsReplacements() != variant.reportsReplacements || structure.hasSpareWord() != variant.hasSpareWord)
             return false;
         if (structure.hasExtraProperties() != variant.hasExtraProperties || structure.extraPropertiesStructure() != variant.extraPropertiesStructure)
             return false;
@@ -492,11 +512,10 @@ struct StructureTable::VariantMaps {
     size_t firstPlaceOf(uint32_t hash) const { return hash & (filed.size() - 1); }
     size_t placeBehind(size_t place) const { return (place + 1) & (filed.size() - 1); }
 
-    CompiledStructure* find(const Variant& variant) const
+    CompiledStructure* find(const Variant& variant, uint32_t hash) const
     {
         if (filed.isEmpty())
             return nullptr;
-        uint32_t hash = hashOf(variant);
         for (size_t place = firstPlaceOf(hash); filed[place].hash; place = placeBehind(place)) {
             if (filed[place].hash != hash || !filed[place].structure)
                 continue;
@@ -507,11 +526,28 @@ struct StructureTable::VariantMaps {
         return nullptr;
     }
 
-    void file(const Variant& variant, StructureID structure)
+    CompiledStructure* findPreferringPristine(const Variant& variant, uint32_t hash) const
+    {
+        if (filed.isEmpty())
+            return nullptr;
+        CompiledStructure* found = nullptr;
+        for (size_t place = firstPlaceOf(hash); filed[place].hash; place = placeBehind(place)) {
+            if (filed[place].hash != hash || !filed[place].structure)
+                continue;
+            CompiledStructure* structure = decode(filed[place].structure);
+            if (!describesBesideOtherPrototype(variant, *structure))
+                continue;
+            if (!structure->hasOtherPrototype())
+                return structure;
+            found = structure;
+        }
+        return found;
+    }
+
+    void file(const Variant& variant, uint32_t hash, StructureID structure)
     {
         if (4 * (numberOfUsedSlots + 1) > 3 * filed.size())
             makeRoom();
-        uint32_t hash = hashOf(variant);
         filedSinceCollection.append({ hash, structure });
         FiledVariant* free = nullptr;
         size_t place = firstPlaceOf(hash);
@@ -712,7 +748,7 @@ void StructureTable::visitRoots(Visitor& visitor)
         if (variant->hasOutOfLineKeyOrder())
             continue;
         JSObject* prototype = variant->storedPrototype().getObject();
-        if (!variant->hasOtherPrototype() || !prototype || visitor.isMarked(prototype))
+        if (!prototype || visitor.isMarked(prototype))
             visitor.appendUnbarriered(variant);
     }
 }
@@ -935,6 +971,7 @@ StructureTable::Variant StructureTable::variantOf(const CompiledStructure& struc
         .layout = &structure.layout(),
         .hasOtherPrototype = structure.hasOtherPrototype(),
         .mayBePrototype = structure.mayBePrototype(),
+        .reportsReplacements = structure.reportsReplacements(),
         .hasSpareWord = structure.hasSpareWord(),
     };
     if (structure.hasExtraProperties()) {
@@ -961,7 +998,7 @@ CompiledStructure* StructureTable::find(const Variant& variant) const
         return nullptr;
     if (CompiledStructure* usual = usualStructureIfExists(variant.layout->shape); usual && VariantMaps::describes(variant, *usual))
         return usual;
-    CompiledStructure* found = m_variants->find(variant);
+    CompiledStructure* found = m_variants->find(variant, VariantMaps::hashOf(variant));
     if (!found)
         return nullptr;
     if (variant.outOfLineKeyOrder)
@@ -981,26 +1018,33 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
     RELEASE_ASSERT(m_tables.hasLayoutForShape(layout.shape));
     Variant usual = usualStructure ? variantOf(*usualStructure) : usualVariantOf(vm, layout);
     Variant variant = requested;
-    bool mayBeFiled = usual.prototype == variant.prototype || !m_state.objects->classes.takeWordThatNothingHasAskedBelow(variant.prototype);
+    bool isListedVariant = isListed(variant);
+    bool mayBeFiled = (usual.prototype == variant.prototype || !m_state.objects->classes.takeWordThatNothingHasAskedBelow(variant.prototype)) && isListedVariant;
+    uint32_t hash = isListedVariant ? VariantMaps::hashOf(variant) : 0;
+    CompiledStructure* existing = nullptr;
     if (!variant.hasOtherPrototype && !usual.hasOtherPrototype && usual.prototype != variant.prototype) {
-        if (CompiledStructure* existing = mayBeFiled ? find(variant) : nullptr)
-            return existing;
+        if (mayBeFiled)
+            existing = m_variants->findPreferringPristine(variant, hash);
         JSObject* firstAbove = variant.prototype.getObject();
-        variant.hasOtherPrototype = true;
-        if (CompiledStructure* existing = mayBeFiled ? find(variant) : nullptr)
-            return existing;
-        variant.hasOtherPrototype = !firstAbove || !m_state.objects->classes.takesObjectsLaidBelowPrototype(vm, layout, firstAbove);
+        if (!existing)
+            variant.hasOtherPrototype = !firstAbove || !m_state.objects->classes.takesObjectsLaidBelowPrototype(vm, layout, firstAbove);
+    } else {
+        variant.hasOtherPrototype |= usual.hasOtherPrototype;
+        if (mayBeFiled)
+            existing = usualStructure && VariantMaps::describes(variant, *usualStructure) ? usualStructure : m_variants->find(variant, hash);
     }
-    variant.hasOtherPrototype |= usual.hasOtherPrototype;
-    if (CompiledStructure* existing = mayBeFiled ? find(variant) : nullptr)
+    if (existing) {
+        if (variant.outOfLineKeyOrder && existing != usualStructure)
+            existing->didFindKeyOrderAgain();
         return existing;
+    }
     ASSERT(layout.shape == usual.layout->shape);
     if (!variant.mayBePrototype && !variant.hasExtraProperties && !variant.hasSpareWord && !variant.outOfLineKeyOrder && variant.prototype == usual.prototype && variant.hasOtherPrototype == usual.hasOtherPrototype)
         return createUsual(vm, layout, usual);
     CompiledStructure* created = create(vm, layout, variant);
-    if (isListed(variant)) {
+    if (isListedVariant) {
         Locker locker { m_state.caches->lock() };
-        m_variants->file(variant, created->id());
+        m_variants->file(variant, hash, created->id());
     }
     if (variant.hasOtherPrototype && layout.isClass())
         m_state.objects->classes.didChangeInstancePrototype(vm, layout, variant.prototype);
@@ -1034,6 +1078,14 @@ CompiledStructure* StructureTable::asPrototype(VM& vm, const CompiledStructure& 
 {
     Variant variant = variantWithKeyOrderOf(current);
     variant.mayBePrototype = true;
+    return findOrCreate(vm, variant);
+}
+
+CompiledStructure* StructureTable::withReportedReplacements(VM& vm, const CompiledStructure& current)
+{
+    ASSERT(current.mayBePrototype());
+    Variant variant = variantWithKeyOrderOf(current);
+    variant.reportsReplacements = true;
     return findOrCreate(vm, variant);
 }
 
@@ -1086,6 +1138,12 @@ CompiledStructure* StructureTable::holdingExtraProperties(VM& vm, const Compiled
     variant.hasExtraProperties = true;
     variant.heldExtraProperties = extraProperties;
     return findOrCreate(vm, variant);
+}
+
+CompiledStructure* StructureTable::withoutHeldStructure(VM& vm, const CompiledStructure& current)
+{
+    ASSERT(current.heldStructure());
+    return findOrCreate(vm, variantWithKeyOrderOf(current));
 }
 
 static uint32_t sizeWithSpareWord(const LayoutData& layout)
@@ -1176,13 +1234,33 @@ const StructureTable::StepOfKeyOrder* StructureTable::findStepOfKeyOrder(Structu
 void StructureTable::rememberStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep kind, StructureID after, uint32_t orderAndCountAfter)
 {
     if (!m_stepsOfKeyOrders) {
-        m_stepsOfKeyOrders = static_cast<StepOfKeyOrder*>(m_state.pages.allocate(numberOfStepsRemembered * sizeof(StepOfKeyOrder)));
-        m_state.caches->addClearedEachCollection("steps of key orders"_s, asWritableBytes(std::span { m_stepsOfKeyOrders, numberOfStepsRemembered }));
+        m_stepsOfKeyOrders = static_cast<StepOfKeyOrder*>(m_state.pages.allocate(sizeof(StepOfKeyOrder) << logMaxSteps));
+        m_state.caches->addClearedEachCollection("steps of key orders"_s, asWritableBytes(std::span { m_stepsOfKeyOrders, size_t { 1 } << logMaxSteps }));
     }
-    uint32_t fieldAndKind = field << 2 | static_cast<uint32_t>(kind);
-    size_t newer = placeOfStep(before, orderAndCountBefore, fieldAndKind);
+    putStepOfKeyOrder({ before, orderAndCountBefore, field << 2 | static_cast<uint32_t>(kind), after, orderAndCountAfter });
+    if (++m_stepsPutSinceGrowth > 1u << m_logNumberOfSteps >> 1 && m_logNumberOfSteps < logMaxSteps) [[unlikely]]
+        growStepsOfKeyOrders();
+}
+
+void StructureTable::putStepOfKeyOrder(const StepOfKeyOrder& step)
+{
+    size_t newer = placeOfStep(step.before, step.orderAndCountBefore, step.fieldAndKind);
     m_stepsOfKeyOrders[newer + 1] = m_stepsOfKeyOrders[newer];
-    m_stepsOfKeyOrders[newer] = { before, orderAndCountBefore, fieldAndKind, after, orderAndCountAfter };
+    m_stepsOfKeyOrders[newer] = step;
+}
+
+NEVER_INLINE void StructureTable::growStepsOfKeyOrders()
+{
+    std::span used { m_stepsOfKeyOrders, size_t { 1 } << m_logNumberOfSteps };
+    Vector<StepOfKeyOrder> previous(used);
+    std::ranges::fill(used, StepOfKeyOrder { });
+    m_logNumberOfSteps += 2;
+    static_assert(!((logMaxSteps - logInitialSteps) % 2));
+    m_stepsPutSinceGrowth = 0;
+    for (size_t index = previous.size(); index--;) {
+        if (previous[index].before)
+            putStepOfKeyOrder(previous[index]);
+    }
 }
 
 JSCellButterfly* StructureTable::findKeysOfOrderWithoutNumber(StructureID structure, uint32_t count, KeyListKind kind) const
@@ -1494,11 +1572,13 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
     if (parameters.outOfLineKeyOrder) {
         m_flags.add(Flag::HasOutOfLineKeyOrder);
         if (parameters.hasExtraProperties)
-            m_heldKeyOrder.add(HeldKeyOrder::IsBesideExtraProperties);
+            m_furtherFlags.add(FurtherFlag::HasKeyOrderBesideExtraProperties);
     }
     if (!parameters.hasOtherPrototype && !parameters.hasExtraProperties && parameters.prototype == JSValue(parameters.realm->objectPrototype()))
         m_flags.add(Flag::HasOnlyFieldsBelowObjectPrototype);
     setMayBePrototype(parameters.mayBePrototype);
+    if (parameters.reportsReplacements)
+        m_furtherFlags.add(FurtherFlag::ReportsReplacements);
     if (holdsListedFields())
         return;
 
@@ -1513,7 +1593,7 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
         if (parameters.keysNamedByOrder) {
             ASSERT(parameters.outOfLineKeyOrder);
             rareData->keysNamedByOrder = Vector<RefPtr<UniquedStringImpl>>(*parameters.keysNamedByOrder);
-            m_heldKeyOrder.add(HeldKeyOrder::IsOfOneObject);
+            m_furtherFlags.add(FurtherFlag::HasKeyOrderOfOneObject);
         }
         rareData->heldExtraProperties.setWithoutWriteBarrier(parameters.heldExtraProperties);
     }
@@ -1531,6 +1611,12 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
         RELEASE_ASSERT(cellSize < endOfExtraPropertiesCellSizes);
         m_extraKeysAndCellSize = { unknownNumberOfExtraKeys, cellSize };
     }
+}
+
+void CompiledStructure::setHeldStructure(VM& vm, Structure* structure) const
+{
+    ASSERT(heldExtraProperties() && heldExtraProperties()->structure() == structure && !structure->isDictionary());
+    const_cast<RareData*>(rareData())->heldStructure.set(vm, this, structure);
 }
 
 static CompiledStructure* finishCreationOfObjectStructure(VM& vm, CompiledStructure* structure)
@@ -1574,8 +1660,11 @@ void CompiledStructure::visitAdditionalChildren(JSCell* cell, Visitor& visitor)
     CompiledStructure* structure = uncheckedDowncast<CompiledStructure>(uncheckedDowncast<Structure>(cell));
     if (Structure* named = structure->extraPropertiesStructure())
         visitor.appendUnbarriered(named);
-    if (const RareData* rareData = structure->rareData())
+    if (const RareData* rareData = structure->rareData()) {
         visitor.append(rareData->heldExtraProperties);
+        if (Structure* listed = rareData->heldStructure.get())
+            visitor.appendUnbarriered(listed);
+    }
     visitor.append(structure->m_successorByPrivateName);
 }
 

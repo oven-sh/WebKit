@@ -72,7 +72,7 @@ const ExcludedNameList* AssignmentPlanCache::excludedListAt(std::span<UniquedStr
 NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source, uint32_t hash)
 {
     if (!m_sets)
-        m_sets.make();
+        m_sets.makeFromZeros();
     unsigned setIndex = hash % numberOfSets;
     Set& set = (*m_sets)[setIndex];
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -614,10 +614,10 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             .isDirect = !(field->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize),
             .copiesBits = property.field && property.field->slot.representation() == field->slot.representation(),
             .holdsCell = traits.holdsCell,
-            .hasAbsent = traits.hasAbsent,
+            .hasAbsent = mayBeCreatedByStore(field->slot.representation()),
             .leavesUndefinedAndNullToOtherWay = !!field->holdsRawValueFromBirth,
             .width = traits.width,
-            .absentBits = traits.absentBits,
+            .absentBits = bitsBeforeCreation(field->slot.representation()),
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
         if (const RuntimeType& type = layouts.typeOf(*field); type.primitiveSet().contains(PrimitiveSet::Integer)) {

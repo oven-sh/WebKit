@@ -827,7 +827,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
 }
 
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean, Opcode::HasArrayStorage };
-static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::RemainderByReciprocal, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedPropertyAddress, Opcode::CallInline };
+static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::RemainderByReciprocal, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::GetDataViewLimit, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedPropertyAddress, Opcode::CallInline };
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
 {
@@ -873,6 +873,7 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         words.append(draft.field());
         break;
     case Opcode::GetTypedArrayLength:
+    case Opcode::GetDataViewLimit:
         words.append(static_cast<uint32_t>(draft.typedArrayType()));
         break;
     case Opcode::GetGlobalPropertyAddress:
@@ -883,7 +884,7 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         words.append(draft.key().bits());
         break;
     case Opcode::GetKeyedPropertyAddress:
-        words.append(draft.findsOnlyFields() + 2 * draft.fitsFieldTypes());
+        words.append(draft.findsOnlyFields() + 2 * draft.fitsFieldTypes() + 4 * draft.takesFunctions());
         break;
     case Opcode::CallInline:
         words.append(static_cast<uint32_t>(draft.inlineBuiltin()));

@@ -52,12 +52,19 @@ struct StoresBehindAllocationInBirths {
     Vector<TypeID, 16> types;
     Vector<MemberConditionRecord, 2> guardsOfCallsOfBases;
     std::optional<MemberConditionRecord> guardOfMethod;
+    Vector<MemberConditionRecord, 4> guardsOfForwarders;
     std::optional<size_t> storesBeforeMethods;
     FunctionID constructor;
     LayoutID constructed;
     HashMap<uint32_t, FunctionReadInBirths, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsRead;
     bool readsFunctionAgain { false };
     bool laysKeyTwice { false };
+
+    void noteForwarderGuard(std::optional<MemberConditionRecord> guard)
+    {
+        if (guard && guard != guardOfMethod && !guardsOfForwarders.contains(*guard))
+            guardsOfForwarders.append(*guard);
+    }
 };
 
 struct ValueAskedInFrontOfAllocationInBirths {
@@ -273,6 +280,41 @@ static FunctionID functionHeldByCaptureInBirths(Walker& walker, FunctionID funct
         return { };
     const LinkedCell& cell = walker.facts().linked().capture(function, parameter - capturing.numberOfEntryParametersBefore(EntryParameter::Capture));
     return cell.everyWriterIsKnown && cell.proven ? singleFunctionOf(walker.types(), walker.types().at(cell.proven)) : FunctionID();
+}
+
+static FunctionID environmentFunctionInBirths(Walker& walker, const BodyValue& read)
+{
+    auto captured = read.as<Opcode::GetEnvironmentField>();
+    const LinkedCell& cell = walker.facts().linked().field(FieldReference { captured.layout(), captured.field() });
+    return cell.everyWriterIsKnown && cell.proven ? singleFunctionOf(walker.types(), walker.types().at(cell.proven)) : FunctionID();
+}
+
+static FunctionID namedFunctionInBirths(Walker& walker, const BodyReadInBirths& body, ValueID value)
+{
+    ValueID holder = valueBehindNamesInBodyForBirths(body.index, value);
+    if (!holder)
+        return { };
+    if (std::optional<uint32_t> parameter = body.index.block(entryBlock).indexOfParameter(holder))
+        return functionHeldByCaptureInBirths(walker, body.function, *parameter);
+    if (body.index.isParameter(holder))
+        return { };
+    if (body.index.opcodeOf(holder) == Opcode::GetModuleVariable)
+        return functionHeldByVariableInBirths(walker, body.index.value(holder).variable());
+    return body.index.opcodeOf(holder) == Opcode::GetEnvironmentField ? environmentFunctionInBirths(walker, body.index.value(holder)) : FunctionID();
+}
+
+static void collectForwarderGuards(Walker& walker, const BodyReadInBirths& body, StoresBehindAllocationInBirths& stores)
+{
+    for (uint32_t block = 0; block < body.index.numberOfBlocks(); ++block) {
+        for (BodyValue operation : body.index.block(BlockID(block)).values()) {
+            if (operation.opcode() != Opcode::PropGet || operation.isFreeName() || !operation.key())
+                continue;
+            if (body.names(operation.objectOperand()))
+                stores.noteForwarderGuard(findInitializerMethod(walker, stores.constructed, operation.key()).guard);
+            else if (FunctionID function = namedFunctionInBirths(walker, body, operation.objectOperand()))
+                stores.noteForwarderGuard(findStaticMethodGuard(walker, function, operation.key()));
+        }
+    }
 }
 
 static FunctionID functionWhoseCallIsReadInBirths(Walker& walker, const BodyReadInBirths& body, const BodyValue& read)
@@ -785,7 +827,12 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     stores.constructor = callee;
     stores.constructed = constructed;
     collectStoresAtHeadOfBodyInBirths(walker, callee, passedOperands.span(), stores);
-    if ((stores.keys.isEmpty() && !stores.guardOfMethod) || stores.laysKeyTwice || !copyTakesOperandsInBirths(walker, callee, constructor, passedOperands.span(), *thisParameter, walker.types().forLayout(constructed)))
+    if (onlyPassesOnArguments) {
+        BodyReadInBirths read { callee, *body, { body->block(entryBlock).parameter(*thisParameter) }, { }, HeadOfBodyInBirths::EndsInFrontOfOtherOperations, { } };
+        collectForwarderGuards(walker, read, stores);
+    }
+    bool hasGuards = stores.guardOfMethod || !stores.guardsOfForwarders.isEmpty();
+    if ((stores.keys.isEmpty() && !hasGuards) || stores.laysKeyTwice || !copyTakesOperandsInBirths(walker, callee, constructor, passedOperands.span(), *thisParameter, walker.types().forLayout(constructed)))
         return false;
 
     Vector<TypeID, 16> typesOfStores = stores.types;
@@ -795,7 +842,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         if (!stores.storesBeforeMethods)
             return false;
         size_t count = std::max(*stores.storesBeforeMethods, listed.fields.size());
-        if (!count && !stores.guardOfMethod)
+        if (!count && !hasGuards)
             return false;
         stores.types = WTF::move(typesOfStores);
         stores.keys.shrink(count);
@@ -813,6 +860,12 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (stores.guardOfMethod && !listed.conditions.contains(*stores.guardOfMethod)) {
         listed.conditions.append(*stores.guardOfMethod);
         listed.asksForLayoutPrototype = true;
+    }
+    for (const MemberConditionRecord& guard : stores.guardsOfForwarders) {
+        if (listed.conditions.contains(guard))
+            continue;
+        listed.conditions.append(guard);
+        listed.asksForLayoutPrototype |= guard.side == ClassSide::Prototype;
     }
     if ((listed.asksForLayoutPrototype || !listed.conditions.isEmpty() || !valuesAsked.isEmpty()) && !looksBehindAllocationPayInBirths(walker))
         return false;
@@ -847,12 +900,18 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             begin.setLayout(guardOfPrototype->condition.layout);
             walker.build(WTF::move(begin));
         }
-        for (const MemberConditionRecord& guard : stores.guardsOfCallsOfBases) {
-            if (walker.state().guardsHaveBegun(guard.layout))
-                continue;
+        auto beginGuardsOf = [&](LayoutID classLayout) {
+            if (walker.state().guardsHaveBegun(classLayout))
+                return;
             Draft begin(Opcode::BeginMemberGuards, origin);
-            begin.setLayout(guard.layout);
+            begin.setLayout(classLayout);
             walker.build(WTF::move(begin));
+        };
+        for (const MemberConditionRecord& guard : stores.guardsOfCallsOfBases)
+            beginGuardsOf(guard.layout);
+        for (const MemberConditionRecord& guard : stores.guardsOfForwarders) {
+            if (guard.side == ClassSide::Static)
+                beginGuardsOf(guard.layout);
         }
         Draft look(Opcode::AreMembersUnchanged, origin);
         look.setConditions(listed.conditions.span());

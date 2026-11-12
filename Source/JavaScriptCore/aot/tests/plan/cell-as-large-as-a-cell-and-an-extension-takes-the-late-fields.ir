@@ -1,0 +1,71 @@
+# class Point { constructor() { this.x = 1; } }  function prepare(points) { const p = points[0]; p.a = 0.5; .. p.n = 13.5; return p.a; }
+# A cell that holds fourteen late fields, filled by one function, is as large as a cell and an extension for them together. Up to 128 bytes such a cell was taken, so here the fields lay out of line.
+# RUN: plan layouts mechanisms=all
+# CHECK: slot {{*}} "a" appended {{*}} Inline
+# CHECK: slot {{*}} "n" appended {{*}} Inline
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 0.5 5.5
+# SHELL: exited with 0
+
+layout L0 kind=Instance name="Point" module=m0 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = Construct v3, - calleeName="Point"
+    v5 = NewArray v4
+    v6 = Call v0, -, v5 calleeName="prepare"
+    v7 = PropGet v4 key="f"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = Call v9, -, v6, v7 calleeName="sink"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="prepare" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    v3 = Double number=0.5
+    PropSet v2, v3 key="a"
+    v5 = Double number=1.5
+    PropSet v2, v5 key="b"
+    v7 = Double number=2.5
+    PropSet v2, v7 key="c"
+    v9 = Double number=3.5
+    PropSet v2, v9 key="d"
+    v11 = Double number=4.5
+    PropSet v2, v11 key="e"
+    v13 = Double number=5.5
+    PropSet v2, v13 key="f"
+    v15 = Double number=6.5
+    PropSet v2, v15 key="g"
+    v17 = Double number=7.5
+    PropSet v2, v17 key="h"
+    v19 = Double number=8.5
+    PropSet v2, v19 key="i"
+    v21 = Double number=9.5
+    PropSet v2, v21 key="j"
+    v23 = Double number=10.5
+    PropSet v2, v23 key="k"
+    v25 = Double number=11.5
+    PropSet v2, v25 key="l"
+    v27 = Double number=12.5
+    PropSet v2, v27 key="m"
+    v29 = Double number=13.5
+    PropSet v2, v29 key="n"
+    v31 = PropGet v2 key="a"
+    Return v31
+}
+function f2 name="Point" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=0 thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    Return v2
+}

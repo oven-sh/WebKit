@@ -358,7 +358,8 @@ struct PropertyDescriptorBits {
     uint32_t isConfigurable : 1;
     uint32_t hasGet : 1;
     uint32_t hasSet : 1;
-    uint32_t unused : 23;
+    uint32_t isOfPropertyMap : 1;
+    uint32_t unused : 22;
 };
 static_assert(sizeof(PropertyDescriptorBits) == 4);
 
@@ -551,6 +552,7 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \
+    v(variablesWithViewMirror, StaticsRange) \
     v(functionVariables, FunctionVariableData) \
     v(namedVariables, uint8_t) \
     v(identifiersByHash, uint32_t) \

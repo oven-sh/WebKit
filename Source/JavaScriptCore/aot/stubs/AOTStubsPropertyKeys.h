@@ -151,7 +151,10 @@ constexpr StubKey putByIdBehindFieldTable(PutMode mode) { return StubKey(StubFam
 constexpr StubKey putByIdAtSite(PutMode mode, NameAtSite name = NameAtSite::IsAnyName) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(static_cast<unsigned>(name)); }
 constexpr StubKey putByIdAtSiteAskingNoTableOfFields(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(2); }
 constexpr StubKey putByIdAtSiteOfOtherStructure(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(3); }
+constexpr StubKey findReplaceableValue() { return StubKey(StubFamily::FindReplaceableValue); }
+constexpr StubKey putMemberOfPrototypeAtSite(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(4); }
 constexpr bool storeAtSiteAsksTableOfFields(StubKey key) { return key.count() < 2; }
+constexpr bool storeAtSiteAsksReplacedMembers(StubKey key) { return key.count() == 4; }
 constexpr bool storeAtSiteComesBehindComparedStructure(StubKey key) { return key.count() == 3; }
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
@@ -173,6 +176,8 @@ constexpr SlotRepresentation representationWithCodeForPutSlotOrAdd(SlotRepresent
 {
     if (representation == SlotRepresentation::Cell)
         return SlotRepresentation::JSValue;
+    if (representation == SlotRepresentation::Int32)
+        return SlotRepresentation::OptionalInt32;
     return representation == SlotRepresentation::OptionalCell32 ? SlotRepresentation::Cell32 : representation;
 }
 constexpr unsigned countForPutSlotOrAdd(SlotRepresentation representation)
@@ -189,9 +194,9 @@ static_assert(descriptorOf(StubFamily::PutSlotOrAdd).maxCount + 1 == representat
 static_assert([] {
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
         SlotRepresentation withCode = representationWithCodeForPutSlotOrAdd(representation);
-        if (canLeaveSlot(representation) != std::ranges::contains(representationsStoredByPutSlotOrAdd, withCode))
+        if (mayBeCreatedByStore(representation) != std::ranges::contains(representationsStoredByPutSlotOrAdd, withCode))
             return false;
-        if (widthOf(representation) != widthOf(withCode) || traitsOf(representation).absentBits != traitsOf(withCode).absentBits)
+        if (widthOf(representation) != widthOf(withCode) || bitsBeforeCreation(representation) != bitsBeforeCreation(withCode))
             return false;
     }
     return true;
@@ -205,6 +210,7 @@ constexpr StubKey getByValCachedBehindPlaces(RegistersOfCaller registers = Regis
 enum class BaseOfKeyedRead : uint8_t { IsCell, IsAnyValue };
 constexpr StubKey getByValOfKeyOfPair(BaseOfKeyedRead base) { return StubKey(StubFamily::GetByValOfKeyOfPair).withForm(static_cast<uint8_t>(base)); }
 constexpr StubKey getSuperByVal() { return StubKey(StubFamily::GetSuperByVal); }
+constexpr StubKey reflectSet() { return StubKey(StubFamily::ReflectSet); }
 constexpr StubKey inByValCached(PresenceQuestion question) { return StubKey(StubFamily::InByValCached).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey hasOwnByValCachedBoxed() { return StubKey(StubFamily::InByValCached).withForm(static_cast<uint8_t>(PresenceQuestion::HasOwn) + 1); }
 constexpr StubKey deleteByIdCached(PutMode mode)

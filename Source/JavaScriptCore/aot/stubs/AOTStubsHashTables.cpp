@@ -59,6 +59,7 @@ struct CompactTableSearch {
     bool asksForPresenceAlone { false };
     std::optional<GPRReg> lengthOfCharactersSought { };
     JumpList comparesCharactersInImage { };
+    bool keyIsSubstring { false };
 };
 
 ptrdiff_t offsetOfHashTableStorage()
@@ -277,10 +278,14 @@ static void emitCompareWithEntry(StubAssembler& jit, const HashTableRegisters& r
     }
     next.append(jit.branchIfNotType(candidate, StringType));
     jit.loadPtr(Address(candidate, JSString::offsetOfValue()), candidate);
-    found.append(jit.branchPtr(CCallHelpers::Equal, candidate, Address(key, JSString::offsetOfValue())));
-
-    jit.loadPtr(Address(key, JSString::offsetOfValue()), table);
-    jit.load32(Address(table, StringImpl::flagsOffset()), table);
+    if (search.keyIsSubstring) {
+        jit.load32(Address(key, JSRopeString::offsetOfFiber0() + static_cast<ptrdiff_t>(sizeof(uint32_t))), table);
+        jit.lshift32(TrustedImm32(StringImpl::s_flagCount), table);
+    } else {
+        found.append(jit.branchPtr(CCallHelpers::Equal, candidate, Address(key, JSString::offsetOfValue())));
+        jit.loadPtr(Address(key, JSString::offsetOfValue()), table);
+        jit.load32(Address(table, StringImpl::flagsOffset()), table);
+    }
     jit.xor32(Address(candidate, StringImpl::flagsOffset()), table);
     search.needsCharacters.append(jit.branch32(CCallHelpers::Below, table, TrustedImm32(1 << StringImpl::s_flagCount)));
     emitReloadTable(jit, registers);
@@ -321,8 +326,51 @@ static void emitCompareLatin1Characters(StubAssembler& jit, GPRReg first, GPRReg
     differ.append(jit.jump());
 }
 
-static void emitCompareCharactersOfKey(StubAssembler& jit, const HashTableRegisters& registers, bool keepsSlot, JumpList& needsCharacters, JumpList& found, HashTableExits& exits)
+static void emitLoadCharactersOfSubstring(StubAssembler& jit, GPRReg substring, GPRReg characters, GPRReg scratch)
 {
+    ASSERT(noOverlap(substring, characters, scratch));
+    static_assert(JSRopeString::offsetOfFiber1Lower() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == JSRopeString::offsetOfFiber2());
+    jit.load16(Address(substring, JSRopeString::offsetOfFiber2()), characters);
+    jit.load32(Address(substring, JSRopeString::offsetOfFiber1Lower()), scratch);
+    jit.lshift64(TrustedImm32(32), characters);
+    jit.or64(scratch, characters);
+    jit.loadPtr(Address(characters, JSString::offsetOfValue()), characters);
+    Jump baseIsRope = jit.branchIfRopeStringImpl(characters);
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        baseIsRope.link(&jit);
+        jit.breakpoint();
+    });
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+    jit.load64(Address(substring, JSRopeString::offsetOfFiber2()), scratch);
+    jit.urshift64(TrustedImm32(16), scratch);
+    jit.add64(scratch, characters);
+}
+
+static void emitCompareCharactersOfSubstring(StubAssembler& jit, const HashTableRegisters& registers, JumpList& needsCharacters, JumpList& found, HashTableExits& exits)
+{
+    const GPRReg candidate = registers.candidate;
+    const GPRReg length = registers.table;
+    JumpList areSame;
+    needsCharacters.link(&jit);
+    jit.load32(Address(candidate, StringImpl::lengthMemoryOffset()), length);
+    exits.unknown.append(jit.branch32(CCallHelpers::NotEqual, length, Address(registers.key, JSRopeString::offsetOfLength())));
+    exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, Address(candidate, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(candidate, StringImpl::dataOffset()), candidate);
+    emitLoadCharactersOfSubstring(jit, registers.key, registers.hash, registers.cursor);
+    emitCompareLatin1Characters(jit, candidate, registers.hash, length, registers.cursor, registers.keys, areSame, exits.unknown);
+    areSame.link(&jit);
+    jit.loadPtr(Address(registers.owner, offsetOfHashTableStorage()), registers.table);
+    emitLoadKeys(jit, registers);
+    found.append(jit.jump());
+}
+
+static void emitCompareCharactersOfKey(StubAssembler& jit, const HashTableRegisters& registers, HashTableLookup lookup, JumpList& needsCharacters, JumpList& found, HashTableExits& exits)
+{
+    if (lookup.keyIsSubstring) {
+        emitCompareCharactersOfSubstring(jit, registers, needsCharacters, found, exits);
+        return;
+    }
+    const bool keepsSlot = lookup.keepsSlot;
     const GPRReg impl = registers.hash;
     const GPRReg candidate = registers.candidate;
     const GPRReg length = registers.table;
@@ -357,21 +405,28 @@ static void emitCompareCharactersOfKey(StubAssembler& jit, const HashTableRegist
     found.append(jit.jump());
 }
 
-static void emitCompareCharactersInImage(StubAssembler& jit, const HashTableRegisters& registers, JumpList& comparesCharacters, JumpList& found, HashTableExits& exits)
+static void emitCompareCharactersInImage(StubAssembler& jit, const HashTableRegisters& registers, bool keyIsSubstring, JumpList& comparesCharacters, JumpList& found, HashTableExits& exits)
 {
     const GPRReg impl = registers.hash;
     const GPRReg candidate = registers.candidate;
     const GPRReg length = registers.cursor;
     comparesCharacters.link(&jit);
-    jit.loadPtr(Address(registers.key, JSString::offsetOfValue()), impl);
-    jit.load32(Address(candidate, StringImpl::lengthMemoryOffset()), length);
-    exits.unknown.append(jit.branch32(CCallHelpers::NotEqual, length, Address(impl, StringImpl::lengthMemoryOffset())));
     JumpList hasWideCharacters;
-    hasWideCharacters.append(jit.branchTest32(CCallHelpers::Zero, Address(candidate, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    hasWideCharacters.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.load32(Address(candidate, StringImpl::lengthMemoryOffset()), length);
+    if (keyIsSubstring) {
+        exits.unknown.append(jit.branch32(CCallHelpers::NotEqual, length, Address(registers.key, JSRopeString::offsetOfLength())));
+        exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, Address(candidate, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    } else {
+        jit.loadPtr(Address(registers.key, JSString::offsetOfValue()), impl);
+        exits.unknown.append(jit.branch32(CCallHelpers::NotEqual, length, Address(impl, StringImpl::lengthMemoryOffset())));
+        hasWideCharacters.append(jit.branchTest32(CCallHelpers::Zero, Address(candidate, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        hasWideCharacters.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        jit.loadPtr(Address(impl, StringImpl::dataOffset()), impl);
+    }
     jit.loadPtr(Address(candidate, StringImpl::dataOffset()), candidate);
-    jit.loadPtr(Address(impl, StringImpl::dataOffset()), impl);
     jit.preserving({ registers.table, registers.keys }, [&] {
+        if (keyIsSubstring)
+            emitLoadCharactersOfSubstring(jit, registers.key, impl, registers.table);
         JumpList areSame;
         JumpList differ;
         emitCompareLatin1Characters(jit, candidate, impl, length, registers.table, registers.keys, areSame, differ);
@@ -384,6 +439,8 @@ static void emitCompareCharactersInImage(StubAssembler& jit, const HashTableRegi
     });
     exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, length));
     found.append(jit.jump());
+    if (keyIsSubstring)
+        return;
 
     hasWideCharacters.link(&jit);
     RELEASE_ASSERT(noOverlap(leafFunctionGPR, registers.table, registers.keys));
@@ -832,6 +889,7 @@ static void emitFindStringInCompactTable(StubAssembler& jit, const HashTableRegi
     static_assert(CompactTable::offsetOfKeysShift() == CompactTable::offsetOfIndexBits() + 1);
     Jump isOtherTable = jit.branchTest32(CCallHelpers::NonZero, Address(table, CompactTable::offsetOfIndexBits()), TrustedImm32(hugeTableSignBit | CompactTable::keysAreWide << 8));
     CompactTableSearch narrowSearch { true, KeyWidth::Narrow, lookup.findsInsertionPoint, { } };
+    narrowSearch.keyIsSubstring = lookup.keyIsSubstring;
     Label entryOfHugeNarrowTable;
     emitSearchCompactTable(jit, registers, narrowSearch, exits, &entryOfHugeNarrowTable);
     JumpList needsCharacters = narrowSearch.needsCharacters;
@@ -849,6 +907,7 @@ static void emitFindStringInCompactTable(StubAssembler& jit, const HashTableRegi
         isInImage.append(jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreInImage)));
         jit.branchTest8(CCallHelpers::Zero, flags, TrustedImm32(CompactTable::keysAreWide)).linkTo(entryOfHugeNarrowTable, &jit);
         CompactTableSearch wideSearch { true, KeyWidth::Wide, lookup.findsInsertionPoint, { } };
+        wideSearch.keyIsSubstring = lookup.keyIsSubstring;
         emitSearchCompactTable(jit, registers, wideSearch, exits);
         needsCharacters.append(wideSearch.needsCharacters);
     }
@@ -859,11 +918,11 @@ static void emitFindStringInCompactTable(StubAssembler& jit, const HashTableRegi
         CompactTableSearch imageSearch { true, KeyWidth::Either, false, { }, true, lookup.asksForPresenceAlone };
         emitSearchCompactTable(jit, registers, imageSearch, exits);
         exits.unknown.append(imageSearch.needsCharacters);
-        emitCompareCharactersInImage(jit, registers, imageSearch.comparesCharactersInImage, lookup.asksForPresenceAlone ? exits.foundInCompactTable : exits.foundInImage, exits);
+        emitCompareCharactersInImage(jit, registers, lookup.keyIsSubstring, imageSearch.comparesCharactersInImage, lookup.asksForPresenceAlone ? exits.foundInCompactTable : exits.foundInImage, exits);
     } else
         exits.unknown.append(isInImage);
 
-    emitCompareCharactersOfKey(jit, registers, lookup.keepsSlot, needsCharacters, lookup.comparison == KeyComparison::String ? exits.foundAmongNarrowKeys : exits.foundInCompactTable, exits);
+    emitCompareCharactersOfKey(jit, registers, lookup, needsCharacters, lookup.comparison == KeyComparison::String ? exits.foundAmongNarrowKeys : exits.foundInCompactTable, exits);
 }
 
 static void emitClassifyOtherKeys(StubAssembler& jit, const HashTableRegisters& registers, Jump notCell, Jump notString, JumpList& isComparedByBits, HashTableExits& exits)
@@ -922,6 +981,23 @@ static void emitFindStringKey(StubAssembler& jit, const HashTableRegisters& regi
 
     isRope.link(&jit);
     branchToAbsentIfNoStorage();
+#if CPU(ADDRESS64)
+    if (lookup.findsHashedSubstrings && !lookup.findsInsertionPoint && !lookup.keepsSlot) {
+        exits.unknown.append(jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSRopeString::isSubstringInPointer)));
+        exits.unknown.append(jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSRopeString::is8BitInPointer)));
+        jit.urshift64(impl, TrustedImm32(JSRopeString::shiftOfHashOfSubstring), hash);
+        exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, hash));
+        if (lookup.comparison == KeyComparison::String) {
+            isLeftToFormForAnyValue.append(jit.jump());
+            return;
+        }
+        HashTableLookup lookupOfSubstring = lookup;
+        lookupOfSubstring.keyIsSubstring = true;
+        emitReloadTable(jit, registers);
+        emitFindStringInCompactTable(jit, registers, lookupOfSubstring, isLeftToFormForAnyValue, exits);
+        return;
+    }
+#endif
     exits.unknown.append(jit.jump());
 }
 

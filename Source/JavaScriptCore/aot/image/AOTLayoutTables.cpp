@@ -578,6 +578,10 @@ static LayoutRecordParts collectPartsOfObjectLayoutRecord(const TableEncoder& en
             encoder.fail("CountsOfClassRecordDifferFromItsLists"_s, id);
             return { };
         }
+        size_t endOfBirth = fields.size();
+        while (endOfBirth && !fields[endOfBirth - 1].isFilledAtBirth && !fields[endOfBirth - 1].holdsRawValueFromBirth)
+            --endOfBirth;
+        classParts.data.numberOfFieldsToLastOfBirth = static_cast<uint32_t>(endOfBirth);
         parentThatListsClass = classParts.parentThatListsClass;
         parts.namedGuards = WTF::move(classParts.namedGuards);
         LayoutID classLayout = Typed::declaredLayoutOf(program, id);
@@ -930,6 +934,19 @@ static Vector<AddedPrototypeNameData> collectAddedPrototypeNames(const TableEnco
     return names;
 }
 
+static Vector<FieldGetterData> collectFieldGetters(const TableEncoder& encoder)
+{
+    Vector<FieldGetterData> getters;
+    for (const auto& [getter, field] : encoder.inputs.bodyFacts.fieldsReturnedByGetters) {
+        std::optional<uint32_t> name = encoder.numbers.identifiers().numberOf(field);
+        std::optional<FunctionID> entrypoint = name ? encoder.findEntrypoint(getter) : std::nullopt;
+        if (entrypoint)
+            getters.append({ entrypoint->index(), *name });
+    }
+    AOT::sort(getters);
+    return getters;
+}
+
 void encodeLayoutTables(TableEncoder& encoder)
 {
     static constexpr ASCIILiteral nameOfSteps = "image: layout tables"_s;
@@ -969,6 +986,7 @@ void encodeLayoutTables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::constructors, constructors);
     encoder.part.setTable(ProgramTableIndex::closurePropertyNames, collectClosurePropertyNames(encoder));
     encoder.part.setTable(ProgramTableIndex::addedPrototypeNames, collectAddedPrototypeNames(encoder));
+    encoder.part.setTable(ProgramTableIndex::fieldGetters, collectFieldGetters(encoder));
     times.didFinish("append the tables behind the records"_s);
 }
 

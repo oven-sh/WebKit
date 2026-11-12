@@ -164,6 +164,9 @@ void ConstantEmitter::generateData(const ValueContext& value)
     case DataEncoding::CopyOnWriteArray:
     case DataEncoding::TreeWithOwnStorage:
         break;
+    case DataEncoding::SharedObject:
+        defineCell(value, sharedObjectOfData(value));
+        return;
     }
     if (value->encoding() == DataEncoding::CopyOnWriteArray) {
         defineCell(value, generator().takesOpenForm(value, StateOfKnowledge::CopyOnWriteArray) ? newCopyOnWriteArray(value) : newCopyOnWriteArrayByStub(value));
@@ -173,6 +176,21 @@ void ConstantEmitter::generateData(const ValueContext& value)
     uint32_t request = mentionOfDataRequest(m_mentions, data, value->encoding());
     m_out.noteForm(Form::Runtime, StateOfKnowledge::ReadOnlyTree);
     defineCell(value, callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { numberOf(request) }));
+}
+
+CellPointer ConstantEmitter::sharedObjectOfData(const ValueContext& value)
+{
+    DataID data = value->data();
+    uint32_t request = mentionOfDataRequest(m_mentions, data, DataEncoding::SharedObject);
+    LBasicBlock isUnmade = newBlock();
+    Join<CellPointer> objects(m_out);
+    LValue object = m_out.load64(instanceWord(m_heaps.AOTInstance_constantCells, m_mentions.add(NumberSpace::DataStorage, data)));
+    branchUnless(Condition(m_out.notNull(object)), isUnmade);
+    objects.add(CellPointer(object));
+
+    m_out.appendTo(isUnmade);
+    objects.add(callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { numberOf(request) }, { .isOnRarePath = true }));
+    return objects.finish();
 }
 
 CellPointer ConstantEmitter::newCopyOnWriteArray(const ValueContext& value)

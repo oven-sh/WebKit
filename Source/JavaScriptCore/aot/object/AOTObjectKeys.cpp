@@ -531,6 +531,8 @@ void Object::willCreateField(State&, const FieldData& field)
 
 void Object::didCreateField(State& state, const FieldData& field, bool withStorage)
 {
+    if (isListedByKeyOrderAlone(field.slot.representation()) && isInKeyOrder(state, field)) [[unlikely]]
+        return;
     if (withStorage)
         willCreateField(state, field);
     const LayoutData& layout = this->layout();
@@ -900,11 +902,15 @@ JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObj
 
 static bool enumerableNamesFollowFromStructureAndOrderWord(VM&, const Object&);
 
-static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& object)
+enum class HiddenKeys : bool { Refused, LeftOut };
+
+static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& object, HiddenKeys hiddenKeys)
 {
     State& state = object.state();
     uint32_t orderWord = object.orderWord();
-    uint32_t structureWord = keyListWordOfStructure(object.structureID().bits());
+    uint32_t structureID = object.structureID().bits();
+    static_assert(MarkedBlock::atomSize >= 4);
+    uint32_t structureWord = hiddenKeys == HiddenKeys::LeftOut ? enumerableKeyListWordOfStructure(structureID) : keyListWordOfStructure(structureID);
     KeyListCacheEntry& cacheEntry = state.instance.objects.keyLists[indexOfKeyList(structureWord, orderWord)];
     if (cacheEntry.shapeWord == structureWord && cacheEntry.orderWord == orderWord)
         return uncheckedDowncast<JSCellButterfly>(cacheEntry.list);
@@ -918,12 +924,14 @@ static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& ob
     forEachOwnKey(vm, state, object, KeysListed::Strings, DontEnumPropertiesMode::Exclude, [&](UniquedStringImpl* name) {
         names.append(name);
     });
-    size_t numberOfOwnKeys = 0;
-    forEachOwnKey(vm, state, object, KeysListed::StringsAndSymbols, DontEnumPropertiesMode::Include, [&](UniquedStringImpl*) {
-        ++numberOfOwnKeys;
-    });
-    if (numberOfOwnKeys != names.size())
-        return nullptr;
+    if (hiddenKeys == HiddenKeys::Refused) {
+        size_t numberOfOwnKeys = 0;
+        forEachOwnKey(vm, state, object, KeysListed::StringsAndSymbols, DontEnumPropertiesMode::Include, [&](UniquedStringImpl*) {
+            ++numberOfOwnKeys;
+        });
+        if (numberOfOwnKeys != names.size())
+            return nullptr;
+    }
     DeferGC deferGC(vm);
     JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(names.size()));
     if (!list)
@@ -954,7 +962,7 @@ JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
     if (!hasNumberedKeyOrder(*this))
         return keysOfSharedOrderWithoutNumber(vm, *this, kind);
     if (hasExtraProperties())
-        return kind == KeyListKind::Symbols ? nullptr : keysOfObjectWithExtraProperties(vm, *this);
+        return kind == KeyListKind::Symbols ? nullptr : keysOfObjectWithExtraProperties(vm, *this, HiddenKeys::Refused);
     State& state = this->state();
     if (!hasKeyListsInTable(kind, state.tables.numberOfShapes))
         return state.objects->keyOrders.keysInOrder(vm, layout(), orderWord(), kind);
@@ -972,6 +980,8 @@ static bool enumerableNamesFollowFromStructureAndOrderWord(VM& vm, const Object&
 {
     if (!object.keysDependOnlyOnStructureAndOrderWord())
         return false;
+    if (!object.hasFlagsInOrderWord() && !object.bearsMark()) [[likely]]
+        return true;
     JSObject* extra = object.extraProperties();
     if (extra && (object.compiledStructure().extraPropertiesStructureID() != extra->structureID() || !extra->structure()->canCacheOwnPropertyNames()))
         return false;
@@ -981,6 +991,13 @@ static bool enumerableNamesFollowFromStructureAndOrderWord(VM& vm, const Object&
         holdsEveryListedField &= holdsValue(object, fields[index]) || (extra && livesInExtraProperties(vm, object, fields[index]));
     });
     return holdsEveryListedField;
+}
+
+JSCellButterfly* Object::enumerableKeys(VM& vm) const
+{
+    if (!hasNumberedKeyOrder(*this) || !hasExtraProperties())
+        return keys(vm);
+    return keysOfObjectWithExtraProperties(vm, *this, HiddenKeys::LeftOut);
 }
 
 static bool holdsValueUnderEveryOwnName(const Object& object)
@@ -1035,6 +1052,89 @@ static void cacheEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& obj
     list->prototypeChain = prototypeChain;
 }
 
+static bool describePrototypes(VM& vm, JSObject* base, EnumeratorBelowCompiledObjects& described)
+{
+    bool isBelowCompiledObject = false;
+    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject()) {
+        Object* compiled = compiledObjectOrNull(prototype);
+        Structure* structure = prototype->structure();
+        bool namesAreFixed = compiled ? enumerableNamesFollowFromStructureAndOrderWord(vm, *compiled) : structure->canCacheOwnPropertyNames() && !structure->hasPolyProto();
+        if (!namesAreFixed || described.numberOfPrototypes == EnumeratorBelowCompiledObjects::mostPrototypes)
+            return false;
+        isBelowCompiledObject |= !!compiled;
+        described.prototypes[described.numberOfPrototypes++] = { structure->id().bits(), compiled ? compiled->orderWord() : 0 };
+    }
+    return isBelowCompiledObject;
+}
+
+static bool hasDescribedPrototypes(VM& vm, JSObject* base, const EnumeratorBelowCompiledObjects& described)
+{
+    uint32_t place = 0;
+    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject(), ++place) {
+        Object* compiled = compiledObjectOrNull(prototype);
+        if (place == described.numberOfPrototypes || described.prototypes[place] != EnumeratorBelowCompiledObjects::Prototype { prototype->structureID().bits(), compiled ? compiled->orderWord() : 0 })
+            return false;
+        if (compiled && !enumerableNamesFollowFromStructureAndOrderWord(vm, *compiled))
+            return false;
+    }
+    return place == described.numberOfPrototypes;
+}
+
+static bool describesNames(VM& vm, JSObject* base, const EnumeratorBelowCompiledObjects& described)
+{
+    if (described.structureID != base->structureID().bits())
+        return false;
+    Object* compiled = compiledObjectOrNull(base);
+    if (compiled && (described.orderWord != compiled->orderWord() || !enumerableNamesFollowFromStructureAndOrderWord(vm, *compiled)))
+        return false;
+    return hasDescribedPrototypes(vm, base, described);
+}
+
+static bool isEveryNameEnumerable(JSGlobalObject* globalObject, JSObject* base, JSPropertyNameEnumerator* enumerator)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (uint32_t index = 0; index < enumerator->sizeOfPropertyNames(); ++index) {
+        JSString* name = enumerator->propertyNameAtIndex(index);
+        if (!name)
+            return false;
+        auto identifier = name->toAtomString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool isEnumerable = base->hasEnumerableProperty(globalObject, identifier.data);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isEnumerable)
+            return false;
+    }
+    return true;
+}
+
+static bool hasDescribedNames(JSObject* object, uint32_t structureID, uint32_t orderWord)
+{
+    if (object->structureID().bits() != structureID)
+        return false;
+    Object* compiled = compiledObjectOrNull(object);
+    if (!compiled)
+        return true;
+    JSObject* extra = compiled->extraProperties();
+    return compiled->orderWord() == orderWord && (!extra || compiled->compiledStructure().extraPropertiesStructureID() == extra->structureID());
+}
+
+bool Object::areEnumeratedNamesFixed(JSGlobalObject* globalObject, JSObject* base, const JSPropertyNameEnumerator* enumerator)
+{
+    Instance* instance = Instance::of(globalObject);
+    if (!instance || !instance->state || !instance->state->objects)
+        return false;
+    const EnumeratorBelowCompiledObjects& described = instance->state->objects->keyOrders.enumeratorBelowCompiledObjects(base->structureID().bits());
+    if (described.enumerator != enumerator || !described.everyNameIsEnumerable || !hasDescribedNames(base, described.structureID, described.orderWord))
+        return false;
+    uint32_t place = 0;
+    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject(), ++place) {
+        if (place == described.numberOfPrototypes || !hasDescribedNames(prototype, described.prototypes[place].structureID, described.prototypes[place].orderWord))
+            return false;
+    }
+    return place == described.numberOfPrototypes;
+}
+
 JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1057,6 +1157,11 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
             keyOrders.publishEnumerator(*this, cached);
             return cached;
         }
+    }
+    EnumeratorBelowCompiledObjects& place = keyOrders.enumeratorBelowCompiledObjects(structureBefore->id().bits());
+    if (ownNamesAreFixed && describesNames(vm, this, place)) {
+        countEvent(vm, RuntimeCounterID::EnumeratorsBelowCompiledObjectsFound);
+        return place.enumerator;
     }
 
     uint32_t indexedLength = 0;
@@ -1081,6 +1186,7 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
         return nullptr;
     }
 
+    bool isCachedByChain = false;
     bool sawPolyProto;
     if (isCacheable && isUnchanged && normalizePrototypeChain(globalObject, this, sawPolyProto) != InvalidPrototypeChain) {
         if (structureBefore->prototypeChain(vm, globalObject, this) == prototypeChainBefore && canCacheEnumeratorFor(prototypeChainBefore)) {
@@ -1089,7 +1195,39 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
             else
                 cacheEnumeratorOfObjectWithExtraProperties(vm, *this, enumerator, prototypeChainBefore);
             keyOrders.publishEnumerator(*this, enumerator);
+            isCachedByChain = true;
         }
+    }
+    EnumeratorBelowCompiledObjects described { structureBefore->id().bits(), orderWordBefore, 0, false, enumerator, { } };
+    if (!isCachedByChain && ownNamesAreFixed && isUnchanged && structure() == structureBefore && orderWord() == orderWordBefore && describePrototypes(vm, this, described)) {
+        described.everyNameIsEnumerable = isEveryNameEnumerable(globalObject, this, enumerator);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        place = described;
+    }
+    return enumerator;
+}
+
+JSPropertyNameEnumerator* Object::enumeratorOfFinalObject(JSGlobalObject* globalObject, JSObject* base)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(base->type() == FinalObjectType);
+    Structure* structure = base->structure();
+    Instance* instance = Instance::of(globalObject);
+    if (!instance || !instance->state || !instance->state->objects || structure->hasPolyProto() || !structure->canCacheOwnPropertyNames())
+        RELEASE_AND_RETURN(scope, JSC::propertyNameEnumerator(globalObject, base));
+    EnumeratorBelowCompiledObjects& place = instance->state->objects->keyOrders.enumeratorBelowCompiledObjects(structure->id().bits());
+    if (describesNames(vm, base, place)) {
+        countEvent(vm, RuntimeCounterID::EnumeratorsBelowCompiledObjectsFound);
+        return place.enumerator;
+    }
+    JSPropertyNameEnumerator* enumerator = JSC::propertyNameEnumerator(globalObject, base);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    EnumeratorBelowCompiledObjects described { structure->id().bits(), 0, 0, false, enumerator, { } };
+    if (base->structure() == structure && describePrototypes(vm, base, described)) {
+        described.everyNameIsEnumerable = isEveryNameEnumerable(globalObject, base, enumerator);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        place = described;
     }
     return enumerator;
 }
@@ -1148,7 +1286,9 @@ KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t ord
 static bool ownKeysFollowFromStructureAndOrderWord(const Object& object)
 {
     JSObject* extra = object.extraProperties();
-    return extra && object.keysDependOnlyOnStructureAndOrderWord() && object.compiledStructure().extraPropertiesStructureID() == extra->structureID();
+    if (!extra)
+        return !object.hasExtraProperties() && object.keysDependOnlyOnStructureAndOrderWord();
+    return object.keysDependOnlyOnStructureAndOrderWord() && object.compiledStructure().extraPropertiesStructureID() == extra->structureID();
 }
 
 JSCellButterfly* findKeptOwnKeys(const Object& object, bool listsSymbols)

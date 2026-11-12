@@ -885,7 +885,7 @@ static void testTypedArraysWithLength()
     constexpr uint32_t type = TypeFloat32;
     constexpr uint32_t typeWithoutRecord = TypeInt8;
     constexpr unsigned elementSize = sizeof(float);
-    constexpr size_t maxBytesFromStub = 256;
+    constexpr size_t maxBytesFromStub = 1024;
     constexpr size_t numberOfSizeSteps = maxBytesFromStub / MarkedSpace::sizeStep + 1;
     constexpr uint8_t untouchedByte = 0xab;
     static_assert(sizeof(JSArrayBufferView) < sizeof(FakeCell) && !(sizeof(JSArrayBufferView) % sizeof(uint64_t)) && !(JSArrayBufferView::offsetOfMode() % sizeof(uint64_t)));
@@ -905,7 +905,7 @@ static void testTypedArraysWithLength()
         return cell.words[offset / sizeof(uint64_t)];
     };
 
-    for (uint32_t length : { 1u, 3u, 5u, 64u }) {
+    for (auto [length, isWholeNumber] : { std::pair { 1u, false }, { 3u, false }, { 5u, false }, { 64u, false }, { 256u, false }, { 1u, true }, { 4u, true }, { 5u, true }, { 6u, true }, { 9u, true }, { 255u, true }, { 256u, true } }) {
         const size_t bytes = JSArrayBufferView::sizeOf(length, elementSize);
         const size_t sizeOfStorageCell = MarkedSpace::sizeClassToIndex(bytes) * MarkedSpace::sizeStep;
         FakeAllocator storages { static_cast<uint32_t>(sizeOfStorageCell) };
@@ -915,15 +915,15 @@ static void testTypedArraysWithLength()
         views.makeRoomAt(view.address(), sizeof(JSArrayBufferView));
         allocatorOfStorage(bytes) = &storages;
 
-        StubRun run = runner.run(newTypedArray(), { type, std::bit_cast<uint64_t>(static_cast<double>(length)) });
+        StubRun run = isWholeNumber ? runner.run(newTypedArray(LengthOfTypedArray::WholeNumber), { type, length }) : runner.run(newTypedArray(LengthOfTypedArray::Number), { type, std::bit_cast<uint64_t>(static_cast<double>(length)) });
         AOT_TEST_CHECK(!run.calledOperation && run.result == view.address() && !storages.hasRoom() && !views.hasRoom());
         AOT_TEST_CHECK(view.words[0] == header && !wordOf(view, JSObject::butterflyOffset()));
         AOT_TEST_CHECK(wordOf(view, JSArrayBufferView::offsetOfVector()) == room.address());
         AOT_TEST_CHECK(wordOf(view, JSArrayBufferView::offsetOfLength()) == length && !wordOf(view, JSArrayBufferView::offsetOfByteOffset()));
         AOT_TEST_CHECK(static_cast<uint8_t>(wordOf(view, JSArrayBufferView::offsetOfMode())) == FastTypedArray);
         AOT_TEST_CHECK(wordOf(view, sizeof(JSArrayBufferView)) == FakeCell::untouched);
-        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).first(bytes), [](uint8_t byte) { return !byte; }));
-        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).subspan(bytes), [](uint8_t byte) { return byte == untouchedByte; }));
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).first(sizeOfStorageCell), [](uint8_t byte) { return !byte; }));
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).subspan(sizeOfStorageCell), [](uint8_t byte) { return byte == untouchedByte; }));
         allocatorOfStorage(bytes) = nullptr;
     }
 
@@ -939,15 +939,23 @@ static void testTypedArraysWithLength()
     auto isLeftToOperation = [&](uint32_t requestedType, double length) {
         FakeCell fromOperation;
         runner.setResultOfRecordedOperation(fromOperation.address());
-        StubRun run = runner.run(newTypedArray(), { requestedType, std::bit_cast<uint64_t>(length) });
+        StubRun run = runner.run(newTypedArray(LengthOfTypedArray::Number), { requestedType, std::bit_cast<uint64_t>(length) });
         return run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == requestedType && run.recordedArguments[1] == std::bit_cast<uint64_t>(length) && run.result == fromOperation.address() && fromOperation.isUntouched();
+    };
+    auto wholeNumberIsLeftToOperation = [&](uint32_t requestedType, int32_t length) {
+        FakeCell fromOperation;
+        runner.setResultOfRecordedOperation(fromOperation.address());
+        StubRun run = runner.run(newTypedArray(LengthOfTypedArray::WholeNumber), { requestedType, static_cast<uint32_t>(length) });
+        return run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == requestedType && run.recordedArguments[1] == std::bit_cast<uint64_t>(static_cast<double>(length)) && run.result == fromOperation.address() && fromOperation.isUntouched();
     };
     for (size_t bytes = MarkedSpace::sizeStep; bytes <= maxBytesFromStub; bytes += MarkedSpace::sizeStep)
         allocatorOfStorage(bytes) = &storages;
     makeRoom();
 
     constexpr double infinity = std::numeric_limits<double>::infinity();
-    for (double length : { 0.0, -0.0, -1.0, 0.5, 1.5, 65.0, 257.0, 4294967297.0, -4294967295.0, 1e300, infinity, -infinity, PNaN, -PNaN })
+    for (int32_t length : { 0, -1, 257, 1001, 1 << 30, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() })
+        AOT_TEST_CHECK(wholeNumberIsLeftToOperation(type, length) && tookNothing());
+    for (double length : { 0.0, -0.0, -1.0, 0.5, 1.5, 257.0, 1001.0, 4294967297.0, -4294967295.0, 1e300, infinity, -infinity, PNaN, -PNaN })
         AOT_TEST_CHECK(isLeftToOperation(type, length) && tookNothing());
     AOT_TEST_CHECK(isLeftToOperation(typeWithoutRecord, 1) && tookNothing());
 
@@ -1775,12 +1783,12 @@ static void testCopiesOfPropertiesByChunks()
         place = nullptr;
 
         using Flag = CompiledStructure::Flag;
-        using HeldKeyOrder = CompiledStructure::HeldKeyOrder;
+        using FurtherFlag = CompiledStructure::FurtherFlag;
         constexpr uint8_t flagsOfOrdered = static_cast<uint8_t>(Flag::HasOnlyPlainSlots) | static_cast<uint8_t>(Flag::HasOutOfLineKeyOrder);
         auto& unordered = structures[0];
         auto& ordered = structures[1];
         uint8_t& flags = ordered.at<uint8_t>(CompiledStructure::offsetOfFlags());
-        uint8_t& heldKeyOrder = ordered.at<uint8_t>(CompiledStructure::offsetOfHeldKeyOrder());
+        uint8_t& furtherFlags = ordered.at<uint8_t>(CompiledStructure::offsetOfFurtherFlags());
         uint32_t& orderWordOfSource = source.at<uint32_t>(offsetOfOrderWord);
         flags = flagsOfOrdered;
         source.at<uint32_t>(JSCell::structureIDOffset()) = static_cast<uint32_t>(ordered.address());
@@ -1803,8 +1811,8 @@ static void testCopiesOfPropertiesByChunks()
             }
         }
         orderWordOfSource = outOfLineOrderWord;
-        AOT_TEST_CHECK(isCopiedOnlyWithout(heldKeyOrder, static_cast<uint8_t>(HeldKeyOrder::IsOfOneObject)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(heldKeyOrder, static_cast<uint8_t>(HeldKeyOrder::IsBesideExtraProperties)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderOfOneObject)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderBesideExtraProperties)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(Flag::HasOnlyPlainSlots)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasExtraProperties))));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasOtherPrototype))));

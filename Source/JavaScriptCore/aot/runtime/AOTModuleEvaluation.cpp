@@ -4587,8 +4587,23 @@ bool Modules::wasEvictedByRemovedMock(ModuleID file) const
     return m_mockEvictedDataModules.get(file.index()) && !isPatchedByMock(file) && !activeMock(file) && !hasPendingMock(file);
 }
 
-ModuleID Modules::formThatRequireFinds(ModuleID target)
+bool Modules::wasImportedByStatement(ModuleID file) const
 {
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (data(importer).kind != ModuleKind::SourceText || !wasImporterLoaded(importer))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.targetModule() == file)
+                return true;
+        }
+    }
+    return false;
+}
+
+ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     auto wasRequired = [&](ModuleID form) {
         const LoadedModule* loaded = loadedIfExists(form);
         return loaded && (loaded->requiredValue || loaded->wasRequiredByHost);
@@ -4613,17 +4628,34 @@ ModuleID Modules::formThatRequireFinds(ModuleID target)
     }
     if (file && !hasNotBegun(*file) && !wasEvictedByRemovedMock(*file))
         return *file;
+    auto wasImported = [&](ModuleID form) {
+        return (status(form) == ModuleStatus::Evaluated || hasBeenImported(form)) && !wasEvictedByRemovedMock(form);
+    };
     bool loaderHoldsEntryWithoutType = loader()->moduleMap().contains(ModuleMapKey { key.impl(), ScriptFetchParameters::Type::JavaScript });
     if (!file && loaderHoldsEntryWithoutType && status(target) == ModuleStatus::Evaluated && !wasEvictedByRemovedMock(target))
         return target;
     auto first = m_formsAnsweredFirst.find(ModuleMapKey { key.impl(), ScriptFetchParameters::Type::HostDefined });
-    if (first != m_formsAnsweredFirst.end() && forms.contains(first->value.module) && status(first->value.module) == ModuleStatus::Evaluated && !wasEvictedByRemovedMock(first->value.module))
+    if (first != m_formsAnsweredFirst.end() && forms.contains(first->value.module) && status(first->value.module) == ModuleStatus::Evaluated && !wasEvictedByRemovedMock(first->value.module)) {
+        answersNamespace = true;
         return first->value.module;
-    if (forms.contains(target) && !m_table.fullPath(target).endsWith("?json"_s) && status(target) == ModuleStatus::Evaluated && !wasEvictedByRemovedMock(target))
-        return target;
-    for (ModuleID form : forms) {
-        if (m_table.fullPath(form).endsWith("?json"_s) && status(form) == ModuleStatus::Evaluated && !wasEvictedByRemovedMock(form))
-            return form;
+    }
+    if (forms.containsIf(wasImported) && file && (hasBeenImported(*file) || (data(*file).requireResult == RequireResult::Namespace && wasImportedByStatement(*file))) && !wasEvictedByRemovedMock(*file))
+        return *file;
+    for (bool isJSON : { false, true }) {
+        for (ModuleID form : forms) {
+            if (m_table.fullPath(form).endsWith("?json"_s) != isJSON || !wasImported(form))
+                continue;
+            if (!isUnevaluatedTextForm(form)) {
+                answersNamespace = true;
+                return form;
+            }
+            if (file && data(*file).kind == ModuleKind::Data) {
+                moduleNamespace(*file, ModulePhase::Evaluation);
+                RETURN_IF_EXCEPTION(scope, target);
+                answersNamespace = true;
+                return *file;
+            }
+        }
     }
     return target;
 }
@@ -4765,12 +4797,25 @@ bool Modules::hasBeenImported(ModuleID target) const
     });
 }
 
+bool Modules::hasEvaluationPassedImport(ModuleID importer, ModuleID target) const
+{
+    if (status(importer) != ModuleStatus::Evaluating)
+        return status(importer) > ModuleStatus::Linked;
+    for (const ModuleRequestData& request : m_table.imports(importer)) {
+        if (request.targetModule() == target)
+            return true;
+        if (data(request.targetModule()).isESModuleOfProgram() && status(request.targetModule()) <= ModuleStatus::Evaluating)
+            return false;
+    }
+    return true;
+}
+
 bool Modules::isUnevaluatedTextForm(ModuleID form) const
 {
-    if (!m_table.fullPath(form).endsWith("?text"_s) || status(form) == ModuleStatus::Evaluated || namespaceIfCreated(form, ModulePhase::Evaluation))
+    if (!m_table.fullPath(form).endsWith("?text"_s) || status(form) == ModuleStatus::Evaluated || (m_mocks && namespaceIfCreated(form, ModulePhase::Evaluation)))
         return false;
     return std::ranges::none_of(m_table.importsOfHeldFile(form), [&](const ImportOfHeldFileData& import) {
-        return status(ModuleID(import.importer)) > ModuleStatus::Linked;
+        return hasEvaluationPassedImport(ModuleID(import.importer), form);
     });
 }
 
@@ -4959,15 +5004,18 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         tellIfFactoryIsRunning(target, LoadKind::Require);
     if (JSValue settled = settledAnswerOfRequire(target, requiredBy))
         return settled;
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool loadsEvictedDataFile = false;
+    bool answersNamespace = false;
     if (data(target).kind == ModuleKind::Data) [[unlikely]] {
-        if (formThatAnswers == FormThatAnswers::TheOneThatLoaderFinds)
-            target = formThatRequireFinds(target);
+        if (formThatAnswers == FormThatAnswers::TheOneThatLoaderFinds && m_table.mayHaveAttributeVariants()) {
+            target = formThatRequireFinds(target, answersNamespace);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         loadsEvictedDataFile = isEvictedDataFile(target);
         didLoadDataFile(target, LoadKind::Require);
     }
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
     removeUnusedLingeringMocks(target);
     RETURN_IF_EXCEPTION(scope, { });
     if (!m_importsAwaitingSource.isEmpty()) [[unlikely]] {
@@ -5208,7 +5256,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return loaded.exportsWhileRequired.get();
     }
     bool isAnsweredAsByLoader = requiredBy == RequiredBy::Program && targetData.loaderReturnsNamespace();
-    bool answersDefaultExport = !isAnsweredAsByLoader && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target))));
+    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target))));
     if (loaded.isKeptByRequire && loaded.requiredValue && !isAnsweredAsByLoader && status(target) == ModuleStatus::Failed) [[unlikely]]
         return loaded.requiredValue.get();
     bool wasBeingRequired = false;

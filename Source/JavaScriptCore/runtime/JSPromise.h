@@ -123,6 +123,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
+    // The promise that a reaction with this cell settles, itself or at the end of a chain of reactions.
+    JS_EXPORT_PRIVATE static JSPromise* settledByReactionCell(JSCell*);
 #endif
 
     JS_EXPORT_PRIVATE static JSPromise* resolvedPromise(JSGlobalObject*, JSValue);

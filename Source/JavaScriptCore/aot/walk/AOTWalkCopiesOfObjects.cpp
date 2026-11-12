@@ -86,7 +86,7 @@ static bool isPlainPropertyInWalkCopies(const Walker& walker, FieldReference fie
 {
     const Program& program = walker.program();
     const PlacedSlot& slot = walker.plan().slot(field.layout, field.field);
-    if (field.field >= program.at(field.layout).fields.size() || !slot.hasStorage() || !canLeaveSlot(slot.representation))
+    if (field.field >= program.at(field.layout).fields.size() || !slot.hasStorage() || !mayBeCreatedByStore(slot.representation))
         return false;
     FieldFacts facts = walker.facts().field(field);
     const Field& declared = program.at(field.layout).fields[field.field];
@@ -108,6 +108,8 @@ static std::optional<FieldIndex> findFieldThatTakesInWalkCopies(const ObjectCopy
     LayoutID taker = copy.makesObject() ? layoutOfSource : copy.layoutOfLiteral;
     if (copy.stores() && (isOnObjectPrototype(program.nameClassOf(key)) || !isClosedKey(program, program.builtins().canonicalID(Builtins::ObjectPrototype), key) || !onlyObjectPrototypeStandsAboveObjectsOfInWalkCopies(walker, taker)))
         return std::nullopt;
+    if (copy.kind == KindOfCopyInWalkCopies::DefinesOnObjectThatStands && isAccessorAmongOwnKeys(walker, layoutOfSource, field))
+        return field;
     if (copy.makesObject() || copy.kind == KindOfCopyInWalkCopies::DefinesOnObjectThatStands)
         return isPlainPropertyInWalkCopies(walker, { layoutOfSource, field }) ? std::optional(field) : std::nullopt;
     std::optional<FieldReference> found = findField(program, taker, key);
@@ -128,7 +130,8 @@ static bool createdFieldsHoldNoSymbolToCopyInWalkCopies(const ObjectCopyInWalkCo
         OptionSet<FieldForm> form = walker.facts().field({ listed.layout, field }).formOfValue;
         if (field < layout.fields.size())
             form.add(layout.fields[field].form);
-        if (form.contains(FieldForm::IsAccessor) || walker.plan().slot(listed.layout, field).holdsAccessor)
+        bool isListedAccessor = listed.listsAccessors && listed.fields.contains(field);
+        if (!isListedAccessor && (form.contains(FieldForm::IsAccessor) || walker.plan().slot(listed.layout, field).holdsAccessor))
             return false;
         if (isSymbolKind(program.at(key).kind) && !form.contains(FieldForm::IsNotEnumerable))
             return false;
@@ -314,10 +317,10 @@ static void bindLiteralInWalkCopies(Walker& walker, const LiteralInSightInWalkCo
         walker.bind(name, object);
 }
 
-static bool takeFieldsOfSourceInWalkCopies(Walker& walker, const CopiedOrderInWalkCopies& order, Reference source, Origin origin, PropertiesInWalkCopies& properties)
+static bool takeFieldsOfSourceInWalkCopies(Walker& walker, const BodyValue& copy, const CopiedOrderInWalkCopies& order, Reference source, Origin origin, PropertiesInWalkCopies& properties)
 {
     for (size_t index = 0; index < order.fields.size(); ++index) {
-        Reference value = valueOfOwnKey(walker, source, order.keys.layout, order.fields[index], origin);
+        Reference value = valueOfCopiedKey(walker, copy, source, order.keys.layout, order.fields[index], origin);
         if (!value)
             return false;
         properties.put(order.fieldsOfTaker[index], value);
@@ -369,7 +372,7 @@ static Reference buildObjectMadeByCopyInWalkCopies(Walker& walker, const Draft& 
             PropertyKeyID key = keyOfFieldInWalkCopies(walker, order.keys.layout, field);
             if (std::ranges::contains(namesLeftOut, key))
                 continue;
-            Reference held = valueOfOwnKey(walker, source, order.keys.layout, field, origin);
+            Reference held = valueOfCopiedKey(walker, value, source, order.keys.layout, field, origin);
             if (!held)
                 return { };
             definitions.append({ key, held });
@@ -397,7 +400,7 @@ static Reference buildObjectMadeByCopyInWalkCopies(Walker& walker, const Draft& 
 
     PropertiesInWalkCopies properties;
     properties.layout = order.keys.layout;
-    if (!takeFieldsOfSourceInWalkCopies(walker, order, source, origin, properties))
+    if (!takeFieldsOfSourceInWalkCopies(walker, value, order, source, origin, properties))
         return { };
     Draft allocation(Opcode::NewObject, origin);
     allocation.inputValueGiven = value.id();
@@ -431,7 +434,8 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
         copy.kind = KindOfCopyInWalkCopies::DefinesOnObjectThatStands;
     }
 
-    if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source)) {
+    AccessorsAmongOwnKeys accessors = leavesNamesOut ? AccessorsAmongOwnKeys::AreCalled : AccessorsAmongOwnKeys::AreRefused;
+    if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source, accessors)) {
         CopiedOrderInWalkCopies order;
         if (fillCopiedOrderInWalkCopies(copy, *listed, true, order)) {
             Draft written = walker.draftOf(value);
@@ -443,7 +447,7 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
 
     if (leavesNamesOut && !walker.isInLoop())
         return false;
-    OwnKeyPlan plan = planOwnKeyWalk(walker, operation.sourceOperand(), source);
+    OwnKeyPlan plan = planOwnKeyWalk(walker, operation.sourceOperand(), source, mostFieldsOfOwnKeyWalk, mostArmsOfOwnKeyWalk, accessors);
     Vector<CopiedOrderInWalkCopies, 2> orders = planCopyByLayoutsInWalkCopies(copy, plan);
     if (orders.isEmpty() || !shouldOpenGuess(walker, source, walker.types().forLayout(orders[0].keys.layout), plan.isDeclared, closedOperationsOfCopyInWalkCopies))
         return false;
@@ -486,6 +490,13 @@ struct SourceOfAssignmentInWalkCopies {
     Reference built;
     Vector<CopiedOrderInWalkCopies, 2> orders;
     TypeID withoutProperties;
+    bool listsAccessors() const
+    {
+        return orders.containsIf([](const CopiedOrderInWalkCopies& order) {
+            return order.keys.listsAccessors;
+        });
+    }
+
     bool isInSight { false };
     bool layoutIsProven { false };
 };
@@ -506,7 +517,8 @@ static bool planSourceOfAssignmentInWalkCopies(const ObjectCopyInWalkCopies& cop
     Walker& walker = copy.walker;
     if (!source.built || !source.built.isValue())
         return false;
-    if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source.built)) {
+    AccessorsAmongOwnKeys accessors = copy.stores() ? AccessorsAmongOwnKeys::AreRefused : AccessorsAmongOwnKeys::AreCalled;
+    if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source.built, accessors)) {
         CopiedOrderInWalkCopies order;
         if (fillCopiedOrderInWalkCopies(copy, *listed, true, order)) {
             source.orders.append(WTF::move(order));
@@ -516,7 +528,7 @@ static bool planSourceOfAssignmentInWalkCopies(const ObjectCopyInWalkCopies& cop
     }
     if (!mayAskTests || !mostArms)
         return false;
-    OwnKeyPlan plan = planOwnKeyWalk(walker, source.inBody, source.built, mostFieldsOfOwnKeyWalk, mostArms);
+    OwnKeyPlan plan = planOwnKeyWalk(walker, source.inBody, source.built, mostFieldsOfOwnKeyWalk, mostArms, accessors);
     Vector<CopiedOrderInWalkCopies, 2> orders = planCopyByLayoutsInWalkCopies(copy, plan);
     if (orders.isEmpty() || !shouldOpenGuess(walker, source.built, walker.types().forLayout(orders[0].keys.layout), plan.isDeclared, closedOperationsOfCopyInWalkCopies))
         return false;
@@ -726,7 +738,7 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
         }
         walkSourceArmsInWalkCopies(walker, source, origin, asWritten, [&](const CopiedOrderInWalkCopies* order, Reference tested) {
             PropertiesInWalkCopies taken = properties;
-            if (!order || takeFieldsOfSourceInWalkCopies(walker, *order, tested, origin, taken))
+            if (!order || takeFieldsOfSourceInWalkCopies(walker, value, *order, tested, origin, taken))
                 self(self, first + 1, taken);
         });
         if (!asWritten || walker.hasFailed())
@@ -752,6 +764,9 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
 namespace {
 
 struct FillOfLiteralInWalkCopies {
+    BodyValue copy(const BodyIndex& index) const { return index.value(written); }
+
+    ValueID written;
     bool isCopy { false };
     SourceOfAssignmentInWalkCopies source;
     FieldIndex field { 0 };
@@ -901,7 +916,7 @@ bool defineOwnKeysOfSourceOnObjectThatStands(Walker& walker, const BodyValue& co
             PropertyKeyID key = keyOfFieldInWalkCopies(walker, order->keys.layout, field);
             if (std::ranges::contains(spread.excludedKeys(), key))
                 continue;
-            Reference value = valueOfOwnKey(walker, tested, order->keys.layout, field, origin);
+            Reference value = valueOfCopiedKey(walker, copy, tested, order->keys.layout, field, origin);
             if (!value && !walker.isUnreachable() && !walker.hasFailed())
                 walker.fail("an own key that a copy defines has no value, and the way goes on"_s);
             if (!value)
@@ -977,10 +992,14 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
         FillOfLiteralInWalkCopies fill;
         if (!planFillOfLiteralInWalkCopies(copy, *literal, target, next, maxArmsOfSourceInWalkCopies(numberOfArms), fill))
             break;
+        fill.written = next.id();
         if (fill.isCopy)
             numberOfArms *= fill.source.numberOfArms();
+        bool runsGetters = fill.isCopy && fill.source.listsAccessors();
         fills.append(WTF::move(fill));
         walkedUpTo = place + 1;
+        if (runsGetters)
+            break;
     }
     if (fills.isEmpty())
         return false;
@@ -1059,13 +1078,13 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
         }
         const SourceOfAssignmentInWalkCopies& source = fills[first].source;
         if (numberOfArms == 1) {
-            if (takeFieldsOfSourceInWalkCopies(walker, source.order(), source.built, origin, properties))
+            if (takeFieldsOfSourceInWalkCopies(walker, fills[first].copy(index), source.order(), source.built, origin, properties))
                 self(self, first + 1, WTF::move(properties));
             return;
         }
         walkSourceArmsInWalkCopies(walker, source, origin, asWritten, [&](const CopiedOrderInWalkCopies* order, Reference tested) {
             PropertiesInWalkCopies taken = properties;
-            if (!order || takeFieldsOfSourceInWalkCopies(walker, *order, tested, origin, taken))
+            if (!order || takeFieldsOfSourceInWalkCopies(walker, fills[first].copy(index), *order, tested, origin, taken))
                 self(self, first + 1, WTF::move(taken));
         });
     };

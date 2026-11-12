@@ -114,6 +114,14 @@ static void narrowToName(Walker& walker, Opcode opcode, PropertyKeyID name, Effe
         masks.add(walker.program(), MemoryLocation::objectField(walker.program().keyOf(BuiltinNames::__proto__)));
 }
 
+void narrowNamedLookupEffects(const Program& program, PropertyKeyID name, Effects& effects)
+{
+    if (!name || liesInThread(name) || program.at(name).kind != PropertyKeyKind::Text || program.isIndexLike(name) || program.nameClassOf(name) != NameClass::Ordinary)
+        return;
+    effects.reads.remove(AbstractHeapSet { AbstractHeap::ObjectFields });
+    effects.reads.add(program, MemoryLocation::objectField(name));
+}
+
 void narrowKeyedAccessEffects(Walker& walker, const Draft& draft, Effects& effects)
 {
     bool isLookup = draft.opcode == Opcode::GetKeyedValueOrAbsent;
@@ -232,11 +240,99 @@ static uint32_t holderOf(const BodyIndex& index, ValueID operand)
     return source ? source.index() : 0;
 }
 
-bool Walker::storesByName(const BodyIndex& index, const BodyValue& access)
+static constexpr uint32_t updatesField = UINT32_MAX;
+
+static uint32_t updatedHolderOf(const BodyIndex& index, ValueID operand)
 {
-    auto entryOf = [](uint32_t loop, uint32_t holder) { return static_cast<uint64_t>(loop) << 32 | holder; };
-    const Vector<uint64_t>& stored = m_holdersStoredByName.ensure(&index, [&] {
+    static constexpr uint32_t elementHolder = 1u << 30;
+    ValueID source = index.stripCasts(operand);
+    if (source && !index.isParameter(source) && index.opcodeOf(source) == Opcode::ElemGet)
+        return elementHolder | holderOf(index, index.value(source).objectOperand());
+    return holderOf(index, operand);
+}
+
+static constexpr uint32_t nameOfWords = 1u << 30;
+
+static bool isWrittenInteger(Walker& walker, const BodyIndex& index, ValueID parameter)
+{
+    BlockID block = index.blockOf(parameter);
+    if (block == entryBlock || index.isLoopHead(block) || index.isEnteredByHandlerEdge(block))
+        return false;
+    uint32_t position = parameter.index() - index.block(block).parameter(0).index();
+    return std::ranges::all_of(walker.incomingEdgesOf(index, block), [&](const BodyIncomingEdge& edge) {
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID argument = position < arguments.size() ? index.stripCasts(arguments[position]) : ValueID();
+        return argument && !index.isParameter(argument) && index.opcodeOf(argument) == Opcode::Integer;
+    });
+}
+
+static bool isSumOfWords(Walker& walker, const BodyIndex& index, PropertyKeyID key, ValueID written, unsigned& termsLeft, bool& someTermIsWord)
+{
+    ValueID term = index.stripCasts(written);
+    if (!term || !termsLeft)
+        return false;
+    --termsLeft;
+    if (index.isParameter(term))
+        return isWrittenInteger(walker, index, term);
+    BodyValue made = index.value(term);
+    if (allBitwiseOperators.contains(made.opcode())) {
+        someTermIsWord = true;
+        return true;
+    }
+    if (made.opcode() == Opcode::PropGet)
+        return !made.isFreeName() && made.key() == key;
+    if (made.opcode() != Opcode::Add && made.opcode() != Opcode::Sub)
+        return made.opcode() == Opcode::Integer;
+    return isSumOfWords(walker, index, key, made.operand(0), termsLeft, someTermIsWord) && isSumOfWords(walker, index, key, made.operand(1), termsLeft, someTermIsWord);
+}
+
+static bool isWordSumStore(Walker& walker, const BodyIndex& index, const BodyValue& store)
+{
+    static constexpr unsigned maxTerms = 24;
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
+    ValueID stored = index.stripCasts(store.valueOperand());
+    if (!stored || index.isParameter(stored) || !sums.contains(index.opcodeOf(stored)))
+        return false;
+    unsigned termsLeft = maxTerms;
+    bool someTermIsWord = false;
+    return isSumOfWords(walker, index, store.key(), stored, termsLeft, someTermIsWord) && someTermIsWord;
+}
+
+static uint64_t entryOfHolder(uint32_t loop, uint32_t holder)
+{
+    return static_cast<uint64_t>(loop) << 32 | holder;
+}
+
+struct FieldStoredInLoop {
+    uint32_t loop;
+    uint32_t holder;
+    uint32_t key;
+    friend auto operator<=>(const FieldStoredInLoop&, const FieldStoredInLoop&) = default;
+};
+
+static void addLoopsThatUpdateFields(const BodyIndex& index, Vector<FieldStoredInLoop>& stored, Vector<uint64_t>& found)
+{
+    std::ranges::sort(stored);
+    uint32_t loopLookedAt = noLoop;
+    for (const FieldStoredInLoop& store : stored) {
+        if (store.loop == loopLookedAt)
+            continue;
+        loopLookedAt = store.loop;
+        bool updates = std::ranges::any_of(index.membersOf(LoopID(store.loop)), [&](BlockID member) {
+            return std::ranges::any_of(index.block(member).values(), [&](BodyValue read) {
+                return read.opcode() == Opcode::PropGet && !read.isFreeName() && std::ranges::binary_search(stored, FieldStoredInLoop { store.loop, updatedHolderOf(index, read.objectOperand()), read.key().index() });
+            });
+        });
+        if (updates)
+            found.append(entryOfHolder(store.loop, updatesField));
+    }
+}
+
+const Vector<uint64_t>& Walker::holdersStoredByName(const BodyIndex& index)
+{
+    return m_holdersStoredByName.ensure(&index, [&] {
         Vector<uint64_t> found;
+        Vector<FieldStoredInLoop> stored;
         if (!index.holdsAnyOf(OpcodeSet { Opcode::PropSet }))
             return found;
         for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
@@ -247,37 +343,102 @@ bool Walker::storesByName(const BodyIndex& index, const BodyValue& access)
                     continue;
                 uint32_t holder = holderOf(index, operation.objectOperand());
                 LoopID loop = index.loopOf(BlockID(block));
-                found.append(entryOf(noLoop, holder));
+                found.append(entryOfHolder(noLoop, holder));
+                if (loop && index.loop(loop).numberOfLoopsWithin == 1 && !operation.isFreeName())
+                    stored.append({ loop.index(), updatedHolderOf(index, operation.objectOperand()), operation.key().index() });
+                if (loop && !operation.isFreeName() && operation.key() && isWordSumStore(*this, index, operation))
+                    found.append(entryOfHolder(loop.index(), nameOfWords | operation.key().index()));
                 for (; loop; loop = index.loop(loop).parent)
-                    found.append(entryOf(loop.index(), holder));
+                    found.append(entryOfHolder(loop.index(), holder));
             }
         }
+        addLoopsThatUpdateFields(index, stored, found);
         std::ranges::sort(found);
         return found;
     }).iterator->value;
+}
+
+bool Walker::storesByName(const BodyIndex& index, const BodyValue& access)
+{
+    const Vector<uint64_t>& stored = holdersStoredByName(index);
     if (stored.isEmpty())
         return false;
     LoopID loop = index.loopOf(index.blockOf(access.id()));
-    return std::ranges::binary_search(stored, entryOf(loop ? loop.index() : noLoop, holderOf(index, access.objectOperand())));
+    return std::ranges::binary_search(stored, entryOfHolder(loop ? loop.index() : noLoop, holderOf(index, access.objectOperand())));
+}
+
+bool Walker::storesSumOfWords(const BodyIndex& index, LoopID loop, PropertyKeyID key)
+{
+    const Vector<uint64_t>& stored = holdersStoredByName(index);
+    return !stored.isEmpty() && std::ranges::binary_search(stored, entryOfHolder(loop.index(), nameOfWords | key.index()));
+}
+
+bool Walker::updatesFieldInLoop(const BodyIndex& index, LoopID loop)
+{
+    return std::ranges::binary_search(holdersStoredByName(index), entryOfHolder(loop.index(), updatesField));
+}
+
+static bool someLoopAroundStoresUnderName(Walker& walker, const BodyIndex& index, const BodyValue& access, PropertyKeyID key)
+{
+    LoopID outermost = index.loopOf(index.blockOf(access.id()));
+    if (!outermost)
+        return false;
+    while (LoopID around = index.loop(outermost).parent)
+        outermost = around;
+    return walker.textOfOutermostLoopStoresUnderNameInCurrentBody(outermost, key);
+}
+
+static bool isFieldFoundBeforeLoop(Walker& walker, const BodyIndex& index, const BodyValue& access, ValueID operand)
+{
+    ValueID source = index.stripCasts(operand);
+    if (!source || index.isParameter(source) || index.opcodeOf(source) != Opcode::PropGet)
+        return false;
+    BodyValue read = index.value(source);
+    return !read.isFreeName() && isFoundBeforeLoop(walker, index, access, read.objectOperand()) && !someLoopAroundStoresUnderName(walker, index, access, read.key());
+}
+
+static bool isFunctionOutsideClasses(Walker& walker, TypeID holder)
+{
+    FunctionID function = singleFunctionOf(walker.types(), walker.types().at(holder));
+    return function && !classOfClassObject(walker.program(), function);
+}
+
+static bool storesIntoIterationObject(Walker& walker, const BodyIndex& index, const BodyValue& access, TypeID holder)
+{
+    LoopID loop = index.loopOf(index.blockOf(access.id()));
+    if (!loop || index.loop(loop).numberOfLoopsWithin != 1 || !walker.types().isUninformative(holder) || !walker.updatesFieldInLoop(index, loop) || walker.plan().slots().someLayoutWrittenInHasField(walker.program().at(walker.currentFunction()).module, access.key()))
+        return false;
+    if (access.opcode() == Opcode::PropSet)
+        return true;
+    uint32_t stored = holderOf(index, access.objectOperand());
+    return std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
+        return std::ranges::any_of(index.block(member).values(), [&](BodyValue store) {
+            return store.opcode() == Opcode::PropSet && !store.isFreeName() && store.key() == access.key() && holderOf(index, store.objectOperand()) == stored;
+        });
+    });
 }
 
 bool mayUseNamedAddress(Walker& walker, const BodyValue& access, TypeID holder)
 {
-    if (!namedAccesses.contains(access.opcode()) || !holder || !walker.types().isUninformative(holder) || access.isFreeName() || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Guesses))
+    if (!namedAccesses.contains(access.opcode()) || !holder || access.isFreeName() || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Guesses))
+        return false;
+    bool isInFunction = isFunctionOutsideClasses(walker, holder);
+    if (!isInFunction && !walker.types().isUninformative(holder))
         return false;
     const Program& program = walker.program();
     const BodyIndex& index = walker.currentBodyIndex();
     PropertyKeyID key = access.key();
     if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::Text || program.isIndexLike(key) || program.nameClassOf(key) == NameClass::Proto || key == program.keyOf(BuiltinNames::length))
         return false;
-    if (!walker.storesByName(index, access) || isCallee(index, access) || !isFoundBeforeLoop(walker, index, access, access.objectOperand()))
+    if (!walker.storesByName(index, access) || isCallee(index, access))
         return false;
-    if (LoopID outermost = access.opcode() == Opcode::PropGet ? index.loopOf(index.blockOf(access.id())) : LoopID()) {
-        while (LoopID around = index.loop(outermost).parent)
-            outermost = around;
-        if (!walker.textOfOutermostLoopStoresUnderNameInCurrentBody(outermost, key))
-            return false;
-    }
+    bool wasFoundBeforeLoop = isFoundBeforeLoop(walker, index, access, access.objectOperand()) || isFieldFoundBeforeLoop(walker, index, access, access.objectOperand());
+    if (!wasFoundBeforeLoop && !storesIntoIterationObject(walker, index, access, holder))
+        return false;
+    if (access.opcode() == Opcode::PropGet && index.loopOf(index.blockOf(access.id())) && !someLoopAroundStoresUnderName(walker, index, access, key))
+        return false;
+    if (isInFunction)
+        return key != program.keyOf(BuiltinNames::prototype) && key != program.keyOf(BuiltinNames::name);
     TypeID expected = findExpectation(walker, access.objectOperand()).type;
     return !expected || walker.types().isUninformative(expected);
 }
@@ -309,6 +470,21 @@ bool sharesKeyWithOtherAccess(Walker& walker, const BodyValue& access)
     });
 }
 
+bool isKeyedByElement(const BodyIndex& index, const BodyValue& access)
+{
+    if (access.opcode() != Opcode::ElemGet)
+        return false;
+    LoopID loop = index.loopOf(index.blockOf(access.id()));
+    ValueID key = index.stripCasts(access.propertyOperand());
+    if (!loop || index.isParameter(key) || index.opcodeOf(key) != Opcode::ElemGet || !index.isInLoop(index.blockOf(key), loop))
+        return false;
+    uint32_t firstValueOfLoop = index.block(index.loop(loop).head).firstParameter().index();
+    ValueID names = index.stripCasts(index.value(key).objectOperand());
+    if (names.index() >= firstValueOfLoop && !index.isParameter(names) && index.opcodeOf(names) == Opcode::CheckInitialized)
+        names = index.stripCasts(index.value(names).operand(0));
+    return names.index() < firstValueOfLoop || (!index.isParameter(names) && index.opcodeOf(names) == Opcode::GetModuleVariable);
+}
+
 static bool hasFewNames(Walker& walker, TypeID holder)
 {
     HolderLayouts layouts = exactLayoutsOf(walker, holder);
@@ -329,7 +505,7 @@ bool mayDispatchOverNames(Walker& walker, const BodyValue& access, TypeID holder
     constexpr uint16_t names = Primitive::AnyString | Primitive::AnySymbol;
     if (!(walker.types().at(key).primitives & names) || isCallee(index, access) || !index.loopOf(index.blockOf(access.id())) || !hasFewNames(walker, holder))
         return false;
-    return (isFoundBeforeLoop(walker, index, access, access.propertyOperand()) || sharesKeyWithOtherAccess(walker, access)) && mayBeName(walker, access, key, holder);
+    return (isFoundBeforeLoop(walker, index, access, access.propertyOperand()) || sharesKeyWithOtherAccess(walker, access) || isKeyedByElement(index, access)) && mayBeName(walker, access, key, holder);
 }
 
 Effects effectsOfDispatchOverNames(Walker& walker, const BodyValue& access, TypeID holder)
@@ -357,19 +533,21 @@ Effects effectsOfKeyedAccess(Walker& walker, const BodyValue& access, TypeID hol
     return effects;
 }
 
-static Reference buildKeyedAddress(Walker& walker, Reference object, Reference key, PropertyKeyID name, bool fitsFields, Origin origin)
+static Reference buildKeyedAddress(Walker& walker, Reference object, Reference key, PropertyKeyID name, bool fitsFields, bool takesFunctions, Origin origin)
 {
     constexpr auto purity = Walker::IterationPurity::KnownEffectsOnly;
     Reference address;
     Reference test;
+    bool isInvariant = walker.isInvariantInSpecializedVersion(object, purity);
     {
-        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, isInvariant, purity);
         Draft lookup(Opcode::GetKeyedPropertyAddress, origin);
         lookup.setObjectOperand(object);
         lookup.setPropertyOperand(key);
         lookup.setKey(name);
         lookup.setFindsOnlyFields(findsOnlyFields(walker, walker.typeOf(object)));
         lookup.setFitsFieldTypes(fitsFields);
+        lookup.setTakesFunctions(takesFunctions);
         address = walker.build(WTF::move(lookup));
         if (!address || walker.hasFailed())
             return { };
@@ -380,8 +558,8 @@ static Reference buildKeyedAddress(Walker& walker, Reference object, Reference k
             return { };
     }
     walker.recordSpeculation();
-    walker.count(StatisticID::KeyedAddressesHoisted);
-    if (walker.tryBranchInPreheader(test, true, purity))
+    walker.count(isInvariant ? StatisticID::KeyedAddressesHoisted : StatisticID::AddressesFoundInIterations);
+    if (isInvariant && walker.tryBranchInPreheader(test, true, purity))
         return address;
     BlockID leaves = walker.addBlock(BlockFrequency::Rare);
     BlockID goesOn = walker.addBlock();
@@ -469,7 +647,7 @@ bool tryGuardKeyAsString(Walker& walker, const BodyValue& test)
     if (test.testedType() != TypeTable::object || !walker.opensGuesses() || !walker.canBuildIterationGuardAfterStores() || !walker.canRestartIteration())
         return false;
     Reference key = walker.referenceOf(test.valueOperand());
-    if (!key || !key.isValue() || !walker.types().isUninformative(walker.typeOf(key)) || !walker.isInvariantInSpecializedVersion(key, purity) || !walker.canHoistKeyedAddress())
+    if (!key || !key.isValue() || !walker.types().isUninformative(walker.typeOf(key)) || !walker.isInvariantInSpecializedVersion(key, purity) || !walker.canHoistKeyedAddress(false))
         return false;
     if (!isKeyOfUpdate(walker, test.valueOperand(), walker.currentBodyIndex().blockOf(test.id())))
         return false;
@@ -519,19 +697,27 @@ bool Walker::isResultUsedAsNumber() const
         return false;
     const Frame& caller = m_frames[m_frames.size() - 2];
     const BodyIndex& index = *caller.index;
-    ValueID call = m_frames.last().callCopied;
-    ValueID user = index.onlyUsingValue(call);
-    if (!user)
-        return false;
+    ValueID taken = m_frames.last().callCopied;
     static constexpr OpcodeSet takesNumbers = allBitwiseOperators | OpcodeSet { Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod };
-    BodyValue operation = index.value(user);
-    if (takesNumbers.contains(operation.opcode()))
-        return true;
-    if (operation.opcode() != Opcode::Add)
-        return false;
-    ValueID beside = operation.operand(index.stripCasts(operation.operand(0)) == call ? 1 : 0);
-    Reference other = referenceBoundIn(caller, index.stripCasts(beside));
-    return other && other.isRecord() && m_types.at(typeOf(other)).isNumber();
+    static constexpr unsigned maxSums = 4;
+    for (unsigned sumsLeft = maxSums; sumsLeft--;) {
+        ValueID user = index.onlyUsingValue(taken);
+        if (!user)
+            return false;
+        BodyValue operation = index.value(user);
+        if (takesNumbers.contains(operation.opcode()))
+            return true;
+        if (operation.opcode() != Opcode::Add)
+            return false;
+        ValueID beside = index.stripCasts(operation.operand(index.stripCasts(operation.operand(0)) == taken ? 1 : 0));
+        Reference other = referenceBoundIn(caller, beside);
+        if (other && other.isRecord())
+            return m_types.at(typeOf(other)).isNumber();
+        if (index.isParameter(beside) || index.opcodeOf(beside) != Opcode::Call)
+            return false;
+        taken = user;
+    }
+    return false;
 }
 
 bool canAccessAtKeyedAddress(Walker& walker, const BodyValue& access)
@@ -543,8 +729,10 @@ bool canAccessAtKeyedAddress(Walker& walker, const BodyValue& access)
         return false;
     constexpr auto purity = Walker::IterationPurity::KnownEffectsOnly;
     Reference object = walker.referenceOf(access.objectOperand());
+    if (isNamed && object && object.isValue() && !walker.isInvariantInSpecializedVersion(object, purity))
+        return walker.types().isUninformative(walker.typeOf(object)) && mayUseNamedAddress(walker, access, walker.typeOf(object));
     if (isNamed)
-        return object && object.isRecord() && mayUseNamedAddress(walker, access, walker.typeOf(object)) && walker.isInvariantInSpecializedVersion(object, purity) && walker.canHoistKeyedAddress();
+        return object && object.isRecord() && mayUseNamedAddress(walker, access, walker.typeOf(object)) && walker.isInvariantInSpecializedVersion(object, purity) && walker.canHoistKeyedAddress(isFunctionOutsideClasses(walker, walker.typeOf(object)));
     Reference key = walker.referenceOf(access.propertyOperand());
     if (!object || !object.isRecord() || !key || !key.isRecord() || !mayUseKeyedAddress(walker, access, walker.typeOf(object), walker.typeOf(key)))
         return false;
@@ -554,7 +742,7 @@ bool canAccessAtKeyedAddress(Walker& walker, const BodyValue& access)
         if (!storesUnderKeys(walker.currentBodyIndex(), access) && (hasFewNames(walker, walker.typeOf(object)) || hasFewTexts(walker, access)) && walker.currentBodyIndex().loopOf(walker.currentBodyIndex().blockOf(access.id())))
             return false;
         bool mayFit = access.opcode() != Opcode::ElemSet || !findsOnlyFields(walker, walker.typeOf(object)) || storedFits(walker, access, object);
-        return mayFit && walker.canHoistKeyedAddress();
+        return mayFit && walker.canHoistKeyedAddress(false);
     }
     return true;
 }
@@ -630,8 +818,10 @@ bool tryAccessAtKeyedAddressOfItsOpcodes(Walker& walker, const BodyValue& access
         readInPreheader(walker, access, object, key, origin);
         return true;
     }
-    PropertyKeyID name = namedAccesses.contains(access.opcode()) ? access.key() : PropertyKeyID();
-    Reference address = buildKeyedAddress(walker, object, key, name, storedFits(walker, access, object), origin);
+    bool isNamed = namedAccesses.contains(access.opcode());
+    bool takesFunctions = isNamed && isFunctionOutsideClasses(walker, walker.typeOf(object));
+    PropertyKeyID name = isNamed && !takesFunctions ? access.key() : PropertyKeyID();
+    Reference address = buildKeyedAddress(walker, object, key, name, storedFits(walker, access, object), takesFunctions, origin);
     if (!address)
         return true;
     auto read = [&] {
@@ -653,7 +843,7 @@ bool tryAccessAtKeyedAddressOfItsOpcodes(Walker& walker, const BodyValue& access
     store.setObjectOperand(object);
     store.setValueOperand(stored);
     store.inputValueGiven = access.id();
-    walker.recordUndoableKeyedStore(address, object, before);
+    walker.recordUndoableKeyedStore(address, object, before, name);
     walker.build(WTF::move(store));
     walker.takePendingUndoableStore();
     return true;

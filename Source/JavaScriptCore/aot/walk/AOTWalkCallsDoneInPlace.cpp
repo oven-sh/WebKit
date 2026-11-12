@@ -866,15 +866,17 @@ static std::optional<TargetOfBoundFunctionExpected> findTargetOfBoundFunctionExp
 {
     TypeArena& types = walker.types();
     auto partOfBoundFunctions = [&](TypeID type) -> const ClassPart* {
-        if (!type || holdsOnlyPrimitives(type))
+        if (!type || holdsOnlyPrimitives(type) || !types.recordOf(type).classes)
             return nullptr;
         Type objects = types.at(types.withOnlyObjects(type));
         std::span<const ClassPart> parts = classPartsOf(types, objects);
         return !objects.anyObject && !objects.anyFunction && parts.size() == 1 && parts[0].builtinClass == BuiltinClasses::BoundFunction && parts[0].hasWrittenContents() ? parts.data() : nullptr;
     };
     ExpectationOfValue expectation = proven ? ExpectationOfValue { proven, true } : findExpectation(walker, callee);
-    if (!partOfBoundFunctions(expectation.type))
-        expectation = findExpectation(walker, walker.currentBodyIndex().stripCasts(callee));
+    if (!partOfBoundFunctions(expectation.type)) {
+        if (ValueID withoutCasts = walker.currentBodyIndex().stripCasts(callee); proven || withoutCasts != callee)
+            expectation = findExpectation(walker, withoutCasts);
+    }
     if (TypeID held = partOfBoundFunctions(expectation.type) ? TypeID() : typeHeldInFieldOfReceiverThatIsRead(walker, callee))
         expectation = { types.withoutNullish(held), false };
     const ClassPart* expected = partOfBoundFunctions(expectation.type);

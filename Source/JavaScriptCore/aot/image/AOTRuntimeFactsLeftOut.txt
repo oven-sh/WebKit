@@ -15,7 +15,7 @@ OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSiz
 OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_flags) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
-OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_furtherFlags) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_layout) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName) | the body of the accessor of that member, which is among the facts wherever compiled code asks it

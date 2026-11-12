@@ -455,6 +455,8 @@ public:
         m_fieldsReadForArithmetic.merge(other.m_fieldsReadForArithmetic);
         m_fieldsStoredWhatIsNoInt32.merge(other.m_fieldsStoredWhatIsNoInt32);
         m_fieldsUsedInProducts.merge(other.m_fieldsUsedInProducts);
+        m_fieldsFilledByInitializers.merge(other.m_fieldsFilledByInitializers);
+        m_initializerMethods.appendVector(other.m_initializerMethods);
         m_fieldsUsedOutsideLoops.appendVector(other.m_fieldsUsedOutsideLoops);
         m_iterationCallbacks.appendVector(other.m_iterationCallbacks);
         m_variablesStoredInFields.appendVector(other.m_variablesStoredInFields);
@@ -465,6 +467,8 @@ public:
     void noteReadForArithmetic(LayoutID declarer, PropertyKeyID key) { m_fieldsReadForArithmetic.add(declarer, key); }
     void noteStoredWhatIsNoInt32(LayoutID declarer, PropertyKeyID key) { m_fieldsStoredWhatIsNoInt32.add(declarer, key); }
     void noteUsedInProduct(LayoutID declarer, PropertyKeyID key) { m_fieldsUsedInProducts.add(declarer, key); }
+    void noteFilledByInitializer(LayoutID declarer, PropertyKeyID key) { m_fieldsFilledByInitializers.add(declarer, key); }
+    void noteInitializerMethod(FunctionID method) { m_initializerMethods.append(method); }
     void noteUsedInProductOutsideLoops(FieldUsedOutsideLoopsInProgramFacts use) { m_fieldsUsedOutsideLoops.append(use); }
     void noteIterationCallback(FunctionID callback) { m_iterationCallbacks.append(callback); }
     void noteStoredWhatIsNoInt32(PropertyKeyID key) { m_storedWhatIsNoInt32.set(key.index()); }
@@ -477,6 +481,8 @@ public:
     FieldsOfNumbers takeFieldsUsedInProducts() { return WTF::move(m_fieldsUsedInProducts); }
     Vector<FieldUsedOutsideLoopsInProgramFacts> takeFieldsUsedOutsideLoops() { return WTF::move(m_fieldsUsedOutsideLoops); }
     Vector<FunctionID> takeIterationCallbacks() { return WTF::move(m_iterationCallbacks); }
+    FieldsOfNumbers takeFieldsFilledByInitializers() { return WTF::move(m_fieldsFilledByInitializers); }
+    Vector<FunctionID> takeInitializerMethods() { return WTF::move(m_initializerMethods); }
     BitVector takeKeysStoredWhatIsNoInt32() { return WTF::move(m_storedWhatIsNoInt32); }
 
 private:
@@ -486,6 +492,8 @@ private:
     FieldsOfNumbers m_fieldsReadForArithmetic;
     FieldsOfNumbers m_fieldsStoredWhatIsNoInt32;
     FieldsOfNumbers m_fieldsUsedInProducts;
+    FieldsOfNumbers m_fieldsFilledByInitializers;
+    Vector<FunctionID> m_initializerMethods;
     Vector<FieldUsedOutsideLoopsInProgramFacts> m_fieldsUsedOutsideLoops;
     Vector<FunctionID> m_iterationCallbacks;
     Vector<VariableStoredInFieldInProgramFacts> m_variablesStoredInFields;
@@ -615,6 +623,7 @@ private:
     void noteWhatIsStoredUnder(ValueID receiver, LayoutID allocated, PropertyKeyID, ValueID stored);
     TypeID writtenTypeWhereValueIsHandedOn(ValueID) const;
     void noteVariableStoredUnder(ValueID receiver, LayoutID allocated, PropertyKeyID, ValueID stored);
+    void noteFieldsFilledByInitializer();
     void noteWhatIsToldOfNumbers(const BodyValue&);
     void nameBuiltin(const BodyValue&, BuiltinID);
     void lookAtLoad(const BodyValue&);
@@ -647,6 +656,7 @@ private:
     bool rowsOnlyBindAsReceiver(BuiltinID callee, BuiltinOperand) const;
     bool linkFollowsWritesOn(ValueID written, ValueID site) const;
     bool linkHoldsAsTheObject(ValueID) const;
+    bool storesGlobalObjectOntoItself(const BodyValue&) const;
     bool rowsOnlyConstructReceiver(BuiltinID callee, BuiltinID receiver) const;
     bool rowsOnlyCallReceiver(BuiltinID callee, BuiltinID receiver) const;
     Fate fateOf(const BodyValue& user, uint32_t operandIndex) const;
@@ -674,6 +684,7 @@ private:
     static constexpr uint32_t mostQuestionsAnsweredByGoingThroughCalls = 8;
     Vector<BuiltinID> m_builtinOfValue;
     BitVector m_mayBeSomethingElse;
+    BitVector m_parametersNotHeldByLink;
     Vector<PropertyKeyID, 8> m_namesReadOffUnknownValues;
     Vector<BuiltinID, 4> m_builtinsSpelledInTexts;
     Vector<ValueID> m_originOfURLOfValue;
@@ -828,6 +839,8 @@ bool BodyLookOfProgramFacts::passOn(ValueID argument, ValueID parameter, const B
         return false;
     m_builtinOfValue[parameter.index()] = builtin;
     m_mayBeSomethingElse.set(parameter.index());
+    if (!linkHoldsAsTheObject(argument))
+        m_parametersNotHeldByLink.set(parameter.index());
     return true;
 }
 
@@ -1110,6 +1123,18 @@ bool BodyLookOfProgramFacts::linkFollowsWritesOn(ValueID written, ValueID site) 
     return linkHoldsAsTheObject(written) && (std::ranges::contains(m_summary.calls, site, &SummaryCall::site) || std::ranges::contains(m_summary.accesses, site, &SummaryAccess::site) || std::ranges::contains(m_summary.changes, site, &SummaryChange::site));
 }
 
+bool BodyLookOfProgramFacts::storesGlobalObjectOntoItself(const BodyValue& store) const
+{
+    if (store.opcode() != Opcode::PropSet)
+        return false;
+    auto operation = store.as<Opcode::PropSet>();
+    BuiltinID globalObject = m_builtins.canonicalID(Builtins::GlobalThis);
+    auto isGlobalObject = [&](BuiltinID builtin) {
+        return builtin && m_builtins.canonicalID(builtin) == globalObject;
+    };
+    return operation.key() && isGlobalObject(builtinSurelyAt(operation.objectOperand())) && isGlobalObject(builtinSurelyAt(operation.valueOperand())) && isGlobalObject(findOwnMember(m_program, globalObject, operation.key()));
+}
+
 bool BodyLookOfProgramFacts::linkHoldsAsTheObject(ValueID written) const
 {
     if (!builtinAt(written))
@@ -1124,8 +1149,10 @@ bool BodyLookOfProgramFacts::linkHoldsAsTheObject(ValueID written) const
     ValueID read = written;
     while (true) {
         read = m_index.stripCasts(read);
-        if (!read || m_index.isParameter(read))
+        if (!read)
             return false;
+        if (m_index.isParameter(read))
+            return builtinAt(read) && !m_parametersNotHeldByLink.get(read.index());
         BodyValue definition = m_index.value(read);
         if (definition.opcode() == Opcode::Builtin) {
             auto named = definition.as<Opcode::Builtin>();
@@ -1293,6 +1320,10 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
             return Fate::IsInspected;
         if (accessClassOf(opcode) == AccessClass::ByName && receiverOf(opcode) == operandIndex && !isOnlyInspected)
             return (user.operandUses(operandIndex) - usesThatOnlyWriteOnOperandInProgramFacts).isEmpty() && linkFollowsWritesOn(user.operand(operandIndex), user.id()) ? Fate::IsWrittenOn : Fate::IsLetGo;
+        if (operandIndex == OperandIndex::PropSet::value && storesGlobalObjectOntoItself(user))
+            return Fate::IsInspected;
+        if (opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::value && linkFollowsWritesOn(user.operand(operandIndex), user.id()))
+            return Fate::IsFollowedByLink;
         if (accessClassOf(opcode) == AccessClass::ByName)
             return isOnlyInspected && receiverOf(opcode) == operandIndex ? Fate::IsAskedForAnyMember : Fate::IsLetGo;
         if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
@@ -2248,6 +2279,47 @@ ALWAYS_INLINE void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
     });
 }
 
+void BodyLookOfProgramFacts::noteFieldsFilledByInitializer()
+{
+    static constexpr size_t fewestFieldsOfInitializer = 4;
+    std::optional<unsigned> thisParameter = m_function.thisParameterIndex();
+    if (!thisParameter || m_function.kind != FunctionKind::Method)
+        return;
+    size_t stores = 0;
+    for (const SummaryAccess& access : m_summary.accesses)
+        stores += access.kind == SummaryAccess::Kind::Store && access.key;
+    if (stores < fewestFieldsOfInitializer)
+        return;
+    BlockID last;
+    for (uint32_t number = 0; number < m_index.numberOfBlocks(); ++number) {
+        BlockID block(number);
+        if (m_index.terminator(block).kind() != TerminatorKind::Return || (block != entryBlock && !m_index.immediateDominator(block)))
+            continue;
+        if (!last)
+            last = block;
+        while (!m_index.dominates(last, block))
+            last = m_index.immediateDominator(last);
+    }
+    ValueID receiver = m_index.block(entryBlock).parameter(*thisParameter);
+    Vector<PropertyKeyID, 16> keys;
+    for (BlockID block = last; block; block = block == entryBlock ? BlockID() : m_index.immediateDominator(block)) {
+        for (BodyValue operation : m_index.block(block).values()) {
+            if (operation.opcode() != Opcode::PropSet || m_index.stripCasts(operation.as<Opcode::PropSet>().objectOperand()) != receiver)
+                continue;
+            if (PropertyKeyID key = operation.as<Opcode::PropSet>().key())
+                keys.appendIfNotContains(key);
+        }
+    }
+    if (keys.size() < fewestFieldsOfInitializer)
+        return;
+    m_namesOfNumbers.noteInitializerMethod(m_id);
+    for (PropertyKeyID key : keys) {
+        forEachDeclarerOfFieldOf(receiver, key, [&](LayoutID declarer) {
+            m_namesOfNumbers.noteFilledByInitializer(declarer, key);
+        });
+    }
+}
+
 void BodyLookOfProgramFacts::run()
 {
     bool namesBuiltins = m_index.holdsAnyOf(giversOfBuiltinsInProgramFacts);
@@ -2271,6 +2343,8 @@ void BodyLookOfProgramFacts::run()
         if (!m_builtinOfValue.isEmpty())
             lookAtEnd(block);
     }
+    if (m_isOfProgram && m_index.holdsAnyOf(OpcodeSet { Opcode::PropSet }))
+        noteFieldsFilledByInitializer();
 }
 
 class LooksAtBodies {
@@ -2308,6 +2382,8 @@ public:
     FieldsOfNumbers fieldsReadForArithmetic;
     FieldsOfNumbers fieldsStoredWhatIsNoInt32;
     FieldsOfNumbers fieldsUsedInProducts;
+    FieldsOfNumbers fieldsFilledByInitializers;
+    Vector<FunctionID> initializerMethods;
     Vector<FieldUsedOutsideLoopsInProgramFacts> fieldsUsedOutsideLoops;
     Vector<FunctionID> iterationCallbacks;
     Vector<VariableStoredInFieldInProgramFacts> variablesStoredInFields;
@@ -2337,6 +2413,21 @@ const FieldsOfNumbers& fieldsStoredWhatIsNoInt32In(const LooksAtBodies& looks)
 {
     RELEASE_ASSERT(looks.isFilled);
     return looks.fieldsStoredWhatIsNoInt32;
+}
+
+const FieldsOfNumbers& fieldsFilledByInitializersIn(const LooksAtBodies& looks)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    return looks.fieldsFilledByInitializers;
+}
+
+BitVector initializerMethodsIn(const LooksAtBodies& looks, const Program& program)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    BitVector methods(program.functions.size());
+    for (FunctionID method : looks.initializerMethods)
+        methods.quickSet(method.index());
+    return methods;
 }
 
 BitVector functionsCalledInLoopsIn(const LooksAtBodies& looks, const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held, BitVector& keysCalledInLoops, bool& elementsAreCalledInLoops)
@@ -2387,7 +2478,9 @@ BitVector functionsCalledInLoopsOfOwnFileIn(const LooksAtBodies& looks, const Pr
     BitVector functions(program.functions.size());
     for (FunctionID callback : looks.iterationCallbacks)
         functions.quickSet(callback.index());
+    const BitVector iterationCallbacks = functions;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsCalled;
+    BitVector keysCalled;
     auto methodOfFile = [](ModuleID file, PropertyKeyID key) {
         return static_cast<uint64_t>(file.index()) << 32 | key.bits();
     };
@@ -2395,47 +2488,30 @@ BitVector functionsCalledInLoopsOfOwnFileIn(const LooksAtBodies& looks, const Pr
         FunctionID caller(index);
         const ThinSummary& summary = summaries.at(caller);
         ModuleID file = program.at(caller).module;
-        if (!file || !linked.function(caller).isReached || !summary.has(SummaryTrait::HasLoops))
+        bool isIterationCallback = iterationCallbacks.get(index) || linked.function(caller).isIterationCallback;
+        if (!file || !linked.function(caller).isReached || (!isIterationCallback && !summary.has(SummaryTrait::HasLoops)))
             continue;
         for (const SummaryCall& call : summary.calls) {
-            if (!call.isInLoop)
+            if (!isIterationCallback && !call.isInLoop)
                 continue;
             FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(caller, call.site);
             if (!callee)
                 callee = held.calleeAt(caller, call.site);
             if (callee && program.at(callee).module == file)
                 functions.quickSet(callee.index());
-            else if (!callee && call.callee == SummaryCall::Callee::Name && call.key)
+            else if (!callee && call.callee == SummaryCall::Callee::Name && call.key) {
                 methodsCalled.add(methodOfFile(file, call.key));
+                keysCalled.set(call.key.index());
+            }
         }
     }
     for (const LinkedMember& member : linked.members) {
+        if (!member.key || !keysCalled.get(member.key.index()))
+            continue;
         for (FunctionID method : { member.function, member.written, member.replacement }) {
-            ModuleID file = method && member.key ? program.at(method).module : ModuleID();
+            ModuleID file = method ? program.at(method).module : ModuleID();
             if (file && methodsCalled.contains(methodOfFile(file, member.key)))
                 functions.quickSet(method.index());
-        }
-    }
-    return functions;
-}
-
-BitVector functionsInElementsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked)
-{
-    BitVector functions(program.functions.size());
-    if (!linked.elementsAreCalledInLoops)
-        return functions;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        FunctionID holder(index);
-        if (!linked.function(holder).isReached || isLibraryCode(program, program.at(holder)))
-            continue;
-        const ThinSummary& summary = summaries.at(holder);
-        auto functionAt = [&](uint32_t node) -> FunctionID {
-            return node != noSummaryNode && summary.nodes[node].kind == SummaryNode::Kind::Closure ? FunctionID(summary.nodes[node].first) : FunctionID();
-        };
-        for (const SummaryEdge& edge : summary.edges) {
-            FunctionID function = functionAt(edge.from);
-            if (function && summary.nodes[edge.to].kind == SummaryNode::Kind::Contents)
-                functions.quickSet(function.index());
         }
     }
     return functions;
@@ -2468,19 +2544,68 @@ BitVector constructorsCalledInLoopsIn(const Program& program, const ThinSummarie
     return constructors;
 }
 
-BitVector functionsCalledByValueInLoopsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked)
+BitVector mixedClassesConstructedIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    UncheckedKeyHashMap<uint32_t, Vector<FunctionID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> methodsByKey;
+    BitVector isReached(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index)
+        isReached.quickSet(index, linked.function(FunctionID(index)).isReached);
+    for (const LinkedMember& member : held.members) {
+        if (!member.function || !member.key || member.kind != MethodKind::Method)
+            continue;
+        methodsByKey.add(member.key.bits(), Vector<FunctionID, 2>()).iterator->value.append(member.function);
+        isReached.quickClear(member.function.index());
+    }
+    Vector<FunctionID> waiting;
+    for (size_t function : isReached)
+        waiting.append(FunctionID(static_cast<uint32_t>(function)));
+    auto reach = [&](FunctionID function) {
+        if (!isReached.quickSet(function.index()))
+            waiting.append(function);
+    };
+    BitVector constructed(program.layouts.size());
+    while (!waiting.isEmpty()) {
+        FunctionID caller = waiting.takeLast();
+        for (const SummaryCall& call : summaries.at(caller).calls) {
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(caller, call.site);
+            if (!callee)
+                callee = held.calleeAt(caller, call.site);
+            if (callee) {
+                reach(callee);
+                if (LayoutID made = call.isConstruction ? program.at(callee).constructedClass : LayoutID()) {
+                    LayoutID topmost = made;
+                    while (LayoutID above = program.at(topmost).base)
+                        topmost = above;
+                    if (program.at(topmost).mixedSubclass)
+                        constructed.quickSet(made.index());
+                }
+            } else if (call.callee == SummaryCall::Callee::Name && call.key) {
+                auto methods = methodsByKey.find(call.key.bits());
+                for (FunctionID method : methods == methodsByKey.end() ? std::span<const FunctionID>() : methods->value.span())
+                    reach(method);
+            }
+        }
+    }
+    BitVector extended(program.layouts.size());
+    for (size_t made : constructed) {
+        if (LayoutID above = program.at(LayoutID(static_cast<uint32_t>(made))).base)
+            extended.quickSet(above.index());
+    }
+    constructed.exclude(extended);
+    return constructed;
+}
+
+BitVector functionsCalledByValueInLoopsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, BitVector& functionsInElements)
 {
     BitVector functions(program.functions.size());
+    functionsInElements = BitVector(program.functions.size());
     auto isCalledUnder = [&](PropertyKeyID key) {
         return key ? linked.keysCalledInLoops.get(key.index()) : linked.elementsAreCalledInLoops;
     };
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         FunctionID holder(index);
-        if (!linked.function(holder).isReached)
-            continue;
         const ThinSummary& summary = summaries.at(holder);
-        bool makesClosures = std::ranges::any_of(summary.nodes, [](const SummaryNode& node) { return node.kind == SummaryNode::Kind::Closure; });
-        if (!makesClosures)
+        if (!summary.hasClosures || !linked.function(holder).isReached)
             continue;
         auto isClosure = [&](uint32_t node) {
             return node != noSummaryNode && summary.nodes[node].kind == SummaryNode::Kind::Closure;
@@ -2497,27 +2622,58 @@ BitVector functionsCalledByValueInLoopsIn(const Program& program, const ThinSumm
             bool isInField = to.kind == SummaryNode::Kind::Field && to.first < program.layouts.size() && to.second < program.layouts[to.first].fields.size() && isCalledUnder(program.layouts[to.first].fields[to.second].key);
             if (isInArray || isInField)
                 functions.quickSet(summary.nodes[edge.from].first);
+            if (isInArray && !isLibraryCode(program, program.at(holder)))
+                functionsInElements.quickSet(summary.nodes[edge.from].first);
         }
     }
     return functions;
 }
 
-BitVector functionsDoneInIterationsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+BitVector functionsCalledByComparatorsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
 {
-    HashMap<uint64_t, Vector<FunctionID, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsOfFiles;
+    BitVector functions(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID comparator(index);
+        if (!linked.function(comparator).isRepeatedCallback || !linked.function(comparator).isReached)
+            continue;
+        for (const SummaryCall& call : summaries.at(comparator).calls) {
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(comparator, call.site);
+            if (!callee)
+                callee = held.calleeAt(comparator, call.site);
+            if (callee)
+                functions.quickSet(callee.index());
+        }
+    }
+    return functions;
+}
+
+FunctionsDoneInIterations findFunctionsDoneInIterations(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    struct MethodsUnderName {
+        Vector<FunctionID, 1> methods;
+        bool areAdded { false };
+    };
+    HashMap<uint64_t, MethodsUnderName, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsOfFiles;
     auto methodOfFile = [](ModuleID file, PropertyKeyID key) {
         return static_cast<uint64_t>(file.index()) << 32 | key.bits();
     };
     auto noteMethod = [&](PropertyKeyID key, FunctionID method) {
-        if (ModuleID file = key && method ? program.at(method).module : ModuleID())
-            methodsOfFiles.add(methodOfFile(file, key), Vector<FunctionID, 1>()).iterator->value.appendIfNotContains(method);
+        ModuleID file = key && method ? program.at(method).module : ModuleID();
+        if (!file)
+            return;
+        Vector<FunctionID, 1>& methods = methodsOfFiles.add(methodOfFile(file, key), MethodsUnderName()).iterator->value.methods;
+        if (methods.isEmpty() || methods.last() != method)
+            methods.append(method);
     };
     for (const LinkedMember& member : linked.members) {
-        for (FunctionID method : { member.function, member.written, member.replacement })
-            noteMethod(member.key, method);
+        noteMethod(member.key, member.function);
+        if (member.written != member.function)
+            noteMethod(member.key, member.written);
+        noteMethod(member.key, member.replacement);
     }
     for (const LinkedAssignment& assignment : held.lastAssignments)
         noteMethod(assignment.key, assignment.method);
+    FunctionsDoneInIterations found;
     BitVector functions = linked.functionsCalledInLoopsOfOwnFile;
     Vector<FunctionID> waiting;
     auto add = [&](FunctionID function) {
@@ -2538,11 +2694,11 @@ BitVector functionsDoneInIterationsIn(const Program& program, const ThinSummarie
             }
             if (call.callee != SummaryCall::Callee::Name || !call.key)
                 continue;
-            auto methods = methodsOfFiles.find(methodOfFile(file, call.key));
-            if (methods != methodsOfFiles.end()) {
-                for (FunctionID method : methods->value)
-                    add(method);
-            }
+            auto named = methodsOfFiles.find(methodOfFile(file, call.key));
+            if (named == methodsOfFiles.end() || std::exchange(named->value.areAdded, true))
+                continue;
+            for (FunctionID method : named->value.methods)
+                add(method);
         }
     };
     for (size_t function : linked.functionsCalledInLoopsOfOwnFile)
@@ -2553,7 +2709,19 @@ BitVector functionsDoneInIterationsIn(const Program& program, const ThinSummarie
     }
     while (!waiting.isEmpty())
         addCallees(waiting.takeLast(), true);
-    return functions;
+    found.functions = functions;
+    functions.clearAll();
+    for (MethodsUnderName& named : methodsOfFiles.values())
+        named.areAdded = false;
+    for (size_t index : found.functions) {
+        FunctionID caller(static_cast<uint32_t>(index));
+        if (linked.function(caller).isReached && summaries.at(caller).has(SummaryTrait::HasLoops))
+            addCallees(caller, false);
+    }
+    while (!waiting.isEmpty())
+        addCallees(waiting.takeLast(), true);
+    found.inNestedIterations = WTF::move(functions);
+    return found;
 }
 
 void markLiteralsStoredByCallees(ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
@@ -2588,10 +2756,34 @@ void markLiteralsStoredByCallees(ThinSummaries& summaries, const LinkTables& lin
 FieldsOfNumbers fieldsUsedInProductsIn(const LooksAtBodies& looks, const BitVector& functionsCalledInLoops)
 {
     RELEASE_ASSERT(looks.isFilled);
-    FieldsOfNumbers fields = looks.fieldsUsedInProducts;
+    FieldsOfNumbers all = looks.fieldsUsedInProducts;
+    Vector<std::tuple<uint32_t, uint32_t, uint32_t>> uses;
     for (const FieldUsedOutsideLoopsInProgramFacts& use : looks.fieldsUsedOutsideLoops) {
-        if (functionsCalledInLoops.quickGet(use.function.index()))
-            fields.add(use.declarer, use.key);
+        if (functionsCalledInLoops.quickGet(use.function.index())) {
+            all.add(use.declarer, use.key);
+            uses.append({ use.function.index(), use.declarer.index(), use.key.index() });
+        }
+    }
+    std::ranges::sort(uses);
+    uses.shrink(std::ranges::unique(uses).begin() - uses.begin());
+    UncheckedKeyHashMap<uint32_t, unsigned, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fieldsOfDeclarers;
+    all.forEachDeclarer([&](LayoutID declarer) {
+        ++fieldsOfDeclarers.add(declarer.index(), 0).iterator->value;
+    });
+    FieldsOfNumbers fields = looks.fieldsUsedInProducts;
+    for (size_t begin = 0; begin < uses.size();) {
+        size_t end = begin + 1;
+        while (end < uses.size() && std::get<0>(uses[end]) == std::get<0>(uses[begin]))
+            ++end;
+        auto usesOfFunction = uses.span().subspan(begin, end - begin);
+        bool namesSeveralFieldsOfRecord = std::ranges::any_of(usesOfFunction, [&](const auto& use) {
+            return fieldsOfDeclarers.get(std::get<1>(use)) > 1;
+        });
+        if (namesSeveralFieldsOfRecord) {
+            for (auto [function, declarer, key] : usesOfFunction)
+                fields.add(LayoutID(declarer), PropertyKeyID(key));
+        }
+        begin = end;
     }
     return fields;
 }
@@ -2780,6 +2972,8 @@ void lookAtBodies(LooksAtBodies& looks, const Program& program, const ThinSummar
     looks.fieldsReadForArithmetic = namesOfNumbers.takeFieldsReadForArithmetic();
     looks.fieldsStoredWhatIsNoInt32 = namesOfNumbers.takeFieldsStoredWhatIsNoInt32();
     looks.fieldsUsedInProducts = namesOfNumbers.takeFieldsUsedInProducts();
+    looks.fieldsFilledByInitializers = namesOfNumbers.takeFieldsFilledByInitializers();
+    looks.initializerMethods = namesOfNumbers.takeInitializerMethods();
     looks.fieldsUsedOutsideLoops = namesOfNumbers.takeFieldsUsedOutsideLoops();
     looks.iterationCallbacks = namesOfNumbers.takeIterationCallbacks();
     looks.keysStoredWhatIsNoInt32 = namesOfNumbers.takeKeysStoredWhatIsNoInt32();
@@ -3325,9 +3519,18 @@ public:
     void settle();
 
     bool canLockAtStartUp(BuiltinID member) const;
+    bool programAsksForPrototypes() const { return m_programAsksForPrototypes; }
+    bool isLost(BuiltinID canonical) const { return m_isLost.quickGet(canonical.index()); }
+    bool isStoredUnderThroughUnseen(PropertyKeyID) const;
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLostOutOfPlaceThatHolds); }
     bool isWrittenAsFarAsLinkGoes(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLost) != ReasonBuiltinStaysOpen::None; }
-    bool mayHaveNameLaidAsFarAsLinkGoes(BuiltinID canonicalHolder, PropertyKeyID key) const { return reasonNoLockHolds() != ReasonBuiltinStaysOpen::None || isReachedThroughUnseen(canonicalHolder) || reasonToLeaveOpenUnder(canonicalHolder, key, false, m_isLost) != ReasonBuiltinStaysOpen::None; }
+    bool mayHaveNameLaidAsFarAsLinkGoes(BuiltinID canonicalHolder, PropertyKeyID key) const
+    {
+        bool isReached = m_builtins.at(canonicalHolder).flags.contains(BuiltinFlag::IsGlobalObject)
+            ? m_lookups.builtinsAtUnseen.get(canonicalHolder.index()) || m_lookups.lostBuiltins.get(canonicalHolder.index())
+            : isReachedThroughUnseen(canonicalHolder) && (!isPrototypeOfPrimitives(m_builtins, canonicalHolder) || isStoredUnderThroughUnseen(key));
+        return isReached || reasonNoLockHolds() != ReasonBuiltinStaysOpen::None || reasonToLeaveOpenUnder(canonicalHolder, key, false, m_isLost) != ReasonBuiltinStaysOpen::None;
+    }
 
 private:
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const;
@@ -3353,6 +3556,7 @@ private:
     BitVector m_isLost;
     BitVector m_isLostOutOfPlaceThatHolds;
     BitVector m_isWithinReachOfUnseen;
+    bool m_programAsksForPrototypes { false };
     bool m_locksAreLaid { true };
 };
 
@@ -3491,6 +3695,15 @@ bool WritesOnBuiltinsInProgramFacts::runsCodeThatNoLockIsLaidBeside(BuiltinID ca
     return !runsOnlyText && !m_builtins.has(BuiltinMark::EvaluatesTextInGlobalScope, canonical);
 }
 
+static bool handsOutPrototypesInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+{
+    for (BuiltinID handsOut : { Builtins::ObjectGetPrototypeOf, Builtins::ReflectGetPrototypeOf, Builtins::ReflectGet, Builtins::ObjectGetOwnPropertyDescriptor, Builtins::ReflectGetOwnPropertyDescriptor, Builtins::ObjectGetOwnPropertyDescriptors, Builtins::ObjectValues, Builtins::ObjectEntries, Builtins::ObjectPrototype__lookupGetter__ }) {
+        if (canonical == builtins.canonicalID(handsOut))
+            return true;
+    }
+    return false;
+}
+
 void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
 {
     using Kind = FindingOfProgramFacts::Kind;
@@ -3512,6 +3725,8 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
             noteWritten(BuiltinID(finding.subject));
         if (isOfProgram && uses.containsAny(usesOfObjectItselfInProgramFacts))
             m_locksAreLaid &= !runsCodeThatNoLockIsLaidBeside(canonical, uses.contains(BuiltinUse::Escaped));
+        if (isOfProgram && !(uses - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
+            m_programAsksForPrototypes |= handsOutPrototypesInProgramFacts(m_builtins, canonical);
         if (isOfProgram && uses.contains(BuiltinUse::Escaped))
             carryOut(canonical, finding.kind == Kind::ReadOfAnyMember, isFileOfProductInTestRun(m_source, FunctionID(finding.witness.function)));
         break;
@@ -3578,6 +3793,13 @@ bool WritesOnBuiltinsInProgramFacts::isReadOffUnseen(BuiltinName name) const
 {
     PropertyKeyID key = m_source.keyOf(name);
     return m_lookups.readsUnderKeysNobodyKnows || !m_lookups.holdersReadUnderKeysNobodyKnows.isEmpty() || m_lookups.readsUnderNamesThatLoopsGave || (key && m_lookups.namesRead.get(key.index()));
+}
+
+bool WritesOnBuiltinsInProgramFacts::isStoredUnderThroughUnseen(PropertyKeyID key) const
+{
+    if (!key || m_lookups.writesUnderAnyNameThroughUnseenByProgram || m_lookups.writesUnderAnyNameThroughLostBuiltins)
+        return true;
+    return m_lookups.namesWrittenThroughUnseenByProgram.get(key.index()) || m_lookups.namesWrittenThroughUnseenByLibrary.get(key.index()) || m_lookups.namesWrittenThroughLostBuiltins.get(key.index());
 }
 
 bool WritesOnBuiltinsInProgramFacts::isReachedThroughUnseen(BuiltinID canonicalHolder) const
@@ -3751,7 +3973,10 @@ public:
     void takeBuiltinsThatCameOutOfSight(Vector<BuiltinID>&);
     bool objectsMayHaveMethodCalledWithStartupLoads() const { return m_objectsMayHaveMethodCalledWithStartupLoads; }
     bool climberMayBeHandedWhatNobodyKnows() const { return m_climberMayBeHandedWhatNobodyKnows; }
+    bool programMayComeByPrototypes() const;
+    bool writersMayRunOutOfSight() const;
     bool isOutOfSight(BuiltinID canonical) const { return m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
+    bool isInReach(BuiltinID canonical) const { return !(m_uses[canonical.index()] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty(); }
     bool machineCodeMayBeLoaded() const;
     bool isAskedForOtherNames(BuiltinID canonical) const { return m_lightFormsAskedForMore.get(canonical.index()) || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const { return m_source.testsReplaceBuiltins() ? nullptr : m_rows.lightFormOf(m_builtins, canonical); }
@@ -3766,6 +3991,7 @@ public:
     }
     bool hostIsAskedForValueOfModule() const { return m_hostIsAskedForValueOfModule; }
     bool unseenCodeCanRun() const { return hasRecordThat(admitsUnknownJavaScriptInProgramFacts); }
+    BuiltinID globalObject() const { return m_globalObject; }
     bool loaderOfMachineCodeIsInUse() const
     {
         auto isInUse = [&](BuiltinID builtin) {
@@ -3912,6 +4138,7 @@ private:
     void noteStartWithoutName(const Witness&);
     void listWorkers();
     bool mayReadRecordOfLastMatch() const;
+    bool mayRecompileRegExps() const;
 
     const InputsOfProgramFacts& m_inputs;
     const Program& m_source;
@@ -4227,6 +4454,24 @@ void BuilderOfProgramFacts::noteStandsAboveClass(BuiltinID builtin, FunctionID c
     if (m_builtins.conditionOnInstancesThatAnswerEveryName(canonical))
         find(Finding::Kind::InstanceThatMayAnswerEveryName, 0, canonical.index());
     take(findings.span());
+}
+
+bool BuilderOfProgramFacts::programMayComeByPrototypes() const
+{
+    auto spells = [&](BuiltinName name) {
+        PropertyKeyID key = m_source.keyOf(name);
+        return key && m_namesSpelledByProgram.get(key.index());
+    };
+    return m_writes.programAsksForPrototypes() || spells(BuiltinNames::__proto__) || (spells(BuiltinNames::constructor) && spells(BuiltinNames::prototype)) || !m_inputs.linked.lookups.readsOfProgramUnderKeysNobodyKnows.isEmpty();
+}
+
+bool BuilderOfProgramFacts::writersMayRunOutOfSight() const
+{
+    for (size_t index : m_rows.writeUnderKeysOfCalls) {
+        if (anyRowMayApply(BuiltinID(static_cast<uint32_t>(index))))
+            return true;
+    }
+    return false;
 }
 
 void BuilderOfProgramFacts::noteLetGoByLink(BuiltinID builtin)
@@ -6433,7 +6678,7 @@ bool BuilderOfProgramFacts::mayReadRecordOfLastMatch() const
     if (!constructor || m_program.unseenCodeCanRun)
         return true;
     BuiltinID canonical = m_builtins.canonicalID(constructor);
-    bool unknownValuesMayBeIt = m_hasDeferredMembers || isOutOfSight(canonical) || m_isLookedThrough.quickGet(canonical.index());
+    bool unknownValuesMayBeIt = m_hasDeferredMembers || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isLookedThrough.quickGet(canonical.index());
     return std::ranges::any_of(m_builtins.membersOf(canonical), [&](BuiltinID member) {
         const Builtin& entry = m_builtins.at(member);
         if (entry.mutability != BuiltinMutability::ChangesOnItsOwn)
@@ -6441,6 +6686,16 @@ bool BuilderOfProgramFacts::mayReadRecordOfLastMatch() const
         PropertyKeyID key = entry.name ? m_source.keyOf(entry.name) : PropertyKeyID();
         return !m_uses[member.index()].isEmpty() || !m_uses[m_builtins.canonicalID(member).index()].isEmpty() || (unknownValuesMayBeIt && key && m_namesRead.get(key.index()));
     });
+}
+
+bool BuilderOfProgramFacts::mayRecompileRegExps() const
+{
+    BuiltinID compile = m_builtins.canonicalID(BuiltinID(Builtins::RegExpPrototypeCompile));
+    if (m_program.unseenCodeCanRun || m_hasDeferredMembers || !m_uses[compile.index()].isEmpty() || isOutOfSight(compile))
+        return true;
+    const Builtin& entry = m_builtins.at(compile);
+    PropertyKeyID key = entry.name ? m_source.keyOf(entry.name) : PropertyKeyID();
+    return key && (m_namesRead.get(key.index()) || m_namesCalled.get(key.index()));
 }
 
 void BuilderOfProgramFacts::listWorkers()
@@ -6726,6 +6981,7 @@ void BuilderOfProgramFacts::run()
     m_tables.featureUses = FeaturesOfProgramFacts(m_inputs, m_refused, builtinsWhoseOperandsNobodyKnows, foundByNameAlone, handedOnByCodeInSight, unseenCodeMayRun).run(usesWithWhatNobodyNamesAsEscaped().span());
     layPlacesWhereProgramReadsNames();
     m_program.mayReadLegacyRegExpStatics = mayReadRecordOfLastMatch();
+    m_program.mayRecompileRegExps = mayRecompileRegExps();
     m_program.matchesRegExps = m_program.unseenCodeCanRun || std::ranges::contains(m_tables.featureUses, static_cast<uint32_t>(RemovableFeature::RegExp), &FeatureUseRecord::feature);
     listLibraryCodeLacked();
     listLocaleUses();
@@ -7112,7 +7368,8 @@ void BuiltinsInReach::noteWriteThroughLostBuiltins(PropertyKeyID key, bool isByF
 
 void BuiltinsInReach::noteNameWrittenThroughUnseenByLibrary(PropertyKeyID key)
 {
-    m_wasToldSomethingNew |= !m_linked->lookups.namesWrittenThroughUnseenByLibrary.set(key.index());
+    LookupsPastProgramObjects& lookups = m_linked->lookups;
+    m_wasToldSomethingNew |= key ? !lookups.namesWrittenThroughUnseenByLibrary.set(key.index()) : !std::exchange(lookups.writesUnderAnyNameThroughUnseenByLibrary, true);
 }
 
 void BuiltinsInReach::noteWriteThroughUnseenByProgram(PropertyKeyID key, bool isByFileOfProduct)
@@ -7224,6 +7481,7 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     m_builder->takeBuiltinsThatCameOutOfSight(cameOutOfSight);
 
     m_builder->writes().settle();
+    m_writersMayRunOutOfSight = m_writersMayRunOutOfSight || m_builder->writersMayRunOutOfSight();
     BitVector& taken = m_linked->lookups.membersTakenForConstants;
     for (size_t index : taken) {
         BuiltinID member(static_cast<uint32_t>(index));
@@ -7242,7 +7500,13 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
 
 bool BuiltinsInReach::mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID key) const
 {
-    return m_builder->machineCodeMayBeLoaded() || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key);
+    bool evaluatesTextOnGlobalObject = m_builder->unseenCodeCanRun() && canonicalHolder == m_builder->globalObject();
+    auto isStoredUnderAnyName = [&] {
+        bool someWriterMayRun = m_linked->lookups.writesUnderAnyNameThroughUnseenByLibrary || m_writersMayRunOutOfSight;
+        return m_builder->unseenCodeCanRun() || (someWriterMayRun && (m_builder->programMayComeByPrototypes() || m_builder->writes().isLost(canonicalHolder)));
+    };
+    bool isLaidOutOfSight = isPrototypeOfPrimitives(m_inputs->program.builtins(), canonicalHolder) && (isStoredUnderAnyName() || (m_builder->isOutOfSight(canonicalHolder) && m_builder->writes().isStoredUnderThroughUnseen(key)));
+    return m_builder->machineCodeMayBeLoaded() || evaluatesTextOnGlobalObject || isLaidOutOfSight || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key);
 }
 
 void BuiltinsInReach::takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID key)
@@ -7298,6 +7562,11 @@ bool BuiltinsInReach::objectsMayHaveMethodCalledWithStartupLoads() const
 bool BuiltinsInReach::isOutOfSight(BuiltinID canonical) const
 {
     return m_builder->isOutOfSight(canonical);
+}
+
+bool BuiltinsInReach::isInReach(BuiltinID canonical) const
+{
+    return m_builder->isInReach(canonical);
 }
 
 bool BuiltinsInReach::isAskedForOtherNames(BuiltinID canonical) const

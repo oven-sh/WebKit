@@ -1186,7 +1186,7 @@ bool WalkState::Held::someGuardHoldsOf(LayoutID classLayout) const
         return false;
     for (uint32_t position = m_holders[findHolder(Reference())].firstPlace; position != none; position = m_places[position].next) {
         const Place& place = m_places[position];
-        if (place.value && (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads) && classOfGuardedSide(place.first) == classLayout)
+        if (place.value && (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads) && classOfGuardedSide(place.first) == classLayout && askerOfGuardedSide(place.first) != AskerOfGuardOfReads::PrototypeLink)
             return true;
     }
     return false;

@@ -204,6 +204,13 @@ static TypeID refinedTypeOfTypedArrayLength(TypeArena& types, TypedArrayType typ
     return types.integer({ 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE >> logElementSize(type)) });
 }
 
+static TypeID refinedTypeOfMirroredLength(TypeArena& types, TypedArrayType type, TypeID upperBound)
+{
+    if (!isTypedView(type))
+        return upperBound;
+    return types.integer({ 0, (1ll << 31) >> logElementSize(type) });
+}
+
 static TypeID refinedTypeOfConversion(TypeArena& types, Opcode opcode, TypeID operandID, TypeID upperBound)
 {
     Type operand = types.at(operandID);
@@ -286,6 +293,10 @@ static TypeID refinedTypeOfOperation(const TypingContext& context, const Operati
         return refinedTypeOfStringLength(context, operands[OperandIndex::GetStringLength::string], upperBound);
     case Opcode::GetTypedArrayElement:
         return refinedTypeOfTypedArrayElement(context, operation, operands[OperandIndex::GetTypedArrayElement::view], upperBound);
+    case Opcode::GetDataViewElement:
+        return elementTypeOf(operation.typedArrayType());
+    case Opcode::GetMirroredLength:
+        return refinedTypeOfMirroredLength(types, operation.typedArrayType(), upperBound);
     case Opcode::GetTypedArrayLength:
         return refinedTypeOfTypedArrayLength(types, operation.typedArrayType(), upperBound);
     case Opcode::GetSuperBase:

@@ -100,12 +100,33 @@ void ChainDependents::ObjectDependents::removeIf(const Invocable<bool(const Chai
     });
 }
 
+void startReportingReplacements(VM& vm, JSObject* object)
+{
+    Object* compiled = compiledObjectOrNull(object);
+    if (!compiled || compiled->compiledStructure().reportsReplacements())
+        return;
+    compiled->JSCell::setStructure(vm, compiled->state().objects->structures.withReportedReplacements(vm, compiled->compiledStructure()));
+}
+
+static bool holdsExtraProperty(VM& vm, JSObject* object, UniquedStringImpl* uidOrNull)
+{
+    Object* compiled = compiledObjectOrNull(object);
+    JSObject* extra = compiled ? extraPropertiesIfCreated(*compiled) : nullptr;
+    return extra && (!uidOrNull || isValidOffset(extra->structure()->get(vm, uidOrNull)));
+}
+
 void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDependent& dependent)
 {
     if (chainObjects.empty())
         return;
+    VM& vm = *m_state.instance.vm;
+    const bool readsValuesWhereTheyAre = ownerOf(dependent).readsValuesWhereTheyAre();
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
+        if (!readsValuesWhereTheyAre)
+            m_state.instance.propertyCaches.forgetReplacedMembersOf(object);
+        if (holdsExtraProperty(vm, object, dependent.uidOrNull))
+            startReportingReplacements(vm, object);
         m_objectsWithDependents.add(object);
         ObjectDependents& dependents = m_dependentsByObject.ensure(object, [] {
             return ObjectDependents();
@@ -244,11 +265,13 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     const LayoutData* layout = classWhoseHolderChanged(classes, changed, side);
     if (!layout)
         return;
+    classes.reportReplacementsOnHolder(vm, *layout, side, changed, uidOrNull);
     if (uidOrNull) {
         classes.holdMemberToProof(vm, *layout, side, changed, uidOrNull);
         if (!classes.hasNoGuardLeft(*layout, side) && seesAccessesUnderName(vm, changed, uidOrNull) && !classes.holdsMemberOfRecordUnder(vm, *layout, side, changed, uidOrNull))
             classes.didLayWhatSeesAccesses(vm, *layout, side);
         classes.didChangeMember(*layout, side, uidOrNull);
+        classes.noteReplacedMember(vm, *layout, side, changed, uidOrNull);
         return;
     }
     classes.holdLinkToProof(vm, *layout, side, changed);
@@ -278,6 +301,9 @@ static void tellOfChangeOfChainObject(VM& vm, JSObject* changed, UniquedStringIm
         State* state = instance->state;
         if (!state)
             continue;
+        instance->propertyCaches.forgetReplacedMembersOf(changed);
+        if (!uidOrNull)
+            instance->propertyCaches.forgetPrototypeChainFilters();
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
         if (state->objects)
@@ -287,6 +313,8 @@ static void tellOfChangeOfChainObject(VM& vm, JSObject* changed, UniquedStringIm
 
 void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
+    if (changed && changed == vm.aotState().unobservedClassHolder)
+        return;
     tellOfChangeOfChainObject(vm, changed, uidOrNull, ChangeOfChainObject::IsOfAnyKind);
 }
 
@@ -301,6 +329,7 @@ void RuntimeHooks::didStartWatchingReplacements(VM& vm)
         caches->didStartWatchingReplacements();
     for (Instance* instance : vm.aotState().instances) {
         State* state = instance->state;
+        instance->propertyCaches.forgetReplacedMembers();
         if (state && state->objects)
             state->objects->classes.forgetStructuresOfHeirs();
     }
@@ -332,6 +361,8 @@ bool RuntimeHooks::shouldUseDictionaryForAddition(VM& vm, JSObject* object, Stru
     if (type != FinalObjectType && type != CompiledClosureType && type != SlimClosureWithPropertiesType)
         return false;
     if (structure->hasBeenDictionary() || isCopyOnWrite(structure->indexingMode()) || structure->isCompiledStructure() || structure->typeInfo().prohibitsPropertyCaching())
+        return false;
+    if (structure->transitionKind() == TransitionKind::PropertyDeletion)
         return false;
     if (structure->inlineCapacity() == extraPropertiesInlineCapacity && structure->hasMonoProto() && structure->storedPrototype().isNull())
         return false;
@@ -511,10 +542,24 @@ static StepResult passLazyClassPrototypes(const ChainWalkStart& start, UniquedSt
     return StepResult::Continue;
 }
 
+static bool isCompleteClassObject(VM& vm, JSObject* object, Structure* structure)
+{
+    auto* closure = uncheckedDowncast<Closure>(object);
+    if (!closure->classData())
+        return true;
+    unsigned attributes = 0;
+    std::optional<PropertyOffset> prototype = structure->getWithoutMaterializing(vm.propertyNames->prototype.impl(), attributes);
+    return prototype && isValidOffset(*prototype) && !closure->hasStaticFieldsLeft();
+}
+
 static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* object, Structure* structure, UniquedStringImpl* uid)
 {
     VM& vm = start.globalObject->vm();
     TypeInfo typeInfo = structure->typeInfo();
+    if (start.mode == ChainWalkMode::AllocatesNothing && typeInfo.type() == CompiledClosureType) {
+        bool isNameOfEveryFunction = uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto;
+        return !isNameOfEveryFunction && isCompleteClassObject(vm, object, structure);
+    }
     if (!structure->propertyAccessesAreCacheableForAbsence()) {
         return start.mode == ChainWalkMode::MayAllocate && !mayHaveLazyProperty(vm, object, uid, LookupPosition::PrototypeChain);
     }
@@ -610,6 +655,12 @@ static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStr
     return stopAtField(object, *field, offsetOfBoxedValueInCell(*field), walk);
 }
 
+bool isArrayPrototypeWithWritableLength(const JSGlobalObject* globalObject, const JSObject* object)
+{
+    Structure* structure = object->structure();
+    return object == globalObject->arrayPrototype() && !hasIndexedProperties(structure->indexingType()) && !structure->hasPolyProto() && !structure->hasNonReifiedStaticProperties();
+}
+
 static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl* uid, JSObject* object, ChainWalk& walk)
 {
     VM& vm = start.globalObject->vm();
@@ -618,6 +669,10 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         return stopAt(object, walk);
     if (structure->isCompiledStructure())
         return isCompiledObject(object) ? lookUpInCompiledObject(start, uid, *uncheckedDowncast<Object>(object), walk) : stopAt(object, walk);
+    if (start.use == ChainWalkUse::KeptForStores && uid == vm.propertyNames->length && isArrayPrototypeWithWritableLength(start.globalObject, object)) {
+        walk.changeableObjects.append(object);
+        return stopAtProperty(walk, object, object, invalidOffset, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    }
     if (!hasOrdinaryLookupForName(start, object, structure, uid))
         return stopAt(object, walk);
 

@@ -208,6 +208,10 @@ static std::optional<int64_t> wordOfNumberInSlot(SlotRepresentation representati
 void StraightEmitter::storeVariable(VariableID variable, ValueID stored)
 {
     PlannedVariable planned = plan().variable(variable);
+    if (planned.hasViewMirror) {
+        fail(Opcode::PutModuleVariable);
+        return;
+    }
     std::optional<int64_t> word;
     if (std::optional<JSValue> constant = constantOf(stored); constant && planned.hasWordInStatics())
         word = planned.representation == SlotRepresentation::JSValue ? JSValue::encode(*constant) : wordOfNumberInSlot(planned.representation, *constant);
@@ -224,7 +228,7 @@ void StraightEmitter::storeVariable(VariableID variable, GPRReg boxed)
 {
     PlannedVariable planned = plan().variable(variable);
     bool holdsNumbersRaw = !!formOfRawNumbersInStraightForm(planned.representation);
-    if (!planned.hasWordInStatics() || (planned.representation != SlotRepresentation::JSValue && !holdsNumbersRaw)) {
+    if (!planned.hasWordInStatics() || planned.hasViewMirror || (planned.representation != SlotRepresentation::JSValue && !holdsNumbersRaw)) {
         fail(Opcode::PutModuleVariable);
         return;
     }

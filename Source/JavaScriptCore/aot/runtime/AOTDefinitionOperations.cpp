@@ -28,6 +28,7 @@
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
@@ -36,6 +37,7 @@
 #include "ButterflyInlines.h"
 #include "DeferTermination.h"
 #include "Error.h"
+#include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
@@ -111,6 +113,13 @@ static void rememberStructureWithFirstElement(Instance* instance, const Compiled
     std::span { instance->objects.prototypeTransitions, numberOfPrototypeTransitions }[indexOfPrototypeTransition(before.id().bits(), inPlaceOfPrototype)] = { inPlaceOfPrototype, before.id().bits(), after.id().bits() };
 }
 
+static bool mayAddElement(VM& vm, Object& object, uint32_t index)
+{
+    if (!object.state().objects->classes.mayNameMemberByIndex(object.layout()))
+        return admitsMutation(vm, object, ObjectMutation::AddProperty);
+    return object.mayAddExtraProperty(vm, Identifier::from(vm, index));
+}
+
 enum class ElementStore : bool { Defines, Sets };
 
 template<ElementStore store>
@@ -127,7 +136,7 @@ static ALWAYS_INLINE bool tryStoreElementOfCompiledObject(Instance* instance, JS
     if (!isThere) {
         if (store == ElementStore::Sets && compiled->needsSlowPutIndexing())
             return false;
-        if (!(compiled->layout().isClass() ? compiled->mayAddExtraProperty(vm, Identifier::from(vm, index)) : admitsMutation(vm, *compiled, ObjectMutation::AddProperty)))
+        if (!mayAddElement(vm, *compiled, index))
             return true;
     }
     if (!extra) {
@@ -296,6 +305,26 @@ static NEVER_INLINE Object::LeavingProperty redefinedBy(JSGlobalObject* globalOb
     return { bits.hasValue ? valueOrGetter : wasAccessor ? jsUndefined() : current.valueOrAccessor, attributes | (isWritable ? PropertyAttribute::None : PropertyAttribute::ReadOnly) };
 }
 
+static NEVER_INLINE bool tryRedefineFieldInSlot(JSGlobalObject* globalObject, Object& compiled, const FieldData& field, JSValue value, PropertyDescriptorBits bits)
+{
+    unsigned attributes = compiled.attributesOf(field);
+    if (!bits.hasValue || field.isPrivate() || attributes & PropertyAttribute::DontDelete)
+        return false;
+    Object::LeavingProperty redefined = redefinedBy(globalObject, { jsUndefined(), attributes }, value, JSValue(), bits);
+    if (redefined.attributes == attributes)
+        return false;
+    compiled.moveFieldToExtraProperties(globalObject->vm(), field, redefined, SlotExitReason::Redefinition);
+    return true;
+}
+
+static ALWAYS_INLINE unsigned attributesOfDefinition(PropertyDescriptorBits bits)
+{
+    unsigned attributes = (bits.isEnumerable ? PropertyAttribute::None : PropertyAttribute::DontEnum) | (bits.isConfigurable ? PropertyAttribute::None : PropertyAttribute::DontDelete);
+    if (bits.hasGet || bits.hasSet)
+        return attributes | PropertyAttribute::Accessor;
+    return attributes | (bits.isWritable ? PropertyAttribute::None : PropertyAttribute::ReadOnly);
+}
+
 static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
@@ -308,11 +337,7 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
     if (!compiled && !canSkipDefineOwnProperty(vm, object, structure, name))
         return false;
     bool isAccessor = bits.hasGet || bits.hasSet;
-    unsigned attributes = (bits.isEnumerable ? PropertyAttribute::None : PropertyAttribute::DontEnum) | (bits.isConfigurable ? PropertyAttribute::None : PropertyAttribute::DontDelete);
-    if (isAccessor)
-        attributes |= PropertyAttribute::Accessor;
-    else if (!bits.isWritable)
-        attributes |= PropertyAttribute::ReadOnly;
+    unsigned attributes = attributesOfDefinition(bits);
     JSValue stored;
     if (compiled) {
         PropertyCaches& caches = *Instance::of(structure->realm())->state->propertyCaches;
@@ -330,7 +355,7 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
     if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))
         return true;
     if (field && compiled->isInSlot(*field))
-        return false;
+        return tryRedefineFieldInSlot(globalObject, *compiled, *field, valueOrGetter, bits);
     if (compiled && !field) {
         using Kind = Object::ExtraPropertyFound::Kind;
         Object::ExtraPropertyFound found = compiled->findExtraProperty(vm, name);
@@ -393,6 +418,8 @@ static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name,
         return true;
     if (define == JSArray::info()->methodTable.defineOwnProperty)
         return name != vm.propertyNames->length || !bits.hasValue || value.isUInt32();
+    if (define == ErrorInstance::info()->methodTable.defineOwnProperty)
+        return name != vm.propertyNames->stack && name != vm.propertyNames->line && name != vm.propertyNames->column && name != vm.propertyNames->sourceURL;
     for (const ClassInfo* info : { Closure::info(), SlimClosure::info(), ReifiedSlimClosure::info(), ClassPrototype::info(), JSFunction::info() }) {
         if (define == info->methodTable.defineOwnProperty)
             return true;
@@ -423,6 +450,27 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
     RELEASE_AND_RETURN(scope, object->methodTable()->defineOwnProperty(object, globalObject, name, descriptorFromBits(valueOrGetter, setter, bits), false));
 }
 
+static ALWAYS_INLINE bool tryRepeatDefinition(JSGlobalObject* globalObject, JSObject* object, JSValue key, JSValue value, PropertyDescriptorBits bits)
+{
+    Object* compiled = bits.hasGet || bits.hasSet ? nullptr : compiledObjectOrNull(object);
+    if (!compiled)
+        return false;
+    PropertyCaches& caches = *compiled->state().propertyCaches;
+    UniquedStringImpl* name = nullptr;
+    if (key.isSymbol()) {
+        name = &asSymbol(key)->uid();
+        if (caches.preparationBeforeLookupsUnder(name))
+            return false;
+    } else if (StringImpl* text = key.isString() ? asString(key)->tryGetValueImpl() : nullptr; text && text->isAtom())
+        name = static_cast<UniquedStringImpl*>(text);
+    else
+        return false;
+    const AddedExtraProperty* added = caches.findAddedExtraProperty(compiled->structureID(), name);
+    if (!added || added->attributes != attributesOfDefinition(bits) || !descriptorObjectsInheritNoMembers(globalObject))
+        return false;
+    return compiled->tryRepeat(globalObject->vm(), *added, bits.hasValue ? value : jsUndefined());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instance, EncodedJSValue encodedObject, EncodedJSValue key, EncodedJSValue encodedValueOrGetter, EncodedJSValue encodedSetter, uint32_t descriptorBits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDefineOwnProperty);
@@ -431,6 +479,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     JSValue setter = JSValue::decode(encodedSetter);
     auto bits = std::bit_cast<PropertyDescriptorBits>(descriptorBits);
     if (object.isObject()) [[likely]] {
+        if (tryRepeatDefinition(globalObject, asObject(object), JSValue::decode(key), valueOrGetter, bits))
+            OPERATION_RETURN(scope);
         Identifier converted;
         StringImpl* text = JSValue::decode(key).isString() ? asString(JSValue::decode(key))->tryGetValueImpl() : nullptr;
         if (!text || !text->isAtom()) {
@@ -445,7 +495,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
             OPERATION_RETURN(scope);
     }
     JSObject* literal = constructObjectFromPropertyDescriptor(globalObject, descriptorFromBits(valueOrGetter, setter, bits));
-    callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
+    if (bits.isOfPropertyMap) {
+        JSObject* map = constructEmptyObject(globalObject);
+        map->putDirect(globalObject->vm(), asString(JSValue::decode(key))->toIdentifier(globalObject), literal);
+        callInEngine(instance, Builtins::ObjectDefineProperties, object, map);
+    } else
+        callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
     OPERATION_RETURN(scope);
 }
 
@@ -595,14 +650,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
     MethodKind kind = static_cast<MethodKind>(bits.kind);
     if (bits.isUnderComputedKey)
         instance->state->objects->classes.holdDefinitionToNameInRecord(*classLayout, side, bits.index, key.impl(), member);
+    ClassTable& classes = instance->state->objects->classes;
+    bool isUnobserved = classes.isLaterEvaluation(*closure, *classLayout) && classes.hasNoGuardLeft(*classLayout, ClassSide::Prototype) && classes.hasNoGuardLeft(*classLayout, ClassSide::Static) && !parseIndex(key);
     {
-        ClassTable::MemberDefinition definition(instance->state->objects->classes, *classLayout, side, key.impl());
+        ClassTable::MemberDefinition definition(classes, *classLayout, side, key.impl());
         SetForScope prototypeBeingDefined(vm.aotState().classPrototypeBeingDefined, side == ClassSide::Prototype ? holder : nullptr);
+        SetForScope unobservedHolder(vm.aotState().unobservedClassHolder, isUnobserved ? holder : nullptr);
         if (!tryDefineClassMemberWithoutTransition(globalObject, *closure, *classLayout, holder, key, member, kind))
             defineMethod(globalObject, holder, key, member, kind);
     }
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    instance->state->objects->classes.didDefineMember(vm, *classLayout, side, bits.index, holder, key.impl(), member);
+    if (isUnobserved)
+        countEvent(vm, Typed::RuntimeCounterID::UnobservedMembersDefined);
+    else
+        classes.didDefineMember(vm, *classLayout, side, bits.index, holder, key.impl(), member);
     OPERATION_RETURN(scope);
 }
 

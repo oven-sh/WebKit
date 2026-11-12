@@ -22,6 +22,7 @@ JS_EXPORT_PRIVATE bool isTopFrameCompiled(VM&);
 JS_EXPORT_PRIVATE bool isCallerCompiled(VM&, const CallFrame* calleeFrame, EntryFrame*);
 JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
 JS_EXPORT_PRIVATE std::span<const uint8_t> compiledCodeOf(VM&);
+bool isCallStubReturnSite(VM&, const void* returnPC);
 #else
 inline bool isOperationFrameRecord(VM&, const CallFrame*) { return false; }
 inline bool isTopFrameCompiled(VM&) { return false; }

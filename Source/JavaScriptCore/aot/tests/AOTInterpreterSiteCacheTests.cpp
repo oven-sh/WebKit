@@ -353,6 +353,10 @@ static constexpr ASCIILiteral programWithUnboxedNumbers =
     "    v8 = PropGet v5 key=\"whole\"\n"
     "    v9 = PropGet v5 key=\"any\"\n"
     "    v10 = NewArray v7, v8, v9 contents=anything holes=[]\n"
+    "    v11 = Double number=0.5\n"
+    "    v12 = Integer integer=9\n"
+    "    v13 = NewObject -, v11, v12, v0 layout=L0 fields=[0, 1, 2]\n"
+    "    v14 = FinishObject v13\n"
     "    Return v10\n"
     "}\n"
     "entry module=m0\n"_s;

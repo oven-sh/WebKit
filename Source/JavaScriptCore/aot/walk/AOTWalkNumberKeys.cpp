@@ -260,11 +260,15 @@ static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, 
     std::optional<HoistedArrayGuard> tested = findHoistedArrayGuard(walker, value);
     if (!tested && value.opcode() == Opcode::ElemGet)
         tested = tryHoistArrayGuardForAccess(walker, value, walker.referenceOf(value.objectOperand()));
+    TypeID stored = !tested && value.opcode() == Opcode::ElemSet ? inputs.typeOf(value.valueOperand()) : TypeID();
+    if (stored && walker.types().at(stored).isNumber())
+        tested = tryHoistArrayGuardForAccess(walker, value, walker.referenceOf(value.objectOperand()), walker.types().at(stored).primitives & Primitive::FractionalNumber ? ArrayStorage::Double : ArrayStorage::Int32);
     if (!tested || !hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, TypeTable::int32))
         return false;
 
     Origin origin = originInFrontOfAccessInNumberKeys(walker, value);
-    Reference isInt32 = buildTestOfNumber(walker, writtenKey, TypeTable::int32, origin);
+    TypeID asked = value.opcode() == Opcode::ElemSet ? walker.types().integer(Range { 0, std::numeric_limits<int32_t>::max() }) : TypeID(TypeTable::int32);
+    Reference isInt32 = buildTestOfNumber(walker, writtenKey, asked, origin);
     if (!isInt32 || !isInt32.isValue())
         return false;
     BlockID whereKeyIsAnother = walker.addBlock(BlockFrequency::Rare);
@@ -287,6 +291,29 @@ static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, 
     return true;
 }
 
+static bool buildAccessUnderIndexTextInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    static constexpr unsigned mostDigits = 9;
+    Reference key = walker.referenceOf(value.propertyOperand());
+    if (!key || !key.isConstant() || walker.code().at(key.id()).opcode != Opcode::String)
+        return false;
+    Vector<char16_t> buffer;
+    StringView text = walker.types().viewOf(walker.code().at(key.id()).string(), buffer);
+    if (text.isEmpty() || text.length() > mostDigits || (text[0] == '0' && text.length() > 1))
+        return false;
+    int32_t index = 0;
+    for (unsigned place = 0; place < text.length(); ++place) {
+        if (!isASCIIDigit(text[place]))
+            return false;
+        index = 10 * index + (text[place] - '0');
+    }
+    if (!hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, walker.types().integer(Range { index, index })))
+        return false;
+    walker.count(StatisticID::IndexTextsTakenAsIntegers);
+    buildAccessUnderKeyInNumberKeys(walker, value, walker.constant(PrimitiveKnownToFolding::number(index)));
+    return true;
+}
+
 bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (!opcodesOfNumberKeys.contains(value.opcode()) || !hasMechanismsOfNumberForms(walker))
@@ -302,7 +329,7 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
     if (!key || !inputs.typeOf(value.objectOperand()))
         return false;
     if (!walker.types().at(key).isNumber())
-        return buildListAccessUnderNumberAskedForInt32InNumberKeys(walker, value, inputs);
+        return buildAccessUnderIndexTextInNumberKeys(walker, value, inputs) || buildListAccessUnderNumberAskedForInt32InNumberKeys(walker, value, inputs);
     if (buildAccessUnderWholeRemainderInNumberKeys(walker, value, inputs))
         return true;
     if (buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs))

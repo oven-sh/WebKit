@@ -606,6 +606,15 @@ static std::optional<RunStart> findRunAtTop(VM& vm)
     return RunStart { callerStackPointer(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false };
 }
 
+static std::optional<RunStart> findRunBelowEntry(VM& vm)
+{
+    VMEntryRecord* entry = vmEntryRecord(vm.topEntryFrame);
+    CallFrame* operationRecord = entry->prevTopCallFrame();
+    if (!isOperationFrameRecord(vm, operationRecord) || (Options::useAsyncStackTrace() && JSC::Interpreter::asyncFunctionIn(entry->m_context)))
+        return std::nullopt;
+    return RunStart { callerStackPointer(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), entry->prevTopEntryFrame(), false, true };
+}
+
 static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy topFramePolicy)
 {
     CallFrame* top = vm.topCallFrame;
@@ -618,11 +627,7 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy t
             return std::nullopt;
     }
     if (top->callerFrameOrEntryFrame() == vm.topEntryFrame) {
-        VMEntryRecord* entry = vmEntryRecord(vm.topEntryFrame);
-        CallFrame* operationRecord = entry->prevTopCallFrame();
-        if (!isOperationFrameRecord(vm, operationRecord) || (Options::useAsyncStackTrace() && JSC::Interpreter::asyncFunctionIn(entry->m_context)))
-            return std::nullopt;
-        return RunStart { callerStackPointer(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), entry->prevTopEntryFrame(), false, true };
+        return findRunBelowEntry(vm);
     }
     const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
@@ -639,11 +644,59 @@ static bool isOnlyTopFrame(VM& vm)
     return !entry->prevTopCallFrame() && !entry->prevTopEntryFrame();
 }
 
-static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
+static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy)
+{
+    auto isShownInterpretedFrame = [&](CallFrame* frame) {
+        if (frame->isZombieFrame() || frame->isNativeCalleeFrame() || vm.aotState().classCalledWithoutNew == frame)
+            return false;
+        CodeBlock* codeBlock = frame->codeBlock();
+        return codeBlock && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && codeBlock->ownerExecutable()->implementationVisibility() == ImplementationVisibility::Public;
+    };
+    CallFrame* frame = vm.topCallFrame;
+    if (topFramePolicy == TopFramePolicy::Include ? !isShownInterpretedFrame(frame) : frame->isZombieFrame() || frame->isNativeCalleeFrame() || frame->codeBlock() || vm.aotState().classCalledWithoutNew == frame)
+        return std::nullopt;
+
+    auto compiledCode = compiledCodeOf(vm);
+    size_t maxFrames = std::min<size_t>(maxStackSize, ReturnAddressTrace::maxFramesOnTop);
+    WTF::Vector<CallFrame*, 16> frames;
+    if (topFramePolicy == TopFramePolicy::Include)
+        frames.append(frame);
+    std::optional<RunStart> start;
+    for (;;) {
+        if (frame->callerFrameOrEntryFrame() == vm.topEntryFrame) {
+            start = findRunBelowEntry(vm);
+            break;
+        }
+        const void* returnPC = removeCodePtrTag(frame->rawReturnPC());
+        if (std::bit_cast<uintptr_t>(returnPC) - std::bit_cast<uintptr_t>(compiledCode.data()) < compiledCode.size()) {
+            if (isCallStubReturnSite(vm, returnPC))
+                start = RunStart { callerStackPointer(frame), frame->callerFrame(), frame->rawReturnPC(), vm.topEntryFrame, false, true };
+            break;
+        }
+        if (frames.size() == maxFrames)
+            return std::nullopt;
+        frame = frame->callerFrame();
+        if (!isShownInterpretedFrame(frame))
+            return std::nullopt;
+        frames.append(frame);
+    }
+    if (!start || frames.isEmpty())
+        return std::nullopt;
+
+    framesOnTop.reserveInitialCapacity(frames.size());
+    for (CallFrame* shownFrame : frames)
+        framesOnTop.append(StackFrame(vm, owner, shownFrame->callee().asCell(), shownFrame->codeBlock(), shownFrame->bytecodeIndex()));
+    return start;
+}
+
+static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy)
 {
     countEvent(vm, RuntimeCounterID::StackWalksToCompiledFrames);
     std::optional<CompiledFrameIterator> frames;
-    vm.interpreter.appendStackTrace(owner, framesOnTop, { .callFrame = vm.topCallFrame, .compiledFramesBelow = &frames }, maxStackSize);
+    size_t framesToSkip = topFramePolicy == TopFramePolicy::Skip;
+    vm.interpreter.appendStackTrace(owner, framesOnTop, { .callFrame = vm.topCallFrame, .framesToSkip = framesToSkip, .compiledFramesBelow = &frames }, maxStackSize);
+    if (framesToSkip && framesOnTop.isEmpty())
+        return std::nullopt;
     if (!frames || frames->isAtEnd() || frames->hasNoMachineFrame() || framesOnTop.size() > ReturnAddressTrace::maxFramesOnTop)
         return std::nullopt;
     return RunStart { frames->stackPointer(), frames->framePointer(), const_cast<void*>(frames->callSite().address), frames->entryFrame(), frames->isAtFirstReadSite(), frames->calleeWasEntered(), frames->plainFunctionConstructFrameLeft(), frames->constructFrameLeftMakesThis() };
@@ -723,16 +776,19 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
         return nullptr;
     std::optional<RunStart> start = topFramePolicy == TopFramePolicy::Include ? findRunAtTop(vm) : findRunBelowHostFunction(vm, topFramePolicy);
     if (!start) {
-        if (lastConstructorToSkip || topFramePolicy == TopFramePolicy::Skip)
+        if (lastConstructorToSkip)
             return nullptr;
-        if (maxStackSize >= 2)
+        if (topFramePolicy == TopFramePolicy::Include && maxStackSize >= 2)
             start = findRunBelowHostFunction(vm, topFramePolicy);
         if (start) {
             if (!otherFrames.capacity())
                 otherFrames.reserveInitialCapacity(1);
             otherFrames.append(StackFrame(vm, owner, vm.topCallFrame->callee().asCell()));
-        } else
-            start = isOnlyTopFrame(vm) ? std::nullopt : findRunBelowOtherFrames(vm, owner, otherFrames, maxStackSize);
+        } else {
+            start = findRunBelowInterpretedFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy);
+            if (!start && !isOnlyTopFrame(vm))
+                start = findRunBelowOtherFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy);
+        }
         if (!start)
             return nullptr;
         framesAbove = { otherFrames.size(), true };
@@ -1370,9 +1426,9 @@ static ReturnAddresses findAwaitingCallsOnStack(const SavedFrame& saved)
 
 static ALWAYS_INLINE bool isModuleBody(VM& vm, const SavedFrame& saved)
 {
-    if (const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->find(saved.resumeAddress()))
-        return entry->isInModuleBody;
     const Image& image = *Image::current();
+    if (const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(image, saved.resumeAddress()))
+        return entry->isInModuleBody;
     CodeLocation location = image.locate(saved.resumeAddress());
     return location.kind == CodeKind::Function && FunctionDescription(image.rootFunctionOf(location.function)).codeType() == ModuleCode;
 }

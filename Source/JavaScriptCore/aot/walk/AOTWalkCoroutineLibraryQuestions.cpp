@@ -27,7 +27,7 @@ bool answerLibraryQuestionOfCoroutines(Walker&, const BodyValue&);
 
 static constexpr OpcodeSet makersOfArraysOfLibraryQuestions {
     Opcode::NewArray, Opcode::Data, Opcode::NewTemplateObject, Opcode::CreateRest,
-    Opcode::NewContiguousArray, Opcode::NewArrayLike,
+    Opcode::NewContiguousArray, Opcode::SortKeyArray, Opcode::NewArrayLike,
 };
 
 static void bindAnswerOfLibraryQuestion(Walker& walker, const BodyValue& question, bool answer)

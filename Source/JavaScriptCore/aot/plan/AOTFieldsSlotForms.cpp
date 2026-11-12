@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 #include <wtf/OptionSet.h>
@@ -25,6 +26,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr TypeID typeOfIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
 static constexpr TypeID typeOfNumberSlotInSlotForms = typeOfPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+static constexpr TypeID typeOfFilledIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer);
 static constexpr Range integersOfNarrowSlotInSlotForms { minInlineInt32, INT32_MAX };
 
 #if USE(BIGINT32)
@@ -41,11 +43,12 @@ namespace {
 enum class ContentsInSlotForms : uint8_t {
     Booleans = 1 << 0,
     NarrowIntegers = 1 << 1,
-    Integers = 1 << 2,
-    Fractions = 1 << 3,
-    Cells = 1 << 4,
-    UndefinedOrNull = 1 << 5,
-    AnyValue = 1 << 6,
+    Counts = 1 << 2,
+    Integers = 1 << 3,
+    Fractions = 1 << 4,
+    Cells = 1 << 5,
+    UndefinedOrNull = 1 << 6,
+    AnyValue = 1 << 7,
 };
 
 } // anonymous namespace
@@ -69,9 +72,11 @@ static OptionSet<ContentsInSlotForms> contentsOfTypeForSlotForms(const Program& 
             contents.add(brought);
         primitives &= ~some;
     };
-    bool isCount = proven.integers.minimum >= 0 && proven.integers.maximum == INT32_MAX;
-    if (primitives & Primitive::Integer)
-        contents.add(proven.integers.isSubsetOf(claim == ClaimInSlotForms::IsHeld ? Range::int32() : integersOfNarrowSlotInSlotForms) && (claim == ClaimInSlotForms::IsHeld || !isCount) ? Contents::NarrowIntegers : Contents::Integers);
+    if (primitives & Primitive::Integer) {
+        bool isNarrow = proven.integers.isSubsetOf(claim == ClaimInSlotForms::IsHeld ? Range::int32() : integersOfNarrowSlotInSlotForms);
+        bool isCount = claim == ClaimInSlotForms::IsProven && proven.integers.minimum >= 0 && proven.integers.maximum == INT32_MAX;
+        contents.add(!isNarrow ? Contents::Integers : isCount ? Contents::Counts : Contents::NarrowIntegers);
+    }
     primitives &= ~Primitive::Integer;
     takeOut(Primitive::Number, Contents::Fractions);
     takeOut(Primitive::Boolean, Contents::Booleans);
@@ -94,7 +99,10 @@ static SlotRepresentation representationOfContentsForSlotForms(OptionSet<Content
         return SlotRepresentation::OptionalBoolean;
     if (values == Contents::NarrowIntegers && (mayBeNarrow || isHeld))
         return SlotRepresentation::OptionalInt32;
-    constexpr OptionSet<Contents> integers { Contents::NarrowIntegers, Contents::Integers };
+    constexpr OptionSet<Contents> narrowIntegers { Contents::NarrowIntegers, Contents::Counts };
+    if ((values - narrowIntegers).isEmpty() && mayBeNarrow)
+        return SlotRepresentation::OptionalInt32;
+    constexpr OptionSet<Contents> integers { Contents::NarrowIntegers, Contents::Counts, Contents::Integers };
     if ((values - integers).isEmpty() && !isHeld)
         return SlotRepresentation::OptionalInt64;
     if ((values - integers - Contents::Fractions).isEmpty())
@@ -109,9 +117,21 @@ SlotRepresentation narrowFormOfSlotHeldToTypeForFields(const Program& program, T
     return representationOfContentsForSlotForms(contentsOfTypeForSlotForms(program, held, ClaimInSlotForms::IsHeld), true, usesWideReferences, true, false);
 }
 
+static bool isFilledInt32FieldInSlotForms(const Program& program, const Facts& facts, FieldReference row)
+{
+    const LinkedCell* cell = facts.linked().findCellOfField(row);
+    if (!cell || !cell->everyWriterIsKnown || !cell->proven || isNeverType(cell->proven) || !cell->isFilledAtEveryRead || row.field >= program.at(row.layout).fields.size())
+        return false;
+    Type proven = program.at(cell->proven);
+    bool holdsInt32s = proven.isJavaScriptValue() && proven.hasOnlyPrimitives(Primitive::Integer) && proven.integers.isSubsetOf(Range::int32());
+    return holdsInt32s && facts.field(row).stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined });
+}
+
 static TypeID widestTypeOfRepresentationForSlotForms(TypeArena& types, SlotRepresentation representation)
 {
     switch (representation) {
+    case SlotRepresentation::Int32:
+        return types.withIntegers(typeOfFilledIntegerSlotInSlotForms, Range::int32());
     case SlotRepresentation::OptionalBoolean:
         return typeOfPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull);
     case SlotRepresentation::OptionalInt32:
@@ -219,15 +239,17 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     Vector<OptionSet<ContentsInSlotForms>> contentsOfUnits(numberOfUnits);
     BitVector unitsWhoseFormMayChange(numberOfUnits);
     BitVector unitsWithSlotHeldToType(numberOfUnits);
+    BitVector unitsOfFilledInt32s(numberOfUnits);
     forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfUnits, [&](size_t firstUnit, size_t endOfUnits) {
         for (size_t unit = firstUnit; unit < endOfUnits; ++unit) {
             std::optional<SlotRepresentation> found;
             bool everyFieldIsClaimed = !groupsLaidForGood.quickGet(units.units[unit].group);
+            bool everyFieldIsFilledInt32 = true;
             for (FieldReference row : units.rowsOf(units.units[unit])) {
                 bool hasCells = hasCellsForFields(parts, row.layout);
                 if (!hasCells && !layoutsAboveCells.quickGet(row.layout.index()))
                     continue;
-                if (hasCells && parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
+                if (hasCells && parts.layouts[row.layout.index()].slots[row.field].storage != SlotStorage::Inline)
                     continue;
                 const LinkedCell* cell = linked.findCellOfField(row);
                 bool isProven = cell && cell->everyWriterIsKnown && cell->proven;
@@ -240,7 +262,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
                     if (!isProven && slot.representation == SlotRepresentation::JSValue)
                         held = slot.type;
                     everyFieldIsClaimed &= kind == LayoutKind::Record || kind == LayoutKind::Instance;
-                    everyFieldIsClaimed &= slot.storage == SlotStorage::Inline && found.value_or(slot.representation) == slot.representation && isPlainSlotOfField(planned, row.field);
+                    everyFieldIsClaimed &= found.value_or(slot.representation) == slot.representation && isPlainSlotOfField(planned, row.field);
                     found = slot.representation;
                 } else if (!isProven)
                     held = facts.field(row).slotType;
@@ -250,48 +272,171 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
                 contentsOfUnits[unit].add(isProven ? contentsOfTypeForSlotForms(program, cell->proven, ClaimInSlotForms::IsProven) : contentsOfTypeForSlotForms(program, held, ClaimInSlotForms::IsHeld));
                 if (held)
                     unitsWithSlotHeldToType.quickSet(unit);
+                everyFieldIsFilledInt32 &= !held && (!hasCells || isFilledInt32FieldInSlotForms(program, facts, row));
             }
             if (found && everyFieldIsClaimed)
                 unitsWhoseFormMayChange.quickSet(unit);
+            if (found && everyFieldIsClaimed && everyFieldIsFilledInt32)
+                unitsOfFilledInt32s.quickSet(unit);
         }
     });
     if (unitsWhoseFormMayChange.isEmpty())
         return;
+    auto narrowFormOf = [&](size_t unit) {
+        if (unitsOfFilledInt32s.quickGet(unit))
+            return SlotRepresentation::Int32;
+        return representationOfContentsForSlotForms(contentsOfUnits[unit], true, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false);
+    };
+
+    auto wideWidthOf = [&](uint32_t unit) {
+        return widthOf(representationOfContentsForSlotForms(contentsOfUnits[unit], false, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false));
+    };
+    auto unitOfChangingForm = [&](LayoutID id, FieldIndex field) {
+        if (parts.layouts[id.index()].environmentOfDeferredClosures == field)
+            return UnitsOfFields::noUnit;
+        uint32_t unit = units.unitOfRow[units.rowOf({ id, field })];
+        return unit != UnitsOfFields::noUnit && unitsWhoseFormMayChange.quickGet(unit) ? unit : UnitsOfFields::noUnit;
+    };
+    auto isInherited = [&](LayoutID id, FieldIndex field) {
+        const Layout& layout = program.at(id);
+        return field < layout.fields.size() && layout.fields[field].flags.contains(FieldFlags::IsInherited);
+    };
+    struct WidthsOfSlot {
+        uint32_t wide;
+        uint32_t narrow;
+    };
+    struct EndsOfSlots {
+        uint64_t wide;
+        uint64_t narrow;
+    };
+    auto endsOfSlots = [&](LayoutID id, NOESCAPE const Invocable<WidthsOfSlot(uint32_t, FieldIndex)> auto& widthsOf) {
+        const PlannedLayout& planned = parts.layouts[id.index()];
+        EndsOfSlots ends { offsetsOfFirstSlots[id.index()], offsetsOfFirstSlots[id.index()] };
+        for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
+            const PlacedSlot& slot = planned.slots[field];
+            if (slot.storage != SlotStorage::Inline || slot.liesInCellOnTrial())
+                continue;
+            uint32_t unit = unitOfChangingForm(id, field);
+            WidthsOfSlot widths = unit == UnitsOfFields::noUnit ? WidthsOfSlot { slot.width(), slot.width() } : widthsOf(unit, field);
+            ends.wide += widths.wide;
+            ends.narrow += widths.narrow;
+        }
+        return ends;
+    };
 
     CellSizesForFields sizes(build);
-    BitVector layoutsThatGainFromNarrowForms = layoutsThatLateNamesMayMoveInto;
+    BitVector layoutsThatGainFromNarrowForms(numberOfLayouts);
     forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfLayouts, [&](size_t firstLayout, size_t endOfLayouts) {
         for (size_t index = firstLayout; index < endOfLayouts; ++index) {
             LayoutID id(static_cast<uint32_t>(index));
             if (groups.groupOf[index] == GroupsOfLayoutsForFields::noGroup || !hasCellsForFields(parts, id))
                 continue;
-            const PlannedLayout& planned = parts.layouts[index];
-            uint64_t endAsFound = offsetsOfFirstSlots[index];
-            uint64_t endAtNarrowest = offsetsOfFirstSlots[index];
-            for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
-                const PlacedSlot& slot = planned.slots[field];
-                if (slot.storage != SlotStorage::Inline || slot.liesInCellOnTrial())
-                    continue;
-                uint32_t unit = planned.environmentOfDeferredClosures == field ? UnitsOfFields::noUnit : units.unitOfRow[units.rowOf({ id, field })];
-                bool mayChange = unit != UnitsOfFields::noUnit && unitsWhoseFormMayChange.quickGet(unit);
-                endAsFound += slot.width();
-                endAtNarrowest += mayChange ? widthOf(representationOfContentsForSlotForms(contentsOfUnits[unit], true, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false)) : slot.width();
-            }
-            if (sizes.cellSizeFor(endAtNarrowest) < sizes.cellSizeFor(endAsFound))
+            EndsOfSlots ends = endsOfSlots(id, [&](uint32_t unit, FieldIndex) -> WidthsOfSlot {
+                return { wideWidthOf(unit), widthOf(narrowFormOf(unit)) };
+            });
+            if (sizes.cellSizeFor(ends.narrow) < sizes.cellSizeFor(ends.wide))
                 layoutsThatGainFromNarrowForms.quickSet(index);
         }
     });
 
-    auto isInheritedRow = [&](FieldReference row) {
-        const Layout& layout = program.at(row.layout);
-        return row.field < layout.fields.size() && layout.fields[row.field].flags.contains(FieldFlags::IsInherited);
+    BitVector unitsNarrowByThemselves(numberOfUnits);
+    for (size_t index : layoutsThatLateNamesMayMoveInto) {
+        LayoutID id(static_cast<uint32_t>(index));
+        const PlannedLayout& planned = parts.layouts[index];
+        for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
+            if (planned.slots[field].storage != SlotStorage::Inline || isInherited(id, field))
+                continue;
+            if (uint32_t unit = unitOfChangingForm(id, field); unit != UnitsOfFields::noUnit)
+                unitsNarrowByThemselves.quickSet(unit);
+        }
+    }
+    enum class CostOfNarrowForm : uint8_t { None, Reference, ReferenceWithMarkers, Link, IntegerWithMarkers };
+    auto costOfNarrowForm = [&](LayoutID id, FieldIndex field, uint32_t unit) {
+        SlotRepresentation narrow = narrowFormOf(unit);
+        if (narrow == SlotRepresentation::OptionalInt32)
+            return CostOfNarrowForm::IntegerWithMarkers;
+        if (narrow != SlotRepresentation::Cell32 && narrow != SlotRepresentation::OptionalCell32)
+            return CostOfNarrowForm::None;
+        const LinkedCell* cell = linked.findCellOfField({ id, field });
+        if (cell && cell->proven && program.at(program.at(cell->proven).layouts).contains(id))
+            return CostOfNarrowForm::Link;
+        return narrow == SlotRepresentation::Cell32 ? CostOfNarrowForm::Reference : CostOfNarrowForm::ReferenceWithMarkers;
     };
-    auto isNarrowByItself = [&](size_t unit) {
-        return std::ranges::any_of(units.rowsOf(units.units[unit]), [&](FieldReference row) {
-            return !isInheritedRow(row) && layoutsThatGainFromNarrowForms.quickGet(row.layout.index());
+    auto areMarkersWorthwhile = [&](LayoutID id) {
+        EndsOfSlots ends = endsOfSlots(id, [&](uint32_t unit, FieldIndex) -> WidthsOfSlot {
+            bool isCount = contentsOfUnits[unit].contains(ContentsInSlotForms::Counts);
+            uint32_t wide = wideWidthOf(unit);
+            return { wide, isCount ? wide : widthOf(representationOfContentsForSlotForms(contentsOfUnits[unit], true, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false)) };
         });
+        if (sizes.cellSizeFor(ends.narrow) < sizes.cellSizeFor(ends.wide))
+            return true;
+        EndsOfSlots endsOfAll = endsOfSlots(id, [&](uint32_t unit, FieldIndex) -> WidthsOfSlot {
+            return { wideWidthOf(unit), widthOf(narrowFormOf(unit)) };
+        });
+        uint64_t wideSize = sizes.cellSizeFor(endsOfAll.wide);
+        return 3 * (wideSize - sizes.cellSizeFor(endsOfAll.narrow)) >= wideSize;
+    };
+    struct NarrowUnit {
+        CostOfNarrowForm cost;
+        uint32_t key;
+        uint32_t unit;
+    };
+    Vector<NarrowUnit, 32> narrowUnits;
+    auto chooseNarrowUnitsOf = [&](LayoutID id, bool integersMayHaveMarkers) {
+        narrowUnits.shrink(0);
+        EndsOfSlots ends = endsOfSlots(id, [&](uint32_t unit, FieldIndex field) -> WidthsOfSlot {
+            uint32_t wide = wideWidthOf(unit);
+            uint32_t narrow = widthOf(narrowFormOf(unit));
+            if (isInherited(id, field))
+                narrow = wide = unitsNarrowByThemselves.quickGet(unit) ? narrow : wide;
+            else if (!integersMayHaveMarkers && narrowFormOf(unit) == SlotRepresentation::OptionalInt32)
+                narrow = wide;
+            if (narrow < wide)
+                narrowUnits.append({ costOfNarrowForm(id, field, unit), keyOfRowInSlotForms(program, parts, { id, field }).bits(), unit });
+            return { wide, narrow };
+        });
+        uint64_t size = sizes.cellSizeFor(ends.narrow);
+        if (size == sizes.cellSizeFor(ends.wide))
+            return false;
+        std::ranges::sort(narrowUnits, [](const NarrowUnit& a, const NarrowUnit& b) {
+            return std::tuple(b.cost, a.key, a.unit) < std::tuple(a.cost, b.key, b.unit);
+        });
+        bool needsRoomForLateNames = layoutsThatLateNamesMayMoveInto.quickGet(id.index()) || parts.layouts[id.index()].slots.containsIf([](const PlacedSlot& slot) { return slot.isOutOfLine(); });
+        narrowUnits.removeAllMatching([&](const NarrowUnit& candidate) {
+            uint32_t added = wideWidthOf(candidate.unit) - widthOf(narrowFormOf(candidate.unit));
+            bool staysWide = candidate.cost != CostOfNarrowForm::None && ends.narrow + added <= size && !needsRoomForLateNames;
+            if (staysWide)
+                ends.narrow += added;
+            return staysWide;
+        });
+        return true;
+    };
+    auto depthOf = [&](uint32_t index) {
+        unsigned depth = 0;
+        for (LayoutID above = writtenBaseOf(program.layouts[index]); above; above = writtenBaseOf(program.at(above)))
+            ++depth;
+        return depth;
+    };
+    Vector<std::pair<unsigned, uint32_t>> layoutsByDepth;
+    for (size_t index : layoutsThatGainFromNarrowForms)
+        layoutsByDepth.append({ depthOf(static_cast<uint32_t>(index)), static_cast<uint32_t>(index) });
+    std::ranges::sort(layoutsByDepth);
+    for (auto [depth, index] : layoutsByDepth) {
+        LayoutID id(index);
+        if (!chooseNarrowUnitsOf(id, false) && !chooseNarrowUnitsOf(id, true))
+            continue;
+        bool needsDecoding = std::ranges::any_of(narrowUnits, [](const NarrowUnit& chosen) { return chosen.cost != CostOfNarrowForm::None; });
+        if (needsDecoding && !areMarkersWorthwhile(id))
+            continue;
+        for (const NarrowUnit& chosen : narrowUnits)
+            unitsNarrowByThemselves.quickSet(chosen.unit);
+    }
+    auto isNarrowByItself = [&](size_t unit) {
+        return unitsNarrowByThemselves.quickGet(unit);
     };
     auto formOf = [&](size_t unit, bool mayBeNarrow) {
+        if (mayBeNarrow && unitsOfFilledInt32s.quickGet(unit))
+            return SlotRepresentation::Int32;
         bool isHeld = unitsWithSlotHeldToType.quickGet(unit);
         SlotRepresentation representation = representationOfContentsForSlotForms(contentsOfUnits[unit], mayBeNarrow, usesWideReferences, isHeld, false);
         if (!isHeld)
@@ -346,6 +491,15 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     });
     BitVector unitsNarrowWithOthers(numberOfUnits);
     if (!unitsUnitedWithOthers.isEmpty()) {
+        BitVector holdUnitOfOtherIntegers(numberOfUnits);
+        for (size_t unit : unitsUnitedWithOthers) {
+            if (!unitsOfFilledInt32s.quickGet(unit))
+                holdUnitOfOtherIntegers.quickSet(lowestUnitedWith(static_cast<uint32_t>(unit)));
+        }
+        for (size_t unit : unitsUnitedWithOthers) {
+            if (holdUnitOfOtherIntegers.quickGet(lowestUnitedWith(static_cast<uint32_t>(unit))))
+                unitsOfFilledInt32s.clear(unit);
+        }
         Vector<std::optional<SlotRepresentation>> narrowForms(numberOfUnits);
         BitVector haveSeveralNarrowForms(numberOfUnits);
         BitVector holdUnitThatIsNarrow(numberOfUnits);
@@ -383,21 +537,31 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
             continue;
         bool holdsReferences = representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
         if (holdsReferences && unitsWithSlotHeldToType.quickGet(unit)) {
-            std::optional<TypeID> heldOfAll;
-            bool allAreHeldAlike = std::ranges::all_of(rows, [&](FieldReference row) {
-                if (!hasCellsForFields(parts, row.layout) || parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
-                    return true;
-                TypeID held = parts.layouts[row.layout.index()].slots[row.field].type;
-                bool isAlike = held && heldOfAll.value_or(held) == held;
-                heldOfAll = held;
-                return isAlike;
+            auto forEachSlot = [&](const auto& functor) {
+                for (FieldReference row : rows) {
+                    if (hasCellsForFields(parts, row.layout) && parts.layouts[row.layout.index()].slots[row.field].storage == SlotStorage::Inline)
+                        functor(parts.layouts[row.layout.index()].slots[row.field]);
+                }
+            };
+            TypeID widest;
+            bool isEveryOneHeld = true;
+            forEachSlot([&](PlacedSlot& slot) {
+                isEveryOneHeld &= !!slot.type;
+                if (slot.type && (!widest || types.isSubset(widest, slot.type)))
+                    widest = slot.type;
             });
-            if (!allAreHeldAlike)
+            forEachSlot([&](PlacedSlot& slot) {
+                isEveryOneHeld = isEveryOneHeld && types.isSubset(slot.type, widest);
+            });
+            if (!isEveryOneHeld)
                 continue;
+            forEachSlot([&](PlacedSlot& slot) {
+                slot.type = widest;
+            });
         }
         TypeID type = widestTypeOf(representation);
         for (FieldReference row : rows) {
-            if (!hasCellsForFields(parts, row.layout) || parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
+            if (!hasCellsForFields(parts, row.layout) || parts.layouts[row.layout.index()].slots[row.field].storage != SlotStorage::Inline)
                 continue;
             PlacedSlot& slot = parts.layouts[row.layout.index()].slots[row.field];
             if (!holdsReferences || slot.representation != SlotRepresentation::JSValue || !slot.type)

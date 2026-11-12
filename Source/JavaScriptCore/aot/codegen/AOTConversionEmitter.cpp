@@ -222,6 +222,8 @@ Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type)
         return convertMarkers(operand, type, Representation::JSValue).as<Boxed>();
     };
     auto boxUnmarked = [&] {
+        if (std::optional<Word32> narrow = operand.is<OptionalInteger>() ? narrowWordBehind(operand.as<OptionalInteger>()) : std::nullopt)
+            return boxInt32(*narrow);
         return operand.is<OptionalInteger>() ? boxInteger(Integer(operand.value), type.integers) : boxNumber(Number(operand.value));
     };
     if (!(type.primitives & Primitive::Number))
@@ -266,6 +268,8 @@ Word32 ConversionEmitter::lowHalfOfIntegerToldInsideInt32(Integer wide)
 
 Word32 ConversionEmitter::lowHalfOfOptionalInteger(OptionalInteger optional)
 {
+    if (std::optional<Word32> narrow = narrowWordBehind(optional); narrow && !emittersCheckProofs())
+        return *narrow;
     Integer wide(optional.value());
     Word32 low = low32(wide);
     if (emittersCheckProofs())
@@ -856,7 +860,8 @@ ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue n
 
     if (auto optional = m_optionalIntegersOfNumbers.getOptional(number)) {
         build().statistics().count(StatisticID::TruncatedOptionalIntegers);
-        return ExactInteger { .value = ofInteger(Integer(optional->integer)), .holdsWhile = logicalNot(isMarker(Operand(Representation::OptionalInt64, optional->integer))) };
+        std::optional<Word32> narrow = narrowWordBehind(OptionalInteger(optional->integer));
+        return ExactInteger { .value = narrow ? ofWord(*narrow) : ofInteger(Integer(optional->integer)), .holdsWhile = logicalNot(isMarker(Operand(Representation::OptionalInt64, optional->integer))) };
     }
 
     switch (number->opcode()) {
@@ -918,7 +923,10 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
 
     bool testsWhatWasRead = false;
     std::optional<IntegerBehindNumber> knownOfNumber = describe(false);
-    if (!knownOfNumber && mayBeTested && isArithmeticThatMakesNumber(number) && comesRoundToIntegerBehind(number)) {
+    auto isInNormalBlock = [&] {
+        return m_code.at(m_code.blockOf(generator().operationBeingGenerated())).frequency == BlockFrequency::Normal;
+    };
+    if (!knownOfNumber && mayBeTested && isArithmeticThatMakesNumber(number) && comesRoundToIntegerBehind(number) && isInNormalBlock()) {
         testsWhatWasRead = true;
         knownOfNumber = describe(true);
     }
@@ -1064,8 +1072,8 @@ std::optional<Number> ConversionEmitter::convertOptionalInteger(LValue optional)
     auto behind = m_optionalIntegersOfNumbers.getOptional(optional);
     if (!behind)
         return std::nullopt;
-    Integer whole(behind->integer);
-    Number made = select(isMarker(Operand(Representation::OptionalInt64, behind->integer)), number(PNaN), toNumber(whole));
+    std::optional<Word32> narrow = narrowWordBehind(OptionalInteger(behind->integer));
+    Number made = select(isMarker(Operand(Representation::OptionalInt64, behind->integer)), number(PNaN), narrow ? toNumber(*narrow) : toNumber(Integer(behind->integer)));
     if (made.value()->opcode() == Machine::Select)
         m_optionalIntegersOfNumbers.add(made.value(), OptionalIntegerOfNumber { behind->integer, behind->range, true });
     return made;
@@ -1076,6 +1084,8 @@ std::optional<Number> ConversionEmitter::convertIntegerOrNull(LValue optional)
     auto behind = m_integersOrNullOfNumbers.getOptional(optional);
     if (!behind)
         return std::nullopt;
+    if (std::optional<Word32> narrow = narrowWordBehind(OptionalInteger(behind->integer)))
+        return toNumber(select(lessThan(*narrow, word32(minInlineInt32)), word32(0), *narrow));
     Integer whole = select(isMarker(Operand(Representation::OptionalInt64, behind->integer)), integer(0), Integer(behind->integer));
     return toNumber(whole, Range { std::min<int64_t>(behind->range.minimum, 0), std::max<int64_t>(behind->range.maximum, 0) });
 }
@@ -1084,11 +1094,57 @@ Number ConversionEmitter::withoutPayload(Number value)
 {
     if (value.value()->opcode() == Machine::IToD || m_doubleElements.contains(value.value()))
         return value;
+    if (LValue number = m_numbersWithoutPayload.get(value.value()))
+        return Number(number);
     return either<Number>(equal(value, value), [&] {
         return value;
     }, [&] {
-        return Number(m_out.bitCast(quietNaNWithSignOf(bitsOf(value)).value(), Machine::Double));
+        return quietNaN(value);
     });
+}
+
+Number ConversionEmitter::quietNaN(Number value)
+{
+    return Number(m_out.bitCast(quietNaNWithSignOf(bitsOf(value)).value(), Machine::Double));
+}
+
+static LValue wordReadAsUndefinedIfEmpty(NarrowReference word)
+{
+    LValue select = word.value();
+    if (select->opcode() != Machine::Select)
+        return nullptr;
+    LValue predicate = select->child(0);
+    for (unsigned index : { 1u, 2u }) {
+        LValue loaded = select->child(index);
+        bool isAskedForZero = index == 1 ? predicate == loaded : predicate->opcode() == Machine::Equal && predicate->child(0) == loaded && predicate->child(1)->isInt(0);
+        if (isAskedForZero && select->child(3 - index)->isInt(undefinedCell32))
+            return loaded;
+    }
+    return nullptr;
+}
+
+Boxed ConversionEmitter::decodeEmptyAsUndefined(NarrowReference loaded)
+{
+    auto isMarkerOrEmpty = [&](Boxed word) {
+        return select(isEmpty(word), undefined(), word);
+    };
+    const OperationContext* context = generator().contextBeingGenerated();
+    Condition isReference = isCellReference(loaded);
+    if (!context || !context->block() || !generator().usesLoopForms(context->block()) || generator().isLayingOutTurns())
+        return isMarkerOrEmpty(select(isReference, boxCell(decode(loaded)), Boxed(m_out.zeroExt(loaded.value(), Machine::Int64))));
+
+    build().statistics().count(StatisticID::ReferencesTestedBeforeDecoding);
+    LBasicBlock holdsReference = newBlock();
+    LBasicBlock holdsNone = newBlock();
+    Join<Boxed> join(m_out);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isReference.value(), normalEdge(holdsReference), unlikelyEdge(holdsNone));
+    m_out.appendToArm(holdsReference, fork);
+    join.add(boxCell(decode(loaded)));
+
+    m_out.appendToArm(holdsNone, fork);
+    join.add(isMarkerOrEmpty(Boxed(m_out.zeroExt(loaded.value(), Machine::Int64))));
+    return join.finishBehind(fork);
 }
 
 Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Representation to)
@@ -1104,6 +1160,8 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
         Boxed marker(m_out.zeroExt(word.value(), Machine::Int64));
         if (!type.hasCells())
             return marker;
+        if (LValue loaded = emittersCheckProofs() ? nullptr : wordReadAsUndefinedIfEmpty(word))
+            return decodeEmptyAsUndefined(NarrowReference(loaded));
         Condition isCell = isCellReference(word);
         return select(isCell, boxCell(decode(word)), marker);
     }
@@ -1135,11 +1193,11 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
         Boxed value = operand.as<Boxed>();
         if (!(type.primitives & markerPrimitives))
             return compress(unboxCell(value));
-        NarrowReference marker(m_out.castToInt32(value.value()));
         if (!type.hasCells())
-            return marker;
+            return NarrowReference(m_out.castToInt32(value.value()));
         Condition isCell = above(value, undefined());
-        return select(isCell, compress(unboxCell(value)), marker);
+        LValue shifted = m_out.lShr(value.value(), m_out.constInt32(cell32Shift));
+        return NarrowReference(m_out.castToInt32(m_out.select(isCell.value(), shifted, value.value())));
     }
     case Representation::Unchosen:
     case Representation::Boolean:
@@ -1237,12 +1295,14 @@ std::optional<ConversionEmitter::ComparedInteger> ConversionEmitter::findCompare
     if (!operand.is<Number>() && !operand.is<OptionalNumber>())
         return std::nullopt;
     if (auto behind = m_optionalIntegersOfNumbers.getOptional(number))
-        return ComparedInteger { Integer(behind->integer), true, behind->markerIsNaN || operand.is<Number>() };
+        return ComparedInteger { Integer(behind->integer), true, behind->markerIsNaN || operand.is<Number>(), behind->range };
     if (number->opcode() == Machine::IToD && number->child(0)->type() == Machine::Int32)
-        return ComparedInteger { signExtended(Word32(number->child(0))), false };
+        return ComparedInteger { .value = signExtended(Word32(number->child(0))), .mayBeMarker = false, .range = Range::int32() };
+    if (number->opcode() == Machine::IToD && operand.is<Number>())
+        return ComparedInteger { .value = Integer(number->child(0)), .mayBeMarker = false, .isRounded = true };
     static constexpr double largestComparedConstant = 0x1p52;
     if (number->hasDouble() && std::abs(number->asDouble()) <= largestComparedConstant && std::trunc(number->asDouble()) == number->asDouble())
-        return ComparedInteger { integer(static_cast<int64_t>(number->asDouble())), false };
+        return ComparedInteger { .value = integer(static_cast<int64_t>(number->asDouble())), .mayBeMarker = false, .range = Range::one(static_cast<int64_t>(number->asDouble())) };
     return std::nullopt;
 }
 

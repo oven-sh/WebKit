@@ -92,16 +92,51 @@ static Reference booleanInStepsByHand(Walker& walker, bool written, Origin origi
     return walker.constant(WTF::move(constant));
 }
 
-static bool nothingSeenHappensBetweenInStepsByHand(const BodyIndex& index, ValueID read, ValueID call)
+static bool isPlainPrimitiveInStepsByHand(Walker& walker, const BodyIndex& index, ValueID value, ValueID read)
 {
+    static constexpr uint16_t plainPrimitives = Primitive::Number | Primitive::AnyString | Primitive::Boolean | Primitive::UndefinedOrNull;
+    static constexpr OpcodeSet operators = opcodesOfFamily(OperationFamily::Operator);
+    static constexpr OpcodeSet written { Opcode::Integer, Opcode::Double, Opcode::String, Opcode::Boolean, Opcode::Undefined, Opcode::Null };
+    value = index.stripCasts(value);
+    bool standsBehindRead = value && !index.isParameter(value) && index.blockOf(value) == index.blockOf(read) && value.index() > read.index();
+    if (!standsBehindRead) {
+        Reference built = value ? walker.referenceOf(value) : Reference();
+        return built && walker.typeOf(built) && walker.types().at(walker.typeOf(built)).hasOnlyPrimitives(plainPrimitives);
+    }
+    Opcode opcode = index.opcodeOf(value);
+    if (written.contains(opcode))
+        return true;
+    if (!operators.contains(opcode))
+        return false;
+    bool isPlain = true;
+    index.value(value).forEachOperand([&](ValueID operand, uint32_t) {
+        isPlain = isPlain && isPlainPrimitiveInStepsByHand(walker, index, operand, read);
+    });
+    return isPlain;
+}
+
+static bool nothingSeenHappensBetweenInStepsByHand(Walker& walker, const BodyIndex& index, ValueID read, ValueID call)
+{
+    static constexpr OpcodeSet operators = opcodesOfFamily(OperationFamily::Operator);
     if (index.blockOf(read) != index.blockOf(call) || read.index() >= call.index())
         return false;
     for (uint32_t between = read.index() + 1; between < call.index(); ++between) {
         Opcode opcode = index.opcodeOf(ValueID(between));
-        if (!declaredBoundInTable(opcode).mayBeRunAgainUnseen() || operandsMayRunCode(opcode))
+        if (declaredBoundInTable(opcode).mayBeRunAgainUnseen() && !operandsMayRunCode(opcode))
+            continue;
+        if (!operators.contains(opcode) || !isPlainPrimitiveInStepsByHand(walker, index, ValueID(between), read))
             return false;
     }
     return true;
+}
+
+static PropertyKeyID nameCalled(Walker& walker, const BodyValue& call)
+{
+    if (PropertyKeyID key = call.calleeKey())
+        return key;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = index.stripCasts(call.calleeOperand());
+    return !index.isParameter(read) && index.opcodeOf(read) == Opcode::ElemGet && walker.armHoldsKeyOf(read) ? keyThatAccessGoesBy(walker, index.value(read)) : PropertyKeyID();
 }
 
 static bool readsEngineNext(Walker& walker, const BodyValue& call)
@@ -111,13 +146,14 @@ static bool readsEngineNext(Walker& walker, const BodyValue& call)
     BuiltinID next = table.canonicalID(Builtins::GeneratorPrototypeNext);
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID read = index.stripCasts(call.calleeOperand());
-    if (index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet)
+    if (index.isParameter(read) || (index.opcodeOf(read) != Opcode::PropGet && index.opcodeOf(read) != Opcode::ElemGet))
         return false;
     BodyValue access = index.value(read);
     PropertyKeyID key = program.keyOf(BuiltinNames::next);
-    if (access.isFreeName() || access.key() != key || index.stripCasts(access.objectOperand()) != index.stripCasts(call.thisValueOperand()))
+    bool readsNext = access.opcode() == Opcode::PropGet ? !access.isFreeName() && access.key() == key : nameCalled(walker, call) == key;
+    if (!readsNext || index.stripCasts(access.objectOperand()) != index.stripCasts(call.thisValueOperand()))
         return false;
-    if (!nothingSeenHappensBetweenInStepsByHand(index, read, call.id()))
+    if (!nothingSeenHappensBetweenInStepsByHand(walker, index, read, call.id()))
         return false;
 
     BuiltinID prototype = table.at(BuiltinClasses::Generator).prototype;
@@ -160,13 +196,22 @@ static const OnlyReadSteps& findOnlyReadSteps(Walker& walker, ResultOfNextInStep
     BitVector& onlyRead = steps.values;
     onlyRead.ensureSize(index.numberOfValues());
     Vector<uint32_t> sources;
-    sources.fill(UINT32_MAX, index.numberOfValues());
     auto sourceOf = [&](ValueID name) {
         return name ? sources[name.index()] : UINT32_MAX;
     };
-    auto isCallOfNext = [&](const BodyValue& user) {
-        return user.opcode() == Opcode::Call && user.calleeKey() == next;
+    auto callsComputedMember = [&](const BodyValue& user) {
+        ValueID read = user.calleeKey() || !user.thisValueOperand() ? ValueID() : index.stripCasts(user.calleeOperand());
+        return read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::ElemGet && index.stripCasts(index.value(read).objectOperand()) == index.stripCasts(user.thisValueOperand());
     };
+    auto isCallOfNext = [&](const BodyValue& user) {
+        return user.opcode() == Opcode::Call && (user.calleeKey() == next || callsComputedMember(user));
+    };
+    bool someCallIsOfNext = false;
+    for (uint32_t blockIndex = 0; blockIndex < index.numberOfBlocks() && !someCallIsOfNext; ++blockIndex)
+        someCallIsOfNext = std::ranges::any_of(index.block(BlockID(blockIndex)).values(), isCallOfNext);
+    if (!someCallIsOfNext)
+        return steps;
+    sources.fill(UINT32_MAX, index.numberOfValues());
     for (bool hasFoundMore = true; hasFoundMore;) {
         hasFoundMore = false;
         for (uint32_t blockIndex = 0; blockIndex < index.numberOfBlocks(); ++blockIndex) {
@@ -559,7 +604,7 @@ static bool isGeneratorStep(Walker& walker, const BodyValue& call)
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::BuiltinCalls) || !walker.opensGuesses())
         return false;
     const Program& program = walker.program();
-    if (!call.thisValueOperand() || call.argumentsOperands().size() > 1 || call.calleeKey() != program.keyOf(BuiltinNames::next))
+    if (!call.thisValueOperand() || call.argumentsOperands().size() > 1 || nameCalled(walker, call) != program.keyOf(BuiltinNames::next))
         return false;
 
     Reference generator = walker.referenceOf(call.thisValueOperand());
@@ -570,7 +615,8 @@ static bool isGeneratorStep(Walker& walker, const BodyValue& call)
     if (!types.at(typeOfGenerator).isObject() || !types.isSubset(typeOfGenerator, types.builtinClass(BuiltinClasses::Generator))) {
         TypeID expected = walker.has(Mechanism::Guesses) ? findExpectation(walker, call.thisValueOperand()).type : TypeID();
         TypeID present = expected ? types.withoutNullish(expected) : TypeID();
-        if (!present || isNeverType(present) || !types.isSubset(present, types.builtinClass(BuiltinClasses::Generator)))
+        bool nothingIsKnown = walker.has(Mechanism::Guesses) && walker.isInLoop() && walker.fileHoldsGenerators() && types.isUninformative(typeOfGenerator) && (!present || types.isUninformative(present));
+        if (!nothingIsKnown && (!present || isNeverType(present) || !types.isSubset(present, types.builtinClass(BuiltinClasses::Generator))))
             return false;
     }
     return walker.isInLoop() || findOnlyReadSteps(walker).values.quickGet(call.id().index());

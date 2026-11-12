@@ -467,6 +467,89 @@ static void testMachineOrderKeepsArmThatGoesRoundThroughRareBlockWithinItsLoop()
     AOT_ORDER_TEST_CHECK(test, test.run(5, 9, 0) == 105 && test.run(5, 4, 1) == 106 && test.run(5, 3, 0) == -1);
 }
 
+template<bool followsLinks>
+static void testMachineOrderOfSearch()
+{
+    OrderTest test;
+    Output& out = test.out;
+    const AbstractHeap& words = test.testProcedure.heaps().argumentBuffer;
+    LBasicBlock head = out.newBlock();
+    LBasicBlock body = out.newBlock();
+    LBasicBlock latch = out.newBlock();
+    LBasicBlock found = out.newBlock();
+    LBasicBlock missing = out.newBlock();
+    LValue entry = out.phiIn(head, Int64);
+    out.upsilon(test.first, entry);
+    out.jump(head);
+    out.appendTo(head);
+    out.branch(out.equal(entry, test.third), normalEdge(missing), normalEdge(body));
+    out.appendTo(body);
+    out.branch(out.equal(out.load64(out.address(words, entry, sizeof(int64_t))), test.second), normalEdge(found), normalEdge(latch));
+    out.appendTo(latch);
+    out.upsilon(followsLinks ? out.load64(out.address(words, entry)) : out.add(entry, 2 * sizeof(int64_t)), entry);
+    out.jump(head);
+    test.returnConstant(found, 1);
+    test.returnConstant(missing, 0);
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, (order.of(head).layoutIndex < order.of(latch).layoutIndex) == followsLinks);
+    std::array<int64_t, 6> entries { 0, 7, 0, 8, 0, 9 };
+    auto addressOf = [&](size_t word) {
+        return static_cast<int64_t>(reinterpret_cast<uintptr_t>(entries.data() + word));
+    };
+    entries[0] = addressOf(2);
+    entries[2] = addressOf(4);
+    int64_t end = followsLinks ? 0 : addressOf(entries.size());
+    AOT_ORDER_TEST_CHECK(test, test.run(addressOf(0), 7, end) == 1 && test.run(addressOf(0), 9, end) == 1 && !test.run(addressOf(0), 10, end) && !test.run(end, 7, end));
+}
+
+template<bool isEnteredWithWhatWasTested>
+static void testMachineOrderOfSearchWithPoll()
+{
+    OrderTest test;
+    Output& out = test.out;
+    const AbstractHeap& words = test.testProcedure.heaps().argumentBuffer;
+    LBasicBlock entered = out.newBlock();
+    LBasicBlock head = out.newBlock();
+    LBasicBlock body = out.newBlock();
+    LBasicBlock comparesKey = out.newBlock();
+    LBasicBlock latch = out.newBlock();
+    LBasicBlock found = out.newBlock();
+    LBasicBlock missing = out.newBlock();
+    LValue entry = out.phiIn(head, Int64);
+    if (isEnteredWithWhatWasTested)
+        out.branch(out.equal(test.first, test.third), normalEdge(missing), normalEdge(entered));
+    else
+        out.jump(entered);
+    test.passAndJump(entered, test.first, entry, normalEdge(head));
+    out.appendTo(head);
+    PatchOperation* poll = out.patchpoint(Void);
+    out.procedure().noteLoopPoll(poll);
+    poll->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    out.branch(out.equal(entry, test.third), normalEdge(missing), normalEdge(body));
+    out.appendTo(body);
+    LValue key = out.load64(out.address(words, entry, sizeof(int64_t)));
+    out.branch(out.lessThan(key, out.constInt64(0)), normalEdge(latch), normalEdge(comparesKey));
+    out.appendTo(comparesKey);
+    out.branch(out.equal(key, test.second), normalEdge(found), normalEdge(latch));
+    out.appendTo(latch);
+    out.upsilon(out.load64(out.address(words, entry)), entry);
+    out.jump(head);
+    test.returnConstant(found, 1);
+    test.returnConstant(missing, 0);
+    test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, (head->last()->opcode() == Jump) == isEnteredWithWhatWasTested);
+    AOT_ORDER_TEST_CHECK(test, (latch->last()->opcode() == Branch) == isEnteredWithWhatWasTested);
+    std::array<int64_t, 6> entries { 0, 7, 0, -8, 0, 9 };
+    auto addressOf = [&](size_t word) {
+        return static_cast<int64_t>(reinterpret_cast<uintptr_t>(entries.data() + word));
+    };
+    entries[0] = addressOf(2);
+    entries[2] = addressOf(4);
+    AOT_ORDER_TEST_CHECK(test, test.run(addressOf(0), 7) == 1 && test.run(addressOf(0), 9) == 1 && !test.run(addressOf(0), 10) && !test.run(addressOf(0), -8) && !test.run(0, 7));
+}
+
 static void testMachineOrderSplitsCriticalEdge()
 {
     for (EdgeClass classOfEdge : { EdgeClass::Normal, EdgeClass::Unlikely, EdgeClass::Rare }) {
@@ -755,11 +838,6 @@ struct OrderTestBooleanJoin {
         out.appendTo(join);
     }
 
-    bool isKept(const Order& order) const
-    {
-        return taken->successor(0).block() == join && notTaken->successor(0).block() == join && order.of(join).predecessors.size() == 2;
-    }
-
     LBasicBlock taken;
     LBasicBlock notTaken;
     LBasicBlock join;
@@ -787,6 +865,81 @@ static void testMachineThreadingResolvesBranchOnJoinOfConstants()
         AOT_ORDER_TEST_CHECK(test, !order.of(whenTrue).isRare() && order.of(whenFalse).isRare() == (classOfFalseWay == EdgeClass::Rare));
         AOT_ORDER_TEST_CHECK(test, test.run(1, 2) == 10 && test.run(2, 1) == 20);
     }
+}
+
+template<bool isInverted, bool falseWayLeadsToJoin>
+static void testMachineThreadingPassesTestAsNumber()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock left = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LBasicBlock right = falseWayLeadsToJoin ? join : out.newBlock();
+    LValue number = out.phiIn(join, Int32);
+    LValue passed = out.phiIn(join, Int64);
+    LValue one = out.constInt32(1);
+    LValue zero = out.constInt32(0);
+    LValue isLess = out.lessThan(test.first, test.second);
+    if (falseWayLeadsToJoin) {
+        out.upsilon(isInverted ? one : zero, number);
+        out.upsilon(test.third, passed);
+    }
+    out.branch(isLess, normalEdge(left), normalEdge(right));
+    out.appendTo(left);
+    out.upsilon(isInverted ? zero : one, number);
+    out.upsilon(test.third, passed);
+    out.jump(join);
+    if (!falseWayLeadsToJoin) {
+        out.appendTo(right);
+        out.upsilon(isInverted ? one : zero, number);
+        out.upsilon(test.third, passed);
+        out.jump(join);
+    }
+    out.appendTo(join);
+    out.ret(out.add(passed, out.zeroExtPtr(number)));
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, !orderTestNumberOfReached(order, Branch) && !order.of(left).isReached() && (falseWayLeadsToJoin || !order.of(right).isReached()));
+    AOT_ORDER_TEST_CHECK(test, test.run(1, 2, 10) == 10 + !isInverted && test.run(2, 1, 10) == 10 + isInverted && test.run(2, 2, 10) == 10 + isInverted);
+}
+
+static void testMachineThreadingLeavesTestsOfDoublesToBranch()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock left = out.newBlock();
+    LBasicBlock right = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LValue number = out.phiIn(join, Int32);
+    auto bits = [&](LValue word) { return out.bitCast(word, Double); };
+    out.branch(out.doubleLessThan(bits(test.first), bits(test.second)), normalEdge(left), normalEdge(right));
+    test.passAndJump(left, out.constInt32(0), number, normalEdge(join));
+    test.passAndJump(right, out.constInt32(1), number, normalEdge(join));
+    out.appendTo(join);
+    out.ret(out.zeroExtPtr(number));
+    test.compile();
+
+    auto run = [&](double first, double second) { return test.run(std::bit_cast<int64_t>(first), std::bit_cast<int64_t>(second)); };
+    AOT_ORDER_TEST_CHECK(test, !run(1, 2) && run(2, 1) == 1 && run(1, 1) == 1 && run(std::numeric_limits<double>::quiet_NaN(), 1) == 1);
+}
+
+static void testMachineThreadingLeavesOtherNumbersToBranch()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock left = out.newBlock();
+    LBasicBlock right = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LValue number = out.phiIn(join, Int32);
+    out.branch(out.lessThan(test.first, test.second), normalEdge(left), normalEdge(right));
+    test.passAndJump(left, out.constInt32(2), number, normalEdge(join));
+    test.passAndJump(right, out.constInt32(0), number, normalEdge(join));
+    out.appendTo(join);
+    out.ret(out.zeroExtPtr(number));
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, orderTestNumberOfReached(order, Branch) == 1);
+    AOT_ORDER_TEST_CHECK(test, test.run(1, 2) == 2 && !test.run(2, 1));
 }
 
 template<unsigned numberOfJoins>
@@ -911,7 +1064,7 @@ static void testMachineThreadingKeepsJoinThatHoldsStore()
     test.returnConstant(whenFalse, 20);
     const Order& order = test.compile();
 
-    AOT_ORDER_TEST_CHECK(test, blocks.isKept(order));
+    AOT_ORDER_TEST_CHECK(test, order.of(blocks.join).isReached() && orderTestNumberOfReached(order, Branch) == 1);
     for (int64_t first : { 1, 3 }) {
         int64_t word = 0;
         AOT_ORDER_TEST_CHECK(test, test.run(first, 2, reinterpret_cast<int64_t>(&word)) == (first < 2 ? 10 : 20) && word == 5);
@@ -1566,6 +1719,147 @@ static void testMachineThreadingAsksSecondOfTwoJoinedTestsOfBitsOfWordThatFirstR
         AOT_ORDER_TEST_CHECK(test, test.run(0, 0, reinterpret_cast<int64_t>(&word)) == (word & 1 ? 10 : word & 6 ? 20 : 30));
 }
 
+enum class OrderTestBytes : uint8_t { OfOneWord, OfTwoWords, StoredBetween, Opposed, LeaveElsewhere, AllOfByteInMiddle };
+
+template<OrderTestBytes variant>
+static void testMachineThreadingAsksBytesOfWordAtOnce()
+{
+    using enum OrderTestBytes;
+    OrderTest test;
+    Output& out = test.out;
+    const Block* start = out.m_block;
+    LBasicBlock next = out.newBlock();
+    LBasicBlock last = out.newBlock();
+    LBasicBlock usual = out.newBlock();
+    LBasicBlock slow = out.newBlock();
+    LBasicBlock other = out.newBlock();
+    auto byteAt = [&](ptrdiff_t offset) {
+        return out.load8ZeroExt32(out.address(test.testProcedure.heaps().argumentBuffer, test.first, offset));
+    };
+    out.branch(out.equal(byteAt(5), out.constInt32(0x30)), normalEdge(next), rareEdge(slow));
+    out.appendTo(next);
+    if (variant == StoredBetween)
+        out.store32(out.constInt32(0x40300c), out.address(test.testProcedure.heaps().argumentBuffer, test.first, 4));
+    if (variant == AllOfByteInMiddle)
+        out.branch(out.equal(byteAt(6), out.constInt32(0x40)), normalEdge(last), rareEdge(slow));
+    else
+        out.branch(out.testNonZero32(byteAt(variant == OfTwoWords ? 2 : 6), out.constInt32(0x40)), normalEdge(last), rareEdge(slow));
+    out.appendTo(last);
+    if (variant == Opposed)
+        out.branch(out.equal(out.bitAnd(byteAt(5), out.constInt32(0x31)), out.constInt32(0x21)), normalEdge(usual), rareEdge(slow));
+    else
+        out.branch(out.equal(out.bitAnd(byteAt(4), out.constInt32(0xc)), out.constInt32(4)), normalEdge(usual), rareEdge(variant == LeaveElsewhere ? other : slow));
+    test.returnConstant(usual, 10);
+    test.returnConstant(slow, 20);
+    test.returnConstant(other, 30);
+    const Order& order = test.compile();
+
+    constexpr bool areAskedAtOnce = variant == OfOneWord || variant == AllOfByteInMiddle;
+    AOT_ORDER_TEST_CHECK(test, order.of(next).isReached() != areAskedAtOnce);
+    if (areAskedAtOnce) {
+        const Operation* asked = start->last()->child(0);
+        uint32_t mask = variant == AllOfByteInMiddle ? 0xffff0c : 0x40ff0c;
+        AOT_ORDER_TEST_CHECK(test, !order.of(last).isReached() && asked->opcode() == Equal && asked->child(1)->isInt32(0x403004) && asked->child(0)->opcode() == BitAnd && asked->child(0)->child(1)->isInt32(static_cast<int32_t>(mask)));
+    }
+    for (uint32_t high : { 0x403004u, 0x403006u, 0xff40300cu, 0x3004u, 0x413005u, 0x403104u, 0xc0300fu, 0x402104u }) {
+        for (uint32_t low : { 0u, 0x400000u }) {
+            uint64_t words[] { static_cast<uint64_t>(high) << 32 | low, 0, 0 };
+            auto byteOf = [&](unsigned offset) {
+                return static_cast<uint8_t>(words[0] >> (offset * 8));
+            };
+            bool isFirst = byteOf(5) == 0x30;
+            if (isFirst && variant == StoredBetween)
+                words[0] = static_cast<uint64_t>(0x40300c) << 32 | low;
+            bool isSecond = variant == AllOfByteInMiddle ? byteOf(6) == 0x40 : byteOf(variant == OfTwoWords ? 2 : 6) & 0x40;
+            bool isThird = variant == Opposed ? (byteOf(5) & 0x31) == 0x21 : (byteOf(4) & 0xc) == 4;
+            int64_t expected = !isFirst || !isSecond ? 20 : isThird ? 10 : variant == LeaveElsewhere ? 30 : 20;
+            words[0] = static_cast<uint64_t>(high) << 32 | low;
+            AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(words)) == expected);
+        }
+    }
+}
+
+template<bool convertsOneValue>
+static void testMachineThreadingAsksBytesAtOnceWhereWaysConvertOneValue()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock next = out.newBlock();
+    LBasicBlock usual = out.newBlock();
+    LBasicBlock leavesFirst = out.newBlock();
+    LBasicBlock leavesSecond = out.newBlock();
+    LBasicBlock slow = out.newBlock();
+    LValue phi = out.phiIn(slow, Int64);
+    LValue word = out.load32(out.address(test.testProcedure.heaps().argumentBuffer, test.second));
+    LValue otherWord = out.load32(out.address(test.testProcedure.heaps().argumentBuffer, test.second, 4));
+    auto byteAt = [&](ptrdiff_t offset) {
+        return out.load8ZeroExt32(out.address(test.testProcedure.heaps().argumentBuffer, test.first, offset));
+    };
+    out.branch(out.equal(byteAt(5), out.constInt32(0x30)), normalEdge(next), rareEdge(leavesFirst));
+    out.appendTo(next);
+    out.branch(out.equal(out.bitAnd(byteAt(4), out.constInt32(0xc)), out.constInt32(4)), normalEdge(usual), rareEdge(leavesSecond));
+    out.appendTo(leavesFirst);
+    out.upsilon(out.signExt32To64(word), phi);
+    out.jump(rareEdge(slow));
+    out.appendTo(leavesSecond);
+    out.upsilon(out.signExt32To64(convertsOneValue ? word : otherWord), phi);
+    out.jump(rareEdge(slow));
+    test.returnValue(slow, phi);
+    test.returnValue(usual, out.constInt64(1));
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, order.of(next).isReached() != convertsOneValue);
+    for (uint32_t high : { 0x403004u, 0x40300cu, 0x402104u, 0x40210cu }) {
+        uint64_t words[] { static_cast<uint64_t>(high) << 32, 0, 0 };
+        int32_t passed[] { -5, 7 };
+        bool isFirst = ((high >> 8) & 0xff) == 0x30;
+        bool isSecond = (high & 0xc) == 4;
+        int64_t expected = !isFirst ? -5 : isSecond ? 1 : convertsOneValue ? -5 : 7;
+        AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(words), reinterpret_cast<int64_t>(passed)) == expected);
+    }
+}
+
+static void testMachineThreadingAsksBytesAtOnceWhereEarlierTestLeadsIntoWay()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock first = out.newBlock();
+    LBasicBlock next = out.newBlock();
+    LBasicBlock usual = out.newBlock();
+    LBasicBlock leavesFirst = out.newBlock();
+    LBasicBlock leavesSecond = out.newBlock();
+    LBasicBlock slow = out.newBlock();
+    LValue phi = out.phiIn(slow, Int64);
+    LValue word = out.load32(out.address(test.testProcedure.heaps().argumentBuffer, test.second));
+    auto byteAt = [&](ptrdiff_t offset) {
+        return out.load8ZeroExt32(out.address(test.testProcedure.heaps().argumentBuffer, test.first, offset));
+    };
+    out.branch(out.equal(test.third, out.constInt64(9)), rareEdge(leavesFirst), normalEdge(first));
+    out.appendTo(first);
+    out.branch(out.equal(byteAt(5), out.constInt32(0x30)), normalEdge(next), rareEdge(leavesFirst));
+    out.appendTo(next);
+    out.branch(out.equal(out.bitAnd(byteAt(4), out.constInt32(0xc)), out.constInt32(4)), normalEdge(usual), rareEdge(leavesSecond));
+    out.appendTo(leavesFirst);
+    out.upsilon(out.signExt32To64(word), phi);
+    out.jump(rareEdge(slow));
+    out.appendTo(leavesSecond);
+    out.upsilon(out.signExt32To64(word), phi);
+    out.jump(rareEdge(slow));
+    test.returnValue(slow, phi);
+    test.returnValue(usual, out.constInt64(1));
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, !order.of(next).isReached());
+    for (uint32_t high : { 0x403004u, 0x40300cu, 0x402104u, 0x40210cu }) {
+        for (int64_t third : { 0, 9 }) {
+            uint64_t words[] { static_cast<uint64_t>(high) << 32, 0, 0 };
+            int32_t passed[] { -5, 7 };
+            bool passes = third != 9 && ((high >> 8) & 0xff) == 0x30 && (high & 0xc) == 4;
+            AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(words), reinterpret_cast<int64_t>(passed), third) == (passes ? 1 : -5));
+        }
+    }
+}
+
 static void testMachineThreadingEndsInCycleOfJumps()
 {
     OrderTest test;
@@ -1923,6 +2217,10 @@ std::span<const NativeTest> machineOrderTests()
         { "machine-order/unlikely-arm-stands-outside-its-loop"_s, Machine::testMachineOrderTakesUnlikelyArmOutOfLoop },
         { "machine-order/every-entrypoint-is-a-start"_s, Machine::testMachineOrderStartsAtEveryEntrypoint },
         { "machine-order/arm-that-goes-round-through-a-rare-block-lies-within-its-loop"_s, Machine::testMachineOrderKeepsArmThatGoesRoundThroughRareBlockWithinItsLoop },
+        { "machine-order/search-along-links-starts-at-its-head"_s, Machine::testMachineOrderOfSearch<true> },
+        { "machine-order/search-in-a-row-is-tested-behind-its-body"_s, Machine::testMachineOrderOfSearch<false> },
+        { "machine-order/search-begins-with-its-body"_s, Machine::testMachineOrderOfSearchWithPoll<true> },
+        { "machine-order/search-that-was-not-asked-begins-with-its-test"_s, Machine::testMachineOrderOfSearchWithPoll<false> },
         { "machine-order/critical-edge-is-split"_s, Machine::testMachineOrderSplitsCriticalEdge },
         { "machine-order/two-edges-to-one-block-are-split-apart"_s, Machine::testMachineOrderSplitsEachOfTwoEdgesToOneBlock },
         { "machine-order/work-grows-as-the-edges-of-a-switch-do"_s, Machine::testMachineOrderGrowsAsEdgesOfSwitchDo },
@@ -1933,6 +2231,12 @@ std::span<const NativeTest> machineOrderTests()
         { "machine-order/branch-on-a-join-of-constants-is-threaded"_s, Machine::testMachineThreadingResolvesBranchOnJoinOfConstants },
         { "machine-order/only-reached-edge-keeps-its-class-through-two-joins"_s, Machine::testMachineThreadingKeepsClassOfOnlyReachedEdge<2> },
         { "machine-order/comparisons-ahead-of-a-join-are-fused-into-branches"_s, Machine::testMachineThreadingFusesComparisonsAheadOfJoin },
+        { "machine-order/test-is-passed-as-number"_s, Machine::testMachineThreadingPassesTestAsNumber<false, false> },
+        { "machine-order/inverted-test-is-passed-as-number"_s, Machine::testMachineThreadingPassesTestAsNumber<true, false> },
+        { "machine-order/test-with-one-arm-is-passed-as-number"_s, Machine::testMachineThreadingPassesTestAsNumber<false, true> },
+        { "machine-order/inverted-test-with-one-arm-is-passed-as-number"_s, Machine::testMachineThreadingPassesTestAsNumber<true, true> },
+        { "machine-order/tests-of-doubles-are-left-to-branch"_s, Machine::testMachineThreadingLeavesTestsOfDoublesToBranch },
+        { "machine-order/other-numbers-are-left-to-branch"_s, Machine::testMachineThreadingLeavesOtherNumbersToBranch },
         { "machine-order/edge-of-a-branch-that-passes-no-constant-stays"_s, Machine::testMachineThreadingLeavesEdgeOfBranchThatPassesNoConstant },
         { "machine-order/join-that-hands-its-phi-to-a-second-join-is-threaded"_s, Machine::testMachineThreadingPassesJoinThatHandsItsPhiOn },
         { "machine-order/join-that-holds-a-store-stays"_s, Machine::testMachineThreadingKeepsJoinThatHoldsStore },
@@ -1971,6 +2275,15 @@ std::span<const NativeTest> machineOrderTests()
         { "machine-order/test-for-zero-is-asked-behind-a-test-that-leaves-by-its-first-way"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::LeavesForZeroTooByItsFirstWay> },
         { "machine-order/test-of-bits-is-asked-behind-a-bound-that-words-without-them-fail"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::FollowsTestOfBits> },
         { "machine-order/the-second-of-two-joined-tests-of-bits-asks-the-word-that-the-first-read"_s, Machine::testMachineThreadingAsksSecondOfTwoJoinedTestsOfBitsOfWordThatFirstRead },
+        { "machine-order/bytes-of-one-word-are-asked-at-once"_s, Machine::testMachineThreadingAsksBytesOfWordAtOnce<Machine::OrderTestBytes::OfOneWord> },
+        { "machine-order/all-bits-of-bytes-of-one-word-are-asked-at-once"_s, Machine::testMachineThreadingAsksBytesOfWordAtOnce<Machine::OrderTestBytes::AllOfByteInMiddle> },
+        { "machine-order/bytes-of-two-words-are-asked-apart"_s, Machine::testMachineThreadingAsksBytesOfWordAtOnce<Machine::OrderTestBytes::OfTwoWords> },
+        { "machine-order/bytes-are-asked-apart-around-a-store"_s, Machine::testMachineThreadingAsksBytesOfWordAtOnce<Machine::OrderTestBytes::StoredBetween> },
+        { "machine-order/opposed-tests-of-a-byte-are-asked-apart"_s, Machine::testMachineThreadingAsksBytesOfWordAtOnce<Machine::OrderTestBytes::Opposed> },
+        { "machine-order/bytes-whose-tests-leave-for-two-places-are-asked-apart"_s, Machine::testMachineThreadingAsksBytesOfWordAtOnce<Machine::OrderTestBytes::LeaveElsewhere> },
+        { "machine-order/bytes-are-asked-at-once-where-both-ways-convert-one-value"_s, Machine::testMachineThreadingAsksBytesAtOnceWhereWaysConvertOneValue<true> },
+        { "machine-order/bytes-are-asked-apart-where-the-ways-convert-two-values"_s, Machine::testMachineThreadingAsksBytesAtOnceWhereWaysConvertOneValue<false> },
+        { "machine-order/bytes-are-asked-at-once-where-an-earlier-test-leads-into-the-way"_s, Machine::testMachineThreadingAsksBytesAtOnceWhereEarlierTestLeadsIntoWay },
         { "machine-order/test-is-left-to-next"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::ExitsToOneBlock> },
         { "machine-order/test-is-left-for-usual-place"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::ExitsToOneLikelyBlock> },
         { "machine-order/word-read-below-stays-read"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::IsReadBelow> },

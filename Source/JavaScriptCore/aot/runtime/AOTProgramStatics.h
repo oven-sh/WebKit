@@ -36,6 +36,20 @@ public:
     explicit ProgramStatics(State&);
 
     void putBack(uint32_t offset, uint32_t size);
+
+    struct VariableWithViewMirror {
+        void refresh();
+        static void refreshViewsOfOneBuffer(std::span<VariableWithViewMirror>);
+
+        EncodedJSValue variable;
+        void* vector;
+        uint64_t length;
+        uint64_t lengthOfBuffer;
+    };
+    std::span<VariableWithViewMirror> variablesWithViewMirrorIn(const StaticsRange&);
+    void refreshViewMirrors();
+    void didWriteVariable(uint32_t offset);
+    void didMoveStorageOf(JSCell* view);
     void didStoreRootInStatics(uint32_t offset) { m_slots.record(m_instance.statics() + offset); }
     void setCell(uint32_t offset, JSCell* cell) { at<RememberedSlot<JSCell*>>(offset).set(m_slots, cell); }
 

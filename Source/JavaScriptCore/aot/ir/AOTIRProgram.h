@@ -83,6 +83,9 @@ public:
     Vector<ExpectedResult> expectedResults;
     Vector<Layout> layouts;
     bool someClassExtendsMixin { false };
+    bool someClassExtendsArray { false };
+    bool someClassExtendsIterable { false };
+    bool someClassExtendsView { false };
     Vector<TaggedFamily> taggedFamilies;
     Vector<Variable> variables;
     Vector<Module> modules;
@@ -195,6 +198,7 @@ public:
     LayoutID layoutOfWholeNamespace(ModuleID) const;
     LayoutID layoutOfNamespaceThatListsNoName(ModuleID) const;
     VariableID variableBehindExport(ModuleID, uint32_t index) const;
+    VariableID findCompiledExport(ModuleID, uint32_t index) const;
     std::span<const FieldReference> exportedFields() const LIFETIME_BOUND { return m_derivedTables.exportedFields.span(); }
     struct InstanceField {
         FieldReference field;
@@ -377,6 +381,7 @@ constexpr bool hasNamespaceLayout(ModuleKind kind)
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& facade);
 Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool reachesModuleObjects(const Program&);
+bool namesModuleObjects(const Program&);
 BuiltinID hostRequireFunctionFor(const Module&);
 bool loaderEntersBodyAtMostOnce(const Module&);
 bool isBodyWrittenInAnotherFile(const Program&, FunctionID);

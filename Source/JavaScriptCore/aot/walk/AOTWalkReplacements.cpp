@@ -667,11 +667,14 @@ static void buildStepOfCollectionIteratorAsReplacement(Walker& walker, const Bod
     Draft read = builder.draft(Opcode::GetCollectionIteratorTable);
     read.setObjectOperand(iterator);
     Reference table = builder.build(WTF::move(read));
-    Draft test = builder.draft(Opcode::IsCollectionIteratorClosedMark);
-    test.setTableOperand(table);
-
-    ArmsOfReplacements byFinished(builder, builder.build(WTF::move(test)), 2);
-    byFinished.endFirstArm({ builder.boolean(true), builder.undefined() });
+    bool isFirstStep = table && table.isValue() && walker.code().at(table.id()).opcode == Opcode::CollectionTable;
+    std::optional<ArmsOfReplacements> byFinished;
+    if (!isFirstStep) {
+        Draft test = builder.draft(Opcode::IsCollectionIteratorClosedMark);
+        test.setTableOperand(table);
+        byFinished.emplace(builder, builder.build(WTF::move(test)), 2);
+        byFinished->endFirstArm({ builder.boolean(true), builder.undefined() });
+    }
 
     TypeID collections = walker.types().builtinClass(classOfCollectionSteppedByReplacement(kindOfCollection));
     Reference collection;
@@ -693,8 +696,12 @@ static void buildStepOfCollectionIteratorAsReplacement(Walker& walker, const Bod
     putTableOfCollectionIteratorForReplacement(builder, iterator, builder.build(builder.draft(Opcode::CollectionIteratorClosedMark)));
     byEntry.endSecondArm({ builder.boolean(true), builder.undefined() });
 
-    byFinished.endSecondArm({ byEntry.result(0), byEntry.result(1) });
-    bindStepForReplacement(builder, step, byFinished.result(0), byFinished.result(1));
+    if (!byFinished) {
+        bindStepForReplacement(builder, step, byEntry.result(0), byEntry.result(1));
+        return;
+    }
+    byFinished->endSecondArm({ byEntry.result(0), byEntry.result(1) });
+    bindStepForReplacement(builder, step, byFinished->result(0), byFinished->result(1));
 }
 
 static void buildCallOfModuleStepAsReplacement(BuilderOfReplacements& builder, const ModuleStep& step, BuiltinID calledBuiltin)
@@ -933,13 +940,15 @@ static bool layAccessorsOfLiteralTogether(Walker& walker, const BodyValue& value
         return { };
     };
     ValueID next = neighbor(value.id(), 1);
-    bool isDefinedByNext = next && next.index() - block.firstValue().index() < walker.endOfStretchBeingWalked();
-    walker.noteAccessorDefinedByNext(value.id(), isDefinedByNext);
-    if (isDefinedByNext)
+    ValueID earlier = neighbor(value.id(), -1);
+    if (next && next.index() - block.firstValue().index() < walker.endOfStretchBeingWalked()) {
+        walker.noteAccessorDefinedByNext(value.id(), earlier);
         return true;
+    }
+    walker.noteAccessorDefinedItself(value.id(), earlier);
 
     Vector<ValueID, valuesInRowOfAccessors> group { value.id() };
-    for (ValueID earlier = neighbor(value.id(), -1); earlier && walker.isAccessorDefinedByNext(earlier); earlier = neighbor(earlier, -1))
+    for (; walker.isAccessorDefinedByNext(earlier); earlier = neighbor(earlier, -1))
         group.append(earlier);
     group.reverse();
 
@@ -1128,9 +1137,40 @@ bool Walker::armHoldsKeyOf(ValueID access) const
     return accesses.contains(index.opcodeOf(access)) && index.stripCasts(index.value(access).propertyOperand()) == index.stripCasts(index.value(m_accessWhoseKeyArmHolds).propertyOperand());
 }
 
+static TypeID namesOfComputedLiteral(Walker& walker, const BodyValue& definition)
+{
+    if (definition.as<Opcode::ElemDefine>().calledBuiltin())
+        return { };
+    Reference object = walker.referenceOf(definition.objectOperand());
+    if (!object || !object.isValue() || walker.code().isConstant(object.id()) || walker.code().at(object.id()).opcode != Opcode::NewObject)
+        return { };
+    const Program& program = walker.program();
+    LayoutID layout = walker.code().at(object.id()).layout();
+    if (program.at(layout).kind != LayoutKind::Record || walker.plan().slots().layout(layout).appendedKeys.isEmpty())
+        return { };
+    Vector<PropertyKeyID, 8> names;
+    for (const Field& field : program.at(layout).fields)
+        names.append(field.key);
+    names.appendVector(walker.plan().slots().layout(layout).appendedKeys);
+    if (names.isEmpty() || names.size() > std::min(mostTextsToldApart, mostNamesOfComputedLiteral))
+        return { };
+    TypeArena& types = walker.types();
+    TypeID texts;
+    for (PropertyKeyID name : names) {
+        if (!name || liesInThread(name) || program.at(name).kind != PropertyKeyKind::Text || !program.at(name).text || program.nameClassOf(name) != NameClass::Ordinary)
+            return { };
+        TypeID text = types.stringLiteral(program.at(name).text);
+        texts = texts ? types.unionOf(texts, text) : text;
+    }
+    return texts;
+}
+
 Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& written)
 {
-    if (!has(Mechanism::TypedOperations) || written.opcode() == Opcode::ElemDefine || isUnreachable() || armHoldsKeyOf(written.id()))
+    if (!has(Mechanism::TypedOperations) || isUnreachable() || armHoldsKeyOf(written.id()))
+        return KeyOfAccess::IsAnyValue;
+    TypeID namesOfLiteral = written.opcode() == Opcode::ElemDefine && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses) ? namesOfComputedLiteral(*this, written) : TypeID();
+    if (written.opcode() == Opcode::ElemDefine && !namesOfLiteral)
         return KeyOfAccess::IsAnyValue;
     Reference key = referenceOf(written.propertyOperand());
     TypeID proven = key ? typeOf(key) : TypeID();
@@ -1142,9 +1182,9 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     Type type = m_types.at(proven);
     if (!(type.primitives & Primitive::AnyString))
         return KeyOfAccess::IsAnyValue;
-    if (!m_versionedLoops.isEmpty() && canAccessAtKeyedAddress(*this, written))
+    if (!namesOfLiteral && !m_versionedLoops.isEmpty() && canAccessAtKeyedAddress(*this, written))
         return KeyOfAccess::IsAnyValue;
-    bool looksUpCallee = canRestartIteration() && canBuildIterationGuard() && canLookUpCallee(*this, written);
+    bool looksUpCallee = !namesOfLiteral && canRestartIteration() && canBuildIterationGuard() && canLookUpCallee(*this, written);
     if (looksUpCallee && !holdsWrittenTextsAlone(type) && !isStaticMethodCallee(*this, written) && isInvariantInSpecializedVersion(key, IterationPurity::KnownEffectsOnly) && canHoistKeyedLookup(Opcode::GetValueUnderKeyOrAbsent))
         return KeyOfAccess::IsAnyValue;
     auto isHolderOfLayouts = [&] {
@@ -1157,12 +1197,21 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     };
     bool textsAreOnlyExpected = false;
     bool holderIsOfLayouts = false;
+    if (namesOfLiteral && !holdsWrittenTextsAlone(type)) {
+        if (!m_types.isSubset(namesOfLiteral, proven))
+            return KeyOfAccess::IsAnyValue;
+        type = m_types.at(namesOfLiteral);
+        textsAreOnlyExpected = true;
+        holderIsOfLayouts = true;
+    }
     if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses)) {
         TypeID expected = findExpectation(*this, written.propertyOperand()).type;
-        TypeID withoutNothing = expected && canRestartIteration() ? m_types.withoutPrimitives(expected, Primitive::UndefinedOrNull | Primitive::Absent) : expected ? m_types.withoutNullish(expected) : TypeID();
-        if (!expected || withoutNothing == TypeID(TypeTable::string) || (looksUpCallee && !holdsWrittenTextsAlone(m_types.at(m_types.withoutNullish(expected)))))
+        auto withoutNothing = [&](TypeID type) {
+            return canRestartIteration() ? m_types.withoutPrimitives(type, Primitive::UndefinedOrNull | Primitive::Absent) : m_types.withoutNullish(type);
+        };
+        if (!expected || withoutNothing(expected) == TypeID(TypeTable::string) || (looksUpCallee && !holdsWrittenTextsAlone(m_types.at(m_types.withoutNullish(expected)))))
             expected = textsThatNamesOfHolderSayOfKey(*this, written, looksUpCallee);
-        TypeID present = expected ? m_types.withoutNullish(expected) : TypeID();
+        TypeID present = expected ? withoutNothing(expected) : TypeID();
         holderIsOfLayouts = isHolderOfLayouts();
         const BodyIndex& body = currentBodyIndex();
         ValueID definition = body.stripCasts(written.propertyOperand());
@@ -1199,6 +1248,18 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         return KeyOfAccess::IsAnyValue;
 
     uint32_t end = isCalled ? placeOfUser + 1 : begin + 1;
+    if (namesOfLiteral) {
+        static constexpr OpcodeSet constants { Opcode::Integer, Opcode::Double, Opcode::String, Opcode::Boolean, Opcode::Undefined, Opcode::Null };
+        ValueID literal = index.stripCasts(written.objectOperand());
+        for (uint32_t place = end; place < std::min(limit, endOfStretchBeingWalked()); ++place) {
+            BodyValue next = index.value(ValueID(block.firstValue().index() + place));
+            bool isOfLiteral = (next.opcode() == Opcode::PropDefine || next.opcode() == Opcode::FinishObject) && index.stripCasts(next.operand(0)) == literal;
+            if (isOfLiteral)
+                end = place + 1;
+            else if (!constants.contains(next.opcode()))
+                break;
+        }
+    }
     if (textsAreOnlyExpected) {
         ValueID rootOfKey = index.stripCasts(written.propertyOperand());
         bool hasLaterUse = false;
@@ -1220,7 +1281,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         return typeOf(referenceOf(input));
     };
     for (StringID text : texts) {
-        if (!textsAreOnlyExpected && typedFormOf(*this, accessByName(written, nameOfTextThatAccessMayGoBy(*this, written, text)), TypesOfInputs(typeOfInput)) == TypedForm::None && !isHolderOfLayouts())
+        if (!textsAreOnlyExpected && !isCalled && typedFormOf(*this, accessByName(written, nameOfTextThatAccessMayGoBy(*this, written, text)), TypesOfInputs(typeOfInput)) == TypedForm::None && !isHolderOfLayouts())
             return KeyOfAccess::IsAnyValue;
     }
 

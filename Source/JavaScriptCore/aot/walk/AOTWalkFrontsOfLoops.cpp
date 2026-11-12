@@ -600,7 +600,7 @@ BitVector Walker::findLoopsToUnswitch(FunctionID function, const BodyIndex& inde
     return found;
 }
 
-bool Walker::mayUnswitchLoop(BlockID inputHead)
+bool Walker::mayUnswitchLoop(BlockID inputHead, OtherClassBelowMixin& otherClass)
 {
     size_t frameIndex = m_frames.size() - 1;
     const BodyIndex& index = currentBodyIndex();
@@ -614,7 +614,18 @@ bool Walker::mayUnswitchLoop(BlockID inputHead)
     FunctionID function = m_frames[frameIndex].function;
     const BitVector& loopsToUnswitch = m_loopsToUnswitch.ensure(&index, [&] { return findLoopsToUnswitch(function, index); }).iterator->value;
     bool mayUnswitch = loopsToUnswitch.get(2 * loop.index()) || loopsToUnswitch.get(2 * loop.index() + 1);
-    return mayUnswitch && mayBuildLoopSeveralTimes(inputHead) && (index.loop(loop).numberOfLoopsWithin == 1 || hasUnrolledInnerLoops(inputHead));
+    bool holdsReaderLoop = false;
+    if (program().someClassExtendsMixin) [[unlikely]] {
+        BlockID innerMember;
+        for (BlockID member : index.loop(loop).numberOfLoopsWithin == 2 ? index.membersOf(loop) : std::span<const BlockID>()) {
+            if (index.loopOf(member) != loop)
+                innerMember = member;
+        }
+        holdsReaderLoop = innerMember && callsReaders(*this, index.loop(index.loopOf(innerMember)).head);
+        if (index.loop(loop).numberOfLoopsWithin == 1 || holdsReaderLoop)
+            otherClass = findOtherClassBelowMixin(*this, inputHead);
+    }
+    return (mayUnswitch || otherClass.others) && mayBuildLoopSeveralTimes(inputHead) && (index.loop(loop).numberOfLoopsWithin == 1 || holdsReaderLoop || hasUnrolledInnerLoops(inputHead));
 }
 
 bool Walker::isQuietOnceUnswitched(LoopID loop, std::span<const ValueID> ranOtherCode, std::span<const UnswitchCandidate> candidates, Vector<ValueID, 4>& operationsOutsideCandidates) const
@@ -622,13 +633,13 @@ bool Walker::isQuietOnceUnswitched(LoopID loop, std::span<const ValueID> ranOthe
     const BodyIndex& index = currentBodyIndex();
     FunctionID function = m_frames.last().function;
     auto hasCandidateInCopyOf = [&](FunctionID callee) {
-        return std::ranges::any_of(candidates, [&](const UnswitchCandidate& candidate) { return candidate.asksForInt32s || (callee ? candidate.function == callee : candidate.function != function); });
+        return std::ranges::any_of(candidates, [&](const UnswitchCandidate& candidate) { return candidate.asksForInt32s || candidate.asksForOtherClass || (callee ? candidate.function == callee : candidate.function != function); });
     };
     for (ValueID ran : ranOtherCode) {
         if (!ran || ran.index() >= index.numberOfValues() || !index.isInLoop(index.blockOf(ran), loop))
             return false;
         bool isBehindCandidate = std::ranges::any_of(candidates, [&](const UnswitchCandidate& candidate) {
-            return !candidate.asksForInt32s && candidate.function == function && index.dominates(index.terminator(candidate.block).targets()[1 - candidate.quietTarget].block(), index.blockOf(ran));
+            return !candidate.asksForInt32s && !candidate.asksForOtherClass && candidate.function == function && index.dominates(index.terminator(candidate.block).targets()[1 - candidate.quietTarget].block(), index.blockOf(ran));
         });
         if (isBehindCandidate)
             continue;
@@ -945,7 +956,7 @@ void Walker::cutUnswitchedWalkShort()
 bool Walker::tryUnswitchBranch(const BodyTerminator& branch)
 {
     for (const UnswitchCandidate& candidate : m_versionedLoops.last().unswitchCandidates) {
-        if (candidate.asksForInt32s || candidate.function != m_frames.last().function || candidate.block != branch.block())
+        if (candidate.asksForInt32s || candidate.asksForOtherClass || candidate.function != m_frames.last().function || candidate.block != branch.block())
             continue;
         uint32_t quietTarget = candidate.quietTarget;
         std::optional<uint32_t> openLoop = specializedOpenLoop(IterationPurity::KnownEffectsOnly);
@@ -1055,6 +1066,12 @@ bool Walker::mayReadInFrontOfQuietTurns(uint32_t indexOfLoop) const
 {
     const OpenLoop& loop = m_openLoops[indexOfLoop];
     return (loop.firstReloadBlock || loop.watchesTurns) && !isUnreachable() && m_state.hasOnlyKnownEffectsSince(loop.restartPoint) && innermostOpenLoop() == indexOfLoop && !isUnderHandler() && !hasStringsInBuilders();
+}
+
+bool Walker::isIterationQuiet() const
+{
+    std::optional<uint32_t> loop = innermostOpenLoop();
+    return loop && mayReadInFrontOfQuietTurns(*loop);
 }
 
 bool Walker::isReadForCall(const Draft& draft) const

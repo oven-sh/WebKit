@@ -37,9 +37,14 @@ ALWAYS_INLINE void RegExpCachedResult::record(VM& vm, JSObject* owner, RegExp* r
     m_lastRegExp.setWithoutWriteBarrier(regExp);
     m_lastInput.setWithoutWriteBarrier(input);
     m_result = result;
-    m_reified = false;
+    m_state = State::Lazy;
     m_oneCharacterMatch = oneCharacterMatch;
     vm.writeBarrier(owner);
+}
+
+inline JSString* RegExpGlobalData::input(JSGlobalObject* owner)
+{
+    return m_cachedResult.input(owner, owner);
 }
 
 inline void RegExpGlobalData::setInput(JSGlobalObject* globalObject, JSString* string)

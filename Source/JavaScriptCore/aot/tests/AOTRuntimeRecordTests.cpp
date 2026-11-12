@@ -145,6 +145,8 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
         return false;
     if (flags & Slot::needsHandler)
         return false;
+    if (kind == Slot::Kind::Field && (flags & (Slot::isOwn | Slot::absentIsUndefined)) == Slot::absentIsUndefined)
+        return false;
     static_assert(Slot::inheritedIsOutOfLine == Slot::storageHasIndexingHeader);
     bool namesPlaceInHolder = Slot::payloadOf(kind) == SlotPayload::FieldAndHolder && Slot::locationOf(kind) == SlotLocation::WordIndex;
     if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage) && !namesPlaceInHolder)
@@ -231,10 +233,14 @@ static void testPackedSlotRoundTrip()
     Cells cells(realms);
     unsigned numberPacked = 0;
     forEachLegalSlot(cells, [&](const Slot& slot, Slot::Kind kind, uint8_t flags) {
-        AOT_TEST_CHECK(packsAndUnpacks(slot, cells.cageBase) == (!alwaysStaysOutsideTheFront(kind) && !(flags & Slot::storageHasIndexingHeader)));
+        bool isReportedReplacement = Slot::payloadOf(kind) == SlotPayload::Key && (flags & Slot::isOwn);
+        AOT_TEST_CHECK(packsAndUnpacks(slot, cells.cageBase) == (!alwaysStaysOutsideTheFront(kind) && !isReportedReplacement && !(flags & Slot::storageHasIndexingHeader)));
         ++numberPacked;
     });
+    AOT_TEST_CHECK(!packsAndUnpacks(Slot::createReportedReplacement(cells.id(), 3), cells.cageBase));
     AOT_TEST_CHECK(numberPacked > numberOfSlotKinds);
+    for (uint8_t flags : { 0, static_cast<int>(Slot::isOutOfLine), static_cast<int>(Slot::dependsOnChain) })
+        AOT_TEST_CHECK(packsAndUnpacks(createSlotOfKind(cells, Slot::Kind::Field, flags | Slot::isOwn | Slot::emptySlotMayBeUndefined), cells.cageBase));
 }
 
 static void testInheritedIndexOutsideEightBitsDoesNotPack()

@@ -2588,18 +2588,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JS
     if (!enterHolder<hasGap>()) [[unlikely]]
         return;
     const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
-    auto appendProperty = [&](UniquedStringImpl& name, JSValue value) ALWAYS_INLINE_LAMBDA -> bool {
-        if (name.isSymbol()) [[unlikely]] {
-            recordFailure("symbol"_s);
-            return false;
-        }
-
-        if (!name.is8Bit()) [[unlikely]] {
-            recordFailure("16-bit property name"_s);
-            return false;
-        }
-        auto span = name.span8();
-
+    auto appendNamedValue = [&](std::span<const Latin1Character> span, JSValue value) -> bool {
         if (value.isUndefined())
             return true;
 
@@ -2679,9 +2668,36 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JS
         append<hasGap>(value);
         return !haveFailure();
     };
+    auto appendProperty = [&](UniquedStringImpl& name, JSValue value) ALWAYS_INLINE_LAMBDA -> bool {
+        if (name.isSymbol()) [[unlikely]] {
+            recordFailure("symbol"_s);
+            return false;
+        }
+
+        if (!name.is8Bit()) [[unlikely]] {
+            recordFailure("16-bit property name"_s);
+            return false;
+        }
+        return appendNamedValue(name.span8(), value);
+    };
+    // Index keys come first, in ascending order.
+    auto elementsFilter = AOT::PropertyWalk::Elements::NeedGenericPath;
+    if (JSObject* holder = AOT::PropertyWalk::objectHoldingIndexedProperties(&object); holder && (hasInt32(holder->indexingType()) || hasDouble(holder->indexingType()) || hasContiguous(holder->indexingType()))) {
+        elementsFilter = AOT::PropertyWalk::Elements::Skip;
+        unsigned length = holder->butterfly()->publicLength();
+        for (unsigned index = 0; index < length; ++index) {
+            if (!holder->canGetIndexQuickly(index))
+                continue;
+            std::array<Latin1Character, std::numeric_limits<unsigned>::digits10 + 1> digits;
+            std::span<Latin1Character> key = std::span { digits }.first(lengthOfIntegerAsString(index));
+            writeIntegerToBuffer(index, key);
+            if (!appendNamedValue(key, holder->getIndexQuickly(index))) [[unlikely]]
+                return;
+        }
+    }
     auto result = AOT::PropertyWalk::forEachOwnProperty(m_vm, &object, AOT::PropertyWalk::Filter::EnumerableStrings, [&](const AOT::PropertyWalk::OwnProperty& property) {
         return appendProperty(*property.name, property.value) ? IterationStatus::Continue : IterationStatus::Done;
-    });
+    }, elementsFilter);
     if (result == AOT::PropertyWalk::Result::NeedsGenericPath)
         recordFailure("compiled object has an accessor or an index"_s);
     if (haveFailure()) [[unlikely]]

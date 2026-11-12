@@ -24,6 +24,7 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCalls.h"
+#include "AOTStubsCoroutines.h"
 #include "AOTThrowEmitter.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -149,6 +150,15 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
+static void emitMarkOfDelegatedCall(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    for (uint8_t byte : headOfDelegationMark)
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(byte));
+#endif
+    jit.m_assembler.buffer().putInt(delegationMark);
+}
+
 Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options, const AnswersOfCalledStub* answersOfCalledStub)
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
@@ -232,7 +242,7 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         wordsThatAreMentions = mentionsAmongThrowSiteWords(*options.throwSite, words.size());
         wordsOfThrowSite = m_proc.arena().copySpan<uint32_t>(words.span());
     }
-    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite, wordsThatAreMentions, kind = target.kind, calledUnit = target.calledUnit, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, numberedImmediate = options.numberedImmediate, site = OptionalIndex { site }, firstReadSite, callerSuspendsAtReturn = options.callerSuspendsAtReturn](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite, wordsThatAreMentions, kind = target.kind, calledUnit = target.calledUnit, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, numberedImmediate = options.numberedImmediate, site = OptionalIndex { site }, firstReadSite, callerSuspendsAtReturn = options.callerSuspendsAtReturn, callerDelegates = options.callerDelegates](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (callerSuspendsAtReturn)
             FrameMapEmitter::releaseSavedRegisters(jit, params);
@@ -255,6 +265,8 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
             returnSite = stubCalls.callRegister(jit, valueEntryGPR, site);
             break;
         }
+        if (callerDelegates)
+            emitMarkOfDelegatedCall(jit);
         if (!wordsOfThrowSite.empty())
             records->traps.callThrowSites.append(CallThrowSite { returnSite, Vector<uint32_t, 3>(wordsOfThrowSite), wordsThatAreMentions });
     });
@@ -344,6 +356,8 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     } else {
         chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
         conventionCall.stub = conventionCall.stub.withForm(static_cast<uint8_t>(positionOf(context)));
+        if (isX86_64() && hasOneInstance() && positionOf(context) == CallPosition::Ordinary && values.size() <= numberOfArgumentGPRs && context.valueID() && context.block() && generator().usesLoopForms(context.block()))
+            conventionCall.stub = callValueCopy(conventionCall.stub, intHash(context.origin().position) % numberOfCallValueCopies);
     }
     return callByConvention(context, conventionCall, options);
 }
@@ -358,6 +372,15 @@ void CallEmitter::defineResultOfCallByValue(const ValueContext& value, Boxed res
     if (BuiltinID called = callee.isObject() ? singleBuiltinOf(types(), callee) : BuiltinID())
         emitter<BuiltinCallEmitter>().stopUnlessNativeResultIsAsWritten(value, result, called, constructionsByValue.contains(value->opcode));
     define(value, result);
+}
+
+Boxed CallEmitter::callDelegate(const ValueContext& value)
+{
+    ValueID callee = value->calleeOperand();
+    Vector<Boxed, 8> arguments = boxedOperands(value->argumentsOperands());
+    ValueCall call { in<Boxed>(callee), thisOrUndefined(value->thisValueOperand()), arguments.span() };
+    call.calleeIsCell = typeOf(callee).isObject();
+    return callValue(value, call, { .throwSite = siteThatNamesCallee(value), .callerDelegates = true });
 }
 
 void CallEmitter::generateCall(const ValueContext& value)

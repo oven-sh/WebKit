@@ -201,6 +201,10 @@ bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
     const Operation& made = m_code->at(allocation);
     if (made.blockIndex == Operation::noBlock)
         return false;
+    if (made.opcode == Opcode::Parameter && m_code->isMergedObject(allocation)) {
+        object = allocation;
+        return true;
+    }
     if (!isAllocationWhoseStoresAreHeldBack(m_inputs->program.builtins(), made, m_opcodesOfAllocationsWhoseStoresAreHeldBack))
         return false;
 
@@ -376,6 +380,8 @@ SweepTotals Sweep::sweepAgainBehindMovedBirths(const SweepInputs& inputs, Code& 
     m_liveness = nullptr;
     Sweep again(m_rooms);
     again.m_sweepsAgainBehindMovedBirths = true;
+    again.m_overwrittenStores = WTF::move(m_overwrittenStores);
+    std::ranges::sort(again.m_overwrittenStores, { }, &ValueID::index);
     SweepTotals totals = again.run(inputs, code);
     totals.operationsSwept += m_totals.operationsSwept;
     totals.allocationsSunk = m_totals.allocationsSunk;
@@ -428,9 +434,10 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             if (namesSomeBirth) {
                 ValueID filled;
                 bool onlyFillsCell = storeMayMoveWithBirthInSweep(operation) && resultRuleOf(operation.opcode) == ResultRule::None && !testsItsOwnGuess(operation) && isStoreIntoOwnObject(operation, filled);
+                bool handsCellBack = operation.opcode == Opcode::ReleaseEnvironment;
                 forEachOperandNeededBySweep(operation, [&](ValueID operand) {
                     if (namesBirth(operand))
-                        noteUse(operand, user, onlyFillsCell && operand == filled);
+                        noteUse(operand, user, handsCellBack || (onlyFillsCell && operand == filled));
                 });
             }
             if (namesBirth(user))
@@ -502,6 +509,10 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         return false;
     };
 
+    auto isRareMerge = [&](BlockID id, BlockID above) {
+        return code.at(id).frequency == BlockFrequency::Rare && code.at(above).frequency == BlockFrequency::Normal;
+    };
+
     Vector<BirthThatMayMove, 4> births;
     for (ValueID allocation : m_birthsThatMayMove) {
         if (!mayMove.quickGet(allocation.index()))
@@ -561,7 +572,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             laid.depth = upper.depth + 1;
             laid.leap = leapsAreOfOneLength ? leap.leap : above;
             laid.nearestFreeOfHandlers = upper.nearestFreeOfHandlers;
-            laid.nearestSideOfBranch = standsOnOneSideOfBranch(id) ? id : upper.nearestSideOfBranch;
+            laid.nearestSideOfBranch = standsOnOneSideOfBranch(id) || isRareMerge(id, above) ? id : upper.nearestSideOfBranch;
         }
         if (!code.at(id).handler && !code.at(id).isHandlerBlock() && !code.at(id).meetsStepWrittenByHand)
             laid.nearestFreeOfHandlers = id;
@@ -689,11 +700,37 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         return found;
     };
     auto isOnlyLoopExit = [&](BlockID side) {
+        if (!standsOnOneSideOfBranch(side))
+            return false;
         EdgeID edge = code.at(side).firstEdgeIn();
         while (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
             edge = code.at(edge).nextInto();
         BlockID loop = findOutermostLoopExcluding(code.at(edge).from, side);
         return loop && blocksBelow[loop.index()].loopExitCount == 1;
+    };
+
+    Vector<BlockID, 16> blocksOnWay;
+    auto mayLeadTo = [&](BlockID first, BlockID last, BlockID birth) {
+        SweepBits seen;
+        seen.ensureSize(numberOfBlocks);
+        auto follow = [&](EdgeID edge) {
+            BlockID next = code.at(edge).to;
+            if (next == birth || !isSweptEdgeTaken(code, m_states, edge, code.at(edge)) || seen.quickGet(next.index()))
+                return;
+            seen.quickSet(next.index());
+            blocksOnWay.append(next);
+        };
+        blocksOnWay.shrink(0);
+        blocksOnWay.append(first);
+        while (!blocksOnWay.isEmpty()) {
+            BlockID id = blocksOnWay.takeLast();
+            const Block& block = code.at(id);
+            for (uint32_t index = 0; index < block.terminator.numberOfEdges; ++index)
+                follow(block.terminator.edge(index));
+            if (EdgeID handler = handlerOfSweptBlock(block, m_states[id.index()]))
+                follow(handler);
+        }
+        return seen.quickGet(last.index());
     };
 
     const uint32_t firstBirth = births.first().allocation.index();
@@ -776,6 +813,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     m_totals.operationsSwept += numberOfOperationsLookedAt;
 
     Vector<OperationThatMoves, 8> moves;
+    Vector<OperationThatMoves, 8> goneWithCell;
     uint32_t numberOfAllocationsSunk = 0;
     for (size_t indexOfBirth = births.size(); indexOfBirth--;) {
         BirthThatMayMove& birth = births[indexOfBirth];
@@ -812,13 +850,18 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             continue;
 
         size_t numberOfMovesBefore = moves.size();
+        size_t numberGoneBefore = goneWithCell.size();
         moves.append({ to, birth.allocation });
         bool everythingHasItsPlace = true;
         for (ValueID store : birth.stores) {
             BlockID at = code.at(store).block();
             if (standsAtOrAbove(to, at))
                 continue;
-            everythingHasItsPlace &= standsAtOrAbove(at, to) && !code.at(at).handler && !findOutermostLoopExcluding(at, from);
+            if (!standsAtOrAbove(at, to) && !mayLeadTo(at, to, from) && !mayLeadTo(to, at, from)) {
+                goneWithCell.append({ at, store });
+                continue;
+            }
+            everythingHasItsPlace &= standsAtOrAbove(at, to) && code.at(store).opcode != Opcode::ReleaseEnvironment && !code.at(at).handler && !findOutermostLoopExcluding(at, from);
             moves.append({ to, store });
         }
         AOT::sort(moves.mutableSpan().subspan(numberOfMovesBefore), { }, &OperationThatMoves::operation);
@@ -833,6 +876,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         }
         if (!everythingHasItsPlace) {
             moves.shrink(numberOfMovesBefore);
+            goneWithCell.shrink(numberGoneBefore);
             continue;
         }
         numberOfAllocationsSunk += !isBox;
@@ -847,6 +891,10 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     for (const OperationThatMoves& move : moves) {
         isMoved.quickSet(move.operation.index());
         blocksLeft.append(code.at(move.operation).block());
+    }
+    for (const OperationThatMoves& gone : goneWithCell) {
+        isMoved.quickSet(gone.operation.index());
+        blocksLeft.append(gone.to);
     }
     AOT::sort(blocksLeft);
     blocksLeft.shrink(std::ranges::unique(blocksLeft).begin() - blocksLeft.begin());

@@ -93,7 +93,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberStructureOfClass, size_t, 
 {
     VM& vm = *instance->vm;
     ClassTable& classes = instance->state->objects->classes;
+    bool asksElements = offsetOfStructures & StructuresOfHeir::asksElements;
+    offsetOfStructures &= ~StructuresOfHeir::asksElements;
     bool isRemembered = classes.rememberStructureOfInstances(vm, cell, classLayoutAt(classes, classIndex), offsetOfStructures);
+    if (asksElements)
+        isRemembered = isRemembered && classes.rememberPrototypeWithoutElements(vm, cell, offsetOfStructures);
     countEvent(vm, isRemembered ? RuntimeCounterID::BuiltinSubclassStructuresAccepted : RuntimeCounterID::BuiltinSubclassStructuresRejected);
     return isRemembered;
 }
@@ -113,6 +117,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
 {
     constexpr Entry entry = Entry::operationAOTGetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
+    countEvent(vm, RuntimeCounterID::ConstructPrototypeLookups);
     JSObject* target = objectArgument(newTarget, entry);
     if (auto* closure = dynamicDowncast<Closure>(target); closure && Instance::owning(closure) == instance && FunctionTables::hasPrototypePropertyAtCreation(closure->kind())) {
         ClassTable& classes = instance->state->objects->classes;
@@ -269,9 +274,11 @@ static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, S
         return;
     PropertyOffset offset = after->transitionOffset();
     std::optional<uint32_t> newCapacity = capacityOfStorageGrownByStub(vm, before, after, offset);
-    if (!newCapacity)
+    bool liesBesideElements = !newCapacity && before->typeInfo().type() == ArrayType && offset == firstOutOfLineOffset && !before->outOfLineCapacity() && after->outOfLineCapacity() == initialOutOfLineCapacity
+        && !before->hasElementsStartOffset() && !before->mayBePrototype() && !before->mayHaveImmutableProperties() && after->propertyAccessesAreCacheable();
+    if (!newCapacity && !liesBesideElements)
         return;
-    int32_t placeOfValue = *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
+    int32_t placeOfValue = liesBesideElements ? 1 : *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
     int32_t placeOfBrand = brand ? locationOf(*brand) : 0;
     if (placeOfValue != static_cast<int16_t>(placeOfValue) || placeOfBrand != static_cast<int16_t>(placeOfBrand))
         return;

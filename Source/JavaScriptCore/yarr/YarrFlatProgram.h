@@ -414,7 +414,7 @@ struct RegExpMatchOutcome {
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&, FlatProgramForm = FlatProgramForm::Fast);
 // Whether the pattern has a program of each form, and the one that counts turns keeps a table.
-bool hasFlatProgramsThatRememberFailedSearches(StringView pattern, OptionSet<Flags>);
+bool hasFlatProgramsThatRememberFailedSearches(const YarrPattern& analyzed, StringView);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
 // It depends on whether the group has anything to go back into. What has been found out about a disjunction is kept, so that each is walked once however deep groups are nested.
 using KnownBacktrackableContent = UncheckedKeyHashMap<const PatternDisjunction*, bool>;

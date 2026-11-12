@@ -235,6 +235,48 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+std::optional<int64_t> ElementAccessEmitter::lengthFilledByLoop(const ValueContext& store)
+{
+    static constexpr OpcodeSet passing { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger };
+    if (!generator().takesFormOfLoops(store))
+        return std::nullopt;
+    const Code& code = generator().code();
+    ValueID position = store->positionOperand();
+    while (passing.contains(code.at(position).opcode))
+        position = code.at(position).valueOperand();
+    BlockID home = code.isConstant(position) ? BlockID() : code.blockOf(position);
+    if (!home || !code.at(home).isLoopHead || !std::ranges::contains(code.at(home).parameters(), position))
+        return std::nullopt;
+    const Type& type = typeOf(position);
+    if (!type.isInteger() || type.integers.minimum < 0 || type.integers.maximum >= std::numeric_limits<int32_t>::max())
+        return std::nullopt;
+    return type.integers.maximum;
+}
+
+void ElementAccessEmitter::requireRoomInVector(const ValueContext& store, const ArrayElements& elements, Integer index, LBasicBlock isBeyondVector)
+{
+    std::optional<int64_t> filled = lengthFilledByLoop(store);
+    if (!filled) {
+        branchUnless(below(index, vectorLength(elements)), isBeyondVector);
+        return;
+    }
+    LBasicBlock hasRoom = newBlock();
+    LBasicBlock isFull = newBlock();
+    LBasicBlock grows = newBlock();
+    m_out.branch(below(index, vectorLength(elements)).value(), normalEdge(hasRoom), unlikelyEdge(isFull));
+
+    m_out.appendTo(isFull);
+    branchUnless(equal(index, publicLength(elements)), isBeyondVector);
+    m_out.jump(grows);
+    m_out.appendTo(grows);
+    Integer fourfold = add(mul(index, integer(4)), integer(4));
+    Integer room(m_out.select(m_out.lessThan(fourfold.value(), m_out.constInt64(*filled)), fourfold.value(), m_out.constInt64(*filled)));
+    callVoidOperation(store, RuntimeOperation::GrowFilledArray, { elements.array, room }, { .isOnRarePath = true });
+    m_out.jump(isBeyondVector);
+
+    m_out.appendTo(hasRoom);
+}
+
 void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement, LBasicBlock isBeyondVector)
 {
     LengthTest test = testLength(index, elements);
@@ -249,7 +291,7 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
     m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
 
     m_out.appendTo(isBeyondLength);
-    branchUnless(below(index, vectorLength(elements)), isBeyondVector);
+    requireRoomInVector(store, elements, index, isBeyondVector);
     setPublicLength(elements, add(index, integer(1)));
     m_out.jump(isWithinLength);
     m_out.appendTo(isWithinLength);
@@ -271,39 +313,8 @@ void ElementAccessEmitter::appendInVector(const ValueContext& store, const Array
     m_out.appendToJoin(done, fork);
 }
 
-bool ElementAccessEmitter::readsInt32Of(const ValueContext& store)
-{
-    bool isAboveStore = false;
-    for (BlockID block = store.block(); block; block = generator().singlePredecessorOf(block)) {
-        std::span<const ValueID> values = m_code.valuesOf(block);
-        for (size_t index = values.size(); index--;) {
-            if (!isAboveStore) {
-                isAboveStore = values[index] == store.id();
-                continue;
-            }
-            const Operation& operation = m_code.at(values[index]);
-            if (operation.opcode == Opcode::GetArrayElement && operation.arrayOperand() == store->arrayOperand() && operation.positionOperand() == store->positionOperand())
-                return operation.arrayStorage() == ArrayStorage::Int32 && operation.level() == KnowledgeLevel::Proven && operation.isPresent() && operation.representation == Representation::Int32;
-            if (operation.traits().mayTouchMemory())
-                return false;
-        }
-    }
-    return false;
-}
-
-bool ElementAccessEmitter::updateInt32InPlace(const ValueContext& store, const ArrayElements& elements, Integer index, Boxed word)
-{
-    if (!typeOf(store->valueOperand()).isInt32() || !readsInt32Of(store))
-        return false;
-    m_out.store32(unboxInt32(word).value(), elementOfUnknownForm(elements, index));
-    build().statistics().count(StatisticID::Int32ElementsUpdatedInPlace);
-    return true;
-}
-
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
 {
-    if (form.kind == ArrayStorage::Int32 && store.opcode() == Opcode::PutArrayElement && updateInt32InPlace(store, elements, index, rawElement.as<Boxed>()))
-        return;
     stopWhereHoleWouldBeStored(store, form, rawElement);
     storeRawElement(form, elements, index, rawElement);
     if (form.holdsCells && typeOf(store->valueOperand()).hasCells()) {
@@ -403,20 +414,23 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
     LBasicBlock continuation = newBlock();
     Integer index = indexOrElse(value->positionOperand(), true, nullptr);
     ArrayElements elements = elementsOf(list);
+    bool zeroesRowCounts = generator().mustZeroRowCounts(value);
     forEachFormByShape(indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, forms, outOfLine, [&](const ArrayStorageForm& form) {
         std::optional<Operand> rawElement = rawElementToStore(form, stored, outOfLine);
         if (!rawElement) {
             m_out.jump(outOfLine);
             return;
         }
+        if (zeroesRowCounts && form.holdsCells) [[unlikely]]
+            generator().zeroRowCounts();
         LengthTest test = testLength(index, elements);
         if (!value->isInBounds() && (generator().takesFormOfLoops(value) || generator().isInRecursion(value.block()))) {
             LBasicBlock inBounds = newBlock();
             LBasicBlock pastEnd = newBlock();
             m_out.branch(test.isInside.value(), normalEdge(inBounds), unlikelyEdge(pastEnd));
             m_out.appendTo(pastEnd);
-            branchUnless(equal(test.indexInside, publicLength(elements)), outOfLine);
-            branchUnless(below(test.indexInside, vectorLength(elements)), outOfLine);
+            requireRoomInVector(value, elements, test.indexInside, outOfLine);
+            build().statistics().count(StatisticID::StoresPastLengthEmittedInline);
             setPublicLength(elements, add(test.indexInside, integer(1)));
             m_out.jump(inBounds);
             m_out.appendTo(inBounds);

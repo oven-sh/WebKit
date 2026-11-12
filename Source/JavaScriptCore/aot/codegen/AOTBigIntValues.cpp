@@ -62,6 +62,8 @@ BigIntValues::BigIntValues(const Code& code, const TypeArena& types, FrameUse fr
     findBlocksForBigInts();
     if (frameUse != FrameUse::Never)
         findValuesForFrame();
+    if (m_quotients.isEmpty())
+        findQuotients();
 }
 
 uint32_t BigIntValues::classOf(uint32_t index)
@@ -89,6 +91,16 @@ void BigIntValues::findLikelyValues()
     for (uint32_t index = 0; index < numberOfValues; ++index)
         m_classes[index] = index;
 
+    auto isBigInt = [&](ValueID value) {
+        return m_code.at(value).type == TypeTable::bigInt;
+    };
+    auto computesBigInt = [&](ValueID value, const Operation& operation) {
+        if (comparisons.contains(operation.opcode) || operation.numberOfOperands() < 2)
+            return false;
+        bool takesNumber = std::ranges::any_of(operation.operands(), [&](ValueID operand) { return m_types.at(m_code.at(operand).type).isNumber(); });
+        return !takesNumber && (isBigInt(value) || std::ranges::any_of(operation.operands(), isBigInt));
+    };
+    Vector<ValueID> bigInts;
     Vector<ValueID> remaindersOfProducts;
     for (uint32_t number = 0; number < m_code.numberOfBlocks(); ++number) {
         BlockID block(number);
@@ -110,6 +122,8 @@ void BigIntValues::findLikelyValues()
                 unite(value, first);
             if (operation.opcode == Opcode::Mod && m_code.at(first).opcode == Opcode::Mul)
                 remaindersOfProducts.append(value);
+            if (computesBigInt(value, operation))
+                bigInts.append(value);
         }
         const Terminator& terminator = m_code.at(block).terminator;
         for (uint32_t target = 0; target < terminator.numberOfEdges; ++target) {
@@ -124,11 +138,15 @@ void BigIntValues::findLikelyValues()
     BitVector classesOfNumbers(numberOfValues);
     for (uint32_t index = 0; index < numberOfValues; ++index) {
         const Operation& operation = m_code.at(ValueID(index));
-        if (operation.type == TypeTable::bigInt)
-            likelyClasses.quickSet(classOf(index));
-        else if (isNumberRepresentation(operation.representation) || operation.opcode == Opcode::Integer || operation.opcode == Opcode::Double)
+        if (operation.type == TypeTable::bigInt) {
+            bool isFromElsewhere = operation.opcode == Opcode::Parameter ? m_code.at(operation.block()).isEntry : !passesOperandOn.contains(operation.opcode) && !(unitesOperands.contains(operation.opcode) && hasBigIntRepresentation(operation));
+            if (isFromElsewhere)
+                likelyClasses.quickSet(classOf(index));
+        } else if (isNumberRepresentation(operation.representation) || operation.opcode == Opcode::Integer || operation.opcode == Opcode::Double)
             classesOfNumbers.quickSet(classOf(index));
     }
+    for (ValueID value : bigInts)
+        likelyClasses.quickSet(classOf(value.index()));
     for (ValueID value : remaindersOfProducts) {
         if (uint32_t found = classOf(value.index()); !classesOfNumbers.quickGet(found))
             likelyClasses.quickSet(found);
@@ -259,7 +277,8 @@ void BigIntValues::findValuesForFrame()
 
     for (bool changes = true; changes;) {
         changes = false;
-        for (const Flow& flow : flows) {
+        for (size_t place = flows.size(); place--;) {
+            const Flow& flow = flows[place];
             if (escapes.quickGet(flow.to.index()) && !escapes.quickGet(flow.from.index())) {
                 escapes.quickSet(flow.from.index());
                 changes = true;
@@ -288,6 +307,7 @@ void BigIntValues::findValuesForFrame()
     m_passesOn.ensureSize(numberOfValues);
     for (const Flow& flow : flows)
         m_passesOn.quickSet(flow.from.index());
+    findQuotients();
     findCarriedValues(flows.span(), isProducer);
     m_staysInBlock.ensureSize(numberOfValues);
     for (uint32_t index = 0; index < numberOfValues; ++index) {
@@ -304,26 +324,38 @@ void BigIntValues::findValuesForFrame()
 
 std::span<const ValueID> BigIntValues::valuesKeptBeside(ValueID value) const
 {
-    for (const CarriedValue& carried : m_carriedValues) {
-        if (carried.value == value)
-            return carried.keptBeside.span();
-    }
-    return { };
+    auto found = m_valuesKept.find(value.index());
+    return found == m_valuesKept.end() ? std::span<const ValueID>() : found->value.span();
 }
 
-ValueID BigIntValues::quotientForRemainder(ValueID remainder) const
+std::span<const BigIntValues::CopyInUnlikelyBlock> BigIntValues::copiesInUnlikelyBlock(BlockID block) const
 {
-    const Operation& operation = m_code.at(remainder);
-    if (operation.opcode != Opcode::Mod || !isArithmetic(operation))
-        return { };
-    for (ValueID value : m_code.valuesOf(m_code.blockOf(remainder))) {
-        if (value == remainder)
-            break;
-        const Operation& quotient = m_code.at(value);
-        if (quotient.opcode == Opcode::Div && isArithmetic(quotient) && isLikely(value) && !m_passesOn.get(value.index()) && quotient.leftOperand() == operation.leftOperand() && quotient.rightOperand() == operation.rightOperand())
-            return value;
+    auto copies = std::ranges::equal_range(m_copies.span(), block.index(), { }, [](const CopyInUnlikelyBlock& copy) { return copy.block.index(); });
+    return { copies.begin(), copies.end() };
+}
+
+void BigIntValues::findQuotients()
+{
+    if (!m_code.opcodesOfValues().contains(Opcode::Div))
+        return;
+    UncheckedKeyHashMap<uint64_t, ValueID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> quotients;
+    for (uint32_t number = 0; number < m_code.numberOfBlocks(); ++number) {
+        BlockID block(number);
+        if (!m_code.isReached(block))
+            continue;
+        quotients.clear();
+        for (ValueID value : m_code.valuesOf(block)) {
+            const Operation& operation = m_code.at(value);
+            if ((operation.opcode != Opcode::Div && operation.opcode != Opcode::Mod) || !isArithmetic(operation) || !isLikely(value))
+                continue;
+            uint64_t operands = static_cast<uint64_t>(operation.leftOperand().index()) << 32 | operation.rightOperand().index();
+            if (operation.opcode == Opcode::Mod) {
+                if (ValueID quotient = quotients.get(operands))
+                    m_quotients.add(value.index(), quotient);
+            } else if (!m_passesOn.get(value.index()))
+                quotients.set(operands, value);
+        }
     }
-    return { };
 }
 
 class BigIntValues::Liveness {
@@ -334,6 +366,10 @@ public:
         m_numbers.grow(code.numberOfValues());
         for (uint32_t index = 0; index < code.numberOfValues(); ++index)
             m_numbers[index] = values.get(index) ? m_count++ : noNumber;
+        for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
+            if (m_numbers[index] != noNumber)
+                m_values.append(ValueID(index));
+        }
         m_liveAtHead.grow(code.numberOfBlocks());
         for (bool changes = true; changes;) {
             changes = false;
@@ -356,15 +392,30 @@ public:
         }
     }
 
-    void computeLiveAfter(ValueID value)
+    template<typename Begin, typename End, typename Visit>
+    void forEachOperationFromEnd(BlockID block, const Begin& beginValue, const End& endValue, const Visit& visit) const
     {
-        BlockID block = m_code.blockOf(value);
-        m_live = liveAtEnd(block);
+        BitVector live = liveAtEnd(block);
+        for (uint32_t number = 0; number < m_count; ++number) {
+            if (live.get(number))
+                beginValue(m_values[number]);
+        }
         std::span<const ValueID> values = m_code.valuesOf(block);
-        for (size_t index = values.size(); index-- && values[index] != value;)
-            stepOver(values[index], m_live);
+        for (size_t index = values.size(); index--;) {
+            ValueID value = values[index];
+            visit(value);
+            if (uint32_t number = m_numbers[value.index()]; number != noNumber && live.get(number)) {
+                live.clear(number);
+                endValue(value);
+            }
+            m_code.at(value).forEachOperand([&](ValueID operand, uint32_t) {
+                forEachRead(operand, [&](uint32_t number) {
+                    if (!live.set(number))
+                        beginValue(m_values[number]);
+                });
+            });
+        }
     }
-    bool isLive(uint32_t index) const { return m_numbers[index] != noNumber && m_live.get(m_numbers[index]); }
 
 private:
     static constexpr uint32_t noNumber = std::numeric_limits<uint32_t>::max();
@@ -403,9 +454,17 @@ private:
 
     void read(ValueID value, BitVector& live) const
     {
+        forEachRead(value, [&](uint32_t number) {
+            live.set(number);
+        });
+    }
+
+    template<typename Functor>
+    void forEachRead(ValueID value, const Functor& functor) const
+    {
         auto readOne = [&](ValueID one) {
             if (uint32_t number = m_numbers[one.index()]; number != noNumber)
-                live.set(number);
+                functor(number);
         };
         readOne(value);
         const Operation& operation = m_code.at(value);
@@ -418,61 +477,93 @@ private:
     const Code& m_code;
     uint32_t m_count { 0 };
     Vector<uint32_t> m_numbers;
+    Vector<ValueID> m_values;
     Vector<BitVector> m_liveAtHead;
-    BitVector m_live;
 };
 
 void BigIntValues::findCarriedValues(std::span<const Flow> flows, const BitVector& isProducer)
 {
     uint32_t numberOfValues = m_code.numberOfValues();
-    auto isParameterOfLoop = [&](ValueID value) {
-        BlockID block = m_code.blockOf(value);
-        return block && m_code.at(block).isLoopHead && std::ranges::contains(m_code.at(block).parameters(), value);
-    };
-    BitVector all(numberOfValues);
-    Vector<BitVector> reachedByCarried;
-    for (uint32_t index = 0; index < numberOfValues; ++index) {
-        if (!isProducer.quickGet(index) || !m_mayBeInFrame.quickGet(index) || !m_passesOn.quickGet(index))
+    for (uint32_t index = 0; index < numberOfValues; ++index)
+        m_classes[index] = index;
+    for (const Flow& flow : flows)
+        unite(flow.from, flow.to);
+    BitVector carriedClasses(numberOfValues);
+    bool hasCarriedValues = false;
+    for (uint32_t number = 0; number < m_code.numberOfBlocks(); ++number) {
+        const Block& block = m_code.at(BlockID(number));
+        if (!block.isLoopHead || !m_code.isReached(BlockID(number)))
             continue;
-        BitVector reached(numberOfValues);
-        reached.quickSet(index);
-        bool isCarried = false;
-        for (bool changes = true; changes;) {
-            changes = false;
-            for (const Flow& flow : flows) {
-                if (!reached.quickGet(flow.from.index()) || reached.quickGet(flow.to.index()))
-                    continue;
-                reached.quickSet(flow.to.index());
-                isCarried |= isParameterOfLoop(flow.to);
-                changes = true;
+        for (ValueID parameter : block.parameters()) {
+            if (m_mayBeInFrame.quickGet(parameter.index())) {
+                carriedClasses.quickSet(classOf(parameter.index()));
+                hasCarriedValues = true;
             }
         }
-        if (!isCarried)
-            continue;
-        all.merge(reached);
-        reached.quickClear(index);
-        m_carriedValues.append({ ValueID(index), { } });
-        reachedByCarried.append(WTF::move(reached));
     }
-    if (m_carriedValues.isEmpty())
+    if (!hasCarriedValues)
         return;
 
-    Liveness liveness(m_code, all);
-    for (size_t place = 0; place < m_carriedValues.size(); ++place) {
-        CarriedValue& carried = m_carriedValues[place];
-        const Operation& operation = m_code.at(carried.value);
-        bool mayWriteOverItsOperands = mayWriteOverOperands.contains(operation.opcode) || quotientForRemainder(carried.value);
-        liveness.computeLiveAfter(carried.value);
-        for (uint32_t index = 0; index < numberOfValues; ++index) {
-            if (!reachedByCarried[place].quickGet(index))
-                continue;
-            if (liveness.isLive(index) || (!mayWriteOverItsOperands && std::ranges::contains(operation.operands(), ValueID(index))))
-                carried.keptBeside.append(ValueID(index));
-        }
-        if (carried.keptBeside.size() > maxValuesKept) {
-            m_mayBeInFrame.quickClear(carried.value.index());
-            carried.keptBeside.clear();
-        }
+    BitVector carried(numberOfValues);
+    BitVector blocksOfCarriedValues(m_code.numberOfBlocks());
+    for (uint32_t index = 0; index < numberOfValues; ++index) {
+        if (!m_mayBeInFrame.quickGet(index) || !carriedClasses.quickGet(classOf(index)))
+            continue;
+        carried.quickSet(index);
+        if (isProducer.quickGet(index))
+            blocksOfCarriedValues.quickSet(m_code.blockOf(ValueID(index)).index());
+    }
+    Liveness liveness(m_code, carried);
+    Vector<uint32_t> placesAmongLive;
+    placesAmongLive.grow(numberOfValues);
+    for (uint32_t number = 0; number < m_code.numberOfBlocks(); ++number) {
+        if (!blocksOfCarriedValues.quickGet(number))
+            continue;
+        MapByIndex<Vector<ValueID>> liveByClass;
+        auto begin = [&](ValueID value) {
+            Vector<ValueID>& live = liveByClass.add(classOf(value.index()), Vector<ValueID>()).iterator->value;
+            placesAmongLive[value.index()] = live.size();
+            live.append(value);
+        };
+        auto end = [&](ValueID value) {
+            Vector<ValueID>& live = liveByClass.find(classOf(value.index()))->value;
+            ValueID last = live.takeLast();
+            if (last == value)
+                return;
+            live[placesAmongLive[value.index()]] = last;
+            placesAmongLive[last.index()] = placesAmongLive[value.index()];
+        };
+        liveness.forEachOperationFromEnd(BlockID(number), begin, end, [&](ValueID value) {
+            if (!carried.quickGet(value.index()) || !isProducer.quickGet(value.index()))
+                return;
+            const Operation& operation = m_code.at(value);
+            Vector<ValueID, maxValuesKept> kept;
+            bool areFew = true;
+            auto keep = [&](ValueID other) {
+                if (other == value || kept.contains(other))
+                    return;
+                areFew &= kept.size() < maxValuesKept;
+                if (areFew)
+                    kept.append(other);
+            };
+            if (auto live = liveByClass.find(classOf(value.index())); live != liveByClass.end()) {
+                for (ValueID other : live->value) {
+                    keep(other);
+                    if (!areFew)
+                        break;
+                }
+            }
+            if (!mayWriteOverOperands.contains(operation.opcode) && !quotientForRemainder(value)) {
+                for (ValueID operand : operation.operands()) {
+                    if (carried.quickGet(operand.index()) && classOf(operand.index()) == classOf(value.index()))
+                        keep(operand);
+                }
+            }
+            if (areFew)
+                m_valuesKept.add(value.index(), WTF::move(kept));
+            else
+                m_mayBeInFrame.quickClear(value.index());
+        });
     }
 }
 

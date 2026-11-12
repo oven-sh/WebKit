@@ -286,8 +286,13 @@ void generateArrayIndexOfString(StubAssembler& jit)
     if (!hasStart)
         hasTable = jit.branchTest8(CCallHelpers::NonZero, Address(cursor, JSCell::typeInfoFlagsOffset() - static_cast<ptrdiff_t>(JSCellButterfly::offsetOfData())), TrustedImm32(TypeInfoPerCellBit));
     jit.loadPtr(Address(searchString, JSString::offsetOfValue()), searchCharacters);
-    slowPath.append(jit.branchIfRopeStringImpl(searchCharacters));
-    slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(searchCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    Jump searchesShortListForRope = jit.branchIfRopeStringImpl(searchCharacters);
+    Jump searchesForAtom = jit.branchTest32(CCallHelpers::NonZero, Address(searchCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom()));
+    constexpr int32_t maxWordsOfShortList = 16;
+    searchesShortListForRope.link(&jit);
+    jit.subPtr(end, cursor, characters);
+    slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, characters, TrustedImm32(maxWordsOfShortList * static_cast<int32_t>(sizeof(EncodedJSValue)))));
+    searchesForAtom.link(&jit);
     isOwnStorage.link(&jit);
     holdsOtherValues.link(&jit);
     jit.loadPtr(Address(searchString, JSString::offsetOfValue()), searchCharacters);

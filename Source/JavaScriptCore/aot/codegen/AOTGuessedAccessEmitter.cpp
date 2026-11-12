@@ -108,14 +108,15 @@ static Operand ownElementOfGuessedArrayOrElse(ElementAccessEmitter& elements, Ou
     return element;
 }
 
-CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest, std::optional<CellPointer>* baseOfSlot)
+CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest, std::optional<CellPointer>* baseOfSlot, bool isKnownCell)
 {
     Type known = typeOf(value->objectOperand());
     CellPointer cell = unboxCell(object);
     MarkedObjects marked = value.opcode() == Opcode::GetSlot && value->isFilledWhereShapeFits() ? MarkedObjects::AreRefused : MarkedObjects::MayBeRefused;
-    if ((value.opcode() == Opcode::GetSlot || value.opcode() == Opcode::GetSlotOrUndefined) && value->receiverMayBeInBirth())
+    static constexpr OpcodeSet accessesOfUnfinishedObjects { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlotOrAdd };
+    if (accessesOfUnfinishedObjects.contains(value.opcode()) && value->receiverMayBeInBirth())
         marked = MarkedObjects::Pass;
-    if (known.primitives & ~cellPrimitives) {
+    if (!isKnownCell && known.primitives & ~cellPrimitives) {
         // The empty value has no tag bits, so it passes isCell.
         Condition isPresentCell = isCell(object);
         if (known.primitives & Primitive::Absent)
@@ -167,6 +168,23 @@ Word32 GuessedAccessEmitter::indexOrElse(Boxed position, LBasicBlock failure)
 {
     branchUnless(isInt32(position), failure);
     return unboxInt32(position);
+}
+
+bool GuessedAccessEmitter::isReadByNextReadAlone(const ValueContext& read)
+{
+    if (generator().isLayingOutTurns() || generator().keepsValuesInHeapFrame() || generator().checksEffects() || emittersCheckProofs())
+        return false;
+    ValueID next = read.operationsBehind().empty() ? ValueID() : read.operationsBehind().front();
+    if (!next || m_code.useCountOf(read.id()) != 1 || m_code.onlyUserOf(read.id()) != next)
+        return false;
+    const Operation& operation = m_code.at(next);
+    static constexpr OpcodeSet readsOfSlots { Opcode::GetSlot, Opcode::GetSlotOrUndefined };
+    if (!readsOfSlots.contains(operation.opcode) || !testsItsOwnGuess(operation) || operation.representation != Representation::JSValue || operation.objectOperand() != read.id())
+        return false;
+    if (operation.opcode == Opcode::GetSlotOrUndefined && operation.looksAboveEmptySlot())
+        return false;
+    FieldAccess access = fieldAccessFor(operation.key(), operation.receivers(), false);
+    return guessedAccessFindsSlot(access) && access.slot.representation != SlotRepresentation::DeferredClosure;
 }
 
 void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
@@ -237,9 +255,24 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         return askedAgainOfObject(found);
     };
 
+    bool holdsNarrowReference = slot.representation == SlotRepresentation::OptionalCell32 && !slot.isOutOfLine();
+    bool isContinuedByNext = !ways && holdsNarrowReference && !asksWhatSlotsHold && !asksObjectAgain && isReadByNextReadAlone(value);
+    LBasicBlock blockOfCell = nullptr;
+    CellPointer cellRead;
+    auto addCell = [&](CellPointer read) {
+        if (!isContinuedByNext) {
+            join->add(foundInSlot(boxCell(read)));
+            return;
+        }
+        blockOfCell = m_out.forkScope().block;
+        cellRead = read;
+    };
+
     LayoutSetID holders = membersWithFieldAmong(access, value->receivers());
     std::optional<CellPointer> baseByOneTable;
-    CellPointer cell = receiverOrElse(value, object, holders, failure, &access, &baseByOneTable);
+    bool continuesRead = !!m_readContinuedByNext;
+    RELEASE_ASSERT(!continuesRead || m_readContinuedByNext == value->objectOperand());
+    CellPointer cell = receiverOrElse(value, object, holders, failure, &access, &baseByOneTable, continuesRead);
     if (baseByOneTable || emitter<ShapeTestEmitter>().lastTestIsHeldAgainstEveryShape())
         access.layoutsThatTestInCodeLetThrough = holders;
     bool letsMarkedObjectsPass = (value.opcode() == Opcode::GetSlot || value.opcode() == Opcode::GetSlotOrUndefined) && value->receiverMayBeInBirth();
@@ -259,19 +292,39 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         if (ways) {
             held.primitives &= ~Primitive::UndefinedOrNull;
             branch(emitter<TruthinessEmitter>().isTruthy(value, slots.loadSlot(base, slot, location, extensionWord, loaded), held), ways->targets);
-        } else
+        } else if (isContinuedByNext)
+            addCell(decode(slots.loadSlot(base, slot, location, extensionWord, loaded).as<NarrowReference>()));
+        else
             join->add(foundInSlot(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded)));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         bool asksWhetherSlotIsFilled = value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark;
         LBasicBlock slotIsEmptyWhereItIsToldFilled = !asksWhetherSlotIsFilled && asksWhatSlotsHold ? newBlock() : nullptr;
-        Operand loaded = asksWhetherSlotIsFilled
+        bool asksForReference = isContinuedByNext || (!ways && holdsNarrowReference && !asksWhatSlotsHold && asksWhetherSlotIsFilled && !generator().isLayingOutTurns());
+        if (asksForReference) {
+            build().statistics().count(StatisticID::ReferencesTestedBeforeDecoding);
+            NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
+            LBasicBlock isReference = newBlock();
+            LBasicBlock isNoReference = newBlock();
+            m_out.branch(isCellReference(word).value(), normalEdge(isReference), unlikelyEdge(isNoReference));
+            m_out.appendToContinuation(isReference);
+            addCell(decode(word));
+
+            m_out.appendTo(isNoReference);
+            if (asksWhetherSlotIsFilled) {
+                LBasicBlock isMarker = newBlock();
+                m_out.branch(isZero(Word32(word.value())).value(), slotIsEmpty ? normalEdge(slotIsEmpty) : rareEdge(failure), normalEdge(isMarker));
+                m_out.appendTo(isMarker);
+            }
+            join->add(foundInSlot(Boxed(m_out.zeroExt(word.value(), Machine::Int64))));
+        }
+        Operand loaded = asksForReference ? Operand() : asksWhetherSlotIsFilled
             ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure))
             : slotIsEmptyWhereItIsToldFilled ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, rareEdge(slotIsEmptyWhereItIsToldFilled))
             : slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         if (ways)
             branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
-        else
+        else if (!asksForReference)
             join->add(foundInSlot(conversions.box(value, loaded, types().at(widestTypeOf(loaded.representation)))));
 
         if (slotIsEmptyWhereItIsToldFilled) {
@@ -280,7 +333,9 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         }
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);
-            branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit | JSC::IsPristine), failure);
+            if (letsMarkedObjectsPass)
+                branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), orderWordHasFieldOutsideSlot), failure);
+            branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), letsMarkedObjectsPass ? JSC::IsPristine : TypeInfoPerCellBit | JSC::IsPristine), failure);
             if (!value->conditions().isEmpty())
                 branchUnless(emitter<GuardEmitter>().areMembersUnchanged(value->conditions()), failure);
             if (ways)
@@ -291,11 +346,25 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     }
 
     m_out.appendTo(failure);
+    if (continuesRead) {
+        m_otherAnswersOfRead->add(object);
+        object = m_otherAnswersOfRead->finish();
+        m_readContinuedByNext = { };
+        m_otherAnswersOfRead.reset();
+    }
     if (ways) {
         define(value, accesses.getById(value, object, key));
         return;
     }
     join->add(accesses.getById(value, object, key));
+    if (blockOfCell) {
+        build().statistics().count(StatisticID::ReadsContinuedByNextRead);
+        m_out.appendTo(blockOfCell);
+        m_readContinuedByNext = value.id();
+        m_otherAnswersOfRead.emplace(WTF::move(*join));
+        define(value, boxCell(cellRead));
+        return;
+    }
     define(value, join->finish());
 }
 
@@ -361,14 +430,15 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
             m_out.noteForm(Form::Closed, slotState, coldPlace);
     }
     bool overwritesFilledSlot = mayCreate && isWrittenInLine && !value->isExpectedToCreate() && !slot.isOutOfLine() && slotAccesses.mayCreateListedField(access);
+    bool overwritesLateField = mayCreate && isWrittenInLine && !defersClosure && slotAccesses.storesIntoLateField(value, access) && needsStorageFor(slot, types().at(tested ? types().intersectionOf(storedTypeID, tested) : storedTypeID));
     auto checkCreationConditions = [&] {
         branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine), failure);
         if (!value->conditions().isEmpty())
             branchUnless(emitter<GuardEmitter>().areMembersUnchanged(value->conditions()), failure);
     };
     uint32_t bitsBlockingStore = value->isDefinition() ? orderWordIntegrityBits : orderWordIsFrozen;
-    branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), mayCreate && !overwritesFilledSlot ? orderWordIntegrityBits | orderWordHasFieldOutsideSlot : bitsBlockingStore), failure);
-    if (mayCreate && !overwritesFilledSlot)
+    branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), mayCreate && !overwritesFilledSlot && !overwritesLateField ? orderWordIntegrityBits | orderWordHasFieldOutsideSlot : bitsBlockingStore), failure);
+    if (mayCreate && !overwritesFilledSlot && !overwritesLateField)
         checkCreationConditions();
     if (!mayCreate)
         continueGuessedAccessIf(m_out, slots.holdsValue(slotAccesses.baseOfSlot(cell, access, holders), slot, location, extensionWord), rareEdge(failure));
@@ -418,6 +488,14 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
     }
     slotAccesses.askObjectWhatStandsInWayOfStore(value, cell);
     slotAccesses.markCellIfMarkerReplacesRawValue(cell, access, storedValue);
+    if (overwritesLateField) {
+        slotAccesses.storeIntoLateField(value, cell, access, location, inFormOfSlot, storedType, scopedLambda<void()>([&] {
+            branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), orderWordIntegrityBits | orderWordHasFieldOutsideSlot), failure);
+            checkCreationConditions();
+        }));
+        finish();
+        return;
+    }
     if (!isWrittenInLine && needsStorage && !defersClosure && slotAccesses.mayCreateListedField(access) && slotAccesses.tryPutSlotOrAddByStub(value, cell, access, inFormOfSlot)) {
         finish();
         return;
@@ -611,6 +689,14 @@ void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
     define(value, join.finish());
 }
 
+static bool isCutToInt32ByOnlyUser(const Code& code, ValueID number)
+{
+    ValueID user = code.useCountOf(number) == 1 ? code.onlyUserOf(number) : ValueID();
+    if (user && code.at(user).opcode == Opcode::ToNumber && code.useCountOf(user) == 1)
+        user = code.onlyUserOf(user);
+    return user && code.at(user).opcode == Opcode::ToInt32;
+}
+
 void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
@@ -622,17 +708,54 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
     bool keyIsRawNumber = keyIsOptionalNumber || representationOf(value->positionOperand()) == Representation::Double;
     Integer index = elements.indexOrElse(value->positionOperand(), !keyIsRawNumber || typeOf(value->positionOperand()).isNumberWithoutFraction(), keyIsRawNumber ? outOfLine : nullptr, ElementAccessEmitter::NaNIndexMode::ProduceOutOfBoundsIndex);
     ArrayElements storage = elements.elementsOf(list);
-    OperandJoin join(m_out, representation);
+    bool takesBitsAlone = result.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) && isCutToInt32ByOnlyUser(m_code, value.id()) && !generator().isLayingOutTurns() && !generator().asksBehindTurnsWhetherElementIsThere(value.id());
+    if (takesBitsAlone)
+        build().statistics().count(StatisticID::ElementBitsReadAsWords);
+    OperandJoin join(m_out, takesBitsAlone ? Representation::Int32 : representation);
+    auto joinBitsOfNumberThatIsNoInt32 = [&](Boxed element) {
+        Condition isDouble = isNumber(element);
+        if (result.primitives & Primitive::Undefined) {
+            LBasicBlock holdsDouble = newBlock();
+            LBasicBlock holdsNoNumber = newBlock();
+            m_out.branch(isDouble.value(), normalEdge(holdsDouble), unlikelyEdge(holdsNoNumber));
+            m_out.appendTo(holdsNoNumber);
+            emitter<ThrowEmitter>().requireOrCrash(value, equal(element, undefined()), element, ProofSource::Contents);
+            join.add(word32(0));
+            m_out.appendTo(holdsDouble);
+        } else
+            emitter<ThrowEmitter>().requireOrCrash(value, isDouble, element, ProofSource::Contents);
+        join.add(emitter<ConversionEmitter>().toInt32(unboxDouble(element)));
+    };
+    auto joinBitsOf = [&](Boxed element, LBasicBlock whereEmpty) {
+        LBasicBlock holdsInt32 = newBlock();
+        LBasicBlock holdsOther = newBlock();
+        m_out.branch(isInt32(element).value(), normalEdge(holdsInt32), normalEdge(holdsOther));
+        m_out.appendTo(holdsInt32);
+        join.add(unboxInt32(element));
+        m_out.appendTo(holdsOther);
+        if (whereEmpty)
+            continueGuessedAccessIf(m_out, isNotEmpty(element), rareEdge(whereEmpty));
+        joinBitsOfNumberThatIsNoInt32(element);
+    };
     auto readInForm = [&](const ArrayStorageForm& form) {
         LengthTest test = elements.testLength(value, index, storage);
         if (!value->isInBounds())
             continueGuessedAccessIf(m_out, test.isInside, rareEdge(outOfLine));
         Operand element = elements.loadRawElement(form, storage, test.indexInside);
+        if (takesBitsAlone && form.kind == ArrayStorage::Contiguous) {
+            if (value->listHasNoHoles())
+                elements.checkElementPresenceProof(value, logicalNot(elements.isHole(form, element)));
+            joinBitsOf(element.as<Boxed>(), value->listHasNoHoles() ? nullptr : outOfLine);
+            return;
+        }
         if (!value->listHasNoHoles())
             continueGuessedAccessIf(m_out, logicalNot(elements.isHole(form, element)), rareEdge(outOfLine));
         else
             elements.checkElementPresenceProof(value, logicalNot(elements.isHole(form, element)));
-        join.add(elements.convertRawElement(value, form, element, representation, typeIDOf(value.id())));
+        if (takesBitsAlone)
+            join.add(emitter<ConversionEmitter>().toInt32(element.as<Number>()));
+        else
+            join.add(elements.convertRawElement(value, form, element, representation, typeIDOf(value.id())));
     };
     bool takesAnyNumber = types().intersectionOf(typeIDOf(value.id()), TypeTable::number) == TypeID(TypeTable::number);
     auto readDouble = [&] {
@@ -675,6 +798,11 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
         ? emitter<AccessEmitter>().getByVal(value, in<Boxed>(value->arrayOperand()), emitter<ConversionEmitter>().boxNumberByStub(in<Number>(value->positionOperand())))
         : Boxed(callStub(value, arrayGetAtIndex(read), { list.value(), index.value() }).first);
     elements.stopUnlessElementIsOf(value, answer, typeIDOf(value.id()));
+    if (takesBitsAlone) {
+        joinBitsOf(answer, nullptr);
+        define(value, Operand(representation, toNumber(join.finish().as<Word32>()).value()));
+        return;
+    }
     join.add(emitter<ConversionEmitter>().unbox(answer, result, representation));
     define(value, join.finish());
 }

@@ -21,6 +21,7 @@ AOT_LINK_OF_WALK(answerFromURLThatIsNeverMade, opcodesThatAnswerFromURLThatIsNev
 bool foldCallByOneRowOnKnownOperands(Walker&, const CallByOneRow&);
 bool isKnownForTerminatorOfFolding(const Walker&, Reference operand);
 void mergeKnownPartsOfJoinedText(Walker&, Vector<Reference, 8>& parts);
+bool mayMergeKnownParts(Walker&, std::span<const Reference> parts);
 
 PropertyKeyID keyOfKnownTextThatAccessGoesBy(const Walker&, const BodyValue& access);
 bool buildReadByPartsOfKey(Walker&, const BodyValue& read, const InputsOfTypedOperation&);

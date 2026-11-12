@@ -46,6 +46,23 @@ struct PinnedConstant {
 };
 JS_EXPORT_PRIVATE std::optional<PinnedConstant> findPinnedConstant(uint64_t bits);
 
+inline constexpr unsigned numberOfHeldConstants = 2;
+inline constexpr unsigned fewestHeldConstantReads = 3;
+
+inline std::optional<unsigned> heldConstantIndex(const Operation& constant)
+{
+    if (!isX86_64() || !constant.hasInt64())
+        return std::nullopt;
+    switch (constant.asInt64()) {
+    case JSValue::NumberTag:
+        return 0;
+    case JSValue::NotCellMask:
+        return 1;
+    default:
+        return std::nullopt;
+    }
+}
+
 JS_EXPORT_PRIVATE std::span<const uint64_t> bitsOfPinnedConstants();
 
 #if CPU(X86_64)

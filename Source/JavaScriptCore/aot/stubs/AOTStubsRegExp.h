@@ -11,14 +11,17 @@
 
 namespace JSC { namespace AOT {
 
-enum class RegExpMatchResult : uint8_t { Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts, Record };
+enum class RegExpMatchResult : uint8_t { Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch, Parts, PartsInFrame, Record };
 enum class FinishRegExpExecForm : uint8_t { WithObject, WithoutObject, OnSubstringWithObject, OnSubstringWithoutObject };
 constexpr bool finishesWithObject(FinishRegExpExecForm form) { return form == FinishRegExpExecForm::WithObject || form == FinishRegExpExecForm::OnSubstringWithObject; }
 constexpr bool finishesOnSubstring(FinishRegExpExecForm form) { return form == FinishRegExpExecForm::OnSubstringWithObject || form == FinishRegExpExecForm::OnSubstringWithoutObject; }
-enum class ReplacementOfMatches : uint8_t { TextOrFunction, AnyValue };
+enum class ReplacementOfMatches : uint8_t { TextOrFunction, AnyValue, NothingForLength };
 
 constexpr uint32_t noSharedRegExpOffset = UINT32_MAX;
 constexpr uint32_t noRegExpRecord = UINT32_MAX;
+
+constexpr int64_t matchIsInFrame = 1;
+constexpr unsigned maxPartsOfMatchInFrame = 16;
 
 constexpr StubKey regExpMatch(RegExpMatchResult result) { return StubKey(StubFamily::RegExpMatch).withForm(static_cast<uint8_t>(result)); }
 constexpr bool takesStringInFrontOfRegExp(RegExpMatchResult result) { return result == RegExpMatchResult::ArrayForStringMatch || result == RegExpMatchResult::IndexForStringSearch; }
@@ -31,6 +34,22 @@ constexpr StubKey regExpMatchLiteral(Typed::RegExpMatchForm form, bool isGlobal,
     unsigned group = 1 + (isGlobal ? 1 : 0) + (recordsMatch ? 2 : 0);
     return StubKey(StubFamily::RegExpMatchLiteral).withForm(static_cast<uint8_t>(static_cast<unsigned>(form) + group * numberOfEnumerators<Typed::RegExpMatchForm>));
 }
+
+constexpr uint16_t entryOfMatcher = 2;
+constexpr int32_t sizeOfMatcherHeader = 2 * sizeof(uint32_t);
+constexpr int32_t offsetOfMaxLengthOfMatcher = -sizeOfMatcherHeader;
+constexpr int32_t offsetOfRecordOfMatcher = -static_cast<int32_t>(sizeof(uint32_t));
+constexpr StubRegister registerOfMatcherCharacters = StubRegister::A0;
+constexpr StubRegister registerOfMatcherEnd = StubRegister::A2;
+constexpr StubRegister registerOfMatcherString = StubRegister::T13;
+constexpr StubRegister registerOfMatcherRecorder = StubRegister::A5;
+
+enum class RegExpTestForm : uint8_t { Literal, Object, LiteralRecorded, ObjectRecorded };
+constexpr StubKey regExpTest(bool isChecked, bool recordsMatch) { return StubKey(StubFamily::RegExpTest).withForm(static_cast<uint8_t>((recordsMatch ? 2 : 0) + (isChecked ? 1 : 0))); }
+constexpr bool checksRegExpOfTest(StubKey key) { return key.form() & 1; }
+constexpr bool recordsMatchOfTest(StubKey key) { return key.form() & 2; }
+constexpr bool testTakesRegExp(StubKey key) { return key.form(); }
+
 constexpr Typed::RegExpMatchForm matchFormOf(StubKey key) { return static_cast<Typed::RegExpMatchForm>(key.form() % numberOfEnumerators<Typed::RegExpMatchForm>); }
 constexpr bool takesRegExpObject(StubKey key) { return key.form() >= numberOfEnumerators<Typed::RegExpMatchForm>; }
 constexpr bool matchesGlobalLiteral(StubKey key) { return takesRegExpObject(key) && ((key.form() / numberOfEnumerators<Typed::RegExpMatchForm> - 1) & 1); }
@@ -39,7 +58,8 @@ constexpr bool recordsMatchOfLiteral(StubKey key) { return takesRegExpObject(key
 static_assert(exists(regExpMatch(RegExpMatchResult::Array)) && exists(regExpMatch(RegExpMatchResult::IndexForStringSearch)));
 static_assert(exists(regExpMatch(RegExpMatchResult::Record)) && !exists(regExpMatch(RegExpMatchResult::Record).withForm(static_cast<uint8_t>(RegExpMatchResult::Record) + 1)));
 static_assert(exists(regExpMatchLiteral(Typed::RegExpMatchForm::Parts, true, true)) && matchFormOf(regExpMatchLiteral(Typed::RegExpMatchForm::Parts, true, true)) == Typed::RegExpMatchForm::Parts && !takesRegExpObject(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Parts)));
-static_assert(exists(finishRegExpExec(FinishRegExpExecForm::WithObject)) && exists(finishRegExpExec(FinishRegExpExecForm::WithoutObject)) && exists(finishRegExpExec(FinishRegExpExecForm::OnSubstringWithObject)) && exists(finishRegExpExec(FinishRegExpExecForm::OnSubstringWithoutObject)) && exists(stringReplaceRegExpMayNotMatch()) && exists(stringReplaceRegExpMayNotMatch(ReplacementOfMatches::AnyValue)) && exists(newRegExpLiteral()));
+static_assert(exists(finishRegExpExec(FinishRegExpExecForm::WithObject)) && exists(finishRegExpExec(FinishRegExpExecForm::WithoutObject)) && exists(finishRegExpExec(FinishRegExpExecForm::OnSubstringWithObject)) && exists(finishRegExpExec(FinishRegExpExecForm::OnSubstringWithoutObject)) && exists(stringReplaceRegExpMayNotMatch()) && exists(stringReplaceRegExpMayNotMatch(ReplacementOfMatches::AnyValue)) && exists(stringReplaceRegExpMayNotMatch(ReplacementOfMatches::NothingForLength)) && exists(newRegExpLiteral()));
+static_assert(static_cast<unsigned>(RegExpTestForm::ObjectRecorded) == 3 && exists(regExpTest(true, true)) && !exists(regExpTest(true, true).withForm(4)) && recordsMatchOfTest(regExpTest(false, true)) && checksRegExpOfTest(regExpTest(true, false)) && !testTakesRegExp(regExpTest(false, false)));
 static_assert(descriptorOf(StubFamily::RegExpMatchLiteral).numberOfForms == 5 * numberOfEnumerators<Typed::RegExpMatchForm>);
 static_assert(exists(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)) && matchFormOf(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Search)) == Typed::RegExpMatchForm::Search);
 static_assert(!takesRegExpObject(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)) && !matchesGlobalLiteral(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)) && !recordsMatchOfLiteral(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)));

@@ -36,6 +36,7 @@ enum class PropertyAnswerKind : uint8_t {
     Field,
     FieldAccessor,
     FieldCreation,
+    FieldOfGetter,
     FieldOrInheritedValue,
     FieldOrInheritedAccessor,
     InheritedField,
@@ -62,6 +63,7 @@ struct PropertyAnswer {
     static PropertyAnswer uncacheable(SlotAccess access, bool didFlatten = false) { return { .access = access, .didFlatten = didFlatten }; }
     static PropertyAnswer handlerOfProxyAnswers(SlotAccess access, JSCell* key) { return { .access = access, .keyForTrap = key }; }
     static PropertyAnswer uncacheableAfter(SlotAccess access, ChainWalk&& walk) { return { .access = access, .changeableObjects = WTF::move(walk.changeableObjects) }; }
+    static PropertyAnswer reportedReplacement(PropertyOffset offset) { return { .access = SlotAccess::Store, .isOwn = true, .offset = offset }; }
     static PropertyAnswer own(PropertyAnswerKind kind, SlotAccess access, PropertyOffset offset = invalidOffset) { return { .kind = kind, .access = access, .isOwn = true, .offset = offset }; }
     static PropertyAnswer above(PropertyAnswerKind kind, SlotAccess access, ChainWalk&& walk) { return { .kind = kind, .access = access, .offset = walk.offset, .holder = walk.holder, .changeableObjects = WTF::move(walk.changeableObjects) }; }
 
@@ -135,6 +137,9 @@ ChainWalk walkChainThroughGlobalProxy(JSGlobalObject*, const Slot&, UniquedStrin
 bool repeatsPropertyAddition(Structure*, UniquedStringImpl*);
 
 Slot slotFor(const PropertyAnswer&, Structure* receiverStructure);
+
+const FieldData* findFieldReadByGetter(const Object&, JSObject* getter);
+void answerByFieldOfGetter(JSValue base, Structure* structureBefore, PropertyAnswer&);
 
 enum class LazyPrototypeReadResult : uint8_t { NotApplicable, Answered, ContinuesAbove };
 

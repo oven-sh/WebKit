@@ -51,8 +51,14 @@ Reference valueNoLongerCaptured(Walker& walker, FunctionID function, uint32_t ca
 {
     const RemovedCapture* removed = walker.plan().promotedEnvironments().findRemoved(function, capture);
     RELEASE_ASSERT(removed);
-    if (!removed->variable)
-        return wordInPlaceOfRemovedCapture(walker, function, capture);
+    if (!removed->variable) {
+        Reference word = wordInPlaceOfRemovedCapture(walker, function, capture);
+        TypeID scope = walker.program().provenTypeOf(walker.program().at(function).captures[capture]);
+        std::optional<uint32_t> loop = walker.isInTrialVisit() && walker.types().at(scope).environment ? findLoopForPromotedCapture(walker, function, closure) : std::nullopt;
+        if (loop)
+            walker.noteScopeMadeInFront(scope, *loop);
+        return word;
+    }
     origin.isTailCall = false;
     Draft read(Opcode::GetModuleVariable, origin);
     read.setVariable(removed->variable);

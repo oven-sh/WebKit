@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTCellFormat.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTResultRules.h"
+#include "MarkedSpace.h"
 #include <algorithm>
 #include <span>
 
@@ -56,11 +58,89 @@ static bool hasRoomForHiddenWord(const Program& program, const LinkTables& linke
     return program.at(id).fields.size() % 2;
 }
 
-static bool holdsField(const Program& program, const LinkTables& linked, const FamiliesOfInstances& familiesOfInstances, TypeArena& types, FieldReference field, PropertyKeyID key, TypeID written)
+static bool isNarrowNumberInEnforcedFields(const Type& type)
+{
+    if (type.hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull | Primitive::Absent))
+        return type.primitives & Primitive::Boolean;
+    return (type.primitives & Primitive::Number) && !(type.primitives & Primitive::Double) && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent) && type.integers.isSubsetOf(Range::int32());
+}
+
+static bool isReferenceInEnforcedFields(const Type& type)
+{
+    return type.hasCells() && !type.hasUnboundedUnknown() && !(type.primitives & (Primitive::Number | Primitive::Boolean));
+}
+
+static constexpr size_t mostFieldsOfSmallRecord = 5;
+static uint32_t fieldsThatMakeCellSmaller(const Program& program, const LinkTables& linked, TypeArena& types, LayoutID id)
+{
+    constexpr uint32_t widthOfNarrowSlot = sizeof(uint32_t);
+    constexpr OptionSet<LayoutChange> changesThatMakeExtraProperties { LayoutChange::GainsProperty, LayoutChange::GetsAccessor };
+    const auto& fields = program.at(id).fields;
+    if (fields.isEmpty() || fields.size() > mostFieldsOfSmallRecord || id.index() >= linked.layouts.size() || linked.numberOfAppendedKeysOfPlan(id))
+        return 0;
+    bool hasHiddenWord = linked.layout(id).possibleChanges.containsAny(changesThatMakeExtraProperties);
+    uint32_t end = offsetOfFirstField + (hasHiddenWord ? widthOfNarrowSlot : 0) + static_cast<uint32_t>(sizeof(uint64_t) * fields.size());
+    uint32_t sizeWanted = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(end);
+    uint32_t chosen = 0;
+    for (bool choosesNumbers : { true, false }) {
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            TypeID written = fieldAt(program, declarationOf(program, { id, field })).declared.written();
+            if (!written || !(choosesNumbers ? isNarrowNumberInEnforcedFields(types.at(written)) : isReferenceInEnforcedFields(types.at(written))))
+                continue;
+            chosen |= 1u << field;
+            end -= sizeof(uint64_t) - widthOfNarrowSlot;
+            if (WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(end) < sizeWanted)
+                return chosen;
+        }
+    }
+    return 0;
+}
+
+static bool isHeldForSmallerCell(const Program& program, const LinkTables& linked, const Families& families, TypeArena& types, LayoutID id, PropertyKeyID key)
+{
+    constexpr uint32_t mostMembers = 32;
+    FamilyID nearest = families.nearestFamilyOf(id);
+    if (!nearest)
+        return false;
+    LayoutSetID members = families.layoutsOf(families.topmostFamilyAtOrAbove(nearest));
+    uint32_t numberOfMembers = program.at(members).size();
+    if (numberOfMembers < 2 || numberOfMembers > mostMembers)
+        return false;
+    bool someSmallRecordHasKey = program.at(members).anyOf([&](LayoutID member) {
+        const Layout& record = program.at(member);
+        return record.fields.size() <= mostFieldsOfSmallRecord && record.findField(key);
+    });
+    if (!someSmallRecordHasKey)
+        return false;
+    auto isTag = [&](LayoutID member, PropertyKeyID tag) {
+        std::optional<uint32_t> field = program.at(member).kind == LayoutKind::Record ? program.at(member).findField(tag) : std::nullopt;
+        TypeID written = field ? fieldAt(program, declarationOf(program, { member, *field })).declared.written() : TypeID();
+        return written && types.at(written).hasOnlyPrimitives(Primitive::Integer) && isNarrowNumberInEnforcedFields(types.at(written));
+    };
+    bool hasTag = std::ranges::any_of(program.at(id).fields, [&](const Field& field) {
+        bool everyMemberHasIt = field.key && isTag(id, field.key);
+        program.at(members).forEach([&](LayoutID member) {
+            everyMemberHasIt = everyMemberHasIt && isTag(member, field.key);
+        });
+        return everyMemberHasIt;
+    });
+    if (!hasTag)
+        return false;
+    bool isHeld = false;
+    program.at(members).forEach([&](LayoutID member) {
+        std::optional<uint32_t> field = program.at(member).findField(key);
+        isHeld = isHeld || (field && *field < mostFieldsOfSmallRecord && fieldsThatMakeCellSmaller(program, linked, types, member) >> *field & 1);
+    });
+    return isHeld;
+}
+
+static bool holdsField(const Program& program, const LinkTables& linked, const Families& families, const FamiliesOfInstances& familiesOfInstances, TypeArena& types, FieldReference field, PropertyKeyID key, TypeID written)
 {
     if (program.at(field.layout).kind == LayoutKind::Instance || familiesOfInstances.sharesFamilyWithInstance(field.layout))
         return true;
     Type type = types.at(written);
+    if (key && (isNarrowNumberInEnforcedFields(type) || isReferenceInEnforcedFields(type)) && isHeldForSmallerCell(program, linked, families, types, field.layout, key))
+        return true;
     bool isNumber = (type.primitives & Primitive::Number) && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent);
     return isNumber && key && linked.fieldsUsedInProducts.names(program, field.layout, key) && hasRoomForHiddenWord(program, linked, field.layout);
 }
@@ -248,6 +328,53 @@ static bool everyStoreIsProvenToFitInEnforcedFields(const LinkTables& linked, Ty
     return !reachesUnseenCode && proven && types.isSubset(proven, type);
 }
 
+bool isLibraryLayout(const Program& program, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    return layout.module && program.at(layout.module).flags.contains(ModuleFlags::IsLibrary);
+}
+
+static TypeID typeWrittenByOthersOfFamilyInEnforcedFields(const Program& program, const Families& families, TypeArena& types, LayoutID layout, PropertyKeyID key)
+{
+    FamilyID nearest = families.nearestFamilyOf(layout);
+    if (!nearest || !key || program.at(layout).kind != LayoutKind::Instance)
+        return { };
+    Vector<TypeID, 8> written;
+    program.at(families.layoutsOf(families.topmostFamilyAtOrAbove(nearest))).forEach([&](LayoutID member) {
+        const Layout& other = program.at(member);
+        std::optional<uint32_t> listed = member != layout && other.kind == LayoutKind::Instance ? other.findField(key) : std::nullopt;
+        if (!listed || isLibraryLayout(program, member) != isLibraryLayout(program, layout))
+            return;
+        const Field& record = fieldAt(program, declarationOf(program, { member, *listed }));
+        if (TypeID type = holdsPlainValueInEnforcedFields(program, record) && record.declared.isGuarded() ? record.declared.written() : TypeID(); type && type != TypeTable::anything && !written.contains(type))
+            written.append(type);
+    });
+    TypeID united = written.isEmpty() ? TypeID() : types.unionOf(written.span());
+    return united && !isNeverType(united) ? united : TypeID();
+}
+
+static bool holdsSeenStores(const LinkTables& held, TypeArena& types, FieldReference field, TypeID type, bool isExpectedOfUnknownValues)
+{
+    const LinkedCell* seen = held.findCellOfField(field);
+    if (!seen || !seen->proven || isNeverType(seen->proven))
+        return true;
+    TypeID stored = types.withoutPrimitives(seen->proven, Primitive::UndefinedOrNull | Primitive::Absent);
+    if (isNeverType(stored))
+        return true;
+    Type shown = types.at(stored);
+    if (isExpectedOfUnknownValues)
+        return shown.hasUnboundedUnknown() || (shown.primitives & Primitive::All) == Primitive::All || types.overlap(stored, type);
+
+    constexpr uint16_t values = Primitive::All & ~Primitive::UndefinedOrNull;
+    if ((shown.primitives & values) == values)
+        return false;
+    if (seen->leavesOutWhatArrives || shown.hasUnboundedUnknown())
+        return types.at(type).hasObjects() || types.overlap(stored, type);
+    if (types.at(type).primitives & Primitive::Number)
+        stored = types.withoutPrimitives(stored, Primitive::BigInt);
+    return types.isSubset(stored, type);
+}
+
 EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, const FamiliesOfInstances& familiesOfInstances, TypeArena& types, FieldReference reference)
 {
     if (!slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, reference.layout))
@@ -277,6 +404,16 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
         source = sourceOfWrittenTypeInEnforcedFields(record.declared);
         if (source != SourceOfSlotType::Nothing)
             written = record.declared.written();
+        bool isOnlyExpected = record.declared.isExpected() && !record.declared.writtenFlags().contains(PositionFlags::IsFromCompiler);
+        if (isOnlyExpected || written == TypeTable::anything) {
+            TypeID ofOthers = typeWrittenByOthersOfFamilyInEnforcedFields(program, families, types, declaration.layout, record.key);
+            TypeID inWords = ofOthers ? typeInWordsOfTestsInEnforcedFields(families, types, ofOthers) : TypeID();
+            TypeID expected = inWords && isOnlyExpected && record.declared.written() ? typeInWordsOfTestsInEnforcedFields(families, types, record.declared.written()) : TypeID();
+            if (inWords && (!isOnlyExpected || (expected && types.isSubset(expected, inWords))) && holdsSeenStores(held, types, declaration, inWords, isOnlyExpected)) {
+                written = isOnlyExpected ? record.declared.written() : ofOthers;
+                source = SourceOfSlotType::WrittenInFamily;
+            }
+        }
     }
 
     if (!isAppended && !moreIsStoredThanIsSeen && (!written || written == TypeTable::anything)) {
@@ -293,7 +430,7 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
     EnforcedField answer;
     TypeID type;
     PropertyKeyID key = isAppended ? keyOfAppendedFieldInEnforcedFields(linked, reference.layout, reference.field - numberDeclared) : fieldAt(program, declaration).key;
-    bool isHeld = written && holdsField(program, linked, familiesOfInstances, types, reference, key, written);
+    bool isHeld = written && holdsField(program, linked, families, familiesOfInstances, types, reference, key, written);
     if (isHeld && written != TypeTable::anything && !describesBagOfOptions(types, written))
         type = typeInWordsOfTestsInEnforcedFields(families, types, written);
     if (type) {

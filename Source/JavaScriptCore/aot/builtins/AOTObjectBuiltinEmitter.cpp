@@ -13,6 +13,7 @@
 #include "AOTBuiltinWords.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCellFormat.h"
+#include "AOTConversionEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTTypeTable.h"
 #include "JSObject.h"
@@ -92,6 +93,10 @@ void ObjectBuiltinEmitter::generateObjectCreate(const InlineCall& call)
 
 void ObjectBuiltinEmitter::generateGetPrototypeOf(const InlineCall& call)
 {
+    if (!call.canMiss()) {
+        finish(call, loadField<Boxed>(loadStructure(cellOperand(call.argument(0))), m_heaps.Structure_prototype));
+        return;
+    }
     CellPointer object = objectOrMiss(call, call.argument(0));
     missUnless(call, hasNoBits(loadByte(object, m_heaps.JSCell_typeInfoFlags), OverridesGetPrototype));
     Boxed prototype = loadField<Boxed>(loadStructure(object), m_heaps.Structure_prototype);
@@ -140,16 +145,65 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
         Number x = numberOperand(a);
         return areSameNumber(x, numberOperand(b));
     }
+    auto isInRegister = [](const Operand& operand) {
+        return operand.is<Number>() || operand.is<OptionalNumber>();
+    };
+    Operand first = get(a);
+    Operand second = get(b);
+    if (isInRegister(first) && !isInRegister(second) && right.isNumber())
+        second = numberOperand(b);
+    else if (isInRegister(second) && !isInRegister(first) && left.isNumber())
+        first = numberOperand(a);
+    if (isInRegister(first) && isInRegister(second)) {
+        ConversionEmitter& conversions = emitter<ConversionEmitter>();
+        auto isNaN = [&](const Operand& operand) {
+            Number number(operand.value);
+            Condition isNumberOrMarker = notEqualOrUnordered(number, number);
+            return operand.is<OptionalNumber>() ? logicalAnd(isNumberOrMarker, logicalNot(conversions.isMarker(operand))) : isNumberOrMarker;
+        };
+        Integer bitsOfFirst = conversions.bitsOf(first);
+        return selectByBranch<Condition>(equal(bitsOfFirst, conversions.bitsOf(second)), [&] {
+            return boolean(true);
+        }, [&] {
+            return logicalAnd(isNaN(first), isNaN(second));
+        });
+    }
     Boxed x = boxedOperand(context, a);
     Boxed y = boxedOperand(context, b);
     if (!(left.primitives & Primitive::Number) || !(right.primitives & Primitive::Number))
         return equal(x, y);
-    Condition xIsNumber = isNumber(x);
-    return selectByBranch<Condition>(logicalAnd(xIsNumber, isNumber(y)), [&] {
-        Number numberX = numberToDouble(x);
-        return areSameNumber(numberX, numberToDouble(y));
+    auto isWrittenNaN = [&](ValueID id) {
+        const Operation& definition = operationAt(definitionOf(id));
+        return definition.opcode == Opcode::Double && definition.number() != definition.number();
+    };
+    auto isBoxedNaN = [&](Boxed value) {
+        return selectByBranch<Condition>(logicalAnd(isNumber(value), isNotInt32(value)), [&] {
+            Number number = unboxDouble(value);
+            return notEqualOrUnordered(number, number);
+        }, [&] {
+            return boolean(false);
+        });
+    };
+    if (isWrittenNaN(b))
+        return isBoxedNaN(x);
+    if (isWrittenNaN(a))
+        return isBoxedNaN(y);
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    auto isSameAsInt32 = [&](Boxed integer, Boxed other) {
+        return equal(other, conversions.boxDouble(toNumber(unboxInt32(integer))));
+    };
+    return selectByBranch<Condition>(equal(x, y), [&] {
+        return boolean(true);
     }, [&] {
-        return equal(x, y);
+        return selectByBranch<Condition>(isInt32(x), [&] {
+            return isSameAsInt32(x, y);
+        }, [&] {
+            return selectByBranch<Condition>(isInt32(y), [&] {
+                return isSameAsInt32(y, x);
+            }, [&] {
+                return logicalAnd(isBoxedNaN(x), isBoxedNaN(y));
+            });
+        });
     });
 }
 
@@ -193,17 +247,56 @@ void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
     finish(call, get(target), typeOf(target));
 }
 
+template<typename LeaveUnless>
+CellPointer ObjectBuiltinEmitter::cachedToStringTag(CellPointer object, const LeaveUnless& leaveUnless)
+{
+    CellPointer previousOrRareData = loadField<CellPointer>(loadStructure(object), m_heaps.Structure_previousOrRareData);
+    leaveUnless(Condition(m_out.notNull(previousOrRareData.value())));
+    leaveUnless(logicalNot(hasCellType(previousOrRareData, StructureType)));
+    Pointer cache = loadField<Pointer>(previousOrRareData, m_heaps.StructureRareData_specialPropertyCache);
+    leaveUnless(Condition(m_out.notNull(cache.value())));
+    CellPointer text = loadField<CellPointer>(cache, m_heaps.SpecialPropertyCache_cachedToStringTagValue);
+    leaveUnless(above(asPointer(text), pointerConstant(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects()))));
+    return text;
+}
+
 void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& call)
 {
     CellPointer object = objectOrMiss(call, call.receiver());
-    CellPointer previousOrRareData = loadField<CellPointer>(loadStructure(object), m_heaps.Structure_previousOrRareData);
-    missUnless(call, Condition(m_out.notNull(previousOrRareData.value())));
-    missUnless(call, logicalNot(hasCellType(previousOrRareData, StructureType)));
-    Pointer cache = loadField<Pointer>(previousOrRareData, m_heaps.StructureRareData_specialPropertyCache);
-    missUnless(call, Condition(m_out.notNull(cache.value())));
-    CellPointer text = loadField<CellPointer>(cache, m_heaps.SpecialPropertyCache_cachedToStringTagValue);
-    missUnless(call, above(asPointer(text), pointerConstant(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects()))));
-    finish(call, text);
+    finish(call, cachedToStringTag(object, [&](Condition mustHold) { missUnless(call, mustHold); }));
+}
+
+Boxed ObjectBuiltinEmitter::cachedToStringTagInFrontOfClosedCall(Boxed receiver, LBasicBlock closed)
+{
+    branchUnless(isCell(receiver), closed);
+    CellPointer cell = unboxCell(receiver);
+    branchUnless(isObjectCell(cell), closed);
+    return boxCell(cachedToStringTag(cell, [&](Condition mustHold) { branchUnless(mustHold, closed); }));
+}
+
+void ObjectBuiltinEmitter::generateSymbolDescription(const InlineCall& call)
+{
+    CellPointer symbol = cellOperand(call.receiver());
+    finishWithCachedString(call, symbol, loadField<CellPointer>(symbol, m_heaps.Symbol_description), RuntimeOperation::SymbolDescription);
+}
+
+void ObjectBuiltinEmitter::generateSymbolToString(const InlineCall& call)
+{
+    CellPointer symbol = cellOperand(call.receiver());
+    finishWithCachedString(call, symbol, loadField<CellPointer>(symbol, m_heaps.Symbol_string), RuntimeOperation::SymbolToString);
+}
+
+void ObjectBuiltinEmitter::finishWithCachedString(const InlineCall& call, CellPointer symbol, CellPointer cached, RuntimeOperation create)
+{
+    LBasicBlock isMade = newBlock();
+    LBasicBlock isNotMade = newBlock();
+    Join<Boxed> join(m_out);
+    m_out.branch(m_out.isNull(cached.value()), rareEdge(isNotMade), normalEdge(isMade));
+    m_out.appendTo(isMade);
+    join.add(boxCell(cached));
+    m_out.appendTo(isNotMade);
+    join.add(callOperation<Boxed>(call.context(), create, { symbol }));
+    finish(call, join.finish());
 }
 
 void ObjectBuiltinEmitter::generateReturnThis(const InlineCall& call)

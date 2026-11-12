@@ -51,10 +51,11 @@ export function from(items /*, mapFn, thisArg */)
                 }
                 if (k >= $MAX_SAFE_INTEGER)
                     $ifAbruptCloseIterator(iterator, $throwTypeError("Length exceeded the maximum array length"));
-                if (mapFn === undefined)
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, yielded));
-                else
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, thisArg === undefined ? mapFn(yielded, k) : mapFn.$call(thisArg, yielded, k)));
+                var answer = yielded;
+                if (mapFn !== undefined)
+                    $ifAbruptCloseIterator(iterator, (answer = thisArg === undefined ? mapFn(yielded, k) : mapFn.$call(thisArg, yielded, k)));
+                if (!$isJSArray(result) || !$tryPutIndex(result, k, answer))
+                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, answer));
                 k += 1;
             }
         }
@@ -70,10 +71,11 @@ export function from(items /*, mapFn, thisArg */)
                 }
                 if (k >= $MAX_SAFE_INTEGER)
                     $ifAbruptCloseIterator(iterator, $throwTypeError("Length exceeded the maximum array length"));
-                if (mapFn === undefined)
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, stepped));
-                else
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, thisArg === undefined ? mapFn(stepped, k) : mapFn.$call(thisArg, stepped, k)));
+                var value = stepped;
+                if (mapFn !== undefined)
+                    $ifAbruptCloseIterator(iterator, (value = thisArg === undefined ? mapFn(stepped, k) : mapFn.$call(thisArg, stepped, k)));
+                if (!$isJSArray(result) || !$tryPutIndex(result, k, value))
+                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, value));
                 k += 1;
             }
         }
@@ -91,6 +93,17 @@ export function from(items /*, mapFn, thisArg */)
                 result.length = k;
                 return result;
             }
+            if (iteratorMethod === $typedArrayProtoValues && $isTypedArrayView(items) && $isJSArray(result)) {
+                for (; k < $typedArrayLength(items); k++) {
+                    var number = items[k];
+                    if (mapFn !== undefined)
+                        $ifAbruptCloseIterator(iterator, (number = thisArg === undefined ? mapFn(number, k) : mapFn.$call(thisArg, number, k)));
+                    if (!$tryPutIndex(result, k, number))
+                        $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, number));
+                }
+                result.length = k;
+                return result;
+            }
             for (;;) {
                 const step = $stepArrayIterator(iterator);
                 const stepped = $resultAt(step, $stepArrayIteratorResultValue);
@@ -100,10 +113,11 @@ export function from(items /*, mapFn, thisArg */)
                 }
                 if (k >= $MAX_SAFE_INTEGER)
                     $ifAbruptCloseIterator(iterator, $throwTypeError("Length exceeded the maximum array length"));
-                if (mapFn === undefined)
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, stepped));
-                else
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, thisArg === undefined ? mapFn(stepped, k) : mapFn.$call(thisArg, stepped, k)));
+                var value = stepped;
+                if (mapFn !== undefined)
+                    $ifAbruptCloseIterator(iterator, (value = thisArg === undefined ? mapFn(stepped, k) : mapFn.$call(thisArg, stepped, k)));
+                if (!$isJSArray(result) || !$tryPutIndex(result, k, value))
+                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, value));
                 k += 1;
             }
         }
@@ -118,10 +132,11 @@ export function from(items /*, mapFn, thisArg */)
                 }
                 if (k >= $MAX_SAFE_INTEGER)
                     $ifAbruptCloseIterator(iterator, $throwTypeError("Length exceeded the maximum array length"));
-                if (mapFn === undefined)
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, stepped));
-                else
-                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, thisArg === undefined ? mapFn(stepped, k) : mapFn.$call(thisArg, stepped, k)));
+                var value = stepped;
+                if (mapFn !== undefined)
+                    $ifAbruptCloseIterator(iterator, (value = thisArg === undefined ? mapFn(stepped, k) : mapFn.$call(thisArg, stepped, k)));
+                if (!$isJSArray(result) || !$tryPutIndex(result, k, value))
+                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, value));
                 k += 1;
             }
         }

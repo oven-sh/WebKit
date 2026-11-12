@@ -388,9 +388,20 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
     }
 
     bool everyOtherPasses = plan.everyNonCellPasses();
+    LBasicBlock continuation = newBlock();
+    if (m_asksNumbersFirst && !everyOtherPasses && (plan.passingPrimitives & Primitive::Number) && verdictOfNumbers(plan) == TypeTestVerdict::AlwaysPasses) {
+        LBasicBlock isNoNumber = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        m_out.branch(isNumber(value).value(), normalEdge(continuation), unlikelyEdge(isNoNumber));
+        m_out.appendToArm(isNoNumber, fork);
+        SetForScope numberWasAsked(m_asksNumbersFirst, false);
+        testBoxed(value, plan, failure);
+        m_out.jump(continuation);
+        m_out.appendToJoin(continuation, fork);
+        return;
+    }
     Condition holdsCell = isCell(value);
     LBasicBlock cellCase = newBlock();
-    LBasicBlock continuation = newBlock();
     LBasicBlock otherCase = everyOtherPasses ? continuation : newBlock();
     ScopeFork fork = m_out.forkScope();
     m_out.branch(holdsCell.value(), normalEdge(cellCase), everyOtherPasses ? rareEdge(otherCase) : unlikelyEdge(otherCase));

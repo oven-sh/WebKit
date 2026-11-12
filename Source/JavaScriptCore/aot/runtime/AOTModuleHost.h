@@ -97,7 +97,7 @@ struct ModuleHost {
     const MockOperations* (*mockOperations)();
     uint64_t (*computeFileStamp)(std::span<const char> path);
     bool (*shouldBypassMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
-    bool (*wasLinkedBeforeMock)(JSGlobalObject*, const String& path, const String& importer);
+    bool (*wasLinkedBeforeMock)(JSGlobalObject*, const ScopedLambda<String()>& path, const ScopedLambda<String()>& importer);
     bool (*isMockHiddenFromRequirer)(JSGlobalObject*, const String& path, const String& requirer);
     JSPromise* (*nextPendingFactory)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isInGraph, PendingFactoryRequester, JSValue& state);
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
@@ -121,6 +121,7 @@ struct ModuleHost {
     bool (*isInPendingFactoryChain)(JSGlobalObject*, ModuleID file, ModuleID mocked);
     bool (*isRequiredByOwnFactory)(JSGlobalObject*, ModuleID required, ModuleID requirer);
     bool (*isFactoryCallPending)(JSGlobalObject*, uint64_t call);
+    bool (*hasRegisteredMock)(JSGlobalObject*, const String& path);
     bool (*isAwaitingOriginalBody)(JSGlobalObject*, ModuleID);
     void (*didRunOriginal)(JSGlobalObject*, const String& path, OriginalRun);
     bool (*deferPatchToNextLoad)(JSGlobalObject*, ModuleID, bool isFactoryPending);

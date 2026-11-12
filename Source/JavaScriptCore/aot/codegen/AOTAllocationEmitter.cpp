@@ -12,6 +12,7 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
+#include "AOTConversionEmitter.h"
 #include "AOTEnvironmentEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTInliningAcrossFiles.h"
@@ -323,7 +324,7 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
         unsigned numberOfLooks = 0;
         for (const BirthFieldToCheck& checked : fields | std::views::reverse) {
             const PlacedSlot& slot = m_plan.slot(layout, checked.field);
-            if (!traitsOf(slot.representation).hasAbsent || (everyFieldIsListed && !checked.holdsRawValue))
+            if (!mayBeCreatedByStore(slot.representation) || (everyFieldIsListed && !checked.holdsRawValue))
                 continue;
             if (mayCall && numberOfLooks++ == maxInstructionsBeforeCall) {
                 callVoidOperation(value, RuntimeOperation::TryFinishBirth, { cell }, { .isOnRarePath = true });
@@ -331,7 +332,10 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
                 return;
             }
             MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, checked.field);
-            continueIf(checked.holdsRawValue ? slots.holdsDeclaredType(cell, slot, location) : slots.holdsValue(cell, slot, location));
+            if (isListedByKeyOrderAlone(slot.representation))
+                continueIf(slots.isFilled(cell, slot, location));
+            else
+                continueIf(checked.holdsRawValue ? slots.holdsDeclaredType(cell, slot, location) : slots.holdsValue(cell, slot, location));
         }
         clearBirthMark(cell, type);
         m_out.jump(done);
@@ -370,8 +374,7 @@ AllocationEmitter::InitialFields AllocationEmitter::collectInitialFields(LayoutI
 
 static bool isZeroWhileEmpty(SlotRepresentation representation)
 {
-    SlotTraits traits = traitsOf(representation);
-    return !traits.hasAbsent || !traits.absentBits;
+    return !bitsBeforeCreation(representation);
 }
 
 ZeroedBy AllocationEmitter::whoZeroesBodyOfFreshCell(const ValueContext& value, const MentionedAllocation& allocation, std::span<const FieldIndex> emptySlots, AllocationStorage storage)
@@ -449,12 +452,13 @@ Representation AllocationEmitter::representationWantedBy(const InitialField& fie
 
 bool AllocationEmitter::isNarrowedWhereStored(const InitialField& field) const
 {
-    return representationOf(field.value) == Representation::Cell && representationWantedBy(field) == Representation::Cell32;
+    Representation held = representationOf(field.value);
+    return (held == Representation::Cell || held == Representation::JSValue) && representationWantedBy(field) == Representation::Cell32;
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES Operand AllocationEmitter::takeForSlot(const InitialField& field)
 {
-    return isNarrowedWhereStored(field) ? Operand(compress(in<CellPointer>(field.value))) : get(field.value);
+    return isNarrowedWhereStored(field) ? Operand(emitter<ConversionEmitter>().compress(get(field.value), typeOf(field.value))) : get(field.value);
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES void AllocationEmitter::storeInitialFields(const ValueContext& value, CellPointer cell, LayoutID layout, const InitialFields& initialFields, AllocationStorage storage)
@@ -596,8 +600,7 @@ void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, std::
             const PlacedSlot& slot = planned.slots[field];
             if (!fillsWord(slot))
                 continue;
-            SlotTraits traits = traitsOf(slot.representation);
-            wordsWhileEmpty[slot.offset / sizeof(uint64_t)] = traits.hasAbsent ? static_cast<int64_t>(traits.absentBits) : 0;
+            wordsWhileEmpty[slot.offset / sizeof(uint64_t)] = static_cast<int64_t>(bitsBeforeCreation(slot.representation));
             isEmptyWord.quickSet(slot.offset / sizeof(uint64_t));
         }
         isStoredInLoop.ensureSize(numberOfWords);
@@ -622,11 +625,10 @@ void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, std::
         if (!isStored(slot) || (storesWordsInLoop && fillsWord(slot) && isStoredInLoop.get(slot.offset / sizeof(uint64_t))))
             continue;
         TypedPointer address = slots.addressOf(cell, slot, locationOfField(m_program, m_plan.slots(), layout, field));
-        SlotTraits traits = traitsOf(slot.representation);
-        if (traits.hasAbsent)
+        if (mayBeCreatedByStore(slot.representation))
             slots.storeAbsent(address, slot.representation);
         else
-            storeZero(m_out, address, traits.width);
+            storeZero(m_out, address, widthOf(slot.representation));
     }
 }
 

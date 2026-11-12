@@ -8,15 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinCells.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCallsOfStrings.h"
 #include "AOTStubsCallHost.h"
 #include "AOTStubsStrings.h"
+#include "InternalFunction.h"
 #include "JSCallee.h"
 #include "JSString.h"
 #include "JSType.h"
@@ -252,6 +255,39 @@ void emitCallOfNumberOrStringConstructor(StubAssembler& jit, GPRReg scratch)
 
     jit.linkToStub(callsFunction, callHostFunction(jit.key().count()));
     isAnotherFunction.link(&jit);
+}
+
+void emitCallOfObjectOrArrayConstructor(StubAssembler& jit, GPRReg scratch)
+{
+    if (!jit.key().count())
+        return;
+    constexpr GPRReg value = argumentGPR(0);
+    const GPRReg classInfo = jit.reuseScratch(StubRegister::T9);
+    RELEASE_ASSERT(noOverlap(scratch, classInfo, calleeGPR, thisGPR, instanceGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
+    JumpList callsFunction;
+
+    loadStructure(jit, calleeGPR, scratch);
+    jit.loadPtr(Address(scratch, Structure::classInfoOffset()), scratch);
+    jit.loadRuntimePointer(Entry::ObjectConstructorClassInfo, classInfo);
+    Jump isNotObjectConstructor = jit.branchPtr(CCallHelpers::NotEqual, scratch, classInfo);
+    callsFunction.append(jit.branchIfNotCell(value));
+    callsFunction.append(jit.branch8(CCallHelpers::Below, Address(value, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
+    jit.move(value, jit.result());
+    jit.returnToCaller();
+
+    isNotObjectConstructor.link(&jit);
+    if (jit.key().count() == 1 && jit.options().callsArrayByValue) {
+        const GPRReg length = classInfo;
+        jit.loadRuntimePointer(Entry::ArrayConstructorClassInfo, classInfo);
+        callsFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, classInfo));
+        callsFunction.append(jit.branchIfNotInt32(value));
+        jit.signExtend32ToPtr(value, length);
+        callsFunction.append(jit.branch64(CCallHelpers::Above, length, TrustedImm32(maxHoleArrayCapacity)));
+        jit.loadPtr(Address(calleeGPR, InternalFunction::offsetOfGlobalObject()), scratch);
+        callsFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+        jit.jumpToStub(newArrayOfLength(ArrayElementKind::Contiguous));
+    }
+    callsFunction.link(&jit);
 }
 
 } } // namespace JSC::AOT

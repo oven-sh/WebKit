@@ -64,8 +64,8 @@ bool Modules::importsOriginalDespiteMock(ModuleID fileOrModule, ModuleID importe
         return false;
     auto asked = m_importersAskedAboutOriginal.add(pair, AnswersOfHostOnOriginal { });
     if (asked.isNewEntry) {
-        asked.iterator->value.isGiven = host().shouldBypassMock(m_instance.globalObject, m_table.fullPath(mocked), m_table.fullPath(importer), true);
-        asked.iterator->value.staysLinked = host().wasLinkedBeforeMock(m_instance.globalObject, m_table.fullPath(mocked), m_table.fullPath(importer));
+        asked.iterator->value.isGiven = isOfPackage(importer) && host().shouldBypassMock(m_instance.globalObject, m_table.fullPath(mocked), m_table.fullPath(importer), true);
+        asked.iterator->value.staysLinked = host().wasLinkedBeforeMock(m_instance.globalObject, scopedLambda<String()>([&] { return m_table.fullPath(mocked); }), scopedLambda<String()>([&] { return m_table.fullPath(importer); }));
     }
     if (askedBy == OriginalRequester::ImportCall && !asked.iterator->value.isGiven)
         return false;
@@ -116,8 +116,12 @@ bool Modules::isExternalizedPackage(ModuleID module) const
 
 bool Modules::isOfPackage(ModuleID module) const
 {
-    String path = m_table.fullPath(module);
-    return path.contains("/node_modules/"_s) || path.contains("\\node_modules\\"_s);
+    if (!m_modulesAskedAboutPackage.set(module.index())) {
+        String path = m_table.fullPath(module);
+        if (path.contains("/node_modules/"_s) || path.contains("\\node_modules\\"_s))
+            m_modulesOfPackages.set(module.index());
+    }
+    return m_modulesOfPackages.get(module.index());
 }
 
 bool Modules::wasLoadedUnderActualKey(ModuleID fileOrModule) const
@@ -508,12 +512,44 @@ bool Modules::isRequestedDuringOwnPatch(ModuleID module)
     return host().isRequestedByPendingFactory && host().isRequestedByPendingFactory(m_instance.globalObject, module);
 }
 
+void Modules::showOriginalUntilMockIsSet(ModuleID file)
+{
+    m_filesShownToOwnFactories.set(file.index());
+    if (LoadedModule* held = loadedIfExists(m_table.moduleBehindFacade(file).value_or(file)); held && held->pendingMockWord)
+        uncheckedDowncast<ModuleNamespace>(held->pendingMockWord.get())->setUninitializedMock(false);
+}
+
+bool Modules::isOnCycleWithOtherMock(ModuleID mocked) const
+{
+    const CyclesOfImports& cycles = cyclesOfImports();
+    const CyclesOfImports::Member* own = cycles.find(mocked);
+    if (!own || !host().hasRegisteredMock)
+        return false;
+    return std::ranges::any_of(cycles.membersOf(own->cycle), [&](uint32_t member) {
+        return member != mocked.index() && m_table.hasFilePath(ModuleID(member)) && host().hasRegisteredMock(m_instance.globalObject, m_table.fullPath(ModuleID(member)));
+    });
+}
+
 void Modules::noteLoadBegunByFactories(ModuleID root)
 {
     for (size_t index : m_mocks->modules) {
         ModuleID mocked(index);
-        if (mocked == root)
+        if (mocked == root) {
+            if (!cyclesOfImports().find(mocked)) [[likely]]
+                continue;
+            if (isRequestedByOwnFactory(mocked))
+                showOriginalUntilMockIsSet(mocked);
+            bool wasFactoryCalledByLoad = m_modulesWithRunningFactory.get(index) || pendingFactoryCallID(mocked);
+            bool isOriginalAwaited = std::ranges::any_of(m_hostImportCalls, [](const auto& call) { return call.second->status() == JSPromise::Status::Pending; });
+            if (!wasFactoryCalledByLoad || isOriginalAwaited || !isRequestedByOwnFactory(mocked) || isOnCycleWithOtherMock(mocked))
+                continue;
+            size_t first = m_factoryLoadedImporters.size();
+            collectImportersBetween(root, mocked, m_factoryLoadedImporters);
+            m_factoryLoadedImporters.removeAllMatching([&](const auto& pair) { return hasInstances(pair.first) && status(pair.first) == ModuleStatus::Evaluated; }, first);
+            for (size_t place = first; place < m_factoryLoadedImporters.size(); ++place)
+                m_originalsThatLoadedImporters.set(m_factoryLoadedImporters[place].first, mocked);
             continue;
+        }
         if (isRequestedDuringOwnPatch(mocked) && !pendingFactoryCallID(mocked)) [[unlikely]] {
             Vector<std::pair<ModuleID, ModuleID>> importers;
             collectImportersBetween(root, mocked, importers);
@@ -527,9 +563,16 @@ void Modules::noteLoadBegunByFactories(ModuleID root)
             m_modulesThatOwnFactoryMayLoad.set(index);
         size_t first = m_factoryLoadedImporters.size();
         collectImportersBetween(root, mocked, m_factoryLoadedImporters);
+        if (m_factoryLoadedImporters.size() > first)
+            showOriginalUntilMockIsSet(mocked);
         m_factoryLoadedImporters.removeAllMatching([&](const auto& pair) { return hasInstances(pair.first) && status(pair.first) == ModuleStatus::Evaluated && !isMocked(pair.first); }, first);
         for (size_t place = first; place < m_factoryLoadedImporters.size(); ++place)
             notePrivateCopy(m_factoryLoadedImporters[place].first, mocked);
+        bool isLoadedByRefusedRequire = m_factoryLoadedImporters.size() > first && m_detachedLoads.containsIf([&](const DetachedLoad& load) {
+            return load.wait->status() == JSPromise::Status::Pending && !load.isForOriginal && staticImportClosure(load.required, MockTraversal::Stop).get(root.index());
+        });
+        if (isLoadedByRefusedRequire)
+            m_importsBesideRefusedRequires.append({ root, mocked });
     }
 }
 
@@ -1132,7 +1175,7 @@ JSValue Modules::answerRequireWhileFactoryHasNotSettled(ModuleID target, ModuleI
 void Modules::collectImportersBetween(ModuleID root, ModuleID mocked, Vector<std::pair<ModuleID, ModuleID>>& importers)
 {
     Vector<Vector<uint32_t, 2>> importersOf(m_table.size());
-    for (size_t importer : staticImportClosure(root, MockTraversal::Stop)) {
+    for (size_t importer : root == mocked ? importClosureOfOriginal(root) : staticImportClosure(root, MockTraversal::Stop)) {
         if (isMocked(ModuleID(importer)))
             continue;
         for (const ModuleRequestData& request : m_table.requests(ModuleID(importer)))

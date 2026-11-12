@@ -180,9 +180,13 @@ static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function,
     jit.move(TrustedImm32(static_cast<int32_t>(multiplierOfPlaceOfPrototypeProperty)), place);
     jit.mul32(structureID, place);
     jit.urshift32(TrustedImm32(shiftOfProductOfPlaceOfPrototypeProperty), place);
+    jit.lshift32(TrustedImm32(1), place);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.placesOfPrototypeProperties)), offset);
     jit.getEffectiveAddress(BaseIndex(offset, place, CCallHelpers::TimesEight), place);
+    Jump isFirstOfSet = jit.branch32(CCallHelpers::Equal, Address(place, OBJECT_OFFSETOF(PlaceOfPrototypeProperty, structureID)), structureID);
+    jit.addPtr(TrustedImm32(sizeof(PlaceOfPrototypeProperty)), place);
     Jump isStructureNotRemembered = jit.branch32(CCallHelpers::NotEqual, Address(place, OBJECT_OFFSETOF(PlaceOfPrototypeProperty, structureID)), structureID);
+    isFirstOfSet.link(&jit);
     jit.load32(Address(place, OBJECT_OFFSETOF(PlaceOfPrototypeProperty, offset)), offset);
     jit.loadProperty(function, offset, prototype);
     isNotRemembered.append(jit.branchIfNotCell(prototype));
@@ -190,13 +194,18 @@ static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function,
     Jump isLoaded = jit.jump();
 
     isStructureNotRemembered.link(&jit);
-    jit.move(function, place);
-    jit.urshift64(TrustedImm32(shiftOfClassObjectForPrototype), place);
-    jit.and32(TrustedImm32(numberOfPrototypesOfClassObjects - 1), place);
-    jit.lshift32(TrustedImm32(1), place);
+    jit.move(function, offset);
+    jit.urshift64(TrustedImm32(shiftOfClassObjectForPrototype), offset);
+    jit.move(TrustedImm32(static_cast<int32_t>(multiplierOfPlaceOfPrototypeProperty)), place);
+    jit.mul32(offset, place);
+    jit.urshift32(TrustedImm32(shiftOfProductOfClassObject), place);
+    jit.lshift32(TrustedImm32(2), place);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.prototypesOfClassObjects)), offset);
     jit.getEffectiveAddress(BaseIndex(offset, place, CCallHelpers::TimesEight), place);
+    Jump isFirstClassObjectOfSet = jit.branchPtr(CCallHelpers::Equal, Address(place, OBJECT_OFFSETOF(PrototypeOfClassObject, classObject)), function);
+    jit.addPtr(TrustedImm32(sizeof(PrototypeOfClassObject)), place);
     isNotRemembered.append(jit.branchPtr(CCallHelpers::NotEqual, Address(place, OBJECT_OFFSETOF(PrototypeOfClassObject, classObject)), function));
+    isFirstClassObjectOfSet.link(&jit);
     jit.loadPtr(Address(place, OBJECT_OFFSETOF(PrototypeOfClassObject, prototype)), prototype);
     isLoaded.link(&jit);
 }

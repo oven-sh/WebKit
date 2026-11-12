@@ -10,10 +10,10 @@
 # OPTIONS: check=Validate
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: [[shape]]: boolean @Boolean = ShapeTest {{*}}layouts=[L0]
-# CHECK-NEXT: Branch [[shape]] -> taken {{*}}, notTaken [[closed]]()
 # CHECK: number @Double{{*}}isInLoop=true isLoopHead=true
 # CHECK-NOT: RequireObjectCoercible
+# CHECK: [[shape]]: boolean @Boolean = ShapeTest {{*}}layouts=[L0]
+# CHECK-NEXT: Branch [[shape]] -> taken {{*}}, notTaken [[closed]]()
 # CHECK: [[prototype]]: boolean @Boolean = HasLayoutPrototype
 # CHECK-NEXT: Branch [[prototype]] -> taken {{*}}, notTaken [[closed]]()
 # CHECK: [[members]]: boolean @Boolean = AreMembersUnchanged

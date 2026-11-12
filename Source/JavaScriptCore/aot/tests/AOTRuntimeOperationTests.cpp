@@ -61,6 +61,7 @@ static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-wit
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
 static constexpr ASCIILiteral literalBornHoldingListTest = "runtime-operations/literal-born-holding-list"_s;
 static constexpr ASCIILiteral growingTextTest = "runtime-operations/a-text-that-is-added-to-grows-in-a-buffer"_s;
+static constexpr ASCIILiteral longTextSharesBufferTest = "runtime-operations/a-long-text-shares-the-characters-of-its-buffer"_s;
 static constexpr ASCIILiteral partsOfOtherWidthTest = "runtime-operations/a-growing-text-takes-parts-whose-characters-have-changed-width"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
 static constexpr ASCIILiteral pollShowsRegistersTest = "runtime-operations/poll-that-faults-shows-every-register-to-the-collector"_s;
@@ -545,6 +546,53 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     vm.heap.collectNow(Sync, CollectionScope::Full);
     AOT_TEST_CHECK(vm.heap.objectCount() < numberOfCellsBefore + maxNumberOfCellsLeft);
     AOT_TEST_CHECK(text->length() == 2 * (numberOfPiecesWithPart + numberOfPiecesBetweenCollections));
+}
+
+static void checkLongTextSharesItsBuffer(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    JSGlobalObject* realm = program.realm();
+    constexpr unsigned numberOfTensInPiece = 5;
+    JSString* piece = jsNontrivialString(vm, repeated("0123456789"_s, numberOfTensInPiece));
+    unsigned numberOfPieces = 1;
+    JSString* text = piece;
+    auto grow = [&](unsigned length) {
+        for (; text->length() < length; ++numberOfPieces)
+            text = joinFromNativeCode(program, text, piece);
+    };
+
+    grow(minLengthSharedWithBuffer / 2);
+    AOT_TEST_CHECK(canGrowInPlace(instance, text));
+    JSString* shortText = jsString(realm, text, jsNontrivialString(vm, "ab"_s));
+    AOT_TEST_CHECK(!tryResolveLongText(instance, shortText) && shortText->isRope());
+
+    grow(minLengthSharedWithBuffer);
+    AOT_TEST_CHECK(canGrowInPlace(instance, text));
+    String expected = repeated("0123456789"_s, numberOfTensInPiece * numberOfPieces);
+    const StringImpl* buffer = uncheckedDowncast<JSRopeString>(text)->substringBase()->tryGetValueImpl();
+    JSString* pieceOfRopes = jsString(realm, jsNontrivialString(vm, "ab"_s), jsString(realm, jsNontrivialString(vm, "cd"_s), jsNontrivialString(vm, "ef"_s)));
+    JSString* first = jsString(realm, jsString(realm, text, pieceOfRopes), jsNontrivialString(vm, "first"_s));
+    JSString* second = jsString(realm, text, jsNontrivialString(vm, "second"_s));
+    JSString* tooLong = jsString(realm, text, jsNontrivialString(vm, repeated("0123456789"_s, 4 * minLengthSharedWithBuffer)));
+    AOT_TEST_CHECK(first->isNonSubstringRope() && second->isNonSubstringRope() && tooLong->isNonSubstringRope());
+    AOT_TEST_CHECK(!tryResolveLongText(instance, text) && !tryResolveLongText(instance, tooLong) && tooLong->isRope());
+
+    AOT_TEST_CHECK(tryResolveLongText(instance, first) && !first->isRope());
+    const StringImpl* shared = first->tryGetValueImpl();
+    AOT_TEST_CHECK(shared->span8().data() >= buffer->span8().data() && shared->span8().data() + shared->length() <= buffer->span8().data() + buffer->length());
+    AOT_TEST_CHECK(charactersOf(first) == makeString(expected, "abcdeffirst"_s));
+    AOT_TEST_CHECK(!canGrowInPlace(instance, text) && charactersOf(text) == expected);
+
+    AOT_TEST_CHECK(!tryResolveLongText(instance, second) && second->value(realm).data == makeString(expected, "second"_s));
+    AOT_TEST_CHECK(charactersOf(first) == makeString(expected, "abcdeffirst"_s));
+    JSString* longer = joinFromNativeCode(program, text, jsNontrivialString(vm, "third"_s));
+    AOT_TEST_CHECK(charactersOf(longer) == makeString(expected, "third"_s) && charactersOf(first) == makeString(expected, "abcdeffirst"_s));
+
+    first = jsString(realm, first, jsNontrivialString(vm, "more"_s));
+    AOT_TEST_CHECK(!tryResolveLongText(instance, first) && charactersOf(first) == makeString(expected, "abcdeffirstmore"_s));
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(first->value(realm).data == makeString(expected, "abcdeffirstmore"_s) && charactersOf(longer) == makeString(expected, "third"_s));
 }
 
 static String copyIn16Bits(const String& text)
@@ -1101,6 +1149,11 @@ static void textThatIsAddedToGrowsInBuffer()
     runWithLoadedProgram(growingTextTest, programText, checkTextThatIsAddedToGrowsInBuffer);
 }
 
+static void longTextSharesItsBuffer()
+{
+    runWithLoadedProgram(longTextSharesBufferTest, programText, checkLongTextSharesItsBuffer);
+}
+
 static void growingTextTakesPartsWhoseCharactersHaveChangedWidth()
 {
     runWithLoadedProgram(partsOfOtherWidthTest, programText, checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth);
@@ -1157,6 +1210,7 @@ std::span<const NativeTest> runtimeOperationTests()
         { pushesAndHolesTest, pushesAndHoles },
         { literalBornHoldingListTest, literalsAreBornHoldingLists },
         { growingTextTest, textThatIsAddedToGrowsInBuffer },
+        { longTextSharesBufferTest, longTextSharesItsBuffer },
         { partsOfOtherWidthTest, growingTextTakesPartsWhoseCharactersHaveChangedWidth },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
         { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },

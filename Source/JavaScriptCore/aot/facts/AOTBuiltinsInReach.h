@@ -44,13 +44,20 @@ const FieldsOfNumbers& fieldsReadAsIntegersIn(const LooksAtBodies&);
 const NamesOfModules& namesReadAsIntegersIn(const LooksAtBodies&);
 const FieldsOfNumbers& fieldsReadForArithmeticIn(const LooksAtBodies&);
 const FieldsOfNumbers& fieldsStoredWhatIsNoInt32In(const LooksAtBodies&);
+const FieldsOfNumbers& fieldsFilledByInitializersIn(const LooksAtBodies&);
+BitVector initializerMethodsIn(const LooksAtBodies&, const Program&);
 BitVector functionsCalledInLoopsIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held, BitVector& keysCalledInLoops, bool& elementsAreCalledInLoops);
 BitVector functionsCalledInLoopsOfOwnFileIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
-BitVector functionsInElementsIn(const Program&, const ThinSummaries&, const LinkTables& linked);
 BitVector constructorsCalledInLoopsIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
-BitVector functionsCalledByValueInLoopsIn(const Program&, const ThinSummaries&, const LinkTables&);
+BitVector mixedClassesConstructedIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+BitVector functionsCalledByValueInLoopsIn(const Program&, const ThinSummaries&, const LinkTables&, BitVector& functionsInElements);
+BitVector functionsCalledByComparatorsIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
 void markLiteralsStoredByCallees(ThinSummaries&, const LinkTables& linked, const LinkTables& held);
-BitVector functionsDoneInIterationsIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+struct FunctionsDoneInIterations {
+    BitVector functions;
+    BitVector inNestedIterations;
+};
+FunctionsDoneInIterations findFunctionsDoneInIterations(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
 FieldsOfNumbers fieldsUsedInProductsIn(const LooksAtBodies&, const BitVector& functionsCalledInLoops);
 FieldsOfNumbers fieldsStoredCountsIn(const LooksAtBodies&, const Program&, const LinkTables& linked);
 const BitVector& keysStoredWhatIsNoInt32In(const LooksAtBodies&);
@@ -108,6 +115,7 @@ public:
     bool mayRunOrHasObjects(BuiltinID canonical) const;
     bool isAskedForOtherNames(BuiltinID canonical) const;
     bool isOutOfSight(BuiltinID canonical) const;
+    bool isInReach(BuiltinID canonical) const;
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const;
     bool loaderOfHostMayRun() const;
     bool hostIsAskedForValueOfModule() const;
@@ -166,6 +174,7 @@ private:
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesEverTakenForUnlaid;
     Vector<NameOnHolder> m_namesLaidAfterAll;
     bool m_wasToldSomethingNew { true };
+    bool m_writersMayRunOutOfSight { false };
 };
 
 } } } // namespace JSC::AOT::Typed

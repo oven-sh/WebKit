@@ -220,6 +220,7 @@ public:
     uint32_t builtinCell(BuiltinCellKey key) { return add(NumberSpace::BuiltinCell, key.encoded()); }
     uint32_t globalBinding(PropertyKeyID key, OptionSet<GlobalBindingFlags> flags) { return addPair(NumberSpace::GlobalBinding, key.index(), flags.toRaw()); }
     static constexpr uint32_t firstUseOfSiteAnswers = 8;
+    static constexpr uint32_t useOfPresenceTests = 12;
     template<size_t inlineCapacity>
     uint32_t siteCache(Vector<uint32_t, inlineCapacity>&& modulesAndPositions, PropertyKeyID key, uint32_t access)
     {
@@ -228,9 +229,11 @@ public:
         return add(NumberSpace::SiteCache, modulesAndPositions.span());
     }
     uint32_t regExp(StringID pattern, OptionSet<Yarr::Flags> flags) { return addPair(NumberSpace::RegExp, pattern.index(), flags.toRaw()); }
-    uint32_t regExpLiteralCell(Wire::SourceLocation written, StringID pattern, OptionSet<Yarr::Flags> flags)
+    static constexpr OptionSet<Yarr::Flags> flagsOfMatcher { Yarr::Flags::Global, Yarr::Flags::HasIndices };
+    uint32_t regExpMatcher(StringID pattern, OptionSet<Yarr::Flags> flags) { return regExp(pattern, flags | flagsOfMatcher); }
+    uint32_t regExpLiteralCell(Wire::SourceLocation written, StringID pattern, uint32_t flags)
     {
-        uint32_t key[] { written.module, written.position, pattern.index(), flags.toRaw() };
+        uint32_t key[] { written.module, written.position, pattern.index(), flags };
         return add(NumberSpace::RegExpLiteralCell, std::span<const uint32_t>(key));
     }
     uint32_t templateObjectCell(Wire::SourceLocation written) { return addPair(NumberSpace::TemplateObjectCell, written.module, written.position); }
@@ -439,8 +442,10 @@ struct PlacedStatics {
     Vector<PlacedClassGuardCount> classGuardCounts;
     Vector<PlacedGuardOfClassGuardCount> guardsOfClassGuardCounts;
     Vector<uint32_t> environmentHandedBackOffsets;
+    Vector<uint32_t> structuresOfHeirOffsets;
     Vector<uint32_t> roots;
     Vector<StaticsRange> clearedEachCollection;
+    Vector<StaticsRange> variablesWithViewMirror;
     uint32_t size { 0 };
 };
 
@@ -533,8 +538,6 @@ public:
     std::optional<uint32_t> rankOfClass(LayoutID id) const { return id.index() < m_classRanks.size() && m_classRanks[id.index()] != UINT32_MAX ? std::optional(m_classRanks[id.index()]) : std::nullopt; }
     uint32_t closureCellNumber(FunctionID id) const { return id.index() < m_closureCellNumbers.size() ? m_closureCellNumbers[id.index()] : 0; }
     uint32_t numberOfClosureCells() const { return m_numberOfClosureCells; }
-    std::span<const LayoutID> heirsLookedAt() const { return m_heirsLookedAt.span(); }
-    uint32_t sizeOfStructuresOfHeirs() const { return m_sizeOfStructuresOfHeirs; }
 
     const NumberedKeys& allocations() const { return m_allocations; }
     const NumberedKeys& requests() const { return m_requests; }
@@ -606,9 +609,6 @@ private:
     Vector<uint32_t> m_classRanks;
     Vector<uint32_t> m_closureCellNumbers;
     uint32_t m_numberOfClosureCells { 0 };
-    Vector<LayoutID> m_heirsLookedAt;
-    Vector<uint32_t> m_offsetsOfStructuresOfHeirs;
-    uint32_t m_sizeOfStructuresOfHeirs { 0 };
     NumberedKeys m_allocations;
     NumberedKeys m_requests;
     Vector<uint32_t> m_offsetsOfRequests;

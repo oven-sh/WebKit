@@ -4854,6 +4854,12 @@ public:
         return branch32(cond, memoryTempRegister, right);
     }
 
+    Jump branch32(RelationalCondition cond, BaseIndex left, RegisterID right)
+    {
+        load32(left, getCachedMemoryTempRegisterIDAndInvalidate());
+        return branch32(cond, memoryTempRegister, right);
+    }
+
     Jump branch32(RelationalCondition cond, BaseIndex left, TrustedImm32 right)
     {
         load32(left, getCachedMemoryTempRegisterIDAndInvalidate());

@@ -2037,10 +2037,8 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
     bool found = false;
 
     auto follow = [&](JSValue value) {
-        if (JSCell* cell = cellOf(value)) {
-            if (auto* promise = dynamicDowncast<JSPromise>(cell))
-                work.append(promise);
-        }
+        if (JSPromise* promise = JSPromise::settledByReactionCell(cellOf(value)))
+            work.append(promise);
     };
 
     // A promise, or the async function or module body that an await or for-await resumes.
@@ -2124,6 +2122,7 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
         case InternalMicrotask::DynamicImportDeferDependencySettled:
 #if ENABLE(AOT)
         case InternalMicrotask::CompiledModuleImportSettled:
+        case InternalMicrotask::CompiledReactionChainStep:
 #endif
             follow(cell);
             break;

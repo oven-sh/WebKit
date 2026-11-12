@@ -119,6 +119,7 @@ using SiteCache = RememberedSlot<Slot>*;
 class SiteCaches final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(SiteCaches);
 public:
+    bool readsValuesWhereTheyAre() const final { return true; }
     static constexpr unsigned regionShift = 8;
     static constexpr uint32_t numberOfMissBits = 1u << 17;
 
@@ -133,6 +134,7 @@ public:
     SiteCache at(uint32_t index) const { return &checkedAt(m_slots, index); }
 
     bool didMissBefore(SiteCache);
+    bool mayBeFilledAfterMiss(SiteCache);
     void didFailToFill(SiteCache);
     void fill(SiteCache, const Slot&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     void clear(SiteCache);
@@ -147,6 +149,7 @@ public:
     void waitLongerForNextFill(const void* site);
     unsigned takeSamplesToLeaveOutBeforeNextFill(const void* site);
     void forgetHowOftenItWasFilled(const void* site);
+    bool hasReachedLongestWait(const void* site) const { return refillCountOf(site) >= SiteCacheState::maxRefillCount; }
     bool didWaitForSamples(const void* site);
 
 private:
@@ -199,6 +202,7 @@ private:
 class AnswersAtSites final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(AnswersAtSites);
 public:
+    bool readsValuesWhereTheyAre() const final { return true; }
     AnswersAtSites(State&, SiteCaches&);
 
     uint32_t placeAtDistanceFromInstance(uint32_t) const;
@@ -225,7 +229,7 @@ public:
     void moveUpFurtherAnswer(uint32_t place, SiteUse, StructureID);
     void fillByShape(uint32_t place, SiteUse, SiteAnswers::Answer, std::optional<SiteAnswers::Answer> sameByStructure = std::nullopt);
     bool holdsAnotherStructure(uint32_t place, SiteUse, StructureID) const;
-    void addStructureThatLacksName(uint32_t place, StructureID, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
+    void addStructureThatLacksName(uint32_t place, StructureID, UniquedStringImpl*, std::span<JSObject* const> changeableObjects, bool mayGiveUp);
     struct WhatStandsAbove {
         uint32_t holderOrWord;
         int32_t indexInStorageOfHolder { 0 };
@@ -259,6 +263,9 @@ private:
     bool wasPutOut(uint32_t place, StructureID id) const { return m_visitorsPutOut.contains(static_cast<uint64_t>(place) << 32 | id.bits()); }
     void giveBackIfEmpty(uint32_t numberOfAnswers);
     void giveBackWideAnswersIfEmpty(uint32_t numberOfWideAnswers);
+    bool tryDropWideAnswers(uint32_t place, WideSiteAnswers&);
+    bool noteSampleOfTrial(uint32_t place, StructureID);
+    bool beginTrialUnlessTried(uint32_t place, WideSiteAnswers&);
 
     State& m_state;
     SiteCaches& m_states;
@@ -271,6 +278,19 @@ private:
     Vector<uint16_t> m_numbersOfWideAnswersGivenBack;
     uint32_t m_nextStructureToForget { 0 };
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
+    struct TrialOfFurtherAnswers {
+        static constexpr unsigned numberOfSamples = 48;
+        static constexpr uint8_t timesWithoutRoomBeforeTrial = 8;
+        bool serves(StructureID id) const { return std::ranges::contains(hidden.structuresOfFurtherAnswers, id.bits()) || std::ranges::contains(hidden.structuresThatLackName, id.bits()); }
+
+        WideSiteAnswers hidden;
+        uint8_t samples { 0 };
+        uint8_t samplesServed { 0 };
+    };
+    using PlaceTraits = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
+    UncheckedKeyHashMap<uint32_t, TrialOfFurtherAnswers, DefaultHash<uint32_t>, PlaceTraits> m_trials;
+    UncheckedKeyHashMap<uint32_t, uint8_t, DefaultHash<uint32_t>, PlaceTraits> m_timesWithoutRoom;
+    UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, PlaceTraits> m_placesWithoutFurtherAnswers;
     static constexpr uint8_t requestsThatOpenPage = 8;
     unsigned m_placesInPageShift { 0 };
     uint8_t* m_requestsOfPages { nullptr };
@@ -380,6 +400,7 @@ class VMPropertyCaches final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(VMPropertyCaches);
     WTF_MAKE_TZONE_ALLOCATED(VMPropertyCaches);
 public:
+    bool readsValuesWhereTheyAre() const final { return true; }
     explicit VMPropertyCaches(VM&);
     ~VMPropertyCaches();
 
@@ -487,6 +508,16 @@ public:
         m_fieldExitsBesideTable.clear();
         m_fieldReturns.fill({ });
     }
+    void remember(const FunctionBirth& birth)
+    {
+        m_functionBirthsMayBeFilled = true;
+        m_functionBirths[FunctionBirth::placeOf(birth.executable)] = birth;
+    }
+    void remember(const StringSwitchTarget& target)
+    {
+        m_switchTargetsMayBeFilled = true;
+        m_switchTargets[StringSwitchTarget::placeOf(target.string, target.instruction)] = target;
+    }
     void remember(const FieldReturn& back) { placeOfReturn(back.structureBefore, back.name) = back; }
     const FieldReturn* findFieldReturn(StructureID structureID, uint32_t name)
     {
@@ -523,10 +554,14 @@ public:
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
-    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false);
+    void fillSiteCacheOfStore(SiteCache, Structure*, UniquedStringImpl*, PropertyOffset);
+    bool fillFromHeldValue(uint32_t place, SiteUse, Object&, UniquedStringImpl*, bool stubFollowsFurtherAnswers);
+    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false, bool asksForPresence = false);
     void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
-    static ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&);
-    JSValue fillReadGroupOffset(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index);
+    bool mayReadDictionary(Structure*);
+    static ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&, bool usesWideReferences);
+    void claimAndFillReadGroupRow(JSValue, ReadGroupCache&, uint32_t numberOfReads);
+    void fillReadGroupPlace(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index);
     bool fillAboveFieldLeftOut(uint32_t place, SiteUse, Object&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
@@ -575,8 +610,13 @@ private:
     bool m_isPreparingHolder { false };
     JSCell* m_holderLookedAtByName { nullptr };
     UniquedStringImpl* m_symbolLookedAtByName { nullptr };
-    std::array<uint8_t, numberOfMissCounters> m_missCounters { };
+    std::span<uint8_t, numberOfMissCounters> m_missCounters;
     uint8_t* m_counterOfPairToFile { nullptr };
+    struct DictionaryReads {
+        uint32_t structure { 0 };
+        uint32_t count { 0 };
+    };
+    std::array<DictionaryReads, 16> m_readsOfDictionaries { };
     static uint64_t keyOfFieldExit(StructureID structureID, uint32_t name) { return static_cast<uint64_t>(structureID.bits()) << 32 | name; }
     static uint64_t keyOf(const FieldExit& exit) { return keyOfFieldExit(exit.structureBefore, exit.name); }
     static bool isFilled(const FieldExit& exit) { return !!exit.field; }
@@ -602,6 +642,11 @@ private:
     EntriesBesideTable<FieldExit, uint64_t> m_fieldExitsBesideTable;
     FieldReturn& placeOfReturn(StructureID structureID, uint32_t name) { return m_fieldReturns[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldReturn::numberOfPlaces]; }
     std::array<FieldReturn, FieldReturn::numberOfPlaces> m_fieldReturns { };
+    std::span<PrototypeChainFilter, PrototypeChainFilter::numberOfFilters> m_prototypeChainFilters;
+    std::span<StringSwitchTarget, StringSwitchTarget::numberOfTargets> m_switchTargets;
+    std::span<FunctionBirth, FunctionBirth::numberOfBirths> m_functionBirths;
+    uint8_t m_switchTargetsMayBeFilled { false };
+    uint8_t m_functionBirthsMayBeFilled { false };
     AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
     std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
     AddedExtraPropertiesBesideTable m_addedExtraPropertiesBesideTable;

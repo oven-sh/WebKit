@@ -32,6 +32,7 @@ struct CoroutineWords {
     void* lastPromiseResolvedWithSettled;
     EncodedJSValue waiterResolution;
     EncodedJSValue waiterAsyncContext;
+    EncodedJSValue delegatedResult;
     AsyncGeneratorStepInProgress* stepInProgress;
     const uint64_t* resumableFrame;
     uint64_t resumeJobWords[2];
@@ -41,6 +42,11 @@ struct CoroutineWords {
     uint64_t reactionJobWords[4];
     uint64_t performMicrotaskJobWord;
     uint64_t promiseAllResolveJobWord;
+    uint64_t promiseRaceResolveJobWord;
+    uint64_t reactionChainHeader;
+    uint64_t reactionChainStepJobWord;
+    uint64_t handlerOfReactionChain[2 + 4];
+    uint64_t promiseAllSettledResolveJobWords[2];
     uint64_t resolveThenableJobWord;
     uint64_t resolveWithoutHandlerJobWord;
     void* asyncGeneratorAllocator;

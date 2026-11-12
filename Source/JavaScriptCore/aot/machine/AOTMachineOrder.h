@@ -116,6 +116,7 @@ public:
     static void leaveTestToNext(Block* first, unsigned leavingSuccessor);
     static void readWordWhereRequested(Block* asked, Operation* word);
     static void compareEarlierReadWord(Operation* comparison, Operation* word);
+    static void askBytesOfTwoTestsAtOnce(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value);
     static void askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high);
     struct CaseOfEquality {
         int64_t value;
@@ -125,6 +126,8 @@ public:
     static void askBitsOfTwoTestsAtOnce(Block* first, unsigned wayOfFirstWhereBitIsSet, Operation* bitsOfFirst, Block* second, unsigned wayOfSecondWhereBitIsSet, Operation* bitsOfSecond);
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
+    static void passTestToJoin(Block* from, Block* join, const Operation* phi, bool isInverted);
+    static void moveTestToLatch(Block* header, Block* latch, Operation* test, unsigned successorInLoop);
     static bool isUnsplit(const Block* from, const BlockPlace& placeOfTarget)
     {
         return from->numSuccessors() > 1 && from->last()->opcode() != Patch && placeOfTarget.predecessors.size() > 1;

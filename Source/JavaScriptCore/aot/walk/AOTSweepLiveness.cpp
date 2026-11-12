@@ -735,7 +735,7 @@ void Sweep::listLiveValuesAtSuspensionsBySets()
 {
     Code& code = *m_code;
     SweepValueSets& sets = m_liveness->sets;
-    const bool mayPointIntoStorage = code.opcodesOfValues().contains(Opcode::GetTypedArrayVector) || code.opcodesOfValues().contains(Opcode::GetArrayStorage);
+    const bool mayPointIntoStorage = code.opcodesOfValues().contains(Opcode::GetTypedArrayVector) || code.opcodesOfValues().contains(Opcode::GetMirroredVector) || code.opcodesOfValues().contains(Opcode::GetArrayStorage) || code.opcodesOfValues().contains(Opcode::GetObjectStorage);
     sets.keepSetsMadeSoFar();
     for (const SweepLivenessStorage::PointAskedAbout& point : m_liveness->suspensions) {
         ValueID suspension(point.index);
@@ -749,7 +749,7 @@ void Sweep::listLiveValuesAtSuspensionsBySets()
             if (!m_liveness->hintsThatStay.quickGet(index)) {
                 if (mayPointIntoStorage) {
                     Opcode opcode = code.at(id).opcode;
-                    RELEASE_ASSERT(opcode != Opcode::GetTypedArrayVector && opcode != Opcode::GetArrayStorage);
+                    RELEASE_ASSERT(opcode != Opcode::GetTypedArrayVector && opcode != Opcode::GetMirroredVector && opcode != Opcode::GetArrayStorage && opcode != Opcode::GetObjectStorage);
                 }
                 code.m_liveValues.append(id);
                 return;

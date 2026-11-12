@@ -796,6 +796,35 @@ bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) con
     return frameAtBlock(from).isLeftInFrame() == frameAtBlock(target).isEnteredInFrame();
 }
 
+bool Encoder::isCall(const PatchOperation& patch)
+{
+    static constexpr int fewestRegisters = 8;
+    return std::popcount(patch.lateClobberedMask()) >= fewestRegisters;
+}
+
+void Encoder::noteShortLoopsThatEndWith(const Block* block)
+{
+    static constexpr ptrdiff_t maxBytes = 128;
+    for (const Edge& edge : block->successors()) {
+        if (placeOf(edge.block()).loop != placeOf(block).loop)
+            continue;
+        const MacroAssembler::Label& begin = m_labels[blockEnteredThrough(edge.block())->index()];
+        if (!begin.isSet())
+            continue;
+        MacroAssembler::Label end = m_jit.labelIgnoringWatchpoints();
+        ptrdiff_t length = MacroAssembler::differenceBetween(begin, end);
+        if (length <= 0 || length > maxBytes || (m_lastCall.isSet() && MacroAssembler::differenceBetween(begin, m_lastCall) >= 0))
+            continue;
+        ptrdiff_t lastBegin = m_proc.m_shortLoops.isEmpty() ? -1 : MacroAssembler::differenceBetween(begin, m_proc.m_shortLoops.last().begin);
+        if (lastBegin > 0)
+            continue;
+        if (!lastBegin)
+            m_proc.m_shortLoops.last().end = end;
+        else
+            m_proc.m_shortLoops.append(m_arena, ShortLoop { begin, end });
+    }
+}
+
 template<FrameCoverage coverage>
 ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
 {
@@ -889,11 +918,15 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
         m_jit.ret();
         return;
     }
-    if (isTerminal(terminator.operation->opcode())) [[likely]] {
+    if (isTerminal(terminator.operation->opcode())) [[likely]]
         encodeTerminatorInline(block, terminator);
-        return;
+    else
+        encodeExecute(terminator);
+    if (isX86_64() && m_mayEndLoop) [[unlikely]] {
+        m_mayEndLoop = false;
+        if (place.loop != noLoop && place.layoutPart == LayoutPart::Likely)
+            noteShortLoopsThatEndWith(block);
     }
-    encodeExecute(terminator);
 }
 
 template<FrameCoverage coverage>
@@ -1280,6 +1313,9 @@ void Encoder::storeToSpill(const Operation* value)
         return;
     case Double:
         m_jit.storeDouble(source.fpr(), address);
+        return;
+    case Vector128:
+        m_jit.storeVector(source.fpr(), address);
         return;
     case Void:
     case Tuple:

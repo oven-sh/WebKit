@@ -176,45 +176,50 @@ static std::optional<uint32_t> foreseeTurnsByText(const IntegersByText& integers
     BodyValue relation = index.value(asked);
     std::optional<uint32_t> left = head.indexOfParameter(index.stripCasts(relation.operand(0)));
     std::optional<uint32_t> right = head.indexOfParameter(index.stripCasts(relation.operand(1)));
-    if (!left == !right)
+    if (!left && !right)
         return std::nullopt;
+    auto stepOf = [&](uint32_t position) -> std::optional<int64_t> {
+        std::optional<int64_t> step;
+        for (BlockID member : index.membersOf(loop)) {
+            for (BodyTarget target : index.terminator(member).targets()) {
+                if (target.block() != head.id())
+                    continue;
+                ValueID brought = position < target.arguments().size() ? index.stripCasts(target.arguments()[position]) : ValueID();
+                if (!brought || index.isParameter(brought) || !stepsOfCountersWrittenOut.contains(index.opcodeOf(brought)))
+                    return std::nullopt;
+                BodyValue stepped = index.value(brought);
+                if (index.stripCasts(stepped.operand(0)) != head.parameter(position))
+                    return std::nullopt;
+                std::optional<int64_t> by;
+                switch (stepped.opcode()) {
+                case Opcode::Increment:
+                    by = 1;
+                    break;
+                case Opcode::Decrement:
+                    by = -1;
+                    break;
+                default:
+                    by = integers.at(stepped.operand(1));
+                    if (by && stepped.opcode() == Opcode::Sub)
+                        by = -*by;
+                }
+                if (!by || !*by || !Range::int32().contains(*by) || (step && *step != *by))
+                    return std::nullopt;
+                step = by;
+            }
+        }
+        return step;
+    };
     uint32_t position = left ? *left : *right;
     ValueID counter = head.parameter(position);
-    std::optional<int64_t> bound = integers.at(relation.operand(left ? 1 : 0));
+    std::optional<uint32_t> positionOfBound = left ? right : std::nullopt;
+    std::optional<int64_t> bound = positionOfBound ? entering(*positionOfBound) : integers.at(relation.operand(left ? 1 : 0));
     std::optional<int64_t> start = entering(position);
     if (!bound || !start || !Range::int32().contains(*bound) || !Range::int32().contains(*start))
         return std::nullopt;
-
-    std::optional<int64_t> step;
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyTarget target : index.terminator(member).targets()) {
-            if (target.block() != head.id())
-                continue;
-            ValueID brought = position < target.arguments().size() ? index.stripCasts(target.arguments()[position]) : ValueID();
-            if (!brought || index.isParameter(brought) || !stepsOfCountersWrittenOut.contains(index.opcodeOf(brought)))
-                return std::nullopt;
-            BodyValue stepped = index.value(brought);
-            if (index.stripCasts(stepped.operand(0)) != counter)
-                return std::nullopt;
-            std::optional<int64_t> by;
-            switch (stepped.opcode()) {
-            case Opcode::Increment:
-                by = 1;
-                break;
-            case Opcode::Decrement:
-                by = -1;
-                break;
-            default:
-                by = integers.at(stepped.operand(1));
-                if (by && stepped.opcode() == Opcode::Sub)
-                    by = -*by;
-            }
-            if (!by || !*by || !Range::int32().contains(*by) || (step && *step != *by))
-                return std::nullopt;
-            step = by;
-        }
-    }
-    if (!step)
+    std::optional<int64_t> step = stepOf(position);
+    std::optional<int64_t> stepOfBound = positionOfBound ? stepOf(*positionOfBound) : std::optional<int64_t>(0);
+    if (!step || !stepOfBound)
         return std::nullopt;
 
     auto holds = [&](int64_t value) {
@@ -237,7 +242,7 @@ static std::optional<uint32_t> foreseeTurnsByText(const IntegersByText& integers
         return answer == staysOnTakenEdge;
     };
     uint32_t stays = 0;
-    for (int64_t value = *start; holds(value); value += *step) {
+    for (int64_t value = *start; holds(value); value += *step, *bound += *stepOfBound) {
         if (++stays > mostTurnsWrittenOut)
             return std::nullopt;
     }
@@ -311,6 +316,26 @@ static bool bodyOnlyReadsListOfCall(const Walker& walker, const BodyIndex& index
     return !mentionsLeft;
 }
 
+static std::optional<uint32_t> lengthOfConstantArray(const Walker& walker, FunctionID function, const BodyIndex& index, PropertyKeyID keyOfLength, ValueID array)
+{
+    ValueID read = array;
+    if (read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::CheckInitialized)
+        read = index.stripCasts(index.value(read).operand(0));
+    if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
+        return std::nullopt;
+    WrittenListOfVariable written = writtenListThatVariableHolds(const_cast<Walker&>(walker), index.value(read).variable());
+    if (!written)
+        return std::nullopt;
+    for (uint32_t number = array.index() + 1; number < index.numberOfValues(); ++number) {
+        if (index.isParameter(ValueID(number)) || index.opcodeOf(ValueID(number)) != Opcode::PropGet)
+            continue;
+        BodyValue length = index.value(ValueID(number));
+        if (!length.isFreeName() && length.key() == keyOfLength && index.stripCasts(length.objectOperand()) == array && !walker.facts().linked().nobodyChangesReceiverAt(function, length.id()))
+            return std::nullopt;
+    }
+    return written.length;
+}
+
 std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker, FunctionID callee, std::span<const std::optional<int64_t>> integersHandedOver, std::span<const std::optional<uint32_t>> lengthsOfListsHandedOver)
 {
     const BodyIndex* found = walker.facts().bodies().find(callee);
@@ -337,6 +362,8 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
         return known[value.index()];
     };
     WTF::Function<std::optional<int64_t>(ValueID)> lengthOf = [&](ValueID list) -> std::optional<int64_t> {
+        if (std::optional<uint32_t> written = list ? lengthOfConstantArray(walker, callee, index, keyOfLength, list) : std::nullopt)
+            return *written;
         if (!list || !bodyOnlyReadsListOfCall(walker, index, keyOfLength, list))
             return std::nullopt;
         if (std::optional<uint32_t> parameter = entry.indexOfParameter(list)) {
@@ -481,6 +508,9 @@ uint32_t sizeOfCopyThatWritesOutLoopsOverListsHandedIn(const Walker& walker, Fun
             if (list && !body->isParameter(list) && body->opcodeOf(list) == Opcode::PropGet && !body->value(list).isFreeName())
                 list = body->stripCasts(body->value(list).objectOperand());
             readsListHandedIn |= list && body->isParameter(list) && body->blockOf(list) == entryBlock;
+            if (list && !body->isParameter(list) && body->opcodeOf(list) == Opcode::CheckInitialized)
+                list = body->stripCasts(body->value(list).operand(0));
+            readsListHandedIn |= list && !body->isParameter(list) && body->opcodeOf(list) == Opcode::GetModuleVariable && !!writtenListThatVariableHolds(const_cast<Walker&>(walker), body->value(list).variable());
         }
     }
     if (!readsListHandedIn)

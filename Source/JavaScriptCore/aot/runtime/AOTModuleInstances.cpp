@@ -31,6 +31,8 @@
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
 #include "ModuleRegistryEntry.h"
+#include "ObjectConstructor.h"
+#include "ProxyObject.h"
 #include "PropertyNameArray.h"
 #include <wtf/text/MakeString.h>
 
@@ -43,6 +45,8 @@ static AbstractModuleRecord::ModulePhase phaseOfNamespaceExport(const ModuleExpo
 
 Environment* Modules::currentInstance(ModuleID module) const
 {
+    if (!m_table.anyModuleHasInstances()) [[likely]]
+        return nullptr;
     std::optional<SlotData> guard = m_table.instanceGuard(module);
     if (!guard || !ProgramStatics::readVariableWithoutAllocating(m_instance, *guard).isTrue())
         return nullptr;
@@ -51,6 +55,8 @@ Environment* Modules::currentInstance(ModuleID module) const
 
 Environment* Modules::lastInstance(ModuleID module) const
 {
+    if (!m_table.anyModuleHasInstances()) [[likely]]
+        return nullptr;
     std::optional<SlotData> guard = m_table.instanceGuard(module);
     if (!guard || ProgramStatics::readVariableWithoutAllocating(m_instance, *guard).isUndefined())
         return nullptr;
@@ -148,6 +154,39 @@ bool Modules::isMockSeenByLoad(ModuleID target, ModuleID importer) const
     return !importsOriginalDespiteMock(target, importer);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(readUninitializedMock);
+static JSC_DECLARE_HOST_FUNCTION(uninitializedMockHasName);
+
+JSC_DEFINE_HOST_FUNCTION(readUninitializedMock, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (callFrame->argument(1).isSymbol())
+        return JSValue::encode(jsUndefined());
+    String name = callFrame->argument(1).toWTFString(realm);
+    RETURN_IF_EXCEPTION(scope, { });
+    return throwVMError(realm, scope, createTDZError(realm, name));
+}
+
+JSC_DEFINE_HOST_FUNCTION(uninitializedMockHasName, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(!callFrame->argument(1).isSymbol()));
+}
+
+void Modules::ensureUninitializedMock()
+{
+    if (m_uninitializedMock)
+        return;
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* handler = constructEmptyObject(realm);
+    handler->putDirect(vm, vm.propertyNames->get, JSFunction::create(vm, realm, 3, String(), readUninitializedMock, ImplementationVisibility::Private));
+    handler->putDirect(vm, Identifier::fromString(vm, "has"_s), JSFunction::create(vm, realm, 2, String(), uninitializedMockHasName, ImplementationVisibility::Private));
+    m_uninitializedMock.set(vm, ProxyObject::create(realm, constructEmptyObject(realm), handler));
+    scope.assertNoException();
+}
+
 ModuleNamespace* Modules::mockNamespaceForLoad(ModuleID target)
 {
     VM& vm = *m_instance.vm;
@@ -170,6 +209,9 @@ ModuleNamespace* Modules::mockNamespaceForLoad(ModuleID target)
     if (standing) {
         word->setMockOfView(vm, standing);
         word->setRestoredAfterPatch(standing == held.preloadMock.get() && m_restoredPreloadMocks.get(file.index()));
+    } else if (cyclesOfImports().find(file) && !m_filesShownToOwnFactories.get(file.index())) {
+        word->setUninitializedMock(true);
+        ensureUninitializedMock();
     }
     word->setMockWord();
     stored.set(*this, word);
@@ -390,8 +432,10 @@ void Modules::clearPendingMockState(ModuleID file)
     }
     if (JSObject* mock = object->activeMock())
         object->setMockOfView(*m_instance.vm, mock);
-    else
+    else {
+        object->setUninitializedMock(false);
         object->setKeepsToModule(true);
+    }
     held->pendingMockWord.set(*this, nullptr);
     m_hasMockEnded = true;
     for (ModuleID module : linkedByFailedLoads)
@@ -584,8 +628,9 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
                 writeField(instance, link.mock, namespaceObject ? JSValue(namespaceObject) : jsUndefined());
                 continue;
             }
-            ModuleNamespace* word = wordForLoad(target, isMockSeenByLoad(target, module));
-            if (m_mocks && isMocked(target) && !activeMock(target)) [[unlikely]]
+            bool seesMock = isMockSeenByLoad(target, module);
+            ModuleNamespace* word = wordForLoad(target, seesMock);
+            if (seesMock && m_mocks && isMocked(target) && !activeMock(target)) [[unlikely]]
                 tellIfOriginalImports(target, module);
             if (!m_failedLoadTestFiles.isEmpty() && word && !word->isLoadWord()) [[unlikely]]
                 tellOfFailedLoad(module, target);
@@ -1180,6 +1225,8 @@ void Modules::fixMockNames(ModuleNamespace* word)
 bool Modules::hasNameInMock(ModuleNamespace* word, const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (word->isUninitializedMock()) [[unlikely]]
+        return true;
     if (!word->namesOfMock()) {
         fixMockNames(word);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1192,6 +1239,8 @@ bool Modules::hasNameInMock(ModuleNamespace* word, const Identifier& name)
 bool Modules::hasNameInMockOutsideCycles(ModuleNamespace* word, const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (word->isUninitializedMock()) [[unlikely]]
+        return false;
     bool hasName = hasNameInMock(word, name);
     RETURN_IF_EXCEPTION(scope, false);
     return hasName && storedValue(m_instance.globalObject, word->namesOfMock(), name).isBoolean();
@@ -3601,8 +3650,12 @@ void releaseEarlierImporters(JSGlobalObject* realm, ModuleID module)
         return;
     const ModuleData& data = modules->data(module);
     bool hasLoad = data.isOfLibrary() ? modules->table().anyModuleHasInstances() : !modules->hasInstances(module);
-    if (modules->currentInstance(module) || hasLoad)
-        modules->releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
+    if (!modules->currentInstance(module) && !hasLoad)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    modules->separateImportersLinkedBeforeReset(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    modules->releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
 }
 
 void restorePreloadInstances(JSGlobalObject* realm)
@@ -3624,10 +3677,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceImportMeta, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).instanceImportMeta(ModuleID(module), uncheckedDowncast<Environment>(moduleInstance))));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkedMock, EncodedJSValue, (Instance*, EncodedJSValue word))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkedMock, EncodedJSValue, (Instance* instance, EncodedJSValue word))
 {
     auto* object = dynamicDowncast<ModuleNamespace>(JSValue::decode(word));
     JSObject* mock = object ? object->linkedExports() : nullptr;
+    if (object && object->isUninitializedMock()) [[unlikely]]
+        mock = modulesOf(*instance).uninitializedMock();
     return JSValue::encode(mock ? JSValue(mock) : jsUndefined());
 }
 

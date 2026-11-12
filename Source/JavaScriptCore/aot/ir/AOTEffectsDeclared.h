@@ -63,7 +63,7 @@ inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
     Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral,
     Opcode::StringOrderToCharacter, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
     Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt, Opcode::FindStringRangeInMap,
-    Opcode::SubstringOrUndefined, Opcode::NewRegExpMatchArray, Opcode::BoundsOfStringSplit, Opcode::NewStringSplitArray
+    Opcode::SubstringOrUndefined, Opcode::NewRegExpMatchArray, Opcode::NewArrayOfRegExpMatch, Opcode::BoundsOfStringSplit, Opcode::NewStringSplitArray
 };
 
 constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
@@ -92,6 +92,12 @@ ALWAYS_INLINE bool lookAtCellHasNoFlagThatReads(Opcode opcode, const Operation& 
 }
 
 template<typename Operation>
+ALWAYS_INLINE bool restsOnVariablesOfBuffer(Opcode opcode, const Operation& operation)
+{
+    return opcode == Opcode::GetMirroredLength && operation.isOfBuffer();
+}
+
+template<typename Operation>
 Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation)
 {
     if (const Effects* effects = findDeclaredEffectsOfEveryValue(opcode)) {
@@ -104,6 +110,8 @@ Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const 
     Effects effects = Effects::none();
     EffectsBuilder builder(program, effects);
     forEachDeclaredEffect(operation, builder);
+    if (restsOnVariablesOfBuffer(opcode, operation))
+        effects.reads.add(AbstractHeap::ModuleVariables);
     if (lookAtCellHasNoFlagThatReads(opcode, operation))
         effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
@@ -124,6 +132,8 @@ const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode,
     storage = Effects::none();
     EffectsBuilder builder(program, storage);
     forEachDeclaredEffect(operation, builder);
+    if (restsOnVariablesOfBuffer(opcode, operation))
+        storage.reads.add(AbstractHeap::ModuleVariables);
     if (lookAtCellHasNoFlagThatReads(opcode, operation))
         storage.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (storage.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))

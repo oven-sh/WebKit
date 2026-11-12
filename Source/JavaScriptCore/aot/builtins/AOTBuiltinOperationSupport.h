@@ -36,9 +36,12 @@ JSValue constructInEngine(Instance*, BuiltinID constructor, JSValue argument);
 
 void markPristineIfOriginal(Instance&, JSObject*);
 
-JSString* tryConvertListToString(JSGlobalObject*, JSArray*);
+JSString* tryConvertListToString(Instance*, JSGlobalObject*, JSArray*);
 JSString* toStringOfCompiledObject(Instance*, Object&);
 JSValue primitiveIfKnown(Instance*, JSValue compiledObject, PreferredPrimitiveType);
+JSValue timeIfDate(JSValue);
+JSValue textIfFunction(JSGlobalObject*, JSValue function);
+size_t countCharacter(std::span<const Latin1Character>, Latin1Character);
 JSValue primitiveKeyIfKnown(Instance*, JSValue compiledObject);
 [[noreturn]] void stopAtHostResult(Instance&, CallerFrameAndPC* operationFrameRecord, JSValue found, JSCell* function, uint32_t kinds);
 

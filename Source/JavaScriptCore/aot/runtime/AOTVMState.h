@@ -167,6 +167,7 @@ public:
     bool somePrivateNameLiesBesideFields { false };
     bool someTextKnowsPrivateNames { false };
     JSObject* classPrototypeBeingDefined { nullptr };
+    JSObject* unobservedClassHolder { nullptr };
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     Modules* modulesWithEagerLoads { nullptr };
     uintptr_t structureIDBase { 0 };

@@ -17,6 +17,7 @@
 #include "ArrayAllocationProfile.h"
 #include "ArrayConventions.h"
 #include "CompleteSubspace.h"
+#include "GetPutInfo.h"
 #include "IndexingHeader.h"
 #include "Instruction.h"
 #include "JSCJSValue.h"
@@ -27,6 +28,7 @@
 #include "PureNaN.h"
 #include "SymbolTable.h"
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -95,27 +97,63 @@ std::optional<JSValue> tryGetByVal(JSGlobalObject*, JSCell* base, JSValue key);
 std::optional<bool> tryInById(JSGlobalObject*, JSObject* base, const Identifier&);
 std::optional<bool> tryInByVal(JSGlobalObject*, JSObject* base, JSValue key);
 bool tryPutById(JSGlobalObject*, JSCell* base, const Identifier&, JSValue, bool isStrict);
+std::optional<JSValue> tryGetFromContext(JSGlobalObject*, const Identifier&);
+bool tryPutToContext(JSGlobalObject*, const Identifier&, JSValue, PutPropertySlot&);
 bool tryPutByVal(JSGlobalObject*, JSCell* base, JSValue key, JSValue, bool isStrict);
 std::optional<bool> tryInstanceOf(JSGlobalObject*, JSValue, JSValue constructor);
+void didCreateFunction(JSGlobalObject*, FunctionExecutable*, JSFunction*);
+void didCreateClonedArguments(JSGlobalObject*);
+inline constexpr ptrdiff_t offsetOfExecutablesInStorage = FixedVector<WriteBarrier<FunctionExecutable>>::Storage::offsetOfData();
+void rememberSwitchTarget(JSGlobalObject*, const JSInstruction*, const StringImpl& atom, int32_t offset);
 
-void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PropertySlot&);
+void didGetById(JSGlobalObject*, JSCell* base, Structure* structureBefore, const Identifier&, const PropertySlot&, bool isFiledBesideCache);
+void didPutById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PutPropertySlot&);
 
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
+inline constexpr PropertyOffset fieldInSiteCache = 1 << 28;
+inline constexpr PropertyOffset otherModeInSiteCache = std::numeric_limits<PropertyOffset>::min();
+inline constexpr PropertyOffset offsetMaskOfOtherMode = std::numeric_limits<PropertyOffset>::max();
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
+enum class StoreSiteKind : uint8_t {
+    Other,
+    Adds,
+    Replaces,
+    AddsWithChain,
+};
+inline constexpr unsigned storeSiteKindShift = 24;
+inline constexpr unsigned storeSiteOffsetMask = (1u << storeSiteKindShift) - 1;
+inline unsigned offsetOfStoreSite(PropertyOffset offset, StoreSiteKind kind)
+{
+    return isInlineOffset(offset) ? offset | static_cast<unsigned>(kind) << storeSiteKindShift : offset;
+}
 std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject*, Structure* before, const Identifier&);
 
 bool isClassWithLazyMembers(VM&, JSCell* closure);
 
 struct FusedClosureVariableRead {
+    enum Kind : uint8_t {
+        None,
+        Read,
+        ReadIntoScopeRegister,
+        ReadAndCheck,
+        ReadIntoScopeRegisterAndCheck,
+        ReadOuter,
+        ReadOuterIntoScopeRegister,
+        ReadOuterAndCheck,
+        ReadOuterIntoScopeRegisterAndCheck,
+        ReadGlobal,
+        ReadGlobalIntoScopeRegister,
+    };
     static constexpr unsigned typeBits = 8;
-    static constexpr unsigned bytesToSkipBits = 8;
-    static constexpr unsigned offsetShift = typeBits + bytesToSkipBits;
-    static constexpr uint32_t typeMask = (1u << typeBits) - 1;
-    static constexpr uint32_t bytesToSkipMask = (1u << bytesToSkipBits) - 1;
+    static constexpr unsigned kindBits = 8;
+    static constexpr unsigned offsetShift = typeBits + kindBits;
+    static constexpr unsigned offsetOfVariable = offsetShift / 8;
     static constexpr uint32_t maxOffset = UINT32_MAX >> offsetShift;
+    static constexpr unsigned typeAndKind(Kind kind) { return ClosureVar | kind << typeBits; }
+    static constexpr unsigned kindOnly(Kind kind) { return kind << typeBits; }
 };
-void fuseReadsOfClosureVariables(CodeBlock&);
+void fuseReadsOfVariables(CodeBlock&, std::span<const JSInstruction* const> resolutions);
 
 struct ObjectLiteralPlan {
     static constexpr uintptr_t allocatorTag = 1;

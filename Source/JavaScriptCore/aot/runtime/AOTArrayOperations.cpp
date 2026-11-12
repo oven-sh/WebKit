@@ -29,9 +29,11 @@
 #include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "GCDeferralContextInlines.h"
+#include "JSArrayBufferViewInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSObjectVisitInlines.h"
+#include "TypedArrayAdaptors.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -248,10 +250,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Ins
     }
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t room))
+static void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t room)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity);
     IndexingType mode = array->indexingMode();
     if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
         return;
@@ -263,6 +263,434 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Insta
     ASSERT(nextLength(lengthThatGrowsToRoom) >= room);
     if (array->ensureLength(vm, std::max(lengthThatGrowsToRoom, vectorLength + 1)))
         array->butterfly()->setPublicLength(publicLength);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t room))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
+    reserveArrayCapacity(vm, cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity), room);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGrowFilledArray, void, (Instance* instance, JSCell* cell, uint64_t room))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGrowFilledArray);
+    reserveArrayCapacity(vm, cellArgument<JSArray>(cell, Entry::operationAOTGrowFilledArray), room);
+}
+
+static bool isViewOfNumbers(JSCell* cell)
+{
+    return isTypedView(cell->type()) && !isBigIntTypedView(typedArrayType(cell->type()));
+}
+
+template<typename Function>
+static void withAdaptorOfView(JSArrayBufferView* view, const Function& function)
+{
+    switch (typedArrayType(view->type())) {
+    case TypeInt8:
+        return function(Int8Adaptor());
+    case TypeUint8:
+        return function(Uint8Adaptor());
+    case TypeUint8Clamped:
+        return function(Uint8ClampedAdaptor());
+    case TypeInt16:
+        return function(Int16Adaptor());
+    case TypeUint16:
+        return function(Uint16Adaptor());
+    case TypeInt32:
+        return function(Int32Adaptor());
+    case TypeUint32:
+        return function(Uint32Adaptor());
+    case TypeFloat16:
+        return function(Float16Adaptor());
+    case TypeFloat32:
+        return function(Float32Adaptor());
+    case TypeFloat64:
+        return function(Float64Adaptor());
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+template<typename Adaptor>
+static ALWAYS_INLINE typename Adaptor::Type nativeFromNumber(double number)
+{
+    if constexpr (Adaptor::isFloat)
+        return Adaptor::toNativeFromDouble(purifyNaN(number));
+    else if constexpr (Adaptor::typeValue == TypeUint8Clamped)
+        return Adaptor::toNativeFromDouble(number);
+    else {
+        constexpr double limit = 0x1p63;
+        if (number > -limit && number < limit) [[likely]]
+            return static_cast<typename Adaptor::Type>(static_cast<int64_t>(number));
+        return Adaptor::toNativeFromDouble(number);
+    }
+}
+
+static constexpr size_t wordsAskedAtOnce = 8;
+
+static size_t countPresentWords(const EncodedJSValue* words, size_t count)
+{
+    size_t present = 0;
+    for (; present + wordsAskedAtOnce <= count; present += wordsAskedAtOnce) {
+        bool someIsHole = false;
+        for (size_t place = 0; place < wordsAskedAtOnce; ++place)
+            someIsHole |= !words[present + place];
+        if (someIsHole)
+            break;
+    }
+    while (present < count && words[present])
+        ++present;
+    return present;
+}
+
+static size_t countPresentDoubles(const double* numbers, size_t count)
+{
+    size_t present = 0;
+    for (; present + wordsAskedAtOnce <= count; present += wordsAskedAtOnce) {
+        bool someIsHole = false;
+        for (size_t place = 0; place < wordsAskedAtOnce; ++place)
+            someIsHole |= numbers[present + place] != numbers[present + place];
+        if (someIsHole)
+            break;
+    }
+    while (present < count && numbers[present] == numbers[present])
+        ++present;
+    return present;
+}
+
+static size_t copyIntoView(JSArrayBufferView* target, size_t targetIndex, JSObject* source, size_t sourceIndex, size_t count)
+{
+    size_t length = target->length();
+    if (targetIndex >= length)
+        return 0;
+    count = std::min(count, length - targetIndex);
+    auto* sourceView = isViewOfNumbers(source) ? uncheckedDowncast<JSArrayBufferView>(source) : nullptr;
+    if (sourceView && sourceView->type() == target->type()) {
+        withAdaptorOfView(target, [&]<typename Adaptor>(Adaptor) {
+            using Element = typename Adaptor::Type;
+            auto* to = static_cast<Element*>(target->vector()) + targetIndex;
+            const auto* from = static_cast<const Element*>(sourceView->vector()) + sourceIndex;
+            bool readsWhatIsStored = from < to && to < from + count;
+            if (!Adaptor::isFloat && !readsWhatIsStored) {
+                memmove(to, from, count * sizeof(Element));
+                return;
+            }
+            const size_t limit = count;
+            for (size_t place = 0; place < limit; ++place) {
+                Element element = from[place];
+                if constexpr (Adaptor::isFloat) {
+                    if (static_cast<double>(element) != static_cast<double>(element))
+                        element = static_cast<Element>(PNaN);
+                }
+                to[place] = element;
+            }
+        });
+        return count;
+    }
+    if (sourceView) {
+        const auto* to = static_cast<const uint8_t*>(target->vector());
+        const auto* from = static_cast<const uint8_t*>(sourceView->vector());
+        if (from < to + target->byteLength() && to < from + sourceView->byteLength())
+            return 0;
+    }
+    size_t copied = 0;
+    withAdaptorOfView(target, [&]<typename Adaptor>(Adaptor) {
+        auto* to = static_cast<typename Adaptor::Type*>(target->vector()) + targetIndex;
+        const size_t limit = count;
+        size_t place = 0;
+        if (sourceView) {
+            withAdaptorOfView(sourceView, [&]<typename SourceAdaptor>(SourceAdaptor) {
+                const auto* from = static_cast<const typename SourceAdaptor::Type*>(sourceView->vector()) + sourceIndex;
+                for (size_t each = 0; each < limit; ++each) {
+                    if constexpr (SourceAdaptor::isFloat)
+                        to[each] = nativeFromNumber<Adaptor>(static_cast<double>(from[each]));
+                    else
+                        to[each] = SourceAdaptor::template convertTo<Adaptor>(from[each]);
+                }
+            });
+            copied = limit;
+            return;
+        }
+        Butterfly& butterfly = *source->butterfly();
+        if ((source->indexingType() & IndexingShapeMask) == DoubleShape) {
+            const double* from = butterfly.contiguousDouble().data() + sourceIndex;
+            for (; place < limit && from[place] == from[place]; ++place)
+                to[place] = nativeFromNumber<Adaptor>(from[place]);
+            copied = place;
+            return;
+        }
+        const auto* from = butterfly.contiguous().data() + sourceIndex;
+        for (; place < limit; ++place) {
+            JSValue element = from[place].get();
+            if (element.isInt32())
+                to[place] = Adaptor::toNativeFromInt32(element.asInt32());
+            else if (element && element.isDouble())
+                to[place] = nativeFromNumber<Adaptor>(element.asDouble());
+            else
+                break;
+        }
+        copied = place;
+    });
+    return copied;
+}
+
+static size_t fillArray(VM& vm, JSArray* target, size_t targetIndex, JSValue value, size_t count)
+{
+    IndexingType shape = target->indexingType() & IndexingShapeMask;
+    if ((shape != UndecidedShape && shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) || mayRejectOrInterceptWrites(target))
+        return 0;
+    if (isCopyOnWrite(target->indexingMode()) && !target->tryMakeWritable(vm))
+        return 0;
+    bool isPlainDouble = value.isDouble() && value.asDouble() == value.asDouble();
+    if (shape == UndecidedShape && (value.isInt32() ? !target->tryMakeWritableInt32(vm).data() : isPlainDouble ? !target->tryMakeWritableDouble(vm).data() : !target->tryMakeWritableContiguous(vm).data()))
+        return 0;
+    size_t lengthBefore = target->butterfly()->publicLength();
+    if (targetIndex > lengthBefore || targetIndex + count > MAX_STORAGE_VECTOR_LENGTH)
+        return 0;
+    if (targetIndex + count > lengthBefore && !target->ensureLength(vm, static_cast<unsigned>(targetIndex + count)))
+        return 0;
+    size_t stored = 0;
+    if (target->trySetIndexQuickly(vm, static_cast<unsigned>(targetIndex), value)) {
+        shape = target->indexingType() & IndexingShapeMask;
+        if (shape == DoubleShape) {
+            double* to = target->butterfly()->contiguousDouble().data() + targetIndex;
+            std::fill_n(to, count, value.asNumber());
+            stored = count;
+        } else if (shape == Int32Shape || shape == ContiguousShape) {
+            auto to = target->butterfly()->contiguous();
+            for (stored = 1; stored < count; ++stored)
+                to.at(target, targetIndex + stored).setWithoutWriteBarrier(value);
+            vm.writeBarrier(target, value);
+        }
+    }
+    if (targetIndex + count > lengthBefore)
+        target->butterfly()->setPublicLength(static_cast<unsigned>(std::max(lengthBefore, targetIndex + stored)));
+    return stored;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillElements, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedValue, uint64_t targetIndex, uint64_t count))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFillElements);
+    JSValue target = JSValue::decode(encodedTarget);
+    JSValue value = JSValue::decode(encodedValue);
+    constexpr uint64_t limit = std::numeric_limits<int32_t>::max();
+    if (!target.isObject() || targetIndex >= limit || static_cast<int64_t>(count) <= 0)
+        return 0;
+    count = std::min(count, limit - targetIndex);
+    JSObject* to = asObject(target);
+    if (isJSArray(to))
+        return fillArray(vm, uncheckedDowncast<JSArray>(to), targetIndex, value, count);
+    if (!isViewOfNumbers(to) || !value.isNumber())
+        return 0;
+    auto* view = uncheckedDowncast<JSArrayBufferView>(to);
+    size_t length = view->length();
+    if (targetIndex >= length)
+        return 0;
+    count = std::min<uint64_t>(count, length - targetIndex);
+    withAdaptorOfView(view, [&]<typename Adaptor>(Adaptor) {
+        double number = Adaptor::isFloat ? purifyNaN(value.asNumber()) : value.asNumber();
+        std::fill_n(static_cast<typename Adaptor::Type*>(view->vector()) + targetIndex, count, Adaptor::toNativeFromDouble(number));
+    });
+    return count;
+}
+
+static size_t copyNumbersIntoArray(VM& vm, JSArray* target, size_t targetIndex, JSObject* source, size_t sourceIndex, size_t count)
+{
+    size_t copied = 0;
+    auto copyFrom = [&](const auto& readNumber, const auto& readDouble) {
+        const size_t limit = count;
+        while (copied < limit) {
+            IndexingType shape = target->indexingType() & IndexingShapeMask;
+            size_t place = copied;
+            if (shape == DoubleShape) {
+                double* to = target->butterfly()->contiguousDouble().data() + targetIndex;
+                for (; place < limit; ++place) {
+                    double number = readDouble(place);
+                    if (number != number)
+                        break;
+                    to[place] = number;
+                }
+            } else {
+                auto* to = target->butterfly()->contiguous().data() + targetIndex;
+                for (; place < limit; ++place) {
+                    JSValue number = readNumber(place);
+                    if (!number.isInt32() && shape == Int32Shape)
+                        break;
+                    to[place].setWithoutWriteBarrier(number);
+                }
+            }
+            copied = place;
+            if (copied < count && !target->trySetIndexQuickly(vm, static_cast<unsigned>(targetIndex + copied), readNumber(copied)))
+                break;
+            copied += copied < count;
+        }
+        vm.writeBarrier(target);
+    };
+    if (isViewOfNumbers(source)) {
+        auto* view = uncheckedDowncast<JSArrayBufferView>(source);
+        withAdaptorOfView(view, [&]<typename Adaptor>(Adaptor) {
+            const auto* from = static_cast<const typename Adaptor::Type*>(view->vector()) + sourceIndex;
+            copyFrom([&](size_t place) {
+                if constexpr (Adaptor::isFloat)
+                    return jsNumber(purifyNaN(static_cast<double>(from[place])));
+                else
+                    return jsNumber(from[place]);
+            }, [&](size_t place) { return static_cast<double>(from[place]); });
+        });
+    } else if ((source->indexingType() & IndexingShapeMask) == DoubleShape) {
+        const double* from = source->butterfly()->contiguousDouble().data() + sourceIndex;
+        count = countPresentDoubles(from, count);
+        copyFrom([&](size_t place) { return jsNumber(from[place]); }, [&](size_t place) { return from[place]; });
+    } else {
+        const auto* from = source->butterfly()->contiguous().data() + sourceIndex;
+        count = countPresentWords(std::bit_cast<const EncodedJSValue*>(from), count);
+        copyFrom([&](size_t place) { return from[place].get(); }, [&](size_t place) { return from[place].get().asNumber(); });
+    }
+    return copied;
+}
+
+static size_t copyIntoArray(VM& vm, JSArray* target, size_t targetIndex, JSObject* source, size_t sourceIndex, size_t count)
+{
+    IndexingType shape = target->indexingType() & IndexingShapeMask;
+    if ((shape != UndecidedShape && shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape) || mayRejectOrInterceptWrites(target))
+        return 0;
+    IndexingType shapeOfSource = isViewOfNumbers(source) ? static_cast<IndexingType>(NoIndexingShape) : static_cast<IndexingType>(source->indexingType() & IndexingShapeMask);
+    if (isCopyOnWrite(target->indexingMode()) && !target->tryMakeWritable(vm))
+        return 0;
+    if (shape == UndecidedShape || (shape == Int32Shape && shapeOfSource == DoubleShape)) {
+        bool holdsDoubles = shapeOfSource == DoubleShape || (shapeOfSource == NoIndexingShape && !isInt(typedArrayType(source->type())));
+        if (holdsDoubles ? !target->tryMakeWritableDouble(vm).data() : shapeOfSource == ContiguousShape ? !target->tryMakeWritableContiguous(vm).data() : !target->tryMakeWritableInt32(vm).data())
+            return 0;
+        shape = target->indexingType() & IndexingShapeMask;
+    }
+    size_t lengthBefore = target->butterfly()->publicLength();
+    if (targetIndex > lengthBefore || targetIndex + count > MAX_STORAGE_VECTOR_LENGTH)
+        return 0;
+    if (targetIndex + count > lengthBefore && !target->ensureLength(vm, static_cast<unsigned>(targetIndex + count)))
+        return 0;
+    size_t copied = 0;
+    Butterfly& butterfly = *target->butterfly();
+    if (shape == DoubleShape && shapeOfSource == DoubleShape) {
+        double* to = butterfly.contiguousDouble().data() + targetIndex;
+        const double* from = source->butterfly()->contiguousDouble().data() + sourceIndex;
+        if (from < to && to < from + count) {
+            for (; copied < count && from[copied] == from[copied]; ++copied)
+                to[copied] = from[copied];
+        } else {
+            copied = countPresentDoubles(from, count);
+            memmove(to, from, copied * sizeof(double));
+        }
+    } else if ((shape == ContiguousShape && (shapeOfSource == ContiguousShape || shapeOfSource == Int32Shape)) || (shape == Int32Shape && shapeOfSource == Int32Shape)) {
+        auto* to = std::bit_cast<EncodedJSValue*>(butterfly.contiguous().data()) + targetIndex;
+        const auto* from = std::bit_cast<const EncodedJSValue*>(source->butterfly()->contiguous().data()) + sourceIndex;
+        if (from < to && to < from + count) {
+            for (; copied < count && from[copied]; ++copied)
+                to[copied] = from[copied];
+        } else {
+            copied = countPresentWords(from, count);
+            gcSafeMemmove(to, from, copied * sizeof(EncodedJSValue));
+        }
+        vm.writeBarrier(target);
+    } else if (shapeOfSource == ContiguousShape) {
+        for (; copied < count; ++copied) {
+            JSValue element = source->butterfly()->contiguous().at(source, sourceIndex + copied).get();
+            if (!element || !target->trySetIndexQuickly(vm, static_cast<unsigned>(targetIndex + copied), element))
+                break;
+        }
+    } else {
+        copied = copyNumbersIntoArray(vm, target, targetIndex, source, sourceIndex, count);
+    }
+    if (targetIndex + count > lengthBefore)
+        target->butterfly()->setPublicLength(static_cast<unsigned>(std::max(lengthBefore, targetIndex + copied)));
+    return copied;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCopyElements, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, uint64_t targetIndex, uint64_t sourceIndex, uint64_t count))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyElements);
+    JSValue target = JSValue::decode(encodedTarget);
+    JSValue source = JSValue::decode(encodedSource);
+    constexpr uint64_t limit = std::numeric_limits<int32_t>::max();
+    if (!target.isObject() || !source.isObject() || targetIndex >= limit || sourceIndex >= limit || static_cast<int64_t>(count) <= 0)
+        return 0;
+    count = std::min({ count, limit - targetIndex, limit - sourceIndex });
+    JSObject* from = asObject(source);
+    size_t length = 0;
+    if (isViewOfNumbers(from))
+        length = uncheckedDowncast<JSArrayBufferView>(from)->length();
+    else if (isJSArray(from)) {
+        IndexingType shape = from->indexingType() & IndexingShapeMask;
+        if (shape == Int32Shape || shape == DoubleShape || shape == ContiguousShape)
+            length = from->butterfly()->publicLength();
+    }
+    if (sourceIndex >= length)
+        return 0;
+    count = std::min<uint64_t>(count, length - sourceIndex);
+    JSObject* to = asObject(target);
+    if (isViewOfNumbers(to))
+        return copyIntoView(uncheckedDowncast<JSArrayBufferView>(to), targetIndex, from, sourceIndex, count);
+    return isJSArray(to) ? copyIntoArray(vm, uncheckedDowncast<JSArray>(to), targetIndex, from, sourceIndex, count) : 0;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCopyElementsDown, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, uint64_t targetIndex, uint64_t sourceIndex, uint64_t count))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyElementsDown);
+    JSValue targetValue = JSValue::decode(encodedTarget);
+    JSValue sourceValue = JSValue::decode(encodedSource);
+    constexpr uint64_t limit = std::numeric_limits<int32_t>::max();
+    if (!targetValue.isObject() || !sourceValue.isObject() || targetIndex >= limit || sourceIndex >= limit || static_cast<int64_t>(count) <= 0)
+        return 0;
+    count = std::min({ count, targetIndex + 1, sourceIndex + 1 });
+    JSObject* target = asObject(targetValue);
+    JSObject* source = asObject(sourceValue);
+    size_t copied = 0;
+    if (isViewOfNumbers(target) && target->type() == source->type()) {
+        auto* to = uncheckedDowncast<JSArrayBufferView>(target);
+        auto* from = uncheckedDowncast<JSArrayBufferView>(source);
+        if (targetIndex >= to->length() || sourceIndex >= from->length())
+            return 0;
+        withAdaptorOfView(to, [&]<typename Adaptor>(Adaptor) {
+            using Element = typename Adaptor::Type;
+            auto* stored = static_cast<Element*>(to->vector()) + targetIndex;
+            const auto* read = static_cast<const Element*>(from->vector()) + sourceIndex;
+            for (; copied < count; ++copied) {
+                Element element = *(read - copied);
+                if constexpr (Adaptor::isFloat) {
+                    if (static_cast<double>(element) != static_cast<double>(element))
+                        element = static_cast<Element>(PNaN);
+                }
+                *(stored - copied) = element;
+            }
+        });
+        return copied;
+    }
+    if (!isJSArray(target) || !isJSArray(source))
+        return 0;
+    auto* array = uncheckedDowncast<JSArray>(target);
+    IndexingType shape = array->indexingType() & IndexingShapeMask;
+    IndexingType shapeOfSource = source->indexingType() & IndexingShapeMask;
+    bool takesWords = (shape == ContiguousShape && (shapeOfSource == ContiguousShape || shapeOfSource == Int32Shape)) || (shape == Int32Shape && shapeOfSource == Int32Shape);
+    if ((!takesWords && (shape != DoubleShape || shapeOfSource != DoubleShape)) || mayRejectOrInterceptWrites(array) || (isCopyOnWrite(array->indexingMode()) && !array->tryMakeWritable(vm)))
+        return 0;
+    if (targetIndex >= array->butterfly()->publicLength() || sourceIndex >= source->butterfly()->publicLength())
+        return 0;
+    if (takesWords) {
+        auto to = array->butterfly()->contiguous();
+        auto from = source->butterfly()->contiguous();
+        for (; copied < count; ++copied) {
+            JSValue element = from.at(source, sourceIndex - copied).get();
+            if (!element)
+                break;
+            to.at(array, targetIndex - copied).setWithoutWriteBarrier(element);
+        }
+        vm.writeBarrier(array);
+        return copied;
+    }
+    double* to = array->butterfly()->contiguousDouble().data() + targetIndex;
+    const double* from = source->butterfly()->contiguousDouble().data() + sourceIndex;
+    for (; copied < count && *(from - copied) == *(from - copied); ++copied)
+        *(to - copied) = *(from - copied);
+    return copied;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetArrayLength, void, (Instance* instance, JSCell* cell, uint32_t length))
@@ -313,7 +741,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendHole, JSCell*, (Instance* instance, J
     OPERATION_RETURN(scope, array);
 }
 
-JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom)
+JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom, NewElements elements)
 {
     IndexingType indexingType = structure->indexingType();
     RELEASE_ASSERT(publicLength <= vectorLength && !structure->outOfLineCapacity() && !structure->hasElementsStartOffset() && structure->classInfoForCells() == JSArray::info());
@@ -329,7 +757,8 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
     butterfly->setVectorLength(vectorLength);
     butterfly->setPublicLength(publicLength);
     uint64_t hole = hasDouble(indexingType) ? std::bit_cast<uint64_t>(PNaN) : JSValue::encode(JSValue());
-    std::fill_n(butterfly->indexingPayload<uint64_t>(), vectorLength, hole);
+    unsigned firstHole = elements == NewElements::WrittenByCaller ? publicLength : 0;
+    std::fill_n(butterfly->indexingPayload<uint64_t>() + firstHole, vectorLength - firstHole, hole);
     *std::bit_cast<Butterfly**>(cell + JSObject::butterflyOffset()) = butterfly;
     *std::bit_cast<uint64_t*>(cell) = cellHeaderFor(structure);
     vm.mutatorFence();
@@ -350,7 +779,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance
         Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsValues ? ArrayWithContiguous : ArrayWithDouble);
         if (capacity < count || capacity > maxHoleArrayCapacity || (holdsValues ? !hasContiguous(structure->indexingType()) : !hasDouble(structure->indexingType())) || structure->outOfLineCapacity())
             OPERATION_RETURN(scope, nullptr);
-        JSArray* array = tryCreateArrayWithStorage(vm, structure, count, capacity);
+        JSArray* array = tryCreateArrayWithStorage(vm, structure, count, capacity, 0, NewElements::WrittenByCaller);
         if (!array)
             OPERATION_RETURN(scope, nullptr);
         for (size_t index = 0; index < count; ++index) {
@@ -374,7 +803,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(isContiguous ? ArrayWithContiguous : ArrayWithInt32);
     if ((isContiguous ? !hasContiguous(structure->indexingType()) : !hasInt32(structure->indexingType())) || structure->outOfLineCapacity())
         OPERATION_RETURN(scope, nullptr);
-    JSArray* array = tryCreateArrayWithStorage(vm, structure, elements.size(), capacity);
+    JSArray* array = tryCreateArrayWithStorage(vm, structure, elements.size(), capacity, 0, NewElements::WrittenByCaller);
     if (!array)
         OPERATION_RETURN(scope, nullptr);
     elements = { list->butterfly()->contiguous().data(), elements.size() };
@@ -579,7 +1008,7 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
         return allocator && !std::bit_cast<FreeList*>(std::bit_cast<char*>(allocator.localAllocator()) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
     };
     unsigned propertyRoom = hasCellsFor(0) && !hasCellsFor(propertyRoomOfArray) ? propertyRoomOfArray : 0;
-    JSArray* result = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(static_cast<IndexingType>(IsArray | shape)), static_cast<unsigned>(count), vectorLength, propertyRoom);
+    JSArray* result = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(static_cast<IndexingType>(IsArray | shape)), static_cast<unsigned>(count), vectorLength, propertyRoom, NewElements::WrittenByCaller);
     if (!result)
         return nullptr;
     std::copy_n(array->butterfly()->indexingPayload<uint64_t>() + from, count, result->butterfly()->indexingPayload<uint64_t>());

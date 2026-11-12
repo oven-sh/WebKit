@@ -25,6 +25,8 @@ inline constexpr StubRegister storedValueByIdRegister = StubRegister::A1;
 inline constexpr StubRegister keyCellRegister = StubRegister::A1;
 inline constexpr StubRegister storedValueByValRegister = StubRegister::A2;
 inline constexpr StubRegister valueStoredThroughProxyRegister = StubRegister::T10;
+
+void loadKeyOfProxySlot(StubAssembler&, SlotForm, GPRReg header, GPRReg key, JumpList& isForNoProxies);
 #if CPU(X86_64)
 inline constexpr StubRegister readSiteCacheRegister = StubRegister::A1;
 inline constexpr StubRegister storeSiteCacheRegister = StubRegister::A2;
@@ -282,6 +284,7 @@ struct FieldExitBySlotRegisters {
     GPRReg extra;
 };
 void repeatFieldExitFoundBySlotAndReturn(StubAssembler&, const FieldExitBySlotRegisters&, JumpList& cannot);
+void storeToReplacedMemberAndReturn(StubAssembler&, GPRReg receiver, GPRReg identifierNumber, GPRReg value, GPRReg place, GPRReg word);
 
 void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
 void loadOwnValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);

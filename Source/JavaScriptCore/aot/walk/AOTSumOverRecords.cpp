@@ -126,9 +126,18 @@ bool SumOverRecords::add(ValueID value, int64_t times)
     return true;
 }
 
+bool SumOverRecords::subtractPosition(ValueID boundsTest, bool testResult)
+{
+    return testResult && add(m_code.at(boundsTest).positionOperand(), -1);
+}
+
 bool SumOverRecords::takeAwayWhatIsFromZeroUp(ValueID each, bool testResult)
 {
     const Operation& record = m_code.at(each);
+    if (record.opcode == Opcode::IsBelowLength) {
+        m_number += 1;
+        return testResult && add(record.lengthOperand(), -1) && add(record.positionOperand(), 1);
+    }
     if (!relationsInSumOverRecords.contains(record.opcode))
         return testResult && isIntegerInSumOverRecords(m_code, m_types, each) && m_types.at(record.type).integers.minimum >= 0 && add(each, -1);
     bool leftIsGreater = (record.opcode == Opcode::Greater || record.opcode == Opcode::GreaterEq) == testResult;
@@ -227,8 +236,8 @@ std::optional<Range> findStepsFrom(const Code& code, const TypeArena& types, Val
         }
         if (exactness == StepsAreExact::AsAssumed ? steps.contains(record.opcode) : isExactInSumOverRecords(code, types, record)) {
             bool isSum = record.opcode == Opcode::Add || record.opcode == Opcode::Sub;
-            bool firstIsWritten = record.opcode == Opcode::Add && code.at(record.operand(0)).opcode == Opcode::Integer;
-            const Operation* written = isSum ? &code.at(record.operand(firstIsWritten ? 0 : 1)) : nullptr;
+            bool firstIsAddend = record.opcode == Opcode::Add && (code.at(record.operand(0)).opcode == Opcode::Integer || (rootInSumOverRecords(code, record.operand(1)) == from && rootInSumOverRecords(code, record.operand(0)) != from));
+            const Operation* written = isSum ? &code.at(record.operand(firstIsAddend ? 0 : 1)) : nullptr;
             bool isWritten = !written || written->opcode == Opcode::Integer;
             if (written && isWritten && std::abs(written->integer()) > mostWritten)
                 return std::nullopt;
@@ -238,7 +247,7 @@ std::optional<Range> findStepsFrom(const Code& code, const TypeArena& types, Val
             if (!step.isSubsetOf(Range { -mostAdded, mostAdded }))
                 return std::nullopt;
             bool isSubtracted = record.opcode == Opcode::Decrement || record.opcode == Opcode::Sub;
-            follow(record.operand(firstIsWritten ? 1 : 0), isSubtracted ? Range { added.minimum - step.maximum, added.maximum - step.minimum } : Range { added.minimum + step.minimum, added.maximum + step.maximum });
+            follow(record.operand(firstIsAddend ? 1 : 0), isSubtracted ? Range { added.minimum - step.maximum, added.maximum - step.minimum } : Range { added.minimum + step.minimum, added.maximum + step.maximum });
             continue;
         }
         const Block* block = record.opcode == Opcode::Parameter ? &code.at(record.block()) : nullptr;
@@ -551,7 +560,8 @@ bool everyWayStepsDownFrom(const Code& code, const TypeArena& types, ValueID val
 bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID position, const GroundsOfPosition& grounds, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds)
 {
     auto mayBeTaken = [&](ValueID each, bool testResult = true) {
-        return each && (!relationsInSumOverRecords.contains(code.at(each).opcode) || holds(each, testResult));
+        bool isTest = each && (relationsInSumOverRecords.contains(code.at(each).opcode) || code.at(each).opcode == Opcode::IsBelowLength);
+        return each && (!isTest || holds(each, testResult));
     };
     SumOverRecords fromZero(code, types);
     SumOverRecords belowLength(code, types, -1);
@@ -562,7 +572,34 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
     bool isFromZeroUp = (isIntegerInSumOverRecords(code, types, position) && types.at(code.at(position).type).integers.minimum >= 0) || fromZero.isFromZeroUp();
     if (!isFromZeroUp && grounds.counter && !(fromZero.add(grounds.counter, -1) && fromZero.add(grounds.start, 1)))
         return false;
-    isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp, grounds.isNonNegativeResult) && fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp, grounds.isNonNegativeResult) && fromZero.isFromZeroUp());
+    auto subtractNonNegativeTest = [&] {
+        if (code.at(grounds.isFromZeroUp).opcode == Opcode::IsBelowLength)
+            return fromZero.subtractPosition(grounds.isFromZeroUp, grounds.isNonNegativeResult);
+        return fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp, grounds.isNonNegativeResult);
+    };
+    auto isFromZeroUpAfterLoop = [&] {
+        ValueID counter = grounds.loweringLoopIsClosed && grounds.loweredCounter ? rootInSumOverRecords(code, grounds.loweredCounter) : ValueID();
+        if (!counter || code.isConstant(counter) || code.at(counter).opcode != Opcode::Parameter || !code.at(code.at(counter).block()).isLoopHead)
+            return false;
+        std::span<const ValueID> parameters = code.at(code.at(counter).block()).parameters();
+        size_t place = std::ranges::find(parameters, counter) - parameters.begin();
+        std::optional<int64_t> least;
+        for (EdgeID edge = code.at(code.at(counter).block()).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+            std::span<const ValueID> arguments = code.at(edge).arguments();
+            if (place >= arguments.size())
+                return false;
+            if (rootInSumOverRecords(code, arguments[place]) == counter)
+                continue;
+            if (!isIntegerInSumOverRecords(code, types, arguments[place]))
+                return false;
+            int64_t brought = types.at(code.at(arguments[place]).type).integers.minimum;
+            least = least ? std::min(*least, brought) : brought;
+        }
+        SumOverRecords above(code, types, least.value_or(0));
+        return least && above.add(position, 1) && above.add(counter, -1) && above.isFromZeroUp();
+    };
+    isFromZeroUp = isFromZeroUp || isFromZeroUpAfterLoop();
+    isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp, grounds.isNonNegativeResult) && subtractNonNegativeTest() && fromZero.isFromZeroUp());
     if (grounds.loweredCounter && !(belowLength.add(grounds.loweredCounter, 1) && belowLength.add(grounds.loweredFrom, -1)))
         return false;
     if (const SteppedWithCounter& beside = grounds.steppedBeside; beside.stepped) {

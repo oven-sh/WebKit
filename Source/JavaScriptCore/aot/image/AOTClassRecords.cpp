@@ -408,6 +408,9 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     });
     data.classObjectLacksHasInstance = data.isChangedInSightAlone(ClassSide::Static) && encoder.classesWhoseClassObjectsFindNoHasInstance.quickGet(classLayout.index());
     data.privateNamesAreKnownToTexts = encoder.classesWhosePrivateNamesTextsKnow.quickGet(classLayout.index());
+    data.hasComputedMemberNames = std::ranges::any_of(parts.methods, [](const MethodData& method) {
+        return !!(method.flags & methodHasComputedName);
+    });
     return parts;
 }
 
@@ -432,7 +435,7 @@ void appendListsOfClassRecord(TableEncoder& encoder, LayoutID classLayout, const
         list.append(Typed::builtinClassOfInstances(layout).index() | (layout.mixedBuiltinBase ? PropertiesOfHeirsData::extendsMixin : 0));
         list.append(static_cast<uint32_t>(layout.fields.size()));
         for (const Typed::Field& field : layout.fields)
-            list.append(nameInClassRecord(encoder, field.key, "a property of the instances of"_s, classLayout) | (field.flags.contains(Typed::FieldFlags::IsRequired) ? 0 : PropertiesOfHeirsData::mayBeStoredLate));
+            list.append(nameInClassRecord(encoder, field.key, "a property of the instances of"_s, classLayout) | (Typed::isToldByStructureOfClass(field) ? 0 : PropertiesOfHeirsData::mayBeStoredLate));
         data.propertiesOfHeirsOffset = encoder.part.append(list);
     }
 }

@@ -66,6 +66,8 @@ public:
             return activeMock();
         return m_isReleasedLoad ? m_capturedValues.get() : nullptr;
     }
+    void setUninitializedMock(bool isUninitialized) { m_isUninitializedMock = isUninitialized; }
+    bool isUninitializedMock() const { return m_isUninitializedMock && !linkedExports(); }
     bool belongsToInstance() const { return m_belongsToInstance; }
     bool isRestoredAfterPatch() const { return m_isRestoredAfterPatch; }
     void setRestoredAfterPatch(bool isRestored) { m_isRestoredAfterPatch = isRestored; }
@@ -137,6 +139,7 @@ private:
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasInstances;
+    bool m_wasMadeUnderMock;
     bool m_hasESModuleMarker { false };
     bool m_isMarkerDeferred { false };
     bool m_hasOwnStructure { false };
@@ -144,6 +147,7 @@ private:
     bool m_belongsToInstance { false };
     bool m_isMockWord { false };
     bool m_isLoadWord { false };
+    bool m_isUninitializedMock { false };
     bool m_isReleasedLoad { false };
     bool m_isFilled { false };
     bool m_isRestoredAfterPatch { false };

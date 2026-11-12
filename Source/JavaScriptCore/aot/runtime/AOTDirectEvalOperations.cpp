@@ -484,6 +484,7 @@ void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue 
         ProgramStatics& statics = *m_instance->state->statics;
         m_instance->state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
         RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, m_instance->statics() + offset, value));
+        statics.didWriteVariable(offset);
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);
         return;

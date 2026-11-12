@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTCellFormat.h"
 #include "AOTID.h"
 #include "AOTSlotPlan.h"
@@ -42,6 +43,7 @@ struct KeyOrderParts {
     Vector<FieldIndex> fields;
     Vector<KeyOrderSource> sourceOfField;
     Vector<uint8_t> someMakerStopsBehindField;
+    BitVector methodsOfConstructions;
 };
 
 class KeyOrders {
@@ -78,9 +80,12 @@ public:
         return m_parts.someMakerStopsBehindField.span().subspan(m_parts.firstFieldOfOrder[index], m_parts.firstFieldOfOrder[index + 1] - m_parts.firstFieldOfOrder[index]);
     }
 
+    bool isMethodOfConstructions(FunctionID function) const { return m_parts.methodsOfConstructions.get(function.index()); }
+
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWord(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
     JS_EXPORT_PRIVATE size_t lengthOfLongestBeginningWithOrderWord(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
     JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> firstContinuationCreating(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage) const;
+    JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> secondContinuationCreating(LayoutID, FieldIndex createdFieldWithStorage) const;
     JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> continuationCreatingBehindFewestKeys(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage) const;
     JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> continuationCreatingBehindFewestKeys(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage, std::span<const FieldIndex> fieldsInFront) const;
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWordOfShortestBeginningThatLists(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
@@ -92,6 +97,7 @@ private:
     KeyOrderParts m_parts;
     Vector<uint32_t> m_firstContinuationOfLayout;
     Vector<KeyOrderContinuation> m_firstContinuationCreatingField;
+    Vector<KeyOrderContinuation> m_secondContinuationCreatingField;
 };
 
 } } } // namespace JSC::AOT::Typed

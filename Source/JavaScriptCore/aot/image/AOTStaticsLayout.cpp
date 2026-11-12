@@ -13,6 +13,7 @@
 #include "AOTClassGuards.h"
 #include "AOTIRProgram.h"
 #include "AOTInstanceLayout.h"
+#include "AOTObjectWords.h"
 #include "AOTPlan.h"
 #include "AOTPropertyCachesWords.h"
 #include "AOTSort.h"
@@ -57,6 +58,7 @@ public:
             && placeArrayProfiles()
             && placeRowsOfReads()
             && placeEnvironmentsHandedBack()
+            && placeStructuresOfHeirs()
             && placeMethodTable()
             && finish();
     }
@@ -86,6 +88,7 @@ private:
         ZeroWord4,
         ZeroWord2,
         ZeroWord1,
+        ViewWithMirror,
     };
 
     struct Bucket {
@@ -95,12 +98,12 @@ private:
     };
 
     static constexpr unsigned numberOfFilledWordKinds = 9;
-    static constexpr unsigned numberOfWordKinds = 16;
+    static constexpr unsigned numberOfWordKinds = 17;
     static constexpr unsigned wordSize = sizeof(uint64_t);
     static constexpr unsigned bitsPerByte = 8;
     static constexpr uint32_t noBucket = UINT32_MAX;
 
-    static_assert(static_cast<unsigned>(WordKind::ZeroValue) == numberOfFilledWordKinds && static_cast<unsigned>(WordKind::ZeroWord1) + 1 == numberOfWordKinds);
+    static_assert(static_cast<unsigned>(WordKind::ZeroValue) == numberOfFilledWordKinds && static_cast<unsigned>(WordKind::ViewWithMirror) + 1 == numberOfWordKinds);
     static_assert(!traitsOf(SlotRepresentation::JSValue).absentBits);
     static_assert(!traitsOf(SlotRepresentation::OptionalCell32).absentBits && !traitsOf(SlotRepresentation::OptionalBoolean).absentBits);
     static_assert(widthOf(SlotRepresentation::JSValue) == wordSize && widthOf(SlotRepresentation::OptionalInt64) == wordSize && widthOf(SlotRepresentation::OptionalDouble) == wordSize);
@@ -129,8 +132,15 @@ private:
         }
     }
 
+    static unsigned widthOfVariable(const PlannedVariable& planned)
+    {
+        return planned.hasViewMirror ? Typed::sizeOfVariableWithViewMirror : widthOf(planned.representation);
+    }
+
     static WordKind kindOfWord(const PlannedVariable& planned)
     {
+        if (planned.hasViewMirror)
+            return WordKind::ViewWithMirror;
         if (!planned.initialWord)
             return kindOfZeroWord(planned);
         bool startsUndefined = planned.initialWord == traitsOf(planned.representation).undefinedBits;
@@ -216,6 +226,7 @@ private:
         m_statics.arrayProfileOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ArrayProfile).size());
         m_statics.readGroupCacheOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ReadGroupCache).size());
         m_statics.environmentHandedBackOffsets = withoutOffsets(m_program.layouts.size());
+        m_statics.structuresOfHeirOffsets = withoutOffsets(m_program.layouts.size());
         m_statics.classGuardBits = Vector<uint32_t>(FillWith { }, m_program.layouts.size() * numberOfClassSides, noClassGuardBit);
     }
 
@@ -223,7 +234,7 @@ private:
     {
         for (Bucket& bucket : buckets) {
             if (bucket.size)
-                bucket.nextOffset = allocate(bucket.size, bucket.width);
+                bucket.nextOffset = allocate(bucket.size, std::min(bucket.width, wordSize));
         }
     }
 
@@ -353,7 +364,7 @@ private:
         for (uint32_t index = 0; index < m_statics.variables.size(); ++index) {
             if (bucketOfVariable[index] == noBucket)
                 continue;
-            unsigned width = widthOf(m_statics.variables[index].plan.representation);
+            unsigned width = widthOfVariable(m_statics.variables[index].plan);
             Bucket& bucket = buckets[bucketOfVariable[index]];
             RELEASE_ASSERT(!bucket.size || bucket.width == width);
             bucket.width = width;
@@ -365,17 +376,37 @@ private:
         placeClassGuardCounts();
         placeBuckets(allBuckets.subspan(numberOfFilledWordKinds));
 
-        for (uint32_t index = 0; index < m_statics.variables.size(); ++index) {
-            if (bucketOfVariable[index] == noBucket)
-                continue;
+        Vector<uint32_t> views;
+        auto place = [&](uint32_t index) {
             PlacedVariable& placed = m_statics.variables[index];
             Bucket& bucket = buckets[bucketOfVariable[index]];
             placed.offset = std::exchange(bucket.nextOffset, bucket.nextOffset + bucket.width);
             SlotTraits traits = traitsOf(placed.plan.representation);
             if (!traits.holdsCell || traits.isNarrowReference)
-                continue;
-            RELEASE_ASSERT(bucket.width == wordSize && !(placed.offset % wordSize));
+                return;
+            RELEASE_ASSERT(bucket.width == widthOfVariable(placed.plan) && !(placed.offset % wordSize));
             m_statics.roots.append(placed.offset);
+        };
+        for (uint32_t index = 0; index < m_statics.variables.size(); ++index) {
+            if (bucketOfVariable[index] == static_cast<uint32_t>(WordKind::ViewWithMirror))
+                views.append(index);
+            else if (bucketOfVariable[index] != noBucket)
+                place(index);
+        }
+        auto numberOfGroup = [&](uint32_t index) {
+            VariableID first = m_statics.variables[index].plan.firstViewOfBuffer;
+            return first ? first.index() + 1 : 0;
+        };
+        AOT::stableSort(views, { }, numberOfGroup);
+        for (uint32_t number = 0; number < views.size(); ++number) {
+            bool beginsRange = !number || numberOfGroup(views[number - 1]) != numberOfGroup(views[number]);
+            place(views[number]);
+            uint32_t offset = m_statics.variables[views[number]].offset;
+            if (!number && numberOfGroup(views[number]))
+                m_statics.variablesWithViewMirror.append({ offset, 0 });
+            if (beginsRange)
+                m_statics.variablesWithViewMirror.append({ offset, 0 });
+            m_statics.variablesWithViewMirror.last().size += Typed::sizeOfVariableWithViewMirror;
         }
         return fitsWithin(m_limit);
     }
@@ -420,7 +451,7 @@ private:
                     .detail = "code tests a guard of a class that has no record, so nothing would ever end the guard"_s,
                 });
             }
-            uint32_t bit = (asker == AskerOfClassGuardOfName::AssignedMember ? allocateRoot() : allocate(1, 1)) * bitsPerByte;
+            uint32_t bit = (asker == AskerOfClassGuardOfName::AssignedMember ? allocate(wordSize, wordSize) : allocate(1, 1)) * bitsPerByte;
             m_statics.bitsOfClassGuards.append(bit);
             if (key.size() == 2) {
                 m_statics.classGuardBits[classLayout.index() * numberOfClassSides + key[1]] = bit;
@@ -517,6 +548,13 @@ private:
             return false;
         m_statics.clearedEachCollection.append({ first, static_cast<uint32_t>(m_end - first) });
         return true;
+    }
+
+    bool placeStructuresOfHeirs()
+    {
+        for (size_t layout : m_mentions.byID(NumberSpace::HeirLookedAt).isMentioned)
+            m_statics.structuresOfHeirOffsets[layout] = allocate(StructuresOfHeir::sizeWithDisplacementsOfFields(m_program.layouts[layout].fields.size()), alignof(StructuresOfHeir));
+        return fitsWithin(m_limit);
     }
 
     bool placeMethodTable()

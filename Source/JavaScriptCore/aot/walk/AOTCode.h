@@ -899,6 +899,7 @@ struct GroundsOfPosition {
     ValueID limitWithinLengthCheck;
     ValueID loweredCounter;
     ValueID loweredFrom;
+    bool loweringLoopIsClosed { false };
     SteppedWithCounter steppedBeside { };
     ValueID counterTest;
     bool counterTestResult { true };
@@ -1059,7 +1060,7 @@ public:
     bool holdsFrameCells() const { return m_holdsFrameCells; }
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
     bool callsOfFunctionNeverCollect() const { return m_callsOfFunctionNeverCollect; }
-    bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes; }
+    bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes || m_opcodesOfValues.contains(Opcode::GetDataViewElement); }
     bool callsItself() const { return m_callsItself; }
     bool isEntryThatWalksBody() const { return m_isEntryThatWalksBody; }
     bool mayHoldReturnedCalls() const { return m_mayHoldReturnedCalls; }
@@ -1147,6 +1148,7 @@ public:
     void noteBeliefAheadOfEdges(BlockID, BeliefAheadOfEdges);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
+    void makeBlockNormal(BlockID);
     void makeBlockUnlikely(BlockID, bool thoughRare = false);
     void setSubject(BlockID, ValueID);
     void markMeetingOfStepWrittenByHand(BlockID);
@@ -1218,6 +1220,8 @@ public:
         m_syntheticVariableReads.append(read);
     }
     std::span<const ValueID> syntheticVariableReads() const LIFETIME_BOUND { return m_syntheticVariableReads.span(); }
+    void setMergedObjects(const BitVector& parameters) { m_mergedObjects = parameters; }
+    bool isMergedObject(ValueID parameter) const { return m_mergedObjects.get(parameter.index()); }
     void noteValueThatFoldedArithmeticGives(ValueID given) { m_valuesThatFoldedArithmeticGives.append(given); }
     std::span<const ValueID> valuesThatFoldedArithmeticGives() const LIFETIME_BOUND { return m_valuesThatFoldedArithmeticGives.span(); }
     ValueID appendConversion(BlockID, Opcode, ValueID operand, Representation, TypeID proven, Origin);
@@ -1324,6 +1328,7 @@ private:
     Vector<InputOfHoleReadAsNaN> m_readsAnsweredByHolesReadAsNaN;
     Vector<CellsMadeForOneOperation> m_cellsMadeForOneOperation;
     Vector<ValueID> m_syntheticVariableReads;
+    BitVector m_mergedObjects;
     Vector<ValueID> m_valuesThatFoldedArithmeticGives;
     Vector<PollWithFate> m_pollsWithFates;
     struct ChangeToOlderPart {

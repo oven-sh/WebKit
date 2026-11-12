@@ -25,20 +25,21 @@ public:
     Integer low64Of(CellPointer bigInt);
     Condition isNegativeBigInt(CellPointer);
 
-private:
     struct ByteOrder {
         std::optional<bool> isLittle;
         Condition isLittleAtRunTime;
     };
+    enum class NaNBits : bool { Purified, AsStored };
+    Operand loadBytes(const OperationContext&, Pointer, TypedArrayType, const ByteOrder&, NaNBits = NaNBits::Purified);
+    void storeBytes(Pointer, TypedArrayType, Operand, const ByteOrder&);
 
+private:
     ByteOrder byteOrderOf(const InlineCall&, unsigned argumentIndex, unsigned size);
     void continueWhereIsNotNegative(const InlineCall&, ValueID, Integer position, LBasicBlock otherwise);
     Pointer vectorHoldingElement(CellPointer view, Integer index, LBasicBlock otherwise);
     Pointer findBytes(CellPointer view, Integer offset, unsigned size, LBasicBlock otherwise);
     LValue byteSwapped(LValue bits, unsigned size);
     LValue inByteOrder(LValue bits, unsigned size, const ByteOrder&);
-    Operand loadBytes(const OperationContext&, Pointer, TypedArrayType, const ByteOrder&);
-    void storeBytes(Pointer, TypedArrayType, Operand, const ByteOrder&);
     Operand valueToStoreOrElse(ValueID, TypedArrayType, LBasicBlock otherwise);
     Integer offsetOrElse(ValueID, LBasicBlock otherwise);
     LValue emitAtomicAccess(AtomicsOperation, std::span<const LValue> operands, LValue address, Width);

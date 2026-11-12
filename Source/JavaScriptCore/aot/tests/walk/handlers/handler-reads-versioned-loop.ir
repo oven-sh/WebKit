@@ -1,7 +1,7 @@
 # function total(list) { let s = 0; try { for (let i = 0; i < list.length; i++) s += list[i]; } catch { return s - 1; } return s; }  sink(total);
 # The catch reads what the loop sums. The loop gets a version that sums doubles and whose iterations restart in the generic version.
 # RUN: walk f1 mechanisms=all
-# CHECK: : number @Double, {{*}}: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true:
+# CHECK: : number @Double, {{*}}: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true:
 # CHECK: role=CatchHandler
 # RUN(WITHHELD): walk f1 mechanisms=all-Guesses
 # WITHHELD-NOT: : number @Double, {{*}}isLoopHead=true

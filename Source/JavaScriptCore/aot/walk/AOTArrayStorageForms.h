@@ -88,7 +88,7 @@ constexpr Representation elementRepresentationOf(ArrayStorage kind)
 inline constexpr IndexingType arrayStorageTestMask = IndexingShapeMask;
 
 inline constexpr size_t maxInlineConcatOperands = 3;
-inline constexpr size_t maxInlineSpliceInsertions = 2;
+inline constexpr size_t maxInlineSpliceInsertions = 3;
 inline constexpr size_t maxInlinePushedValues = 16;
 inline constexpr int64_t maxRemovedByInlineSplice = 2;
 

@@ -513,6 +513,62 @@ static void emitBigIntOrder(StubAssembler& jit, const BinaryRegisters& registers
     isLeftToOperation.link(&jit);
 }
 
+static void emitOrderOfBigIntAndNumber(StubAssembler& jit, const BinaryRegisters& registers, BinaryOperator operation)
+{
+    const auto [left, right, first, second, scratch, leftNumber, rightNumber] = registers;
+    const Comparison& comparison = comparisonOf(operation);
+    constexpr int32_t bitsOfExactInteger = 53;
+
+    JumpList isLeftToOperation;
+    auto loadInteger = [&](GPRReg bigInt, GPRReg integer) {
+        isLeftToOperation.append(jit.branchIfNotHeapBigInt(bigInt));
+        jit.load32(Address(bigInt, JSBigInt::offsetOfLength()), integer);
+        Jump isZero = jit.branchTest32(CCallHelpers::Zero, integer);
+        isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, integer, TrustedImm32(1)));
+        jit.load64(Address(bigInt, JSBigInt::offsetOfData()), integer);
+        jit.move(integer, scratch);
+        jit.urshift64(TrustedImm32(bitsOfExactInteger), scratch);
+        isLeftToOperation.append(jit.branchTest64(CCallHelpers::NonZero, scratch));
+        Jump isNotNegative = jit.branchTest8(CCallHelpers::Zero, Address(bigInt, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
+        jit.neg64(integer);
+        isNotNegative.link(&jit);
+        isZero.link(&jit);
+    };
+    auto compareIntegers = [&] {
+        jit.compare64(comparison.ofIntegers, first, second, left);
+        returnRelationResult(jit, left);
+    };
+    auto compareDoubles = [&] {
+        jit.compareDouble(comparison.ofDoubles, leftNumber, rightNumber, left);
+        returnRelationResult(jit, left);
+    };
+
+    JumpList leftIsNoCell;
+    leftIsNoCell.append(jit.branchIfNotCell(left));
+    isLeftToOperation.append(jit.branchTest64(CCallHelpers::Zero, right, numberTag));
+    loadInteger(left, first);
+    Jump rightIsDouble = jit.branch64(CCallHelpers::Below, right, numberTag);
+    jit.signExtend32ToPtr(right, second);
+    compareIntegers();
+    rightIsDouble.link(&jit);
+    jit.convertInt64ToDouble(first, leftNumber);
+    unboxDouble(jit, right, scratch, rightNumber);
+    compareDoubles();
+
+    leftIsNoCell.link(&jit);
+    isLeftToOperation.append(jit.branchTest64(CCallHelpers::Zero, left, numberTag));
+    isLeftToOperation.append(jit.branchIfNotCell(right));
+    loadInteger(right, second);
+    Jump leftIsDouble = jit.branch64(CCallHelpers::Below, left, numberTag);
+    jit.signExtend32ToPtr(left, first);
+    compareIntegers();
+    leftIsDouble.link(&jit);
+    unboxDouble(jit, left, scratch, leftNumber);
+    jit.convertInt64ToDouble(second, rightNumber);
+    compareDoubles();
+    isLeftToOperation.link(&jit);
+}
+
 static void loadStringOfSmallInteger(StubAssembler& jit, GPRReg integer, GPRReg string, JumpList& isOther)
 {
     isOther.append(jit.branch64(CCallHelpers::Below, integer, numberTag));
@@ -587,6 +643,7 @@ void generateBinaryOperation(StubAssembler& jit)
     if (isComparison(operation)) {
         emitStringOrder(jit, registers, operation);
         emitBigIntOrder(jit, registers, operation);
+        emitOrderOfBigIntAndNumber(jit, registers, operation);
     }
     if (hasWayOfTwoTexts(operation)) {
         JumpList isCell;

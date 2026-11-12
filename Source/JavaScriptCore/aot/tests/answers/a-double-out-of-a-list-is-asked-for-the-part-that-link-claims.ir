@@ -13,7 +13,7 @@
 # Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
 # OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f2 mechanisms=all
-# FORM: undefined|int|whole @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double
+# FORM: int|whole @Double = GetArrayElement {{*}} arrayStorage=Double
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 3
 # ALL-NEXT: bun: internal AOT error: type check failed

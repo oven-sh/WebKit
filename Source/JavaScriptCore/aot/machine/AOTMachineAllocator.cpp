@@ -945,6 +945,9 @@ static NEVER_INLINE Location placeAllocatedLeafWithoutPosition(Allocator& alloca
                     if (!pinned.offset) {
                         if (opcodeOfLeaf == Const64)
                             return Location::reg(pinned.reg);
+                    } else if (Reg reg = allocator.anyRegisterOf(leaf, allocator.m_file.allocatableIn(bankOf(leaf->type())))) {
+                        taken.locked |= maskOf(reg);
+                        return Location::reg(reg);
                     } else {
                         int32_t offset = *pinned.offset;
                         if (takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
@@ -1177,6 +1180,11 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
     return true;
 }
 
+static ALWAYS_INLINE bool isReadFromRegisterOfItsWord(const Operation* fused)
+{
+    return fused->opcode() == ZExt32 || fused->opcode() == Trunc;
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
 {
     const Type type = operation->type();
@@ -1213,7 +1221,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
         bool canCoalesceFirstChild = false;
         if (firstSourceIsRegister && !(fusedChildren & 1)) {
             overwritesFirstChild = (traits & AllocatedOpcodeOverwritesFirstChild) && !(fusedChildren && addsScaledIndex(m_liveness, operation));
-            maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && !(fusedChildren & 2) && secondSource.isRegister();
+            maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && (!(fusedChildren & 2) || isReadFromRegisterOfItsWord(inlineChildrenOfAllocatedOperation(operation)[1])) && secondSource.isRegister();
             canCoalesceFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeWhenCoalesced(m_liveness, operation);
             if (overwritesFirstChild || canCoalesceFirstChild) {
                 Operation* first = m_valueIn[firstSource.reg().index()];

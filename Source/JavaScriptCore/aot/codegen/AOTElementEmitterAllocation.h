@@ -35,7 +35,9 @@ public:
     CellPointer allocateArrayOfHolesAtSite(const ValueContext&, Integer length, const ArrayStorageForm& seed, Pointer profile, LBasicBlock slowPath);
     CellPointer bearArrayOfLength(const OperationContext&, const ArrayStorageForm&, Integer length);
     CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);
-    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
+    std::optional<Pointer> profileOfEmptyListsAtSite(Origin);
+    void countEmptyListAtSite(const OperationContext&, Pointer profile, CellPointer list);
+    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, std::optional<Pointer> profile, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
     void setLengthOfNewArray(CellPointer, Integer length);
 
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);
@@ -45,6 +47,7 @@ private:
 
     CellPointer newLiteralWithHoles(const ValueContext&);
     std::optional<Integer> takeRoomAskedRightBehind(const ValueContext&);
+    std::optional<EmptyArray> emptyArrayWithRoomForPushes(BlockID, ValueID literal);
     ArrayStorage storageThatLiteralNames(ValueID literal, const Operation&);
     struct AppendedBehindSpread {
         uint32_t room { 0 };

@@ -156,7 +156,8 @@ private:
     unsigned numberOfFusedLoadsBelow(const Operation*) const;
     bool storeBehindDefinition(const Operation*);
     bool checkBranchOnOverflow(const Step&);
-    bool isWidened(Place place) const { return m_widened[place] && m_widened[place] == m_state[place]; }
+    ALWAYS_INLINE bool isWidened(Place place) const { return (m_markedRegisters >> place & 1) && m_widened[place] == m_state[place]; }
+    void markWidened(Place, ValueID);
     void flowAlong(Block* from, unsigned successorIndex);
 
     Procedure& m_proc;
@@ -195,7 +196,8 @@ private:
     uint32_t m_nextOperation { 0 };
     ArenaVector<WriteOutsideRange> m_writesOutsideRange;
     const Step* m_flagSettingStep { nullptr };
-    std::array<ValueID, numberOfRegisters> m_widened { };
+    std::array<ValueID, numberOfRegisters> m_widened;
+    RegisterMask m_markedRegisters { 0 };
     bool m_needsAnotherRound { false };
     bool m_failed { false };
 };
@@ -371,6 +373,13 @@ void AllocationChecker::set(Place place, ValueID value)
         return;
     m_isTouched.set(place);
     m_touched.append(m_arena, place);
+}
+
+void AllocationChecker::markWidened(Place place, ValueID value)
+{
+    m_widened[place] = value;
+    RegisterMask bit = RegisterMask { 1 } << place;
+    m_markedRegisters = value ? m_markedRegisters | bit : m_markedRegisters & ~bit;
 }
 
 const AllocationChecker::SpillMap* AllocationChecker::makeSpillMapLeaf(const SpillMapValues& values, SpillIndex first)
@@ -919,7 +928,7 @@ bool AllocationChecker::executeOperation(const Step& step)
     if (staysWidened && operation->opcode() == ZExt32 && m_liveness.of(operation).has(ValueFlag::UpperHalfIsRead))
         return fail(FailureKind::UpperHalfIsNotClear, operation);
     set(destination, idOf(operation));
-    m_widened[destination] = staysWidened ? idOf(operation) : nothing;
+    markWidened(destination, staysWidened ? idOf(operation) : nothing);
     return storeBehindDefinition(operation);
 }
 
@@ -1133,7 +1142,7 @@ bool AllocationChecker::transfer(const Step& step)
         Place destination = step.destination.reg().index();
         bool staysWidened = step.width == Width64 && isWidened(step.sources[0].reg().index());
         set(destination, narrowed(valueIn(step.sources[0].reg(), step.operation), step.width));
-        m_widened[destination] = staysWidened ? m_state[destination] : nothing;
+        markWidened(destination, staysWidened ? m_state[destination] : nothing);
         return true;
     }
     case StepKind::Reload: {
@@ -1232,9 +1241,9 @@ bool AllocationChecker::enter(Block* block)
     clearState();
     for (const Entry& entry : m_heads[block->index()].entries)
         set(entry.place, entry.value);
-    m_widened.fill(nothing);
+    m_markedRegisters = 0;
     forEachRegister(m_heads[block->index()].widened, [&](Reg reg) {
-        m_widened[reg.index()] = m_state[reg.index()];
+        markWidened(reg.index(), m_state[reg.index()]);
     });
     commitChangedSpills();
     loadSpillMap(m_spillMap, m_heads[block->index()].spills, m_spillMapHeight, 0);
@@ -1327,10 +1336,10 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
             m_onEdge[m_flagSettingStep->destination.reg().index()] = idOf(operandTakenBack);
     }
     RegisterMask widenedOnEdge = 0;
-    for (Place place = 0; place < numberOfRegisters; ++place) {
-        if (isWidened(place) && m_onEdge[place] == m_state[place])
-            widenedOnEdge |= RegisterMask { 1 } << place;
-    }
+    forEachRegister(m_markedRegisters, [&](Reg reg) {
+        if (isWidened(reg.index()) && m_onEdge[reg.index()] == m_state[reg.index()])
+            widenedOnEdge |= maskOf(reg);
+    });
     if (from->last()->opcode() == Branch && m_liveness.usesOverflowFlag(from->last()) && m_flagSettingStep) {
         OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, from->last());
         if (test.isWidenedOnFailure && successorIndex != test.passingSuccessor)

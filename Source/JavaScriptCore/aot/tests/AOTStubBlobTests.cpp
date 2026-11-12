@@ -709,6 +709,18 @@ static void testOperationsCalled()
     checkAdapterOperations(catalog);
 }
 
+static void testTagsOfSmallTablesAreStoredWhole()
+{
+#if CPU(X86_64)
+    constexpr std::array<uint8_t, 4> orWordOfTags { 0x49, 0x09, 0x42, CompactTable::offsetOfIndex() };
+    StubCatalog catalog(StubOptions { });
+    for (StubKey insertion : { mapSet(KeyComparison::Bits), mapSet(KeyComparison::String), setAdd(KeyComparison::Bits), setAdd(KeyComparison::String) }) {
+        StubBlob blob = buildBlob(catalog, std::array { insertion }, EntrySet { });
+        AOT_TEST_CHECK(!std::ranges::search(blob.code.bytes, orWordOfTags).empty());
+    }
+#endif
+}
+
 static void testWideReferences()
 {
     StubOptions wideOptions;
@@ -721,6 +733,18 @@ static void testWideReferences()
     StubBlob wideBlob = buildBlob(wideCatalog, std::array { store }, EntrySet { });
     AOT_TEST_CHECK(sizeOfBody(wideBlob, store) < sizeOfBody(blob, store));
     AOT_TEST_CHECK(operationsCalledBy(wideCatalog, store) == operationsCalledBy(catalog, store));
+}
+
+static void testInt32LiteralsStoreWholeWords()
+{
+#if CPU(X86_64)
+    constexpr std::array<uint8_t, 8> storeOfUpperHalf { 0x41, 0xc7, 0x41, 0x0c, 0x00, 0x00, 0xfe, 0xff };
+    StubCatalog catalog(StubOptions { });
+    for (unsigned count = 1; count <= descriptorOf(StubFamily::ArrayLiteral).maxCount; ++count) {
+        StubBlob blob = buildBlob(catalog, std::array { arrayLiteralWithInt32(count) }, EntrySet { });
+        AOT_TEST_CHECK(std::ranges::search(blob.code.bytes, storeOfUpperHalf).empty());
+    }
+#endif
 }
 
 static void testImmediatesInKeys()
@@ -820,6 +844,30 @@ static void testPushStubRegisters()
     });
 }
 
+template<uint8_t shape, uint32_t readBudget, uint32_t writeBudget>
+static void testInstructionsAtConstantIndex()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    StubRunner runner;
+    const JSValue held = shape == DoubleShape ? jsDoubleNumber(0.1) : jsNumber(5);
+    const JSValue stored = shape == DoubleShape ? jsDoubleNumber(0.3) : jsNumber(6);
+    auto bitsInArray = [&](JSValue value) { return shape == DoubleShape ? bitsOf(value.asNumber()) : boxed(value); };
+    FakeArray array(shape, { bitsInArray(held), bitsInArray(held) });
+    auto isWithin = [&](ASCIILiteral what, StubRun run, uint32_t budget) {
+        AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs);
+        if (*run.instructionsInStubs != budget)
+            dataLogLn(what, " at a constant index: ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+        return *run.instructionsInStubs <= budget;
+    };
+
+    runner.setCountsInstructions(true);
+    StubRun read = runner.run(getByValAtConstantIndex(), { array.address(), 1 });
+    StubRun write = runner.run(putByValAtConstantIndex(ECMAMode::strict()), { array.address(), 1, boxed(stored) });
+    AOT_TEST_CHECK(read.result == boxed(held) && array.elements[1] == bitsInArray(stored));
+    AOT_TEST_CHECK(isWithin("a read"_s, read, readBudget) & isWithin("a store"_s, write, writeBudget));
+#endif
+}
+
 enum class PushedOnto : uint8_t { Doubles, Integers, Values };
 
 template<PushedOnto onto, bool kindIsKnown, uint32_t budget>
@@ -845,6 +893,8 @@ std::span<const NativeTest> stubBlobTests()
 {
     static constexpr NativeTest tests[] = {
         { "stub-blob/entry-placements"_s, testEntryPlacements },
+        { "stub-blob/instructions-at-constant-indices/doubles"_s, ImageTests::whenExecutable<testInstructionsAtConstantIndex<DoubleShape, 20, 25>> },
+        { "stub-blob/instructions-at-constant-indices/int32s"_s, ImageTests::whenExecutable<testInstructionsAtConstantIndex<Int32Shape, 17, 18>> },
         { "stub-blob/instructions-of-pushes/a-double-onto-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, false, 26>> },
         { "stub-blob/instructions-of-pushes/a-double-onto-doubles-of-a-known-kind"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, true, 24>> },
         { "stub-blob/instructions-of-pushes/an-integer-onto-integers"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Integers, false, 23>> },
@@ -862,7 +912,9 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/missing-keys"_s, testMissingKeys },
         { "stub-blob/summaries"_s, testSummaries },
         { "stub-blob/operations-called"_s, testOperationsCalled },
+        { "stub-blob/tags-of-small-tables-are-stored-whole"_s, testTagsOfSmallTablesAreStoredWhole },
         { "stub-blob/wide-references"_s, testWideReferences },
+        { "stub-blob/int32-literals-store-whole-words"_s, testInt32LiteralsStoreWholeWords },
         { "stub-blob/immediates-in-keys"_s, testImmediatesInKeys },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
     };

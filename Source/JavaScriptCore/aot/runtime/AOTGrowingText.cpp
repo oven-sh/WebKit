@@ -198,9 +198,18 @@ static ALWAYS_INLINE void writePieces(StringImpl& buffer, uint32_t position, std
     endOfTextIn(buffer) = position;
 }
 
+static ALWAYS_INLINE void resolveLastingPieces(std::span<JSString* const> pieces)
+{
+    for (JSString* piece : pieces) {
+        if (piece->isNonSubstringRope() && piece->cellState() != CellState::DefinitelyWhite && piece->length() <= maxLengthOfPieceWrittenByStub) [[unlikely]]
+            uncheckedDowncast<JSRopeString>(piece)->resolveRopeWithoutGC();
+    }
+}
+
 JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<JSString* const> pieces)
 {
     ASSERT(text->isRope() && text->length() >= minLengthOfGrowingText);
+    resolveLastingPieces(pieces);
     VM& vm = *instance.vm;
     uint32_t length = text->length();
     uint64_t lengthOfPieces = 0;
@@ -332,6 +341,31 @@ bool tryResolveInGrowingBuffer(Instance& instance, JSRopeString* rope)
         return false;
     std::span<JSString* const> pieces = std::span { added }.subspan(firstAdded);
     return is8Bit ? tryResolveInGrowingBuffer<Latin1Character>(instance, rope, *text, pieces) : tryResolveInGrowingBuffer<char16_t>(instance, rope, *text, pieces);
+}
+
+bool tryResolveInOwnBuffer(Instance& instance, JSRopeString* rope)
+{
+    ASSERT(rope->length() >= minLengthSharedWithBuffer);
+    JSString* bottom = rope;
+    while (bottom->isNonSubstringRope())
+        bottom = firstPartOf(bottom);
+    JSString* buffer = bottom != rope && bottom->isRope() ? bufferThatEndsWith(instance, bottom) : nullptr;
+    if (!buffer)
+        return false;
+    StringImpl& characters = *buffer->tryGetValueImpl();
+    uint32_t end = endOfTextIn(characters);
+    uint32_t lengthAdded = rope->length() - bottom->length();
+    if (lengthAdded > characters.length() - end || rope->is8Bit() != characters.is8Bit())
+        return false;
+    uint32_t offset = end - bottom->length();
+    if (characters.is8Bit()) [[likely]]
+        writeWhatWasAddedTo(bottom, rope, charactersOf<Latin1Character>(characters) + end + lengthAdded);
+    else
+        writeWhatWasAddedTo(bottom, rope, charactersOf<char16_t>(characters) + end + lengthAdded);
+    endOfTextIn(characters) = end + lengthAdded;
+    instance.state->growingFlatText.buffer = buffer;
+    rope->resolveBySharing(StringImpl::createSubstringSharingImpl(characters, offset, rope->length()).get());
+    return true;
 }
 
 bool canGrowInPlace(Instance& instance, JSString* text)

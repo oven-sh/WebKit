@@ -53,7 +53,13 @@ JS_EXPORT_PRIVATE TypeID contentsOfEnforcedSlot(TypeArena&, TypeID slotType, boo
 
 JS_EXPORT_PRIVATE bool enforcedTypeSparesTestOfStoresByName(const TypeArena&, TypeID slotType);
 
-uint64_t fillEnforcedFieldsForFacts(Program&, const LinkTables& linked, const LinkTables& held, const Families&, Mechanisms, FactTables&);
+bool isLibraryLayout(const Program&, LayoutID);
+
+struct EnforcedFieldCounts {
+    uint64_t seen { 0 };
+    uint64_t ofFamily { 0 };
+};
+EnforcedFieldCounts fillEnforcedFieldsForFacts(Program&, const LinkTables& linked, const LinkTables& held, const Families&, Mechanisms, FactTables&);
 
 } } } // namespace JSC::AOT::Typed
 

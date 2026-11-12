@@ -25,6 +25,9 @@ public:
     void generateGetValueAtPlaceInMap(const ValueContext&);
     void generateFindKeyInMap(const ValueContext&);
     void generateMovesOfEntriesInCollections(const ValueContext&);
+    enum class EntryAnswer : uint8_t { IsPresent, Value, Place };
+    Operand lookUpNumberAtItsPlace(CellPointer owner, Boxed key, EntryAnswer, const ScopedLambda<Operand()>& lookUpByHash);
+    bool isCounterOrSmallNumber(ValueID key) const;
     void generateTryPutValueAtPlaceInMap(const ValueContext&);
 
 private:
@@ -43,6 +46,7 @@ private:
     Integer movesOfEntriesInCollections();
 
     bool takesTableReadBeforeStep(const ValueContext& step, ValueID collection);
+    bool mayReadValue(const ValueContext& step);
     ValueID findTableReadAfterStep(const ValueContext& step, ValueID collection);
     ValueID m_forwardedTableRead;
     LValue m_forwardedTable { nullptr };

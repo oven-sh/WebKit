@@ -30,6 +30,23 @@ export function at(index) {
     return (k >= 0 && k < length) ? this[$toLength(k)] : undefined;
 }
 
+// The rows of the table name this one for a view whose class makes its results.
+$overriddenName = "map";
+export function mapOfView(callback /*, thisArg */) {
+    "use strict";
+
+    var length = $typedArrayLength(this);
+
+    if (!$isCallable(callback))
+        $throwTypeError("TypedArray.prototype.map callback must be a function");
+
+    var thisArg = $argument(1);
+    var result = new this.constructor(length);
+    for (var i = 0; i < length; ++i)
+        result[i] = callback.$call(thisArg, this[i], i, this);
+    return result;
+}
+
 export function forEach(callback /*, thisArg */) {
     "use strict";
 

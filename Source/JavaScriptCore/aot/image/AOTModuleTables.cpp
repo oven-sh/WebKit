@@ -289,8 +289,10 @@ static void appendHashesOfModulePath(const Typed::Program& program, uint32_t ind
     uint32_t hash = HashOfDirectory::ofNoText;
     for (char16_t character : StringView(path).codeUnits()) {
         hash = HashOfDirectory::with(hash, character);
-        if (character == '/')
+        if (character == '/' || character == '?')
             listed.hashesOfDirectories.append(hash);
+        if (character == '?')
+            listed.hashesOfDirectories.append(hashOfAnyQuery);
     }
 }
 

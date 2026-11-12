@@ -158,6 +158,12 @@ bool Encoder::blockHasWrittenNumberRegisterInFrontOf(const Step& step, FPRReg re
     return m_numberRegistersWrittenInBlock & maskOf(Reg(reg));
 }
 
+void Encoder::zeroDestinationOf(const Step& step, FPRReg destination)
+{
+    m_jit.moveZeroToDouble(destination);
+    m_stepsWithZeroedDestination[m_numberOfZeroedDestinations++ % m_stepsWithZeroedDestination.size()] = &step;
+}
+
 bool Encoder::writesNumberRegister(const Step& step, FPRReg reg) const
 {
     if (step.destination.isRegister() && step.destination.reg() == Reg(reg))
@@ -222,12 +228,85 @@ bool Encoder::wasNumberRegisterWrittenRecently(const Step& step, FPRReg reg) con
     return false;
 }
 
-template<typename Functor>
-static void encodeX86NumberUnary(Encoder& encoder, const Step* stepThatWaitsLongForDestination, const X86NumberSource& source, Width widthOfSource, FPRReg destination, const Functor& emit)
+static bool keepsRestOfX86Destination(Opcode opcode)
 {
-    bool keepsRestOfDestination = source.isRegister() && source.reg.fpr() != destination;
-    if (stepThatWaitsLongForDestination && keepsRestOfDestination && !encoder.blockHasWrittenNumberRegisterInFrontOf(*stepThatWaitsLongForDestination, destination))
-        encoder.m_jit.moveZeroToDouble(destination);
+    return opcode == FloatToDouble || opcode == DoubleToFloat || opcode == Sqrt || opcode == Floor || opcode == Ceil || opcode == FTrunc;
+}
+
+bool Encoder::startsNumberChain(const Step& step) const
+{
+    if (std::ranges::contains(m_stepsWithZeroedDestination, &step))
+        return true;
+    auto holdsNumber = [](const Location& source) { return source.isRegister() && source.reg().isFPR(); };
+    auto holdsWord = [](const Location& source) { return source.isRegister() && source.reg().isGPR(); };
+    if (std::ranges::any_of(step.sources, holdsNumber))
+        return false;
+    if (step.kind != StepKind::Execute || !keepsRestOfX86Destination(step.operation->opcode()))
+        return true;
+    return std::ranges::count_if(step.sources, holdsWord) > 1;
+}
+
+bool Encoder::isNumberRegisterChainedAcrossIterations(const Step& step, FPRReg reg) const
+{
+    static constexpr unsigned maxSteps = 256;
+    const uint32_t loop = placeOf(m_block).loop;
+    if (loop == noLoop)
+        return false;
+    unsigned numberOfSteps = 0;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    auto isChainBetween = [&](const Step* begin, const Step* end) {
+        while (end > begin) {
+            --end;
+            if (++numberOfSteps > maxSteps)
+                return false;
+            if (writesNumberRegister(*end, reg) && startsNumberChain(*end))
+                return false;
+        }
+        return true;
+    };
+    Vector<const Block*, 16> blocks;
+    auto appendPredecessors = [&](const Block* block) {
+        for (const Block* predecessor : placeOf(block).predecessors) {
+            const BlockPlace& place = placeOf(predecessor);
+            if (place.loop == loop && !place.isRare() && place.layoutPart != LayoutPart::Rare && !blocks.contains(predecessor))
+                blocks.append(predecessor);
+        }
+    };
+    const BlockSteps& ownSteps = stepsOf(m_block);
+    if (&step < m_steps + ownSteps.begin || &step >= m_steps + ownSteps.end || !isChainBetween(m_steps + ownSteps.begin, &step))
+        return false;
+    appendPredecessors(m_block);
+    bool isClosed = false;
+    for (unsigned index = 0; index < blocks.size(); ++index) {
+        const Block* block = blocks[index];
+        const BlockSteps& steps = stepsOf(block);
+        if (steps.terminator != UINT32_MAX && writesNumberRegister(m_steps[steps.terminator], reg))
+            return false;
+        if (!isChainBetween(m_steps + steps.beginOfEdgeMoves, m_steps + steps.endOfEdgeMoves))
+            return false;
+        if (block == m_block) {
+            isClosed = true;
+            if (!isChainBetween(&step + 1, m_steps + steps.end))
+                return false;
+            continue;
+        }
+        if (!isChainBetween(m_steps + steps.begin, m_steps + steps.end))
+            return false;
+        appendPredecessors(block);
+    }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    return isClosed;
+}
+
+enum class WaitForDestination : bool { IsShort, IsLong };
+
+template<typename Functor>
+static void encodeX86NumberUnary(Encoder& encoder, const Step& step, WaitForDestination wait, const X86NumberSource& source, Width widthOfSource, FPRReg destination, const Functor& emit)
+{
+    bool keepsRestOfDestination = source.isRegister() ? source.reg.fpr() != destination : source.isBaseOffset();
+    bool waitsForEarlierBlock = wait == WaitForDestination::IsLong && source.isRegister() && !encoder.blockHasWrittenNumberRegisterInFrontOf(step, destination);
+    if (keepsRestOfDestination && (waitsForEarlierBlock || encoder.isNumberRegisterChainedAcrossIterations(step, destination)))
+        encoder.zeroDestinationOf(step, destination);
     if (source.isRegister()) {
         emit(source.reg.fpr());
         return;
@@ -457,7 +536,7 @@ static void roundX86NumberThroughInteger(Encoder& encoder, Opcode opcode, Width 
     needsNoRounding.link(&jit);
 }
 
-static void encodeX86NumberRounding(Encoder& encoder, Opcode opcode, Width width, const X86NumberSource& source, FPRReg destination)
+static void encodeX86NumberRounding(Encoder& encoder, const Step& step, Opcode opcode, Width width, const X86NumberSource& source, FPRReg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
     bool isDouble = width == Width64;
@@ -468,7 +547,7 @@ static void encodeX86NumberRounding(Encoder& encoder, Opcode opcode, Width width
         return;
     }
 
-    encodeX86NumberUnary(encoder, nullptr, source, width, destination, [&](auto operand) {
+    encodeX86NumberUnary(encoder, step, WaitForDestination::IsShort, source, width, destination, [&](auto operand) {
         if (opcode == Ceil) {
             if (isDouble)
                 jit.ceilDouble(operand, destination);
@@ -576,7 +655,7 @@ static void encodeX86NumberFromInteger(Encoder& encoder, const Step& step, Width
             jit.convertInt32ToDouble(operand, destination);
     };
 
-    if (encoder.wasNumberRegisterWrittenRecently(step, destination))
+    if (encoder.wasNumberRegisterWrittenRecently(step, destination) || encoder.isNumberRegisterChainedAcrossIterations(step, destination))
         jit.moveZeroToDouble(destination);
     if (source.isRegister()) {
         convert(source.reg.gpr());
@@ -663,11 +742,11 @@ void Encoder::encodeNumber(const Step& step)
     case Ceil:
     case Floor:
     case FTrunc:
-        encodeX86NumberRounding(*this, opcode, width, takeSource(0), step.destination.fpr());
+        encodeX86NumberRounding(*this, step, opcode, width, takeSource(0), step.destination.fpr());
         return;
     case Sqrt: {
         FPRReg destination = step.destination.fpr();
-        encodeX86NumberUnary(*this, &step, takeSource(0), width, destination, [&](auto operand) {
+        encodeX86NumberUnary(*this, step, WaitForDestination::IsLong, takeSource(0), width, destination, [&](auto operand) {
             if (width == Width64)
                 m_jit.sqrtDouble(operand, destination);
             else
@@ -677,14 +756,14 @@ void Encoder::encodeNumber(const Step& step)
     }
     case FloatToDouble: {
         FPRReg destination = step.destination.fpr();
-        encodeX86NumberUnary(*this, &step, takeSource(0), Width32, destination, [&](auto operand) {
+        encodeX86NumberUnary(*this, step, WaitForDestination::IsLong, takeSource(0), Width32, destination, [&](auto operand) {
             m_jit.convertFloatToDouble(operand, destination);
         });
         return;
     }
     case DoubleToFloat: {
         FPRReg destination = step.destination.fpr();
-        encodeX86NumberUnary(*this, &step, takeSource(0), Width64, destination, [&](auto operand) {
+        encodeX86NumberUnary(*this, step, WaitForDestination::IsLong, takeSource(0), Width64, destination, [&](auto operand) {
             m_jit.convertDoubleToFloat(operand, destination);
         });
         return;

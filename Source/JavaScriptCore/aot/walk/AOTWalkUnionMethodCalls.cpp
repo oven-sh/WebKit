@@ -264,6 +264,167 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     return true;
 }
 
+GuessOpened askNameBehindTestsOfShape(Walker& walker, const BodyValue& question)
+{
+    if (walker.standsInArmOfRowOfShapeTests() || walker.isNestedTooDeeply() || (!walker.isInLoop() && walker.program().at(walker.unit().function).isModuleBody()))
+        return GuessOpened::None;
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto asked = question.as<Opcode::PropHas>();
+    if (!asked.objectOperand())
+        return GuessOpened::None;
+    BodyBlock block = index.block(index.blockOf(question.id()));
+    uint32_t begin = question.id().index() - block.firstValue().index();
+    uint32_t end = begin + 1;
+    Reference receiver = walker.referenceOf(asked.objectOperand());
+    if (end > walker.endOfStretchBeingWalked() || !receiver || !receiver.isValue())
+        return GuessOpened::None;
+
+    TypeArena& types = walker.types();
+    const Program& program = walker.program();
+    const Plan& plan = walker.plan();
+    TypeID proven = walker.typeOf(receiver);
+    if (!proven || !types.at(proven).isJavaScriptValue() || (types.at(proven).primitives & ~Primitive::UndefinedOrNull) || !types.at(proven).hasOnlyLayouts() || holdsOneMember(types.at(proven).layouts))
+        return GuessOpened::None;
+    auto isAnsweredBy = [&](TypeID tested) {
+        auto typeBehindTest = [&](ValueID input) {
+            return input == asked.objectOperand() ? tested : walker.typeOf(walker.referenceOf(input));
+        };
+        return typedFormOf(walker, question, TypesOfInputs(typeBehindTest)) == TypedForm::Built;
+    };
+    static constexpr size_t mostLayouts = 8;
+    Vector<LayoutID, mostLayouts> haveName;
+    Vector<LayoutID, mostLayouts> lackName;
+    bool mayBeNothing = types.at(proven).primitives;
+    bool someLayoutIsLeft = false;
+    for (size_t place = 0; place < membersOf(types, types.at(proven)).size(); ++place) {
+        LayoutID member = membersOf(types, types.at(proven))[place];
+        if (!plan.isInUse(member))
+            continue;
+        if (!plan.slots().holdsCompiledObjects(member) || !isFoundByShapeTest(program.at(member)) || haveName.size() + lackName.size() == mostLayouts)
+            return GuessOpened::None;
+        if (!isAnsweredBy(types.forLayout(member))) {
+            someLayoutIsLeft = true;
+            continue;
+        }
+        bool listsName = findField(program, member, asked.key()) || std::ranges::contains(walker.facts().linked().appendedKeysOf(member), asked.key());
+        (listsName ? haveName : lackName).append(member);
+    }
+    Origin origin = walker.originOf(question);
+    auto narrowedBy = [&](Reference value, Reference test, uint32_t operandIndex, bool isOnTakenEdge) {
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(value);
+        narrowed.setTestOperand(test);
+        narrowed.setOperandIndex(operandIndex);
+        narrowed.setIsOnTakenEdge(isOnTakenEdge);
+        return walker.build(WTF::move(narrowed));
+    };
+    bool shapeDecides = !someLayoutIsLeft && !haveName.isEmpty() && !lackName.isEmpty() && everyReceiverIsFilledAtEveryRead(walker, types.forLayouts(haveName.span()), asked.key()) && isAnsweredBy(types.forLayouts(lackName.span()));
+    if (shapeDecides) {
+        walker.count(StatisticID::PropertyReadsDispatchedByShape);
+        Reference object = receiver;
+        if (mayBeNothing) {
+            Draft isNothing(Opcode::TypeTest, origin);
+            isNothing.setValueOperand(receiver);
+            isNothing.setTestedType(TypeArena::fromPrimitives(Primitive::UndefinedOrNull));
+            Reference nothing = walker.build(WTF::move(isNothing));
+            if (!nothing || walker.isUnreachable())
+                return GuessOpened::AsOneOperation;
+            BlockID refused = walker.addBlock(BlockFrequency::Rare);
+            BlockID goesOn = walker.addBlock();
+            walker.branch(nothing, refused, goesOn);
+            walker.continueIn(refused);
+            Draft asWritten(Opcode::PropHas, origin);
+            walker.chooseConservativeFields(asWritten);
+            asWritten.setObjectOperand(receiver);
+            asWritten.setKey(asked.key());
+            walker.build(WTF::move(asWritten));
+            walker.endAsUnreachable(origin);
+            walker.continueIn(goesOn);
+            object = narrowedBy(receiver, nothing, OperandIndex::TypeTest::value, false);
+            if (!object || walker.isUnreachable())
+                return GuessOpened::AsOneOperation;
+        }
+        Draft test(Opcode::ShapeTest, origin);
+        test.setObjectOperand(object);
+        test.setLayouts(types.at(types.forLayouts(haveName.span())).layouts);
+        test.inputValueGiven = question.id();
+        walker.bind(question.id(), walker.build(WTF::move(test)));
+        return GuessOpened::AsOneOperation;
+    }
+
+    bool somethingIsLeft = mayBeNothing || someLayoutIsLeft;
+    Vector<TypeID, mostLayouts> arms;
+    for (std::span<const LayoutID> answerAlike : { std::span<const LayoutID>(haveName.span()), std::span<const LayoutID>(lackName.span()) }) {
+        if (answerAlike.empty())
+            continue;
+        if (TypeID together = types.forLayouts(answerAlike); isAnsweredBy(together)) {
+            arms.append(together);
+            continue;
+        }
+        for (LayoutID layout : answerAlike)
+            arms.append(types.forLayout(layout));
+    }
+    if (arms.isEmpty() || arms.size() > mostArmsInUnionMethodCalls)
+        return GuessOpened::None;
+    if (walker.shouldDropLastCase() && !somethingIsLeft && arms.size() > 1)
+        arms.removeLast();
+
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), begin, end);
+    Walker::ArmsThatMeet built;
+    auto walkArm = [&] {
+        walker.bind(question.id(), Reference());
+        walker.walkStretch(block.id(), begin, end);
+        walker.listArm(stretch, built);
+    };
+    walker.count(StatisticID::PropertyReadsDispatchedByShape);
+    SetForScope standsInArm(walker.numberOfFramesAtRowOfShapeTests(), walker.depthOfCopies() + 1);
+    BlockID meeting = walker.addBlock();
+    SetForScope failingLooksOfArmsGoThere(walker.closedArmOfRowOfShapeTests(), Walker::ClosedArmOfRowOfShapeTests { BlockID(), question.id(), walker.depthOfCopies() });
+    walker.recordSpeculation();
+    Reference left = receiver;
+    for (size_t place = 0; place < arms.size() && !walker.isUnreachable(); ++place) {
+        Draft test(Opcode::ShapeTest, origin);
+        test.setObjectOperand(left);
+        test.setLayouts(types.at(arms[place]).layouts);
+        Reference passes = walker.build(WTF::move(test));
+        if (!passes)
+            return GuessOpened::WithArms;
+        bool isLast = place + 1 == arms.size();
+        BlockID passed = walker.addBlock();
+        BlockID failed = walker.addBlock(isLast ? BlockFrequency::Rare : BlockFrequency::Normal);
+        walker.branch(passes, passed, failed);
+        walker.continueIn(passed);
+        if (Reference narrowed = narrowedBy(left, passes, OperandIndex::ShapeTest::object, true)) {
+            walker.state().noteShape(narrowed, walker.typeOf(narrowed));
+            Reference boundBefore = walker.referenceBoundTo(asked.objectOperand());
+            walker.bind(asked.objectOperand(), narrowed);
+            walkArm();
+            walker.bind(asked.objectOperand(), boundBefore);
+        }
+        if (walker.hasFailed())
+            return GuessOpened::WithArms;
+        walker.continueIn(failed);
+        if (!isLast) {
+            left = narrowedBy(left, passes, OperandIndex::ShapeTest::object, false);
+            if (!left)
+                return GuessOpened::WithArms;
+        } else if (somethingIsLeft) {
+            walker.closedArmOfRowOfShapeTests() = { };
+            Walker::ClosedArm closedArm(walker, false);
+            walkArm();
+        } else {
+            TypeID layoutsOfArms = arms[0];
+            for (TypeID arm : arms)
+                layoutsOfArms = types.unionOf(layoutsOfArms, arm);
+            walker.checkProof(receiver, layoutsOfArms, TypeWithoutProof(TypeTable::anything), ProofSource::OtherOperation, origin);
+            walker.endAsUnreachable(origin);
+        }
+    }
+    if (!walker.hasFailed())
+        walker.joinArms(stretch, built, meeting);
+    return GuessOpened::WithArms;
+}
+
 bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
     ValueID call = findCallOfMethodReadInUnionMethodCalls(walker.currentBodyIndex(), read);
@@ -276,6 +437,9 @@ bool callMethodsOfExpectedReceiversBehindTestsOfShape(Walker& walker, const Body
         return false;
     Reference receiver = walker.referenceOf(read.as<Opcode::PropGet>().objectOperand());
     if (!receiver || !receiver.isValue())
+        return false;
+    bool isReceivedByLoop = !walker.code().at(walker.code().blockOf(receiver.id())).isInLoop;
+    if (isReceivedByLoop && !walker.facts().layoutsByNames().isInheritedByInstances(read.as<Opcode::PropGet>().key()))
         return false;
     ValueID call = findCallOfMethodReadInUnionMethodCalls(walker.currentBodyIndex(), read);
     return call && walkBehindTestsOfShapeInUnionMethodCalls(walker, read, call, true);

@@ -347,6 +347,7 @@ void encodeStaticsTables(TableEncoder& encoder)
     StaticsWordTables(encoder).encode();
     encodeNamesOfVariables(encoder);
     encoder.part.setTable(ProgramTableIndex::staticsClearedEachCollection, statics.clearedEachCollection);
+    encoder.part.setTable(ProgramTableIndex::variablesWithViewMirror, statics.variablesWithViewMirror);
     encoder.part.setTable(ProgramTableIndex::classGuardCounts, Vector<ClassGuardCountData>(statics.guardsOfClassGuardCounts.size(), [&](size_t index) {
         return ClassGuardCountData { statics.guardsOfClassGuardCounts[index].bit, statics.guardsOfClassGuardCounts[index].offsetOfCount };
     }));

@@ -39,6 +39,11 @@ namespace Limits {
 inline constexpr uint64_t maxWorkers = defaultLimitValue(LimitID::MaxWorkers, hostArchitecture());
 inline constexpr uint64_t regExpParenthesesDepth = 256;
 
+inline constexpr unsigned bitsOfCodeUnit = 16;
+inline constexpr unsigned maxPackedCodeUnits = 64 / bitsOfCodeUnit;
+
+inline constexpr int64_t maxLengthOfStringMadeFlat = 1024;
+
 } // namespace Limits
 
 } } // namespace JSC::AOT

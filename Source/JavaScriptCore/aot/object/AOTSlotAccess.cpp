@@ -80,8 +80,7 @@ void writeSlotBits(SlotRepresentation representation, void* slot, uint64_t bits)
 
 void clearSlot(SlotRepresentation representation, void* slot)
 {
-    SlotTraits traits = traitsOf(representation);
-    writeSlotBits(representation, slot, traits.hasAbsent ? traits.absentBits : 0);
+    writeSlotBits(representation, slot, bitsBeforeCreation(representation));
 }
 
 JSValue readSlot(SlotRepresentation representation, const void* slot, const Instance& instance)

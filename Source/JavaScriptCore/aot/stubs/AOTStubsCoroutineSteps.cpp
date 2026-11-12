@@ -157,13 +157,27 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     }
 }
 
-static void emitFinishOnlyRequestAtYield(StubAssembler& jit, GPRReg generator, GPRReg scratch)
+static void emitFinishOnlyRequest(StubAssembler& jit, GPRReg generator, int32_t state, GPRReg scratch)
 {
     jit.move(TrustedImm64(JSValue::ValueUndefined), scratch);
     jit.store64(boxedInt32(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorResumeMode::Empty)), fieldOf(generator, AsyncGeneratorField::ResumeMode));
     jit.store64(scratch, fieldOf(generator, AsyncGeneratorField::ResumeValue));
     jit.store64(scratch, fieldOf(generator, AsyncGeneratorField::ResumePromise));
-    jit.store64(boxedInt32(suspendedAtYield), fieldOf(generator, AsyncGeneratorField::State));
+    jit.store64(boxedInt32(state), fieldOf(generator, AsyncGeneratorField::State));
+}
+
+static void emitFinishOnlyRequestAtYield(StubAssembler& jit, GPRReg generator, GPRReg scratch) { emitFinishOnlyRequest(jit, generator, suspendedAtYield, scratch); }
+
+static void emitBranchUnlessOnlyRequestIsAnsweredAtOnce(StubAssembler& jit, GPRReg generator, GPRReg word, GPRReg other, JumpList& otherwise)
+{
+    emitBranchUnlessHolds(jit, noJobIsQueued, { InvalidGPRReg, InvalidGPRReg, word, other }, otherwise);
+    otherwise.append(jit.branch64(CCallHelpers::NotEqual, fieldOf(generator, AsyncGeneratorField::Queue), TrustedImm64(JSValue::ValueNull)));
+    otherwise.append(branchIfRealmWatchpointSetIsNotWatched(jit, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet), other));
+}
+
+static Jump branchIfBodyHasReturned(StubAssembler& jit, GPRReg generator)
+{
+    return jit.branch32(CCallHelpers::Equal, fieldOf(generator, AsyncGeneratorField::State), TrustedImm32(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing)));
 }
 
 static void emitBranchUnlessYieldEndsStep(StubAssembler& jit, GPRReg generator, GPRReg yielded, GPRReg word, GPRReg other, JumpList& otherwise)
@@ -173,9 +187,7 @@ static void emitBranchUnlessYieldEndsStep(StubAssembler& jit, GPRReg generator, 
     otherwise.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(suspendedAtYield)));
     emitBranchIfMayBeThenable(jit, yielded, word, other, otherwise);
     needsNoAwait.link(&jit);
-    emitBranchUnlessHolds(jit, noJobIsQueued, { InvalidGPRReg, InvalidGPRReg, word, other }, otherwise);
-    otherwise.append(jit.branch64(CCallHelpers::NotEqual, fieldOf(generator, AsyncGeneratorField::Queue), TrustedImm64(JSValue::ValueNull)));
-    otherwise.append(branchIfRealmWatchpointSetIsNotWatched(jit, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet), other));
+    emitBranchUnlessOnlyRequestIsAnsweredAtOnce(jit, generator, word, other, otherwise);
 }
 
 static void emitPushStepFrame(StubAssembler& jit, GPRReg producer, GPRReg consumer, GPRReg siteWord, GPRReg driver)
@@ -263,10 +275,21 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     isNotCell.link(&jit);
 
     finishesInEngine.append(jit.branchTestPtr(CCallHelpers::Zero, word));
+    Jump hasReturned = branchIfBodyHasReturned(jit, generator);
     emitBranchUnlessYieldEndsStep(jit, generator, result, word, other, finishesInEngine);
     emitFinishOnlyRequestAtYield(jit, generator, word);
     emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Yielded)), status);
+    jit.emitFunctionEpilogue();
+    emitSiteContinuationNote(jit);
+    jit.returnToCaller();
+
+    hasReturned.link(&jit);
+    finishesInEngine.append(jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerOfStepAwaitsCall)));
+    emitBranchUnlessOnlyRequestIsAnsweredAtOnce(jit, generator, word, other, finishesInEngine);
+    emitFinishOnlyRequest(jit, generator, static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed), word);
+    emitNoteAwaitPassedOnStack(jit, consumer, word);
+    jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Completed)), status);
     jit.emitFunctionEpilogue();
     emitSiteContinuationNote(jit);
     jit.returnToCaller();
@@ -382,12 +405,25 @@ void emitDeliverYieldToSuspendedConsumer(StubAssembler& jit, const YieldDelivery
     RELEASE_ASSERT(noOverlap(yielded, producer, driver, consumerFrame, word, other, instanceGPR));
 
     slowPath.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend))));
+    Jump hasReturned = branchIfBodyHasReturned(jit, producer);
     emitBranchUnlessYieldEndsStep(jit, producer, yielded, word, other, slowPath);
     jit.load64(fieldOf(producer, AsyncGeneratorField::ResumePromise), driver);
     emitLoadFrameOfWaitingDriver(jit, WaitingDriver::IsEnteredNext, driver, consumerFrame, word, slowPath);
 
     emitFinishOnlyRequestAtYield(jit, producer, word);
     jit.store8(TrustedImm32(flagsOfStep(AsyncGeneratorStepStatus::Yielded)), Address(consumerFrame, SavedFrame::offsetOfFlags()));
+    Jump isDelivered = jit.jump();
+
+    hasReturned.link(&jit);
+    Jump isNotCell = jit.branchIfNotCell(yielded);
+    slowPath.append(jit.branchIfType(yielded, SentinelType));
+    isNotCell.link(&jit);
+    emitBranchUnlessOnlyRequestIsAnsweredAtOnce(jit, producer, word, other, slowPath);
+    jit.load64(fieldOf(producer, AsyncGeneratorField::ResumePromise), driver);
+    emitLoadFrameOfWaitingDriver(jit, WaitingDriver::IsEnteredNext, driver, consumerFrame, word, slowPath);
+    emitFinishOnlyRequest(jit, producer, static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed), word);
+    jit.store8(TrustedImm32(flagsOfStep(AsyncGeneratorStepStatus::Completed)), Address(consumerFrame, SavedFrame::offsetOfFlags()));
+    isDelivered.link(&jit);
 }
 
 void emitAwaitYieldedValue(StubAssembler& jit, const AwaitRegisters& registers, const JobRegisters& job, JumpList& isLeftToEngine)

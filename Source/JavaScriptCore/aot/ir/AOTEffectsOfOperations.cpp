@@ -257,6 +257,7 @@ static constexpr OpcodeSet opcodesWithEffectsFittedToOperands = [] {
     if (effectRuleOf(Opcode::GetArrayElement) == EffectRule::Declared)
         opcodes.add(Opcode::GetArrayElement);
     opcodes.add(Opcode::ElemDefine);
+    opcodes.add(Opcode::DefineOwnProperty);
     if (effectRuleOf(Opcode::NewArrayLike) == EffectRule::Declared)
         opcodes.add(Opcode::NewArrayLike);
     if (effectRuleOf(Opcode::PutArrayElement) == EffectRule::Declared)
@@ -721,6 +722,8 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
     Effects effects = Effects::none();
     EffectsBuilderInPlace builder(program, effects);
     forEachDeclaredEffect(operation, builder);
+    if (restsOnVariablesOfBuffer(opcodeOf(operation), operation))
+        effects.reads.add(AbstractHeap::ModuleVariables);
     if (lookAtCellHasNoFlagThatReads(opcode, operation))
         effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
@@ -820,6 +823,12 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
     return effects;
 }
 
+static bool definesOnObjectsOfLayouts(const TypingContext& context, OperandTypes operandTypes)
+{
+    TypeID object = operandTypes[OperandIndex::DefineOwnProperty::object];
+    return object && context.at(object).isObject() && context.at(object).hasOnlyLayouts();
+}
+
 template<typename Operation>
 static NEVER_INLINE Effects effectsThatHangOnOperandsOf(const TypingContext& context, const Operation& operation, OperandTypes operandTypes, TypeID result, const Effects* foundByCaller)
 {
@@ -836,8 +845,12 @@ static NEVER_INLINE Effects effectsThatHangOnOperandsOf(const TypingContext& con
     if (opcodesUnderRuleOfOperators.contains(opcode))
         return effectsOfOperatorWithin(context, opcode, operandTypes.types, result, foundByCaller);
 
-    Effects effects = opcodesWithEffectsFittedToOperands.contains(opcode) ? declaredEffectsWithOperands(context, opcode, operation, operandTypes, result) : declaredEffectsBuiltInPlace(context.program, opcode, operation);
-    addCodeOfOperands(context, opcode, operation, operandTypes, effects, foundByCaller);
+    bool areFittedToOperands = opcodesWithEffectsFittedToOperands.contains(opcode);
+    Effects effects = areFittedToOperands ? declaredEffectsWithOperands(context, opcode, operation, operandTypes, result) : declaredEffectsBuiltInPlace(context.program, opcode, operation);
+    if (areFittedToOperands && opcode == Opcode::DefineOwnProperty && definesOnObjectsOfLayouts(context, operandTypes))
+        cutBoundByWhatCallerFound(effects, CodeRunByOperands { }, foundByCaller);
+    else
+        addCodeOfOperands(context, opcode, operation, operandTypes, effects, foundByCaller);
     if (foundByCaller && opcodesThatMakeThisForEffects.contains(opcode))
         effects.merge(effectsOfMakingThisOfConstruction);
     if (foundByCaller && opcode == Opcode::GetBuiltinValue)

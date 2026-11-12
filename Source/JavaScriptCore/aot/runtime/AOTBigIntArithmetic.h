@@ -16,6 +16,7 @@
 #include "JSCInlines.h"
 #include <array>
 #include <atomic>
+#include <bit>
 #include <utility>
 #include <wtf/Int128.h>
 #if CPU(X86_64) && !OS(WINDOWS)
@@ -142,7 +143,7 @@ public:
     }
 
 #if AOT_HAS_FUNCTIONS_WITH_MULX
-#define AOT_WITH_MULX __attribute__((target("bmi2")))
+#define AOT_WITH_MULX __attribute__((target("bmi2,lzcnt")))
     static ALWAYS_INLINE bool hasMULX()
     {
         uint8_t state = s_stateOfMULX.load(std::memory_order_relaxed);
@@ -204,12 +205,9 @@ public:
     }
 
     template<unsigned dividendLength, typename Place>
-    static ALWAYS_INLINE JSBigInt* tryRemainderOfUsualLength(VM& vm, Place place, JSBigInt* dividend, JSBigInt* divisor, bool mayBeSum)
+    static ALWAYS_INLINE JSBigInt* tryRemainderOfUsualLength(Place place, JSBigInt* dividend, JSBigInt* divisor, bool mayBeSum)
     {
-        Digit factor = vm.m_bigIntFoldFactor;
-        if (!factor || vm.m_cachedBigIntDivisor.get() != divisor || divisor->length() != usualLength)
-            return nullptr;
-        return tryFold<dividendLength>(place, dividend->dataStorage(), dividend->sign(), divisor, factor, mayBeSum);
+        return tryFold<dividendLength>(place, dividend->dataStorage(), dividend->sign(), divisor, mayBeSum);
     }
 
     template<typename Place>
@@ -230,10 +228,9 @@ public:
 
     enum class Factors : bool { HaveUsualLength, MayBeShorter };
     template<Factors factors, typename Place>
-    static ALWAYS_INLINE JSBigInt* tryRemainderOfProduct(VM& vm, Place place, JSBigInt* left, JSBigInt* right, JSBigInt* divisor, bool mayBeSum)
+    static ALWAYS_INLINE JSBigInt* tryRemainderOfProduct(Place place, JSBigInt* left, JSBigInt* right, JSBigInt* divisor, bool mayBeSum)
     {
-        Digit factor = vm.m_bigIntFoldFactor;
-        if (!factor || vm.m_cachedBigIntDivisor.get() != divisor)
+        if (!isNearPowerOfTwo(divisor->dataStorage())) [[unlikely]]
             return nullptr;
         const Digit* x = left->dataStorage();
         const Digit* y = right->dataStorage();
@@ -252,7 +249,7 @@ public:
             squareDigits<usualLength>(x, product.data());
         else
             multiplyDigits<usualLength>(x, y, product.data());
-        return tryFold<2 * usualLength>(place, product.data(), left->sign() != right->sign(), divisor, factor, mayBeSum);
+        return tryFold<2 * usualLength>(place, product.data(), left->sign() != right->sign(), divisor, mayBeSum);
     }
 
     template<typename Place>
@@ -299,6 +296,17 @@ public:
     {
         unsigned length = divisor->length();
         unsigned dividendLength = dividend->length();
+        if (length == usualLength && isNearPowerOfTwo(divisor->dataStorage())) {
+            if (dividendLength < length || (dividendLength == length && dividend->digit(length - 1) < divisor->digit(length - 1)))
+                return place.tryCopy(dividend);
+            if (dividendLength > maxTermLength) [[unlikely]]
+                return nullptr;
+            JSBigInt* result = place.tryMake(length, dividend->sign());
+            if (!result) [[unlikely]]
+                return nullptr;
+            foldDigitsOfAnyLength(dividend->dataStorage(), dividendLength, divisor->dataStorage(), result->dataStorage());
+            return place.finishTrimmed(result, length);
+        }
         if (vm.m_cachedBigIntDivisor.get() != divisor) {
             if (length == 1)
                 return tryRemainderByDigit(place, dividend, divisor->digit(0));
@@ -312,7 +320,7 @@ public:
         JSBigInt* result = place.tryMake(length, dividend->sign());
         if (!result) [[unlikely]]
             return nullptr;
-        reduceByCachedDivisor(vm, result, dividend, divisor);
+        JSBigInt::cachedMod(vm, digitsOf(result), digitsOf(dividend), digitsOf(divisor));
         return place.finishTrimmed(result, length);
     }
 
@@ -512,9 +520,12 @@ private:
     static NEVER_INLINE bool findMULX()
     {
         constexpr unsigned leafOfExtendedFeatures = 7;
+        constexpr unsigned leafOfLZCNT = 0x80000001;
         constexpr unsigned bitOfBMI2 = 1 << 8;
+        constexpr unsigned bitOfLZCNT = 1 << 5;
         unsigned eax, ebx, ecx, edx;
         bool isPresent = __get_cpuid_count(leafOfExtendedFeatures, 0, &eax, &ebx, &ecx, &edx) && ebx & bitOfBMI2;
+        isPresent = isPresent && __get_cpuid(leafOfLZCNT, &eax, &ebx, &ecx, &edx) && ecx & bitOfLZCNT;
         s_stateOfMULX.store(isPresent ? mulxIsPresent : mulxIsAbsent, std::memory_order_relaxed);
         return isPresent;
     }
@@ -649,9 +660,43 @@ private:
         }
     }
 
-    template<unsigned length, unsigned dividendLength>
-    static ALWAYS_INLINE void foldDigits(const Digit* dividend, const Digit* divisor, Digit factor, Digit* result)
+    static ALWAYS_INLINE bool isNearPowerOfTwo(const Digit* divisor)
     {
+        static_assert(usualLength == 4);
+        constexpr unsigned maxBits = 56;
+        Digit high = divisor[3];
+        return !~(divisor[1] & divisor[2]) && !(high & (high + 1)) && high >> (JSBigInt::digitBits - 3) && !((-divisor[0] - 1) >> maxBits);
+    }
+
+    static ALWAYS_INLINE void foldDigitsOfAnyLength(const Digit* dividend, unsigned dividendLength, const Digit* divisor, Digit* result)
+    {
+        std::array<Digit, 2 * usualLength> part { };
+        Digit* high = part.data() + usualLength;
+        unsigned rest = (dividendLength - 1) / usualLength * usualLength;
+        for (unsigned index = rest; index < dividendLength; ++index)
+            high[index - rest] = dividend[index];
+        if (!rest) {
+            foldDigits<usualLength>(high, divisor, result);
+            return;
+        }
+        for (;;) {
+            rest -= usualLength;
+            for (unsigned index = 0; index < usualLength; ++index)
+                part[index] = dividend[rest + index];
+            foldDigits<2 * usualLength>(part.data(), divisor, high);
+            if (!rest)
+                break;
+        }
+        for (unsigned index = 0; index < usualLength; ++index)
+            result[index] = high[index];
+    }
+
+    template<unsigned dividendLength>
+    static ALWAYS_INLINE void foldDigits(const Digit* dividend, const Digit* divisor, Digit* result)
+    {
+        constexpr unsigned length = usualLength;
+        unsigned shift = std::countl_zero(divisor[length - 1]);
+        Digit factor = -divisor[0] << shift;
         Digit folded[length];
         Digit carry = 0;
         _Pragma("unroll") for (unsigned index = 0; index < length; ++index) {
@@ -661,24 +706,14 @@ private:
             folded[index] = static_cast<Digit>(sum);
             carry = static_cast<Digit>(sum >> JSBigInt::digitBits);
         }
-        auto foldCarry = [&](Digit top, Digit multiplier) ALWAYS_INLINE_LAMBDA {
-            UInt128 sum = static_cast<UInt128>(top) * multiplier + folded[0];
-            folded[0] = static_cast<Digit>(sum);
-            Digit high = 0;
-            folded[1] = addWithCarry(folded[1], static_cast<Digit>(sum >> JSBigInt::digitBits), high);
-            _Pragma("unroll") for (unsigned index = 2; index < length; ++index)
-                folded[index] = addWithCarry(folded[index], 0, high);
-            return high;
-        };
-        Digit high;
-        constexpr unsigned mostBitsOfFactor = 60;
-        if (!~divisor[1] && !(factor >> mostBitsOfFactor)) [[likely]] {
-            unsigned shift = clz(divisor[length - 1]);
-            Digit top = carry << shift | folded[length - 1] >> 1 >> (JSBigInt::digitBits - 1 - shift);
-            folded[length - 1] &= divisor[length - 1];
-            high = foldCarry(top, -divisor[0]);
-        } else
-            high = foldCarry(carry, factor);
+        Digit top = carry << shift | folded[length - 1] >> 1 >> (JSBigInt::digitBits - 1 - shift);
+        folded[length - 1] &= divisor[length - 1];
+        UInt128 sum = static_cast<UInt128>(top) * -divisor[0] + folded[0];
+        folded[0] = static_cast<Digit>(sum);
+        Digit high = 0;
+        folded[1] = addWithCarry(folded[1], static_cast<Digit>(sum >> JSBigInt::digitBits), high);
+        _Pragma("unroll") for (unsigned index = 2; index < length; ++index)
+            folded[index] = addWithCarry(folded[index], 0, high);
         while (high || folded[length - 1] >= divisor[length - 1]) [[unlikely]] {
             Digit difference[length];
             Digit borrow = subtractDigits<length>(folded, divisor, difference);
@@ -693,11 +728,13 @@ private:
     }
 
     template<unsigned dividendLength, typename Place>
-    static ALWAYS_INLINE JSBigInt* tryFold(Place place, const Digit* dividend, bool sign, JSBigInt* divisor, Digit factor, bool mayBeSum)
+    static ALWAYS_INLINE JSBigInt* tryFold(Place place, const Digit* dividend, bool sign, JSBigInt* divisor, bool mayBeSum)
     {
         Digit remainder[usualLength];
         const Digit* digitsOfDivisor = divisor->dataStorage();
-        foldDigits<usualLength, dividendLength>(dividend, digitsOfDivisor, factor, remainder);
+        if (!isNearPowerOfTwo(digitsOfDivisor)) [[unlikely]]
+            return nullptr;
+        foldDigits<dividendLength>(dividend, digitsOfDivisor, remainder);
         if (mayBeSum) {
             bool isSum = sign & !divisor->sign();
             Digit sum[usualLength];
@@ -720,27 +757,6 @@ private:
         if (!digits[usualLength - 1]) [[unlikely]]
             return place.finishTrimmed(result, usualLength);
         return place.finish(result);
-    }
-
-    static ALWAYS_INLINE void reduceByCachedDivisor(VM& vm, JSBigInt* result, JSBigInt* dividend, JSBigInt* divisor)
-    {
-        Digit factor = vm.m_bigIntFoldFactor;
-        if (factor && divisor->length() == 4) {
-            const Digit* digits = dividend->dataStorage();
-            const Digit* digitsOfDivisor = divisor->dataStorage();
-            Digit* resultDigits = result->dataStorage();
-            switch (dividend->length()) {
-            case 4:
-                return foldDigits<4, 4>(digits, digitsOfDivisor, factor, resultDigits);
-            case 5:
-                return foldDigits<4, 5>(digits, digitsOfDivisor, factor, resultDigits);
-            case 7:
-                return foldDigits<4, 7>(digits, digitsOfDivisor, factor, resultDigits);
-            case 8:
-                return foldDigits<4, 8>(digits, digitsOfDivisor, factor, resultDigits);
-            }
-        }
-        JSBigInt::cachedMod(vm, digitsOf(result), digitsOf(dividend), digitsOf(divisor));
     }
 
     template<typename Place>

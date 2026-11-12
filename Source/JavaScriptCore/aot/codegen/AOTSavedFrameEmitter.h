@@ -25,6 +25,9 @@ public:
     void generateNewGeneratorOfLibrary(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
     void generateTakeGeneratorPrototype(const ValueContext&);
+    void generateIsCallDelegated(const ValueContext&);
+    void generateGiveDelegatedResult(const ValueContext&);
+    void generateCallDelegate(const ValueContext&);
     void generateStepAsyncGenerator(const ValueContext&);
     void generateAwaitMayContinue(const ValueContext&);
     void generateAwaitBySavingFrame(const ValueContext&);
@@ -33,9 +36,12 @@ public:
     void generateAsyncGeneratorYield(const ValueContext&);
     void generateReturnAsyncResult(const ValueContext&);
     void generatePromiseAllOfElements(const ValueContext&);
+    void generateStartReactionChain(const ValueContext&);
 
     void generateStepGenerator(const ValueContext&);
     void generateIsUnmodifiedGenerator(const ValueContext&);
+    void branchUnlessGeneratorsPlain(CellPointer function, LBasicBlock otherwise);
+    void branchUnlessUnmodifiedAsyncGenerator(CellPointer generator, LBasicBlock otherwise);
 
     void generateNewHeapWords(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
@@ -62,6 +68,7 @@ public:
 
 private:
     CoroutineKind kindOfFunction() const;
+    Word32 loadStructureIDOfGenerators(CellPointer closure, LBasicBlock otherwise);
     CellPointer allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin, LBasicBlock slowPath);
     GeneratorFunctionOrigin originOfGeneratorFunction(FunctionID) const;
     LValue cellOrZero(ValueID driver);

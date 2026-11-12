@@ -28,6 +28,7 @@ struct BodyIndexTable::Worker {
     size_t usedBytesOfLastChunk { 0 };
     size_t allocatedBytes { 0 };
     Vector<ConstructionStartInModule> constructionStarts;
+    Vector<EvaluationOfClass> evaluationsOfClasses;
     uint64_t valuesGoneOver { 0 };
 
     Vector<BodyFlowEdge> edges;
@@ -46,6 +47,8 @@ inline constexpr OpcodeSet opcodesThatMayNameIterationsInBodyIndex {
     Opcode::IteratorResume, Opcode::IteratorClose, Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::StepAsyncGenerator, Opcode::AwaitBySavingFrame, Opcode::AwaitCallBySavingFrame,
     Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield
 };
+
+inline constexpr OpcodeSet opcodesFiledInBodyIndex = opcodesThatMayNameIterationsInBodyIndex | OpcodeSet { Opcode::NewClass };
 
 class BodyIndexBuilder {
     WTF_MAKE_NONCOPYABLE(BodyIndexBuilder);

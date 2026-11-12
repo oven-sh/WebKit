@@ -3,13 +3,12 @@ runtime PutById, PutByIdSloppy : void (EncodedJSValue base, uint32_t key, Encode
 runtime DeleteById, DeleteByIdSloppy : size_t (EncodedJSValue base, uint32_t key) ; unknownCode
 runtime DeleteByName, DeleteByNameSloppy : size_t (JSCell* base, UniquedStringImpl* uid) ; unknownCode
 runtime InByIdAndCache, HasOwnByIdAndCache : size_t (EncodedJSValue base, uint32_t key) ; unknownCode
-runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, SiteCache cache) ; unknownCode
+runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, uint32_t isInStubFrame) ; unknownCode
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode
 runtime FillSiteCache : void (JSCell* base, uint32_t key, SiteCache cache, uint32_t access) ; reads(all) writes(RuntimeState)
 runtime FillSiteAnswers : void (JSCell* base, uint32_t key, uint32_t distanceOfSite, uint32_t use) ; reads(all) writes(RuntimeState)
-runtime ClaimReadGroupRow : size_t (EncodedJSValue base, EncodedJSValue* group) ; reads(all) writes(RuntimeState)
-runtime FillReadGroupOffset : EncodedJSValue (JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index) ; reads(all) writes(RuntimeState)
-runtime ReadRunningNoCode : EncodedJSValue (JSCell* base, uint32_t key) ; reads(all) writes(RuntimeState)
+runtime ClaimReadGroupRow : void (EncodedJSValue base, EncodedJSValue* group, uint32_t numberOfReads) ; reads(all) writes(RuntimeState)
+runtime ReadRunningNoCode, ReadBeforeLoop, HasBeforeLoop : EncodedJSValue (JSCell* base, uint32_t key) ; reads(all) writes(RuntimeState)
 runtime StopAtStaleAnswer : void (EncodedJSValue receiver, EncodedJSValue answer, uint32_t key, uint32_t kindAndStub) ; reads(all) writes(RuntimeState)
 runtime StopAtStaleMemberOfBuiltinClass : void (EncodedJSValue receiver, EncodedJSValue readInFront, uint32_t form) ; reads(all) writes(RuntimeState)
 
@@ -21,9 +20,10 @@ runtime SetGlobalBinding, SetGlobalBindingSloppy, SetGlobalObjectBinding, SetGlo
 
 runtime GetByVal, GetByValAndCache : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; unknownCode
 runtime GetByValOfPlainList : EncodedJSValue (EncodedJSValue list, EncodedJSValue property) ; reads(all) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-runtime OwnNamedPropertyAddress : uint64_t (EncodedJSValue base, uint32_t key, uint32_t fitsFieldTypes) ; reads(ShapeWords, OrderWords, NamedProperties)
+runtime MovedStaticField : EncodedJSValue (JSCell* classObject, uint32_t key) ; reads(ShapeWords, NamedProperties)
+runtime OwnNamedPropertyAddress : uint64_t (EncodedJSValue base, uint32_t key, uint32_t fitsFieldTypes, SiteCache cache) ; reads(ShapeWords, OrderWords, NamedProperties)
 runtime OwnValueUnderKeyOrEmpty : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; reads(ShapeWords, NamedProperties) ; leaf
-runtime OwnPropertyAddress : uint64_t (EncodedJSValue base, EncodedJSValue property, uint32_t findsOnlyFields, uint32_t fitsFieldTypes) ; reads(ShapeWords, OrderWords, NamedProperties) ; leaf
+runtime OwnPropertyAddress : uint64_t (EncodedJSValue base, EncodedJSValue property, uint32_t findsOnlyFields, uint32_t fitsFieldTypes, uint32_t takesFunctions) ; reads(ShapeWords, OrderWords, NamedProperties) ; leaf
 runtime OwnValueByKeyOrEmpty : EncodedJSValue (EncodedJSValue base, EncodedJSValue property, uint32_t findsOnlyFields) ; reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) ; leaf
 runtime BarrierAfterKeyedStore : void (EncodedJSValue base) ; reads(NamedProperties) writes(RuntimeState) ; leaf
 runtime HasDefaultHasInstance : size_t (EncodedJSValue constructor) ; reads(NamedProperties, PrototypeLinks) ; leaf
@@ -32,10 +32,12 @@ runtime PutByValAndCache, PutByValAndCacheSloppy : void (EncodedJSValue base, En
 runtime InByValAndCache, HasOwnByValAndCache, DeleteByVal, DeleteByValSloppy : size_t (EncodedJSValue base, EncodedJSValue property) ; unknownCode
 runtime GetByValWithThis : EncodedJSValue (EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property) ; unknownCode
 runtime GetOwnProperty : EncodedJSValue (EncodedJSValue object, uint32_t key) ; unknownCode
+runtime ReflectSet : size_t (EncodedJSValue target, EncodedJSValue property, EncodedJSValue value, EncodedJSValue receiver) ; unknownCode
 runtime GetWithProxyTrap : EncodedJSValue (EncodedJSValue* wordsOfAccess, EncodedJSValue trap) ; unknownCode
 runtime ValidateAnswerOfProxyTrap : EncodedJSValue (EncodedJSValue* wordsOfAccess, EncodedJSValue answer) ; unknownCode
 runtime HasWithProxyTrap, FinishHasThroughProxy : size_t (EncodedJSValue* wordsOfAccess, EncodedJSValue trapOrAnswer) ; unknownCode
 runtime SetWithProxyTrap, FinishSetThroughProxy : void (EncodedJSValue* wordsOfAccess, EncodedJSValue trapOrAnswer) ; unknownCode
+runtime FinishAccessThroughProxy : void (EncodedJSValue target, EncodedJSValue answer, EncodedJSValue stored, EncodedJSValue name, uint32_t isStrict) ; unknownCode
 
 runtime GetGeneric : EncodedJSValue (JSCell* base, UniquedStringImpl* uid) ; reads(all) writes(RuntimeState)
 runtime GetByValGeneric, GetNamedByValGeneric : EncodedJSValue (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)

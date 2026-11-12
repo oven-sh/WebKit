@@ -56,7 +56,6 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     switch (kind) {
     case Slot::Kind::Setter:
     case Slot::Kind::CustomSetter:
-    case Slot::Kind::FieldCreation:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
     case Slot::Kind::Transition:
@@ -79,6 +78,7 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::CustomGetter:
     case Slot::Kind::Field:
     case Slot::Kind::FieldGetter:
+    case Slot::fieldOfGetter:
     case Slot::Kind::InheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraProperty:
@@ -330,6 +330,16 @@ void generateReadSlot(StubAssembler& jit)
             linkToSlotCannot(jit, exits.cannot, table, SlotFinisher::ReadField, slot);
             return;
         }
+        case Slot::fieldOfGetter: {
+            const FieldReadRegisters registers = allocateFieldReadRegisters(R0, slot.registerOfFirstPayloadWord());
+            FieldReadExits exits;
+            useFieldAndReturn(registers.field, exits.isAbsent, [&] {
+                readFieldAndReturn(jit, registers, exits);
+            });
+            uncached.append(jit.jump());
+            linkToSlotCannot(jit, exits.cannot, table, SlotFinisher::ReadField, slot);
+            return;
+        }
         case Slot::Kind::FieldGetter: {
             const FieldAddressRegisters field { .object = R0, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T14 };
             const GPRReg getterSetter = T10;
@@ -476,17 +486,16 @@ void generateReadSlot(StubAssembler& jit)
             slot.loadPayloadBits(jit, R0);
             jit.returnToCaller();
             return;
-        case Slot::Kind::Uncacheable:
-            if (slot.form() == SlotForm::Slot) {
-                if (origin == SlotOrigin::ByIdInStubFrame)
-                    uncached.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
-                jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get).withCallerFrame(callerFrameOf(origin)));
-            }
-            uncached.append(jit.jump());
+        case Slot::Kind::Uncacheable: {
+            if (origin == SlotOrigin::ByIdInStubFrame)
+                uncached.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
+            const GPRReg key = slot.form() == SlotForm::Slot ? operands.payload : jit.allocateScratch(slotPayloadRegister);
+            loadKeyOfProxySlot(jit, slot.form(), operands.header, key, uncached);
+            jit.jumpToStub(throughProxy(TrapOfProxy::Get).withCallerFrame(callerFrameOf(origin)));
             return;
+        }
         case Slot::Kind::Setter:
         case Slot::Kind::CustomSetter:
-        case Slot::Kind::FieldCreation:
         case Slot::Kind::ExtraSetter:
         case Slot::Kind::ExtraPropertyAddition:
         case Slot::Kind::Transition:
@@ -591,19 +600,40 @@ void generateThroughProxy(StubAssembler& jit)
         runTimeDoesAll.append(jit.branchIfNotCell(handler));
         runTimeDoesAll.append(jit.branchTest32(CCallHelpers::Zero, name));
         jit.move(handler, R0);
-        jit.callStub(getByIdCheckingColumn().withCallerFrame(CallerFrame::StubFrame));
+        jit.callStub(getByIdOfCell().withCallerFrame(CallerFrame::StubFrame));
         isNoFunction.append(jit.branchIfNotCell(R0));
+        auto loadOperandsOfTrap = [&] {
+            jit.move(R0, calleeGPR);
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)), thisGPR);
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), argumentGPR(0));
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), argumentGPR(1));
+            if (isStore)
+                jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), argumentGPR(2));
+            if (trap != TrapOfProxy::Has)
+                jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
+        };
+        const bool entersClosure = isX86_64() && jit.options().hasOneInstance;
+        Jump isClosure = jit.branch8(CCallHelpers::GreaterThanOrEqual, Address(R0, offsetOfSlimClosureWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(entersClosure ? operations.numberOfArguments : ClosureWord::maxNumberOfParameters)));
         isNoFunction.append(branchIfNotFunctionType(jit, R0, scratch));
-
-        jit.move(R0, calleeGPR);
-        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)), thisGPR);
-        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), argumentGPR(0));
-        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), argumentGPR(1));
-        if (isStore)
-            jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), argumentGPR(2));
-        if (trap != TrapOfProxy::Has)
-            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
-        jit.callStub(callValueCell(operations.numberOfArguments));
+        Jump hasCalled;
+        if (entersClosure) {
+            loadOperandsOfTrap();
+            jit.callStub(callValueCell(operations.numberOfArguments));
+            hasCalled = jit.jump();
+        }
+        isClosure.link(&jit);
+        loadOperandsOfTrap();
+        if (entersClosure) {
+            static_assert(!isX86_64() || (ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32));
+            const GPRReg code = target;
+            RELEASE_ASSERT(noOverlap(code, calleeGPR, thisGPR, countGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
+            jit.move(TrustedImm32(operations.numberOfArguments), countGPR);
+            jit.load32(Address(calleeGPR, offsetOfSlimClosureWord), code);
+            jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), code);
+            jit.call(code, JSEntryPtrTag);
+            hasCalled.link(&jit);
+        } else
+            jit.callStub(callValueCell(operations.numberOfArguments));
         Jump saysYes;
         if (trap == TrapOfProxy::Has) {
             saysYes = jit.branch64(CCallHelpers::Equal, R0, TrustedImm64(JSValue::ValueTrue));
@@ -761,9 +791,9 @@ void generateReadSlotExit(StubAssembler& jit)
     case SlotOrigin::ByIdInStubFrame:
         switch (traits.exit) {
         case SlotExit::Miss: {
-            const GPRReg noSite = jit.allocateScratch(StubRegister::T10);
-            jit.move(CCallHelpers::TrustedImmPtr(nullptr), noSite);
-            jit.exitOnMiss(Entry::operationAOTGetByIdAndCache, createReadExitCall(receiver, name, noSite));
+            const GPRReg isInStubFrame = jit.allocateScratch(StubRegister::T10);
+            jit.move(TrustedImm32(origin == SlotOrigin::ByIdInStubFrame), isInStubFrame);
+            jit.exitOnMiss(Entry::operationAOTGetByIdAndCache, createReadExitCall(receiver, name, isInStubFrame));
             return;
         }
         case SlotExit::Uncached:

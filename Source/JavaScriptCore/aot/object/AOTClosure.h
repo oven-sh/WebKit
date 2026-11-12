@@ -63,6 +63,8 @@ public:
     State& state() const;
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
+    bool mayHoldOwnProperties(VM&, std::span<UniquedStringImpl* const> names) const;
+    bool isLazyClassObjectOf(const LayoutData&) const;
     bool hasStructureOfNewClosure(VM&) const;
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
@@ -70,7 +72,10 @@ public:
     bool holdsStaticFieldUnder(UniquedStringImpl*) const;
     bool valueUnderIsHeardByNobody(UniquedStringImpl*) const;
     bool isBuiltinFunction() const;
+    bool hasStaticFieldsLeft() const;
+    bool mayHoldStaticFieldInVariable(UniquedStringImpl*) const;
     void ensureClassObject(VM&);
+    void ensureStaticMethods(VM&);
     void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);
     JSValue prototypeProperty(VM&);
     void setPrototypeProperty(VM&, JSObject* prototype, unsigned attributes);
@@ -84,6 +89,7 @@ private:
     }
 
     bool ensurePrototypeProperty(VM&);
+    bool tryCreatePrototypeProperty(VM&, JSValue);
 
     uint64_t m_entry;
 };

@@ -3585,6 +3585,119 @@ static void allocatorReadsPinnedConstantWhereItLies()
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(argument) == argument + static_cast<uint64_t>(tag));
 }
 
+template<bool loopHasCall>
+static void allocatorHoldsComparedConstant()
+{
+    constexpr int64_t tag = JSValue::NumberTag;
+    constexpr unsigned numberOfWords = loopHasCall ? 9 : 4;
+    std::optional<PinnedConstant> pinned = findPinnedConstant(static_cast<uint64_t>(tag));
+    AOT_TEST_CHECK(pinned);
+
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue buffer = test.argumentGPR(0);
+    LValue constant = out.constInt64(tag);
+    LBasicBlock head = out.newBlock();
+    LBasicBlock latch = out.newBlock();
+    LBasicBlock other = out.newBlock();
+    LBasicBlock exit = out.newBlock();
+    out.jump(normalEdge(head));
+
+    out.appendTo(head);
+    Vector<LBasicBlock, 8> comparing;
+    for (unsigned word = 0; word < numberOfWords; ++word)
+        comparing.append(out.newBlock());
+    out.branch(out.load64(allocationTestWordAt(test, buffer, numberOfWords)), normalEdge(comparing[0]), normalEdge(exit));
+    for (unsigned word = 0; word < numberOfWords; ++word) {
+        out.appendTo(comparing[word]);
+        out.branch(out.aboveOrEqual(out.load64(allocationTestWordAt(test, buffer, word)), constant), normalEdge(word + 1 < numberOfWords ? comparing[word + 1] : latch), normalEdge(other));
+    }
+
+    out.appendTo(other);
+    out.store64(constant, allocationTestWordAt(test, buffer, numberOfWords + 1));
+    out.jump(normalEdge(latch));
+
+    out.appendTo(latch);
+    if constexpr (loopHasCall)
+        allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~file.calleeSaved);
+    out.store64(out.sub(out.load64(allocationTestWordAt(test, buffer, numberOfWords)), 1), allocationTestWordAt(test, buffer, numberOfWords));
+    out.jump(normalEdge(head));
+
+    out.appendTo(exit);
+    out.ret(buffer);
+
+    int64_t wordOfTag = pinned->offset.value_or(0) / static_cast<int64_t>(sizeof(uint64_t));
+    int64_t numberOfWordsEachWay = std::abs(wordOfTag) + 1;
+    Vector<uint64_t> wordsAroundInstance(FillWith { }, static_cast<size_t>(2 * numberOfWordsEachWay), uint64_t { 0 });
+    wordsAroundInstance[static_cast<size_t>(numberOfWordsEachWay + wordOfTag)] = static_cast<uint64_t>(tag);
+    compileOrFail(test, &wordsAroundInstance[static_cast<size_t>(numberOfWordsEachWay)]);
+
+    AllocationTestText text(test);
+    const Order& order = test.procedure().order();
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(head).isLoopHead && order.of(latch).loop == order.of(head).loop);
+    Reg held = allocationTestRegisterAtHead(test, head, constant);
+    AOT_ALLOCATION_TEST_CHECK(test, held.isSet() == pinned->offset.has_value());
+    AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s, constant) == (pinned->offset ? 1u : 0u));
+    if (pinned->offset) {
+        AOT_ALLOCATION_TEST_CHECK(test, !loopHasCall || (maskOf(held) & file.calleeSaved));
+        for (const Step& step : test.procedure().allocation().steps()) {
+            for (const Location& source : step.sources)
+                AOT_ALLOCATION_TEST_CHECK(test, step.kind != StepKind::Execute || source.kind() != Location::InstanceWord);
+        }
+        for (LBasicBlock block : comparing)
+            AOT_ALLOCATION_TEST_CHECK(test, !text.count("materialize"_s, constant, block) && allocationTestRegisterAtHead(test, block, constant) == held);
+    }
+
+    std::array<uint64_t, 64> words { };
+    for (unsigned below = 0; below <= numberOfWords; ++below) {
+        for (unsigned word = 0; word < numberOfWords; ++word)
+            words[word] = word == below ? static_cast<uint64_t>(tag) - 1 : static_cast<uint64_t>(tag) + word;
+        words[numberOfWords] = 3;
+        words[numberOfWords + 1] = 0;
+        test.call<uint64_t>(words.data());
+        AOT_ALLOCATION_TEST_CHECK(test, !words[numberOfWords] && words[numberOfWords + 1] == (below < numberOfWords ? static_cast<uint64_t>(tag) : 0));
+    }
+}
+
+static void allocatorSkipsRarelyComparedConstant()
+{
+    constexpr int64_t tag = JSValue::NumberTag;
+    std::optional<PinnedConstant> pinned = findPinnedConstant(static_cast<uint64_t>(tag));
+    AOT_TEST_CHECK(pinned);
+    for (unsigned numberOfWords : { 2u, 3u }) {
+        TestProcedure test;
+        Output& out = test.out();
+        RegisterFile file = registerFileFor(test.procedure().traits());
+        LValue buffer = test.argumentGPR(1);
+        LValue constant = out.constInt64(tag);
+        LBasicBlock head = out.newBlock();
+        LBasicBlock latch = out.newBlock();
+        LBasicBlock exit = out.newBlock();
+        LValue left = out.phiIn(head, Int64);
+        out.upsilon(test.argumentGPR(0), left);
+        out.jump(normalEdge(head));
+        out.appendTo(head);
+        LBasicBlock next = out.newBlock();
+        out.branch(left, normalEdge(next), normalEdge(exit));
+        for (unsigned word = 0; word < numberOfWords; ++word) {
+            out.appendTo(next);
+            next = word + 1 < numberOfWords ? out.newBlock() : latch;
+            out.branch(out.aboveOrEqual(out.load64(allocationTestWordAt(test, buffer, word)), constant), normalEdge(next), normalEdge(exit));
+        }
+        out.appendTo(latch);
+        if (numberOfWords == 3)
+            allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~file.calleeSaved);
+        out.upsilon(out.sub(left, 1), left);
+        out.jump(normalEdge(head));
+        out.appendTo(exit);
+        out.ret(left);
+        prepareOrFail(test);
+        AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, head, constant));
+        AOT_ALLOCATION_TEST_CHECK(test, !AllocationTestText(test).count("materialize"_s, constant));
+    }
+}
+
 static constexpr Origin allocationTestOriginOfExtension(7);
 
 static ProcedureTraits allocationTestTraitsThatNoteOrigins()
@@ -4177,6 +4290,9 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/what-the-return-register-holds-at-a-return-goes-without-a-store"_s, Machine::allocatorStoresNothingForRegisterThatReturnTakes },
         { "machine-allocation/rare-arm-costs-the-hot-path-nothing-for-numbers"_s, Machine::allocatorKeepsRareArmOffHotPath<double> },
         { "machine-allocation/pinned-constant-is-read-where-it-lies"_s, Machine::allocatorReadsPinnedConstantWhereItLies },
+        { "machine-allocation/compared-constant-is-held"_s, Machine::allocatorHoldsComparedConstant<false> },
+        { "machine-allocation/compared-constant-is-held-across-calls"_s, Machine::allocatorHoldsComparedConstant<true> },
+        { "machine-allocation/rarely-compared-constant-is-not-held"_s, Machine::allocatorSkipsRarelyComparedConstant },
         { "machine-allocation/zero-extension-of-a-count-that-starts-at-a-truncated-word-is-an-instruction"_s, Machine::allocatorExtendsCountOfLoop<false> },
         { "machine-allocation/free-extension-of-variable-shift"_s, Machine::allocatorExtendsVariableShiftFree },
         { "machine-allocation/masks-without-copy"_s, Machine::allocatorMasksWithoutCopy },

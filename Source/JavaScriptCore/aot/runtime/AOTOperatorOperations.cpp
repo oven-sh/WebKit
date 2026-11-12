@@ -10,7 +10,9 @@
 
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTChainDependents.h"
+#include "AOTClosure.h"
 #include "AOTCompiledCall.h"
+#include "AOTCompiledCallee.h"
 #include "AOTGrowingText.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
@@ -24,6 +26,9 @@
 #include "AOTState.h"
 #include "AOTTextsOfFewDigits.h"
 #include "AOTBigIntArithmetic.h"
+#include "DateInstance.h"
+#include "DatePrototype.h"
+#include "FunctionPrototype.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "MathCommon.h"
@@ -166,11 +171,62 @@ NEVER_INLINE JSValue primitiveIfKnown(Instance* instance, JSValue object, Prefer
     return primitive ? primitive : object;
 }
 
+static ALWAYS_INLINE bool isHostFunctionNamed(JSValue value, NativeFunction function)
+{
+    JSFunction* held = value && value.isCell() ? dynamicDowncast<JSFunction>(value.asCell()) : nullptr;
+    return held && held->isHostFunction() && held->nativeFunction() == toTagged(function);
+}
+
+static ALWAYS_INLINE bool isCompiledFunction(JSValue value)
+{
+    return value.isCell() && isCompiledCalleeType(value.asCell()->type());
+}
+
+static NEVER_INLINE bool isFunctionConvertedToText(JSGlobalObject* globalObject, JSObject* function)
+{
+    VM& vm = globalObject->vm();
+    const CommonIdentifiers& names = *vm.propertyNames;
+    JSObject* functionPrototype = globalObject->functionPrototype();
+    JSObject* objectPrototype = globalObject->objectPrototype();
+    const std::array<UniquedStringImpl*, 3> conversions { names.toPrimitiveSymbol.impl(), names.valueOf.impl(), names.toString.impl() };
+    auto isAbsent = [&](JSObject* object, PropertyName name) {
+        return !isValidOffset(object->structure()->get(vm, name));
+    };
+    for (JSObject* object = function; object != functionPrototype; object = object->getPrototypeDirect().getObject()) {
+        if (!object || !isCompiledCalleeType(object->type()))
+            return false;
+        if (object->type() == CompiledClosureType ? uncheckedDowncast<Closure>(object)->mayHoldOwnProperties(vm, conversions) : !std::ranges::all_of(conversions, [&](UniquedStringImpl* name) { return isAbsent(object, PropertyName(name)); }))
+            return false;
+    }
+    return functionPrototype->getPrototypeDirect() == JSValue(objectPrototype) && isAbsent(functionPrototype, names.toPrimitiveSymbol) && isAbsent(objectPrototype, names.toPrimitiveSymbol) && isAbsent(functionPrototype, names.valueOf)
+        && isHostFunctionNamed(functionPrototype->getDirect(vm, names.toString), functionProtoFuncToString) && objectPrototype->getDirect(vm, names.valueOf) == globalObject->objectProtoValueOfFunction();
+}
+
+NEVER_INLINE JSValue textIfFunction(JSGlobalObject* globalObject, JSValue function)
+{
+    return isFunctionConvertedToText(globalObject, asObject(function)) ? CompiledCallee::sourceText(globalObject, asObject(function)) : function;
+}
+
+JSValue timeIfDate(JSValue value)
+{
+    if (!value.isCell() || value.asCell()->type() != JSDateType) [[likely]]
+        return value;
+    auto* date = uncheckedDowncast<DateInstance>(value.asCell());
+    Structure* structure = date->structure();
+    if (!isHostFunctionNamed(structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToPrimitive), dateProtoFuncToPrimitiveSymbol) || !isHostFunctionNamed(structure->cachedSpecialProperty(CachedSpecialPropertyKey::ValueOf), dateProtoFuncGetTime))
+        return value;
+    return jsNumber(date->internalNumber());
+}
+
 #define AOT_TAKE_PRIMITIVES(left, right, hint, returned) \
+    if (hint == PreferNumber) \
+        left = timeIfDate(left); \
     if (isCompiledObject(left)) { \
         left = primitiveIfKnown(instance, left, hint); \
         OPERATION_RETURN_IF_EXCEPTION(scope, returned); \
     } \
+    if (hint == PreferNumber && !left.isObject()) \
+        right = timeIfDate(right); \
     if (isCompiledObject(right) && !left.isObject() && (hint == NoPreference || !left.isSymbol())) { \
         right = primitiveIfKnown(instance, right, hint); \
         OPERATION_RETURN_IF_EXCEPTION(scope, returned); \
@@ -239,8 +295,8 @@ AOT_DEFINE_STEP_ON_BIGINTS(BitwiseAnd)
 AOT_DEFINE_STEP_ON_BIGINTS(SignedRightShift)
 AOT_DEFINE_STEP_WITH_CACHED_DIVISOR(Remainder)
 struct RemainderOfUsualProduct {
-    static constexpr bool asksCachedDivisor = true;
-    static ALWAYS_INLINE JSBigInt* run(VM& vm, auto place, JSBigInt* dividend, JSBigInt* divisor) { return BigIntArithmetic::tryRemainderOfUsualLength<2 * BigIntArithmetic::usualLength>(vm, place, dividend, divisor, false); }
+    static constexpr bool asksCachedDivisor = false;
+    static ALWAYS_INLINE JSBigInt* run(auto place, JSBigInt* dividend, JSBigInt* divisor) { return BigIntArithmetic::tryRemainderOfUsualLength<2 * BigIntArithmetic::usualLength>(place, dividend, divisor, false); }
 };
 }
 
@@ -367,6 +423,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance* instance, Enc
         object = primitiveIfKnown(instance, object, NoPreference);
         OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     }
+    if (isCompiledFunction(left) ? !right.isObject() && !right.isUndefinedOrNull() : isCompiledFunction(right) && !left.isObject() && !left.isUndefinedOrNull()) {
+        JSValue& function = isCompiledFunction(left) ? left : right;
+        if ((left.isSymbol() || right.isSymbol()) && isFunctionConvertedToText(globalObject, asObject(function)))
+            OPERATION_RETURN(scope, false);
+        function = textIfFunction(globalObject, function);
+        OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    }
     OPERATION_RETURN(scope, JSValue::equal(globalObject, left, right));
 }
 
@@ -379,6 +442,7 @@ AOT_DEFINE_BINARY_OPERATION(operationAOTCompareStrictEq, size_t, JSValue::strict
         JSValue operand = JSValue::decode(encodedOperand); \
         if (std::optional<double> number = valueOfTextOfFewDigits(operand)) \
             OPERATION_RETURN(scope, resultOfFewDigits); \
+        operand = timeIfDate(operand); \
         if (isCompiledObject(operand)) { \
             operand = primitiveIfKnown(instance, operand, PreferNumber); \
             OPERATION_RETURN_IF_EXCEPTION(scope, type()); \
@@ -430,6 +494,18 @@ NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Object& obje
 
 static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addAnyValues(Instance*, EncodedJSValue, EncodedJSValue);
 
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addListToText(Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueAdd);
+    JSValue text = JSValue::decode(encodedLeft);
+    JSValue list = JSValue::decode(encodedRight);
+    JSString* joined = tryConvertListToString(instance, globalObject, asArray(list.asCell()));
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (!joined) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, text, list)));
+    OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(text), joined)));
+}
+
 static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addShortBigInts(Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)
 {
     if (JSBigInt* result = tryShortBigInts<tryInHeap<StepOnBigInts::Add>>(instance, encodedLeft, encodedRight))
@@ -439,6 +515,8 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
 
 JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
+    if (JSValue left = JSValue::decode(encodedLeft), right = JSValue::decode(encodedRight); right.isCell() && right.asCell()->type() == ArrayType && left.isString())
+        AOT_MUST_TAIL_CALL return addListToText(instance, encodedLeft, encodedRight);
     if (JSBigInt* result = tryBigIntsOfUsualLength<BigIntArithmetic::usualLength, tryInHeap<StepOnBigInts::AddOfUsualLength>>(instance, encodedLeft, encodedRight))
         return { JSValue::encode(result), nullptr };
     AOT_MUST_TAIL_CALL return addShortBigInts(instance, encodedLeft, encodedRight);
@@ -449,6 +527,16 @@ OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addAnyValues(Instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueAdd);
     JSValue left = BigIntArithmetic::valueInHeap(vm, JSValue::decode(encodedLeft));
     JSValue right = BigIntArithmetic::valueInHeap(vm, JSValue::decode(encodedRight));
+    auto takeTextOfList = [&](JSValue& operand) {
+        if (!operand.isCell() || !isJSArray(operand.asCell()))
+            return;
+        if (JSString* joined = tryConvertListToString(instance, globalObject, asArray(operand.asCell())))
+            operand = joined;
+    };
+    if (left.isString()) {
+        takeTextOfList(right);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
     if (left.isHeapBigInt() && right.isHeapBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::add(globalObject, left.asHeapBigInt(), right.asHeapBigInt())));
     if (left.isString() && right.isString())
@@ -459,6 +547,22 @@ OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addAnyValues(Instan
         OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, int32ToString(vm, left.asInt32(), 10), asString(right))));
     if (!left.isCell() && !right.isCell())
         OPERATION_RETURN(scope, JSValue::encode(jsNumber(numberOfValueThatIsNoCell(left) + numberOfValueThatIsNoCell(right))));
+    takeTextOfList(left);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (isCompiledFunction(left)) {
+        left = textIfFunction(globalObject, left);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
+    if (!left.isObject()) {
+        takeTextOfList(right);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (isCompiledFunction(right)) {
+            right = textIfFunction(globalObject, right);
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        }
+        if (left.isString() && right.isString())
+            OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), asString(right))));
+    }
     AOT_TAKE_PRIMITIVES(left, right, NoPreference, encodedJSValue())
     OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
 }
@@ -471,8 +575,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
         JSCell* cell = operand.asCell();
         if (cell->type() == CompiledObjectType)
             OPERATION_RETURN(scope, toStringOfCompiledObject(instance, *uncheckedDowncast<Object>(cell)));
+        if (isCompiledCalleeType(cell->type())) {
+            JSValue text = textIfFunction(globalObject, operand);
+            OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+            if (text.isString())
+                OPERATION_RETURN(scope, asString(text));
+        }
         if (isJSArray(cell)) {
-            JSString* joined = tryConvertListToString(globalObject, asArray(cell));
+            JSString* joined = tryConvertListToString(instance, globalObject, asArray(cell));
             OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
             if (joined)
                 OPERATION_RETURN(scope, joined);
@@ -527,7 +637,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueNegate, EncodedJSValue, (Instance* ins
 OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES negateAnyValue(Instance* instance, EncodedJSValue operand)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueNegate);
-    JSValue numeric = JSValue::decode(operand).toNumeric(globalObject);
+    JSValue numeric = timeIfDate(JSValue::decode(operand)).toNumeric(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (numeric.isBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, numeric.asHeapBigInt())));
@@ -695,43 +805,47 @@ static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES tryModShortBigIntsIn
     return encodeResult(tryInFrameOrHeap<StepOnBigInts::Remainder, bigIntSlotLength>(left.asHeapBigInt(), right.asHeapBigInt(), addressOf(taggedPlace)));
 }
 
-template<unsigned dividendLength>
-static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES tryModUsualBigInts(EncodedJSValue left, EncodedJSValue right, void* taggedInstance)
-{
-    VM& vm = *static_cast<Instance*>(addressOf(taggedInstance))->vm;
-    if (JSBigInt* result = BigIntArithmetic::tryRemainderOfUsualLength<dividendLength>(vm, BigIntArithmetic::HeapPlace(vm), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), remainderMayBeSumAt(taggedInstance))) [[likely]]
-        return JSValue::encode(result);
-    AOT_MUST_TAIL_CALL return tryModShortBigInts(left, right, taggedInstance);
-}
-
-template<unsigned dividendLength>
-static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES tryModUsualBigIntsInFrame(EncodedJSValue left, EncodedJSValue encodedDivisor, void* taggedPlace)
-{
-    JSBigInt* divisor = JSValue::decode(encodedDivisor).asHeapBigInt();
-    if (!BigIntArithmetic::isInFrame(divisor)) [[likely]] {
-        if (JSBigInt* result = BigIntArithmetic::tryRemainderOfUsualLength<dividendLength>(divisor->vm(), BigIntArithmetic::FramePlace<bigIntSlotLength>(addressOf(taggedPlace)), JSValue::decode(left).asHeapBigInt(), divisor, remainderMayBeSumAt(taggedPlace))) [[likely]]
-            return JSValue::encode(result);
+#define AOT_DEFINE_MOD_OF_USUAL_LENGTH(suffix, attributes) \
+    template<unsigned dividendLength> \
+    static NEVER_INLINE attributes EncodedJSValue JIT_OPERATION_ATTRIBUTES tryModUsualBigInts##suffix(EncodedJSValue left, EncodedJSValue right, void* taggedInstance) \
+    { \
+        VM& vm = *static_cast<Instance*>(addressOf(taggedInstance))->vm; \
+        if (JSBigInt* result = BigIntArithmetic::tryRemainderOfUsualLength<dividendLength>(BigIntArithmetic::HeapPlace(vm), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), remainderMayBeSumAt(taggedInstance))) [[likely]] \
+            return JSValue::encode(result); \
+        AOT_MUST_TAIL_CALL return tryModShortBigInts(left, right, taggedInstance); \
+    } \
+    template<unsigned dividendLength> \
+    static NEVER_INLINE attributes EncodedJSValue JIT_OPERATION_ATTRIBUTES tryModUsualBigIntsInFrame##suffix(EncodedJSValue left, EncodedJSValue right, void* taggedPlace) \
+    { \
+        if (JSBigInt* result = BigIntArithmetic::tryRemainderOfUsualLength<dividendLength>(BigIntArithmetic::FramePlace<bigIntSlotLength>(addressOf(taggedPlace)), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), remainderMayBeSumAt(taggedPlace))) [[likely]] \
+            return JSValue::encode(result); \
+        AOT_MUST_TAIL_CALL return tryModShortBigIntsInFrame(left, right, taggedPlace); \
     }
-    AOT_MUST_TAIL_CALL return tryModShortBigIntsInFrame(left, encodedDivisor, taggedPlace);
-}
+AOT_DEFINE_MOD_OF_USUAL_LENGTH(, )
+#if AOT_HAS_FUNCTIONS_WITH_MULX
+AOT_DEFINE_MOD_OF_USUAL_LENGTH(ByMULX, AOT_WITH_MULX)
+#define AOT_TAIL_CALL_MOD_BY_MULX_IF_POSSIBLE(name, ...) \
+    if (BigIntArithmetic::hasMULX()) [[likely]] \
+        AOT_MUST_TAIL_CALL return name##ByMULX<__VA_ARGS__>(left, right, instanceOrPlace);
+#else
+#define AOT_TAIL_CALL_MOD_BY_MULX_IF_POSSIBLE(name, ...)
+#endif
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryModBigInts, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right, void* taggedInstance))
-{
-    if (areBigIntsOfLengths<2 * BigIntArithmetic::usualLength, BigIntArithmetic::usualLength>(left, right))
-        AOT_MUST_TAIL_CALL return tryModUsualBigInts<2 * BigIntArithmetic::usualLength>(left, right, taggedInstance);
-    if (remainderMayBeSumAt(taggedInstance) && areBigIntsOfLengths<BigIntArithmetic::usualLength, BigIntArithmetic::usualLength>(left, right))
-        AOT_MUST_TAIL_CALL return tryModUsualBigInts<BigIntArithmetic::usualLength>(left, right, taggedInstance);
-    AOT_MUST_TAIL_CALL return tryModShortBigInts(left, right, taggedInstance);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryModBigIntsInFrame, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right, void* taggedPlace))
-{
-    if (areBigIntsOfLengths<2 * BigIntArithmetic::usualLength, BigIntArithmetic::usualLength>(left, right))
-        AOT_MUST_TAIL_CALL return tryModUsualBigIntsInFrame<2 * BigIntArithmetic::usualLength>(left, right, taggedPlace);
-    if (remainderMayBeSumAt(taggedPlace) && areBigIntsOfLengths<BigIntArithmetic::usualLength, BigIntArithmetic::usualLength>(left, right))
-        AOT_MUST_TAIL_CALL return tryModUsualBigIntsInFrame<BigIntArithmetic::usualLength>(left, right, taggedPlace);
-    AOT_MUST_TAIL_CALL return tryModShortBigIntsInFrame(left, right, taggedPlace);
-}
+#define AOT_DEFINE_MOD_OF_BIGINTS(operation, name) \
+    JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operation, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right, void* instanceOrPlace)) \
+    { \
+        if (areBigIntsOfLengths<2 * BigIntArithmetic::usualLength, BigIntArithmetic::usualLength>(left, right)) { \
+            AOT_TAIL_CALL_MOD_BY_MULX_IF_POSSIBLE(tryModUsual##name, 2 * BigIntArithmetic::usualLength) \
+            AOT_MUST_TAIL_CALL return tryModUsual##name<2 * BigIntArithmetic::usualLength>(left, right, instanceOrPlace); \
+        } \
+        if (remainderMayBeSumAt(instanceOrPlace) && areBigIntsOfLengths<BigIntArithmetic::usualLength, BigIntArithmetic::usualLength>(left, right)) { \
+            AOT_TAIL_CALL_MOD_BY_MULX_IF_POSSIBLE(tryModUsual##name, BigIntArithmetic::usualLength) \
+            AOT_MUST_TAIL_CALL return tryModUsual##name<BigIntArithmetic::usualLength>(left, right, instanceOrPlace); \
+        } \
+        AOT_MUST_TAIL_CALL return tryModShort##name(left, right, instanceOrPlace); \
+    }
+AOT_DEFINE_MOD_OF_BIGINTS(operationAOTTryModBigInts, BigInts)
+AOT_DEFINE_MOD_OF_BIGINTS(operationAOTTryModBigIntsInFrame, BigIntsInFrame)
 
 template<unsigned greatestLength>
 static ALWAYS_INLINE bool areBigIntsOfAtMostLength(std::same_as<EncodedJSValue> auto... values)
@@ -748,7 +862,7 @@ template<BigIntArithmetic::Factors factors>
 static ALWAYS_INLINE EncodedJSValue remainderOfFactors(EncodedJSValue left, EncodedJSValue right, EncodedJSValue divisor, void* taggedInstance)
 {
     VM& vm = *static_cast<Instance*>(addressOf(taggedInstance))->vm;
-    return encodeResult(BigIntArithmetic::tryRemainderOfProduct<factors>(vm, BigIntArithmetic::HeapPlace(vm), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), JSValue::decode(divisor).asHeapBigInt(), remainderMayBeSumAt(taggedInstance)));
+    return encodeResult(BigIntArithmetic::tryRemainderOfProduct<factors>(BigIntArithmetic::HeapPlace(vm), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), JSValue::decode(divisor).asHeapBigInt(), remainderMayBeSumAt(taggedInstance)));
 }
 
 static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES tryRemainderOfDigits(EncodedJSValue left, EncodedJSValue right, EncodedJSValue divisor, void* taggedInstance)
@@ -757,12 +871,9 @@ static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES tryRemainderOfDigits
 }
 
 template<BigIntArithmetic::Factors factors>
-static ALWAYS_INLINE EncodedJSValue remainderOfFactorsInFrame(EncodedJSValue left, EncodedJSValue right, EncodedJSValue encodedDivisor, void* taggedPlace)
+static ALWAYS_INLINE EncodedJSValue remainderOfFactorsInFrame(EncodedJSValue left, EncodedJSValue right, EncodedJSValue divisor, void* taggedPlace)
 {
-    JSBigInt* divisor = JSValue::decode(encodedDivisor).asHeapBigInt();
-    if (BigIntArithmetic::isInFrame(divisor)) [[unlikely]]
-        return JSValue::encode(JSValue());
-    return encodeResult(BigIntArithmetic::tryRemainderOfProduct<factors>(divisor->vm(), BigIntArithmetic::FramePlace<bigIntSlotLength>(addressOf(taggedPlace)), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), divisor, remainderMayBeSumAt(taggedPlace)));
+    return encodeResult(BigIntArithmetic::tryRemainderOfProduct<factors>(BigIntArithmetic::FramePlace<bigIntSlotLength>(addressOf(taggedPlace)), JSValue::decode(left).asHeapBigInt(), JSValue::decode(right).asHeapBigInt(), JSValue::decode(divisor).asHeapBigInt(), remainderMayBeSumAt(taggedPlace)));
 }
 
 static NEVER_INLINE EncodedJSValue JIT_OPERATION_ATTRIBUTES tryRemainderOfDigitsInFrame(EncodedJSValue left, EncodedJSValue right, EncodedJSValue divisor, void* taggedPlace)
@@ -956,6 +1067,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryConvertToInteger, int64_t, (Enc
             double y = bits.numberIsOnRight ? withoutPayload(number) : numberOfValueThatIsNoCell(other); \
             OPERATION_RETURN(scope, ofNumbers); \
         } \
+        if (hint == PreferNumber) \
+            other = timeIfDate(other); \
         if (isCompiledObject(other)) { \
             other = primitiveIfKnown(instance, other, hint); \
             OPERATION_RETURN_IF_EXCEPTION(scope, 0); \

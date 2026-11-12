@@ -1,0 +1,141 @@
+# A loop carries an object that nothing else names: the header carries its slots beside it, a call of unseen code ends nothing of them, and nothing needs an allocation
+# function sum(n, f) { let p = { x: n }; for (let i = 0; i < 10; i++) { f(); p = { x: p.x }; } return p.x; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# CHECK: Return
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = NewObject
+# NEVER-NOT: = GetSlot
+# NEVER-NOT: = PropGet
+# What the loop leaves behind is allocated behind it, once
+# function last(n, f) { let p = { x: n }; for (let i = 0; i < 10; i++) { f(); p = { x: p.x }; } return p; }
+# RUN(LAST): walk f2 mechanisms=all
+# LAST-LABEL: code f2:Body
+# LAST-NOT: = NewObject
+# LAST: = Call
+# LAST-NOT: = PropGet
+# LAST: = NewObject
+# LAST-NOT: = NewObject
+# LAST: Return
+# The object that enters has another name behind the loop: the loop carries cells
+# function named(n, f) { const first = { x: n }; let p = first; for (let i = 0; i < 10; i++) { f(); p = { x: p.x }; } first.x = f; return p === first; }
+# RUN(NAMED): walk f3 mechanisms=all
+# NAMED-LABEL: code f3:Body
+# NAMED: = NewObject
+# NAMED: = NewObject
+# One object comes round in two parameters
+# function twice(n, f) { let p = { x: n }, q = { x: f }; for (let i = 0; i < 10; i++) { f(); p = q = { x: p.x }; } return p === q; }
+# RUN(TWICE): walk f4 mechanisms=all
+# TWICE-LABEL: code f4:Body
+# TWICE: = NewObject
+# TWICE: = NewObject
+# TWICE: = NewObject
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v8
+    Return v9
+}
+function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Integer integer=0
+    v5 = Integer integer=10
+    Jump -> next b1(v3, v4)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v5
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Call v1, -
+    v11 = PropGet v6 key="x"
+    v12 = NewObject -, v11 layout=L0 fields=[0]
+    v13 = FinishObject v12
+    v14 = Increment v7
+    Jump -> next b1(v13, v14)
+  b3():
+    v15 = PropGet v6 key="x"
+    Return v15
+}
+function f2 name="last" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Integer integer=0
+    v5 = Integer integer=10
+    Jump -> next b1(v3, v4)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v5
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Call v1, -
+    v11 = PropGet v6 key="x"
+    v12 = NewObject -, v11 layout=L0 fields=[0]
+    v13 = FinishObject v12
+    v14 = Increment v7
+    Jump -> next b1(v13, v14)
+  b3():
+    Return v6
+}
+function f3 name="named" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Integer integer=0
+    v5 = Integer integer=10
+    Jump -> next b1(v3, v4)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v5
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Call v1, -
+    v11 = PropGet v6 key="x"
+    v12 = NewObject -, v11 layout=L0 fields=[0]
+    v13 = FinishObject v12
+    v14 = Increment v7
+    Jump -> next b1(v13, v14)
+  b3():
+    PropSet v3, v1 key="x" mode=Strict
+    v16 = StrictEq v6, v3
+    Return v16
+}
+function f4 name="twice" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Integer integer=0
+    v7 = Integer integer=10
+    Jump -> next b1(v3, v5, v6)
+  b1(v8, v9, v10):
+    LoopHint
+    v12 = Less v10, v7
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = Call v1, -
+    v14 = PropGet v8 key="x"
+    v15 = NewObject -, v14 layout=L0 fields=[0]
+    v16 = FinishObject v15
+    v17 = Increment v10
+    Jump -> next b1(v16, v16, v17)
+  b3():
+    v18 = StrictEq v8, v9
+    Return v18
+}

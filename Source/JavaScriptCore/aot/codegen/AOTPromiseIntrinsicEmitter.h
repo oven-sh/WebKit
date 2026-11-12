@@ -15,7 +15,8 @@ class PromiseIntrinsicEmitter final : public OperationEmitter {
 public:
     explicit PromiseIntrinsicEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    void generateNewPromise(const ValueContext& value) { define(value, newPromise(value)); }
+    void generateNewPromise(const ValueContext&);
+    bool isPromiseOfReactionChain(ValueID);
     void generateCreatePromise(const ValueContext&);
     void generateResolvePromise(const ValueContext&);
     void generateRejectPromise(const ValueContext& value) { callVoidOperation(value, RuntimeOperation::RejectPromise, { in<CellPointer>(value->promiseOperand()), in<Boxed>(value->valueOperand()) }); }

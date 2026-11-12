@@ -117,6 +117,7 @@ private:
     void strikeCoveredOwners();
     void lookForBirthOfOwner(ValueID, const Operation&);
     void forgetStoresThatAwaitBirth();
+    void awaitBirthsAheadOf(BlockID);
     bool beginLookingForCoveredFences();
     void beginFenceCoverageAtEndOf(BlockID);
     void lookForCoveredFence(ValueID, const Operation&);
@@ -202,6 +203,7 @@ private:
     bool m_looksForBirthsToMove { false };
     bool m_hasMovedBirths { false };
     bool m_sweepsAgainBehindMovedBirths { false };
+    Vector<ValueID, 4> m_overwrittenStores;
     Vector<ValueID>& m_birthsThatMayMove;
     struct EnvironmentHandedBack {
         LayoutID layout;
@@ -224,6 +226,7 @@ private:
     Vector<uint32_t>& m_numberCoveredAtHead;
     Vector<ValueID>& m_coveredOwners;
     SweepBits& m_ownersCovered;
+    ValueID m_requiredObject;
     ValueID m_storeWhoseOwnerIsKnown;
     ValueID m_ownerOfThatStore;
     struct StoreThatAwaitsBirth {
@@ -232,6 +235,7 @@ private:
     };
     Vector<StoreThatAwaitsBirth, 8>& m_storesThatAwaitBirth;
     SweepBits& m_birthsAwaited;
+    BlockID m_blockWhereBirthsAreAwaited;
     bool m_laterFenceCovers { false };
     bool m_laterFenceCoversAtSomeHead { false };
     SweepBits& m_laterFenceCoversAtHeads;

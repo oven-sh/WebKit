@@ -2522,16 +2522,13 @@ std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgr
     return program;
 }
 
-bool hasFlatProgramsThatRememberFailedSearches(StringView patternString, OptionSet<Flags> flags)
+bool hasFlatProgramsThatRememberFailedSearches(const YarrPattern& analyzed, StringView patternString)
 {
-    ErrorCode errorCode { ErrorCode::NoError };
-    YarrPattern analyzed(patternString, flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Performed);
-    if (hasError(errorCode))
-        return false;
     auto fast = compileFlatProgram(analyzed);
     if (!fast || !(*fast)->jitCountsTurns)
         return false;
-    YarrPattern asWritten(patternString, flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Skipped);
+    ErrorCode errorCode { ErrorCode::NoError };
+    YarrPattern asWritten(patternString, analyzed.m_flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Skipped);
     if (hasError(errorCode))
         return false;
     auto counting = compileFlatProgram(asWritten, FlatProgramForm::CountsTurns);

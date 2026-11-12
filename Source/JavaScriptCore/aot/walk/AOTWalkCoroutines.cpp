@@ -22,6 +22,7 @@
 #include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkCoroutineCalls.h"
 #include "AOTWalkCoroutinePromises.h"
+#include "AOTWalkLoopsOverGenerators.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -116,6 +117,18 @@ Reference buildSuspensionInCoroutine(Walker& walker, Draft&& suspension)
     return buildSuspensionOfCoroutine(walker, WTF::move(suspension));
 }
 
+Vector<Reference, 8> heldForCells(Walker& walker, std::span<const Reference> held)
+{
+    constexpr uint16_t unseen = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString | Primitive::BigInt | Primitive::Absent | Primitive::Unspecified;
+    Vector<Reference, 8> kept;
+    for (Reference reference : held) {
+        TypeID type = walker.typeOf(reference);
+        if (!type || !walker.types().at(type).hasOnlyPrimitives(unseen))
+            kept.append(reference);
+    }
+    return kept;
+}
+
 static Reference buildAwaitInCoroutine(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin, bool readsThenInFrame)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
@@ -130,7 +143,7 @@ static Reference buildAwaitInCoroutine(Walker& walker, Reference awaited, std::s
     Draft await = draftForCoroutine(walker, Opcode::AwaitBySavingFrame, origin);
     await.setAwaitedOperand(awaited);
     await.setPromiseOperand(body->driver);
-    await.setHeldOperands(held);
+    await.setHeldOperands(heldForCells(walker, held).span());
     await.setReadsThenInFrame(readsThenInFrame);
     return buildSuspensionOfCoroutine(walker, WTF::move(await));
 }
@@ -155,7 +168,7 @@ Reference buildAwaitOfResolution(Walker& walker, Reference resolution, std::span
     Draft await = draftForCoroutine(walker, Opcode::AwaitBySavingFrame, origin);
     await.setAwaitedOperand(resolution);
     await.setPromiseOperand(body->driver);
-    await.setHeldOperands(held);
+    await.setHeldOperands(heldForCells(walker, held).span());
     await.setAwaitsResolution(true);
     return buildSuspensionOfCoroutine(walker, WTF::move(await));
 }
@@ -180,7 +193,7 @@ Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Referen
     step.setDriverOperand(body->driver);
     if (goesByDriver)
         step.setGoesByDriverOperand(goesByDriver);
-    step.setHeldOperands(held);
+    step.setHeldOperands(heldForCells(walker, held).span());
     step.setCalledBuiltin(awaitedCallee);
     return buildSuspensionOfCoroutine(walker, WTF::move(step));
 }
@@ -190,7 +203,7 @@ static Reference buildYieldBySavingFrameOfCoroutine(Walker& walker, const Suspen
     Draft yield = draftForCoroutine(walker, Opcode::YieldBySavingFrame, origin);
     yield.setGeneratorOperand(body.driver);
     yield.setValueOperand(yielded);
-    yield.setHeldOperands(held);
+    yield.setHeldOperands(heldForCells(walker, held).span());
     return buildSuspensionOfCoroutine(walker, WTF::move(yield));
 }
 
@@ -249,6 +262,252 @@ static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, co
     return taking.opcode() == Opcode::IteratorOpen && taking.as<Opcode::IteratorOpen>().iteratorKind() == IteratorKind::Sync;
 }
 
+namespace {
+
+class GeneratorDriver {
+public:
+    GeneratorDriver(const Walker& walker, FunctionID helper)
+        : m_walker(walker)
+        , m_helper(helper)
+    {
+    }
+
+    bool onlyDrives(unsigned entryParameter);
+
+private:
+    struct EntryParameterOfFunction {
+        FunctionID function;
+        unsigned number;
+    };
+
+    const BodyIndex* findBody(FunctionID) const;
+    bool isOnlyDriven(const BodyIndex&, ValueID);
+    bool isUseOfDriven(const BodyIndex&, ValueID driven, const BodyValue& user);
+    bool isResultOfApply(const BodyIndex&, ValueID) const;
+    bool accessesScopeOnlyToDrive(FunctionID);
+    void addFunction(FunctionID function)
+    {
+        if (!m_functions.contains(function))
+            m_functions.append(function);
+    }
+
+    const Walker& m_walker;
+    const FunctionID m_helper;
+    Vector<FunctionID, 8> m_functions;
+    Vector<EntryParameterOfFunction, 4> m_parameters;
+    LayoutID m_scope;
+    FieldIndex m_field { 0 };
+};
+
+} // anonymous namespace
+
+template<typename Functor> static bool everyUseIs(const BodyIndex& index, ValueID value, const Functor& isAllowed)
+{
+    bool isEveryUseAllowed = true;
+    for (uint32_t number = 0; isEveryUseAllowed && number < index.numberOfBlocks(); ++number) {
+        for (BodyValue operation : index.block(BlockID(number)).values()) {
+            bool isUse = false;
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                isUse |= operand == value;
+            });
+            if (isUse && !isAllowed(operation)) {
+                isEveryUseAllowed = false;
+                break;
+            }
+        }
+        BodyTerminator terminator = index.terminator(BlockID(number));
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            isEveryUseAllowed &= operand != value;
+        });
+        for (BodyTarget target : terminator.targets())
+            isEveryUseAllowed &= !std::ranges::contains(target.arguments(), value);
+    }
+    return isEveryUseAllowed;
+}
+
+const BodyIndex* GeneratorDriver::findBody(FunctionID function) const
+{
+    static constexpr OpcodeSet seesMoreThanItNames { Opcode::ScopeHasBinding, Opcode::DirectEval, Opcode::NewClass };
+    if (m_walker.facts().summaries().at(function).has(SummaryTrait::HasDirectEval))
+        return nullptr;
+    const BodyIndex* body = m_walker.facts().bodies().find(function);
+    return body && !body->holdsAnyOf(seesMoreThanItNames) && !body->holdsAnyOf(opcodesOfMappedArguments) ? body : nullptr;
+}
+
+bool GeneratorDriver::isUseOfDriven(const BodyIndex& index, ValueID driven, const BodyValue& user)
+{
+    if (opcodesThatStateTypes.contains(user.opcode()))
+        return isOnlyDriven(index, user.id());
+    auto isDriven = [&](ValueID value) {
+        return value && index.stripCasts(value) == index.stripCasts(driven);
+    };
+    switch (user.opcode()) {
+    case Opcode::PropGet: {
+        const Program& program = m_walker.program();
+        bool applies = user.key() == program.keyOf(BuiltinNames::apply);
+        if (user.isFreeName() || (!applies && user.key() != program.keyOf(BuiltinNames::next) && user.key() != program.keyOf(BuiltinNames::throwKeyword) && user.key() != program.keyOf(BuiltinNames::returnKeyword)))
+            return false;
+        ValueID call = index.onlyUsingValue(user.id());
+        return call && index.opcodeOf(call) == Opcode::Call && index.value(call).calleeOperand() == user.id() && isDriven(index.value(call).thisValueOperand()) && (!applies || isOnlyDriven(index, call));
+    }
+    case Opcode::Call: {
+        ValueID callee = user.calleeOperand();
+        return callee != driven && isDriven(user.thisValueOperand()) && !std::ranges::contains(user.as<Opcode::Call>().argumentsOperands(), driven)
+            && !index.isParameter(callee) && index.opcodeOf(callee) == Opcode::PropGet && isDriven(index.value(callee).objectOperand());
+    }
+    case Opcode::PutEnvironmentField:
+        return m_scope && user.layout() == m_scope && user.field() == m_field && user.valueOperand() == driven && isResultOfApply(index, driven);
+    case Opcode::NewClosure:
+    case Opcode::CallDirect: {
+        FunctionID function = user.opcode() == Opcode::NewClosure ? user.as<Opcode::NewClosure>().function() : user.as<Opcode::CallDirect>().function();
+        unsigned numberOfOperands = 0;
+        user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (operand == driven)
+                m_parameters.append(EntryParameterOfFunction { function, operandIndex });
+            ++numberOfOperands;
+        });
+        const Function& entered = m_walker.program().at(function);
+        return numberOfOperands == (user.opcode() == Opcode::NewClosure ? entered.captures.size() : entered.numberOfEntryParameters());
+    }
+    case Opcode::NewObject: {
+        const Program& program = m_walker.program();
+        if (m_scope || !user.layout() || program.at(user.layout()).kind != LayoutKind::Environment)
+            return false;
+        std::span<const ValueID> values = user.as<Opcode::NewObject>().valuesOperands();
+        size_t place = std::ranges::find(values, driven) - values.begin();
+        if (place == values.size() || std::ranges::count(values, driven) != 1)
+            return false;
+        m_scope = user.layout();
+        m_field = user.as<Opcode::NewObject>().fields()[place];
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+bool GeneratorDriver::isResultOfApply(const BodyIndex& index, ValueID value) const
+{
+    ValueID call = index.stripCasts(value);
+    if (index.isParameter(call) || index.opcodeOf(call) != Opcode::Call)
+        return false;
+    ValueID callee = index.value(call).calleeOperand();
+    return !index.isParameter(callee) && index.opcodeOf(callee) == Opcode::PropGet && index.value(callee).key() == m_walker.program().keyOf(BuiltinNames::apply);
+}
+
+bool GeneratorDriver::isOnlyDriven(const BodyIndex& index, ValueID value)
+{
+    return everyUseIs(index, value, [&](const BodyValue& user) {
+        return isUseOfDriven(index, value, user);
+    });
+}
+
+bool GeneratorDriver::accessesScopeOnlyToDrive(FunctionID function)
+{
+    const Program& program = m_walker.program();
+    const BodyIndex* index = findBody(function);
+    if (!index)
+        return false;
+    for (uint32_t number = 0; number < index->numberOfBlocks(); ++number) {
+        for (BodyValue operation : index->block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::NewClosure)
+                addFunction(operation.as<Opcode::NewClosure>().function());
+            if (operation.opcode() == Opcode::CallDirect) {
+                const Function& callee = program.at(operation.as<Opcode::CallDirect>().function());
+                const Function& helper = program.at(m_helper);
+                if (callee.module == helper.module && callee.position >= helper.sourceRange.start && callee.position < helper.sourceRange.end)
+                    addFunction(operation.as<Opcode::CallDirect>().function());
+            }
+            if (!m_scope || (operation.opcode() != Opcode::GetEnvironmentField && operation.opcode() != Opcode::PutEnvironmentField) || operation.layout() != m_scope || operation.field() != m_field)
+                continue;
+            if (operation.opcode() == Opcode::GetEnvironmentField ? !isOnlyDriven(*index, operation.id()) : !isResultOfApply(*index, operation.valueOperand()))
+                return false;
+        }
+    }
+    return true;
+}
+
+bool GeneratorDriver::onlyDrives(unsigned entryParameter)
+{
+    const Function& helper = m_walker.program().at(m_helper);
+    if (helper.isCoroutine() || helper.has(FunctionFlags::HasHiddenRest))
+        return false;
+    m_parameters.append(EntryParameterOfFunction { m_helper, entryParameter });
+    for (size_t place = 0; place < m_parameters.size(); ++place) {
+        auto [function, number] = m_parameters[place];
+        bool isRepeated = std::ranges::any_of(m_parameters.span().first(place), [&](const EntryParameterOfFunction& earlier) {
+            return earlier.function == function && earlier.number == number;
+        });
+        if (isRepeated)
+            continue;
+        const BodyIndex* index = findBody(function);
+        if (!index || index->numberOfIncomingEdges(entryBlock) || index->holdsAnyOf(OpcodeSet { Opcode::CreateUnmappedArguments }) || !isOnlyDriven(*index, index->block(entryBlock).parameter(number)))
+            return false;
+        addFunction(function);
+    }
+    for (size_t place = 0; place < m_functions.size(); ++place) {
+        if (!accessesScopeOnlyToDrive(m_functions[place]))
+            return false;
+    }
+    return true;
+}
+
+static bool helpersDriveGeneratorsOf(const Walker& walker, FunctionID generatorFunction)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    std::optional<BuiltinID> apply = findMemberAboveForIteration(walker, table.at(BuiltinClasses::GeneratorFunction).prototype, BuiltinNames::apply);
+    if (!apply || !*apply || table.canonicalID(*apply) != table.canonicalID(Builtins::FunctionPrototypeApply))
+        return false;
+    const BodyIndex* own = walker.facts().bodies().find(generatorFunction);
+    std::optional<unsigned> calleeParameter = program.at(generatorFunction).calleeParameterIndex();
+    if (!own || !calleeParameter || !own->isUnused(own->block(entryBlock).parameter(*calleeParameter)))
+        return false;
+    const LinkTables& linked = walker.facts().linked();
+    bool isMade = false;
+    for (FunctionID referrer : linked.referrersOf(generatorFunction)) {
+        const BodyIndex* index = linked.isGroup(referrer) || referrer == generatorFunction ? nullptr : walker.facts().bodies().find(referrer);
+        if (!index)
+            continue;
+        auto isHandedToDriver = [&](const BodyValue& user, ValueID closure) {
+            if (user.opcode() != Opcode::Call || user.calleeOperand() == closure || user.thisValueOperand() == closure)
+                return false;
+            uint32_t first = linked.firstCallOfCaller[referrer.index()];
+            FunctionID helper;
+            for (const LinkedCall& call : linked.calls.span().subspan(first, linked.firstCallOfCaller[referrer.index() + 1] - first)) {
+                if (call.site != user.id())
+                    continue;
+                if (helper || call.asksForIterator || linked.isGroup(call.callee))
+                    return false;
+                helper = call.callee;
+            }
+            if (!helper || !linked.function(helper).everyCallHasOneCallee)
+                return false;
+            std::span<const ValueID> arguments = user.as<Opcode::Call>().argumentsOperands();
+            for (size_t place = 0; place < arguments.size(); ++place) {
+                if (arguments[place] != closure)
+                    continue;
+                if (place >= program.at(helper).numberOfPositionalParameters() || !GeneratorDriver(walker, helper).onlyDrives(program.at(helper).firstParameterIndex() + place))
+                    return false;
+            }
+            return true;
+        };
+        for (uint32_t number = 0; number < index->numberOfBlocks(); ++number) {
+            for (BodyValue operation : index->block(BlockID(number)).values()) {
+                if (operation.opcode() != Opcode::NewClosure || operation.as<Opcode::NewClosure>().function() != generatorFunction)
+                    continue;
+                isMade = true;
+                bool isOnlyHandedOver = everyUseIs(*index, operation.id(), [&](const BodyValue& user) {
+                    return isHandedToDriver(user, operation.id());
+                });
+                if (!isOnlyHandedOver)
+                    return false;
+            }
+        }
+    }
+    return isMade;
+}
+
 bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunction, uint32_t* numberOfListedCalls)
 {
     return nobodyLooksAboveGeneratorsOf(walker, generatorFunction, numberOfListedCalls, scopedLambda<bool(const BodyIndex&, const LinkedCall&, FunctionID)>([](const BodyIndex&, const LinkedCall&, FunctionID) {
@@ -262,11 +521,13 @@ bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunc
     if (!function.has(FunctionFlags::IsGenerator) || function.has(FunctionFlags::IsAsync) || !walker.facts().mechanisms().contains(Mechanism::TypedOperations))
         return false;
     const LinkTables& linked = walker.facts().linked();
-    if (!linked.function(generatorFunction).everyCallHasOneCallee || !engineAnswersAboveGenerators(walker))
+    if (!engineAnswersAboveGenerators(walker))
         return false;
     const BodyIndex* own = walker.facts().bodies().find(generatorFunction);
     if (!own || own->holdsAnyOf(opcodesOfMappedArguments) || walker.facts().summaries().at(generatorFunction).has(SummaryTrait::HasDirectEval))
         return false;
+    if (!linked.function(generatorFunction).everyCallHasOneCallee)
+        return !numberOfListedCalls && helpersDriveGeneratorsOf(walker, generatorFunction);
     for (FunctionID referrer : linked.referrersOf(generatorFunction)) {
         if (linked.isGroup(referrer))
             return false;
@@ -288,33 +549,40 @@ bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunc
 
 static bool headOfGeneratorMayReplacePrototypeOfCoroutine(const BodyIndex& input)
 {
-    if (input.numberOfIncomingEdges(entryBlock))
-        return true;
-    BlockID block = entryBlock;
-    for (uint32_t numberOfBlocksPassed = 0; numberOfBlocksPassed < input.numberOfBlocks(); ++numberOfBlocksPassed) {
+    BitVector isVisited(input.numberOfBlocks());
+    Vector<BlockID, 8> pending { entryBlock };
+    while (!pending.isEmpty()) {
+        BlockID block = pending.takeLast();
+        if (isVisited.quickSet(block.index()))
+            continue;
         BodyBlock head = input.block(block);
         if (head.hasHandler())
             return true;
+        bool isSuspended = false;
         for (BodyValue operation : head.values()) {
             Opcode opcode = operation.opcode();
-            if (opcode == Opcode::InitialYield)
-                return false;
+            isSuspended = opcode == Opcode::InitialYield;
+            if (isSuspended)
+                break;
             const Effects& bound = declaredBoundInTable(opcode);
             if (bound.mayRunOtherCode() || operandsMayRunCode(opcode) || bound.writes.contains(AbstractHeap::NamedProperties))
                 return true;
         }
+        if (isSuspended)
+            continue;
         BodyTerminator terminator = input.terminator(block);
-        if (terminator.kind() != TerminatorKind::Jump)
+        if (terminator.kind() != TerminatorKind::Jump && !terminator.isConditionalBranch())
             return true;
-        block = terminator.next().block();
-        if (input.numberOfIncomingEdges(block) != 1)
-            return true;
+        for (BodyTarget target : terminator.targets())
+            pending.append(target.block());
     }
-    return true;
+    return false;
 }
 
 static void replaceInitialYieldOfCoroutine(Walker& walker, const BodyValue& value)
 {
+    if (walker.unit().role == CodeRole::Body && walker.walksOwnBodyOfUnit())
+        return;
     std::optional<SuspendingBodyOfCoroutine> body = findYieldingBodyOfCoroutine(walker);
     if (!body)
         return;
@@ -518,6 +786,8 @@ Reference convertReturnedValueOfCoroutine(Walker& walker, Reference returned, Or
     return walker.build(WTF::move(result));
 }
 
+static bool buildRampOfCoroutine(Walker&, Vector<Reference, 12>&& operands, Origin);
+
 bool walkRampOfCoroutine(Walker& walker)
 {
     CodeUnit unit = walker.unit();
@@ -547,6 +817,46 @@ bool walkRampOfCoroutine(Walker& walker)
     }
     walker.code().addEntry(entry);
     walker.continueIn(entry);
+    return buildRampOfCoroutine(walker, WTF::move(operands), origin);
+}
+
+bool buildRampUnlessDelegated(Walker& walker, std::span<const Reference> parameters)
+{
+    const Function& function = walker.program().at(walker.unit().function);
+    Origin origin { .position = function.position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false };
+    Vector<Reference, 12> operands(parameters);
+    Draft test = draftForCoroutine(walker, Opcode::IsCallDelegated, origin);
+    test.setCalleeOperand(operands[*function.calleeParameterIndex()]);
+    Reference isDelegated = walker.build(WTF::move(test));
+    if (!isDelegated)
+        return false;
+    BlockID runsBody = walker.addBlock();
+    BlockID createsGenerator = walker.addBlock();
+    walker.branch(isDelegated, runsBody, createsGenerator);
+    walker.continueIn(createsGenerator);
+    if (!buildRampOfCoroutine(walker, WTF::move(operands), origin))
+        return false;
+    walker.continueIn(runsBody);
+    return true;
+}
+
+bool runsBodyWhereCallIsDelegated(const Walker& walker, CodeUnit unit)
+{
+    if (unit.role != CodeRole::Body || !walker.plan().conventions().of(unit.function).generatorNeverYields || !walker.has(Mechanism::TypedOperations))
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(unit.function);
+    return body && engineAnswersAboveGenerators(walker) && !headOfGeneratorMayReplacePrototypeOfCoroutine(*body) && walker.plan().conventions().resultRepresentation(unit) == Representation::JSValue;
+}
+
+static bool buildRampOfCoroutine(Walker& walker, Vector<Reference, 12>&& operands, Origin origin)
+{
+    CodeUnit unit = walker.unit();
+    const Program& program = walker.program();
+    const Function& function = program.at(unit.function);
+    const CallingConventions& conventions = walker.plan().conventions();
+    CodeUnit body { unit.function, CodeRole::CoroutineBody };
+    bool isGenerator = function.has(FunctionFlags::IsGenerator);
+    bool neverSuspends = conventions.of(unit.function).coroutineNeverSuspends;
 
     Reference driver;
     if (isGenerator) {
@@ -556,6 +866,8 @@ bool walkRampOfCoroutine(Walker& walker)
             return false;
         }
         bool readsPrototype = !nobodyLooksAboveGeneratorsOf(walker, unit.function, nullptr);
+        if (!readsPrototype && !walker.facts().linked().function(unit.function).everyCallHasOneCallee)
+            walker.count(StatisticID::GeneratorsDrivenByHelpers);
         bool hasNoPrototypeOfItsOwn = walker.plan().functionKind(program, conventions.closureEntryOf(unit.function)).isInRuntimeModule;
         Opcode birth = function.has(FunctionFlags::IsAsync) ? Opcode::NewAsyncGenerator : readsPrototype && hasNoPrototypeOfItsOwn ? Opcode::NewGeneratorOfLibrary : Opcode::NewGenerator;
         Draft allocation = draftForCoroutine(walker, birth, origin);

@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <limits>
 #include <utility>
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -44,7 +46,7 @@ private:
     bool fail(const Operation* = nullptr, PlaceOfCheck = PlaceOfCheck::here());
     bool failAtEndOf(const Block*, PlaceOfCheck = PlaceOfCheck::here());
 
-    bool isInProcedure(const Operation*) const;
+    ALWAYS_INLINE bool isInProcedure(const Operation*) const;
     bool isInProcedure(const Block*) const;
     static std::span<Operation* const> listHolding(const Block*, Opcode);
     bool listsItsOwnOperations(const Block*, std::span<Operation* const>);
@@ -61,7 +63,7 @@ private:
     bool checkDominance();
 
     static bool terminatorHasExpectedSuccessorCount(const Block*);
-    bool hasLegalChildren(const Operation*) const;
+    bool hasLegalChildren(const Operation*, std::span<Operation* const> children) const;
     bool hasLegalPosition(const Operation*) const;
     bool hasLegalTypes(const Operation*) const;
     bool hasLegalAddress(const Operation*) const;
@@ -140,7 +142,7 @@ bool MachineValidator::failAtEndOf(const Block* block, PlaceOfCheck check)
     return fail(block->isEmpty() ? nullptr : block->last(), check);
 }
 
-bool MachineValidator::isInProcedure(const Operation* operation) const
+ALWAYS_INLINE bool MachineValidator::isInProcedure(const Operation* operation) const
 {
     return operation && operation->index() < m_proc.numberOfOperations() && m_proc.operationAt(operation->index()) == operation;
 }
@@ -280,15 +282,15 @@ bool MachineValidator::checkTerminators()
     return true;
 }
 
-bool MachineValidator::hasLegalChildren(const Operation* operation) const
+bool MachineValidator::hasLegalChildren(const Operation* operation, std::span<Operation* const> children) const
 {
     Opcode opcode = operation->opcode();
-    unsigned numberOfChildren = operation->numChildren();
+    unsigned numberOfChildren = children.size();
     uint8_t numberWanted = descriptionOf(opcode).numberOfChildren;
     if (numberWanted != variableChildren ? numberOfChildren != numberWanted : opcode == Return && numberOfChildren > 1)
         return false;
 
-    for (const Operation* child : operation->children()) {
+    for (const Operation* child : children) {
         if (!isInProcedure(child))
             return false;
         if (opcode == Extract ? !child->type().isTuple() : !child->type().isNumeric())
@@ -350,7 +352,7 @@ bool MachineValidator::isLegalConstraint(const ValueRep& constraint, Type type, 
     case ValueRep::StackArgument:
         return true;
     case ValueRep::Register:
-        return type.isFloat() ? constraint.isFPR() : constraint.isGPR();
+        return type.isInNumberRegister() ? constraint.isFPR() : constraint.isGPR();
     case ValueRep::Stack:
     case ValueRep::Constant:
         return false;
@@ -468,7 +470,7 @@ bool MachineValidator::hasLegalTypes(const Operation* operation) const
     case FMax:
         return type.isFloat() && type == typeOfChild(0) && type == typeOfChild(1);
     case BitwiseCast:
-        return type.isNumeric() && type.isInt() != typeOfChild(0).isInt() && widthOf(type) == widthOf(typeOfChild(0));
+        return type.isNumeric() && !type.isVector() && type.isInt() != typeOfChild(0).isInt() && widthOf(type) == widthOf(typeOfChild(0));
     case SExt8:
     case SExt16:
         return type == Int32 && typeOfChild(0) == Int32;
@@ -578,11 +580,11 @@ bool MachineValidator::checkOperations()
         const Operation* operation = m_proc.operationAt(index);
         if (!isLeft(operation))
             continue;
-        if (!hasLegalChildren(operation) || !hasLegalPosition(operation) || !hasLegalTypes(operation) || !hasLegalFlags(operation) || !hasInstructionOnTarget(operation))
+        std::span<Operation* const> children = operation->children();
+        if (!hasLegalChildren(operation, children) || !hasLegalPosition(operation) || !hasLegalTypes(operation) || !hasLegalFlags(operation) || !hasInstructionOnTarget(operation))
             return fail(operation);
         if (countsChildrenAtFirstUse(operation->opcode()) && !operation->useCount())
             continue;
-        std::span<Operation* const> children = operation->children();
         for (unsigned childIndex = 0; childIndex < children.size(); ++childIndex) {
             const Operation* child = children[childIndex];
             ++numberOfUses[child->index()];
@@ -761,6 +763,8 @@ bool MachineValidator::checkDominance()
 {
     computeDominators();
 
+    const Block* lastUserBlock = nullptr;
+    const Block* lastDominator = nullptr;
     for (uint32_t index = 0; index < m_proc.numberOfOperations(); ++index) {
         const Operation* user = m_proc.operationAt(index);
         const Block* block = user->owner();
@@ -778,8 +782,12 @@ bool MachineValidator::checkDominance()
                     return fail(user);
                 continue;
             }
+            if (home == lastDominator && block == lastUserBlock)
+                continue;
             if (isReached && !dominates(home, block))
                 return fail(user);
+            lastUserBlock = block;
+            lastDominator = home;
         }
     }
     return true;
@@ -795,6 +803,62 @@ bool validate(Procedure& procedure)
 bool validateBehindBlockPasses(Procedure& procedure)
 {
     return MachineValidator(procedure, true).run();
+}
+
+bool checkVectorsAcrossCalls(Procedure& procedure)
+{
+    uint32_t numberOfBlocks = procedure.numberOfBlocks();
+    Vector<BitVector> liveAtHead(numberOfBlocks);
+    RegisterMask numberRegisters = 0;
+    for (unsigned index = 0; index <= Reg::maxIndex(); ++index) {
+        if (Reg reg = Reg::fromIndex(index); reg.isFPR())
+            numberRegisters |= maskOf(reg);
+    }
+    auto endsVectors = [&](const Operation* operation) {
+        const PatchOperation* patch = operation->as<PatchOperation>();
+        if (!patch || operation->opcode() == Check)
+            return false;
+        RegisterMask clobbered = patch->lateClobberedMask() & numberRegisters;
+        if (isARM64() && clobbered)
+            return true;
+        return (patch->effects.exitsSideways || patch->effects.mayCollect) && clobbered != numberRegisters;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (uint32_t index = numberOfBlocks; index--;) {
+            const Block* block = procedure.blockAt(index);
+            BitVector live;
+            for (const Edge& edge : block->successors())
+                live.merge(liveAtHead[edge.block()->index()]);
+            auto noteUses = [&](const Operation* operation) {
+                for (const Operation* child : operation->children()) {
+                    if (child->type().isVector())
+                        live.set(child->index());
+                }
+            };
+            for (const Operation* upsilon : block->upsilons())
+                noteUses(upsilon);
+            for (unsigned place = block->size(); place--;) {
+                const Operation* operation = block->at(place);
+                if (operation->type().isVector())
+                    live.clear(operation->index());
+                if (endsVectors(operation) && !live.isEmpty()) {
+                    procedure.fail(FailureKind::MalformedProcedure, operation);
+                    return false;
+                }
+                noteUses(operation);
+            }
+            for (const Operation* phi : block->phis()) {
+                if (phi->type().isVector())
+                    live.clear(phi->index());
+            }
+            if (live == liveAtHead[index])
+                continue;
+            liveAtHead[index] = live;
+            changed = true;
+        }
+    }
+    return true;
 }
 
 bool checkThatDefinitionsDominateUses(Procedure& procedure)

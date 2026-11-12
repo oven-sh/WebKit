@@ -119,6 +119,8 @@ static TypeID anyFunctionWrittenByTable(const BuiltinTypeReading& reading)
 
 static TypingContext typingContextOfBuiltinTypes(const BuiltinTypeContext& context)
 {
+    if (context.asksPositions)
+        *context.asksPositions = true;
     return { context.program, context.types, context.positions ? *context.positions : PositionTypes::knowingNothing(), context.level };
 }
 
@@ -455,10 +457,13 @@ TypedArrayType typedArrayTypeOf(const BuiltinTypeContext& context, TypeID id)
     if (!id)
         return NotTypedArray;
     Type type = context.types.at(id);
-    if (!type.hasOnlyClassObjects())
-        return NotTypedArray;
-
     const BuiltinTable& table = context.program.builtins();
+    if (!type.hasOnlyClassObjects()) {
+        if (!type.hasOnlyLayouts() || type.hasOnlyClosures() || !holdsOneMember(type.layouts))
+            return NotTypedArray;
+        const Layout& layout = context.program.at(LayoutID(positionOf(type.layouts)));
+        return layout.writtenBuiltinBase && !layout.mayBeOrdinaryObject ? table.typedArrayTypeOf(layout.writtenBuiltinBase) : NotTypedArray;
+    }
     std::span<const ClassPart> parts = classPartsOf(context.types, type);
     if (parts.empty())
         return NotTypedArray;

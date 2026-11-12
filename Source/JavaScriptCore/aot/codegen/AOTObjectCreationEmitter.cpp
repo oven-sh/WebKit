@@ -29,6 +29,7 @@ static uint32_t descriptorBitsOf(OptionSet<PropertyDescriptorFlags> flags)
     bits.isConfigurable = flags.contains(PropertyDescriptorFlags::IsConfigurable);
     bits.hasGet = flags.contains(PropertyDescriptorFlags::HasGet);
     bits.hasSet = flags.contains(PropertyDescriptorFlags::HasSet);
+    bits.isOfPropertyMap = flags.contains(PropertyDescriptorFlags::IsOfPropertyMap);
     return std::bit_cast<uint32_t>(bits);
 }
 

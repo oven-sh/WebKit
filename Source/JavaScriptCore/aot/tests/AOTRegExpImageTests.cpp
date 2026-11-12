@@ -68,7 +68,8 @@ public:
 
     MatchResult match(Yarr::YarrCodeBlock&, std::span<int> output, StringView subject);
     Vector<int> execute(Yarr::YarrCodeBlock&, unsigned outputSize, StringView subject);
-    void checkAnswers(const LaidOutRegExps&, const ImageTests::ExecutableCopy&, std::span<const String> subjects);
+    void checkAnswers(const LaidOutRegExps& laidOut, const ImageTests::ExecutableCopy& code, std::span<const String> subjects) { checkAnswers(laidOut, code.start(), subjects); }
+    void checkAnswers(const LaidOutRegExps&, const uint8_t* code, std::span<const String> subjects);
 
 private:
     RefPtr<VM> m_vm;
@@ -243,14 +244,14 @@ Vector<int> Matcher::execute(Yarr::YarrCodeBlock& codeBlock, unsigned outputSize
     return output;
 }
 
-void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const ImageTests::ExecutableCopy& code, std::span<const String> subjects)
+void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const uint8_t* code, std::span<const String> subjects)
 {
     for (size_t index = 0; index < laidOut.sources.size(); ++index) {
         const Source& source = laidOut.sources[index];
         unsigned outputSize = (summarizeRegExp(source.pattern, source.flags).numSubpatterns + 1) * 2;
         auto [offsetFor8Bit, offsetFor16Bit] = laidOut.section.entries[index];
         Yarr::YarrCodeBlock codeBlock(nullptr);
-        codeBlock.setCodeFromImage(code.start() + offsetFor8Bit, code.start() + offsetFor16Bit);
+        codeBlock.setCodeFromImage(code + offsetFor8Bit, code + offsetFor16Bit);
         Interpreter interpreter(source);
         for (const String& subject : subjects) {
             bool isSame = execute(codeBlock, outputSize, subject) == interpreter.match(subject);
@@ -642,6 +643,40 @@ static void testUsersFarApartShareUnit()
     checkUsersFarApartShareUnit(makeClassTable(1, 4));
 }
 
+static void testRoutineIsCalledAcrossLargeBody()
+{
+    constexpr size_t moreThanReachOfCall = 130 * MB;
+    LaidOutRegExps laidOut;
+    laidOut.sources = { backreferenceSources()[0] };
+    laidOut.regExps.append(compileToCode(laidOut.sources[0]));
+    AOT_TEST_CHECK(laidOut.regExps[0].code[1]->symbols.containsIf([](const RegExpSymbol& symbol) {
+        return WTF::holdsAlternative<Yarr::SharedRoutine>(symbol);
+    }));
+    CompiledRegExp large;
+    large.form = Form::Code;
+    large.code[0] = makeCode({ }, PCRelativeReach::Far, moreThanReachOfCall);
+    large.code[1] = makeCode({ }, PCRelativeReach::Far, sizeof(uint32_t));
+    laidOut.regExps.append(WTF::move(large));
+
+    AssemblerPolicy policy = policyFor(nullptr);
+    auto templates = CodeTemplates::create(policy, nullptr);
+    AOT_TEST_CHECK(templates.has_value());
+    std::optional<RegExpSection> section = layOutRegExpSection(laidOut.regExps.span(), policy, *templates, nullptr);
+    AOT_TEST_CHECK(section.has_value());
+    laidOut.section = WTF::move(*section);
+    AOT_TEST_CHECK(laidOut.section.entries[0][1] > laidOut.section.entries[0][0] + moreThanReachOfCall);
+
+#if OS(LINUX)
+    size_t size = WTF::roundUpToMultipleOf(pageSize(), laidOut.section.bytes.size());
+    auto* code = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(size, OSAllocator::UnknownUsage, nullptr, true, true));
+    memcpySpan(std::span<uint8_t> { code, size }, laidOut.section.bytes.span());
+    MacroAssembler::cacheFlush(code, size);
+    Matcher matcher;
+    matcher.checkAnswers(laidOut, code, mixedSubjects().span());
+    OSAllocator::decommitAndRelease(code, size);
+#endif
+}
+
 static void testLongSubjectAllowsMatchLimitTurns()
 {
     Source source { "^(x+)+y"_s, { } };
@@ -742,6 +777,7 @@ std::span<const NativeTest> regExpImageTests()
         { "regexp-image/only-code-is-placed"_s, testOnlyCodeIsPlaced },
         { "regexp-image/entry-without-code-gives-match-up"_s, testEntryWithoutCodeGivesMatchUp },
         { "regexp-image/users-far-apart-share-unit"_s, testUsersFarApartShareUnit },
+        { "regexp-image/routine-is-called-across-large-body"_s, testRoutineIsCalledAcrossLargeBody },
         { "regexp-image/long-subject-allows-match-limit-turns"_s, testLongSubjectAllowsMatchLimitTurns },
         { "regexp-image/equal-tables-are-one-symbol"_s, testEqualTablesAreOneSymbol },
         { "regexp-image/pointer-immediate-declines"_s, testPointerImmediateDeclines },

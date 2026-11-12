@@ -92,6 +92,12 @@ static ALWAYS_INLINE PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walk
     return onlyValueOfTypeInFolding(walker.types(), walker.typeOf(reference));
 }
 
+Reference Walker::onlyValueOfType(TypeID type)
+{
+    PrimitiveKnownToFolding value = onlyValueOfTypeInFolding(types(), type);
+    return value ? constant(value) : Reference();
+}
+
 Reference Walker::constant(PrimitiveKnownToFolding primitive)
 {
     Draft constant(Opcode::Undefined);
@@ -374,6 +380,11 @@ static PrimitiveKnownToFolding evaluateInFolding(const Program& program, TypeRea
     }
     case Opcode::ToNumber:
     case Opcode::ToNumeric:
+        if (left.isText()) {
+            Vector<char16_t> buffer;
+            return PrimitiveKnownToFolding::number(jsToNumber(viewOfProgramString(texts.bytesOf(left.asText()), buffer)));
+        }
+        [[fallthrough]];
     case Opcode::Negate:
     case Opcode::Increment:
     case Opcode::Decrement:
@@ -559,6 +570,8 @@ static bool areOneClassObjectInFolding(Walker& walker, TypeID left, TypeID right
     Type type = walker.types().at(left);
     FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
     LayoutID classLayout = constructor ? classOfClassObject(walker.program(), constructor) : LayoutID();
+    if (!classLayout)
+        classLayout = classOfConstructorFunction(walker.program(), constructor);
     return classLayout && walker.facts().isEvaluatedAtMostOnce(classLayout);
 }
 
@@ -832,9 +845,20 @@ static const Operation* findTemplateObject(const Walker& walker, Reference objec
     return made.opcode == Opcode::NewTemplateObject ? &made : nullptr;
 }
 
+static const Operation* findTemplateObjectWithRaw(const Walker& walker, Reference object)
+{
+    if (!object || !object.isValue())
+        return nullptr;
+    const Operation& read = walker.code().at(underlyingCellOf(walker.code(), object.id()));
+    return read.opcode == Opcode::GetRawOfTemplateObject ? findTemplateObject(walker, Reference::value(read.templateObjectOperand())) : nullptr;
+}
+
 static Reference partOfTemplateObject(Walker& walker, Reference object, Reference index)
 {
     const Operation* made = index.isConstant() ? findTemplateObject(walker, object) : nullptr;
+    bool isOfRaw = !made && index.isConstant();
+    if (isOfRaw)
+        made = findTemplateObjectWithRaw(walker, object);
     if (!made)
         return { };
     const Operation& key = walker.code().at(index.id());
@@ -845,7 +869,7 @@ static Reference partOfTemplateObject(Walker& walker, Reference object, Referenc
         parts.append(part);
     if (key.integer() < 0 || static_cast<uint64_t>(key.integer()) >= parts.size())
         return { };
-    StringID cooked = parts[key.integer()].cooked;
+    StringID cooked = isOfRaw ? parts[key.integer()].raw : parts[key.integer()].cooked;
     Draft constant(cooked ? Opcode::String : Opcode::Undefined);
     if (cooked)
         constant.setString(cooked);
@@ -857,7 +881,10 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     if (read.isFreeName())
         return { };
     Reference object = walker.referenceOf(read.objectOperand());
-    if (const Operation* made = walker.program().nameClassOf(read.key()) == NameClass::Length ? findTemplateObject(walker, object) : nullptr) {
+    const Operation* made = walker.program().nameClassOf(read.key()) == NameClass::Length ? findTemplateObject(walker, object) : nullptr;
+    if (!made && walker.program().nameClassOf(read.key()) == NameClass::Length)
+        made = findTemplateObjectWithRaw(walker, object);
+    if (made) {
         int64_t numberOfParts = 0;
         for ([[maybe_unused]] TemplateString part : made->templateStrings())
             ++numberOfParts;
@@ -865,6 +892,8 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
         length.setInteger(numberOfParts);
         return walker.constant(WTF::move(length));
     }
+    if (Reference lastIndex = findLastIndexOfMatch(walker, object, read.key()))
+        return lastIndex;
     if (!walker.state().mayHoldPlaceOf(object))
         return propertyOfResultTakenInParts(walker, object, read.key());
     TypeID type = typeToJudgeByInFolding(walker, object);
@@ -927,6 +956,11 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
     case Opcode::PropGet:
         if (Reference earlier = walker.currentBodyIndex().opcodes().contains(Opcode::NarrowByField) ? walker.tagReadInFrontOfTest(value) : Reference())
             return earlier;
+        if (Reference object = !value.isFreeName() && value.key() == walker.program().keyOf(BuiltinNames::raw) ? walker.referenceOf(value.objectOperand()) : Reference(); findTemplateObject(walker, object)) {
+            Draft raw(Opcode::GetRawOfTemplateObject, walker.originOf(value));
+            raw.setTemplateObjectOperand(object);
+            return walker.build(WTF::move(raw));
+        }
         return answerOfNamedReadInFolding(walker, value.as<Opcode::PropGet>());
     case Opcode::ElemGet:
         return elementAnsweredByStateInFolding(walker, value);
@@ -972,9 +1006,16 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     FieldReference field;
     const Code& code = walker.code();
     const Operation& read = code.at(checked.id());
+    bool meetsFirstRead = false;
     if (read.opcode == Opcode::GetModuleVariable)
         variable = read.variable();
-    else if (read.opcode == Opcode::GetEnvironmentField) {
+    else if (read.opcode == Opcode::Parameter) {
+        const BodyIndex& index = walker.currentBodyIndex();
+        ValueID written = index.stripCasts(check.operand(0));
+        if (written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::GetModuleVariable && walker.state().variable(index.value(written).variable()) == checked)
+            variable = index.value(written).variable();
+        meetsFirstRead = !!variable;
+    } else if (read.opcode == Opcode::GetEnvironmentField) {
         ValueID holder = read.operand(OperandIndex::GetEnvironmentField::environment);
         environment = code.isConstant(holder) ? Reference::constant(holder) : Reference::value(holder);
         field = FieldReference { read.layout(), read.field() };
@@ -992,6 +1033,8 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
 
     if (variable)
         noteValueOfStableBinding(walker, variable, passed);
+    if (meetsFirstRead)
+        noteObjectOfVariablePutOff(walker, variable, passed);
     if (environment)
         noteValueOfStableBinding(walker, environment, field, passed);
     WalkState& state = walker.state();

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
 #include "AOTCoroutinePlan.h"
@@ -16,6 +17,7 @@
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
+#include "AOTOpcodeSets.h"
 #include "AOTPromotedEnvironments.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
@@ -670,6 +672,7 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
     if (function.isCoroutine()) {
         add(CodeRole::CoroutineBody);
         convention.coroutineNeverSuspends = isAsyncFunctionInWhichNothingSuspends(program, facts, id);
+        convention.generatorNeverYields = isGeneratorThatNeverYields(program, facts, id);
     }
 }
 
@@ -737,6 +740,70 @@ static Representation formOfParameterInConvention(const Program& program, const 
     return isOptionalNumber ? Representation::OptionalDouble : formOfParameterProvenToBe(program, proven);
 }
 
+static bool isIntegerOfLoopInConvention(const Facts& facts, FunctionID id, unsigned entryParameter, bool hasNoFraction)
+{
+    static constexpr size_t mostNames = 8;
+    static constexpr OpcodeSet accesses { Opcode::ElemGet, Opcode::ElemSet };
+    static constexpr OpcodeSet steps = opcodesThatStateTypes | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::ToNumeric };
+    const BodyIndex* body = facts.bodies().find(id);
+    if (!body || !body->hasLoops() || (!hasNoFraction && !body->holdsAnyOf(accesses)) || entryParameter >= body->block(entryBlock).numberOfParameters())
+        return false;
+    Vector<ValueID, mostNames> names { body->block(entryBlock).parameter(entryParameter) };
+    auto addName = [&](ValueID name) {
+        if (names.size() < mostNames && !names.contains(name))
+            names.append(name);
+    };
+    for (size_t known = 0; known != names.size();) {
+        known = names.size();
+        for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+            BlockID block(number);
+            if (!body->isReachable(block))
+                continue;
+            bool isInLoop = !!body->loopOf(block);
+            for (BodyValue operation : body->block(block).values()) {
+                if (isInLoop && accesses.contains(operation.opcode()) && names.contains(operation.propertyOperand()))
+                    return true;
+                if (steps.contains(operation.opcode()) && names.contains(operation.operand(0)))
+                    addName(operation.id());
+            }
+            for (BodyTarget target : body->terminator(block).targets()) {
+                std::span<const ValueID> arguments = target.arguments();
+                for (uint32_t position = 0; position < arguments.size(); ++position) {
+                    if (!names.contains(arguments[position]) || position >= body->block(target.block()).numberOfParameters())
+                        continue;
+                    if (hasNoFraction && body->isLoopHead(target.block()))
+                        return true;
+                    addName(body->block(target.block()).parameter(position));
+                }
+            }
+        }
+    }
+    return false;
+}
+
+static bool declaresNumberInConvention(const Program& program, const DeclaredType& position)
+{
+    TypeID written = position.written();
+    return written && program.at(written).isNumber() && !program.at(written).isInteger();
+}
+
+static bool returnsValueCarriedByLoop(const Facts& facts, FunctionID id)
+{
+    const BodyIndex* body = facts.bodies().find(id);
+    if (!body || !body->hasLoops())
+        return false;
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        BlockID block(number);
+        BodyTerminator end = body->isReachable(block) ? body->terminator(block) : BodyTerminator();
+        if (!end || end.kind() != TerminatorKind::Return)
+            continue;
+        ValueID returned = body->stripCasts(end.as<TerminatorKind::Return>().valueOperand());
+        if (returned && body->isParameter(returned) && body->isLoopHead(body->blockOf(returned)))
+            return true;
+    }
+    return false;
+}
+
 static void fillFormsOfEntryParameters(const Program& program, const Facts& facts, FunctionID id, bool mayTakeUnboxedNumbers, std::span<Representation> forms)
 {
     const Function& function = program.at(id);
@@ -748,6 +815,8 @@ static void fillFormsOfEntryParameters(const Program& program, const Facts& fact
         bool isPositional = index >= firstPositionalParameter && index - firstPositionalParameter < numberOfPositionalParameters;
         if (mayTakeUnboxedNumbers && isPositional && form == Representation::JSValue && !tellsAbsentFromUndefinedInConvention(program, function.parameters[index - firstPositionalParameter]))
             form = formOfParameterInConvention(program, function.parameters[index - firstPositionalParameter], facts.typeOfEntryParameter(id, index).proven);
+        if (form == Representation::Double && !declaresNumberInConvention(program, function.parameters[index - firstPositionalParameter]) && isIntegerOfLoopInConvention(facts, id, index, program.at(facts.typeOfEntryParameter(id, index).proven).isNumberWithoutFraction()))
+            form = Representation::JSValue;
         forms[index] = form;
     }
 }
@@ -840,6 +909,29 @@ static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTable
     }
 }
 
+static bool returnsWhatIsTakenOutOfList(const Program& program, const ThinSummary& summary, TypeID result)
+{
+    bool takesOut = false;
+    bool mayHaveFraction = program.at(result).primitives & Primitive::FractionalNumber;
+    for (const SummaryEdge& edge : summary.edges) {
+        if (summary.nodes[edge.to].kind != SummaryNode::Kind::Result)
+            continue;
+        const SummaryNode& returned = summary.nodes[edge.from];
+        if (returned.kind == SummaryNode::Kind::ResultOfAccess && !mayHaveFraction && !summary.accesses[returned.first].key) {
+            takesOut = true;
+            continue;
+        }
+        if (returned.kind != SummaryNode::Kind::ResultOfCall)
+            return false;
+        const SummaryCall& call = summary.calls[returned.first];
+        BuiltinName name = call.callee == SummaryCall::Callee::Name && call.key ? program.builtinNameOf(call.key) : BuiltinName();
+        if (name != BuiltinNames::pop && name != BuiltinNames::shift)
+            return false;
+        takesOut = true;
+    }
+    return takesOut;
+}
+
 CallingConventions computeCallingConventions(const Program& program, const Facts& facts, const BitVector& layoutsMadeAsCompiledObjects, const ParallelLoops& loops)
 {
     static_assert(!(indicesInRangeOfLoop % 64));
@@ -884,6 +976,10 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
                 const LinkedFunction& proven = linked.function(id);
                 if (proven.ringsOfTailCallsAreListed && (proven.everyTakerOfResultKnowsCallee || directlyCalledClosures.get(index))) {
                     Representation form = formOfResultProvenToBe(program, proven.result);
+                    if (form == Representation::OptionalDouble && returnsWhatIsTakenOutOfList(program, facts.summaries().at(id), proven.result))
+                        form = Representation::JSValue;
+                    if (form == Representation::Double && !declaresNumberInConvention(program, function.results.last()) && program.at(proven.result).isNumberWithoutFraction() && returnsValueCarriedByLoop(facts, id))
+                        form = Representation::JSValue;
                     if (proven.everyTakerOfResultKnowsCallee || isUnboxedWiderThanInt32(form))
                         formsOfResults.back() = form;
                 }

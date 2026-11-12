@@ -126,6 +126,24 @@ static bool oneBuiltinClassAnswersAllNamesInNarrowingOfGuesses(const Walker& wal
     });
 }
 
+static bool isHandedToMethodOfSubclassInNarrowingOfGuesses(Walker& walker, ValueID input, LayoutID expected)
+{
+    const Program& program = walker.program();
+    const Function& function = program.at(walker.currentFunction());
+    BuiltinClassID base = program.at(expected).writtenBuiltinBase;
+    std::optional<unsigned> receiver = function.thisParameterIndex();
+    TypeID own = base && receiver && *receiver != input.index() ? function.thisType.written() : TypeID();
+    TypeArena& types = walker.types();
+    if (!own || holdsOnlyPrimitives(own) || !types.at(own).hasOnlyLayouts() || types.at(own).hasOnlyClosures() || !std::ranges::contains(membersOf(types, types.at(own).layouts), expected))
+        return false;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID prototype = builtins.at(base).prototype;
+    return prototype && std::ranges::any_of(walker.namesUsedOff(input), [&](PropertyKeyID key) {
+        BuiltinName name = liesInThread(key) || program.nameClassOf(key) == NameClass::Length ? BuiltinName() : program.builtinNameOf(key);
+        return name && builtins.findMember(builtins.canonicalID(prototype), name).outcome != BuiltinMemberLookup::Outcome::Found;
+    });
+}
+
 static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, ValueID input, const BodyValue& definition, TypeID found)
 {
     TypeArena& types = walker.types();
@@ -138,6 +156,8 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
     if (names.empty() || walker.onlyLayoutInSightWithAllNames(names, walker.isInLoop() && names.size() > 1, { }, walker.numberOfLongListOfNamesUsedOff(input, names)) != expected)
         return false;
     if (someCastStatesLayoutInNarrowingOfGuesses(walker, input, expected))
+        return false;
+    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && isHandedToMethodOfSubclassInNarrowingOfGuesses(walker, input, expected))
         return false;
     return std::ranges::none_of(names, [&](PropertyKeyID name) {
         return nameSpeaksForLayoutInNarrowingOfGuesses(walker, name);

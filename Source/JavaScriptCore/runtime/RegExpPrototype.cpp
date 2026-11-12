@@ -826,7 +826,7 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
     ASSERT(StringSplitCache::canBeKey(subject->impl()));
 
     constexpr unsigned atomStringsArrayLimit = 100;
-    bool makeAtomStringsArray = subject->impl()->isAtom() && resultLength < atomStringsArrayLimit;
+    bool makeAtomStringsArray = resultLength < atomStringsArrayLimit;
     Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
     auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultLength);
     if (!newButterfly)

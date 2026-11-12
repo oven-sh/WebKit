@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCollectionIntrinsicEmitter.h"
 #include "AOTCompactTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentation.h"
@@ -134,6 +135,12 @@ Operand HashTableBuiltinEmitter::lookUpByStub(const OperationContext& context, C
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool HashTableBuiltinEmitter::isSoughtAtItsPlace(const OperationContext& context, ValueID key)
+{
+    const Type& type = typeOf(key);
+    return type.isInteger() && type.integers.isSubsetOf(Range::int32()) && context.block() && generator().usesLoopForms(context.block()) && emitter<CollectionIntrinsicEmitter>().isCounterOrSmallNumber(key);
+}
+
 Operand HashTableBuiltinEmitter::search(const OperationContext& context, ValueID collection, ValueID keyOfSearch, HashTableOwner owner, LookupAnswer answer)
 {
     RELEASE_ASSERT(owner == HashTableOwner::Map || answer == LookupAnswer::IsPresent);
@@ -141,7 +148,11 @@ Operand HashTableBuiltinEmitter::search(const OperationContext& context, ValueID
     CellPointer table = cellOperand(collection);
     KeyComparison comparison = keyComparisonForType(typeOf(keyOfSearch));
     Boxed key = normalizedKey(context, keyOfSearch);
-    return lookUpByStub(context, table, key, lookupStubFor(owner, answer, comparison), answer);
+    auto lookUpByHash = [&]() -> Operand { return lookUpByStub(context, table, key, lookupStubFor(owner, answer, comparison), answer); };
+    if (!isSoughtAtItsPlace(context, keyOfSearch))
+        return lookUpByHash();
+    using EntryAnswer = CollectionIntrinsicEmitter::EntryAnswer;
+    return emitter<CollectionIntrinsicEmitter>().lookUpNumberAtItsPlace(table, key, answer == LookupAnswer::Value ? EntryAnswer::Value : EntryAnswer::IsPresent, scopedLambda<Operand()>(lookUpByHash));
 }
 
 Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, ValueID map, ValueID keyOfSearch)
@@ -149,7 +160,10 @@ Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, Valu
     CellPointer table = cellOperand(map);
     KeyComparison comparison = keyComparisonForType(typeOf(keyOfSearch));
     Boxed key = normalizedKey(context, keyOfSearch);
-    return Integer(callStub(context, findKeyInMap(comparison), { table.value(), key.value() }).first);
+    auto lookUpByHash = [&]() -> Operand { return Integer(callStub(context, findKeyInMap(comparison), { table.value(), key.value() }).first); };
+    if (!isSoughtAtItsPlace(context, keyOfSearch))
+        return lookUpByHash().as<Integer>();
+    return emitter<CollectionIntrinsicEmitter>().lookUpNumberAtItsPlace(table, key, CollectionIntrinsicEmitter::EntryAnswer::Place, scopedLambda<Operand()>(lookUpByHash)).as<Integer>();
 }
 
 void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, LookupAnswer answer)

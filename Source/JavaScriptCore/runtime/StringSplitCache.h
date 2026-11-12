@@ -99,15 +99,13 @@ private:
 
     static bool wasSplitBefore(const StringImpl& subject)
     {
-        auto& splitBefore = s_splitOnce[std::bit_cast<uintptr_t>(&subject) / alignof(StringImpl) % s_splitOnce.size()];
-        if (splitBefore.load(std::memory_order_relaxed) == &subject)
-            return true;
-        splitBefore.store(&subject, std::memory_order_relaxed);
-        return false;
+        uintptr_t place = std::bit_cast<uintptr_t>(&subject) / alignof(StringImpl);
+        uint64_t bit = 1ull << (place % 64);
+        return s_splitOnce[place / 64 % s_splitOnce.size()].fetch_or(bit, std::memory_order_relaxed) & bit;
     }
 
-    // The strings are static, so one list serves every thread. A lost entry costs one more split outside the cache.
-    inline static constinit std::array<std::atomic<const StringImpl*>, 64> s_splitOnce { };
+    // A bit for each string that was split. The strings are static, so one list serves every thread. Where two strings share a bit, the second one enters the cache at its first split.
+    inline static constinit std::array<std::atomic<uint64_t>, 128> s_splitOnce { };
 
     std::array<StringEntry, stringCacheSize> m_stringEntries { };
     std::array<RegExpEntry, regExpCacheSize> m_regExpEntries { };

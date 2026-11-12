@@ -341,7 +341,7 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
     Vector<PropertyKeyID, 16> keysDefinedBehind;
     for (size_t index = numberListed; index < fields.size(); ++index) {
         PropertyKeyID key = keyDefinedBehindAllocationInChoices(walker, { layout, fields[index] });
-        if (!key || (hasSlots && !canLeaveSlot(plan.slot(layout, fields[index]).representation))) {
+        if (!key || (hasSlots && !mayBeCreatedByStore(plan.slot(layout, fields[index]).representation))) {
             walker.fail("a field that only an allocation can create stands behind what the allocation can list"_s);
             return false;
         }
@@ -644,6 +644,11 @@ static void becomeObjectOfDataInChoices(Walker& walker, Draft& draft, const Data
 static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
 {
     bool isEmpty = !list.numberOfVariadicOperands() && list.holes().empty();
+    if (isEmpty && walker.appendsDoublesInFusedChain() && walker.has(Mechanism::TypedOperations) && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other) {
+        list.setLiteralStorage(ArrayLiteralStorage::Profiled);
+        list.setArrayStorage(ArrayStorage::Double);
+        return;
+    }
     bool kindIsWritten = list.contents() && !walker.types().at(list.contents()).isAnything() && arrayStorageHolding(walker.types(), list.contents()) == ArrayStorage::Contiguous;
     if (isEmpty && (!kindIsWritten || walker.isInLoop()) && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.program().at(walker.unit().function).isModuleBody()))
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
@@ -655,6 +660,53 @@ static bool elementsMayBeInt32(const Walker& walker, const Draft& list)
         TypeID type = walker.typeOf(element);
         return type && !isNeverType(type) && (walker.types().at(type).primitives & Primitive::Integer);
     });
+}
+
+TypeID Walker::literalElementTypeInLoops(ValueID literal)
+{
+    const BodyIndex& index = currentBodyIndex();
+    const Vector<std::pair<ValueID, TypeID>>& literals = m_literalElementTypes.ensure(&index, [&] {
+        Vector<std::pair<ValueID, TypeID>> found;
+        if (!index.numberOfLoops() || !index.holdsAnyOf(OpcodeSet { Opcode::NewArray }) || !index.holdsAnyOf(OpcodeSet { Opcode::ElemGet }))
+            return found;
+        auto literalUnder = [&](ValueID holder) {
+            ValueID root = index.stripCasts(holder);
+            return root && !index.isParameter(root) && index.opcodeOf(root) == Opcode::NewArray ? root : ValueID();
+        };
+        auto forEachReachableOperation = [&](Opcode opcode, bool inLoops, NOESCAPE const Invocable<void(const BodyValue&, ValueID)> auto& visit) {
+            for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+                if (!index.isReachable(BlockID(number)) || (inLoops && !index.loopOf(BlockID(number))))
+                    continue;
+                for (BodyValue operation : index.block(BlockID(number)).values()) {
+                    if (ValueID root = operation.opcode() == opcode ? literalUnder(operation.objectOperand()) : ValueID())
+                        visit(operation, root);
+                }
+            }
+        };
+        forEachReachableOperation(Opcode::ElemGet, true, [&](const BodyValue& read, ValueID root) {
+            found.append({ root, facts().linked().resultOfReadByKey(currentFunction(), read.id()) });
+        });
+        auto isNoNumber = [&](TypeID type) {
+            return !type || !(m_types.at(type).primitives & Primitive::Number) || !m_types.at(type).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent);
+        };
+        Vector<ValueID, 4> storedInto;
+        if (std::ranges::any_of(found, isNoNumber, &std::pair<ValueID, TypeID>::second)) {
+            forEachReachableOperation(Opcode::ElemSet, false, [&](const BodyValue& store, ValueID root) {
+                ValueID stored = index.stripCasts(store.valueOperand());
+                bool isMoved = stored && !index.isParameter(stored) && (index.opcodeOf(stored) == Opcode::Integer || (index.opcodeOf(stored) == Opcode::ElemGet && literalUnder(index.value(stored).objectOperand()) == root));
+                if (!isMoved)
+                    storedInto.append(root);
+            });
+        }
+        for (auto& [read, type] : found) {
+            if (!storedInto.contains(read) && isNoNumber(type))
+                type = m_types.withPrimitives(TypeTable::int32, Primitive::Undefined);
+        }
+        std::ranges::stable_sort(found, { }, &std::pair<ValueID, TypeID>::first);
+        return found;
+    }).iterator->value;
+    auto place = std::ranges::lower_bound(literals, literal, { }, &std::pair<ValueID, TypeID>::first);
+    return place != literals.end() && place->first == literal ? place->second : TypeID();
 }
 
 static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
@@ -679,7 +731,12 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
     }
     bool numbersAreWritten = holdsNumbersAsWritten && walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked);
     bool isOnlyHandedOn = list.inputValueGiven && walker.currentBodyIndex().hasOneUse(list.inputValueGiven);
-    if (!numbersAreWritten && !isOnlyHandedOn)
+    static constexpr OpcodeSet calls { Opcode::Call, Opcode::Construct };
+    bool isMadeByCall = list.inputValueGiven && !walker.currentBodyIndex().isParameter(list.inputValueGiven) && calls.contains(walker.currentBodyIndex().opcodeOf(list.inputValueGiven));
+    TypeID readInLoops = !numbersAreWritten && !isOnlyHandedOn && list.inputValueGiven ? walker.literalElementTypeInLoops(list.inputValueGiven) : TypeID();
+    bool holdsNumbersInLoops = readInLoops && (walker.types().at(readInLoops).primitives & Primitive::Number) && walker.types().at(readInLoops).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent);
+    holdsNumbersInLoops |= !numbersAreWritten && !isOnlyHandedOn && list.inputValueGiven && walker.loopsPushNumbersOnto(list.inputValueGiven);
+    if (!numbersAreWritten && !isOnlyHandedOn && !holdsNumbersInLoops && !isMadeByCall)
         return;
     bool areInt32 = true;
     bool mayHaveFraction = false;
@@ -693,12 +750,17 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
         areInt32 &= walker.types().at(proven).isInt32();
         mayHaveFraction |= !!(walker.types().at(proven).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
     }
-    if (!areInt32 && !numbersAreWritten && !mayHaveFraction)
+    if (!areInt32 && !numbersAreWritten && !mayHaveFraction) {
+        if (elementsMayBeInt32(walker, list))
+            list.setLiteralStorage(ArrayLiteralStorage::ByElements);
         return;
+    }
     if (!areInt32)
         list.setArrayStorage(ArrayStorage::Double);
-    else if (isOnlyHandedOn)
+    else if (isOnlyHandedOn || holdsNumbersInLoops || isMadeByCall)
         list.setArrayStorage(ArrayStorage::Int32);
+    if (holdsNumbersInLoops)
+        walker.count(StatisticID::ArrayLiteralsAllocatedForLoops);
 }
 
 static unsigned widthOfStorageInChoices(ArrayStorage storage)
@@ -905,65 +967,23 @@ static bool variableHoldsListInChoices(Walker& walker, DataID data)
     return function.isModuleBody() || (body && walker.facts().summaries().at(body).holdsWrittenList(data));
 }
 
-static bool someLoopPushesOntoInChoices(Walker& walker, ValueID literal)
+static bool isOnlyLookedUpInChoices(Walker& walker, const Draft& data)
 {
-    const BodyIndex& index = walker.currentBodyIndex();
-    for (uint32_t number = 0; literal && number < index.numberOfLoops(); ++number) {
-        LoopID loop(number);
-        if (index.loop(loop).parent)
-            continue;
-        for (uint32_t push : walker.pushesOntoLiteralsOf(loop)) {
-            if (index.stripCasts(index.value(ValueID(push)).as<Opcode::Call>().thisValueOperand()) == literal)
-                return true;
-        }
-    }
-    return false;
-}
-
-static bool loopsFillWithNumbersOfCounterInChoices(Walker& walker, ValueID literal)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    if (!literal || !index.hasLoops())
+    const auto* object = walker.program().at(data.data()).root.tryAs<DataNode::Object>();
+    if (!object || !data.inputValueGiven || (walker.program().at(walker.currentFunction()).isModuleBody() && !walker.isInLoop()))
         return false;
-    auto isNumberOfCounter = [&](auto& self, ValueID value, BlockID head, unsigned stepsLeft) -> bool {
-        value = index.stripCasts(value);
-        if (index.isParameter(value))
-            return index.blockOf(value) == head;
-        if (static constexpr OpcodeSet constants { Opcode::Double, Opcode::Integer }; constants.contains(index.opcodeOf(value)))
-            return true;
-        if (!stepsLeft || (!allBitwiseOperators.contains(index.opcodeOf(value)) && !numberProducingOperators.contains(index.opcodeOf(value)) && index.opcodeOf(value) != Opcode::Add))
-            return false;
-        bool isNumber = true;
-        index.value(value).forEachOperand([&](ValueID operand, uint32_t) { isNumber = isNumber && self(self, operand, head, stepsLeft - 1); });
-        return isNumber;
-    };
-    static constexpr unsigned mostSteps = 3;
-    bool isFilled = false;
-    for (uint32_t number = 0; number < index.numberOfLoops(); ++number) {
-        LoopID loop(number);
-        BlockID head = index.loop(loop).head;
-        for (BlockID member : index.membersOf(loop)) {
-            for (BodyValue operation : index.block(member).values()) {
-                bool stores = operation.opcode() == Opcode::ElemSet;
-                bool storesIntoLiteral = stores && index.stripCasts(operation.objectOperand()) == literal;
-                if ((stores && !storesIntoLiteral) || (storesIntoLiteral && (index.loopOf(member) != loop || !isNumberOfCounter(isNumberOfCounter, operation.valueOperand(), head, mostSteps))))
-                    return false;
-                isFilled |= storesIntoLiteral;
-                bool usesLiteral = false;
-                if (!storesIntoLiteral && !opcodesThatStateTypes.contains(operation.opcode()))
-                    operation.forEachOperand([&](ValueID operand, uint32_t) { usesLiteral |= operand && index.stripCasts(operand) == literal; });
-                if (usesLiteral)
-                    return false;
-            }
-        }
-    }
-    return isFilled;
-}
-
-static bool isBornInLoopInChoices(Walker& walker, ValueID literal)
-{
+    if (std::ranges::any_of(object->members, [](const DataMember& member) { return isAggregateOfDataInChoices(member.value); }))
+        return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    return literal && index.hasLoops() && !!index.loopOf(index.blockOf(literal));
+    ValueID literal = data.inputValueGiven;
+    if (index.isParameter(literal) || index.opcodeOf(literal) != Opcode::Data)
+        return false;
+    ValueID user = index.onlyUsingValue(literal);
+    static constexpr OpcodeSet lookups { Opcode::ElemGet, Opcode::ElemHas };
+    if (!user || index.isParameter(user) || !lookups.contains(index.opcodeOf(user)))
+        return false;
+    BodyValue lookup = index.value(user);
+    return lookup.objectOperand() == literal && lookup.propertyOperand() != literal;
 }
 
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
@@ -983,7 +1003,7 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
         bool isStoredInto = ((data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven)) || walker.facts().summaries().storesElementInto(data.data())) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
         if (isStoredInto)
             walker.count(StatisticID::ArrayLiteralsWithOwnStorage);
-        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations() && (someLoopPushesOntoInChoices(walker, data.inputValueGiven) || loopsFillWithNumbersOfCounterInChoices(walker, data.inputValueGiven) || isBornInLoopInChoices(walker, data.inputValueGiven))) {
+        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations()) {
             becomeNodeOfDataInChoices(walker, data, root);
             return;
         }
@@ -993,6 +1013,11 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     data.setEncoding(DataEncoding::ReadOnlyTree);
     if (isAggregateOfDataInChoices(root)) {
         Walker::SurveyOfConstant survey = surveyDataInChoices(walker, data.data());
+        if (survey.tableOfImageHoldsIt && isOnlyLookedUpInChoices(walker, data)) {
+            data.setEncoding(DataEncoding::SharedObject);
+            walker.count(StatisticID::LiteralsSharedByLookups);
+            return;
+        }
         if (survey.tableOfImageHoldsIt && !(survey.allocationsAloneMakeIt && survey.numberOfNodes <= maxNodesOfExpandedData))
             return;
     }

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTMachineFrame.h"
+#include "AOTUnitPlacement.h"
 #include "StackAlignment.h"
 #include <wtf/MathExtras.h>
 
@@ -126,6 +127,21 @@ void describeRangesOfOrigins(const Procedure& procedure, const LinkBuffer& linkB
 void describeRangesOfOperations(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<LinkedRangeOfOrigin>& ranges)
 {
     describeRangesOfCode(procedure, linkBuffer, DescribedRangesPartAt::Operations, ranges);
+}
+
+uint64_t describePlacesInLine(const Procedure& procedure, const LinkBuffer& linkBuffer, uint64_t placesOfPrimaryEntry)
+{
+    uint64_t places = UINT64_MAX;
+    for (const ShortLoop& loop : procedure.shortLoops()) {
+        uint32_t begin = describedOffsetOf(linkBuffer, loop.begin);
+        uint32_t length = describedOffsetOf(linkBuffer, loop.end) - begin;
+        if (length > sizeOfCodeLine / 4 * 3)
+            continue;
+        uint64_t placesOfLoop = std::rotr(UINT64_MAX >> (length - 1), static_cast<int>(begin % sizeOfCodeLine));
+        if (places & placesOfLoop & placesOfPrimaryEntry)
+            places &= placesOfLoop;
+    }
+    return places;
 }
 
 void describeRareCode(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<LinkedRangeOfRareCode>& ranges)
