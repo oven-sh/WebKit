@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinsInReach.h"
 #include "AOTFactRecords.h"
 #include "AOTLayoutsByNames.h"
@@ -101,6 +102,46 @@ struct BuiltinLeftOpen {
     ReasonBuiltinStaysOpen reason { ReasonBuiltinStaysOpen::None };
 };
 
+struct AssignedMember {
+    FunctionID method;
+    FunctionID getter;
+    FunctionID setter;
+    bool isDeclared { false };
+    bool isUnconditional { false };
+    bool holdsValue { false };
+
+    explicit operator bool() const { return method || getter || setter; }
+};
+
+struct AssignedMemberOfClass {
+    std::pair<LayoutID, PropertyKeyID> place() const { return { classLayout, key }; }
+
+    LayoutID classLayout;
+    PropertyKeyID key;
+    AssignedMember member;
+};
+
+class Facts;
+AssignedMember findAssignedMember(const Program&, const Facts&, LayoutID classLayout, PropertyKeyID);
+
+struct BeforeEvaluation {
+    bool holdsIn(FunctionID id) const { return functions.get(id.index()); }
+    TypeID typeOf(VariableID id) const { return id.index() < variables.size() ? variables[id.index()] : TypeID(); }
+    TypeID typeOf(FieldReference reference) const
+    {
+        auto found = std::ranges::lower_bound(fields, reference, { }, &std::pair<FieldReference, TypeID>::first);
+        return found != fields.end() && found->first == reference ? found->second : TypeID();
+    }
+    TypeID resultOf(FunctionID id) const { return id.index() < results.size() ? results[id.index()] : TypeID(); }
+
+    Vector<VariableID, 2> marks;
+    Vector<TypeID> variables;
+    Vector<std::pair<FieldReference, TypeID>> fields;
+    Vector<TypeID> results;
+    BitVector functions;
+    LinkedFirstStores firstStores;
+};
+
 struct FactTables {
     WTF_MAKE_NONCOPYABLE(FactTables);
 public:
@@ -125,7 +166,9 @@ public:
     BitVector functionsTakenToRunOnce;
     FactRows<ClassMember> membersOfClass;
     Vector<uint32_t> placesOfMembersOfClassByKey;
-    BitVector keysOfMembersOfClass;
+    BitVector classMemberKeys;
+    Vector<AssignedMemberOfClass> assignedMembers;
+    BitVector assignedMemberKeys;
     BitVector layoutsThatParsersMayMake;
     LayoutSetID layoutsThatStayWithCompiledCode;
 
@@ -136,12 +179,18 @@ public:
         FunctionID atStart;
     };
     Vector<FunctionGivenToVariable> functionsGivenToVariables;
+    struct FunctionStoredInField {
+        FieldReference field;
+        FunctionID function;
+    };
+    Vector<FunctionStoredInField> functionsStoredInFields;
     BitVector functionsWhoseResultIsReadAsKey;
 
     BitVector constantBuiltinMembers;
     BitVector builtinMembersLockedAtStartUp;
     Vector<BuiltinLeftOpen> builtinMembersLeftOpen;
     Vector<BuiltinID> builtinMembersThatTestsReplace;
+    BitVector builtinHoldersWithOpenMembers;
     BitVector builtinMembersBehindWatch;
     MocksOfProgram mocks;
     BitVector builtinHoldersWhoseKeysAreNeverListed;
@@ -151,6 +200,7 @@ public:
 
     ProgramFactTables program;
 
+    BeforeEvaluation beforeEvaluation;
 };
 
 // "Must be true": the image or the run time is wrong, and not merely slower, where the answer lacks something. An empty list there is a claim.
@@ -197,6 +247,7 @@ public:
     WhatMiddleAloneReads takeWhatMiddleAloneReads() { return { WTF::move(m_bodies), WTF::move(m_summaries), WTF::move(m_families), std::exchange(m_held, { }), std::exchange(m_layoutsByNames, { }) }; }
     void trimSummariesForWalk(const ParallelLoops& loops) { m_summaries->trimForWalk(loops); }
     const BodyIndexTable& bodies() const { return *m_bodies; }
+    const BeforeEvaluation& beforeEvaluation() const LIFETIME_BOUND { return m_tables.beforeEvaluation; }
     FunctionID functionThatCallEntersByBinding(const BodyIndex&, const BodyValue& call, ValueID* checkThatPasses = nullptr) const;
     bool testMentionsWhatIsOutOfReach(TypeReader, TypeID tested, NOESCAPE const ScopedLambda<bool(FunctionID)>& isInReach) const;
     TypeID typeBelievedOfEntryParameter(TypeArena&, FunctionID, unsigned entryParameter, TypeID knownOfCallers) const;
@@ -245,6 +296,7 @@ public:
     bool has(LayoutID id, LayoutFact fact) const { return layout(id).facts.contains(fact); }
     bool parsersMayMake(LayoutID id) const { return m_tables.layoutsThatParsersMayMake.get(id.index()); }
     ClassFacts classOf(LayoutID id) const { return factRecordAt(m_tables.classes, id.index()); }
+    bool isEvaluatedOncePerInstance(LayoutID classLayout) const { return classOf(classLayout).isEvaluatedOncePerInstance; }
     bool isEvaluatedAtMostOnce(LayoutID classLayout) const { return classOf(classLayout).evaluations == ExecutionCount::AtMostOnce; }
     std::span<const ClassMember> membersOf(LayoutID classLayout) const LIFETIME_BOUND { return m_tables.membersOfClass.of(classLayout); }
     JS_EXPORT_PRIVATE std::span<const uint32_t> placesOfMembersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
@@ -254,6 +306,7 @@ public:
     const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtinMembersLockedAtStartUp; }
     std::span<const BuiltinLeftOpen> builtinMembersLeftOpen() const LIFETIME_BOUND { return m_tables.builtinMembersLeftOpen.span(); }
     std::span<const BuiltinID> builtinMembersThatTestsReplace() const LIFETIME_BOUND { return m_tables.builtinMembersThatTestsReplace.span(); }
+    bool hasOpenMember(BuiltinID canonicalHolder) const { return m_tables.builtinHoldersWithOpenMembers.get(canonicalHolder.index()); }
     bool isBehindWatch(BuiltinID member) const { return member && m_tables.builtinMembersBehindWatch.get(member.index()); }
     const MocksOfProgram& mocks() const LIFETIME_BOUND { return m_tables.mocks; }
     bool listsKeysOf(BuiltinID canonicalHolder) const { return !m_tables.builtinHoldersWhoseKeysAreNeverListed.get(canonicalHolder.index()); }
@@ -279,6 +332,7 @@ public:
 
     bool isPathReadByOperation(ModuleID id) const { return !m_tables.modulesWhosePathNoOperationReads.get(id.index()); }
     const FactTables::FunctionGivenToVariable* findFunctionGivenTo(VariableID id) const { return findFactRow(m_tables.functionsGivenToVariables.span(), id.index(), &FactTables::FunctionGivenToVariable::variable); }
+    const FactTables::FunctionStoredInField* findFunctionGivenTo(FieldReference field) const { return findFactRow(m_tables.functionsStoredInFields.span(), field, &FactTables::FunctionStoredInField::field); }
     bool resultIsReadAsKey(FunctionID id) const { return m_tables.functionsWhoseResultIsReadAsKey.get(id.index()); }
 
     bool unseenCodeCanRun() const { return m_tables.program.unseenCodeCanRun; }

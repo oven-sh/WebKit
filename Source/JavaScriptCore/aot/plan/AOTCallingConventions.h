@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
+#include "AOTBitVector.h"
 #include "AOTCodeRole.h"
 #include "AOTID.h"
 #include "AOTOpcode.h"
@@ -20,7 +21,6 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
@@ -118,6 +118,7 @@ struct CallingConventionParts {
 static constexpr unsigned maxArgumentsOfTableCall = 4;
 
 class CallingConventions {
+    friend class FactMisstater;
 public:
     CallingConventions() = default;
     JS_EXPORT_PRIVATE explicit CallingConventions(CallingConventionParts&&);

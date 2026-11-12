@@ -45,6 +45,7 @@ struct KeyOrderParts {
 };
 
 class KeyOrders {
+    friend class FactMisstater;
 public:
     KeyOrders() = default;
     explicit KeyOrders(KeyOrderParts&& parts)

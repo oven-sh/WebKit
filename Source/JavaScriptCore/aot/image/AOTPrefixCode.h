@@ -28,8 +28,14 @@ public:
     static constexpr unsigned endOfStream = 256;
     static constexpr unsigned bitsOfShortWord = 7;
     static constexpr size_t sizeOfShortWords(unsigned bits) { return sizeof(uint16_t) << bits; }
-    static constexpr size_t maxSize(unsigned bits) { return sizeOfShortWords(bits) + maxLength + endOfStream; }
+    static constexpr size_t maxSize(unsigned bits) { return sizeOfShortWords(bits) + sizeof(LongWords) + maxLength + endOfStream; }
     using Counts = std::array<uint32_t, endOfStream>;
+
+    struct LongWords {
+        uint16_t firstWord;
+        uint16_t shortWords;
+    };
+    static_assert(sizeof(LongWords) == 4);
 
     struct Word {
         uint16_t bits { 0 };
@@ -39,8 +45,8 @@ public:
     explicit PrefixCode(const Counts&);
 
     const Word& word(uint8_t byte) const { return m_words[byte]; }
-    unsigned bitsOfShortWords(unsigned most) const;
-    void append(Vector<uint8_t>&, unsigned bitsOfShortWords) const;
+    unsigned shortCodeBits(unsigned most) const;
+    void append(Vector<uint8_t>&, unsigned shortCodeBits) const;
 
 private:
     using Lengths = std::array<uint8_t, endOfStream + 1>;
@@ -165,9 +171,9 @@ public:
             PrefixCode code(countsOfCode);
             for (unsigned byte = 0; byte < PrefixCode::endOfStream; ++byte)
                 m_words[first + byte] = code.word(static_cast<uint8_t>(byte));
-            unsigned bitsOfShortWords = code.bitsOfShortWords(ShortWords::bits(number));
-            writePlace(number, bitsOfShortWords);
-            code.append(m_bytes, bitsOfShortWords);
+            unsigned shortCodeBits = code.shortCodeBits(ShortWords::bits(number));
+            writePlace(number, shortCodeBits);
+            code.append(m_bytes, shortCodeBits);
         }
         writePlace(numberOfCodes, 1);
     }
@@ -206,9 +212,9 @@ public:
     static const uint8_t* endOfCodes(const uint8_t* bytes) { return code(bytes, numberOfCodes).shortWords; }
 
 private:
-    void writePlace(unsigned number, unsigned bitsOfShortWords)
+    void writePlace(unsigned number, unsigned shortCodeBits)
     {
-        uint32_t place = static_cast<uint32_t>(m_bytes.size()) << PrefixCodeView::bitsOfShift | (64 - bitsOfShortWords);
+        uint32_t place = static_cast<uint32_t>(m_bytes.size()) << PrefixCodeView::bitsOfShift | (64 - shortCodeBits);
         memcpy(m_bytes.mutableSpan().data() + number * sizeof(place), &place, sizeof(place));
     }
 
@@ -236,7 +242,7 @@ public:
         unsigned length = shortWord >> 8;
         unsigned byte = shortWord & 0xff;
         if (!length) [[unlikely]] {
-            LongWord word = findLongWord(code.endOfShortWords(), static_cast<unsigned>(m_bits >> (64 - PrefixCode::maxLength)));
+            LongWord word = findLongWord(code.endOfShortWords(), 64 - code.shift, static_cast<unsigned>(m_bits >> (64 - PrefixCode::maxLength)));
             length = word.length;
             byte = word.byte;
         }
@@ -282,11 +288,14 @@ private:
         return next;
     }
 
-    NEVER_INLINE static LongWord findLongWord(const uint8_t* numbersOfWords, unsigned nextBits)
+    NEVER_INLINE static LongWord findLongWord(const uint8_t* endOfShortWords, unsigned shortCodeBits, unsigned nextBits)
     {
-        const uint8_t* bytes = numbersOfWords + PrefixCode::maxLength;
-        unsigned firstWord = 0;
-        for (unsigned length = 1; length <= PrefixCode::maxLength; ++length) {
+        PrefixCode::LongWords longWords;
+        memcpy(&longWords, endOfShortWords, sizeof(longWords));
+        const uint8_t* numbersOfWords = endOfShortWords + sizeof(longWords);
+        const uint8_t* bytes = numbersOfWords + PrefixCode::maxLength + longWords.shortWords;
+        unsigned firstWord = longWords.firstWord;
+        for (unsigned length = shortCodeBits + 1; length <= PrefixCode::maxLength; ++length) {
             unsigned word = nextBits >> (PrefixCode::maxLength - length);
             unsigned number = numbersOfWords[length - 1];
             if (word - firstWord < number)

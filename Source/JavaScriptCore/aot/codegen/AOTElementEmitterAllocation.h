@@ -53,7 +53,13 @@ private:
     std::optional<AppendedBehindSpread> findWhatIsAppendedBehindSpread(BlockID, ValueID literal, ValueID spread);
     CellPointer newLiteralWithRoom(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, Integer room);
     CellPointer newLiteralAtSite(const ValueContext&, const ArrayStorageForm& seed, std::span<const uint32_t> site);
-    CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
+    CellPointer newNumberLiteral(const OperationContext&, std::span<const ValueID> elements);
+    CellPointer newLiteralOfRawElements(const OperationContext&, const ArrayStorageForm&, std::span<const Operand> rawElements);
+    Word32 shapeAtSite(Pointer profile);
+    RawElements numbersOf(std::span<const Operand> int32s);
+    std::optional<Pointer> numberLiteralProfile(const OperationContext&);
+    CellPointer newProfiledInt32Literal(const OperationContext&, std::span<const ValueID> elements, std::span<const Operand> int32s, Pointer profile);
+    CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, bool hasPropertyRoom = false);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray = nullptr);
     const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray);

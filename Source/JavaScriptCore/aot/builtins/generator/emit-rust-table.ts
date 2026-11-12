@@ -439,7 +439,7 @@ function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
   for (const { result, flow } of model.overloads) {
     add(result.properties.map(property => property.name));
     for (const { to } of flow.transfers) {
-      if (to.place === "ResultField") add(namesOfResultField(result, to.index));
+      if (to.place === "ResultField" && !to.isOfElements) add(namesOfResultField(result, to.index));
     }
     for (const { action, key } of flow.propertyActions) {
       if (key.key === "Names" && storingActions.includes(action)) add(key.names);

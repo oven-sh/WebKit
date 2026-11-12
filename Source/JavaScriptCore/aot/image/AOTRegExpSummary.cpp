@@ -179,6 +179,114 @@ static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
     return consumesOnly8BitCharacters(*pattern.m_body, refersToGroup(*pattern.m_body) ? LookaroundContents::Checked : LookaroundContents::Ignored);
 }
 
+static void addOtherCases(WTF::BitSet<256>& characters)
+{
+    for (unsigned letter = 'a'; letter <= 'z'; ++letter) {
+        unsigned upper = toASCIIUpper(letter);
+        if (characters.get(letter) || characters.get(upper)) {
+            characters.set(letter);
+            characters.set(upper);
+        }
+    }
+}
+
+struct FirstCharacters {
+    WTF::BitSet<256> characters { };
+    bool areLatin1 { true };
+};
+
+static bool addCharactersOfClass(const Yarr::PatternTerm& term, FirstCharacters& found)
+{
+    const Yarr::CharacterClass& characterClass = *term.characterClass;
+    if (characterClass.hasStrings())
+        return false;
+    WTF::BitSet<256> held;
+    auto add = [&](char32_t first, char32_t last) {
+        for (char32_t character = first; character <= std::min<char32_t>(last, 0xff); ++character)
+            held.set(character);
+    };
+    if (characterClass.m_anyCharacter)
+        add(0, 0xff);
+    for (char32_t character : characterClass.m_matches8)
+        add(character, character);
+    for (char32_t character : characterClass.m_matches32)
+        add(character, character);
+    for (const Yarr::CharacterRange& range : characterClass.m_ranges8)
+        add(range.begin, range.end);
+    for (const Yarr::CharacterRange& range : characterClass.m_ranges32)
+        add(range.begin, range.end);
+    bool holdsWideCharacter = std::ranges::any_of(characterClass.m_matches32, [](char32_t character) { return character > 0xff; })
+        || std::ranges::any_of(characterClass.m_ranges32, [](const Yarr::CharacterRange& range) { return range.end > 0xff; });
+    found.areLatin1 &= !term.invert() && !characterClass.m_anyCharacter && !holdsWideCharacter && !term.ignoreCase();
+    if (term.ignoreCase()) {
+        if (held.findBit(0x80, true) < 256)
+            return false;
+        addOtherCases(held);
+    }
+    if (term.invert())
+        held.invert();
+    found.characters.merge(held);
+    return true;
+}
+
+static bool addFirstCharacters(const Yarr::PatternAlternative& alternative, size_t firstTerm, FirstCharacters& found)
+{
+    for (const Yarr::PatternTerm& term : alternative.m_terms.span().subspan(firstTerm)) {
+        switch (term.type) {
+        case Yarr::PatternTerm::Type::PatternCharacter: {
+            char32_t character = term.patternCharacter;
+            if (term.ignoreCase()) {
+                if (!isASCII(character))
+                    return false;
+                found.characters.set(toASCIILower(character));
+                found.characters.set(toASCIIUpper(character));
+                found.areLatin1 = false;
+            } else if (character <= 0xff)
+                found.characters.set(character);
+            else
+                found.areLatin1 = false;
+            break;
+        }
+        case Yarr::PatternTerm::Type::CharacterClass:
+            if (!addCharactersOfClass(term, found))
+                return false;
+            break;
+        case Yarr::PatternTerm::Type::ParenthesesSubpattern:
+            for (auto& inner : term.parentheses.disjunction->m_alternatives) {
+                if (!addFirstCharacters(*inner, 0, found))
+                    return false;
+            }
+            break;
+        case Yarr::PatternTerm::Type::AssertionBOL:
+        case Yarr::PatternTerm::Type::AssertionEOL:
+        case Yarr::PatternTerm::Type::AssertionWordBoundary:
+        case Yarr::PatternTerm::Type::NumberedBackReference:
+        case Yarr::PatternTerm::Type::NamedBackReference:
+        case Yarr::PatternTerm::Type::NumberedForwardReference:
+        case Yarr::PatternTerm::Type::NamedForwardReference:
+        case Yarr::PatternTerm::Type::ParentheticalAssertion:
+        case Yarr::PatternTerm::Type::DotStarEnclosure:
+            return false;
+        }
+        if (term.quantityMinCount)
+            return true;
+    }
+    return false;
+}
+
+static std::optional<FirstCharacters> firstCharactersOf(const Yarr::YarrPattern& pattern)
+{
+    if (pattern.multiline() || pattern.m_containsModifiers)
+        return std::nullopt;
+    FirstCharacters found;
+    for (auto& alternative : pattern.m_body->m_alternatives) {
+        auto& terms = alternative->m_terms;
+        if (terms.isEmpty() || terms.first().type != Yarr::PatternTerm::Type::AssertionBOL || !addFirstCharacters(*alternative, 1, found))
+            return std::nullopt;
+    }
+    return found;
+}
+
 static uint64_t groupsPresentInEveryMatch(const Yarr::PatternDisjunction& disjunction)
 {
     if (disjunction.m_alternatives.size() != 1)
@@ -228,6 +336,10 @@ RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, 
     summary.minimumSize = yarrPattern.m_body->m_minimumSize;
     summary.numDuplicateNamedCaptureGroups = yarrPattern.m_numDuplicateNamedCaptureGroups;
     summary.groupsPresentInEveryMatch = yarrPattern.m_numDuplicateNamedCaptureGroups ? 0 : groupsPresentInEveryMatch(*yarrPattern.m_body);
+    if (std::optional<FirstCharacters> first = firstCharactersOf(yarrPattern)) {
+        summary.firstCharacters = first->characters;
+        summary.firstCharactersAreLatin1 = first->areLatin1;
+    }
     summary.specificPattern = yarrPattern.m_specificPattern;
     summary.matchesOnlyWhole8BitSubjects = matchesOnlyWhole8BitSubjects(yarrPattern);
     summary.namedGroups = sortedNamedGroups(yarrPattern);
@@ -292,6 +404,33 @@ const RegExpSummary& RegExpSummaries::summaryOfText(StringView patternText, Opti
     std::unique_ptr<const RegExpSummary> summary = summarizeRegExpWithEnoughStack(patternText, flags, m_parenthesesDepthLimit);
     Locker locker { m_lock };
     return *m_summariesByText.add(WTF::move(key), WTF::move(summary)).iterator->value;
+}
+
+const RegExpMatchPlan* RegExpSummaries::matchPlanOf(StringID pattern, OptionSet<Yarr::Flags> flags, StringView patternText)
+{
+    const RegExpSummary* summary = &summaryOf(pattern, flags, patternText);
+    if (!summary->canBeCreated())
+        return nullptr;
+    {
+        Locker locker { m_lock };
+        auto found = m_matchPlans.find(summary);
+        if (found != m_matchPlans.end())
+            return found->value.get();
+    }
+
+    std::unique_ptr<const RegExpMatchPlan> plan;
+    auto planMatch = [&] {
+        Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
+        Yarr::YarrPattern yarrPattern(patternText, ImageRegExp::significantFlags(flags), error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::CharacterClassForms);
+        RELEASE_ASSERT(!Yarr::hasError(error));
+        plan = planRegExpMatch(yarrPattern);
+    };
+    if (hasStackForRegExpCompiler())
+        planMatch();
+    else
+        runOnBuildThread(planMatch);
+    Locker locker { m_lock };
+    return m_matchPlans.add(summary, WTF::move(plan)).iterator->value.get();
 }
 
 const RegExpSummary* RegExpSummaries::summaryIfComputed(StringID pattern, OptionSet<Yarr::Flags> flags) const

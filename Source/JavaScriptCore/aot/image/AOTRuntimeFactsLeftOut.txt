@@ -19,6 +19,9 @@ OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder) | the body of the accessor of
 OBJECT_OFFSETOF(CompiledStructure, m_layout) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_highBitsOfRareData) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.lowBitsOfRareData) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(RareData, heldExtraProperties) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
 OBJECT_OFFSETOF(Extension, m_granuleBits) | the body of Extension::offsetOfGranuleBits()
 OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number
 OBJECT_OFFSETOF(Plan::FastField, offset) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number

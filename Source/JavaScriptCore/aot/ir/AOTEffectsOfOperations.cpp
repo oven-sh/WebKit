@@ -156,7 +156,7 @@ constexpr auto effectsOfEveryOperationWithRoomForAll = [] {
             continue;
         Effects effects = withDeclaredKindOfThrow(opcode, builder.effects());
         if (opcode == Opcode::PutDoubleIndex || opcode == Opcode::PutOwnDoubleIndex) {
-            uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~markOfElementsThatMayHoldCells;
+            uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~cellHoldingElementsMask;
             effects.writes.remove(AbstractHeapSet { AbstractHeap::Elements });
             effects.writes.add(AbstractHeap::Elements, written);
         }
@@ -193,7 +193,7 @@ static_assert(effectsOfEveryOperation.opcodesNamingOnlyEntireHeaps.contains(Opco
 static_assert([] {
     bool rawStoresLackMarkAlone = true;
     for (Opcode opcode : { Opcode::PutDoubleIndex, Opcode::PutOwnDoubleIndex })
-        rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == (locationMaskOfElementBase(ElementBase::Array) & ~markOfElementsThatMayHoldCells);
+        rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == (locationMaskOfElementBase(ElementBase::Array) & ~cellHoldingElementsMask);
     for (Opcode opcode : { Opcode::PutContiguousIndex, Opcode::PutOwnContiguousIndex, Opcode::PutOwnInt32Index })
         rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == locationMaskOfElementBase(ElementBase::Array);
     return rawStoresLackMarkAlone && std::popcount(locationMaskOfElementBase(ElementBase::Array)) == 2;
@@ -729,9 +729,15 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
 }
 
 template<typename Holder>
+static bool readsInsideListAlone(const Holder& read)
+{
+    return (read.isInBounds() || read.isPresent()) && !read.asksCellWhereNothingIsFound();
+}
+
+template<typename Holder>
 static bool readInsideListOnlyLoadsForEffects(const TypingContext& context, const Holder& read, TypeID result)
 {
-    if ((!read.isInBounds() && !read.isPresent()) || read.asksCellWhereNothingIsFound())
+    if (!readsInsideListAlone(read))
         return false;
     ArrayStorage storage = read.arrayStorage();
     if (storage == ArrayStorage::Contiguous || storage == ArrayStorage::Int32)
@@ -792,7 +798,7 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
     if (opcode == Opcode::NewArrayLike && effects.mayThrow && lengthIsThatOfListForEffects(context, operandTypes))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     if (opcode == Opcode::PutContiguousIndex && operation.hasNumericStorage()) {
-        uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~markOfElementsThatMayHoldCells;
+        uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~cellHoldingElementsMask;
         effects.writes.remove(AbstractHeapSet { AbstractHeap::Elements });
         effects.writes.add(AbstractHeap::Elements, written);
     }
@@ -800,11 +806,16 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     if (opcode == Opcode::Strcat && effects.mayThrow && joinsTextsThatFitForEffects(context, operation, operandTypes))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
-    if (opcode == Opcode::GetArrayElement && readInsideListOnlyLoadsForEffects(context, operation, result)) {
-        LocationMasks reads = effects.reads;
-        reads.remove(heapsThatReadInsideListLeavesAloneForEffects);
-        effects = Effects::none();
-        effects.reads = reads;
+    if (opcode == Opcode::GetArrayElement && readsInsideListAlone(operation)) {
+        bool onlyLoads = readInsideListOnlyLoadsForEffects(context, operation, result);
+        if (onlyLoads || (operation.arrayStorage() == ArrayStorage::Double && result)) {
+            LocationMasks reads = effects.reads;
+            reads.remove(heapsThatReadInsideListLeavesAloneForEffects);
+            effects = Effects::none();
+            effects.reads = reads;
+            if (!onlyLoads)
+                effects.mayThrow = ThrowEffect::stopsProgram();
+        }
     }
     return effects;
 }

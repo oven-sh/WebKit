@@ -205,6 +205,7 @@ struct CompiledFrame {
     bool runsCodeOfFile() const;
     JS_EXPORT_PRIVATE bool isActivationOf(JSCell* function) const;
     std::optional<ModuleID> evaluatingModule() const;
+    std::optional<ModuleID> sourceModule() const;
 
     Instance* instance { nullptr };
     CallFrame* callFrame { nullptr };
@@ -272,6 +273,7 @@ public:
         ASSERT(!m_isAtEnd);
         return m_callSite;
     }
+    const HandlerRecord* exceptionHandler() const { return callSite().exceptionHandler(*m_image); }
 
     JS_EXPORT_PRIVATE void advance();
     JS_EXPORT_PRIVATE void advanceToCallerMachineFrame();

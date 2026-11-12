@@ -47,6 +47,27 @@ void loadExtraProperties(StubAssembler& jit, GPRReg object, GPRReg hiddenWordOff
     decodeCell32(jit, result, result);
 }
 
+void loadExtraPropertiesByStructure(StubAssembler& jit, GPRReg object, GPRReg structure, GPRReg scratch, GPRReg result, JumpList& hasNone)
+{
+    RELEASE_ASSERT(noOverlap(object, structure, scratch) && noOverlap(object, scratch, result));
+    jit.load32(Address(structure, CompiledStructure::offsetOfExtraPropertiesSlot()), scratch);
+    Jump isHeldByStructure = jit.branchTest32(CCallHelpers::Zero, scratch, TrustedImm32(SlotData::maxOffset));
+    jit.and32(TrustedImm32(SlotData::maxOffset), scratch);
+    loadExtraProperties(jit, object, scratch, result, hasNone);
+    Jump isLoaded = jit.jump();
+
+    isHeldByStructure.link(&jit);
+    hasNone.append(jit.branchTest8(CCallHelpers::Zero, Address(structure, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasExtraProperties))));
+    jit.load16(Address(structure, CompiledStructure::offsetOfHighBitsOfRareData()), scratch);
+    jit.lshift64(TrustedImm32(32), scratch);
+    jit.load32(Address(structure, CompiledStructure::offsetOfLowBitsOfRareData()), result);
+    jit.or64(scratch, result);
+    hasNone.append(jit.branchTestPtr(CCallHelpers::Zero, result));
+    jit.loadPtr(Address(result, CompiledStructure::offsetOfHeldExtraPropertiesInRareData()), result);
+    hasNone.append(jit.branchTestPtr(CCallHelpers::Zero, result));
+    isLoaded.link(&jit);
+}
+
 static void loadWordIndex(StubAssembler& jit, const CachedSlot& slot, GPRReg result)
 {
     slot.loadSecondPayloadWord(jit, result);

@@ -66,6 +66,8 @@ Range computeResultRange(BuiltinRangeRule rule, std::span<const Range> operandRa
         return first;
     case BuiltinRangeRule::Sign:
         return { signOfRangeBound(first.minimum), signOfRangeBound(first.maximum) };
+    case BuiltinRangeRule::CodeUnitOrNaN:
+        return { 0, UINT16_MAX };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -74,6 +76,7 @@ static TypeID typeOfRuledResultOfFractions(TypeArena& types, const BuiltinOverlo
 {
     switch (overload.result.rangeRule) {
     case BuiltinRangeRule::None:
+    case BuiltinRangeRule::CodeUnitOrNaN:
         break;
     case BuiltinRangeRule::MinimumOfArguments:
     case BuiltinRangeRule::MaximumOfArguments:
@@ -95,6 +98,8 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
     const BuiltinResult& result = overload.result;
     if (result.rangeRule == BuiltinRangeRule::None || !result.rangeOperand)
         return declared;
+    if (result.rangeRule == BuiltinRangeRule::CodeUnitOrNaN)
+        return context.types.intersectionOf(context.types.withPrimitives(context.types.integer({ 0, UINT16_MAX }), Primitive::WholeNumber), declared);
     if (result.rangeRule == BuiltinRangeRule::IntegerPart)
         declared = context.types.intersectionOf(TypeArena::fromPrimitives(Primitive::NumberWithoutFraction), declared);
 

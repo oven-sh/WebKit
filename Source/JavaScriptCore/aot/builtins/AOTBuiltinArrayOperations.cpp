@@ -12,6 +12,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
+#include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
@@ -19,6 +20,7 @@
 #include "AOTState.h"
 #include "ArrayPrototypeInlines.h"
 #include "ButterflyInlines.h"
+#include "CPUFeatureSet.h"
 #include "DeferTermination.h"
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
@@ -37,6 +39,9 @@
 #include <wtf/Atomics.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
+#if CPU(X86_64)
+#include <immintrin.h>
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -131,6 +136,89 @@ static RefPtr<StringImpl> joinStrings(const WriteBarrier<Unknown>* elements, uns
     return joined;
 }
 
+template<typename CharacterType, bool hasSeparator>
+static ALWAYS_INLINE JSString* joinFewStrings(VM& vm, StringImpl* const* string, StringImpl* const* endOfStrings, Latin1Character separator, unsigned joinedLength)
+{
+    std::span<CharacterType> buffer;
+    RefPtr<StringImpl> joined = StringImpl::tryCreateUninitialized(joinedLength, buffer);
+    if (!joined) [[unlikely]]
+        return nullptr;
+    CharacterType* end = buffer.data();
+    for (;;) {
+        const StringImpl& appended = **string;
+        unsigned length = appended.length();
+        auto append = [&](const auto* source) ALWAYS_INLINE_LAMBDA {
+            _Pragma("clang loop vectorize(disable) unroll(disable)")
+            for (unsigned unit = 0; unit < length; ++unit)
+                end[unit] = source[unit];
+        };
+        if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
+            if (length > sizeof(uint64_t))
+                memcpy(end, appended.span8().data(), length);
+            else
+                append(appended.span8().data());
+        } else if (appended.is8Bit())
+            append(appended.span8().data());
+        else if (length == 2)
+            WTF::unalignedStore<uint32_t>(end, WTF::unalignedLoad<uint32_t>(appended.span16().data()));
+        else if (length > sizeof(uint32_t))
+            memcpy(end, appended.span16().data(), length * sizeof(char16_t));
+        else
+            append(appended.span16().data());
+        end += length;
+        if (++string == endOfStrings)
+            break;
+        if constexpr (hasSeparator)
+            *end++ = separator;
+    }
+    return jsNontrivialString(vm, String { joined.releaseNonNull() });
+}
+
+template<bool hasSeparator>
+static NEVER_INLINE JSString* tryJoinFewStrings(VM& vm, JSArray* array, Latin1Character separator)
+{
+    static constexpr unsigned mostStrings = 16;
+    static constexpr unsigned mostUnits = 512;
+    Butterfly& butterfly = *array->butterfly();
+    unsigned count = butterfly.publicLength();
+    if (count < 2 || count > mostStrings)
+        return nullptr;
+    std::array<StringImpl*, mostStrings> strings;
+    StringImpl** endOfStrings = strings.data();
+    unsigned units = hasSeparator ? count - 1 : 0;
+    unsigned sharedFlags = StringImpl::flagIs8Bit();
+    auto* element = butterfly.contiguous().data();
+    auto* endOfElements = element + count;
+    do {
+        JSValue value = element->get();
+        if (!value || !value.isString())
+            return nullptr;
+        StringImpl* impl = asString(value)->tryGetValueImpl();
+        if (!impl || impl->length() > mostUnits)
+            return nullptr;
+        *endOfStrings++ = impl;
+        units += impl->length();
+        sharedFlags &= impl->is8Bit() ? StringImpl::flagIs8Bit() : 0;
+    } while (++element != endOfElements);
+    if (units < 2 || units > mostUnits)
+        return nullptr;
+    return sharedFlags ? joinFewStrings<Latin1Character, hasSeparator>(vm, strings.data(), endOfStrings, separator, units) : joinFewStrings<char16_t, hasSeparator>(vm, strings.data(), endOfStrings, separator, units);
+}
+
+static ALWAYS_INLINE JSString* tryJoinFewStrings(VM& vm, JSArray* array, JSString* separatorOrNull)
+{
+    if (!hasContiguous(array->indexingType())) [[unlikely]]
+        return nullptr;
+    if (!separatorOrNull)
+        return tryJoinFewStrings<true>(vm, array, ',');
+    StringImpl* separator = separatorOrNull->tryGetValueImpl();
+    if (!separator || separator->length() > 1)
+        return nullptr;
+    if (!separator->length())
+        return tryJoinFewStrings<false>(vm, array, 0);
+    return separator->is8Bit() ? tryJoinFewStrings<true>(vm, array, separator->span8()[0]) : nullptr;
+}
+
 static bool holdsOnlyHoles(JSArray* array)
 {
     Butterfly& butterfly = *array->butterfly();
@@ -140,12 +228,10 @@ static bool holdsOnlyHoles(JSArray* array)
     return std::ranges::all_of(std::span { butterfly.contiguous().data(), length }, [](const WriteBarrier<Unknown>& element) { return !element; });
 }
 
-static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
+static NEVER_INLINE JSString* tryJoinElements(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (vm.stringRecursionCheckFirstObject) [[unlikely]]
-        return nullptr;
     EnsureStillAliveScope arrayScope(array);
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);
@@ -208,6 +294,16 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
     }
 }
 
+static ALWAYS_INLINE JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
+{
+    VM& vm = globalObject->vm();
+    if (vm.stringRecursionCheckFirstObject) [[unlikely]]
+        return nullptr;
+    if (JSString* joined = tryJoinFewStrings(vm, array, separatorOrNull))
+        return joined;
+    return tryJoinElements(globalObject, array, separatorOrNull);
+}
+
 JSString* tryConvertListToString(JSGlobalObject* globalObject, JSArray* array)
 {
     return array->isToPrimitiveFastAndNonObservable() ? tryJoin(globalObject, array, nullptr) : nullptr;
@@ -233,7 +329,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayJoinOfAnyReceiver, EncodedJSValue, (In
     MarkedArgumentBuffer arguments;
     arguments.append(separator);
     ASSERT(!arguments.hasOverflowed());
-    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), receiver, arguments)));
+    JSValue joined = call(globalObject, function, JSC::getCallData(function), receiver, arguments);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (!joined.isString()) [[unlikely]]
+        stopAtHostResult(*instance, AOT_OPERATION_FRAME_RECORD(), joined, function, kindsOfHostResult(HostResult::String));
+    OPERATION_RETURN(scope, JSValue::encode(joined));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayToStringOfAnyReceiver, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, JSCell* function))
@@ -353,11 +453,51 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfDouble, size_t, (Insta
     return found ? found - data : static_cast<size_t>(-1);
 }
 
+#if CPU(X86_64)
+__attribute__((target("avx2"))) static const uint64_t* findWithAVX2(const uint64_t* data, uint64_t searched, size_t length)
+{
+    const __m256i target = _mm256_set1_epi64x(static_cast<long long>(searched));
+    size_t index = 0;
+    for (; index + 16 <= length; index += 16) {
+        auto* cursor = reinterpret_cast<const __m256i*>(data + index);
+        __m256i first = _mm256_cmpeq_epi64(_mm256_loadu_si256(cursor), target);
+        __m256i second = _mm256_cmpeq_epi64(_mm256_loadu_si256(cursor + 1), target);
+        __m256i third = _mm256_cmpeq_epi64(_mm256_loadu_si256(cursor + 2), target);
+        __m256i fourth = _mm256_cmpeq_epi64(_mm256_loadu_si256(cursor + 3), target);
+        __m256i any = _mm256_or_si256(_mm256_or_si256(first, second), _mm256_or_si256(third, fourth));
+        if (_mm256_testz_si256(any, any)) [[likely]]
+            continue;
+        uint32_t found = _mm256_movemask_pd(_mm256_castsi256_pd(first)) | _mm256_movemask_pd(_mm256_castsi256_pd(second)) << 4
+            | _mm256_movemask_pd(_mm256_castsi256_pd(third)) << 8 | _mm256_movemask_pd(_mm256_castsi256_pd(fourth)) << 12;
+        return data + index + std::countr_zero(found);
+    }
+    for (; index + 4 <= length; index += 4) {
+        __m256i equal = _mm256_cmpeq_epi64(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + index)), target);
+        if (uint32_t found = _mm256_movemask_pd(_mm256_castsi256_pd(equal)))
+            return data + index + std::countr_zero(found);
+    }
+    for (; index < length; ++index) {
+        if (data[index] == searched)
+            return data + index;
+    }
+    return nullptr;
+}
+#endif
+
+static const uint64_t* findBox(const uint64_t* data, uint64_t searched, size_t length)
+{
+#if CPU(X86_64)
+    if (CPUFeatureSet::host().contains(CPUFeature::AVX2))
+        return findWithAVX2(data, searched, length);
+#endif
+    return WTF::find64(data, searched, length);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instance*, JSCell* array, EncodedJSValue searched))
 {
     Butterfly& butterfly = *cellArgument<JSArray>(array, Entry::operationAOTArrayIndexOfInt32)->butterfly();
     auto* data = std::bit_cast<const uint64_t*>(butterfly.contiguous().data());
-    const uint64_t* found = WTF::find64(data, searched, butterfly.publicLength());
+    const uint64_t* found = findBox(data, searched, butterfly.publicLength());
     return found ? found - data : static_cast<size_t>(-1);
 }
 
@@ -371,6 +511,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayIndexOfString, size_t, (Instance* inst
     const WriteBarrier<Unknown>* elements = hasContiguous(array->indexingType()) ? array->butterfly()->contiguous().data() : nullptr;
     if (!elements && !hasAnyArrayStorage(array->indexingType()))
         OPERATION_RETURN(scope, notFound);
+    if (elements && isCopyOnWrite(array->indexingMode()) && JSCellButterfly::isOnlyAtomStringsStructure(vm, array->butterfly())) {
+        auto searched = searchString->toExistingAtomString(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
+        AtomStringImpl* atom = searched.data;
+        bool isKnownAtomicWord = atom && ((atom->length() == 1 && atom->at(0) <= maxSingleCharacterString) || vm.atomStringToJSStringMap.contains(atom));
+        for (uint64_t index = start, length = isKnownAtomicWord ? array->length() : 0; index < length; ++index) {
+            if (asString(elements[index].get())->getValueImpl() == atom)
+                OPERATION_RETURN(scope, index);
+        }
+        OPERATION_RETURN(scope, notFound);
+    }
     unsigned searchLength = searchString->length();
     for (uint64_t index = start, length = array->length(); index < length; ++index) {
         JSValue element = elements ? elements[index].get() : array->getDirectIndex(globalObject, static_cast<unsigned>(index));
@@ -475,18 +626,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* in
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(length + 1)));
 }
 
-static constexpr unsigned bitsOfSortDigit = 11;
-static constexpr unsigned numberOfSortDigits = 1 << bitsOfSortDigit;
+static constexpr unsigned radixDigitBits = 11;
+static constexpr unsigned radixDigitCount = 1 << radixDigitBits;
 
-template<typename Key> static constexpr size_t minLengthSortedByDigits = sizeof(Key) > sizeof(uint32_t) ? 2048 : 512;
+template<typename Key> static constexpr size_t minRadixSortedLength = sizeof(Key) > sizeof(uint32_t) ? 2048 : 512;
 
 template<typename Key>
-static std::span<Key> sortKeysByDigits(std::span<Key> keys, std::span<Key> scratch)
+static std::span<Key> radixSortKeys(std::span<Key> keys, std::span<Key> scratch)
 {
-    constexpr unsigned numberOfPasses = (sizeof(Key) * CHAR_BIT + bitsOfSortDigit - 1) / bitsOfSortDigit;
-    using CountsOfPass = std::array<uint32_t, numberOfSortDigits>;
+    constexpr unsigned numberOfPasses = (sizeof(Key) * CHAR_BIT + radixDigitBits - 1) / radixDigitBits;
+    using CountsOfPass = std::array<uint32_t, radixDigitCount>;
     auto digitOf = [](Key key, unsigned pass) -> unsigned {
-        return static_cast<unsigned>(key >> (pass * bitsOfSortDigit)) & (numberOfSortDigits - 1);
+        return static_cast<unsigned>(key >> (pass * radixDigitBits)) & (radixDigitCount - 1);
     };
     void* memory = nullptr;
     if (!tryFastZeroedMalloc(numberOfPasses * sizeof(CountsOfPass)).getValue(memory))
@@ -514,7 +665,7 @@ static std::span<Key> sortKeysByDigits(std::span<Key> keys, std::span<Key> scrat
 template<typename Key, typename Element>
 static bool sortElementsByKey(std::span<Element> elements, NOESCAPE const auto& tryMakeKey, NOESCAPE const auto& elementOf)
 {
-    bool usesDigits = elements.size() >= minLengthSortedByDigits<Key> && elements.size() <= std::numeric_limits<uint32_t>::max();
+    bool usesDigits = elements.size() >= minRadixSortedLength<Key> && elements.size() <= std::numeric_limits<uint32_t>::max();
     void* memory = nullptr;
     if (!tryFastMalloc((usesDigits ? 2 : 1) * elements.size() * sizeof(Key)).getValue(memory))
         return false;
@@ -524,7 +675,7 @@ static bool sortElementsByKey(std::span<Element> elements, NOESCAPE const auto& 
         hasKeys = tryMakeKey(elements[i], keys[i]);
     std::span<Key> sorted;
     if (hasKeys && usesDigits)
-        sorted = sortKeysByDigits(keys, std::span { static_cast<Key*>(memory) + elements.size(), elements.size() });
+        sorted = radixSortKeys(keys, std::span { static_cast<Key*>(memory) + elements.size(), elements.size() });
     else if (hasKeys) {
         std::sort(keys.begin(), keys.end());
         sorted = keys;
@@ -601,7 +752,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayIterator, JSCell*, (Instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayIterator);
     DeferTerminationForAWhile deferTermination(vm);
     RELEASE_ASSERT(kind <= static_cast<uint32_t>(IterationKind::Entries));
+    prepareInlineAllocation<JSArrayIterator>(instance, InlineAllocation::ArrayIterator, globalObject->arrayIteratorStructure());
     return JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), cellArgument<JSObject>(array, Entry::operationAOTNewArrayIterator), static_cast<IterationKind>(kind));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayAtGeneric, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue position))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayAtGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayAtGeneric);
+    double length = array->length();
+    double place = JSValue::decode(position).toIntegerOrInfinity(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (place < 0)
+        place += length;
+    if (!(place >= 0 && place < length))
+        OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+    OPERATION_RETURN(scope, JSValue::encode(array->getIndex(globalObject, static_cast<unsigned>(place))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopGeneric, EncodedJSValue, (Instance* instance, JSCell* cell))
@@ -613,6 +779,90 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopGeneric, EncodedJSValue, (Instance*
     if (!canPopDirectly || mayRejectOrInterceptWrites(array)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePop, array)));
     OPERATION_RETURN(scope, JSValue::encode(array->pop(globalObject)));
+}
+
+static constexpr uint64_t mostElementsConcatenated = 4 * maxLengthForElementwiseCopy;
+
+static JSArray* tryConcatFast(VM& vm, JSGlobalObject* globalObject, JSArray* first, JSValue argument)
+{
+    auto isPlain = [&](JSArray* array) {
+        return array->isPristine() && array->structure()->realm() == globalObject;
+    };
+    JSArray* second = argument.isCell() && argument.asCell()->type() == ArrayType ? asArray(argument) : nullptr;
+    if ((!second && argument.isObject()) || !isPlain(first) || (second && !isPlain(second)) || globalObject->isHavingABadTime() || globalObject->arrayIsConcatSpreadableWatchpointSet().state() != IsWatched)
+        return nullptr;
+
+    struct Part {
+        IndexingType shape;
+        unsigned length;
+        const uint64_t* elements;
+    };
+    auto partOf = [](JSArray* array) -> std::optional<Part> {
+        IndexingType shape = array->indexingType() & IndexingShapeMask;
+        if (shape != UndecidedShape && shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
+            return std::nullopt;
+        unsigned length = array->butterfly()->publicLength();
+        if (shape == UndecidedShape && length)
+            return std::nullopt;
+        return Part { shape, length, array->butterfly()->indexingPayload<uint64_t>() };
+    };
+    uint64_t element = JSValue::encode(argument);
+    std::optional<Part> head = partOf(first);
+    std::optional<Part> tail;
+    if (second)
+        tail = partOf(second);
+    else if (argument.isInt32())
+        tail = Part { Int32Shape, 1, &element };
+    else if (argument.isDouble() && argument.asDouble() == argument.asDouble()) {
+        element = std::bit_cast<uint64_t>(argument.asDouble());
+        tail = Part { DoubleShape, 1, &element };
+    } else
+        tail = Part { ContiguousShape, 1, &element };
+    if (!head || !tail)
+        return nullptr;
+    uint64_t count = static_cast<uint64_t>(head->length) + tail->length;
+    if (count > mostElementsConcatenated)
+        return nullptr;
+    static_assert(UndecidedShape < Int32Shape && Int32Shape < DoubleShape && DoubleShape < ContiguousShape);
+    IndexingType shape = std::max<IndexingType>(Int32Shape, !head->length ? tail->shape : !tail->length ? head->shape : std::max(head->shape, tail->shape));
+
+    Structure* structure = globalObject->originalArrayStructureForIndexingType(static_cast<IndexingType>(IsArray | shape));
+    unsigned vectorLength = std::max(static_cast<unsigned>(count) | 1, Butterfly::optimalContiguousVectorLength(structure, static_cast<unsigned>(count)));
+    JSArray* result = tryCreateArrayWithStorage(vm, structure, static_cast<unsigned>(count), vectorLength);
+    if (!result)
+        return nullptr;
+    uint64_t* target = result->butterfly()->indexingPayload<uint64_t>();
+    for (const Part* part : { &*head, &*tail }) {
+        if (part->shape == shape)
+            std::copy_n(part->elements, part->length, target);
+        else if (part->length) {
+            std::transform(part->elements, part->elements + part->length, target, [&](uint64_t element) {
+                JSValue value;
+                if (part->shape == DoubleShape) {
+                    double number = std::bit_cast<double>(element);
+                    value = number == number ? JSValue(JSValue::EncodeAsDouble, number) : JSValue();
+                } else
+                    value = JSValue::decode(element);
+                if (shape == ContiguousShape)
+                    return static_cast<uint64_t>(JSValue::encode(value));
+                return std::bit_cast<uint64_t>(value ? static_cast<double>(value.asInt32()) : PNaN);
+            });
+        }
+        target += part->length;
+    }
+    vm.mutatorFence();
+    ensureStillAliveHere(first);
+    ensureStillAliveHere(argument);
+    return result;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayConcatGeneric, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue argument))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayConcatGeneric);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayConcatGeneric);
+    if (JSArray* result = tryConcatFast(vm, globalObject, array, JSValue::decode(argument))) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeConcat, array, JSValue::decode(argument))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayShiftGeneric, EncodedJSValue, (Instance* instance, JSCell* cell))

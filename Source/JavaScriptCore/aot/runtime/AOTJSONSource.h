@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTJSONHooks.h"
 #include "AOTJSONWords.h"
 #include <span>
 #include <wtf/ForbidHeapAllocation.h>
@@ -27,9 +28,9 @@ class JSONSourceScope {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(JSONSourceScope);
 public:
-    ALWAYS_INLINE JSONSourceScope(Instance& instance, StringView text)
+    ALWAYS_INLINE JSONSourceScope(Instance& instance, StringView text, JSONTextMemory memory)
         : m_instance(instance)
-        , m_isOpen(open(text, currentStackPointer()))
+        , m_isOpen(open(text, memory, currentStackPointer()))
     {
     }
 
@@ -39,7 +40,7 @@ public:
     const uint8_t* start() const;
 
 private:
-    bool open(StringView, void* stackPointer);
+    bool open(StringView, JSONTextMemory, void* stackPointer);
 
     Instance& m_instance;
     bool m_isOpen;

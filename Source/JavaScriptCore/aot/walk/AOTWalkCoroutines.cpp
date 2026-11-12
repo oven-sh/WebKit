@@ -30,6 +30,8 @@ bool walkRampOfCoroutine(Walker&);
 Reference addDriverParameterOfCoroutine(Walker&, BlockID entry);
 Reference convertReturnedValueOfCoroutine(Walker&, Reference returned, Origin);
 Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
+Reference buildAwaitOfElement(Walker&, Reference awaited, std::span<const Reference> held, Origin);
+Reference buildAwaitOfResolution(Walker&, Reference resolution, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
 bool engineAnswersAboveGenerators(const Walker&);
@@ -114,7 +116,7 @@ Reference buildSuspensionInCoroutine(Walker& walker, Draft&& suspension)
     return buildSuspensionOfCoroutine(walker, WTF::move(suspension));
 }
 
-Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin)
+static Reference buildAwaitInCoroutine(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin, bool readsThenInFrame)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
     if (!body || body->kind == CoroutineKind::Generator) {
@@ -129,6 +131,32 @@ Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<c
     await.setAwaitedOperand(awaited);
     await.setPromiseOperand(body->driver);
     await.setHeldOperands(held);
+    await.setReadsThenInFrame(readsThenInFrame);
+    return buildSuspensionOfCoroutine(walker, WTF::move(await));
+}
+
+Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin)
+{
+    return buildAwaitInCoroutine(walker, awaited, held, origin, false);
+}
+
+Reference buildAwaitOfElement(Walker& walker, Reference element, std::span<const Reference> held, Origin origin)
+{
+    return buildAwaitInCoroutine(walker, element, held, origin, true);
+}
+
+Reference buildAwaitOfResolution(Walker& walker, Reference resolution, std::span<const Reference> held, Origin origin)
+{
+    std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
+    if (!body || body->kind != CoroutineKind::AsyncFunction) {
+        walker.fail("the resolution of a promise is awaited where no frame of an async function can be saved"_s);
+        return { };
+    }
+    Draft await = draftForCoroutine(walker, Opcode::AwaitBySavingFrame, origin);
+    await.setAwaitedOperand(resolution);
+    await.setPromiseOperand(body->driver);
+    await.setHeldOperands(held);
+    await.setAwaitsResolution(true);
     return buildSuspensionOfCoroutine(walker, WTF::move(await));
 }
 
@@ -432,6 +460,9 @@ bool replaceCoroutineOperation(Walker& walker, const BodyValue& value)
     Reference built;
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(value.id()));
+    std::optional<Walker::HeardAsArm> heardAsArm;
+    if (walker.isInLoop() && walker.walksOwnBodyOfUnit() && awaitsInSomeIteration(index, value.id()))
+        heardAsArm.emplace(walker);
     if (opcode == Opcode::Await) {
         if (runTimeAwaitsWhatCoroutineYields(walker) && findYieldThatAloneTakesAwaitOfCoroutine(index, block, value.id())) {
             walker.bind(value.id(), written.valueOperand());
@@ -554,10 +585,9 @@ bool walkRampOfCoroutine(Walker& walker)
     if (isGenerator)
         result = driver;
     else if (neverSuspends) {
-        result = walker.build(draftForCoroutine(walker, Opcode::NewPromise, origin));
-        if (!result)
-            return false;
-        resolvePromiseThatNothingHasTaken(walker, result, started, true, origin);
+        return buildReturnsOfPromise(walker, started, origin, scopedLambda<bool(Reference)>([&](Reference promise) {
+            return endBlockOfCoroutine(walker, TerminatorKind::Return, promise, origin);
+        }));
     }
     return endBlockOfCoroutine(walker, TerminatorKind::Return, result, origin);
 }

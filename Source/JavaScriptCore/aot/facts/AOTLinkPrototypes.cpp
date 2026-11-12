@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTIRProgram.h"
 #include "AOTNameClass.h"
@@ -72,6 +73,7 @@ static uint64_t wordOfNameInLinkPrototypes(LayoutID layout, PropertyKeyID key)
 
 void LinkFlow::indexConstructorFunctions()
 {
+    indexRootsOfClassRows();
     size_t numberOfLayouts = program.layouts.size();
     for (BitVector* byLayout : { &m_layoutsOfConstructorFunctions, &m_layoutsBelowConstructorFunctions, &m_layoutsWithFollowedPrototypes, &m_layoutsBelowFollowedPrototypes, &m_prototypesPassedByLookups, &m_prototypesWithDefinitions, &m_prototypesAboveLostLayouts, &m_prototypesPassedByNumbers })
         byLayout->ensureSize(numberOfLayouts);
@@ -96,6 +98,19 @@ void LinkFlow::indexConstructorFunctions()
             m_layoutsBelowConstructorFunctions.quickSet(below.index());
             noteConstructorFunctionAbove(below, LayoutID(index));
         }
+    }
+
+    m_prototypeHelperCandidates.ensureSize(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const ThinSummary& summary = summaries.at(FunctionID(index));
+        auto isOfParameter = [&](uint32_t node) {
+            return node != noSummaryNode && summary.nodes[node].kind == SummaryNode::Kind::Parameter;
+        };
+        bool laysPrototype = std::ranges::any_of(summary.accesses, [&](const SummaryAccess& access) {
+            return access.kind == SummaryAccess::Kind::Store && access.key == program.keyOf(BuiltinNames::prototype) && isOfParameter(access.subject);
+        });
+        if (laysPrototype || std::ranges::contains(summary.changes, SummaryChange::Kind::ChangesPrototype, &SummaryChange::kind))
+            m_prototypeHelperCandidates.quickSet(index);
     }
 
     BitVector classesWithFollowedPrototypes = findClassesWithFollowedPrototypes();
@@ -135,6 +150,11 @@ static LayoutID classNamedAtInLinkPrototypes(const Program& program, FunctionID 
     LayoutID constructed = constructor && isClassConstructorOf(program.at(constructor).kind) ? program.at(constructor).constructedClass : LayoutID();
     bool isClass = constructed && program.at(constructed).kind == LayoutKind::Instance && program.at(constructed).constructor == constructor && !program.at(constructed).has(LayoutFlags::IsConstructorFunction);
     return isClass ? constructed : LayoutID();
+}
+
+LayoutID LinkFlow::findClassNamedAt(FunctionID asker, const SummaryNode& node) const
+{
+    return classNamedAtInLinkPrototypes(program, asker, node);
 }
 
 bool LinkFlow::instancesMayHoldName(LayoutID layout, PropertyKeyID key) const
@@ -207,7 +227,24 @@ bool LinkFlow::mayBeDefinedUnderUnknownKeyOnPrototypeOf(LayoutID layout, Propert
     return underSomeKey->isDefinedByDescriptor || (underSomeKey->isDefinedUnderSomeSymbol && (!key || program.at(key).kind != PropertyKeyKind::Text));
 }
 
-bool LinkFlow::mayLieOnPrototypeAbove(LayoutID layout, PropertyKeyID key, bool countsKeysThatNobodyKnows) const
+bool LinkFlow::hasOnlyPrimitives(const NameOnPrototype& name) const
+{
+    if (!name.key || !name.isStoredInto || name.mayHoldAccessor() || escapedLayouts.get(name.layout.index()))
+        return false;
+    const LinkType& stored = typeAt(name.stored);
+    return stored.objects == LinkType::Objects::None && stored.functions == LinkType::Functions::None && stored.classes == LinkType::Classes::None
+        && !stored.builtin && !stored.hasUnknownObjects && !stored.holdsLostBuiltins;
+}
+
+bool LinkFlow::hasNoFunctionsInSight(const NameOnPrototype& name) const
+{
+    if (!name.key || !name.isStoredInto || name.mayHoldAccessor())
+        return false;
+    const LinkType& stored = typeAt(name.storedInSight);
+    return stored.functions == LinkType::Functions::None && !stored.builtin && !stored.hasDirectUnknownObjects() && !stored.holdsLostBuiltins && stored.objects != LinkType::Objects::Lost;
+}
+
+bool LinkFlow::mayLieOnPrototypeAbove(LayoutID layout, PropertyKeyID key, bool countsKeysThatNobodyKnows, PrimitivesOnPrototypes primitives) const
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     if (!isBelowFollowedPrototype(layout))
@@ -217,7 +254,8 @@ bool LinkFlow::mayLieOnPrototypeAbove(LayoutID layout, PropertyKeyID key, bool c
         if (!followsNamesOnPrototypeOf(current))
             continue;
         const NameOnPrototype* underKey = findNameOnPrototype(current, key);
-        if (underKey && (underKey->isStoredInto || underKey->mayHoldAccessor()))
+        bool isIgnored = underKey && primitives != PrimitivesOnPrototypes::Count && (hasOnlyPrimitives(*underKey) || (primitives == PrimitivesOnPrototypes::AreIgnoredWithObjects && hasNoFunctionsInSight(*underKey)));
+        if (underKey && !isIgnored && (underKey->isStoredInto || underKey->mayHoldAccessor()))
             return true;
         if (!countsKeysThatNobodyKnows || !m_prototypesWithDefinitions.get(current.index()))
             continue;
@@ -281,13 +319,15 @@ void LinkFlow::noteInstancesLaidAsPrototype(const LinkType& laid)
     });
 }
 
-FlowNodeID LinkFlow::storedOnPrototypeOf(LayoutID layout, PropertyKeyID key, bool isLaidByBodyOfFile)
+FlowNodeID LinkFlow::storedOnPrototypeOf(LayoutID layout, PropertyKeyID key, bool isLaidByBodyOfFile, bool isDefinition)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     RELEASE_ASSERT(key);
     uint32_t record = recordOfNameOnPrototype(layout, key);
     if (!isLaidByBodyOfFile)
         m_namesOnPrototypes[record].isStoredIntoFromOutside = true;
+    if (isDefinition)
+        m_namesOnPrototypes[record].isDefinedInSight = true;
     if (!std::exchange(m_namesOnPrototypes[record].isStoredInto, true)) {
         auto noteFieldBelow = [&](LayoutID below) {
             if (std::optional<uint32_t> field = program.at(below).findField(key))
@@ -508,6 +548,72 @@ void LinkFlow::lookForSetterOnPrototypesAbove(LayoutID layout, PropertyKeyID key
     forEachPrototypePassedAbove(layout, key, [](uint32_t) { });
 }
 
+FunctionID parentConstructorOf(const Program& program, FunctionID function)
+{
+    const Function& record = program.at(function);
+    auto isConstructorFunction = [&](FunctionID constructor, LayoutID classLayout) {
+        const Function& constructing = program.at(constructor);
+        return program.at(classLayout).kind == LayoutKind::Instance && program.at(classLayout).has(LayoutFlags::IsConstructorFunction) && program.at(classLayout).constructor == constructor && constructing.constructedClass == classLayout && constructing.takesThisFromConstruction();
+    };
+    LayoutID made = record.constructedClass;
+    LayoutID above = made && isConstructorFunction(function, made) ? program.at(made).base : LayoutID();
+    FunctionID parent = above ? program.at(above).constructor : FunctionID();
+    return parent && parent != function && isConstructorFunction(parent, above) && program.at(parent).hasBody() && !program.at(parent).isCoroutine() ? parent : FunctionID();
+}
+
+bool LinkFlow::answersNothing(FunctionID function) const
+{
+    const ThinSummary& summary = summaries.at(function);
+    return std::ranges::all_of(summary.edges, [&](const SummaryEdge& edge) {
+        const SummaryNode& from = summary.nodes[edge.from];
+        return summary.nodes[edge.to].kind != SummaryNode::Kind::Result || (from.kind == SummaryNode::Kind::Constant && TypeID::fromBits(from.first) == TypeID(TypeTable::undefined));
+    });
+}
+
+bool LinkFlow::answersOwnThis(FunctionID function) const
+{
+    const Function& record = program.at(function);
+    const ThinSummary& summary = summaries.at(function);
+    std::optional<unsigned> thisParameter = record.thisParameterIndex();
+    if (!record.hasBody() || record.isCoroutine() || summary.has(SummaryTrait::HasDirectEval))
+        return false;
+    auto answersThis = [&](uint32_t node, auto&& self, unsigned stepsLeft) -> bool {
+        const SummaryNode& answered = summary.nodes[node];
+        switch (answered.kind) {
+        case SummaryNode::Kind::Parameter:
+            return thisParameter && answered.first == *thisParameter;
+        case SummaryNode::Kind::Constant:
+            return TypeID::fromBits(answered.first) == TypeID(TypeTable::undefined);
+        case SummaryNode::Kind::ResultOfCall:
+            return summary.calls[answered.first].continuesConstruction && answersOwnThis(parentConstructorOf(program, function));
+        case SummaryNode::Kind::Join:
+            return stepsLeft && std::ranges::all_of(summary.edges, [&](const SummaryEdge& edge) {
+                return edge.to != node || self(edge.from, self, stepsLeft - 1);
+            });
+        default:
+            return false;
+        }
+    };
+    static constexpr unsigned mostJoinsFollowed = 8;
+    return std::ranges::all_of(summary.edges, [&](const SummaryEdge& edge) {
+        return summary.nodes[edge.to].kind != SummaryNode::Kind::Result || answersThis(edge.from, answersThis, mostJoinsFollowed);
+    });
+}
+
+void LinkFlow::noteConstructionLeavesParent(FunctionID function)
+{
+    LayoutID made = layoutOfConstructorFunction(function);
+    if (!made)
+        return;
+    auto leaveFieldsEmpty = [&](LayoutID layout) {
+        for (uint32_t field = 0; field < program.at(layout).fields.size(); ++field)
+            noteFieldMayBeEmpty({ layout, field });
+    };
+    leaveFieldsEmpty(made);
+    for (LayoutID below : program.layoutsExpectedBelow(made))
+        leaveFieldsEmpty(below);
+}
+
 bool LinkFlow::mayNotBeLinkedYetBelow(LayoutID from, LayoutID classAbove) const
 {
     if (!isBelowConstructorFunction(from))
@@ -524,6 +630,15 @@ FlowNodeID LinkFlow::objectsMadeThroughConstructorOf(LayoutID layout)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     auto added = m_nodesOfObjectsMadeThroughConstructors.add(layout.index(), UINT32_MAX);
+    if (added.isNewEntry)
+        added.iterator->value = makeNode().index();
+    return FlowNodeID(added.iterator->value);
+}
+
+FlowNodeID LinkFlow::objectsMadeBySuperCallsOf(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    auto added = m_nodesOfObjectsMadeBySuperCalls.add(layout.index(), UINT32_MAX);
     if (added.isNewEntry)
         added.iterator->value = makeNode().index();
     return FlowNodeID(added.iterator->value);
@@ -1053,6 +1168,1146 @@ bool LinkFlow::CopiesOfMembers::lay()
 bool LinkFlow::layMembersThatCopiesBring()
 {
     return CopiesOfMembers(*this).lay();
+}
+
+class LinkFlow::PrototypeHelperReader {
+public:
+    PrototypeHelperReader(const LinkFlow& flow, FunctionID id)
+        : m_flow(flow)
+        , m_program(flow.program)
+        , m_id(id)
+        , m_function(flow.program.at(id))
+        , m_summary(flow.summaries.at(id))
+        , m_operands(m_summary.nodes.size())
+        , m_prototypeKey(flow.program.keyOf(BuiltinNames::prototype))
+    {
+    }
+
+    PrototypeHelper read();
+
+private:
+    using Operand = PrototypeHelper::Operand;
+    using Step = PrototypeHelper::Step;
+
+    Operand operandAt(uint32_t node) const { return node == noSummaryNode ? Operand() : m_operands[node]; }
+    bool isOther(uint32_t node) const { return operandAt(node).isOther(); }
+    bool mayPass(const Operand&, TypeID passes) const;
+    FunctionID functionKeptIn(VariableID);
+    FunctionID findFunctionKeptIn(VariableID) const;
+    FunctionID functionCapturedBy(FunctionID, uint32_t capture) const;
+    FunctionID functionNamedBy(FunctionID user, uint32_t node);
+    FunctionID functionNamedBy(uint32_t node) { return node == noSummaryNode ? FunctionID() : functionNamedBy(m_id, node); }
+    bool isUsedElsewhere(FunctionID surrogate);
+    bool nothingRunsBetween(ValueID first, ValueID last) const;
+    bool isConstructionBySurrogate(const SummaryCall&);
+    bool isCreation(const SummaryCall& call) const { return call.callee == SummaryCall::Callee::Builtin && m_program.builtins().canonicalID(call.builtin) == m_program.builtins().canonicalID(Builtins::ObjectCreate); }
+    bool setsPrototype(const SummaryCall&) const;
+    bool findOperands();
+    bool hasNoOtherEffect() const;
+    bool readAccess(const SummaryAccess&);
+    bool readChange(const SummaryChange&);
+    bool readDefinition(const SummaryChange&);
+    bool readCall(uint32_t call);
+    bool asksOwnName(const SummaryCall&);
+    bool readsCopiedName(const SummaryAccess&) const;
+    bool copiesName(const SummaryAccess&);
+    bool readResult();
+    bool isUsedOutsideResult(uint32_t node) const;
+    bool isKnownNonFunction(const SummaryCall&, uint32_t argument) const;
+    bool isOnlyLaid(uint32_t node) const;
+    bool findObjectsLaid(uint32_t node, Vector<uint32_t, 2>& calls);
+    bool takeObjectLaid(Operand child, uint32_t call);
+    bool takeStoresOfSurrogate(Operand child, FunctionID surrogate);
+    void add(Step step)
+    {
+        m_helper.steps.append(step);
+    }
+
+    const LinkFlow& m_flow;
+    const Program& m_program;
+    FunctionID m_id;
+    const Function& m_function;
+    const ThinSummary& m_summary;
+    Vector<Operand, 32> m_operands;
+    PropertyKeyID m_prototypeKey;
+    PrototypeHelper m_helper;
+    struct ParentOfSurrogate {
+        Operand parent;
+        ValueID site;
+    };
+    HashMap<uint32_t, ParentOfSurrogate, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parentsOfSurrogates;
+    HashMap<uint32_t, FunctionID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_functionsKeptInVariables;
+    Vector<uint32_t, 2> m_constructionsLaid;
+    HashMap<std::pair<uint32_t, uint32_t>, Operand, DefaultHash<std::pair<uint32_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_captures;
+};
+
+bool LinkFlow::PrototypeHelperReader::mayPass(const Operand& operand, TypeID passes) const
+{
+    if (!passes || operand.kind == Operand::Kind::Unknown)
+        return true;
+    LinkType held;
+    if (operand.kind == Operand::Kind::Parameter) {
+        held.functions = LinkType::Functions::Closure;
+        held.function = m_id;
+    } else
+        held.hasUnknownObjects = true;
+    return !m_flow.passedBy(held, passes).isNever();
+}
+
+FunctionID LinkFlow::PrototypeHelperReader::findFunctionKeptIn(VariableID id) const
+{
+    const Variable& variable = m_program.at(id);
+    const Module& module = m_program.at(variable.module);
+    if (variable.owner || !variable.flags.contains(VariableFlags::IsImmutable) || !module.body || module.kind == ModuleKind::RuntimeSource
+        || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
+        return { };
+    if (std::ranges::contains(module.exports, id, &ModuleExport::variable) || std::ranges::contains(module.syntheticExports, id, &SyntheticExport::variable))
+        return { };
+    for (const EvalScope& scope : m_program.evalScopes) {
+        if (std::ranges::contains(scope.bindings, id, &EvalBinding::variable))
+            return { };
+    }
+    if (variable.initialization == VariableInitialization::Function)
+        return variable.function;
+    FunctionID kept;
+    const ThinSummary& body = m_flow.summaries.at(module.body);
+    for (const SummaryEdge& edge : body.edges) {
+        if (body.nodes[edge.to] != SummaryNode { SummaryNode::Kind::Variable, id.index(), 0 })
+            continue;
+        if (kept || body.nodes[edge.from].kind != SummaryNode::Kind::Closure)
+            return { };
+        kept = FunctionID(body.nodes[edge.from].first);
+    }
+    return kept;
+}
+
+FunctionID LinkFlow::PrototypeHelperReader::functionKeptIn(VariableID id)
+{
+    return m_functionsKeptInVariables.ensure(id.index(), [&] { return findFunctionKeptIn(id); }).iterator->value;
+}
+
+FunctionID LinkFlow::PrototypeHelperReader::functionCapturedBy(FunctionID closure, uint32_t capture) const
+{
+    const DeclaredCapture& declared = m_program.at(closure).captures[capture];
+    return declared.isEstablished() && declared.written() ? singleFunctionOf(TypeReader(m_program), m_program.at(declared.written())) : FunctionID();
+}
+
+FunctionID LinkFlow::PrototypeHelperReader::functionNamedBy(FunctionID user, uint32_t index)
+{
+    const SummaryNode& node = m_flow.summaries.at(user).nodes[index];
+    switch (node.kind) {
+    case SummaryNode::Kind::Closure:
+        return FunctionID(node.first);
+    case SummaryNode::Kind::Variable:
+        return functionKeptIn(VariableID(node.first));
+    case SummaryNode::Kind::Capture:
+        return functionCapturedBy(node.second ? FunctionID(node.second - 1) : user, node.first);
+    default:
+        return { };
+    }
+}
+
+bool LinkFlow::PrototypeHelperReader::isUsedElsewhere(FunctionID surrogate)
+{
+    ModuleID module = m_program.at(surrogate).module;
+    for (uint32_t other = 0; other < m_program.functions.size(); ++other) {
+        FunctionID user(other);
+        if (m_program.at(user).module != module || user == m_id || !m_program.at(user).hasBody())
+            continue;
+        const ThinSummary& summary = m_flow.summaries.at(user);
+        for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
+            if (functionNamedBy(user, index) != surrogate)
+                continue;
+            for (const SummaryEdge& edge : summary.edges) {
+                if (edge.from != index)
+                    continue;
+                if (functionNamedBy(user, edge.to) != surrogate)
+                    return true;
+            }
+            auto isUsed = [&](auto&&... operands) { return ((operands == index) || ...); };
+            if (std::ranges::any_of(summary.accesses, [&](const SummaryAccess& access) { return isUsed(access.subject, access.receiver, access.value, access.keyNode, access.emptyHolderOrKeyPrefix); })
+                || std::ranges::any_of(summary.calls, [&](const SummaryCall& call) { return isUsed(call.subject, call.receiver, call.newTarget, call.waitsFor); })
+                || std::ranges::any_of(summary.changes, [&](const SummaryChange& change) { return isUsed(change.subject, change.other, change.keyNode, change.getter, change.getterInSight, change.setterInSight, change.valueInSight); })
+                || std::ranges::any_of(summary.copiesOfMembers, [&](const SummaryCopyOfMembers& copy) { return isUsed(copy.target, copy.source); })
+                || std::ranges::any_of(summary.operators, [&](const SummaryOperator& found) { return isUsed(found.operands[0], found.operands[1]); })
+                || std::ranges::any_of(summary.inspections, [&](const ThinSummary::Inspection& inspection) { return isUsed(inspection.subject); })
+                || std::ranges::any_of(summary.members, [&](const SummaryMember& member) { return isUsed(member.value); })
+                || std::ranges::contains(summary.arguments, index))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool LinkFlow::PrototypeHelperReader::nothingRunsBetween(ValueID first, ValueID last) const
+{
+    auto runsBetween = [&](const auto& found) { return found.site && found.site.index() > first.index() && found.site.index() < last.index(); };
+    return std::ranges::none_of(m_summary.accesses, runsBetween) && std::ranges::none_of(m_summary.calls, runsBetween) && std::ranges::none_of(m_summary.changes, runsBetween) && std::ranges::none_of(m_summary.operators, runsBetween);
+}
+
+bool LinkFlow::PrototypeHelperReader::isConstructionBySurrogate(const SummaryCall& call)
+{
+    return call.callee == SummaryCall::Callee::Value && call.isConstruction && !call.passesList && !call.numberOfArguments && functionNamedBy(call.subject)
+        && (call.newTarget == noSummaryNode || functionNamedBy(call.newTarget) == functionNamedBy(call.subject));
+}
+
+bool LinkFlow::PrototypeHelperReader::setsPrototype(const SummaryCall& call) const
+{
+    if (call.callee != SummaryCall::Callee::Builtin)
+        return false;
+    BuiltinID called = m_program.builtins().canonicalID(call.builtin);
+    return called == m_program.builtins().canonicalID(Builtins::ObjectSetPrototypeOf) || called == m_program.builtins().canonicalID(Builtins::ReflectSetPrototypeOf);
+}
+
+bool LinkFlow::PrototypeHelperReader::findOperands()
+{
+    for (uint32_t index = 0; index < m_summary.nodes.size(); ++index) {
+        const SummaryNode& node = m_summary.nodes[index];
+        if (node.kind == SummaryNode::Kind::Parameter && m_function.entryParameterKind(node.first) == EntryParameter::Parameter && node.first - m_function.firstParameterIndex() < m_function.numberOfPositionalParameters())
+            m_operands[index] = { Operand::Kind::Parameter, node.first };
+    }
+    auto meet = [&](uint32_t node, const Operand& operand) {
+        Operand met = m_operands[node].isOther() || m_operands[node] == operand ? operand : Operand { Operand::Kind::Unknown, 0 };
+        return std::exchange(m_operands[node], met) != met;
+    };
+    for (bool grows = true; std::exchange(grows, false);) {
+        for (const SummaryEdge& edge : m_summary.edges) {
+            const Operand from = m_operands[edge.from];
+            if (from.isOther() || !mayPass(from, edge.passes))
+                continue;
+            const SummaryNode& to = m_summary.nodes[edge.to];
+            if (to.kind == SummaryNode::Kind::Join || to.kind == SummaryNode::Kind::Result)
+                grows |= meet(edge.to, from);
+            else if (to.kind == SummaryNode::Kind::Capture && to.second) {
+                auto added = m_captures.add({ to.second - 1, to.first }, from);
+                if (!added.isNewEntry && added.iterator->value != from)
+                    return false;
+            } else
+                return false;
+        }
+        for (uint32_t index = 0; index < m_summary.nodes.size(); ++index) {
+            const SummaryNode& node = m_summary.nodes[index];
+            if (node.kind != SummaryNode::Kind::ResultOfAccess)
+                continue;
+            const SummaryAccess& access = m_summary.accesses[node.first];
+            if (access.kind == SummaryAccess::Kind::Read && !access.isToContents() && access.key == m_prototypeKey && operandAt(access.subject).kind == Operand::Kind::Parameter)
+                grows |= meet(index, { Operand::Kind::PrototypeOfParameter, operandAt(access.subject).parameter });
+        }
+    }
+    for (const SummaryEdge& edge : m_summary.edges) {
+        if (m_operands[edge.to].isOther() || !m_operands[edge.from].isOther() || m_summary.nodes[edge.to].kind == SummaryNode::Kind::Result)
+            continue;
+        const SummaryNode& from = m_summary.nodes[edge.from];
+        if (from.kind != SummaryNode::Kind::Constant || !holdsOnlyPrimitives(TypeID::fromBits(from.first)))
+            m_operands[edge.to] = { Operand::Kind::Unknown, 0 };
+    }
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::hasNoOtherEffect() const
+{
+    bool copiesOnlyOperands = std::ranges::all_of(m_summary.copiesOfMembers, [&](const SummaryCopyOfMembers& copy) {
+        return operandAt(copy.target).kind == Operand::Kind::Parameter && operandAt(copy.source).kind == Operand::Kind::Parameter;
+    });
+    if (!copiesOnlyOperands || !m_summary.members.isEmpty() || !m_summary.placesOfWrittenLists.isEmpty() || !m_summary.namesThatLoaderTakes.isEmpty() || !m_summary.namesThatHostLooksFor.isEmpty() || !m_summary.handlers.isEmpty())
+        return false;
+    for (const SummaryOperator& found : m_summary.operators) {
+        for (uint32_t operand : found.operands) {
+            if (!isOther(operand))
+                return false;
+        }
+        for (uint32_t converted : found.converted) {
+            if (!isOther(converted))
+                return false;
+        }
+    }
+    return std::ranges::all_of(m_summary.inspections, [&](const ThinSummary::Inspection& inspection) {
+        return operandAt(inspection.subject).kind == Operand::Kind::Other || operandAt(inspection.subject).kind == Operand::Kind::Parameter;
+    });
+}
+
+bool LinkFlow::PrototypeHelperReader::readsCopiedName(const SummaryAccess& read) const
+{
+    uint32_t place = static_cast<uint32_t>(&read - &m_summary.accesses[0]);
+    uint32_t result = noSummaryNode;
+    for (uint32_t index = 0; index < m_summary.nodes.size(); ++index) {
+        if (m_summary.nodes[index].kind == SummaryNode::Kind::ResultOfAccess && m_summary.nodes[index].first == place)
+            result = index;
+    }
+    if (read.key || operandAt(read.subject).kind != Operand::Kind::Parameter)
+        return false;
+    if (result == noSummaryNode)
+        return true;
+    auto isResult = [&](auto... operands) { return ((operands == result) || ...); };
+    return std::ranges::none_of(m_summary.edges, [&](const SummaryEdge& edge) { return edge.from == result; }) && !std::ranges::contains(m_summary.arguments, result)
+        && std::ranges::all_of(m_summary.accesses, [&](const SummaryAccess& access) {
+            return !isResult(access.subject, access.receiver, access.keyNode, access.emptyHolderOrKeyPrefix) && (!isResult(access.value) || access.kind == SummaryAccess::Kind::Read || (access.kind == SummaryAccess::Kind::Store && !access.key && access.isCopySpelledByLoop));
+        })
+        && std::ranges::none_of(m_summary.calls, [&](const SummaryCall& call) { return isResult(call.subject, call.receiver, call.newTarget, call.waitsFor); })
+        && std::ranges::none_of(m_summary.changes, [&](const SummaryChange& change) { return isResult(change.subject, change.other, change.keyNode, change.getter, change.getterInSight, change.setterInSight, change.valueInSight); })
+        && std::ranges::none_of(m_summary.operators, [&](const SummaryOperator& found) { return isResult(found.operands[0], found.operands[1], found.converted[0], found.converted[1]); });
+}
+
+bool LinkFlow::PrototypeHelperReader::copiesName(const SummaryAccess& store)
+{
+    if (store.key || !store.isCopySpelledByLoop || operandAt(store.subject).kind != Operand::Kind::Parameter || store.value == noSummaryNode || m_summary.nodes[store.value].kind != SummaryNode::Kind::ResultOfAccess)
+        return false;
+    const SummaryAccess& read = m_summary.accesses[m_summary.nodes[store.value].first];
+    Operand parent = operandAt(read.subject);
+    bool isRead = read.kind == SummaryAccess::Kind::Read && !read.isToContents() && !read.key && read.keyNode == store.keyNode && parent.kind == Operand::Kind::Parameter;
+    bool isSpelled = std::ranges::any_of(m_summary.changes, [&](const SummaryChange& change) {
+        return change.site == store.site && change.kind == SummaryChange::Kind::CopiesInto && change.isSpelledByLoop && operandAt(change.subject) == operandAt(store.subject) && operandAt(change.other) == parent;
+    });
+    if (!isRead || !isSpelled)
+        return false;
+    Step step;
+    step.kind = Step::Kind::CopiesNames;
+    step.object = operandAt(store.subject);
+    step.value = parent;
+    add(step);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::asksOwnName(const SummaryCall& call)
+{
+    if (call.callee != SummaryCall::Callee::Name || call.isConstruction || call.passesList || call.isMadeByProtocol || call.passesOnGatheredArguments || call.subject != noSummaryNode || call.receiver == noSummaryNode || !isOther(call.newTarget) || !isOther(call.waitsFor))
+        return false;
+    bool isCallOfHeldBuiltin = call.key == m_program.keyOf(BuiltinNames::call) && isOther(call.receiver) && call.numberOfArguments;
+    if (!isCallOfHeldBuiltin && (call.key != m_program.keyOf(BuiltinNames::hasOwnProperty) || m_flow.someBodyStoresHasOwnProperty()))
+        return false;
+    uint32_t asked = isCallOfHeldBuiltin ? m_summary.arguments[call.firstArgument] : call.receiver;
+    if (operandAt(asked).kind != Operand::Kind::Parameter)
+        return false;
+    for (uint32_t argument = isCallOfHeldBuiltin ? 1 : 0; argument < call.numberOfArguments; ++argument) {
+        if (!isOther(m_summary.arguments[call.firstArgument + argument]))
+            return false;
+    }
+    Step step;
+    step.kind = Step::Kind::AsksOwnName;
+    step.object = operandAt(asked);
+    if (isCallOfHeldBuiltin)
+        step.stored = m_flow.nodeOf(m_id, call.receiver);
+    add(step);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::isUsedOutsideResult(uint32_t node) const
+{
+    auto names = [&](uint32_t named) {
+        return named == node;
+    };
+    return std::ranges::any_of(m_summary.edges, [&](const SummaryEdge& edge) { return names(edge.from) && m_summary.nodes[edge.to].kind != SummaryNode::Kind::Result; }) || std::ranges::any_of(m_summary.arguments, names)
+        || std::ranges::any_of(m_summary.accesses, [&](const SummaryAccess& access) { return names(access.subject) || names(access.receiver) || names(access.keyNode) || (names(access.value) && access.kind != SummaryAccess::Kind::Read); })
+        || std::ranges::any_of(m_summary.calls, [&](const SummaryCall& call) { return names(call.subject) || names(call.receiver) || names(call.newTarget) || names(call.waitsFor); })
+        || std::ranges::any_of(m_summary.changes, [&](const SummaryChange& change) { return names(change.subject) || names(change.other); })
+        || std::ranges::any_of(m_summary.operators, [&](const SummaryOperator& found) { return std::ranges::any_of(found.operands, names); });
+}
+
+bool LinkFlow::PrototypeHelperReader::isKnownNonFunction(const SummaryCall& call, uint32_t argument) const
+{
+    const BodyIndex* index = call.site ? bodiesLookedAt(m_flow.looks).find(m_id) : nullptr;
+    if (!index || index->isParameter(call.site) || index->opcodeOf(call.site) != Opcode::Call)
+        return false;
+    auto arguments = index->value(call.site).as<Opcode::Call>().argumentsOperands();
+    if (argument >= arguments.size())
+        return false;
+    ValueID value = arguments[argument];
+    while (value) {
+        if (!index->isParameter(value)) {
+            Opcode opcode = index->opcodeOf(value);
+            if (opcode != Opcode::Convert && opcode != Opcode::NarrowByTest)
+                return false;
+            value = index->value(value).operand(opcode == Opcode::Convert ? 0 : OperandIndex::NarrowByTest::left);
+            continue;
+        }
+        ValueID subject = index->valueNarrowedInto(value);
+        std::optional<BodyIncomingEdge> edge = subject ? index->onlyIncomingEdge(index->blockOf(value)) : std::nullopt;
+        if (!edge)
+            return false;
+        BodyTerminator end = index->terminator(edge->from);
+        if (end.kind() == TerminatorKind::Branch && edge->targetIndex == 1) {
+            ValueID condition = end.as<TerminatorKind::Branch>().conditionOperand();
+            if (condition && !index->isParameter(condition) && index->opcodeOf(condition) == Opcode::TypeTest && index->value(condition).as<Opcode::TypeTest>().testedType() == TypeID(TypeTable::function))
+                return true;
+        }
+        value = subject;
+    }
+    return false;
+}
+
+bool LinkFlow::PrototypeHelperReader::isOnlyLaid(uint32_t node) const
+{
+    Vector<uint32_t, 4> names { node };
+    for (size_t place = 0; place < names.size(); ++place) {
+        for (const SummaryEdge& edge : m_summary.edges) {
+            if (edge.from != names[place])
+                continue;
+            if (m_summary.nodes[edge.to].kind != SummaryNode::Kind::Join)
+                return false;
+            if (!names.contains(edge.to))
+                names.append(edge.to);
+        }
+    }
+    auto isNamed = [&](auto... operands) { return (names.contains(operands) || ...); };
+    return std::ranges::none_of(m_summary.arguments, isNamed)
+        && std::ranges::all_of(m_summary.accesses, [&](const SummaryAccess& access) {
+            bool isLaid = access.kind == SummaryAccess::Kind::Store && !access.isToContents() && access.key == m_prototypeKey && operandAt(access.subject).kind == Operand::Kind::Parameter;
+            return !isNamed(access.subject, access.receiver, access.keyNode, access.emptyHolderOrKeyPrefix) && (isLaid || !isNamed(access.value));
+        })
+        && std::ranges::none_of(m_summary.calls, [&](const SummaryCall& call) { return isNamed(call.subject, call.receiver, call.newTarget, call.waitsFor); })
+        && std::ranges::none_of(m_summary.changes, [&](const SummaryChange& change) { return isNamed(change.subject, change.keyNode, change.getter, change.getterInSight, change.setterInSight, change.valueInSight) || (!change.heirIsMadeByCall && isNamed(change.other)); })
+        && std::ranges::none_of(m_summary.operators, [&](const SummaryOperator& found) { return isNamed(found.operands[0], found.operands[1], found.converted[0], found.converted[1]); });
+}
+
+bool LinkFlow::PrototypeHelperReader::findObjectsLaid(uint32_t node, Vector<uint32_t, 2>& calls)
+{
+    if (!isOnlyLaid(node))
+        return false;
+    const SummaryNode& laid = m_summary.nodes[node];
+    if (laid.kind == SummaryNode::Kind::ResultOfCall && !laid.second) {
+        const SummaryCall& call = m_summary.calls[laid.first];
+        if (!isConstructionBySurrogate(call) && !(isCreation(call) && call.numberOfArguments == 1))
+            return false;
+        calls.append(laid.first);
+        return true;
+    }
+    if (laid.kind != SummaryNode::Kind::Join)
+        return false;
+    bool isLaidHere = false;
+    for (const SummaryEdge& edge : m_summary.edges) {
+        if (edge.to != node)
+            continue;
+        if (m_summary.nodes[edge.from].kind == SummaryNode::Kind::Join || !findObjectsLaid(edge.from, calls))
+            return false;
+        isLaidHere = true;
+    }
+    return isLaidHere;
+}
+
+bool LinkFlow::PrototypeHelperReader::takeStoresOfSurrogate(Operand child, FunctionID surrogate)
+{
+    const Function& function = m_program.at(surrogate);
+    const ThinSummary& summary = m_flow.summaries.at(surrogate);
+    std::optional<unsigned> thisParameter = function.thisParameterIndex();
+    if (!function.hasBody() || function.isCoroutine() || function.constructorForm() == ConstructorForm::NotConstructor || isClassConstructorOf(function.kind) || !summary.calls.isEmpty() || !summary.changes.isEmpty() || summary.has(SummaryTrait::HasDirectEval) || summary.has(SummaryTrait::UsesArguments))
+        return false;
+    for (const SummaryOperator& found : summary.operators) {
+        if (found.opcode != Opcode::ToThis)
+            return false;
+    }
+    auto isThis = [&](uint32_t node) {
+        auto isParameter = [&](uint32_t from) {
+            return thisParameter && summary.nodes[from] == SummaryNode { SummaryNode::Kind::Parameter, *thisParameter, 0 };
+        };
+        if (isParameter(node))
+            return true;
+        bool comesFromThis = false;
+        for (const SummaryEdge& edge : summary.edges) {
+            if (edge.to != node)
+                continue;
+            if (!isParameter(edge.from))
+                return false;
+            comesFromThis = true;
+        }
+        return comesFromThis && summary.nodes[node].kind == SummaryNode::Kind::Join;
+    };
+    for (const SummaryEdge& edge : summary.edges) {
+        const SummaryNode& from = summary.nodes[edge.from];
+        const SummaryNode& to = summary.nodes[edge.to];
+        bool givesUndefined = to.kind == SummaryNode::Kind::Result && from.kind == SummaryNode::Kind::Constant && TypeID::fromBits(from.first) == TypeID(TypeTable::undefined);
+        bool isThrown = to.kind == SummaryNode::Kind::Thrown && from.kind == SummaryNode::Kind::Unknown;
+        if (!givesUndefined && !isThrown && !isThis(edge.to))
+            return false;
+    }
+    for (const SummaryAccess& access : summary.accesses) {
+        if (access.kind != SummaryAccess::Kind::Store || access.isToContents() || !access.key || !isThis(access.subject) || access.value == noSummaryNode)
+            return false;
+        NameClass nameClass = m_flow.nameClassOf(access.key);
+        if (nameClass == NameClass::Proto || mayBeElementKey(nameClass) || isPrivateNameInLink(m_program, access.key))
+            return false;
+        Step step;
+        step.kind = Step::Kind::StoresName;
+        step.object = child;
+        step.key = access.key;
+        const SummaryNode& stored = summary.nodes[access.value];
+        if (stored.kind == SummaryNode::Kind::Capture && !stored.second) {
+            auto captured = m_captures.find({ surrogate.index(), stored.first });
+            if (captured != m_captures.end())
+                step.value = captured->value;
+        }
+        if (step.value.kind == Operand::Kind::Unknown)
+            return false;
+        if (step.value.isOther())
+            step.stored = m_flow.nodeOf(surrogate, access.value);
+        add(step);
+    }
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::takeObjectLaid(Operand child, uint32_t place)
+{
+    const SummaryCall& call = m_summary.calls[place];
+    Operand prototypeOfChild { Operand::Kind::PrototypeOfParameter, child.parameter };
+    Operand parent;
+    if (isCreation(call)) {
+        parent = operandAt(m_summary.arguments[call.firstArgument]);
+        if (parent.isOther()) {
+            uint32_t node = m_summary.arguments[call.firstArgument];
+            bool holdsNullAlone = m_summary.nodes[node].kind == SummaryNode::Kind::Join && std::ranges::all_of(m_summary.edges, [&](const SummaryEdge& edge) {
+                return edge.to != node || (!m_operands[edge.from].isOther() && !mayPass(m_operands[edge.from], edge.passes));
+            });
+            return holdsNullAlone;
+        }
+    } else {
+        FunctionID surrogate = functionNamedBy(call.subject);
+        auto found = m_parentsOfSurrogates.find(surrogate.index());
+        const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_id);
+        bool isLinkedFirst = found != m_parentsOfSurrogates.end() && index && found->value.site.index() < call.site.index() && index->blockOf(found->value.site) == index->blockOf(call.site);
+        if (!isLinkedFirst || !takeStoresOfSurrogate(prototypeOfChild, surrogate))
+            return false;
+        bool isMadeHere = m_summary.nodes[call.subject].kind == SummaryNode::Kind::Closure;
+        if (!isMadeHere && (!nothingRunsBetween(found->value.site, call.site) || isUsedElsewhere(surrogate)))
+            return false;
+        parent = found->value.parent;
+        m_constructionsLaid.append(place);
+    }
+    if (parent.kind != Operand::Kind::PrototypeOfParameter)
+        return false;
+    Step link;
+    link.kind = Step::Kind::LinksParent;
+    link.object = prototypeOfChild;
+    link.value = parent;
+    add(link);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::readAccess(const SummaryAccess& access)
+{
+    Operand subject = operandAt(access.subject);
+    if (!isOther(access.receiver) || !isOther(access.keyNode))
+        return false;
+    if (access.isToContents())
+        return subject.isOther() && isOther(access.value) && isOther(access.emptyHolderOrKeyPrefix);
+    bool isPrototypeProperty = access.key == m_prototypeKey;
+    switch (access.kind) {
+    case SummaryAccess::Kind::Read:
+        return subject.isOther() || (subject.kind == Operand::Kind::Parameter && isPrototypeProperty) || readsCopiedName(access);
+    case SummaryAccess::Kind::Has:
+        return subject.isOther();
+    case SummaryAccess::Kind::Define:
+        return isOther(access.value) && (subject.isOther() || access.isByDescriptor);
+    case SummaryAccess::Kind::Store:
+        break;
+    }
+    if (copiesName(access))
+        return true;
+    Operand value = operandAt(access.value);
+    if (subject.isOther()) {
+        if (FunctionID surrogate = isPrototypeProperty && value.kind == Operand::Kind::PrototypeOfParameter ? functionNamedBy(access.subject) : FunctionID())
+            return m_parentsOfSurrogates.add(surrogate.index(), ParentOfSurrogate { value, access.site }).isNewEntry;
+        return value.isOther();
+    }
+    if (subject.kind == Operand::Kind::Unknown || value.kind == Operand::Kind::Unknown || !access.key)
+        return false;
+    if (subject.kind == Operand::Kind::Parameter && isPrototypeProperty)
+        return true;
+    NameClass nameClass = m_flow.nameClassOf(access.key);
+    Step step;
+    step.object = subject;
+    step.value = value;
+    step.key = access.key;
+    if (nameClass == NameClass::Proto) {
+        step.kind = Step::Kind::LinksParent;
+        add(step);
+        return !value.isOther();
+    }
+    if (mayBeElementKey(nameClass) || isPrototypeProperty || isPrivateNameInLink(m_program, access.key))
+        return false;
+    step.kind = Step::Kind::StoresName;
+    if (value.isOther())
+        step.stored = m_flow.nodeOf(m_id, access.value);
+    add(step);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::readDefinition(const SummaryChange& change)
+{
+    Operand subject = operandAt(change.subject);
+    Operand value = operandAt(change.valueInSight);
+    if (subject.kind == Operand::Kind::Unknown || value.kind == Operand::Kind::Unknown || !isOther(change.other) || !change.key || change.keyNode != noSummaryNode || !change.descriptorIsInSight || !change.descriptorLaysNoAccessor || change.laysAccessorAsWritten)
+        return false;
+    NameClass nameClass = m_flow.nameClassOf(change.key);
+    bool isPrototypeProperty = change.key == m_prototypeKey;
+    if (nameClass == NameClass::Proto || mayBeElementKey(nameClass) || isPrivateNameInLink(m_program, change.key))
+        return false;
+    if (change.valueInSight == noSummaryNode)
+        return !change.laysValueInSight;
+    if (isPrototypeProperty)
+        return false;
+    Step step;
+    step.kind = Step::Kind::StoresName;
+    step.object = subject;
+    step.value = value;
+    step.key = change.key;
+    if (value.isOther())
+        step.stored = m_flow.nodeOf(m_id, change.valueInSight);
+    add(step);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::readChange(const SummaryChange& change)
+{
+    Operand subject = operandAt(change.subject);
+    Operand other = operandAt(change.other);
+    for (uint32_t node : { change.keyNode, change.getter, change.getterInSight, change.setterInSight }) {
+        if (!isOther(node))
+            return false;
+    }
+    if (change.kind == SummaryChange::Kind::BecomesPrototype) {
+        bool isCreated = change.heirIsMadeByCall && change.other != noSummaryNode && m_summary.nodes[change.other].kind == SummaryNode::Kind::ResultOfCall;
+        return other.isOther() && (subject.isOther() || isCreated);
+    }
+    if (change.kind == SummaryChange::Kind::DefinesByDescriptor && !subject.isOther())
+        return readDefinition(change);
+    if (change.kind == SummaryChange::Kind::CopiesInto && change.isSpelledByLoop && subject.kind == Operand::Kind::Parameter && other.kind == Operand::Kind::Parameter)
+        return true;
+    if (!isOther(change.valueInSight))
+        return false;
+    if (subject.isOther() && other.isOther())
+        return true;
+    if (change.kind != SummaryChange::Kind::ChangesPrototype || subject.isOther() || other.isOther() || subject.kind == Operand::Kind::Unknown || other.kind == Operand::Kind::Unknown)
+        return false;
+    Step step;
+    step.kind = Step::Kind::LinksParent;
+    step.object = subject;
+    step.value = other;
+    add(step);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::readCall(uint32_t place)
+{
+    const SummaryCall& call = m_summary.calls[place];
+    if (asksOwnName(call))
+        return true;
+    for (uint32_t node : { call.subject, call.receiver, call.newTarget, call.waitsFor }) {
+        if (!isOther(node))
+            return false;
+    }
+    bool passesOperand = false;
+    for (uint32_t argument = 0; argument < call.numberOfArguments; ++argument)
+        passesOperand |= !isOther(m_summary.arguments[call.firstArgument + argument]) && !isKnownNonFunction(call, argument);
+    if (!passesOperand)
+        return true;
+    if (call.passesList || call.isConstruction || call.isMadeByProtocol || call.passesOnGatheredArguments)
+        return false;
+    uint32_t result = noSummaryNode;
+    for (uint32_t index = 0; index < m_summary.nodes.size(); ++index) {
+        if (m_summary.nodes[index].kind == SummaryNode::Kind::ResultOfCall && m_summary.nodes[index].first == place)
+            result = index;
+    }
+    bool resultIsUsed = result != noSummaryNode && isUsedOutsideResult(result);
+    if (call.callee == SummaryCall::Callee::Builtin) {
+        if (setsPrototype(call))
+            return !resultIsUsed;
+        if (!isCreation(call))
+            return false;
+        return result == noSummaryNode || isOnlyLaid(result);
+    }
+    if (call.callee != SummaryCall::Callee::Value || call.subject == noSummaryNode)
+        return false;
+    Step step;
+    step.kind = Step::Kind::CallsFunction;
+    step.call = place;
+    step.resultIsUsed = resultIsUsed;
+    add(step);
+    return true;
+}
+
+bool LinkFlow::PrototypeHelperReader::readResult()
+{
+    for (uint32_t index = 0; index < m_summary.nodes.size(); ++index) {
+        if (m_summary.nodes[index].kind != SummaryNode::Kind::Result)
+            continue;
+        for (const SummaryEdge& edge : m_summary.edges) {
+            if (edge.to != index)
+                continue;
+            const SummaryNode& from = m_summary.nodes[edge.from];
+            Operand operand = m_operands[edge.from];
+            bool isPrimitive = from.kind == SummaryNode::Kind::Constant && holdsOnlyPrimitives(TypeID::fromBits(from.first));
+            if (operand.isOther() && isPrimitive)
+                continue;
+            m_helper.result = PrototypeHelper::Result::IsUnknown;
+        }
+        uint32_t onlyFrom = noSummaryNode;
+        bool hasOne = true;
+        for (const SummaryEdge& edge : m_summary.edges) {
+            if (edge.to != index)
+                continue;
+            hasOne &= onlyFrom == noSummaryNode && !edge.passes;
+            onlyFrom = edge.from;
+        }
+        if (hasOne && onlyFrom != noSummaryNode && m_operands[onlyFrom].kind == Operand::Kind::Parameter && m_summary.nodes[onlyFrom].kind == SummaryNode::Kind::Parameter) {
+            m_helper.result = PrototypeHelper::Result::IsParameter;
+            m_helper.returnedParameter = m_operands[onlyFrom].parameter;
+        }
+    }
+    return true;
+}
+
+LinkFlow::PrototypeHelper LinkFlow::PrototypeHelperReader::read()
+{
+    PrototypeHelper none;
+    if (!m_function.hasBody() || m_function.isCoroutine() || isClassConstructorOf(m_function.kind) || m_function.numberOfPositionalParameters() < 2 || m_function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest })
+        || m_summary.has(SummaryTrait::HasDirectEval) || m_summary.has(SummaryTrait::UsesArguments) || m_summary.has(SummaryTrait::Suspends) || m_summary.has(SummaryTrait::OnlyPassesOnGatheredArguments))
+        return none;
+    if (!findOperands() || !hasNoOtherEffect())
+        return none;
+    for (const SummaryAccess& access : m_summary.accesses) {
+        if (!readAccess(access))
+            return none;
+    }
+    for (const SummaryChange& change : m_summary.changes) {
+        if (!readChange(change))
+            return none;
+    }
+    for (uint32_t call = 0; call < m_summary.calls.size(); ++call) {
+        if (!readCall(call))
+            return none;
+    }
+    for (const SummaryAccess& access : m_summary.accesses) {
+        Operand subject = operandAt(access.subject);
+        if (access.kind != SummaryAccess::Kind::Store || access.isToContents() || access.key != m_prototypeKey || subject.kind != Operand::Kind::Parameter)
+            continue;
+        Step step;
+        step.kind = Step::Kind::LaysPrototype;
+        step.object = subject;
+        add(step);
+        if (access.storesObjectMadeForIt)
+            continue;
+        Vector<uint32_t, 2> laid;
+        if (access.value == noSummaryNode || !findObjectsLaid(access.value, laid))
+            return none;
+        for (uint32_t call : laid) {
+            if (!takeObjectLaid(subject, call))
+                return none;
+        }
+    }
+    for (uint32_t index = 0; index < m_summary.nodes.size(); ++index) {
+        FunctionID named = functionNamedBy(index);
+        if (!named)
+            continue;
+        bool isSurrogate = m_parentsOfSurrogates.contains(named.index());
+        bool capturesOperand = m_summary.nodes[index].kind == SummaryNode::Kind::Closure && std::ranges::any_of(m_captures, [&](const auto& captured) { return captured.key.first == named.index(); });
+        if (!isSurrogate && !capturesOperand)
+            continue;
+        if (!isSurrogate || std::ranges::any_of(m_summary.edges, [&](const SummaryEdge& edge) { return edge.from == index; }) || std::ranges::contains(m_summary.arguments, index))
+            return none;
+        for (const SummaryAccess& access : m_summary.accesses) {
+            bool storesPrototype = access.subject == index && access.kind == SummaryAccess::Kind::Store && access.key == m_prototypeKey;
+            if ((access.subject == index && !storesPrototype) || access.receiver == index || access.value == index || access.keyNode == index)
+                return none;
+        }
+        for (uint32_t place = 0; place < m_summary.calls.size(); ++place) {
+            const SummaryCall& call = m_summary.calls[place];
+            if ((call.subject == index && !m_constructionsLaid.contains(place)) || call.receiver == index || (call.newTarget == index && call.subject != index))
+                return none;
+        }
+        for (const SummaryChange& change : m_summary.changes) {
+            if (change.subject == index || change.other == index)
+                return none;
+        }
+    }
+    for (const auto& captured : m_captures) {
+        bool isOfClosureMadeHere = std::ranges::any_of(m_summary.nodes, [&](const SummaryNode& node) { return node.kind == SummaryNode::Kind::Closure && node.first == captured.key.first; });
+        if (!isOfClosureMadeHere)
+            return none;
+    }
+    readResult();
+    auto take = [&](const Operand& operand) {
+        if (!operand.isOther() && !m_helper.parameters.contains(operand.parameter))
+            m_helper.parameters.append(operand.parameter);
+    };
+    for (const Step& step : m_helper.steps) {
+        take(step.object);
+        take(step.value);
+        m_helper.linksOperands |= step.kind == Step::Kind::LaysPrototype || step.kind == Step::Kind::LinksParent;
+        if (step.kind != Step::Kind::CallsFunction)
+            continue;
+        const SummaryCall& call = m_summary.calls[step.call];
+        for (uint32_t argument = 0; argument < call.numberOfArguments; ++argument)
+            take(operandAt(m_summary.arguments[call.firstArgument + argument]));
+    }
+    m_helper.isOne = !m_helper.steps.isEmpty();
+    if (m_helper.result == PrototypeHelper::Result::IsParameter && !m_helper.parameters.contains(m_helper.returnedParameter))
+        m_helper.result = PrototypeHelper::Result::IsOther;
+    return WTF::move(m_helper);
+}
+
+const LinkFlow::PrototypeHelper* LinkFlow::findPrototypeHelper(FunctionID function)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    auto& helper = m_prototypeHelpers.ensure(function.index(), [&] {
+        return makeUniqueWithoutFastMallocCheck<PrototypeHelper>(PrototypeHelperReader(*this, function).read());
+    }).iterator->value;
+    return helper->isOne ? helper.get() : nullptr;
+}
+
+LayoutID LinkFlow::classOfHolder(FunctionID function) const
+{
+    if (LayoutID layout = layoutOfConstructorFunction(function))
+        return layout;
+    const Function& record = program.at(function);
+    return isClassConstructorOf(record.kind) ? record.constructedClass : LayoutID();
+}
+
+LinkFlow::HelperProgress LinkFlow::visitPrototypeHelper(const HelperEntered& helperEntered, Vector<HelperEntered, 4>& entered, const Invocable<bool(const PrototypeHelperStep&)> auto& visit, const Invocable<void(FlowNodeID)> auto& watch) const
+{
+    using Operand = PrototypeHelper::Operand;
+    if (!helperEntered.helper)
+        return HelperProgress::GivesUp;
+    const PrototypeHelper& helper = *helperEntered.helper;
+    const ThinSummary& summary = summaries.at(helperEntered.function);
+    auto functionAt = [&](FlowNodeID node) {
+        const LinkType& held = typeAt(node);
+        LinkType alone;
+        alone.primitives = held.primitives;
+        alone.escapeOnlyPrimitives = held.escapeOnlyPrimitives;
+        alone.functions = LinkType::Functions::Closure;
+        alone.function = held.function;
+        return held.functions == LinkType::Functions::Closure && held == alone && !(held.primitives & ~Primitive::Undefined) ? held.function : FunctionID();
+    };
+    for (uint32_t parameter : helper.parameters) {
+        FlowNodeID node = helperEntered.arguments[parameter];
+        if (node == unseen())
+            return HelperProgress::GivesUp;
+        if (typeAt(node).isNever())
+            return HelperProgress::Waits;
+        if (!functionAt(node))
+            return HelperProgress::GivesUp;
+    }
+    auto functionOf = [&](const Operand& operand) {
+        return operand.isOther() ? FunctionID() : functionAt(helperEntered.arguments[operand.parameter]);
+    };
+    for (const PrototypeHelper::Step& step : helper.steps) {
+        if (step.kind != PrototypeHelper::Step::Kind::CallsFunction) {
+            PrototypeHelperStep taken;
+            taken.kind = step.kind;
+            taken.writer = helperEntered.function;
+            taken.object = functionOf(step.object);
+            taken.objectIsPrototype = step.object.kind == Operand::Kind::PrototypeOfParameter;
+            taken.value = functionOf(step.value);
+            taken.valueIsPrototype = step.value.kind == Operand::Kind::PrototypeOfParameter;
+            taken.key = step.key;
+            taken.stored = step.value.kind == Operand::Kind::Parameter ? helperEntered.arguments[step.value.parameter] : step.stored;
+            if (step.kind == PrototypeHelper::Step::Kind::AsksOwnName && step.stored)
+                watch(step.stored);
+            if (!layoutOfConstructorFunction(taken.object) || !visit(taken))
+                return HelperProgress::GivesUp;
+            continue;
+        }
+
+        const SummaryCall& call = summary.calls[step.call];
+        auto operandOfArgument = [&](uint32_t place) -> std::optional<uint32_t> {
+            if (place >= call.numberOfArguments)
+                return std::nullopt;
+            const SummaryNode& node = summary.nodes[summary.arguments[call.firstArgument + place]];
+            return node.kind == SummaryNode::Kind::Parameter ? std::optional(node.first) : std::nullopt;
+        };
+        FlowNodeID calleeNode = nodeOf(helperEntered.function, call.subject);
+        watch(calleeNode);
+        LinkType callee = typeAt(calleeNode);
+        callee.primitives = 0;
+        bool setsPrototype = false;
+        if (callee.builtin) {
+            BuiltinID called = program.builtins().canonicalID(callee.builtin);
+            if (called != program.builtins().canonicalID(Builtins::ObjectSetPrototypeOf) && called != program.builtins().canonicalID(Builtins::ReflectSetPrototypeOf))
+                return HelperProgress::GivesUp;
+            setsPrototype = true;
+        }
+        if (callee.classes != LinkType::Classes::None) {
+            if (callee.classes != LinkType::Classes::Site || callee.builtinClass != BuiltinClasses::BoundFunction)
+                return HelperProgress::GivesUp;
+            FlowNodeID target = findContentsOf(callee, slotOf(program.builtins().findSlot(BuiltinClasses::BoundFunction, ContentsSlot::Value)));
+            FlowNodeID boundArguments = findContentsOf(callee, slotOf(program.builtins().findSlot(BuiltinClasses::BoundFunction, ContentsSlot::Element)));
+            if (boundArguments) {
+                watch(boundArguments);
+                if (!typeAt(boundArguments).isNever())
+                    return HelperProgress::GivesUp;
+            }
+            if (!target)
+                return HelperProgress::GivesUp;
+            watch(target);
+            const LinkType& bound = typeAt(target);
+            LinkType builtinAlone;
+            builtinAlone.builtin = bound.builtin;
+            if (!bound.isNever()) {
+                if (!bound.builtin || !(bound == builtinAlone) || program.builtins().canonicalID(bound.builtin) != program.builtins().canonicalID(Builtins::ObjectSetPrototypeOf))
+                    return HelperProgress::GivesUp;
+                setsPrototype = true;
+            }
+        }
+        if (callee.objects != LinkType::Objects::None || callee.hasUnknownObjects || callee.holdsLostBuiltins)
+            return HelperProgress::GivesUp;
+        if (setsPrototype) {
+            std::optional<uint32_t> child = operandOfArgument(0);
+            std::optional<uint32_t> parent = operandOfArgument(1);
+            if (!child || !parent || step.resultIsUsed)
+                return HelperProgress::GivesUp;
+            PrototypeHelperStep taken;
+            taken.kind = PrototypeHelper::Step::Kind::LinksParent;
+            taken.writer = helperEntered.function;
+            taken.object = functionAt(helperEntered.arguments[*child]);
+            taken.value = functionAt(helperEntered.arguments[*parent]);
+            if (!taken.object || !taken.value || !layoutOfConstructorFunction(taken.object) || !visit(taken))
+                return HelperProgress::GivesUp;
+        }
+        Vector<FunctionID, 4> functions;
+        switch (callee.functions) {
+        case LinkType::Functions::None:
+            break;
+        case LinkType::Functions::Closure:
+            functions.append(callee.function);
+            break;
+        case LinkType::Functions::Set:
+            functions.append(functionsOfSet(callee));
+            break;
+        case LinkType::Functions::Constructors:
+        case LinkType::Functions::Lost:
+            return HelperProgress::GivesUp;
+        }
+        for (FunctionID function : functions) {
+            const Function& record = program.at(function);
+            const PrototypeHelper* called = knownPrototypeHelper(function);
+            if (!called || (step.resultIsUsed && called->result != PrototypeHelper::Result::IsOther))
+                return HelperProgress::GivesUp;
+            HelperEntered inner;
+            inner.helper = called;
+            inner.function = function;
+            inner.arguments.fill(unseen(), record.numberOfEntryParameters());
+            for (uint32_t position = 0; position < record.numberOfPositionalParameters(); ++position) {
+                if (std::optional<uint32_t> operand = operandOfArgument(position); operand && helper.parameters.contains(*operand))
+                    inner.arguments[record.firstParameterIndex() + position] = helperEntered.arguments[*operand];
+            }
+            bool isEntered = false;
+            for (const HelperEntered& outer : entered) {
+                if (outer.helper != called)
+                    continue;
+                if (outer.arguments != inner.arguments)
+                    return HelperProgress::GivesUp;
+                isEntered = true;
+            }
+            if (isEntered)
+                continue;
+            entered.append(inner);
+            HelperProgress progress = visitPrototypeHelper(inner, entered, visit, watch);
+            entered.removeLast();
+            if (progress != HelperProgress::IsDone)
+                return progress;
+        }
+    }
+    return HelperProgress::IsDone;
+}
+
+bool LinkFlow::someBodyStoresHasOwnProperty() const
+{
+    if (!m_someBodyStoresHasOwnProperty) {
+        PropertyKeyID key = program.keyOf(BuiltinNames::hasOwnProperty);
+        bool isStored = false;
+        for (uint32_t index = 0; index < program.functions.size() && !isStored; ++index) {
+            if (!program.at(FunctionID(index)).hasBody())
+                continue;
+            const ThinSummary& summary = summaries.at(FunctionID(index));
+            isStored = std::ranges::any_of(summary.accesses, [&](const SummaryAccess& access) { return access.key == key && (access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define); })
+                || std::ranges::contains(summary.changes, key, &SummaryChange::key);
+        }
+        m_someBodyStoresHasOwnProperty = isStored;
+    }
+    return *m_someBodyStoresHasOwnProperty;
+}
+
+bool LinkFlow::findsOwnNameBuiltin(const PrototypeHelperStep& step) const
+{
+    for (BuiltinName name : { BuiltinNames::hasOwnProperty, BuiltinNames::call }) {
+        if (StringID text = program.stringOf(name); text && program.isOpenedSomewhere(text))
+            return false;
+    }
+    if (!step.stored)
+        return everyFunctionAboveIsConstructorFunction(step.object);
+    const LinkType& held = typeAt(step.stored);
+    LinkType builtinAlone;
+    builtinAlone.builtin = held.builtin;
+    builtinAlone.primitives = held.primitives;
+    bool isBuiltinAlone = held == builtinAlone && !(held.primitives & ~Primitive::UndefinedOrNull);
+    return held.isNever() || (isBuiltinAlone && (!held.builtin || program.builtins().canonicalID(held.builtin) == program.builtins().canonicalID(Builtins::ObjectPrototypeHasOwnProperty)));
+}
+
+bool LinkFlow::takePrototypeHelperStep(const PrototypeHelperStep& step)
+{
+    auto prototypeOf = [&](LayoutID layout) {
+        LinkType type;
+        type.objects = LinkType::Objects::Prototype;
+        type.layout = layout;
+        return type;
+    };
+    auto closuresOf = [&](FunctionID function) {
+        LinkType type;
+        type.functions = LinkType::Functions::Closure;
+        type.function = function;
+        return type;
+    };
+    LayoutID child = layoutOfConstructorFunction(step.object);
+    LayoutID classOfValue = step.value ? classOfHolder(step.value) : LayoutID();
+    switch (step.kind) {
+    case PrototypeHelper::Step::Kind::LaysPrototype:
+        return true;
+    case PrototypeHelper::Step::Kind::LinksParent:
+        if (step.objectIsPrototype != step.valueIsPrototype || !classOfValue)
+            return false;
+        if (step.objectIsPrototype) {
+            if (!namesParentOfPrototype(prototypeOf(classOfValue), child))
+                return false;
+            noteWhatMayMakeThenableOf(prototypeOf(child), step.writer, std::nullopt);
+            return true;
+        }
+        if (!namesParentOfFunction(closuresOf(step.value), step.object))
+            return false;
+        noteWhatMayMakeThenableOf(closuresOf(step.object), step.writer, std::nullopt);
+        linkFunctionBelow(step.object, step.value);
+        return true;
+    case PrototypeHelper::Step::Kind::StoresName: {
+        if (step.valueIsPrototype && !classOfValue)
+            return false;
+        uint64_t place = static_cast<uint64_t>(child.index()) << 32 | step.key.bits();
+        uint64_t stored = static_cast<uint64_t>(step.valueIsPrototype) << 33 | static_cast<uint64_t>(step.objectIsPrototype) << 32 | (step.valueIsPrototype ? classOfValue.index() : step.stored.index());
+        if (!m_namesStoredByHelpers.add({ place, stored }).isNewEntry)
+            return true;
+        FlowNodeID value = step.stored;
+        if (step.valueIsPrototype) {
+            value = makeSharedNode();
+            arrive(value, prototypeOf(classOfValue));
+        }
+        storeOnClassHolder(step.writer, child, step.objectIsPrototype ? ClassSide::Prototype : ClassSide::Static, step.key, value);
+        return true;
+    }
+    case PrototypeHelper::Step::Kind::CopiesNames:
+        if (!everyFunctionAboveIsConstructorFunction(step.value))
+            return false;
+        noteWhatMayMakeThenableOf(closuresOf(step.object), step.writer, std::nullopt);
+        linkFunctionBelow(step.object, step.value);
+        return true;
+    case PrototypeHelper::Step::Kind::AsksOwnName:
+        return findsOwnNameBuiltin(step);
+    case PrototypeHelper::Step::Kind::CallsFunction:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+const LinkFlow::PrototypeHelper* LinkFlow::knownPrototypeHelper(FunctionID function) const
+{
+    auto found = m_prototypeHelpers.find(function.index());
+    return found != m_prototypeHelpers.end() && found->value->isOne ? found->value.get() : nullptr;
+}
+
+LinkFlow::HelperEntered LinkFlow::enteredBy(const PrototypeHelperCall& call) const
+{
+    HelperEntered entered;
+    entered.helper = knownPrototypeHelper(call.function);
+    entered.function = call.function;
+    entered.arguments = call.arguments;
+    return entered;
+}
+
+void LinkFlow::followPrototypeHelperCall(uint32_t call, FunctionID helper, Vector<FlowNodeID, 4>&& arguments)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (!m_prototypeHelperCallsListed.add({ call + 1, helper.index() + 1 }).isNewEntry)
+        return;
+    uint32_t record = static_cast<uint32_t>(m_prototypeHelperCalls.size());
+    auto made = makeUniqueWithoutFastMallocCheck<PrototypeHelperCall>();
+    made->function = helper;
+    made->arguments = WTF::move(arguments);
+    m_prototypeHelperCalls.append(WTF::move(made));
+    for (FlowNodeID argument : m_prototypeHelperCalls[record]->arguments) {
+        if (argument != unseen())
+            observe(argument, FlowObserver { FlowObserver::Kind::PassedToBeLinked, helper, record });
+    }
+}
+
+void LinkFlow::abandonHelperCall(PrototypeHelperCall& call)
+{
+    call.state = PrototypeHelperCall::State::IsGivenUp;
+    for (uint32_t parameter = 0; parameter < call.arguments.size(); ++parameter) {
+        if (call.arguments[parameter] != unseen())
+            addEdge(call.arguments[parameter], this->parameter(call.function, parameter));
+    }
+}
+
+void LinkFlow::prototypeHelperCallObserved(const FlowObserver& observer)
+{
+    PrototypeHelperCall& call = *m_prototypeHelperCalls[observer.record];
+    if (call.state == PrototypeHelperCall::State::IsGivenUp)
+        return;
+    auto watch = [&](FlowNodeID node) {
+        FlowObserver again { FlowObserver::Kind::PassedToBeLinked, call.function, observer.record };
+        if (isWatchedForFirstTime(node, again))
+            observe(node, again);
+    };
+    readCalledHelpers(call.function);
+    HelperEntered root = enteredBy(call);
+    Vector<HelperEntered, 4> entered { root };
+    switch (visitPrototypeHelper(root, entered, [&](const PrototypeHelperStep& step) { return takePrototypeHelperStep(step); }, watch)) {
+    case HelperProgress::Waits:
+        return;
+    case HelperProgress::IsDone:
+        call.state = PrototypeHelperCall::State::IsLinked;
+        return;
+    case HelperProgress::GivesUp:
+        abandonHelperCall(call);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void LinkFlow::readCalledHelpers(FunctionID function)
+{
+    Vector<FunctionID, 4> pending { function };
+    Vector<FunctionID, 8> listed;
+    while (!pending.isEmpty()) {
+        FunctionID current = pending.takeLast();
+        if (listed.contains(current))
+            continue;
+        listed.append(current);
+        const PrototypeHelper* helper = findPrototypeHelper(current);
+        if (!helper)
+            continue;
+        for (const PrototypeHelper::Step& step : helper->steps) {
+            if (step.kind != PrototypeHelper::Step::Kind::CallsFunction)
+                continue;
+            const LinkType& callee = typeAt(nodeOf(current, summaries.at(current).calls[step.call].subject));
+            if (callee.functions == LinkType::Functions::Closure)
+                pending.append(callee.function);
+            else if (callee.functions == LinkType::Functions::Set)
+                pending.append(functionsOfSet(callee));
+        }
+    }
+}
+
+Vector<LinkFlow::PrototypeHelperStep> LinkFlow::prototypeHelperSteps() const
+{
+    Vector<PrototypeHelperStep> steps;
+    for (const auto& call : m_prototypeHelperCalls) {
+        if (call->state != PrototypeHelperCall::State::IsLinked)
+            continue;
+        HelperEntered root = enteredBy(*call);
+        Vector<HelperEntered, 4> entered { root };
+        visitPrototypeHelper(root, entered, [&](const PrototypeHelperStep& step) {
+            steps.append(step);
+            return true;
+        }, [](FlowNodeID) { });
+    }
+    return steps;
 }
 
 } } } // namespace JSC::AOT::Typed

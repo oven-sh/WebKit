@@ -630,6 +630,35 @@ static JSString* removeEveryMatch(JSGlobalObject* globalObject, VM& vm, JSString
     RELEASE_AND_RETURN(scope, jsSpliceSubstrings(globalObject, string, source, kept.span()));
 }
 
+static constexpr ASCIILiteral patternOfAnySurroundingSpaces = "^\\s*|\\s*$"_s;
+static constexpr ASCIILiteral patternOfSurroundingSpaces = "^\\s+|\\s+$"_s;
+
+static bool matchesSurroundingSpaces(RegExp* regExp)
+{
+    const String& pattern = regExp->pattern();
+    return pattern.length() == patternOfSurroundingSpaces.length() && regExp->flags() == OptionSet<Yarr::Flags> { Yarr::Flags::Global }
+        && (pattern == patternOfSurroundingSpaces || pattern == patternOfAnySurroundingSpaces);
+}
+
+static JSString* removeSurroundingSpaces(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExp* regExp)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    const unsigned length = source->length();
+    unsigned start = 0;
+    unsigned end = length;
+    while (start < length && isStrWhiteSpace(source[start]))
+        ++start;
+    while (end > start && isStrWhiteSpace(source[end - 1]))
+        --end;
+    MatchResult last = regExp->pattern() == patternOfAnySurroundingSpaces ? MatchResult(length, length) : end < length ? MatchResult(end, length) : MatchResult(0, start);
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, last, false);
+    if (!start && end == length)
+        return string;
+    RELEASE_AND_RETURN(scope, jsSubstringOfResolved(vm, string, start, end - start));
+}
+
 static JSString* replaceEveryMatchWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, JSString* replacement, const String& replacementText, MatchResult match)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -725,6 +754,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
     auto replacementText = replacement->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     RegExp* pattern = regExpObject->regExp();
+    if (startOfFirstMatchPlusOne && replacementText->isEmpty() && matchesSurroundingSpaces(pattern))
+        OPERATION_RETURN(scope, removeSurroundingSpaces(globalObject, vm, subject, pattern));
     bool isAtom = pattern->hasValidAtom();
     if (!startOfFirstMatchPlusOne) {
         bool hasReplaced;

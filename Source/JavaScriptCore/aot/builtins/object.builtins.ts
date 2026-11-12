@@ -236,11 +236,11 @@ export default b.declarations(
       },
       entries: {
         args: { object: b.object.loose.refusing(b.null) },
-        returns: b.instance("Array").exactly.holding({ element: b.layoutOf("EntriesPair") }).fresh.dense,
+        returns: b.instance("Array").exactly.holding({ element: b.layoutOf("EntriesPair").fresh }).fresh.dense,
         capability: "js",
         throws: b.propagated,
         runsOnlyOperandCode: true,
-        uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.nativeMemory)] },
+        uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.resultElementField(1))] },
         writes: [...madeByListingOfKeys, ...closuresMadeAtFirstRead],
         implementation: b.inline("ObjectEntries"),
       },

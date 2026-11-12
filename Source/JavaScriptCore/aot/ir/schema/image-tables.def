@@ -20,9 +20,6 @@ packed HandlerRow { sitesSkipped: UInt32 ; furtherSites: UInt32 ; type: HandlerT
 
 packed PositionsHead {
     followsInlineFrames: Bool hasCheckpoints: Bool size: UInt64
-    ; isInOtherSource: Bool lineChange: Signed
-    ; sourceChange: Signed if isInOtherSource
-    ; column: UInt32
     ; count: UInt64 if hasCheckpoints
 }
 

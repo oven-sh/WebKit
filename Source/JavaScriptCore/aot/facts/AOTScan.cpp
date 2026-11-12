@@ -43,6 +43,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -97,6 +98,8 @@ enum class SinkKindInScan : uint8_t {
     TargetOfCopyOfMembers,
     SourceOfCopyOfMembers,
     PlaceOfWrittenList,
+    OtherOperandOfEquality,
+    ConvertedByEquality,
 };
 
 struct SinkInScan {
@@ -118,6 +121,7 @@ struct StoreInScan {
     bool storesObjectMadeForIt { false };
     bool isIntoObjectKnownByRead { false };
     bool storesSurelyIndex { false };
+    bool storesZero { false };
 };
 
 struct AccessorLaidInScan {
@@ -128,6 +132,12 @@ struct AccessorLaidInScan {
     uint32_t sinkOfSubject { 0 };
 };
 
+struct EqualityInScan {
+    ValueID site;
+    ListInScan converted;
+    ListInScan other;
+};
+
 struct OperatorInScan {
     static constexpr uint32_t noRecord = UINT32_MAX;
 
@@ -135,6 +145,10 @@ struct OperatorInScan {
     Opcode opcode { Opcode::Add };
     bool isNeeded { false };
     SummaryOperator::WrittenDivisor writtenDivisor { SummaryOperator::WrittenDivisor::None };
+    bool shiftsRightByConstant { false };
+    int8_t step { 0 };
+    uint8_t steppedOperand { 0 };
+    PropertyKeyID steppedField;
     uint32_t numberOfOperands { 0 };
     ListInScan operands[SummaryOperator::mostOperands];
     uint32_t record { noRecord };
@@ -329,7 +343,7 @@ struct ObjectBeingMadeInScan {
     Vector<uint32_t, 1> parametersHandedTo;
     Vector<PropertyKeyID, 4> definedInTurn;
     Vector<PropertyKeyID, 1> keysThatHoldItself;
-    uint32_t copyAtBirth { ThinSummary::noCopy };
+    uint32_t copyAtAllocation { ThinSummary::noCopy };
 };
 
 struct ObjectHandedToBlockInScan {
@@ -345,7 +359,7 @@ struct BlockThatTookObjectInScan {
     uint32_t root { 0 };
 };
 
-enum class WayOfLeavingInScan : uint8_t { IsSeenFromOutside, IsReturned };
+enum class WayOfLeavingInScan : uint8_t { IsSeenFromOutside, IsReturned, IsHandedToParent };
 enum class KindOfEdgeInScan : uint8_t { Plain, ToHandler };
 
 enum class FirstValueOfSlotInScan : uint8_t { IsEmpty, IsUndefined, IsListed };
@@ -466,12 +480,23 @@ struct StoreOfPrototypeInScan {
     uint32_t rootOfStored { 0 };
 };
 
+struct LiteralInParentInScan {
+    ValueID site;
+    uint32_t root { 0 };
+    uint32_t position { 0 };
+    uint32_t firstSinkOfParent { 0 };
+    uint32_t endOfSinksOfParent { 0 };
+    uint32_t firstLeftLater { UINT32_MAX };
+    uint32_t lastLeftLater { 0 };
+};
+
 struct HeirMadeByBuiltinInScan {
     uint32_t call { 0 };
     uint32_t change { 0 };
     uint32_t sinkOfSubject { 0 };
     ListInScan above;
     bool isMadeEmpty { false };
+    ValueID map;
     bool isFollowed { false };
 };
 
@@ -626,6 +651,14 @@ static constexpr OpcodeSet opcodesWithPureBoundInScan = opcodesWhere([](Opcode o
 static constexpr OpcodeSet opcodesThatMayCallUnknownCodeInScan = opcodesWhere([](Opcode opcode) { return declaredBoundOf(opcode).mayCallUnknownCode; });
 static constexpr OpcodeSet opcodesOnWhichScanLaysEffects { Opcode::Builtin, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::SuperGet, Opcode::SuperSet };
 static constexpr OpcodeSet opcodesReadInWaysOfTheirOwnInScan = catchOpcodes | OpcodeSet { Opcode::NewClass, Opcode::ResolveHeritage, Opcode::NewClassToken, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::ToThis, Opcode::ToObject, Opcode::NarrowByField, Opcode::CheckInitialized, Opcode::NarrowByTest };
+struct CaptureInScan {
+    auto operator<=>(const CaptureInScan& other) const { return std::pair { function.index(), place } <=> std::pair { other.function.index(), other.place }; }
+    bool operator==(const CaptureInScan&) const = default;
+
+    FunctionID function;
+    uint32_t place { 0 };
+};
+
 static constexpr OpcodeSet opcodesLookedAtBehindOperandsInScan { Opcode::NewObject, Opcode::Data, Opcode::GetSuperBase, Opcode::ScopeHasBinding, Opcode::NewTemplateObject, Opcode::StrictEq };
 static constexpr OpcodeSet readsOfDeclaredPlacesInScan { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
 
@@ -965,9 +998,19 @@ public:
         VariableID variable;
     };
     const Vector<KeyOfVariableInScan>& keysOfVariables() const { return m_keysOfVariables; }
+    const Vector<VariableID>& variablesStoredByElement() const { return m_variablesStoredByElement; }
+    const Vector<std::pair<VariableID, DataID>>& literalsOfVariables() const { return m_literalsOfVariables; }
+    const Vector<PropertyKeyID>& keysStoredByElement() const { return m_keysStoredByElement; }
+    const Vector<std::pair<PropertyKeyID, DataID>>& literalsOfKeys() const { return m_literalsOfKeys; }
+    const Vector<FieldReference>& fieldsStoredByElement() const { return m_fieldsStoredByElement; }
+    const Vector<std::pair<FieldReference, DataID>>& literalsOfFields() const { return m_literalsOfFields; }
+    const Vector<CaptureInScan>& capturesStoredByElement() const { return m_capturesStoredByElement; }
+    const Vector<DataID>& literalsStoredByElement() const { return m_literalsStoredByElement; }
+    const ThinSummaries::ElementStores& elementStores() const { return m_elementStores; }
+    const Vector<std::pair<CaptureInScan, DataID>>& literalsOfCaptures() const { return m_literalsOfCaptures; }
     const Vector<MemberUnderVariableInScan>& membersUnderVariables() const { return m_membersUnderVariables; }
     const Vector<FunctionID>& functionsThatCopyMembers() const { return m_functionsThatCopyMembers; }
-    const Vector<FunctionID>& functionsThatMakeCopies() const { return m_functionsThatMakeCopies; }
+    const Vector<FunctionID>& copyingFunctions() const { return m_copyingFunctions; }
     const Vector<ThinSummaries::MakerOfClosures>& makersOfClosures() const { return m_makersOfClosures; }
 
 private:
@@ -998,6 +1041,7 @@ private:
     static constexpr uint16_t isDefinedUnderComputedKeys = 1 << 10;
     static constexpr uint16_t isAccessedBesideNamedStores = isLaidAccessorsUnderNames | isAccessedBesideNamedStoresAndAccessors | isDefinedUnderComputedKeys;
     static constexpr uint16_t hasNullAboveByItsOwnText = 1 << 9;
+    static constexpr uint16_t isLiteralInParent = 1 << 11;
     static constexpr uint8_t mayComeInFrontOfDefinition = 1 << 5;
     static constexpr uint8_t readsAnswerOfSuperCall = 1 << 6;
 
@@ -1018,6 +1062,7 @@ private:
     uint32_t constant(TypeID type) { return nodeFor(SummaryNode::Kind::Constant, type.bits()); }
     uint32_t newJoin() { return addNodeAskedForOnce({ SummaryNode::Kind::Join, m_numberOfJoins++, 0 }); }
     uint32_t classInstanceMadeBy(const BodyValue& value, BuiltinClassID builtinClass) { return nodeFor(SummaryNode::Kind::ClassInstance, builtinClass.index(), value.id().index() + 1); }
+    void addInstanceMadeBy(const BodyValue&, BuiltinClassID);
     uint32_t classInstanceInData(BuiltinClassID builtinClass) { return nodeFor(SummaryNode::Kind::ClassInstance, builtinClass.index(), isInData | m_numberOfInstancesInData++); }
     uint32_t objectOfCoroutine() { return nodeFor(SummaryNode::Kind::ClassInstance, classOfCoroutineResultInScan(*m_function).index()); }
     uint32_t contentsNode(uint32_t classInstance, SlotOfContents slot) { return nodeFor(SummaryNode::Kind::Contents, classInstance, slot.number()); }
@@ -1029,7 +1074,7 @@ private:
     uint32_t nodeOfData(const DataNode&);
     uint32_t resultOfCall(uint32_t call) { return nodeFor(SummaryNode::Kind::ResultOfCall, call, 0); }
     TypeID primitiveConstantAt(uint32_t atom) const;
-    void addEdge(uint32_t from, uint32_t to, TypeID passes = { }, bool runsCodeOfValue = false);
+    void addEdge(uint32_t from, uint32_t to, TypeID passes = { }, bool runsCodeOfValue = false, bool isConversionByEquality = false);
 
     void noteFunctionNamed(FunctionID function)
     {
@@ -1066,11 +1111,14 @@ private:
     struct ExclusionInScan {
         ValueID subject;
         uint16_t excluded { 0 };
+        Range integersLeft { Range::full() };
         uint32_t above { noExclusion };
         uint32_t join { 0 };
         ListInScan listUnderneath;
         bool letsEverythingThrough { false };
         bool isOutermostOverSubject { false };
+        bool isOfObjectTest { false };
+        uint16_t excludedInChain { 0 };
         uint32_t depth { 1 };
         uint32_t jump { noExclusion };
     };
@@ -1080,7 +1128,14 @@ private:
     };
     static constexpr bool liesBehind(uint32_t exclusion, uint32_t other) { return exclusion != noExclusion && (other == noExclusion || exclusion > other); }
     void carryExclusionsOver(uint32_t to, uint32_t targetIndex, const BodyValue& test);
-    uint32_t addExclusion(ValueID subject, uint16_t excluded, uint32_t above);
+    uint32_t addExclusion(ValueID subject, uint16_t excluded, uint32_t above, bool isOfObjectTest = false, Range integersLeft = Range::full());
+    uint32_t addExclusionOfObjectTest(const BodyValue& test, uint32_t above);
+    uint32_t addExclusionsOfRelation(const BodyValue& relation, bool holds, uint32_t above);
+    uint32_t meetOfExclusions(uint32_t, uint32_t);
+    void giveUpExclusion(uint32_t);
+    void noteViewsAfterObjectTest(BodyTarget, uint32_t position, ValueID subject);
+    void takeViewsHandedTo(BodyBlock);
+    ValueID valueViewedAs(ValueID);
     uint32_t depthOfExclusion(uint32_t exclusion) const { return exclusion == noExclusion ? 0 : m_exclusions[exclusion].depth; }
     uint32_t jumpOfExclusion(uint32_t exclusion) const { return exclusion == noExclusion ? noExclusion : m_exclusions[exclusion].jump; }
     uint32_t sharedEndOfExclusions(uint32_t, uint32_t) const;
@@ -1094,6 +1149,18 @@ private:
     HashMap<uint32_t, ListInScan, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_listsUnderExclusions;
     HashMap<uint32_t, ListInScan, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_objectsOfReadsPutOff;
     Vector<ExclusionInScan, 4> m_exclusions;
+    struct ViewHandedInScan {
+        uint32_t block { 0 };
+        uint32_t position { 0 };
+        ValueID viewed;
+    };
+    struct BlockOfViewsInScan {
+        uint32_t block { 0 };
+        uint32_t firstExclusion { 0 };
+    };
+    Vector<ViewHandedInScan, 4> m_viewsHanded;
+    HashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesViewed;
+    Vector<BlockOfViewsInScan, 4> m_blocksWhoseViewsAreTested;
     Vector<uint32_t> m_numberOfEntriesThatCarry;
     Vector<uint32_t> m_whatEntriesShare;
     bool m_someEntryCarries { false };
@@ -1107,6 +1174,8 @@ private:
     bool holdsOnlyConstants(ListInScan) const;
     bool isAlwaysPrimitive(ListInScan) const;
     bool isAlwaysPrimitive(const OriginInScan&) const;
+    bool subjectOfExclusionIsPrimitive(uint32_t join, uint32_t component) const;
+    void findExclusionsOfPrimitives();
     uint32_t nodeOfAtom(uint32_t atom) const;
 
     void beginResult();
@@ -1132,6 +1201,8 @@ private:
     void addContents(const BodyValue&, uint32_t operandIndex, std::optional<ContentsSlot>);
     void addResultAt(const BodyValue&);
     void addOperator(const BodyValue&);
+    PropertyKeyID fieldReadBy(BodyValue) const;
+    void noteFieldsReadAsIntegers(const BodyValue&);
     ListInScan takeResult();
 
     void addSink(SinkKindInScan, ListInScan, uint32_t target, TypeID passes = { });
@@ -1183,6 +1254,9 @@ private:
     bool isMadeInBody(ValueID) const;
     PrimitiveKnownToFolding primitiveHeldBy(ValueID);
     BodyValue definitionBehindCasts(ValueID value) const { return definitionOf(m_roots[value.index()]); }
+    DataID findArrayLiteral(ValueID) const;
+    void resolveLiteralArguments();
+    void noteConstantFieldTaken(ValueID);
     SummaryCall* findCallThatMade(ValueID);
     void noteResultReadAsKey(SummaryCall&);
     void noteIfParameterIsReadAsKey(ValueID key, uint16_t& parameters);
@@ -1199,7 +1273,7 @@ private:
         uint16_t& uses = m_uses.begin()[root];
         if (way == WayOfLeavingInScan::IsSeenFromOutside)
             uses |= isSeenFromOutside;
-        if (uses & isFollowedWhileMade) [[unlikely]]
+        if (uses & (isFollowedWhileMade | isLiteralInParent)) [[unlikely]]
             noteLeavingOfObjectBeingMade(root, way);
     }
     void noteLeavingOfObjectBeingMade(uint32_t root, WayOfLeavingInScan);
@@ -1221,8 +1295,10 @@ private:
     void readProtocols(const BodyValue&, uint32_t operandIndex, const OperandInfo&, ListInScan, uint32_t block);
     void readOwnValues(const BodyValue&, uint32_t operandIndex, ListInScan);
     void convertToPrimitive(ValueID site, ListInScan);
+    void convertOperandOfEquality(const BodyValue&, uint32_t operandIndex, ListInScan);
     void constructBySpecies(ValueID site, ListInScan, uint32_t block);
     ListInScan openIterator(ValueID site, ListInScan iterable, IteratorKind, uint32_t block);
+    uint32_t stepAsyncIterator(ValueID site, ListInScan iterator, std::optional<ListInScan> sent, uint32_t block);
     uint32_t stepIterator(ValueID site, ListInScan iterator, BuiltinName method, std::optional<ListInScan> sent, uint32_t block);
     void readIteration(const BodyValue&, const OperandInfo&, ListInScan, uint32_t block);
     void callHasInstance(const BodyValue&, uint32_t operandIndex, ListInScan constructor, uint32_t block);
@@ -1255,7 +1331,10 @@ private:
     BuiltinID builtinExpectedOf(ValueID) const;
     BuiltinID builtinExpectedToAnswer(ValueID) const;
     bool isGatheredListThatOnlyCallsTake(ValueID);
+    bool appliesGatheredArgumentsOnce(const BodyValue& call, PropertyKeyID key);
     void readChangesMadeByBuiltin(const BodyValue&, const SummaryCall&, uint32_t callIndex, ValueID receiver);
+    void readDecoratorsOfMethod(const BodyValue&);
+    Vector<std::pair<PropertyKeyID, ValueID>> m_gettersDefined;
     void noteEvaluationOf(ModuleID, ValueID site, uint32_t block);
     bool answersWithResultOfBody(const BodyValue&) const;
     void noteRecordOf(ModuleID);
@@ -1269,6 +1348,14 @@ private:
     }
     void noteUseOfValueByBodyOfModule(ValueID);
     void noteUseByBodyOfModule(FunctionID);
+    FunctionID functionMadeThroughCasts(ValueID) const;
+    FunctionID classConstructorThroughCasts(ValueID) const;
+    VariableID variableReadThroughCasts(ValueID) const;
+    WrittenUnit unitComputedInBodyOfModule(const BodyValue& definition) const;
+    std::optional<int64_t> integerReadInBodyOfModule(ValueID operand) const;
+    ValueID prototypeReadFunction(const BodyValue&) const;
+    ValueID prototypeReadFunctionThroughCasts(ValueID) const;
+    void noteStoreOnPrototype(const BodyValue&, ValueID function);
     uint32_t nearestBlockAboveBoth(uint32_t, uint32_t) const;
     void noteEdgeOfBodyOfModule(uint32_t from, uint32_t to, KindOfEdgeInScan);
     void listFirstStoresAndUses();
@@ -1288,12 +1375,26 @@ private:
     ObjectBeingMadeInScan& objectBeingMade(uint32_t root);
     void follow(uint32_t root, ObjectBeingMadeKindInScan);
     void followThis(const BodyBlock& entry);
+    bool callsParentConstructor(const BodyValue&) const;
+    void noteParentCall(const BodyValue&, SummaryCall&);
+    std::optional<uint32_t> findTargetWithoutParent(const BodyValue& test) const;
+    void takeResultsOfParent(const BodyBlock&);
+    void takeThisAfterParent(const BodyBlock&);
+    struct ResultHandedToBlock {
+        uint32_t block { 0 };
+        uint32_t position { 0 };
+    };
+    FunctionID m_parentConstructor;
+    uint32_t m_receiverOfParentCalls { noDefinition };
+    uint32_t m_parentTestedForNull { noDefinition };
+    Vector<uint32_t, 4> m_resultsOfParent;
+    Vector<ResultHandedToBlock, 4> m_resultsOfParentHanded;
     LayoutID layoutOfAllocation(const BodyValue&) const;
     void followAllocation(const BodyValue&);
     void leaveEveryFieldEmpty(LayoutID);
     void leaveFieldsEmptyButFor(LayoutID, std::span<const uint32_t> fieldsHeld);
-    void noteCopyAtBirth(const BodyValue& copy, ValueID target);
-    bool leaveFieldsToCopy(const ObjectBeingMadeInScan&, LayoutID);
+    void noteCopyAtAllocation(const BodyValue& copy, ValueID target);
+    bool deferFieldsToCopy(const ObjectBeingMadeInScan&, LayoutID);
     void listFieldsHeldBy(const ObjectBeingMadeInScan&, const Layout&, Vector<uint32_t>& fieldsHeld);
     bool isListedByAllocation(uint32_t root, PropertyKeyID) const;
     std::span<const FillInScan> fillsOf(uint32_t root, SetsOfFillsInScan::Set) LIFETIME_BOUND;
@@ -1355,7 +1456,7 @@ private:
         uint32_t atom = list.count == 1 ? m_atoms[list.first] : 0;
         if (atom & parameterBit) {
             ListInScan resolved = m_resolved[atom & ~parameterBit];
-            if (resolved.count == 1 && TypeTable::isAnythingButNullish(m_origins[resolved.first].passes))
+            if (resolved.count == 1 && TypeTable::isNonNullishTop(m_origins[resolved.first].passes))
                 return m_origins[resolved.first].node;
         }
         return oneNodeFor(list);
@@ -1366,16 +1467,22 @@ private:
     void layHeritagesBySource();
     void applySinks();
     void applyConversionToPrimitive(const SinkInScan&);
+    void applyConversionByEquality(const EqualityInScan&);
+    uint32_t joinObjectsConverted(ListInScan, bool isConversionByEquality);
+    void callConversionsOf(uint32_t objects, ValueID site);
     void applyOperator(const OperatorInScan&);
     void applyStore(const StoreInScan&);
     void nameKeysOfDefinitionsByMaps();
     void nameGettersOfDescriptors();
     void layDescriptorsInSight();
     static constexpr uint32_t changeOfNoMap = UINT32_MAX;
-    void forgetWrittenAccessorOf(uint32_t access);
+    void removeWrittenAccessor(uint32_t access);
     void nameAccessorWrittenInDescriptor(uint32_t access, uint32_t rootOfDescriptor, uint32_t positionOfDefinition, uint32_t changeOfEntryInMap = changeOfNoMap, uint32_t placeWhereMapTakesEntry = 0);
     FunctionID functionWrittenAt(const SummaryNode&) const;
     std::span<const uint32_t> storesInto(uint32_t root);
+    bool everyAccessorHalfIsWritten(uint32_t root) const;
+    std::optional<uint32_t> findNestedLiteralSink(ValueID site) const;
+    void defineAccessorsOfPrototype(uint32_t root, ListInScan prototype);
     void followObjectsMadeToBePrototypes();
     void finish();
     void noteHandlerOf(const BodyBlock&);
@@ -1426,6 +1533,7 @@ private:
     uint64_t m_numberOfValuesScanned { 0 };
     bool m_hasStopped { false };
     std::optional<bool> m_onlyCallsTakeGatheredList;
+    std::optional<bool> m_argumentsObjectIsNamedOnce;
     std::optional<InternalError> m_error;
 
     Vector<uint32_t> m_nodeSlots;
@@ -1460,9 +1568,18 @@ private:
     std::optional<uint32_t> m_objectCopiedInto;
     std::optional<ListInScan> m_prototypeOfResult;
     Vector<bool> m_isConvertedToPrimitive;
+    Vector<EqualityInScan> m_equalities;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_objectsConvertedByEqualities;
     Vector<uint32_t> m_firstCallOfConversion;
     Vector<OperatorInScan> m_operators;
+    Vector<PropertyKeyID, 8> m_fieldsReadAsIntegers;
     Vector<uint32_t> m_joinsOfPrimitives;
+    struct JoinOfExclusion {
+        uint32_t join { 0 };
+        ListInScan subject;
+    };
+    Vector<JoinOfExclusion> m_joinsOfExclusions;
+    Vector<uint32_t> m_joinsOfExclusionsOfPrimitives;
 
     bool m_followsConstants { false };
     bool m_followsTests { false };
@@ -1498,14 +1615,26 @@ private:
         ValueID value;
     };
     Vector<ValueOfVariableInScan> m_valuesOfImmutableVariables;
+    Vector<std::pair<FieldReference, ValueID>> m_immutableFieldValues;
     Vector<std::pair<VariableID, ValueID>> m_storesIntoImmutableVariables;
     Vector<VariableID> m_moduleVariablesRead;
     std::optional<std::pair<SummaryCall, VariableID>> m_callThatHostMakes;
     Vector<std::pair<VariableID, uint32_t>, 2> m_valuesLaidIntoDescriptors;
     Vector<KeyOfVariableInScan> m_keysOfVariables;
+    Vector<VariableID> m_variablesStoredByElement;
+    Vector<std::pair<VariableID, DataID>> m_literalsOfVariables;
+    Vector<PropertyKeyID> m_keysStoredByElement;
+    Vector<std::pair<PropertyKeyID, DataID>> m_literalsOfKeys;
+    Vector<FieldReference> m_fieldsStoredByElement;
+    Vector<std::pair<FieldReference, DataID>> m_literalsOfFields;
+    Vector<CaptureInScan> m_capturesStoredByElement;
+    Vector<DataID> m_literalsStoredByElement;
+    Vector<std::pair<uint32_t, DataID>> m_literalArguments;
+    ThinSummaries::ElementStores m_elementStores;
+    Vector<std::pair<CaptureInScan, DataID>> m_literalsOfCaptures;
     Vector<MemberUnderVariableInScan> m_membersUnderVariables;
     Vector<FunctionID> m_functionsThatCopyMembers;
-    Vector<FunctionID> m_functionsThatMakeCopies;
+    Vector<FunctionID> m_copyingFunctions;
     Vector<ThinSummaries::MakerOfClosures> m_makersOfClosures;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAccessorsLaid;
     bool hasAccessorLaidUnder(uint32_t root, PropertyKeyID key) const { return !m_accessorsLaid.isEmpty() && m_placesOfAccessorsLaid.contains(static_cast<uint64_t>(root) << 32 | key.bits()); }
@@ -1522,7 +1651,6 @@ private:
     };
     Vector<HeritageInScan, 1> m_heritages;
     Vector<std::pair<ListInScan, uint32_t>> m_returnsOfCoroutine;
-    bool m_someReturnIsNoShift { false };
     Vector<EdgeLeadingBackInScan> m_edgesLeadingBack;
     bool m_listsDefinitions { false };
     struct ValueMadeForVariableInScan {
@@ -1539,6 +1667,7 @@ private:
     Vector<uint32_t> m_targetsWhoseDominatorStandsAbove;
     Vector<uint32_t> m_endsOfBlocks;
     uint32_t m_blockAboveReturns { noDefinition };
+    bool m_someBlockReturns { false };
     struct PlaceInBlockInScan {
         uint32_t number;
         uint32_t position;
@@ -1547,6 +1676,14 @@ private:
     Vector<PlaceInBlockInScan> m_storesOfBodyOfModule;
     Vector<PlaceInBlockInScan> m_readsOfBodyOfModule;
     Vector<PlaceInBlockInScan> m_usesByBodyOfModule;
+    Vector<PlaceInBlockInScan> m_usesOfVariablesByBodyOfModule;
+    Vector<uint32_t> m_blocksOfStoresOnPrototypes;
+    struct IntegerInVariable {
+        int64_t integer { 0 };
+        ValueID store;
+        uint32_t blockOfStore { 0 };
+    };
+    HashMap<uint32_t, IntegerInVariable, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersInVariables;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_readsNotedOfBodyOfModule;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_usesNotedOfBodyOfModule;
     Vector<uint32_t> m_blocksOfCalls;
@@ -1560,6 +1697,10 @@ private:
     Vector<DefinitionByDescriptorInScan, 4> m_definitionsByDescriptors;
     Vector<StoreOfPrototypeInScan, 4> m_storesOfPrototypes;
     Vector<HeirMadeByBuiltinInScan, 4> m_heirsMadeByBuiltins;
+    Vector<LiteralInParentInScan, 4> m_literalsBelowParents;
+    LiteralInParentInScan* findLiteralInParent(uint32_t root);
+    bool isMapUsedOnce(const HeirMadeByBuiltinInScan&) const;
+    void noteLiteralInParent(const BodyValue&);
 
     Vector<ObjectBeingMadeInScan> m_objectsBeingMade;
     uint32_t m_thisBeingMade { noDefinition };
@@ -1627,7 +1768,7 @@ struct ResultRulesOfScan {
     void cast(const BodyValue& value, uint32_t operandIndex, auto&&...) { scan.addOperand(value, operandIndex); }
     void allocation(const BodyValue& value, LayoutID layout) { scan.addAllocation(value, layout); }
     void allocation(const BodyValue& value, BuiltinLayoutID layout) { scan.addAllocation(value, scan.m_program.layoutOf(layout)); }
-    void allocation(const BodyValue& value, BuiltinClassID builtinClass, auto&&...) { scan.addNode(scan.classInstanceMadeBy(value, builtinClass)); }
+    void allocation(const BodyValue& value, BuiltinClassID builtinClass, auto&&...) { scan.addInstanceMadeBy(value, builtinClass); }
     void declared(const BodyValue& value, auto&&...) { scan.addDeclared(value); }
     void declaredContents(const BodyValue& value, uint32_t operandIndex, std::optional<ContentsSlot> slot) { scan.addContents(value, operandIndex, slot); }
     void declaredResult(const BodyValue& value, auto&&...) { scan.addResultAt(value); }
@@ -1950,6 +2091,12 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
         visit(definitionsByDescriptorInOrderOfSites, made.definitionsByDescriptorInOrderOfSites);
         visit(callsAtSitesOfCopiesThatSpellStores, made.callsAtSitesOfCopiesThatSpellStores);
         visit(writtenAccessors, made.writtenAccessors);
+        visit(methodsOfClasses, made.methodsOfClasses);
+        visit(classesInVariables, made.classesInVariables);
+        visit(unitsInVariables, made.unitsInVariables);
+        visit(storesOnPrototypes, made.storesOnPrototypes);
+        visit(firstUsesOfVariables, made.firstUsesOfVariables);
+        visit(nodesHandedToEvals, made.nodesHandedToEvals);
     };
 
     SummaryStorage& storage = nodes.m_storage;
@@ -1957,8 +2104,13 @@ ThinSummary::ThinSummary(SummaryBeingMade& made)
     std::array<Entry, 64> entries;
     size_t size = 0;
     size_t sizeKeptForWalk = 0;
+    uint64_t numbersInUse = 0;
     forEachList([&]<typename T, unsigned number>(const SummaryList<T, number>&, const auto& list) {
         static_assert(alignof(T) <= alignof(uint64_t));
+        if constexpr (number >= SummaryStorage::numberOfListsInRecord) {
+            RELEASE_ASSERT(!(numbersInUse & SummaryStorage::bitOf<number>()));
+            numbersInUse |= SummaryStorage::bitOf<number>();
+        }
         if constexpr (number < SummaryStorage::numberOfListsInRecord) {
             static_assert(std::is_trivially_destructible_v<T>);
             size = WTF::roundUpToMultipleOf<alignof(T)>(size);
@@ -2026,7 +2178,7 @@ void ScanOfBody::run(FunctionID id, ThinSummary& result)
 {
     summarize(id);
     if (m_summary.makesCopies)
-        m_functionsThatMakeCopies.append(id);
+        m_copyingFunctions.append(id);
     if (!m_summary.copiesOfMembers.isEmpty())
         m_functionsThatCopyMembers.append(id);
     result = ThinSummary(m_summary);
@@ -2054,10 +2206,13 @@ void ScanOfBody::summarize(FunctionID id)
                 readWhatNobodyAskedFor();
             if (!m_edgesLeadingBack.isEmpty())
                 findLoops();
+            if (!m_literalArguments.isEmpty())
+                resolveLiteralArguments();
             nameKeysOfMembers();
             if (!m_storesOfPrototypes.isEmpty() || !m_heirsMadeByBuiltins.isEmpty())
                 followObjectsMadeToBePrototypes();
             resolveParameters();
+            findExclusionsOfPrimitives();
             if (!m_definitionsByDescriptors.isEmpty())
                 layDescriptorsInSight();
             applySinks();
@@ -2083,6 +2238,7 @@ void ScanOfBody::reset()
     m_writtenListBeingListed = { };
     m_hasStopped = false;
     m_onlyCallsTakeGatheredList = std::nullopt;
+    m_argumentsObjectIsNamedOnce = std::nullopt;
     m_nodeSlots.fill(0, std::max(initialNumberOfNodeSlots, std::bit_ceil(2 * (m_function->body.numberOfValues() + 1))));
     m_listsOfNodes.shrink(0);
     m_listsOfNodes.append(ListInScan { });
@@ -2096,6 +2252,7 @@ void ScanOfBody::reset()
     m_stores.shrink(0);
     m_keysWrittenForMembers.shrink(0);
     m_valuesOfImmutableVariables.shrink(0);
+    m_immutableFieldValues.shrink(0);
     m_storesIntoImmutableVariables.shrink(0);
     m_moduleVariablesRead.shrink(0);
     m_callThatHostMakes = std::nullopt;
@@ -2111,18 +2268,27 @@ void ScanOfBody::reset()
     m_definitionsByDescriptors.shrink(0);
     m_storesOfPrototypes.shrink(0);
     m_heirsMadeByBuiltins.shrink(0);
+    m_parentConstructor = { };
+    m_receiverOfParentCalls = noDefinition;
+    m_parentTestedForNull = noDefinition;
+    m_resultsOfParent.shrink(0);
+    m_resultsOfParentHanded.shrink(0);
+    m_literalsBelowParents.shrink(0);
     m_readsNotYetNeeded.shrink(0);
     m_heritages.shrink(0);
     m_returnsOfCoroutine.shrink(0);
-    m_someReturnIsNoShift = false;
     m_edgesLeadingBack.shrink(0);
     m_listsDefinitions = listsDefinitions();
     m_valuesMadeForVariables.shrink(0);
     m_listsFirstStoresOfBody = listsFirstStoresOfBody();
     m_blockAboveReturns = noDefinition;
+    m_someBlockReturns = false;
     m_storesOfBodyOfModule.shrink(0);
     m_readsOfBodyOfModule.shrink(0);
     m_usesByBodyOfModule.shrink(0);
+    m_usesOfVariablesByBodyOfModule.shrink(0);
+    m_blocksOfStoresOnPrototypes.shrink(0);
+    m_integersInVariables.clear();
     m_readsNotedOfBodyOfModule.clear();
     m_usesNotedOfBodyOfModule.clear();
     m_blocksOfCalls.shrink(0);
@@ -2131,8 +2297,13 @@ void ScanOfBody::reset()
     m_nodesCaughtByBlocks.shrink(0);
     m_innermostLoopHeads.shrink(0);
     m_isConvertedToPrimitive.shrink(0);
+    m_equalities.shrink(0);
+    m_objectsConvertedByEqualities.clear();
     m_operators.shrink(0);
+    m_fieldsReadAsIntegers.shrink(0);
     m_joinsOfPrimitives.shrink(0);
+    m_joinsOfExclusions.shrink(0);
+    m_joinsOfExclusionsOfPrimitives.shrink(0);
     m_objectsBeingMade.shrink(0);
     m_thisBeingMade = noDefinition;
     m_leavesFieldsEmptyForGood = false;
@@ -2249,11 +2420,11 @@ TypeID ScanOfBody::primitiveConstantAt(uint32_t atom) const
     return holdsOnlyPrimitives(type) ? type : TypeID();
 }
 
-void ScanOfBody::addEdge(uint32_t from, uint32_t to, TypeID passes, bool runsCodeOfValue)
+void ScanOfBody::addEdge(uint32_t from, uint32_t to, TypeID passes, bool runsCodeOfValue, bool isConversionByEquality)
 {
     if (from == to || (!to && (m_summary.nodes[from].kind == SummaryNode::Kind::Constant || m_summary.nodes[from].kind == SummaryNode::Kind::ResultOfOperator)))
         return;
-    m_summary.edges.append(SummaryEdge { from, to, passes, runsCodeOfValue });
+    m_summary.edges.append(SummaryEdge { from, to, passes, runsCodeOfValue, isConversionByEquality });
 }
 
 uint32_t ScanOfBody::nodeOfData(const DataNode& root)
@@ -2291,6 +2462,8 @@ uint32_t ScanOfBody::nodeOfData(const DataNode& root)
             break;
         case DataNode::Kind::Array:
             made = classInstanceInData(BuiltinClasses::Array);
+            if (std::ranges::any_of(node->as<DataNode::Array>().elements, [](const DataNode& element) { return element.is<DataNode::Hole>(); }))
+                addEdge(constant(TypeTable::undefined), contentsNode(made, SlotOfContents::mayHaveHoles()));
             for (const DataNode& element : node->as<DataNode::Array>().elements)
                 nodesToVisit.append(DataAndTaker { &element, contentsNode(made, ContentsSlot::Element) });
             break;
@@ -2412,7 +2585,33 @@ bool ScanOfBody::isAlwaysPrimitive(const OriginInScan& origin) const
 {
     if (primitiveConstantAt(origin.node) || (origin.passes && holdsOnlyPrimitives(origin.passes)))
         return true;
-    return m_summary.nodes[origin.node].kind == SummaryNode::Kind::ResultOfOperator || std::ranges::binary_search(m_joinsOfPrimitives, origin.node);
+    return m_summary.nodes[origin.node].kind == SummaryNode::Kind::ResultOfOperator || std::ranges::binary_search(m_joinsOfPrimitives, origin.node) || std::ranges::binary_search(m_joinsOfExclusionsOfPrimitives, origin.node);
+}
+
+bool ScanOfBody::subjectOfExclusionIsPrimitive(uint32_t join, uint32_t component) const
+{
+    auto found = std::ranges::lower_bound(m_joinsOfExclusions, join, { }, &JoinOfExclusion::join);
+    if (found == m_joinsOfExclusions.end() || found->join != join)
+        return false;
+    return std::ranges::all_of(m_atoms.span().subspan(found->subject.first, found->subject.count), [&](uint32_t atom) {
+        if (atom & operatorBit)
+            return true;
+        if (atom & parameterBit)
+            return component != noComponent && m_componentOf[atom & ~parameterBit] == component;
+        return isAlwaysPrimitive(OriginInScan { atom, { } }) || subjectOfExclusionIsPrimitive(atom, component);
+    });
+}
+
+void ScanOfBody::findExclusionsOfPrimitives()
+{
+    for (const JoinOfExclusion& exclusion : m_joinsOfExclusions) {
+        expand(exclusion.subject);
+        bool holdsPrimitivesAlone = std::ranges::all_of(m_expanded, [&](const OriginInScan& origin) {
+            return isAlwaysPrimitive(origin);
+        });
+        if (holdsPrimitivesAlone)
+            m_joinsOfExclusionsOfPrimitives.append(exclusion.join);
+    }
 }
 
 uint32_t ScanOfBody::nodeOfAtom(uint32_t atom) const
@@ -2553,6 +2752,23 @@ void ScanOfBody::noteTextsThatMayNameEventsIn(const DataNode& root)
     }
 }
 
+static bool fillsEveryElement(const BodyValue& list)
+{
+    return list.opcode() == Opcode::NewArray ? list.as<Opcode::NewArray>().holes().empty() : list.opcode() == Opcode::CreateRest;
+}
+
+void ScanOfBody::addInstanceMadeBy(const BodyValue& value, BuiltinClassID builtinClass)
+{
+    uint32_t made = classInstanceMadeBy(value, builtinClass);
+    addNode(made);
+    if (builtinClass != BuiltinClasses::Array)
+        return;
+    if (!fillsEveryElement(value))
+        addEdge(constant(TypeTable::undefined), contentsNode(made, SlotOfContents::mayHaveHoles()));
+    if (value.opcode() != Opcode::NewArray && value.opcode() != Opcode::CreateRest)
+        addEdge(constant(TypeTable::undefined), contentsNode(made, SlotOfContents::mayHaveNamesOfEngine()));
+}
+
 void ScanOfBody::addNatural(const BodyValue& value, const NaturalType& written)
 {
     if (written.opaque)
@@ -2566,7 +2782,7 @@ void ScanOfBody::addNatural(const BodyValue& value, const NaturalType& written)
         return;
     }
     if (written.builtinClass) {
-        addNode(classInstanceMadeBy(value, written.builtinClass));
+        addInstanceMadeBy(value, written.builtinClass);
         return;
     }
     uint32_t made = constant(written.isFunction && !written.isObject ? TypeTable::function : TypeTable::object);
@@ -2688,6 +2904,35 @@ void ScanOfBody::addResultAt(const BodyValue& value)
     applyResultRule(rules, definition, read.index(), ResultSide::Proven);
 }
 
+PropertyKeyID ScanOfBody::fieldReadBy(BodyValue definition) const
+{
+    if (definition && definition.opcode() == Opcode::ToNumeric)
+        definition = definitionBehindCasts(definition.operand(0));
+    if (!definition)
+        return { };
+    if (definition.opcode() == Opcode::PrivateGet)
+        return fieldAt(m_program, FieldReference { definition.layout(), definition.field() }).key;
+    return definition.opcode() == Opcode::PropGet && !definition.isFreeName() ? definition.key() : PropertyKeyID();
+}
+
+void ScanOfBody::noteFieldsReadAsIntegers(const BodyValue& value)
+{
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    auto note = [&](ValueID operand) {
+        BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+        if (definition && sums.contains(definition.opcode()))
+            definition = definitionBehindCasts(definition.operand(0));
+        if (PropertyKeyID key = fieldReadBy(definition); key && !m_fieldsReadAsIntegers.contains(key))
+            m_fieldsReadAsIntegers.append(key);
+    };
+    if (value.opcode() == Opcode::ElemGet || value.opcode() == Opcode::ElemSet) {
+        note(value.propertyOperand());
+        return;
+    }
+    note(value.operand(0));
+    note(value.operand(1));
+}
+
 void ScanOfBody::addOperator(const BodyValue& value)
 {
     OperatorInScan found;
@@ -2701,6 +2946,32 @@ void ScanOfBody::addOperator(const BodyValue& value)
         BodyValue divisor = definitionBehindCasts(value.operand(1));
         if (int64_t written = divisor && divisor.opcode() == Opcode::Integer ? divisor.as<Opcode::Integer>().integer() : 0; written >= 1 && written <= int64_t { 1 } << 32)
             found.writtenDivisor = written <= INT32_MAX ? SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 : SummaryOperator::WrittenDivisor::FromTwoTo31ToTwoTo32;
+    }
+    if (found.opcode == Opcode::URShift) {
+        BodyValue shift = definitionBehindCasts(value.operand(1));
+        found.shiftsRightByConstant = shift && shift.opcode() == Opcode::Integer && shift.as<Opcode::Integer>().integer() & 31;
+    }
+    auto isLocal = [&](uint32_t index) {
+        BodyValue definition = definitionBehindCasts(value.operand(index));
+        if (!definition)
+            return !m_function->isCoroutine();
+        found.steppedField = fieldReadBy(definition);
+        return !!found.steppedField;
+    };
+    if ((found.opcode == Opcode::Increment || found.opcode == Opcode::Decrement) && isLocal(0))
+        found.step = found.opcode == Opcode::Increment ? 1 : -1;
+    if (found.opcode == Opcode::Add || found.opcode == Opcode::Sub) {
+        auto written = [&](uint32_t index) -> int8_t {
+            BodyValue operand = definitionBehindCasts(value.operand(index));
+            int64_t number = operand && operand.opcode() == Opcode::Integer ? operand.as<Opcode::Integer>().integer() : 0;
+            return number == 1 || number == -1 ? static_cast<int8_t>(number) : 0;
+        };
+        if (isLocal(0))
+            found.step = found.opcode == Opcode::Add ? written(1) : static_cast<int8_t>(-written(1));
+        else if (found.opcode == Opcode::Add && isLocal(1)) {
+            found.step = written(0);
+            found.steppedOperand = 1;
+        }
     }
 
     ListInScan result { static_cast<uint32_t>(m_atoms.size()), 1 };
@@ -2804,6 +3075,8 @@ void ScanOfBody::addArgument(ValueID operand, bool leaves)
     m_summary.arguments.append(0);
     if (!operand)
         return;
+    if (DataID literal = findArrayLiteral(operand))
+        m_literalArguments.append({ place, literal });
     if (leaves)
         noteLeaving(operand);
     addSink(SinkKindInScan::Argument, listOf(operand), place);
@@ -2910,7 +3183,7 @@ ListInScan ScanOfBody::settle(ValueID site, ListInScan list, uint32_t block)
     uint32_t access = addAccess(SummaryAccess::Kind::Read, site, list, { });
     m_summary.accesses[access].slot = ContentsSlot::Value;
     uint32_t whatIsNoPromise = newJoin();
-    m_summary.accesses[access].whatHoldsNothingOrBeginningOfKey = whatIsNoPromise;
+    m_summary.accesses[access].emptyHolderOrKeyPrefix = whatIsNoPromise;
     uint32_t valueOfPromise = resultOfRead(access);
 
     ListInScan objects = objectsAmong(listOfNode(whatIsNoPromise));
@@ -3242,8 +3515,40 @@ PrimitiveKnownToFolding ScanOfBody::primitiveHeldBy(ValueID value)
     return known;
 }
 
+LiteralInParentInScan* ScanOfBody::findLiteralInParent(uint32_t root)
+{
+    for (LiteralInParentInScan& literal : m_literalsBelowParents) {
+        if (literal.root == root)
+            return &literal;
+    }
+    return nullptr;
+}
+
+void ScanOfBody::noteLiteralInParent(const BodyValue& operation)
+{
+    uint32_t root = m_roots[operation.as<Opcode::SetLiteralPrototype>().objectOperand().index()];
+    BodyValue made = definitionOf(root);
+    if (!made || made.opcode() != Opcode::NewDictionary || m_firstLeft[root] != m_position || m_lastLeft[root] != m_position || (m_uses[root] & isLiteralInParent))
+        return;
+    m_uses[root] |= isLiteralInParent;
+    LiteralInParentInScan literal;
+    literal.site = operation.id();
+    literal.root = root;
+    literal.position = m_position;
+    m_literalsBelowParents.append(literal);
+}
+
 void ScanOfBody::noteLeavingOfObjectBeingMade(uint32_t root, WayOfLeavingInScan way)
 {
+    if (m_uses[root] & isLiteralInParent) {
+        LiteralInParentInScan& literal = *findLiteralInParent(root);
+        literal.firstLeftLater = std::min(literal.firstLeftLater, m_position);
+        literal.lastLeftLater = std::max(literal.lastLeftLater, m_position);
+        if (!(m_uses[root] & isFollowedWhileMade))
+            return;
+    }
+    if (way == WayOfLeavingInScan::IsHandedToParent)
+        return;
     noteWhereFinishedLiteralLeavesFirst(objectBeingMade(root));
     if (std::exchange(objectBeingMade(root).blockWhereFillsWereMetLast, m_blockBeingRead) != m_blockBeingRead)
         meetFillsWhereObjectLeaves(objectBeingMade(root), fillsOf(root, m_fills));
@@ -3283,6 +3588,9 @@ void ScanOfBody::readBody()
     m_exclusionsTakenAtBlocks.shrink(0);
     m_exclusionInForce = noExclusion;
     m_listsUnderExclusions.clear();
+    m_viewsHanded.shrink(0);
+    m_valuesViewed.clear();
+    m_blocksWhoseViewsAreTested.shrink(0);
     m_objectsOfReadsPutOff.clear();
     if (m_listsFirstStoresOfBody) {
         m_immediateDominators.fill(noDefinition, body.numberOfBlocks());
@@ -3334,6 +3642,8 @@ ALWAYS_INLINE BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
 
     m_position = block.firstValue().index();
     m_blockBeingRead = number;
+    if (!m_viewsHanded.isEmpty()) [[unlikely]]
+        takeViewsHandedTo(block);
     takeExclusionsAtBlock(number);
     m_blockBeingReadHasHandler = block.hasHandler();
     if (m_followsSomeEnvironment)
@@ -3344,6 +3654,10 @@ ALWAYS_INLINE BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
         followThis(block);
     else if (!m_objectsBeingMade.isEmpty()) {
         m_fills = m_fillsAtBlocks[number] != noFillsYet ? m_fillsAtBlocks[number] : SetsOfFillsInScan::empty;
+        if (!m_resultsOfParentHanded.isEmpty()) {
+            takeResultsOfParent(block);
+            takeThisAfterParent(block);
+        }
         takeObjectsHandedTo(block);
     }
     if (block.hasHandler()) {
@@ -3424,6 +3738,14 @@ static bool readsTokenOfClassInScan(const Program& program, const BodyValue& val
     return written && program.at(written).isOpaque(OpaqueKind::ClassToken);
 }
 
+static FieldReference instanceFieldRead(const Program& program, const BodyValue& value)
+{
+    if (value.opcode() != Opcode::GetEnvironmentField || program.moduleInstances.isEmpty())
+        return { };
+    auto read = value.as<Opcode::GetEnvironmentField>();
+    return { read.layout(), read.field() };
+}
+
 ALWAYS_INLINE bool ScanOfBody::noteEffectsOf(const BodyValue& value, Opcode opcode, uint32_t block, std::optional<SummaryAccess::Kind> access)
 {
     Effects effectsStorage;
@@ -3459,6 +3781,22 @@ ALWAYS_INLINE bool ScanOfBody::noteEffectsOf(const BodyValue& value, Opcode opco
     return effects.mayCallUnknownCode;
 }
 
+void ScanOfBody::noteConstantFieldTaken(ValueID computedKey)
+{
+    BodyValue read = definitionBehindCasts(computedKey);
+    if (read && read.opcode() == Opcode::ToPropertyKey)
+        read = definitionBehindCasts(read.operand(0));
+    if (!read || read.opcode() != Opcode::PropGet || read.isFreeName())
+        return;
+    BodyValue holder = definitionBehindCasts(read.objectOperand());
+    if (holder && holder.opcode() == Opcode::CheckInitialized)
+        holder = definitionBehindCasts(holder.operand(0));
+    if (!holder || holder.opcode() != Opcode::GetModuleVariable || !m_program.at(holder.variable()).flags.contains(VariableFlags::IsImmutable))
+        return;
+    if (!m_summary.keysOfTestedFields.contains(read.key()))
+        m_summary.keysOfTestedFields.append(read.key());
+}
+
 ALWAYS_INLINE void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
 {
     using Row = RowOfOpcodeInScan;
@@ -3482,14 +3820,19 @@ ALWAYS_INLINE void ScanOfBody::readOperation(const BodyValue& value, uint32_t bl
     if (m_followsSomeEnvironment)
         beginOperationOverEnvironments(value);
     if (!(traits & Row::onlyHandsOn)) {
-        m_summary.numberOfOperations += !readsTokenOfClassInScan(m_program, value);
+        FieldReference fieldOfInstance = instanceFieldRead(m_program, value);
+        bool readsLink = fieldOfInstance.layout && m_program.isInstanceLink(fieldOfInstance);
+        m_summary.numberOfOperations += !readsLink && !readsTokenOfClassInScan(m_program, value);
         if (traits & Row::weighsNothingInCopy)
             m_summary.numberOfOperationsThatOnlyTurnTruthRound += onlyTurnsTruthRound(value);
         else
-            ++m_summary.weightOfOperations;
+            m_summary.weightOfOperations += !readsLink && !(fieldOfInstance.layout && m_program.isInstanceVariable(fieldOfInstance));
     }
     if (opcode == Opcode::String)
         noteTextSpelled(value.as<Opcode::String>().string());
+    static constexpr OpcodeSet usesOfIntegers = allRelations | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet };
+    if (usesOfIntegers.contains(opcode))
+        noteFieldsReadAsIntegers(value);
     if (opcode == Opcode::Convert && value.as<Opcode::Convert>().declared().has(PositionFlags::IsInt32Promise))
         m_summary.traits.add(SummaryTrait::HoldsInt32Promise);
     if (m_listsFirstStoresOfBody)
@@ -3810,23 +4153,49 @@ ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::readAccess(const BodyValue& valu
     }
     if (SummaryCall* madeKey = !key && computedKey ? findCallThatMade(computedKey) : nullptr)
         noteResultReadAsKey(*madeKey);
-    if (!key && computedKey)
+    if (!key && computedKey) {
+        noteConstantFieldTaken(computedKey);
         noteIfParameterIsReadAsKey(computedKey, m_summary.entryParametersReadAsNames);
+    }
     ListInScan subject = object ? listOf(object) : listOfNode(0);
     auto addAccessUnderKey = [&] {
         uint32_t added = addAccessUnder(kind, value.id(), subject, key, computedKey);
         m_summary.accesses[added].keyIsNameThatLoopOverSubjectGave = kind == SummaryAccess::Kind::Read && !key && computedKey && object && isNameThatLoopOverGave(computedKey, object);
-        m_summary.accesses[added].whatHoldsNothingOrBeginningOfKey = beginningOfKey.bits();
+        m_summary.accesses[added].emptyHolderOrKeyPrefix = beginningOfKey.bits();
         return added;
     };
     if (object) {
         uint16_t& uses = m_uses[m_roots[object.index()]];
         uses |= isAccessedByName;
-        if (BodyValue made = !key && kind == SummaryAccess::Kind::Store ? definitionBehindCasts(object) : BodyValue(); made && made.opcode() == Opcode::Data && made.as<Opcode::Data>().data()) {
+        bool isStoredInto = key ? kind == SummaryAccess::Kind::Read && key == m_program.keyOf(BuiltinNames::push) : kind == SummaryAccess::Kind::Store;
+        if (BodyValue made = isStoredInto ? definitionBehindCasts(object) : BodyValue(); made && made.opcode() == Opcode::Data && made.as<Opcode::Data>().data()) {
             const auto* list = m_program.at(made.as<Opcode::Data>().data()).root.tryAs<DataNode::Array>();
-            if (list && !list->elements.isEmpty())
+            if (list && !list->elements.isEmpty()) {
                 m_storesIntoConstantLists.append({ made.id(), m_blocks[value.id().index()] });
+                m_literalsStoredByElement.append(made.as<Opcode::Data>().data());
+            }
         }
+        if (!key && kind == SummaryAccess::Kind::Store) {
+            BodyValue held = definitionBehindCasts(object);
+            if (held && held.opcode() == Opcode::CheckInitialized)
+                held = definitionBehindCasts(held.operand(0));
+            if (held && held.opcode() == Opcode::GetModuleVariable)
+                m_variablesStoredByElement.append(held.as<Opcode::GetModuleVariable>().variable());
+            else if (held && held.opcode() == Opcode::PropGet)
+                m_keysStoredByElement.append(held.as<Opcode::PropGet>().key());
+            else if (held && held.opcode() == Opcode::GetEnvironmentField)
+                m_fieldsStoredByElement.append(FieldReference { held.as<Opcode::GetEnvironmentField>().layout(), held.as<Opcode::GetEnvironmentField>().field() });
+            else if (held && held.opcode() == Opcode::PrivateGet)
+                m_keysStoredByElement.append(m_program.at(held.as<Opcode::PrivateGet>().layout()).fields[held.as<Opcode::PrivateGet>().field()].key);
+            else if (uint32_t root = m_roots[object.index()]; root < m_function->numberOfEntryParameters() && m_function->entryParameterKind(root) == EntryParameter::Capture)
+                m_capturesStoredByElement.append({ m_id, root - m_function->numberOfEntryParametersBefore(EntryParameter::Capture) });
+            else if (root < m_function->numberOfEntryParameters() && m_function->entryParameterKind(root) == EntryParameter::Parameter)
+                m_elementStores.parameters.append({ m_id, root - m_function->firstParameterIndex() });
+            else if (held && held.opcode() == Opcode::Call)
+                m_elementStores.results.append({ m_id, held.id() });
+        }
+        if (DataID literal = key && stored && (kind == SummaryAccess::Kind::Store || kind == SummaryAccess::Kind::Define) ? findArrayLiteral(stored) : DataID())
+            m_literalsOfKeys.append({ key, literal });
         if (!key && computedKey && stored && kind == SummaryAccess::Kind::Define)
             uses |= isDefinedUnderComputedKeys;
         else if (!key || (kind != SummaryAccess::Kind::Store && kind != SummaryAccess::Kind::Define) || (kind == SummaryAccess::Kind::Store && m_program.nameClassOf(key) == NameClass::Proto))
@@ -3874,6 +4243,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::readAccess(const BodyValue& valu
                 flowInto(held, valuesLaidIntoDescriptorHeldBy(constant));
             m_stores.append(StoreInScan { value.id(), kind == SummaryAccess::Kind::Define, subject, held, key, m_roots[object.index()], block });
             m_stores.last().storesSurelyIndex = stored && key == m_program.keyOf(BuiltinNames::length) && isSurelyIndex(stored);
+            if (BodyValue written = m_stores.last().storesSurelyIndex ? definitionBehindCasts(stored) : BodyValue())
+                m_stores.last().storesZero = written.opcode() == Opcode::Integer && !written.as<Opcode::Integer>().integer();
             noteStoreIntoObject(m_roots[object.index()], key, kind);
             return;
         }
@@ -4066,12 +4437,14 @@ void ScanOfBody::readDefineAccessor(const BodyValue& value, ValueID object, Valu
                 half = closure.as<Opcode::NewClosure>().function();
         }
         m_accessorsLaid.append(AccessorLaidInScan { root, key, half, lays == SummaryChange::Lays::Getter, static_cast<uint32_t>(m_sinks.size()) });
+        bool isFirstUnderName = m_placesOfAccessorsLaid.add(static_cast<uint64_t>(root) << 32 | key.bits()).isNewEntry;
         if ((m_uses[root] & isFollowedWhileMade) && objectBeingMade(root).kind == ObjectBeingMadeKindInScan::OfOneLayout) {
+            if (isFirstUnderName)
+                objectBeingMade(root).definedInTurn.append(key);
             noteFill(root, false, key.bits());
             if (half)
                 noteFill(root, true, half.index());
         }
-        m_placesOfAccessorsLaid.add(static_cast<uint64_t>(m_roots[object.index()]) << 32 | key.bits());
     }
     uint32_t change = static_cast<uint32_t>(m_summary.changes.size());
     m_summary.definitionsByDescriptorInOrderOfSites.append(static_cast<uint32_t>(m_summary.changes.size()));
@@ -4098,6 +4471,8 @@ void ScanOfBody::readDefineMethod(const BodyValue& value)
     ValueID function = definition.functionOperand();
     if (function)
         noteLeaving(function);
+    if (function && member.key && member.kind == MethodKind::Getter && member.side == ClassSide::Prototype)
+        m_gettersDefined.append({ member.key, function });
     addSink(SinkKindInScan::ValueOfMember, function ? listOf(function) : ListInScan(), place);
 }
 
@@ -4136,6 +4511,12 @@ void ScanOfBody::readOperand(const BodyValue& value, ValueID operand, uint32_t o
         m_uses[m_roots[operand.index()]] |= hasNullAboveByItsOwnText;
     else if (!isPassedThrough)
         noteLeaving(operand);
+    bool isSetOnLiteral = value.opcode() == Opcode::SetLiteralPrototype && !isGivenNullAbove;
+    if (isSetOnLiteral && operandIndex == OperandIndex::SetLiteralPrototype::object)
+        noteLiteralInParent(value);
+    bool isParentOfLiteral = isSetOnLiteral && operandIndex != OperandIndex::SetLiteralPrototype::object && !m_literalsBelowParents.isEmpty() && m_literalsBelowParents.last().site == value.id();
+    if (isParentOfLiteral)
+        m_literalsBelowParents.last().firstSinkOfParent = static_cast<uint32_t>(m_sinks.size());
 
     if (runsProtocols && info.protocols.contains(Protocol::Thenable)) {
         size_t numberOfAccesses = m_summary.accesses.size();
@@ -4185,7 +4566,7 @@ void ScanOfBody::readOperand(const BodyValue& value, ValueID operand, uint32_t o
             ValueID source = info.assignedFromOperand ? value.operand(*info.assignedFromOperand) : ValueID();
             addChange(SummaryChange::Kind::CopiesInto, value.id(), list, { }, source ? listOf(source) : listOfNode(0));
             m_summary.changes.last().definesWhatItCopies = !declaredBoundInTable(value.opcode()).mayCallUnknownCode;
-            noteCopyAtBirth(value, value.operand(operandIndex));
+            noteCopyAtAllocation(value, value.operand(operandIndex));
             m_summary.changes.last().subjectIsMadeInBody = isMadeInBody(value.operand(operandIndex));
             break;
         }
@@ -4209,6 +4590,8 @@ void ScanOfBody::readOperand(const BodyValue& value, ValueID operand, uint32_t o
         }
         }
     }
+    if (isParentOfLiteral)
+        m_literalsBelowParents.last().endOfSinksOfParent = static_cast<uint32_t>(m_sinks.size());
     if (runsProtocols)
         readProtocols(value, operandIndex, info, list, block);
 }
@@ -4227,7 +4610,10 @@ void ScanOfBody::readProtocols(const BodyValue& value, uint32_t operandIndex, co
             readOwnValues(value, operandIndex, list);
             break;
         case Protocol::ToPrimitive:
-            convertToPrimitive(site, list);
+            if (value.opcode() == Opcode::Eq)
+                convertOperandOfEquality(value, operandIndex, list);
+            else
+                convertToPrimitive(site, list);
             break;
         case Protocol::Thenable:
             if (m_operandSettled != operandIndex)
@@ -4300,6 +4686,17 @@ void ScanOfBody::convertToPrimitive(ValueID site, ListInScan list)
     addSink(SinkKindInScan::ConvertedToPrimitive, list, site.index());
 }
 
+void ScanOfBody::convertOperandOfEquality(const BodyValue& value, uint32_t operandIndex, ListInScan list)
+{
+    ListInScan other = listOf(value.operand(1 - operandIndex));
+    if (isAlwaysPrimitive(list) || list == other)
+        return;
+    uint32_t index = static_cast<uint32_t>(m_equalities.size());
+    m_equalities.append(EqualityInScan { value.id(), list, other });
+    addSink(SinkKindInScan::OtherOperandOfEquality, other, index);
+    addSink(SinkKindInScan::ConvertedByEquality, list, index);
+}
+
 void ScanOfBody::constructBySpecies(ValueID site, ListInScan list, uint32_t block)
 {
     uint32_t constructor = addRead(site, list, m_program.keyOf(BuiltinNames::constructor));
@@ -4326,12 +4723,25 @@ ListInScan ScanOfBody::openIterator(ValueID site, ListInScan iterable, IteratorK
     case IteratorKind::Sync:
         addRead(site, iterator, m_program.keyOf(BuiltinNames::next));
         return iterator;
-    case IteratorKind::Async:
+    case IteratorKind::Async: {
         handToCodeThatRuns(iterator);
-        handToCodeThatRuns(listOfNode(resultOfCall(callMember(site, iterable, builtins.nameOf(WellKnownSymbol::AsyncIterator), { }, block))));
-        return listOfNode(0);
+        ListInScan asyncIterator = listOfNode(resultOfCall(callMember(site, iterable, builtins.nameOf(WellKnownSymbol::AsyncIterator), { }, block)));
+        addRead(site, asyncIterator, m_program.keyOf(BuiltinNames::next));
+        return asyncIterator;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+uint32_t ScanOfBody::stepAsyncIterator(ValueID site, ListInScan iterator, std::optional<ListInScan> sent, uint32_t block)
+{
+    uint32_t call = sent ? callMember(site, iterator, BuiltinNames::next, { *sent }, block) : callMember(site, iterator, BuiltinNames::next, { }, block);
+    size_t numberOfAccesses = m_summary.accesses.size();
+    ListInScan result = settle(site, listOfNode(resultOfCall(call)), block);
+    if (m_summary.accesses.size() > numberOfAccesses)
+        m_summary.accesses[numberOfAccesses].standsRightBehindCall = true;
+    addRead(site, result, m_program.keyOf(BuiltinNames::done));
+    return addRead(site, result, m_program.keyOf(BuiltinNames::value));
 }
 
 uint32_t ScanOfBody::stepIterator(ValueID site, ListInScan iterator, BuiltinName method, std::optional<ListInScan> sent, uint32_t block)
@@ -4373,10 +4783,26 @@ void ScanOfBody::readIteration(const BodyValue& value, const OperandInfo& info, 
             m_summary.calls.append(call);
             m_blocksOfCalls.append(block);
         }
-        addList(openIterator(site, list, value.as<Opcode::IteratorOpen>().iteratorKind(), block));
+        auto open = value.as<Opcode::IteratorOpen>();
+        ListInScan iterator = openIterator(site, list, open.iteratorKind(), block);
+        if (open.iteratorKind() == IteratorKind::Async && open.isDelegating()) {
+            handToCodeThatRuns(iterator);
+            iterator = listOfNode(0);
+        }
+        addList(iterator);
         return;
     }
     if (info.kind == OperandKind::IteratorState && !stepsSynchronousIteratorInScan(value)) {
+        if (opcode == Opcode::IteratorResume && value.as<Opcode::IteratorResume>().resumeMode() == ResumeMode::Next) {
+            ValueID operand = value.as<Opcode::IteratorResume>().sentOperand();
+            addNode(stepAsyncIterator(site, list, operand ? std::optional(listOf(operand)) : std::nullopt, block));
+            addNode(0);
+            return;
+        }
+        if (opcode == Opcode::IteratorClose) {
+            handToCodeThatRuns(listOfNode(resultOfCall(callMember(site, list, BuiltinNames::returnKeyword, { }, block))));
+            return;
+        }
         if (opcode == Opcode::IteratorResume && value.as<Opcode::IteratorResume>().resumeMode() == ResumeMode::Throw)
             callMember(site, listOfNode(0), BuiltinNames::throwKeyword, { listOfNode(0) }, block);
         handToCodeThatRuns(list);
@@ -4487,6 +4913,11 @@ void ScanOfBody::retain(const BodyValue& value, uint32_t operandIndex, const Ope
                 m_summary.functionVariablesStoredInto.append(variable);
             flowInto(list, variableNode(variable));
         }
+        else if (value.opcode() == Opcode::DirectEval) {
+            uint32_t handed = newJoin();
+            flowInto(list, handed);
+            m_summary.nodesHandedToEvals.append(handed);
+        }
         else if (m_operandSettled == operandIndex && someResultIsReadOutOf(value, operandIndex))
             return;
         else if (std::optional<SlotOfContents> slot = slotNamedByRowOf(value); slot && !holderOf(value.opcode()) && m_function->isCoroutine() && !m_function->flags.containsAll({ FunctionFlags::IsGenerator, FunctionFlags::IsAsync }))
@@ -4536,6 +4967,8 @@ void ScanOfBody::retainInResult(const BodyValue& value, uint32_t operandIndex, L
         FunctionID closure = value.as<Opcode::NewClosure>().function();
         if (closure && (m_makersOfClosures.isEmpty() || m_makersOfClosures.last().closure != closure || m_makersOfClosures.last().maker != m_id))
             m_makersOfClosures.append({ closure, m_id });
+        if (DataID literal = findArrayLiteral(value.operand(operandIndex)))
+            m_literalsOfCaptures.append({ CaptureInScan { closure, place }, literal });
         flowInto(list, captureNode(closure, place));
         return;
     }
@@ -4574,6 +5007,13 @@ void ScanOfBody::retainInResult(const BodyValue& value, uint32_t operandIndex, L
     auto allocation = value.as<Opcode::NewObject>();
     LayoutID layout = allocation.layout();
     std::span<const uint32_t> fields = allocation.fields();
+    if (DataID literal = place < fields.size() ? findArrayLiteral(value.operand(operandIndex)) : DataID()) {
+        const Layout& holder = m_program.at(layout);
+        if (holder.isEnvironment())
+            m_literalsOfFields.append({ FieldReference { layout, fields[place] }, literal });
+        else if (PropertyKeyID key = holder.fields[fields[place]].key)
+            m_literalsOfKeys.append({ key, literal });
+    }
     if (isFirstValueThatMayGoUnseen(value, value.operand(operandIndex)))
         return;
     uint32_t node = place < fields.size() ? fieldNode(layout, fields[place]) : 0;
@@ -4603,6 +5043,10 @@ void ScanOfBody::retainInOperand(const BodyValue& value, const OperandInfo& info
         return;
     if (opcode == Opcode::PutEnvironmentField) {
         auto store = value.as<Opcode::PutEnvironmentField>();
+        if (FieldReference field { store.layout(), store.field() }; !m_program.moduleInstances.isEmpty() && m_function->isModuleBody() && m_program.isInstanceVariable(field) && fieldAt(m_program, field).flags.contains(FieldFlags::IsImmutable))
+            m_immutableFieldValues.append({ field, store.valueOperand() });
+        if (DataID literal = findArrayLiteral(store.valueOperand()))
+            m_literalsOfFields.append({ FieldReference { store.layout(), store.field() }, literal });
         flowInto(list, fieldNode(store.layout(), store.field()));
         return;
     }
@@ -4652,6 +5096,10 @@ void ScanOfBody::retainContents(const BodyValue& value, ListInScan held)
 void ScanOfBody::storeInspectedValueIntoList(const BodyValue& value, ListInScan list)
 {
     Opcode opcode = value.opcode();
+    if (opcode == Opcode::AppendHole) {
+        storeIntoContents(value.id(), list, SlotOfContents::mayHaveHoles(), listOfNode(constant(TypeTable::undefined)));
+        return;
+    }
     std::optional<unsigned> position = OperandPosition::value(opcode);
     if (!position || operandUsesOf(opcode, *position).contains(OperandUse::Retains))
         return;
@@ -4714,8 +5162,99 @@ void ScanOfBody::followThis(const BodyBlock& entry)
         return;
     m_thisBeingMade = entry.parameter(*parameter).index();
     follow(m_thisBeingMade, ObjectBeingMadeKindInScan::This);
-    if (isInitializer)
+    if (isInitializer) {
         m_uses[m_thisBeingMade] |= isUnderConstruction;
+        return;
+    }
+    m_parentConstructor = parentConstructorOf(m_program, m_id);
+}
+
+bool ScanOfBody::callsParentConstructor(const BodyValue& value) const
+{
+    if (!m_parentConstructor || value.opcode() != Opcode::Call || m_blockBeingReadHasHandler)
+        return false;
+    auto call = value.as<Opcode::Call>();
+    ValueID receiver = call.thisValueOperand();
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    BodyValue callee = call.calleeOperand() ? definitionBehindCasts(call.calleeOperand()) : BodyValue();
+    if (!receiver || arguments.empty() || !arguments[0] || m_roots[arguments[0].index()] != m_thisBeingMade || !callee || callee.opcode() != Opcode::PropGet)
+        return false;
+    auto read = callee.as<Opcode::PropGet>();
+    if (!read.key() || !read.objectOperand() || m_roots[read.objectOperand().index()] != m_roots[receiver.index()])
+        return false;
+    uint32_t parent = m_roots[receiver.index()];
+    if ((m_receiverOfParentCalls != noDefinition && m_receiverOfParentCalls != parent) || (m_parentTestedForNull != noDefinition && m_parentTestedForNull != parent))
+        return false;
+    const BuiltinTable& builtins = m_program.builtins();
+    BuiltinID member = findOwnMember(m_program, builtins.canonicalID(Builtins::FunctionPrototype), read.key());
+    member = member ? builtins.canonicalID(member) : BuiltinID();
+    return member && (member == builtins.canonicalID(Builtins::FunctionPrototypeCall) || member == builtins.canonicalID(Builtins::FunctionPrototypeApply));
+}
+
+void ScanOfBody::noteParentCall(const BodyValue& value, SummaryCall& call)
+{
+    call.continuesConstruction = true;
+    m_receiverOfParentCalls = m_roots[value.as<Opcode::Call>().thisValueOperand().index()];
+    noteLeaving(ValueID(m_thisBeingMade), WayOfLeavingInScan::IsHandedToParent);
+    m_uses[m_thisBeingMade] |= isAccessedBesideNamedStores;
+    ObjectBeingMadeInScan& object = objectBeingMade(m_thisBeingMade);
+    if (!object.parts.contains(m_parentConstructor))
+        object.parts.append(m_parentConstructor);
+    noteFill(m_thisBeingMade, true, m_parentConstructor.index());
+    m_resultsOfParent.append(value.id().index());
+}
+
+std::optional<uint32_t> ScanOfBody::findTargetWithoutParent(const BodyValue& test) const
+{
+    if (!m_parentConstructor || !test)
+        return std::nullopt;
+    BodyValue asked = test;
+    uint32_t target = 0;
+    while (asked && (asked.opcode() == Opcode::ToBoolean || asked.opcode() == Opcode::LogicalNot)) {
+        target ^= asked.opcode() == Opcode::LogicalNot;
+        asked = asked.operand(0) ? definitionOf(asked.operand(0).index()) : BodyValue();
+    }
+    if (!asked || asked.opcode() != Opcode::TypeTest)
+        return std::nullopt;
+    TypeID tested = asked.as<Opcode::TypeTest>().testedType();
+    if (tested != TypeID(TypeTable::null) && tested != TypeID(TypeTable::undefined))
+        return std::nullopt;
+    uint32_t parent = m_roots[asked.operand(0).index()];
+    if (parent >= m_function->captures.size() || (m_receiverOfParentCalls != noDefinition && m_receiverOfParentCalls != parent) || (m_parentTestedForNull != noDefinition && m_parentTestedForNull != parent))
+        return std::nullopt;
+    return target;
+}
+
+void ScanOfBody::takeResultsOfParent(const BodyBlock& block)
+{
+    uint32_t number = block.id().index();
+    if (m_numberOfEdgesInto[number] != 1)
+        return;
+    for (const ResultHandedToBlock& handed : m_resultsOfParentHanded) {
+        if (handed.block == number && handed.position < block.numberOfParameters())
+            m_resultsOfParent.append(block.parameter(handed.position).index());
+    }
+}
+
+void ScanOfBody::takeThisAfterParent(const BodyBlock& block)
+{
+    uint32_t number = block.id().index();
+    for (uint32_t position = 0; position < block.numberOfParameters(); ++position) {
+        auto isResultHandedHere = [&](const ResultHandedToBlock& handed) {
+            return handed.block == number && handed.position == position;
+        };
+        auto isThisHandedHere = [&](const ObjectHandedToBlockInScan& handed) {
+            return handed.block == number && handed.position == position && handed.root == m_thisBeingMade;
+        };
+        size_t numberOfResults = std::ranges::count_if(m_resultsOfParentHanded, isResultHandedHere);
+        size_t numberOfObjects = std::ranges::count_if(m_objectsHandedToBlocks, isThisHandedHere);
+        if (!numberOfResults || !numberOfObjects || numberOfResults + numberOfObjects != m_numberOfEdgesInto[number])
+            continue;
+        m_objectsHandedToBlocks.removeAllMatching(isThisHandedHere);
+        m_roots[block.parameter(position).index()] = m_thisBeingMade;
+        m_blocksThatTookObjects.append(BlockThatTookObjectInScan { number, m_thisBeingMade });
+        m_summary.otherNamesOfObjectsBeingMade.append(OtherNameOfObjectBeingMade { block.parameter(position), ValueID(m_thisBeingMade) });
+    }
 }
 
 static const DataNode::Object* objectOfDataInScan(const Program& program, const BodyValue& value)
@@ -4789,7 +5328,7 @@ void ScanOfBody::leaveFieldsEmptyButFor(LayoutID id, std::span<const uint32_t> f
     m_summary.fieldsHeldOfLayoutsLeftEmpty.append(fieldsHeld);
 }
 
-void ScanOfBody::noteCopyAtBirth(const BodyValue& copy, ValueID target)
+void ScanOfBody::noteCopyAtAllocation(const BodyValue& copy, ValueID target)
 {
     if (copy.opcode() != Opcode::CopyDataProperties)
         return;
@@ -4801,13 +5340,13 @@ void ScanOfBody::noteCopyAtBirth(const BodyValue& copy, ValueID target)
     if (!made || made.opcode() != Opcode::NewObject || m_program.at(made.as<Opcode::NewObject>().layout()).kind != LayoutKind::Record)
         return;
     ObjectBeingMadeInScan& object = objectBeingMade(root);
-    if (object.kind == ObjectBeingMadeKindInScan::OfOneLayout && !object.positionOfFinish && object.copyAtBirth == ThinSummary::noCopy)
-        object.copyAtBirth = static_cast<uint32_t>(m_summary.changes.size() - 1);
+    if (object.kind == ObjectBeingMadeKindInScan::OfOneLayout && !object.positionOfFinish && object.copyAtAllocation == ThinSummary::noCopy)
+        object.copyAtAllocation = static_cast<uint32_t>(m_summary.changes.size() - 1);
 }
 
-bool ScanOfBody::leaveFieldsToCopy(const ObjectBeingMadeInScan& object, LayoutID id)
+bool ScanOfBody::deferFieldsToCopy(const ObjectBeingMadeInScan& object, LayoutID id)
 {
-    if (object.copyAtBirth == ThinSummary::noCopy || !object.positionOfFinish || object.isGivenUp)
+    if (object.copyAtAllocation == ThinSummary::noCopy || !object.positionOfFinish || object.isGivenUp)
         return false;
     listFieldsHeldBy(object, m_program.at(id), m_fieldsThatObjectHolds);
     if (m_fieldsThatObjectHolds.size() == m_program.at(id).fields.size())
@@ -4815,7 +5354,7 @@ bool ScanOfBody::leaveFieldsToCopy(const ObjectBeingMadeInScan& object, LayoutID
     m_summary.makesCopies = true;
     m_summary.fieldsHeldOfLayoutsLeftEmpty.append(id.index());
     m_summary.fieldsHeldOfLayoutsLeftEmpty.append(static_cast<uint32_t>(m_fieldsThatObjectHolds.size()) | ThinSummary::isFilledByCopy);
-    m_summary.fieldsHeldOfLayoutsLeftEmpty.append(object.copyAtBirth);
+    m_summary.fieldsHeldOfLayoutsLeftEmpty.append(object.copyAtAllocation);
     m_summary.fieldsHeldOfLayoutsLeftEmpty.append(m_fieldsThatObjectHolds.span());
     return true;
 }
@@ -4948,6 +5487,8 @@ void ScanOfBody::handToBlock(ValueID value, uint32_t from, uint32_t block, uint3
 {
     noteUseByBodyOfModule(value);
     uint32_t root = m_roots[value.index()];
+    if (!m_resultsOfParent.isEmpty() && block > from && kind == KindOfEdgeInScan::Plain && m_resultsOfParent.contains(root)) [[unlikely]]
+        m_resultsOfParentHanded.append({ block, position });
     if (!(m_uses[root] & isFollowedWhileMade) || block <= from || kind == KindOfEdgeInScan::ToHandler) {
         m_uses[root] |= isAccessedBesideNamedStores;
         noteLeaving(value);
@@ -5085,7 +5626,7 @@ void ScanOfBody::listConstructions()
             LayoutID id = layoutOfAllocation(definitionOf(object.root));
             const Layout& layout = m_program.at(id);
             bool goesByLiteralAlone = layout.kind == LayoutKind::Record && !object.endsWhereItLeaves;
-            if ((object.hasLeft || goesByLiteralAlone) && !leaveFieldsToCopy(object, id))
+            if ((object.hasLeft || goesByLiteralAlone) && !deferFieldsToCopy(object, id))
                 m_placesOfObjectsOfOneLayout.append({ id, static_cast<uint32_t>(&object - m_objectsBeingMade.begin()) });
             continue;
         }
@@ -5253,6 +5794,59 @@ bool ScanOfBody::isGatheredListThatOnlyCallsTake(ValueID list)
     return *m_onlyCallsTakeGatheredList;
 }
 
+static uint32_t countMentionsInScan(const Body& body, ValueID mentioned, uint64_t& numberOfValuesScanned)
+{
+    const UnitIDRemap* unit = &body.unit();
+    uint32_t count = 0;
+    auto countArguments = [&](BodyTarget target) {
+        count += std::ranges::count(target.arguments(), mentioned);
+    };
+    BodyBlock block = body.entry();
+    for (uint32_t remaining = body.numberOfBlocks(); remaining--;) {
+        count += block.subject() == mentioned;
+        if (block.hasHandler())
+            countArguments(block.handler());
+        BodyValues::Iterator cursor = block.values().begin();
+        numberOfValuesScanned += block.numberOfValues();
+        for (uint32_t values = block.numberOfValues(); values--; ++cursor) {
+            (*cursor).forEachOperand([&](ValueID operand, uint32_t) {
+                count += operand == mentioned;
+            });
+        }
+        BodyTerminator terminator(cursor.words(), unit, block.id());
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            count += operand == mentioned;
+        });
+        for (BodyTarget target : terminator.targets())
+            countArguments(target);
+        block = { terminator.end(), nullptr, unit, BlockID(block.id().index() + 1), block.endOfValues() };
+    }
+    return count;
+}
+
+bool ScanOfBody::appliesGatheredArgumentsOnce(const BodyValue& call, PropertyKeyID key)
+{
+    if (!m_function->has(FunctionFlags::HasHiddenRest) || m_function->numberOfPositionalParameters() || m_function->kind == FunctionKind::Getter || m_function->kind == FunctionKind::Setter)
+        return false;
+    std::span<const ValueID> arguments = call.as<Opcode::Call>().argumentsOperands();
+    BuiltinID found = findOwnMember(m_program, m_program.builtins().canonicalID(Builtins::FunctionPrototype), key);
+    if (arguments.size() != 2 || !found || m_program.builtins().canonicalID(found) != Builtins::FunctionPrototypeApply)
+        return false;
+    if (call.id().index() >= m_function->body.entry().endOfValues().index())
+        return false;
+    BodyValue made = definitionOf(arguments[1].index());
+    ValueID gathered;
+    if (made && made.opcode() == Opcode::CreateMappedArguments)
+        gathered = made.as<Opcode::CreateMappedArguments>().restOperand();
+    else if (made && made.opcode() == Opcode::CreateUnmappedArguments)
+        gathered = made.as<Opcode::CreateUnmappedArguments>().restOperand();
+    if (!gathered || made.numberOfVariadicOperands())
+        return false;
+    if (!m_argumentsObjectIsNamedOnce)
+        m_argumentsObjectIsNamedOnce = countMentionsInScan(m_function->body, made.id(), m_numberOfValuesScanned) == 1 && countMentionsInScan(m_function->body, gathered, m_numberOfValuesScanned) == 1;
+    return *m_argumentsObjectIsNamedOnce;
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES BuiltinID ScanOfBody::builtinExpectedOf(ValueID value) const
 {
     TypeReader types(m_program);
@@ -5286,6 +5880,7 @@ ALWAYS_INLINE void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCa
     std::optional<unsigned> listPosition = OperandPosition::list(opcode);
     call.isConstruction = newTargetPosition.has_value();
     call.passesList = listPosition.has_value();
+    bool callsParent = callsParentConstructor(value);
 
     ValueID callee;
     ValueID receiver;
@@ -5311,9 +5906,11 @@ ALWAYS_INLINE void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCa
         } else {
             if (call.isConstruction && callee && definitionBehindCasts(callee) && definitionBehindCasts(callee).opcode() == Opcode::Builtin)
                 call.lengthOfWrittenList = lengthOfListWrittenRightInFrontOf(value, operand);
-            addArgument(operand);
+            addArgument(operand, !callsParent || static_cast<uint32_t>(m_summary.arguments.size()) != call.firstArgument);
         }
     });
+    if (callsParent)
+        noteParentCall(value, call);
 
     m_summary.ownEffects.mayThrow |= ThrowEffect(true);
 
@@ -5349,6 +5946,8 @@ ALWAYS_INLINE void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCa
             return m_bodiesThatSeveralModulesName ? !m_bodiesThatSeveralModulesName->get(body.index()) : isBodyOfOneModuleInScan(m_program, body);
         });
         readChangesMadeByBuiltin(value, call, callIndex, receiver);
+        if (opcode == Opcode::Call && m_program.builtins().has(BuiltinMark::AppliesMethodDecorators, m_program.builtins().canonicalID(call.builtin)))
+            readDecoratorsOfMethod(value);
     };
     if (definition && definition.opcode() == Opcode::Builtin) {
         auto named = definition.as<Opcode::Builtin>();
@@ -5372,6 +5971,10 @@ ALWAYS_INLINE void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCa
             call.callee = SummaryCall::Callee::Name;
             call.key = read.key();
             call.subject = noSummaryNode;
+            if (opcode == Opcode::Call && appliesGatheredArgumentsOnce(value, read.key())) {
+                call.appliesGatheredArguments = true;
+                m_summary.traits.add(SummaryTrait::OnlyPassesOnGatheredArguments);
+            }
             if (!call.expectedBuiltin)
                 call.expectedBuiltin = builtinExpectedOf(receiver);
             if (!call.expectedBuiltin)
@@ -5399,6 +6002,66 @@ ALWAYS_INLINE void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCa
     }
     noteLeaving(callee);
     addSink(SinkKindInScan::SubjectOfCall, listUnderExclusionsOf(callee), callIndex);
+}
+
+void ScanOfBody::readDecoratorsOfMethod(const BodyValue& value)
+{
+    std::span<const ValueID> arguments = value.variadicOperands();
+    if (arguments.size() < 3)
+        return;
+    BodyValue decorators = definitionBehindCasts(arguments[0]);
+    BodyValue element = definitionBehindCasts(arguments[2]);
+    if (!decorators || decorators.opcode() != Opcode::NewArray || !element || element.opcode() != Opcode::Call)
+        return;
+    std::span<const ValueID> described = element.variadicOperands();
+    BodyValue kind = described.size() < 2 ? BodyValue() : definitionBehindCasts(described[0]);
+    PropertyKeyID key = described.size() < 2 ? PropertyKeyID() : keyWrittenAs(described[1]).key;
+    if (!kind || kind.opcode() != Opcode::String || !key)
+        return;
+    ValueID site = value.id();
+    ListInScan holder = listOf(arguments[1]);
+    String kindOfElement = m_program.strings.toWTFString(kind.as<Opcode::String>().string());
+    bool isMethod = kindOfElement == "method"_s;
+    auto declared = std::ranges::find_if(m_gettersDefined.rbegin(), m_gettersDefined.rend(), [&](const auto& getter) { return getter.first == key; });
+    if (!isMethod && (kindOfElement != "getter"_s || declared == m_gettersDefined.rend())) {
+        addChange(SummaryChange::Kind::DefinesByDescriptor, site, holder, key, { });
+        m_summary.changes.last().laysAccessorAsWritten = true;
+        return;
+    }
+    uint32_t found = newJoin();
+    addEdge(isMethod ? addRead(site, holder, key) : oneNodeFor(listOf(declared->second)), found);
+    uint32_t outermost = found;
+    std::span<const ValueID> listed = decorators.variadicOperands();
+    for (size_t place = listed.size(); place--;) {
+        if (!listed[place])
+            return;
+        uint32_t callIndex = static_cast<uint32_t>(m_summary.calls.size());
+        SummaryCall call;
+        call.site = site;
+        call.callee = SummaryCall::Callee::Value;
+        call.isMadeByProtocol = true;
+        call.firstArgument = static_cast<uint32_t>(m_summary.arguments.size());
+        call.numberOfArguments = 2;
+        addSink(SinkKindInScan::Argument, listOfNode(found), call.firstArgument);
+        m_summary.arguments.append(0);
+        m_summary.arguments.append(0);
+        m_summary.calls.append(call);
+        m_blocksOfCalls.append(m_blocks[site.index()]);
+        addSink(SinkKindInScan::SubjectOfCall, listOf(listed[place]), callIndex);
+        uint32_t answered = newJoin();
+        addEdge(resultOfCall(callIndex), answered);
+        if (isMethod) {
+            uint32_t store = addAccess(SummaryAccess::Kind::Store, site, holder, key);
+            m_summary.accesses[store].isByMethodDecorator = true;
+            addSink(SinkKindInScan::ValueOfAccess, listOfNode(answered), store);
+        }
+        addEdge(answered, found);
+        outermost = answered;
+    }
+    if (isMethod)
+        return;
+    addChange(SummaryChange::Kind::DefinesByDescriptor, site, holder, key, listOfNode(outermost));
+    m_summary.changes.last().laysAccessorAsWritten = true;
 }
 
 void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryCall& call, uint32_t callIndex, ValueID receiver)
@@ -5494,6 +6157,8 @@ void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryC
                 if (!keyWritten.key)
                     m_summary.accesses[access].keyNode = 0;
                 m_summary.accesses[access].value = 0;
+                if (stored && keyWritten.key)
+                    addSink(SinkKindInScan::ValueOfAccess, *stored, addAccess(SummaryAccess::Kind::Store, site, subject, keyWritten.key));
                 if (stored)
                     escape(*stored);
             });
@@ -5567,7 +6232,7 @@ void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryC
         case BuiltinPropertyActionKind::BecomesPrototype:
             forEachPair([&](ListInScan prototype, std::optional<ListInScan> below) {
                 if (!below)
-                    m_heirsMadeByBuiltins.append(HeirMadeByBuiltinInScan { site.index(), static_cast<uint32_t>(m_summary.changes.size()), static_cast<uint32_t>(m_sinks.size()), prototype, mode == BuiltinCallMode::Call && !call.passesList && arguments.size() == 1 });
+                    m_heirsMadeByBuiltins.append(HeirMadeByBuiltinInScan { site.index(), static_cast<uint32_t>(m_summary.changes.size()), static_cast<uint32_t>(m_sinks.size()), prototype, mode == BuiltinCallMode::Call && !call.passesList && arguments.size() == 1, mode == BuiltinCallMode::Call && !call.passesList && arguments.size() == 2 ? arguments[1] : ValueID() });
                 addChange(SummaryChange::Kind::BecomesPrototype, site, prototype, { }, below);
                 if (below)
                     escape(prototype);
@@ -5679,12 +6344,29 @@ void ScanOfBody::listDefinitions()
     }
 }
 
+static bool classStaysInVariable(const Program& program, VariableID variable)
+{
+    const Module& module = program.at(program.at(variable).module);
+    return variable != module.exportsVariable && std::ranges::none_of(module.syntheticExports, [&](const SyntheticExport& synthetic) {
+        return synthetic.variable == variable;
+    });
+}
+
+bool isBodyOfWrappedModule(const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    if (!function.syntax.contains(FunctionSyntax::IsWrappedModuleBody) || function.flags.containsAny({ FunctionFlags::TakesCallee, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
+        return false;
+    FunctionID caller = program.at(function.module).body;
+    return caller && !program.at(caller).syntax.contains(FunctionSyntax::MayRunAsOriginal);
+}
+
 bool ScanOfBody::listsFirstStoresOfBody() const
 {
-    if (!m_function->isModuleBody() || !m_function->module)
+    if (!m_function->module)
         return false;
     const Module& module = m_program.at(m_function->module);
-    return module.body == m_id && isEvaluatedAtMostOnceOf(module.kind) && !hasExportTableOf(module.kind)
+    return (module.body == m_id || isBodyOfWrappedModule(m_program, m_id)) && isEvaluatedAtMostOnceOf(module.kind) && !hasExportTableOf(module.kind)
         && !module.flags.containsAny({ ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked });
 }
 
@@ -5752,35 +6434,177 @@ void ScanOfBody::listFirstStoresAndUses()
         if (everyWayComesThrough.quickGet(store.block) && (read == firstReads.end() || placeInItsBlock(store) < read->value))
             m_summary.firstStoresOfBody.append(SummaryPlaceInBody { store.number, placeInItsBlock(store) });
     }
+    sortWithoutRepeatsInScan(m_summary.methodsOfClasses);
+    sortWithoutRepeatsInScan(m_summary.classesInVariables);
+    sortWithoutRepeatsInScan(m_summary.unitsInVariables);
+    for (size_t i = 0; i < m_blocksOfStoresOnPrototypes.size(); ++i) {
+        SummaryStoreOnPrototype& store = m_summary.storesOnPrototypes[i];
+        uint32_t block = m_blocksOfStoresOnPrototypes[i];
+        store.isOnEveryPath = everyWayComesThrough.quickGet(block) && (m_innermostLoopHeads.isEmpty() || m_innermostLoopHeads[block] == noLoop);
+        store.position = placeAmongThoseBlocks(PlaceInBlockInScan { 0, store.position, m_blocksOfStoresOnPrototypes[i] });
+    }
+    std::ranges::sort(m_summary.storesOnPrototypes, { }, &SummaryStoreOnPrototype::site);
+    for (const PlaceInBlockInScan& use : m_usesOfVariablesByBodyOfModule)
+        m_summary.firstUsesOfVariables.append(SummaryPlaceInBody { use.number, placeAmongThoseBlocks(use) });
     for (const PlaceInBlockInScan& use : m_usesByBodyOfModule)
         m_summary.firstUsesOfFunctions.append(SummaryPlaceInBody { use.number, placeAmongThoseBlocks(use) });
-    for (Vector<SummaryPlaceInBody>* places : { &m_summary.firstStoresOfBody, &m_summary.firstUsesOfFunctions }) {
+    for (Vector<SummaryPlaceInBody>* places : { &m_summary.firstStoresOfBody, &m_summary.firstUsesOfFunctions, &m_summary.firstUsesOfVariables }) {
         std::ranges::sort(*places);
         auto repeated = std::ranges::unique(*places, { }, &SummaryPlaceInBody::number);
         places->shrink(places->size() - repeated.size());
     }
 }
 
+FunctionID ScanOfBody::functionMadeThroughCasts(ValueID operand) const
+{
+    BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+    return definition && definition.opcode() == Opcode::NewClosure ? definition.as<Opcode::NewClosure>().function() : FunctionID();
+}
+
+FunctionID ScanOfBody::classConstructorThroughCasts(ValueID operand) const
+{
+    BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+    return definition && definition.opcode() == Opcode::NewClass ? functionMadeThroughCasts(definition.operand(0)) : FunctionID();
+}
+
+VariableID ScanOfBody::variableReadThroughCasts(ValueID operand) const
+{
+    BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+    return definition && definition.opcode() == Opcode::GetModuleVariable ? definition.as<Opcode::GetModuleVariable>().variable() : VariableID();
+}
+
+std::optional<int64_t> ScanOfBody::integerReadInBodyOfModule(ValueID operand) const
+{
+    BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+    if (!definition)
+        return std::nullopt;
+    if (definition.opcode() == Opcode::Integer)
+        return definition.as<Opcode::Integer>().integer();
+    VariableID variable = variableReadThroughCasts(operand);
+    auto found = variable ? m_integersInVariables.find(variable.index()) : m_integersInVariables.end();
+    if (found == m_integersInVariables.end() || definition.id() < found->value.store)
+        return std::nullopt;
+    uint32_t block = m_blockBeingRead;
+    while (block != noDefinition && block > found->value.blockOfStore)
+        block = m_immediateDominators[block];
+    return block == found->value.blockOfStore ? std::optional(found->value.integer) : std::nullopt;
+}
+
+WrittenUnit ScanOfBody::unitComputedInBodyOfModule(const BodyValue& definition) const
+{
+    static constexpr OpcodeSet integerOperators { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift, Opcode::Add, Opcode::Sub };
+    if (!m_listsFirstStoresOfBody || !definition || !integerOperators.contains(definition.opcode()))
+        return { };
+    std::optional<int64_t> left = integerReadInBodyOfModule(definition.operand(0));
+    std::optional<int64_t> right = definition.opcode() == Opcode::BitNot ? left : integerReadInBodyOfModule(definition.operand(1));
+    if (!left || !right)
+        return { };
+    auto a = static_cast<int32_t>(*left);
+    auto b = static_cast<int32_t>(*right);
+    switch (definition.opcode()) {
+    case Opcode::BitAnd:
+        return WrittenUnit::integer(a & b);
+    case Opcode::BitOr:
+        return WrittenUnit::integer(a | b);
+    case Opcode::BitXor:
+        return WrittenUnit::integer(a ^ b);
+    case Opcode::BitNot:
+        return WrittenUnit::integer(~a);
+    case Opcode::LShift:
+        return WrittenUnit::integer(static_cast<int32_t>(static_cast<uint32_t>(a) << (b & 31)));
+    case Opcode::RShift:
+        return WrittenUnit::integer(a >> (b & 31));
+    case Opcode::Add:
+        return WrittenUnit::integer(*left + *right);
+    case Opcode::Sub:
+        return WrittenUnit::integer(*left - *right);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+ValueID ScanOfBody::prototypeReadFunction(const BodyValue& read) const
+{
+    if (read.opcode() != Opcode::PropGet || read.as<Opcode::PropGet>().key() != m_program.keyOf(BuiltinNames::prototype))
+        return { };
+    ValueID function = read.as<Opcode::PropGet>().objectOperand();
+    if (functionMadeThroughCasts(function))
+        return function;
+    VariableID variable = variableReadThroughCasts(function);
+    return variable && m_program.at(variable).module == m_function->module && m_program.at(variable).flags.contains(VariableFlags::IsImmutable) ? function : ValueID();
+}
+
+ValueID ScanOfBody::prototypeReadFunctionThroughCasts(ValueID operand) const
+{
+    BodyValue definition = operand ? definitionBehindCasts(operand) : BodyValue();
+    return definition ? prototypeReadFunction(definition) : ValueID();
+}
+
+void ScanOfBody::noteStoreOnPrototype(const BodyValue& store, ValueID function)
+{
+    auto written = store.as<Opcode::PropSet>();
+    m_summary.storesOnPrototypes.append(SummaryStoreOnPrototype { store.id(), m_position, variableReadThroughCasts(function), functionMadeThroughCasts(function), functionMadeThroughCasts(written.valueOperand()), written.key() });
+    m_blocksOfStoresOnPrototypes.append(m_blockBeingRead);
+}
+
 void ScanOfBody::noteUseOfValueByBodyOfModule(ValueID operand)
 {
-    BodyValue definition = definitionBehindCasts(operand);
-    if (definition && definition.opcode() == Opcode::NewClosure)
-        noteUseByBodyOfModule(definition.as<Opcode::NewClosure>().function());
+    if (ValueID owner = prototypeReadFunctionThroughCasts(operand))
+        operand = owner;
+    FunctionID function = functionMadeThroughCasts(operand);
+    if (!function)
+        function = classConstructorThroughCasts(operand);
+    if (function)
+        noteUseByBodyOfModule(function);
+    if (VariableID variable = variableReadThroughCasts(operand))
+        m_usesOfVariablesByBodyOfModule.append(PlaceInBlockInScan { variable.index(), m_position, m_blockBeingRead });
 }
 
 void ScanOfBody::lookForFirstStoresAndUses(const BodyValue& value)
 {
     Opcode opcode = value.opcode();
+    ValueID classDefined;
     if (opcode == Opcode::PutModuleVariable) {
         VariableID variable = value.as<Opcode::PutModuleVariable>().variable();
-        if (variable && m_program.at(variable).module == m_function->module)
+        if (variable && m_program.at(variable).module == m_function->module) {
             m_storesOfBodyOfModule.append(PlaceInBlockInScan { variable.index(), m_position, m_blockBeingRead });
+            BodyValue stored = m_program.at(variable).flags.contains(VariableFlags::IsImmutable) ? definitionBehindCasts(value.operand(0)) : BodyValue();
+            WrittenUnit unit = unitWrittenInScan(stored);
+            if (!unit)
+                unit = unitComputedInBodyOfModule(stored);
+            if (unit)
+                m_summary.unitsInVariables.append(SummaryUnitInVariable { variable, unit.bits() });
+            if (unit.kind() == WrittenUnit::Kind::Integer)
+                m_integersInVariables.add(variable.index(), IntegerInVariable { unit.integer(), value.id(), m_blockBeingRead });
+            FunctionID held = functionMadeThroughCasts(value.operand(0));
+            if (!held)
+                held = classConstructorThroughCasts(value.operand(0));
+            if (held && classStaysInVariable(m_program, variable)) {
+                m_summary.classesInVariables.append(SummaryClassInVariable { variable, held });
+                return;
+            }
+        }
+    } else if (opcode == Opcode::DefineMethod) {
+        FunctionID constructor = classConstructorThroughCasts(value.operand(0));
+        if (FunctionID method = constructor ? functionMadeThroughCasts(value.operand(1)) : FunctionID()) {
+            m_summary.methodsOfClasses.append(SummaryMethodOfClass { constructor, method });
+            classDefined = value.operand(0);
+        }
     } else if (opcode == Opcode::GetModuleVariable) {
         if (VariableID variable = value.as<Opcode::GetModuleVariable>().variable()) {
             if (m_readsNotedOfBodyOfModule.add(static_cast<uint64_t>(variable.index()) << 32 | m_blockBeingRead).isNewEntry)
                 m_readsOfBodyOfModule.append(PlaceInBlockInScan { variable.index(), m_position, m_blockBeingRead });
-            if (FunctionID declared = m_program.at(variable).function)
-                noteUseByBodyOfModule(declared);
+        }
+    } else if (opcode == Opcode::PropGet) {
+        if (prototypeReadFunction(value))
+            return;
+    } else if (opcode == Opcode::PropSet) {
+        auto store = value.as<Opcode::PropSet>();
+        ValueID function = prototypeReadFunctionThroughCasts(store.objectOperand());
+        BodyValue stored = function && !m_program.isIndexLike(store.key()) ? definitionBehindCasts(store.valueOperand()) : BodyValue();
+        if (stored && (stored.opcode() == Opcode::NewClosure || primitiveConstants.contains(stored.opcode()))) {
+            noteStoreOnPrototype(value, function);
+            return;
         }
     }
     if (raisesOf(opcode) == ProgramEvent::EvaluatesText) {
@@ -5789,8 +6613,9 @@ void ScanOfBody::lookForFirstStoresAndUses(const BodyValue& value)
     }
     if (inputPassThroughOpcodes.contains(opcode))
         return;
-    value.forEachOperand([&](ValueID operand, uint32_t) {
-        if (operand)
+    uint32_t firstOperandUsed = classDefined ? 2 : opcode == Opcode::NewClass ? 1 : 0;
+    value.forEachOperand([&](ValueID operand, uint32_t place) {
+        if (operand && place >= firstOperandUsed)
             noteUseByBodyOfModule(operand);
     });
 }
@@ -5857,6 +6682,9 @@ ALWAYS_INLINE const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& t
         mayThrow = effects.mayThrow;
     }
 
+    if (DataID literal = kind == TerminatorKind::Return ? findArrayLiteral(terminator.operand(0)) : DataID())
+        m_elementStores.literalResults.append({ m_id, literal });
+    m_someBlockReturns |= kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall;
     if (m_listsFirstStoresOfBody && (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall) && m_immediateDominators[block] != noDefinition)
         m_blockAboveReturns = m_blockAboveReturns == noDefinition ? block : nearestBlockAboveBoth(m_blockAboveReturns, block);
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -5880,15 +6708,6 @@ ALWAYS_INLINE const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& t
             escape(listOf(operand));
         }
     });
-    if (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall) {
-        ValueID returned = kind == TerminatorKind::Return ? terminator.operand(0) : ValueID();
-        BodyValue made = returned ? definitionOf(m_roots[returned.index()]) : BodyValue();
-        m_someReturnIsNoShift |= !made || made.opcode() != Opcode::URShift;
-        if (m_someReturnIsNoShift)
-            m_summary.traits.remove(SummaryTrait::ReturnsUInt32);
-        else
-            m_summary.traits.add(SummaryTrait::ReturnsUInt32);
-    }
     if (kind == TerminatorKind::Return && !terminator.operand(0) && m_function->isCoroutine())
         m_returnsOfCoroutine.append(std::pair { listOfNode(constant(TypeTable::undefined)), block });
     if (kind == TerminatorKind::Return && !terminator.operand(0) && !m_function->isCoroutine()) {
@@ -5912,6 +6731,7 @@ ALWAYS_INLINE const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& t
         test = condition ? definitionOf(condition.index()) : BodyValue();
         proof = test ? provesOf(test.opcode()) : Proof::None;
     }
+    std::optional<uint32_t> targetWithoutParent = findTargetWithoutParent(test);
     std::optional<uint32_t> onlyTarget;
     if (m_followsConstants && goesByOneOperand(kind) && terminator.operand(0))
         onlyTarget = onlyTargetWith(m_program, terminator, primitiveHeldBy(terminator.operand(0)));
@@ -5922,6 +6742,14 @@ ALWAYS_INLINE const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& t
         if (onlyTarget && *onlyTarget != targetIndex) {
             ++targetIndex;
             continue;
+        }
+        SetForScope fillsOnThisWay(m_fills, m_fills);
+        if (targetWithoutParent == targetIndex) {
+            BodyValue asked = test;
+            while (asked.opcode() != Opcode::TypeTest)
+                asked = definitionOf(asked.operand(0).index());
+            m_parentTestedForNull = m_roots[asked.operand(0).index()];
+            m_fills = m_setsOfFills.with(m_fills, FillInScan { m_thisBeingMade, true, m_parentConstructor.index() });
         }
         readArgumentsOf(block, target);
         carryExclusionsOver(target.block().index(), targetIndex, test);
@@ -5935,6 +6763,8 @@ ALWAYS_INLINE const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& t
                 TypeID tested = test.as<Opcode::TypeTest>().testedType();
                 passes = targetIndex ? TypeTable::anythingBut(tested) : tested;
             }
+            if (subject && test && test.opcode() == Opcode::TypeTest && !holdsOnlyPrimitives(test.as<Opcode::TypeTest>().testedType())) [[unlikely]]
+                noteViewsAfterObjectTest(target, position, subject);
             if (SummaryCall* madeAnswer = passes == TypeTable::object ? findCallThatMade(subject) : nullptr)
                 m_answerTestedForObject = { target.block().index(), position, madeAnswer->site, { } };
             if (subject)
@@ -6121,13 +6951,16 @@ void ScanOfBody::returnValue(ValueID operand, uint32_t block)
     if (definition && definition.opcode() == Opcode::Results) {
         uint32_t result = 0;
         for (ValueID value : definition.variadicOperands()) {
-            if (value)
-                flowInto(listOf(value), resultNode(result));
+            if (value) {
+                ListInScan returned = listOf(value);
+                flowInto(returned, resultNode(result));
+            }
             ++result;
         }
         return;
     }
-    flowInto(listOf(operand), resultNode(0));
+    ListInScan returned = listOf(operand);
+    flowInto(returned, resultNode(0));
     readNamesThatLoaderTakesOff(operand);
     readWhatHostLooksFor(operand);
     if (!definition || effectRuleOf(definition.opcode()) != EffectRule::Call)
@@ -6150,6 +6983,26 @@ void ScanOfBody::readWhatNobodyAskedFor()
     RELEASE_ASSERT(nextHeritage == m_heritages.size());
     for (auto [list, block] : m_returnsOfCoroutine)
         returnFromCoroutine(list, block);
+}
+
+void ScanOfBody::resolveLiteralArguments()
+{
+    size_t next = 0;
+    for (auto [place, literal] : m_literalArguments) {
+        while (next < m_summary.calls.size() && m_summary.calls[next].firstArgument + m_summary.calls[next].numberOfArguments <= place)
+            ++next;
+        if (next < m_summary.calls.size() && m_summary.calls[next].firstArgument <= place && !m_summary.calls[next].passesList)
+            m_elementStores.literalArguments.append({ m_id, m_summary.calls[next].site, place - m_summary.calls[next].firstArgument, literal });
+    }
+    m_literalArguments.shrink(0);
+}
+
+DataID ScanOfBody::findArrayLiteral(ValueID value) const
+{
+    BodyValue literal = value ? definitionBehindCasts(value) : BodyValue();
+    DataID data = literal && literal.opcode() == Opcode::Data ? literal.as<Opcode::Data>().data() : DataID();
+    const auto* array = data ? m_program.at(data).root.tryAs<DataNode::Array>() : nullptr;
+    return array && !array->elements.isEmpty() ? data : DataID();
 }
 
 void ScanOfBody::returnFromCoroutine(ListInScan list, uint32_t block)
@@ -6247,18 +7100,26 @@ PropertyKeyID ScanOfBody::keySpelledBy(const BodyValue& definition) const
 
 void ScanOfBody::nameKeysOfMembers()
 {
+    auto addLiteralArray = [&](LiteralArrayLocation place, ValueID value) {
+        BodyValue made = value ? definitionBehindCasts(value) : BodyValue();
+        const auto* written = made && made.opcode() == Opcode::Data && made.as<Opcode::Data>().data() ? m_program.at(made.as<Opcode::Data>().data()).root.tryAs<DataNode::Array>() : nullptr;
+        bool holdsStrings = written && isShortStringList(*written);
+        bool isWhole = written && (holdsStrings || isStorageOfArray(*written)) && std::ranges::none_of(written->elements, [](const DataNode& element) {
+            return element.is<DataNode::Hole>();
+        });
+        if (ArrayStorage storage = isWhole ? arrayStorageOfData(m_program, *written) : ArrayStorage::Other; isNumericStorage(storage) || (holdsStrings && storage == ArrayStorage::Contiguous))
+            m_summary.writtenListsOfVariables.append({ place, made.as<Opcode::Data>().data(), made.id(), static_cast<uint32_t>(written->elements.size()), static_cast<uint8_t>(storage) });
+    };
     for (auto [variable, value] : m_valuesOfImmutableVariables) {
         if (PropertyKeyID key = value ? keySpelledBy(definitionBehindCasts(value)) : PropertyKeyID())
             m_keysOfVariables.append({ variable, key });
-        BodyValue made = value ? definitionBehindCasts(value) : BodyValue();
-        const auto* written = made && made.opcode() == Opcode::Data && made.as<Opcode::Data>().data() ? m_program.at(made.as<Opcode::Data>().data()).root.tryAs<DataNode::Array>() : nullptr;
-        bool isWhole = written && isStorageOfArray(*written) && std::ranges::none_of(written->elements, [](const DataNode& element) {
-            return element.is<DataNode::Hole>();
-        });
-        if (ArrayStorage storage = isWhole ? arrayStorageOfData(m_program, *written) : ArrayStorage::Other; isNumericStorage(storage))
-            m_summary.writtenListsOfVariables.append({ variable, made.as<Opcode::Data>().data(), made.id(), static_cast<uint32_t>(written->elements.size()), static_cast<uint8_t>(storage) });
+        addLiteralArray(LiteralArrayLocation::of(variable), value);
+        if (BodyValue literal = value ? definitionBehindCasts(value) : BodyValue(); literal && literal.opcode() == Opcode::Data && literal.as<Opcode::Data>().data())
+            m_literalsOfVariables.append({ variable, literal.as<Opcode::Data>().data() });
     }
-    std::ranges::sort(m_summary.writtenListsOfVariables, { }, [](const SummaryWrittenListOfVariable& each) { return each.variable.index(); });
+    for (auto [field, value] : m_immutableFieldValues)
+        addLiteralArray(LiteralArrayLocation::of(field), value);
+    std::ranges::sort(m_summary.writtenListsOfVariables, { }, &SummaryWrittenListOfVariable::place);
     for (auto [member, written] : m_keysWrittenForMembers) {
         BodyValue definition = definitionBehindCasts(written);
         if (definition && definition.opcode() == Opcode::ToPropertyKey && definition.operand(0))
@@ -6349,6 +7210,9 @@ void ScanOfBody::markParametersThatSinksNeed()
         record.site = found.site;
         record.opcode = found.opcode;
         record.writtenDivisor = found.writtenDivisor;
+        record.shiftsRightByConstant = found.shiftsRightByConstant;
+        record.step = found.steppedField && !m_fieldsReadAsIntegers.contains(found.steppedField) ? 0 : found.step;
+        record.steppedOperand = found.steppedOperand;
         record.result = found.joinOfResult ? found.joinOfResult : addNodeAskedForOnce({ SummaryNode::Kind::ResultOfOperator, found.record, 0 });
         m_summary.operators.append(record);
     }
@@ -6457,7 +7321,7 @@ void ScanOfBody::resolveComponent(std::span<const uint32_t> members, uint32_t co
 
     if (m_gathered.size() > 1) {
         bool takesOnlyPrimitives = std::ranges::all_of(m_gathered, [&](const OriginInScan& origin) {
-            return isAlwaysPrimitive(origin);
+            return isAlwaysPrimitive(origin) || subjectOfExclusionIsPrimitive(origin.node, component);
         });
         uint32_t join = newJoin();
         if (takesOnlyPrimitives)
@@ -6499,19 +7363,129 @@ ALWAYS_INLINE_INTO_OTHER_FILES void ScanOfBody::carryExclusionsOver(uint32_t to,
             carried = addExclusion(subject, excluded, carried);
             break;
         }
-    }
+    } else if (test && test.opcode() == Opcode::TypeTest && !targetIndex)
+        carried = addExclusionOfObjectTest(test, carried);
+    else if (test && allRelations.contains(test.opcode()))
+        carried = addExclusionsOfRelation(test, !targetIndex, carried);
     if (carried == noExclusion)
         return;
     if (!std::exchange(m_someEntryCarries, true)) {
         m_numberOfEntriesThatCarry.fill(0, m_numberOfEdgesInto.size());
         m_whatEntriesShare.fill(noExclusion, m_numberOfEdgesInto.size());
     }
-    m_whatEntriesShare[to] = m_numberOfEntriesThatCarry[to]++ ? sharedEndOfExclusions(m_whatEntriesShare[to], carried) : carried;
+    m_whatEntriesShare[to] = m_numberOfEntriesThatCarry[to]++ ? meetOfExclusions(m_whatEntriesShare[to], carried) : carried;
 }
 
-uint32_t ScanOfBody::addExclusion(ValueID subject, uint16_t excluded, uint32_t above)
+void ScanOfBody::noteViewsAfterObjectTest(BodyTarget target, uint32_t position, ValueID subject)
 {
-    ExclusionInScan added { subject, excluded, above, 0, { }, false, false, depthOfExclusion(above) + 1, noExclusion };
+    if (target.block().index() > m_blockBeingRead)
+        m_viewsHanded.append({ target.block().index(), position, ValueID(m_roots[subject.index()]) });
+}
+
+void ScanOfBody::takeViewsHandedTo(BodyBlock block)
+{
+    uint32_t number = block.id().index();
+    for (const ViewHandedInScan& view : m_viewsHanded) {
+        if (view.block == number && m_numberOfEdgesInto[number] == 1 && view.position < block.numberOfParameters())
+            m_valuesViewed.add(block.parameter(view.position).index(), view.viewed);
+    }
+    m_viewsHanded.removeAllMatching([&](const ViewHandedInScan& view) {
+        return view.block <= number;
+    });
+}
+
+ValueID ScanOfBody::valueViewedAs(ValueID name)
+{
+    name = ValueID(m_roots[name.index()]);
+    while (!m_valuesViewed.isEmpty()) {
+        auto found = m_valuesViewed.find(name.index());
+        if (found == m_valuesViewed.end())
+            break;
+        uint32_t block = m_blocks[name.index()];
+        if (!std::ranges::contains(m_blocksWhoseViewsAreTested, block, &BlockOfViewsInScan::block))
+            m_blocksWhoseViewsAreTested.append({ block, static_cast<uint32_t>(m_exclusions.size()) });
+        name = found->value;
+    }
+    return name;
+}
+
+uint32_t ScanOfBody::addExclusionOfObjectTest(const BodyValue& test, uint32_t above)
+{
+    TypeID tested = test.as<Opcode::TypeTest>().testedType();
+    ValueID subject = test.operand(0);
+    if (!subject || !tested || holdsOnlyPrimitives(tested))
+        return above;
+    uint16_t excluded = Primitive::All & ~m_program.at(tested).primitives;
+    return excluded ? addExclusion(valueViewedAs(subject), excluded, above, true) : above;
+}
+
+static Range integersThatRelationLeaves(Opcode relation, bool holds, int64_t constant)
+{
+    switch (relation) {
+    case Opcode::Less:
+        return holds ? Range { -maxTrackedInteger, constant - 1 } : Range { constant, maxTrackedInteger };
+    case Opcode::LessEq:
+        return holds ? Range { -maxTrackedInteger, constant } : Range { constant + 1, maxTrackedInteger };
+    case Opcode::Greater:
+        return holds ? Range { constant + 1, maxTrackedInteger } : Range { -maxTrackedInteger, constant };
+    case Opcode::GreaterEq:
+        return holds ? Range { constant, maxTrackedInteger } : Range { -maxTrackedInteger, constant - 1 };
+    default:
+        return Range::full();
+    }
+}
+
+static Opcode relationWithOperandsSwapped(Opcode relation)
+{
+    switch (relation) {
+    case Opcode::Less:
+        return Opcode::Greater;
+    case Opcode::LessEq:
+        return Opcode::GreaterEq;
+    case Opcode::Greater:
+        return Opcode::Less;
+    case Opcode::GreaterEq:
+        return Opcode::LessEq;
+    default:
+        return relation;
+    }
+}
+
+uint32_t ScanOfBody::addExclusionsOfRelation(const BodyValue& relation, bool holds, uint32_t above)
+{
+    for (uint32_t side = 0; side < 2; ++side) {
+        ValueID written = relation.operand(side), subject = relation.operand(1 - side);
+        BodyValue definition = written ? definitionOf(written.index()) : BodyValue();
+        if (!subject || !definition || definition.opcode() != Opcode::Integer)
+            continue;
+        int64_t constant = definition.as<Opcode::Integer>().integer();
+        if (std::abs(constant) >= maxExactInteger)
+            continue;
+        Range left = integersThatRelationLeaves(side ? relation.opcode() : relationWithOperandsSwapped(relation.opcode()), holds, constant);
+        Range kept { left.minimum >= 0 ? 0 : -maxTrackedInteger, left.maximum <= INT32_MAX ? INT32_MAX : maxTrackedInteger };
+        return kept == Range::full() ? above : addExclusion(subject, 0, above, false, kept);
+    }
+    return above;
+}
+
+uint32_t ScanOfBody::meetOfExclusions(uint32_t first, uint32_t second)
+{
+    uint32_t shared = sharedEndOfExclusions(first, second);
+    if (first == shared || second == shared)
+        return shared;
+    const ExclusionInScan& lastOnFirst = m_exclusions[first];
+    const ExclusionInScan& lastOnSecond = m_exclusions[second];
+    if (!lastOnFirst.isOfObjectTest || !lastOnSecond.isOfObjectTest || lastOnFirst.subject != lastOnSecond.subject || lastOnFirst.letsEverythingThrough || lastOnSecond.letsEverythingThrough)
+        return shared;
+    uint16_t excluded = lastOnFirst.excludedInChain & lastOnSecond.excludedInChain;
+    return excluded ? addExclusion(lastOnFirst.subject, excluded, shared, true) : shared;
+}
+
+uint32_t ScanOfBody::addExclusion(ValueID subject, uint16_t excluded, uint32_t above, bool isOfObjectTest, Range integersLeft)
+{
+    ExclusionInScan added { subject, excluded, integersLeft, above, 0, { }, false, false, isOfObjectTest, excluded, depthOfExclusion(above) + 1, noExclusion };
+    if (isOfObjectTest && above != noExclusion && m_exclusions[above].isOfObjectTest && m_exclusions[above].subject == subject && !m_exclusions[above].letsEverythingThrough)
+        added.excludedInChain |= m_exclusions[above].excludedInChain;
     uint32_t jump = jumpOfExclusion(above);
     if (above != noExclusion)
         added.jump = depthOfExclusion(above) - depthOfExclusion(jump) == depthOfExclusion(jump) - depthOfExclusion(jumpOfExclusion(jump)) ? jumpOfExclusion(jump) : above;
@@ -6558,6 +7532,12 @@ ALWAYS_INLINE void ScanOfBody::takeExclusionsAtBlock(uint32_t block)
 
 void ScanOfBody::giveUpWhatEdgeLeadingBackDoesNotCarry(uint32_t to)
 {
+    for (const BlockOfViewsInScan& tested : m_blocksWhoseViewsAreTested) {
+        for (uint32_t number = tested.block == to ? tested.firstExclusion : static_cast<uint32_t>(m_exclusions.size()); number < m_exclusions.size(); ++number) {
+            if (m_exclusions[number].isOfObjectTest)
+                giveUpExclusion(number);
+        }
+    }
     if (m_exclusionsTakenAtBlocks.isEmpty()) [[likely]]
         return;
     auto taken = std::ranges::lower_bound(m_exclusionsTakenAtBlocks, to, { }, &ExclusionCarriedInScan::block);
@@ -6566,16 +7546,21 @@ void ScanOfBody::giveUpWhatEdgeLeadingBackDoesNotCarry(uint32_t to)
     uint32_t held = taken->exclusion, carried = sharedEndOfExclusions(taken->exclusion, m_exclusionInForce);
     taken->exclusion = carried;
     while (held != carried) {
-        ExclusionInScan& givenUp = m_exclusions[held];
-        if (!std::exchange(givenUp.letsEverythingThrough, true) && givenUp.join) {
-            ListInScan underneath = givenUp.listUnderneath;
-            uint32_t join = givenUp.join;
-            if (underneath.count == isJoinNotYetNeeded)
-                underneath = listOfNode(joinOfExclusion(underneath.first));
-            addSink(SinkKindInScan::Edge, underneath, join);
-        }
-        held = givenUp.above;
+        giveUpExclusion(held);
+        held = m_exclusions[held].above;
     }
+}
+
+void ScanOfBody::giveUpExclusion(uint32_t number)
+{
+    ExclusionInScan& givenUp = m_exclusions[number];
+    if (std::exchange(givenUp.letsEverythingThrough, true) || !givenUp.join)
+        return;
+    ListInScan underneath = givenUp.listUnderneath;
+    uint32_t join = givenUp.join;
+    if (underneath.count == isJoinNotYetNeeded)
+        underneath = listOfNode(joinOfExclusion(underneath.first));
+    addSink(SinkKindInScan::Edge, underneath, join);
 }
 
 void ScanOfBody::keepObjectOfReadPutOff(uint32_t read, ValueID object)
@@ -6645,9 +7630,13 @@ uint32_t ScanOfBody::joinOfExclusion(uint32_t asked)
             addSink(SinkKindInScan::Edge, underneath, join);
         else {
             addSink(SinkKindInScan::Edge, underneath, join, TypeTable::object);
-            addSink(SinkKindInScan::Edge, underneath, join, typeOfPrimitives(Primitive::All & ~m_exclusions[number].excluded));
+            if (uint16_t left = Primitive::All & ~m_exclusions[number].excluded) {
+                Range integers = left & Primitive::Integer ? m_exclusions[number].integersLeft : Range::empty();
+                addSink(SinkKindInScan::Edge, underneath, join, *tryMakeTypeOfPrimitives(left, integers));
+            }
         }
         m_exclusions[number].join = join;
+        m_joinsOfExclusions.append({ join, underneath });
     }
     return m_exclusions[asked].join;
 }
@@ -6834,6 +7823,11 @@ void ScanOfBody::applySinks()
         case SinkKindInScan::ConvertedToPrimitive:
             applyConversionToPrimitive(sink);
             break;
+        case SinkKindInScan::OtherOperandOfEquality:
+            break;
+        case SinkKindInScan::ConvertedByEquality:
+            applyConversionByEquality(m_equalities[sink.target]);
+            break;
         }
     }
     for (const OperatorInScan& found : m_operators)
@@ -6842,13 +7836,68 @@ void ScanOfBody::applySinks()
         applyStore(store);
 }
 
+bool ScanOfBody::everyAccessorHalfIsWritten(uint32_t root) const
+{
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> halves;
+    for (const AccessorLaidInScan& laid : m_accessorsLaid) {
+        if (laid.root == root && (!laid.function || !halves.add(static_cast<uint64_t>(laid.key.bits()) << 1 | laid.isGetter).isNewEntry))
+            return false;
+    }
+    return true;
+}
+
+void ScanOfBody::defineAccessorsOfPrototype(uint32_t root, ListInScan prototype)
+{
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> accessorsUnderKeys;
+    for (const AccessorLaidInScan& laid : m_accessorsLaid) {
+        if (laid.root != root)
+            continue;
+        SummaryChange& change = m_summary.changes[m_sinks[laid.sinkOfSubject].target];
+        change.laysAccessorAsWritten = true;
+        auto added = accessorsUnderKeys.add(laid.key.bits(), static_cast<uint32_t>(m_summary.writtenAccessors.size()));
+        if (added.isNewEntry) {
+            uint32_t access = addAccess(SummaryAccess::Kind::Define, change.site, prototype, laid.key);
+            m_summary.accesses[access].isByDescriptor = true;
+            m_summary.accesses[access].laysAccessorAsWritten = true;
+            m_summary.accesses[access].value = 0;
+            m_summary.writtenAccessors.append({ access, { }, { }, { } });
+        }
+        SummaryWrittenAccessor& written = m_summary.writtenAccessors[added.iterator->value];
+        (laid.isGetter ? written.getter : written.setter) = laid.function;
+    }
+}
+
+bool ScanOfBody::isMapUsedOnce(const HeirMadeByBuiltinInScan& heir) const
+{
+    if (!heir.map || !findCall(ValueID(heir.call)))
+        return false;
+    uint32_t root = m_roots[heir.map.index()];
+    return holdsOnlyWhatItsBodyLaysInScan(m_program, definitionOf(root)) && m_firstLeft[root] == heir.call && m_lastLeft[root] == heir.call;
+}
+
+std::optional<uint32_t> ScanOfBody::findNestedLiteralSink(ValueID site) const
+{
+    for (uint32_t sink = 0; sink < m_sinks.size(); ++sink) {
+        if (m_sinks[sink].kind != SinkKindInScan::SubjectOfChange)
+            continue;
+        if (const SummaryChange& change = m_summary.changes[m_sinks[sink].target]; change.site == site && change.kind == SummaryChange::Kind::ChangesPrototype)
+            return sink;
+    }
+    return std::nullopt;
+}
+
 void ScanOfBody::followObjectsMadeToBePrototypes()
 {
     for (const StoreOfPrototypeInScan& candidate : m_storesOfPrototypes) {
         uint32_t root = candidate.rootOfStored;
         uint32_t position = m_stores[candidate.store].site.index();
         BodyValue made = definitionOf(root);
-        if (!made || m_firstLeft[root] != position || m_lastLeft[root] != position || m_uses[root] & (isAccessedBesideNamedStoresAndAccessors | isDefinedUnderComputedKeys | hasNullAboveByItsOwnText))
+        LiteralInParentInScan* literal = m_uses[root] & isLiteralInParent ? findLiteralInParent(root) : nullptr;
+        std::optional<uint32_t> sinkOfLiteral = literal ? findNestedLiteralSink(literal->site) : std::nullopt;
+        if (literal && !sinkOfLiteral)
+            continue;
+        bool isStoredOnlyHere = literal ? m_firstLeft[root] == literal->position && literal->firstLeftLater == position && literal->lastLeftLater == position : m_firstLeft[root] == position;
+        if (!made || !isStoredOnlyHere || m_lastLeft[root] != position || m_uses[root] & (isAccessedBesideNamedStoresAndAccessors | isDefinedUnderComputedKeys | hasNullAboveByItsOwnText))
             continue;
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_stores[candidate.store].block];
         if (head != noLoop && head > m_blocks[root])
@@ -6856,14 +7905,15 @@ void ScanOfBody::followObjectsMadeToBePrototypes()
         HeirMadeByBuiltinInScan* heir = nullptr;
         if (made.opcode() != Opcode::NewDictionary) {
             for (HeirMadeByBuiltinInScan& listed : m_heirsMadeByBuiltins) {
-                if (listed.call == root && listed.isMadeEmpty && !listed.isFollowed)
+                if (listed.call == root && !listed.isFollowed && (listed.isMadeEmpty || isMapUsedOnce(listed)))
                     heir = &listed;
             }
             if (!heir)
                 continue;
         }
 
-        m_stores[candidate.store].storesObjectMadeForIt = !(m_uses[root] & isLaidAccessorsUnderNames);
+        bool laysAccessors = m_uses[root] & isLaidAccessorsUnderNames;
+        m_stores[candidate.store].storesObjectMadeForIt = !laysAccessors || everyAccessorHalfIsWritten(root);
         uint32_t standsForObject = addAccessUnder(SummaryAccess::Kind::Read, ValueID(root), m_stores[candidate.store].base, m_stores[candidate.store].key, ValueID());
         m_summary.accesses[standsForObject].standsForObjectMadeAtSite = true;
         ListInScan known = listOfNode(resultOfRead(standsForObject));
@@ -6873,15 +7923,33 @@ void ScanOfBody::followObjectsMadeToBePrototypes()
             store.base = known;
             store.isIntoObjectKnownByRead = true;
         }
-        for (const AccessorLaidInScan& laid : m_uses[root] & isLaidAccessorsUnderNames ? m_accessorsLaid.span() : std::span<AccessorLaidInScan> { }) {
+        for (const AccessorLaidInScan& laid : laysAccessors ? m_accessorsLaid.span() : std::span<AccessorLaidInScan> { }) {
             if (laid.root == root)
                 m_sinks[laid.sinkOfSubject].value = known;
+        }
+        if (laysAccessors && m_stores[candidate.store].storesObjectMadeForIt)
+            defineAccessorsOfPrototype(root, known);
+        if (literal) {
+            m_sinks[*sinkOfLiteral].value = known;
+            for (uint32_t sink = literal->firstSinkOfParent; sink < literal->endOfSinksOfParent; ++sink) {
+                if (m_sinks[sink].kind == SinkKindInScan::OtherOfChange)
+                    m_sinks[sink].value = known;
+                else if (m_sinks[sink].kind == SinkKindInScan::Edge)
+                    m_sinks[sink].value = { };
+            }
         }
         if (heir) {
             heir->isFollowed = true;
             m_summary.changes[heir->change].kind = SummaryChange::Kind::ChangesPrototype;
             m_sinks[heir->sinkOfSubject].value = known;
             addSink(SinkKindInScan::OtherOfChange, heir->above, heir->change);
+        }
+        if (heir && heir->map) {
+            ValueID site(heir->call);
+            m_definitionsByMaps.append(DefinitionByMapInScan { static_cast<uint32_t>(m_summary.changes.size()), static_cast<uint32_t>(m_summary.accesses.size()), m_roots[heir->map.index()], heir->call, listOf(heir->map) });
+            defineByDescriptor(site, known, { }, listOf(heir->map));
+            std::ranges::stable_sort(m_summary.definitionsByDescriptorInOrderOfSites, { }, [&](uint32_t change) { return m_summary.changes[change].site.index(); });
+            m_summary.calls[*findCall(site)].describesPrototypeInSight = true;
         }
     }
     for (const HeirMadeByBuiltinInScan& heir : m_heirsMadeByBuiltins) {
@@ -7108,7 +8176,7 @@ FunctionID ScanOfBody::functionWrittenAt(const SummaryNode& held) const
     return variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable) ? variable.function : FunctionID();
 }
 
-void ScanOfBody::forgetWrittenAccessorOf(uint32_t access)
+void ScanOfBody::removeWrittenAccessor(uint32_t access)
 {
     m_summary.writtenAccessors.removeAllMatching([&](const SummaryWrittenAccessor& written) {
         return written.access == access;
@@ -7226,7 +8294,7 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
             return;
     }
     m_summary.accesses[access].laysAccessorAsWritten = true;
-    forgetWrittenAccessorOf(access);
+    removeWrittenAccessor(access);
     m_summary.writtenAccessors.append({ access, functions[0], functions[1], { } });
     if (!hasLeftIntoMapAlone)
         return;
@@ -7331,7 +8399,7 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
             access.keyNode = keyNode;
             access.value = valueWhereNoneIsInSight;
             access.laysAccessorAsWritten = false;
-            forgetWrittenAccessorOf(placeOfAccess);
+            removeWrittenAccessor(placeOfAccess);
             access.descriptorFromElsewhere = noSummaryNode;
             isFirst = false;
             eachEntryLaysAccessorAsWritten &= key && descriptor;
@@ -7397,9 +8465,9 @@ void ScanOfBody::nameKeysOfDefinitionsByMaps()
     }
 }
 
-void ScanOfBody::applyConversionToPrimitive(const SinkInScan& sink)
+uint32_t ScanOfBody::joinObjectsConverted(ListInScan list, bool isConversionByEquality)
 {
-    expand(sink.value);
+    expand(list);
     uint32_t objects = 0;
     for (const OriginInScan& origin : m_expanded) {
         if (isAlwaysPrimitive(origin))
@@ -7407,18 +8475,66 @@ void ScanOfBody::applyConversionToPrimitive(const SinkInScan& sink)
         if (!objects)
             objects = newJoin();
         OriginInScan from = behindTest(origin, TypeTable::object);
-        addEdge(from.node, objects, from.passes);
+        addEdge(from.node, objects, from.passes, false, isConversionByEquality);
     }
+    return objects;
+}
+
+void ScanOfBody::applyConversionToPrimitive(const SinkInScan& sink)
+{
+    uint32_t objects = joinObjectsConverted(sink.value, false);
     if (!objects)
         return;
+    m_firstCallOfConversion[sink.value.first] = static_cast<uint32_t>(m_summary.calls.size());
+    callConversionsOf(objects, ValueID(sink.target));
+}
 
+void ScanOfBody::applyConversionByEquality(const EqualityInScan& equality)
+{
+    uint32_t firstAtom = equality.converted.first;
+    if (firstAtom < m_isConvertedToPrimitive.size() && m_isConvertedToPrimitive[firstAtom])
+        return;
+    expand(equality.other);
+    bool mayBeUnseen = m_expanded.isEmpty();
+    bool mayConvert = mayBeUnseen;
+    for (const OriginInScan& origin : m_expanded) {
+        TypeID constant = primitiveConstantAt(origin.node);
+        mayConvert |= !constant || (m_program.types.at(constant).primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent));
+        mayBeUnseen |= !origin.node;
+    }
+    if (!mayConvert)
+        return;
+    if (mayBeUnseen) {
+        while (m_isConvertedToPrimitive.size() <= firstAtom)
+            m_isConvertedToPrimitive.append(false);
+        m_isConvertedToPrimitive[firstAtom] = true;
+        applyConversionToPrimitive(SinkInScan { SinkKindInScan::ConvertedToPrimitive, equality.converted, equality.site.index(), { }, false });
+        return;
+    }
+    auto converted = m_objectsConvertedByEqualities.add(firstAtom, 0);
+    if (converted.isNewEntry) {
+        converted.iterator->value = joinObjectsConverted(equality.converted, true);
+        if (converted.iterator->value)
+            callConversionsOf(converted.iterator->value, equality.site);
+    }
+    if (!converted.iterator->value)
+        return;
+    SummaryOperator record;
+    record.site = equality.site;
+    record.opcode = Opcode::Eq;
+    record.operands[0] = oneNodeFor(equality.other);
+    record.result = converted.iterator->value;
+    m_summary.operators.append(record);
+}
+
+void ScanOfBody::callConversionsOf(uint32_t objects, ValueID site)
+{
     const BuiltinTable& builtins = m_program.builtins();
     BuiltinName memberTakingHint = builtins.nameOf(WellKnownSymbol::ToPrimitive);
-    bool isInLoop = !m_innermostLoopHeads.isEmpty() && m_innermostLoopHeads[m_blocks[sink.target]] != noLoop;
-    m_firstCallOfConversion[sink.value.first] = static_cast<uint32_t>(m_summary.calls.size());
+    bool isInLoop = !m_innermostLoopHeads.isEmpty() && m_innermostLoopHeads[m_blocks[site.index()]] != noLoop;
     for (BuiltinName name : builtins.keysReadBy(Protocol::ToPrimitive)) {
         SummaryCall call;
-        call.site = ValueID(sink.target);
+        call.site = site;
         call.callee = SummaryCall::Callee::Name;
         call.isMadeByProtocol = true;
         call.isInLoop = isInLoop;
@@ -7490,6 +8606,7 @@ void ScanOfBody::applyStore(const StoreInScan& store)
     access.isPartOfConstruction = isAlone;
     access.storesObjectMadeForIt = store.storesObjectMadeForIt;
     access.storesSurelyIndex = store.storesSurelyIndex;
+    access.storesZero = store.storesZero;
     access.subjectIsMadeInBody = isMadeInBody(ValueID(store.root));
     access.subject = oneNodeFor(store.base);
     access.key = store.key;
@@ -7497,12 +8614,50 @@ void ScanOfBody::applyStore(const StoreInScan& store)
     m_summary.accesses.append(access);
 }
 
+static void markRedefinedMembersInScan(auto& members)
+{
+    if (members.size() < 2)
+        return;
+    auto placeOf = [&](uint32_t index) {
+        const SummaryMember& member = members[index];
+        return std::tuple { member.classLayout, member.side, member.key };
+    };
+    Vector<uint32_t, 16> order;
+    for (uint32_t index = 0; index < members.size(); ++index) {
+        if (members[index].key)
+            order.append(index);
+    }
+    std::ranges::sort(order, { }, [&](uint32_t index) {
+        return std::pair { placeOf(index), members[index].index };
+    });
+    static constexpr auto bitOf = [](MethodKind kind) -> uint8_t {
+        return 1 << static_cast<unsigned>(kind);
+    };
+    uint8_t laterKinds = 0;
+    for (size_t end = order.size(); end; ) {
+        size_t begin = end - 1;
+        const SummaryMember& last = members[order[begin]];
+        while (begin && placeOf(order[begin - 1]) == placeOf(order[end - 1]) && members[order[begin - 1]].index == last.index)
+            --begin;
+        if (end == order.size() || placeOf(order[end]) != placeOf(order[begin]))
+            laterKinds = 0;
+        uint8_t replacingKinds = last.kind == MethodKind::Method ? 0xff : bitOf(MethodKind::Method) | bitOf(last.kind);
+        for (size_t copy = begin; copy < end; ++copy)
+            members[order[copy]].isRedefined = laterKinds & replacingKinds;
+        laterKinds |= bitOf(last.kind);
+        end = begin;
+    }
+}
+
 void ScanOfBody::finish()
 {
+    markRedefinedMembersInScan(m_summary.members);
     if (m_function->isCoroutine()) {
         if (uint32_t result = resultNode(0))
             addEdge(objectOfCoroutine(), result);
     }
+    if (!m_someBlockReturns && !m_function->isCoroutine())
+        m_summary.traits.add(SummaryTrait::NeverReturns);
     if (!m_environmentsBeingMade.isEmpty())
         letFirstValuesOfSlotsArrive();
     if (!m_summary.handlers.isEmpty())
@@ -7692,15 +8847,18 @@ void ScanOfBody::removeRepeatedEdges()
         }
         bool passesAll = false;
         bool runsCodeOfValue = false;
+        bool isConversionByEquality = true;
         for (end = first; end < size && placeOf(edges[end]) == place; ++end) {
             passesAll |= !edges[end].passes;
             runsCodeOfValue |= edges[end].runsCodeOfValue;
+            isConversionByEquality &= edges[end].isConversionByEquality;
         }
 
         size_t firstKept = kept;
         for (size_t index = first; index < end; ++index) {
             SummaryEdge edge = edges[index];
             edge.runsCodeOfValue = runsCodeOfValue;
+            edge.isConversionByEquality = isConversionByEquality;
             if (passesAll)
                 edge.passes = TypeID();
             bool isRepeated = false;
@@ -7779,10 +8937,63 @@ static void nameKeysOfMembersByVariablesInScan(const Program& program, const Vec
             continue;
         for (const ScanOfBody::MemberUnderVariableInScan& member : scan->membersUnderVariables()) {
             auto stored = std::ranges::equal_range(keys, member.variable, { }, &ScanOfBody::KeyOfVariableInScan::variable);
-            if (stored.size() == 1 && isWriteOnceModuleVariable(program, member.variable))
-                summaries.at(member.function).members[member.member].key = stored.front().key;
+            if (stored.size() != 1 || !isWriteOnceModuleVariable(program, member.variable))
+                continue;
+            auto& members = summaries.at(member.function).members;
+            members[member.member].key = stored.front().key;
+            markRedefinedMembersInScan(members);
         }
     }
+}
+
+static void collectVariablesStoredByElement(const Program& program, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)
+{
+    BitVector stored(program.variables.size());
+    BitVector keys;
+    Vector<FieldReference> fields;
+    Vector<CaptureInScan> captures;
+    ThinSummaries::ElementStores elementStores;
+    for (const std::unique_ptr<ScanOfBody>& scan : scans) {
+        if (!scan)
+            continue;
+        for (VariableID variable : scan->variablesStoredByElement())
+            stored.set(variable.index());
+        for (PropertyKeyID key : scan->keysStoredByElement())
+            keys.set(key.index());
+        fields.appendVector(scan->fieldsStoredByElement());
+        captures.appendVector(scan->capturesStoredByElement());
+        elementStores.merge(scan->elementStores());
+    }
+    auto order = [](FieldReference field) {
+        return std::pair { field.layout.index(), field.field };
+    };
+    std::ranges::sort(fields, { }, order);
+    std::ranges::sort(captures);
+    BitVector literals;
+    for (const std::unique_ptr<ScanOfBody>& scan : scans) {
+        if (!scan)
+            continue;
+        for (auto [variable, literal] : scan->literalsOfVariables()) {
+            if (stored.get(variable.index()))
+                literals.set(literal.index());
+        }
+        for (auto [key, literal] : scan->literalsOfKeys()) {
+            if (keys.get(key.index()))
+                literals.set(literal.index());
+        }
+        for (auto [field, literal] : scan->literalsOfFields()) {
+            if (std::ranges::binary_search(fields, order(field), { }, order))
+                literals.set(literal.index());
+        }
+        for (DataID literal : scan->literalsStoredByElement())
+            literals.set(literal.index());
+        for (auto [capture, literal] : scan->literalsOfCaptures()) {
+            if (std::ranges::binary_search(captures, capture))
+                literals.set(literal.index());
+        }
+    }
+    summaries.setElementStores(WTF::move(elementStores));
+    summaries.setStoresByElement(WTF::move(stored), WTF::move(literals));
 }
 
 static void collectSymbolValuedVariables(const Program& program, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)
@@ -7886,15 +9097,16 @@ ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const
     summaries.setSetsOfLayoutsWrittenInBodies(WTF::move(setsOfLayoutsWritten));
     summaries.setNumberOfValuesScanned(numberOfValuesScanned);
 
-    Vector<FunctionID> functionsThatMakeCopies;
+    Vector<FunctionID> copyingFunctions;
     for (const std::unique_ptr<ScanOfBody>& scan : scans) {
         if (scan)
-            functionsThatMakeCopies.appendVector(scan->functionsThatMakeCopies());
+            copyingFunctions.appendVector(scan->copyingFunctions());
     }
-    std::ranges::sort(functionsThatMakeCopies);
-    summaries.setFunctionsThatMakeCopies(WTF::move(functionsThatMakeCopies));
+    std::ranges::sort(copyingFunctions);
+    summaries.setCopyingFunctions(WTF::move(copyingFunctions));
     nameKeysOfMembersByVariablesInScan(program, scans, summaries);
     collectSymbolValuedVariables(program, scans, summaries);
+    collectVariablesStoredByElement(program, scans, summaries);
     listFunctionsThatCopyMembersInScan(numberOfFunctions, scans, summaries);
 
     std::optional<InternalError> firstError;

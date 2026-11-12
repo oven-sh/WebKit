@@ -193,8 +193,10 @@ public:
         m_registerFilledInFrontOfNextCall = filledByCallee;
         m_registerMovedIntoResultInFrontOfNextCall = movedIntoResultByCallee;
     }
+    void callWithoutReturnSite(CCallHelpers&, StubKey);
     void callForTwoReads(CCallHelpers&, StubKey, OptionalIndex firstRead, OptionalIndex secondRead);
     void tailCall(CCallHelpers&, StubKey);
+    void emitPrecedingTailCall(CCallHelpers&, StubKey);
     void tailCall(CCallHelpers&, StubKey, uint32_t immediate);
     void tailCall(CCallHelpers&, StubKey, NumberedImmediate);
     void callFunction(CCallHelpers&, Typed::CodeUnit callee, uint16_t entry, OptionalIndex site);

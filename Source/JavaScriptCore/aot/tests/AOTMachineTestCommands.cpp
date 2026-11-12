@@ -569,6 +569,8 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
     case NumberSpace::BigInt:
     case NumberSpace::ShownString:
     case NumberSpace::AtomOfString:
+    case NumberSpace::NameHeader:
+    case NumberSpace::StringCharacters:
         return WordOfMentionKey::Text;
     case NumberSpace::BuiltinCell:
         return WordOfMentionKey::BuiltinCell;
@@ -643,6 +645,7 @@ static WordOfMentionKey wordOfRequestKeyAt(RequestKind kind, size_t index)
     case RequestKind::CollectionData:
         return index ? WordOfMentionKey::Number : WordOfMentionKey::Data;
     case RequestKind::FormatPattern:
+    case RequestKind::ImportChecks:
         return WordOfMentionKey::Number;
     }
     RELEASE_ASSERT_NOT_REACHED();

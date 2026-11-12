@@ -330,9 +330,10 @@ struct StepsOfTestWalk {
     void leave(uint32_t enter, bool resolvesNames) { append(steps[enter].module, StepOfLinkWalk::Leave, resolvesNames); }
     void onlyBecomesLinked(uint32_t enter)
     {
-        modulesThatOnlyBecomeLinked.append(steps[enter].module);
+        onlyBecomesLinkedAlone(steps[enter].module);
         steps.shrink(enter);
     }
+    void onlyBecomesLinkedAlone(uint32_t module) { modulesThatOnlyBecomeLinked.append(module); }
 
     Vector<Step> steps;
     Vector<uint32_t> modulesThatOnlyBecomeLinked;

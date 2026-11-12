@@ -51,7 +51,7 @@ static ALWAYS_INLINE TypeID typeOfReceiverBehindCheckInWalkTyped(Walker& walker,
     return walker.types().withoutNullish(typeOfReceiver);
 }
 
-static Reference tryHoistNullishCheck(Walker& walker, const BodyValue& access, Reference receiver)
+Reference tryHoistNullishCheck(Walker& walker, const BodyValue& access, Reference receiver)
 {
     if (!walker.isInvariantInSpecializedVersion(receiver))
         return { };

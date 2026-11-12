@@ -13,6 +13,7 @@
 #include "AOTCompiledStructure.h"
 #include "AOTProgramTables.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsField.h"
@@ -374,11 +375,11 @@ void generateReadSlot(StubAssembler& jit)
             return;
         }
         case Slot::Kind::Variable: {
-            const GPRReg statics = jit.clobberOperand(headerOperand);
-            const FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
+            const GPRReg base = jit.clobberOperand(headerOperand);
+            const FieldReadRegisters registers = allocateFieldReadRegisters(base, T10);
             FieldReadExits exits;
             slot.loadFirstPayloadWord(jit, registers.field.slotData);
-            loadStaticsBase(jit, statics, T11);
+            slot.loadVariableBase(jit, R0, base, T11);
             computeFieldAddress(jit, registers.field, false, exits.isAbsent);
             readFieldAndReturn(jit, registers, exits);
 
@@ -431,7 +432,6 @@ void generateReadSlot(StubAssembler& jit)
             return;
         }
         case Slot::Kind::ClosureLength: {
-            constexpr int32_t offsetOfLengths = OBJECT_OFFSETOF(ProgramTables, ranges) + static_cast<int32_t>(ProgramTableIndex::functionLengths) * sizeof(TableRange) + OBJECT_OFFSETOF(TableRange, offset);
             const GPRReg number = T11;
             Jump isSlim = jit.branch8(CCallHelpers::Equal, Address(R0, JSCell::typeInfoTypeOffset()), TrustedImm32(SlimClosureType));
             jit.load64(Address(R0, offsetOfClosureEntry), number);
@@ -442,10 +442,8 @@ void generateReadSlot(StubAssembler& jit)
 
             hasWord.link(&jit);
             extractBits(jit, number, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, number);
-            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), T10);
-            jit.load32(Address(T10, offsetOfLengths), T14);
-            jit.addPtr(T14, T10);
-            jit.load8(BaseIndex(T10, number, CCallHelpers::TimesOne), T10);
+            loadAddressOfClosureFacts(jit, number, T10);
+            jit.load8(Address(T10, OBJECT_OFFSETOF(ClosureFacts, length)), T10);
             miss.append(jit.branch32(CCallHelpers::Equal, T10, TrustedImm32(countsAreListed)));
             returnInt32(T10);
             return;

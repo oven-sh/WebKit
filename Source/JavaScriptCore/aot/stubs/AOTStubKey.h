@@ -33,6 +33,7 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
 {
     switch (family) {
     case StubFamily::ReturnAsyncResult:
+    case StubFamily::ReturnAsyncResultInTailPosition:
     case StubFamily::AwaitBySavingFrame:
     case StubFamily::SuspendGenerator:
     case StubFamily::StepAsyncGenerator:

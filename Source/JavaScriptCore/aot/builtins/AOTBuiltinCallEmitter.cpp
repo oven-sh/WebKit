@@ -19,6 +19,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTDiagnostics.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTIRProgram.h"
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
@@ -28,6 +29,7 @@
 #include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
+#include "AOTStubsCompiledMethods.h"
 #include "AOTStubsPrimitiveFastPaths.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
@@ -183,6 +185,25 @@ void BuiltinCallEmitter::stopUnlessNativeResultIsAsWritten(const ValueContext& v
     appendBehindTest(continuation);
 }
 
+std::optional<HostResult> BuiltinCallEmitter::hostResultAsWritten(const ValueContext& value)
+{
+    const Type& written = typeOf(value.id());
+    if (!written.isJavaScriptValue() || written.primitives & (Primitive::Absent | Primitive::Unspecified))
+        return std::nullopt;
+    TypeID tested = types().wholeKindsAndBuiltinClassesOf(typeIDOf(value.id()));
+    if (tested == TypeTable::boolean)
+        return HostResult::Boolean;
+    if (tested == TypeTable::string)
+        return HostResult::String;
+    if (tested == TypeTable::symbol)
+        return HostResult::Symbol;
+    if (tested == TypeTable::object)
+        return HostResult::Object;
+    if (tested == types().builtinClass(BuiltinClasses::Array))
+        return HostResult::Array;
+    return std::nullopt;
+}
+
 void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
@@ -204,8 +225,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         build().statistics().count(StatisticID::FreshResultsChecked);
     }
 
+    ExpectedResult expected { .result = hostResultAsWritten(value) };
     auto defineResult = [&](Boxed result) {
-        stopUnlessNativeResultIsAsWritten(value, result, overload.builtin, overload.mode == BuiltinCallMode::Construct);
+        if (!expected.isCheckedByCallee)
+            stopUnlessNativeResultIsAsWritten(value, result, overload.builtin, overload.mode == BuiltinCallMode::Construct);
         if (collectionsBefore) {
             Boxed none = boxedConstant(JSValue());
             const Operation* receiverOperation = receiver ? &m_code.at(underlyingCellOf(m_code, receiver)) : nullptr;
@@ -236,9 +259,17 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         }
         if (builtin == Builtins::String && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
             Boxed operand = boxedOperand(value, arguments[0]);
-            auto convert = [&] {
+            auto convertAnyValue = [&] {
                 return callOperation<Boxed>(value, RuntimeOperation::StringOfAnyValue, { operand }, { .calledBuiltin = builtin });
             };
+            auto convert = [&] {
+                if (!generator().usesLoopForms(value.block()))
+                    return convertAnyValue();
+                return either<Boxed>(isInt32(operand), [&] {
+                    return boxCell(emitter<StringEmitter>().integerToString(value, unboxInt32(operand)));
+                }, convertAnyValue);
+            };
+            expected.isCheckedByCallee = expected.result == HostResult::String;
             const TypeTestPlan& isString = typeTestPlanFor(typeIDOf(arguments[0]), representationOf(arguments[0]), TypeTable::string);
             defineResult(either<Boxed>(hasType(get(arguments[0]), isString), [&] {
                 return operand;
@@ -261,7 +292,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             defineResult(either<Boxed>(isNotEmpty(answer), [&] {
                 return answer;
             }, [&] {
-                return callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span());
+                return callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span(), expected.result == HostResult::String ? &expected : nullptr);
             }));
         };
         bool isCall = overload.mode == BuiltinCallMode::Call;
@@ -277,6 +308,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return;
         }
         if (builtin == Builtins::ArrayPrototypeJoin && isCall && receiver && arguments.size() <= 1) {
+            expected.isCheckedByCallee = expected.result == HostResult::String;
             defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { *boxedReceiver, argumentOrUndefined(0), calleeOf(value, overload) }));
             return;
         }
@@ -319,7 +351,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             defineResult(callDirectFunction(value, *entry));
             return;
         }
-        defineResult(callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span()));
+        defineResult(callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span(), &expected));
     };
 
     switch (value->builtinCallForm()) {
@@ -431,7 +463,16 @@ CellPointer BuiltinCallEmitter::calleeOf(const OperationContext& context, const 
     return builtinCell(context, keyOfCalleeOf(overload));
 }
 
-Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, BuiltinOverloadID id, std::optional<Boxed> receiver, std::span<const Boxed> arguments)
+void BuiltinCallEmitter::createStaticCallee(const ValueContext& value)
+{
+    const BuiltinOverload& overload = m_builtins.at(value->overload());
+    BuiltinID holder = m_builtins.at(overload.builtin).holder;
+    ValueID receiver = value->receiverOperand();
+    if (receiver && holder && overload.code.implementation.kind == BuiltinImplementationKind::HostCall && keyOfCalleeOf(overload).hasCell(m_builtins) && types().overlap(typeIDOf(receiver), types().forBuiltin(holder)))
+        calleeOf(value, overload);
+}
+
+Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, BuiltinOverloadID id, std::optional<Boxed> receiver, std::span<const Boxed> arguments, ExpectedResult* expected)
 {
     const BuiltinOverload& overload = m_builtins.at(id);
     if (overload.code.implementation.callee == BuiltinCallee::CustomGetter) {
@@ -456,6 +497,13 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
         if (call && call->opcode == Opcode::CallBuiltin && call->overload() == id && call->builtinCallForm() == BuiltinCallForm::Whole)
             stub = callHostGetter();
     }
+    if (std::optional<CompiledMethodOfArray> method = !constructs && receiver && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(m_builtins.canonicalID(overload.builtin)) : std::nullopt) {
+        m_mentions.builtinCell(keyOfCalleeOf(overload));
+        Vector<LValue, 4> values;
+        for (Boxed argument : arguments)
+            values.append(argument.value());
+        return emitter<CallEmitter>().callByConvention(context, { .stub = callCompiledMethodOfArray(*method, count), .thisValue = receiver->value(), .arguments = values.span() }, { .numberedImmediate = NumberedImmediate { mentionOfName(keyOf(overload)) } });
+    }
     bool leavesFunctionUnfetched = stub && stub->family() == StubFamily::CallBoxedBuiltin && fetchesFunctionOnlyToLeave(static_cast<BoxedCallForm>(stub->form()), count) && keyOfCalleeOf(overload).hasCell(m_builtins);
     Boxed callee = leavesFunctionUnfetched ? Boxed(zeroExtended(numberOf(m_mentions.builtinCell(keyOfCalleeOf(overload)))).value()) : boxCell(calleeOf(context, overload));
     Boxed thisValue = undefined();
@@ -468,6 +516,14 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
 
     CallEmitter& calls = emitter<CallEmitter>();
     CallOptions options { .constructs = constructs };
+    if (stub && expected && expected->result) {
+        if (stub->family() == StubFamily::CallBoxedBuiltin)
+            expected->isCheckedByCallee = checkedResultOf(static_cast<BoxedCallForm>(stub->form())) == expected->result;
+        else if (stub->family() == StubFamily::CallHostFunctionWithoutBoxedCall) {
+            stub = callHostFunctionCheckingResult(*expected->result, count);
+            expected->isCheckedByCallee = true;
+        }
+    }
     if (stub) {
         Vector<LValue, 8> values;
         for (Boxed argument : arguments)
@@ -605,7 +661,25 @@ void BuiltinCallEmitter::generateNewArgumentList(const ValueContext& value)
 
 void BuiltinCallEmitter::generateNewArrayOfGiven(const ValueContext& value)
 {
-    define(value, CellPointer(callStub(value, newArrayOfGiven(), { in<Boxed>(value->givenOperand()).value() }).first));
+    ArrayAllocationEmitter allocation(generator());
+    const ArrayStorageForm& seed = arrayStorageFormOf(ArrayStorage::Int32);
+    Boxed given = in<Boxed>(value->givenOperand());
+    std::optional<Pointer> profile = allocation.profileOfListsOfLengthAtSite(value.origin(), seed);
+    if (!profile) {
+        define(value, CellPointer(callStub(value, newArrayOfGiven(), { given.value() }).first));
+        return;
+    }
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    branchUnless(isInt32(given), slowPath);
+    Integer length = signExtended(unboxInt32(given));
+    CellPointer array = allocation.allocateArrayOfHolesAtSite(value, length, seed, *profile, slowPath);
+    allocation.setLengthOfNewArray(array, length);
+    join.add(array);
+
+    m_out.appendTo(slowPath);
+    join.add(CellPointer(callStub(value, newArrayOfGiven(), { given.value() }).first));
+    define(value, join.finish());
 }
 
 bool BuiltinCallEmitter::canShareRegExpLiteral(const Operation& literal) const

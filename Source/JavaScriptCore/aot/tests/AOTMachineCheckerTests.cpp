@@ -583,9 +583,10 @@ static void checkerRefusesExchangedMovesOfCycle()
 
     std::span<Step> steps = test.procedure().allocationForTesting().stepsForTesting();
     uint32_t end = test.procedure().allocation().stepsOf(latch).endOfEdgeMoves;
-    uint32_t first = findStepForCheckerTest(test, latch, StepKind::Swap);
+    StepKind kind = isX86_64() ? StepKind::Swap : StepKind::Move;
+    uint32_t first = findStepForCheckerTest(test, latch, kind);
     uint32_t second = first + 1;
-    while (second < end && steps[second].kind != StepKind::Swap)
+    while (second < end && steps[second].kind != kind)
         ++second;
     AOT_CHECKER_TEST_CHECK(test, second < end);
     std::swap(steps[first], steps[second]);
@@ -1074,6 +1075,55 @@ static void checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow()
     expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { built.constant });
 }
 
+static void checkerRejectsImplicitlyExtendedLowHalfOfSum()
+{
+    for (bool testsAgainstLeastResult : { true, false }) {
+        for (bool extendsInBlockBehind : { false, true }) {
+            for (bool assumesClearUpperHalves : { false, true }) {
+                ProcedureTraits traits;
+                traits.shouldAssumeClearUpperHalves = assumesClearUpperHalves;
+                TestProcedure test(traits);
+                Output& out = test.out();
+                Operation* choice = test.argumentGPR(2);
+                Operation* left = out.signExt32To64(out.castToInt32(test.argumentGPR(0)));
+                Operation* right = testsAgainstLeastResult ? out.constInt64(-1) : out.signExt32To64(out.castToInt32(test.argumentGPR(1)));
+                Operation* sum = out.add(left, right);
+                Block* tests = out.m_block;
+                Block* passes = out.newBlock();
+                Block* fails = out.newBlock();
+                Block* behind = out.newBlock();
+                Block* elsewhere = out.newBlock();
+                out.branch(testsAgainstLeastResult ? out.greaterThanOrEqual(sum, out.constInt64(0)) : out.equal(out.signExt32To64(out.castToInt32(sum)), sum), normalEdge(passes), normalEdge(fails));
+
+                out.appendTo(passes);
+                out.ret(out.zeroExtPtr(out.castToInt32(sum)));
+
+                out.appendTo(fails);
+                Operation* whole = out.bitCast(out.intToDouble(sum), Int64);
+                Operation* lowHalf = out.castToInt32(sum);
+                Operation* extended = extendsInBlockBehind ? nullptr : out.zeroExtPtr(lowHalf);
+                out.branch(out.notZero64(choice), normalEdge(behind), normalEdge(elsewhere));
+                out.appendTo(behind);
+                if (extendsInBlockBehind)
+                    extended = out.zeroExtPtr(lowHalf);
+                out.ret(out.add(out.opaque(extended), whole));
+                out.appendTo(elsewhere);
+                out.ret(whole);
+
+                if (assumesClearUpperHalves) {
+                    AOT_CHECKER_TEST_CHECK(test, !test.prepare());
+                    AOT_CHECKER_TEST_CHECK(test, checkerReportedFailureAt(test.procedure(), FailureKind::UpperHalfIsNotClear, { extended }));
+                    continue;
+                }
+                prepareForCheckerTest(test);
+                const Liveness& liveness = test.procedure().liveness();
+                AOT_CHECKER_TEST_CHECK(test, liveness.usesOverflowFlag(tests->last()) && overflowCheckedSumOf(liveness, sum).isWidenedOnFailure);
+                AOT_CHECKER_TEST_CHECK(test, !isFreeWhenCoalesced(liveness, extended));
+            }
+        }
+    }
+}
+
 #undef AOT_CHECKER_TEST_CHECK
 
 } // namespace Machine
@@ -1112,6 +1162,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },
         { "machine-checker/operand-that-is-not-taken-back"_s, Machine::checkerRefusesOperandThatIsNotTakenBack },
         { "machine-checker/step-that-may-write-the-flags-ahead-of-a-branch-on-overflow"_s, Machine::checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow },
+        { "machine-checker/low-half-of-a-widened-sum-extended-without-code"_s, Machine::checkerRejectsImplicitlyExtendedLowHalfOfSum },
     };
     return tests;
 }

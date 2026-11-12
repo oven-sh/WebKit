@@ -57,10 +57,10 @@ public:
     std::span<const uint16_t> entriesInOrder(const LayoutData&, uint32_t order);
     std::span<const uint16_t> entriesListedBy(const LayoutData&, uint32_t orderWord);
     std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
-    std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderWord, uint16_t entry) const;
+    std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderAndCount, uint16_t entry) const;
     enum class Step : bool { IsPublished, IsNotPublished };
     std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
-    std::optional<uint32_t> tryAppendToAddedOrder(const LayoutData&, uint32_t orderWord, const FieldData&);
+    std::optional<uint32_t> tryAppendToAddedOrder(const LayoutData&, uint32_t orderAndCount, const FieldData&, uint32_t numberOfExtraKeys = 0);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
     bool shouldSearchForHeldOrder(const LayoutData&);
     void didFindHeldOrder(const LayoutData&);
@@ -124,6 +124,11 @@ private:
         ObjectWords& words;
     };
 
+    struct FieldsBySlotKey {
+        uint32_t numberOfSearches { 0 };
+        Vector<uint64_t> keysAndIndexes;
+    };
+
     static Ref<StorageOfOrders> storageOfOrdersFor(State&);
     void growTransitions();
     size_t indexOfFieldAt(const LayoutData&, uint32_t slotKey);
@@ -138,7 +143,7 @@ private:
     std::array<ListedField, 128> m_listedFields { };
     std::array<FieldFoundLast, 64> m_fieldsFoundLast { };
     std::array<PlacesOfPositionedKeys, 8> m_placesOfPositionedKeys { };
-    UncheckedKeyHashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
+    UncheckedKeyHashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;
 };
 

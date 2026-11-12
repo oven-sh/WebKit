@@ -32,7 +32,7 @@ enum class AnswerKeptInArena : uint8_t {
     LayoutsOfGuessTest,
     ShapesOfLayouts,
     PartWhoseClassesHaveGuards,
-    PartWithNamedMembersAbove,
+    PartWithInheritedMembers,
     PartOfWrittenSetThatFactoriesFill,
     PartThatHasNameAsked,
     ConstantMemberOfBuiltin,

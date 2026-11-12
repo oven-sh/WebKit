@@ -90,8 +90,10 @@ void StringBuiltinEmitter::generateIndexedRead(const InlineCall& call, IndexedRe
     Representation representation = resultRepresentationOf(call);
 
     CharacterView view = strings().viewOfString(context, stringOperand(call.receiver()));
-    Number position = numberArgument(call, 0).value_or(number(0));
-    Integer index = strings().indexInString(position, view.length, read == IndexedRead::At);
+    ValueID positionOperand = call.argumentOrNull(0);
+    Type positionType = positionOperand ? typeOf(positionOperand) : undefinedType;
+    bool readsFirst = positionType.hasOnlyPrimitives(Primitive::Undefined) || (positionType.isInteger() && positionType.integers.isSubsetOf({ 0, 0 }));
+    Integer index = readsFirst ? integer(0) : strings().indexInString(numberArgument(call, 0).value_or(number(0)), view.length, read == IndexedRead::At);
 
     auto integerTypeUpTo = [&](int64_t maximum) {
         return types().at(types().integer({ 0, maximum }));
@@ -108,7 +110,7 @@ void StringBuiltinEmitter::generateIndexedRead(const InlineCall& call, IndexedRe
         LBasicBlock inside = newBlock();
         LBasicBlock outside = newBlock();
         OperandJoin join(m_out, representation);
-        Condition isInside = greaterThanOrEqual(index, integer(0));
+        Condition isInside = readsFirst ? isNotZero(view.length) : greaterThanOrEqual(index, integer(0));
         ScopeFork fork = m_out.forkScope();
         m_out.branch(isInside.value(), normalEdge(inside), unlikelyEdge(outside));
         m_out.appendToArm(inside, fork);

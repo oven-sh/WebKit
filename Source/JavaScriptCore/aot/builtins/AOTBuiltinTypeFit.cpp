@@ -344,7 +344,7 @@ TypeFit BuiltinTypeFitWalk::fitOfLayout(LayoutID layout) const
     if (isNamed || m_takesSomeOrdinaryObjects)
         return TypeFit::Unknown;
 
-    BuiltinClassID writtenBase = m_context.program.at(layout).writtenBuiltinBase;
+    BuiltinClassID writtenBase = builtinClassOfInstances(m_context.program.at(layout));
     if (!writtenBase)
         return fitOfTestedAtom(false, mayBeInsideSomeClassPart(m_reader, layout, m_classParts.span()));
     return fitOfTestedAtom(false, std::ranges::any_of(m_classes, [&](const ClassTestedByRow& tested) {
@@ -355,10 +355,11 @@ TypeFit BuiltinTypeFitWalk::fitOfLayout(LayoutID layout) const
 bool BuiltinTypeFitWalk::isWrittenBelowTestedClass(LayoutID layout) const
 {
     const Layout& record = m_context.program.at(layout);
-    if (!record.writtenBuiltinBase)
+    BuiltinClassID base = builtinClassOfInstances(record);
+    if (!base)
         return false;
     return std::ranges::any_of(m_classes, [&](const ClassTestedByRow& tested) {
-        if (tested.asksForMoreThanClass || !m_table.isSameOrSubclassOf(record.writtenBuiltinBase, tested.builtinClass))
+        if (tested.asksForMoreThanClass || !m_table.isSameOrSubclassOf(base, tested.builtinClass))
             return false;
         return !tested.pristine.isEmpty() || !record.mayBeOrdinaryObject;
     });

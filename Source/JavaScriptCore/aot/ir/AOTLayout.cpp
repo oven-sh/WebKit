@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
@@ -19,7 +20,6 @@
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include <optional>
-#include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -257,6 +257,30 @@ void noteSubclassesOfBuiltinClasses(Program& program, std::span<const ClassBelow
     }
 }
 
+void noteSubclassesOfMixins(Program& program, std::span<const ClassBelowBuiltinClass> sortedWithoutRepeats)
+{
+    BitVector hasSeveralSubclasses(program.layouts.size());
+    for (const ClassBelowBuiltinClass& written : sortedWithoutRepeats) {
+        Layout& layout = program.layouts[written.layout.index()];
+        if (layout.writtenBuiltinBase || !layout.base)
+            continue;
+        LayoutID mixin = layout.base;
+        while (LayoutID above = program.at(mixin).base)
+            mixin = above;
+        Layout& topmost = program.layouts[mixin.index()];
+        if (topmost.writtenBuiltinBase || !topmost.has(LayoutFlags::HasHeritage) || layout.mixedBuiltinBase)
+            continue;
+        layout.mixedBuiltinBase = written.builtinClass;
+        if (topmost.mixedSubclass)
+            hasSeveralSubclasses.quickSet(mixin.index());
+        topmost.mixedSubclass = written.layout;
+        program.someClassExtendsMixin = true;
+    }
+    hasSeveralSubclasses.forEachSetBit([&](size_t mixin) {
+        program.layouts[mixin].mixedSubclass = { };
+    });
+}
+
 void noteLayoutsOfDictionaries(Program& program, const BitVector& layoutsOfDictionaries)
 {
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
@@ -285,6 +309,7 @@ Layout createDerivedLayout(const Program& program, LayoutID base)
     layout.base = base;
     layout.flags = LayoutFlags::IsDerived;
     layout.writtenBuiltinBase = declared.writtenBuiltinBase;
+    layout.mixedBuiltinBase = declared.mixedBuiltinBase;
     layout.mayBeOrdinaryObject = declared.mayBeOrdinaryObject;
     return layout;
 }

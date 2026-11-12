@@ -177,9 +177,9 @@ static void testAdditionBesideElementsNamesTheIndexingHeader()
             unsigned capacityAfter = object->structure()->outOfLineCapacity();
             bool grows = capacityAfter != before->outOfLineCapacity();
             AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::Addition && answer.newStructure == object->structure());
-            AOT_TEST_CHECK(answer.storageHasIndexingHeader == grows && answer.newStorageCapacity == (grows ? capacityAfter : 0));
+            AOT_TEST_CHECK(answer.storageHasIndexingHeader == grows && answer.copiesElements == grows && !answer.clearsPristineFlag && answer.newStorageCapacity == (grows ? capacityAfter : 0));
             Slot slot = slotFor(answer, before);
-            AOT_TEST_CHECK(slot.kind == Slot::Kind::Transition && slot.has(Slot::growsStorage) == grows && slot.has(Slot::storageHasIndexingHeader) == grows);
+            AOT_TEST_CHECK(slot.kind == Slot::Kind::Transition && slot.has(Slot::growsStorage) == grows && slot.has(Slot::storageHasIndexingHeader) == grows && slot.has(Slot::copiesElements) == grows && !slot.has(Slot::clearsPristineFlag));
             numberOfGrowths += grows;
         }
         AOT_TEST_CHECK(numberOfGrowths >= 2 && object->getIndexQuickly(0) == firstElement);

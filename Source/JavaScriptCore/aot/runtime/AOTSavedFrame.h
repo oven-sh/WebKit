@@ -16,9 +16,11 @@
 #include "MarkedBlockCage.h"
 #include "MarkedSpace.h"
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
+#include <wtf/MathExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -193,6 +195,7 @@ public:
     static constexpr ptrdiff_t offsetOfPromiseOrWaiter() { return OBJECT_OFFSETOF(SavedFrame, m_promiseOrWaiter); }
     static constexpr ptrdiff_t offsetOfAsyncContext() { return OBJECT_OFFSETOF(SavedFrame, m_asyncContext); }
     static constexpr ptrdiff_t offsetOfPreservedRegister() { return OBJECT_OFFSETOF(SavedFrame, m_preservedRegister); }
+    static constexpr ptrdiff_t offsetOfCapacityOfHeapFrame() { return offsetOfPreservedRegister(); }
     static constexpr ptrdiff_t offsetOfWords() { return sizeof(SavedFrame); }
     static constexpr size_t allocationSize(size_t numberOfWords) { return sizeof(SavedFrame) + numberOfWords * sizeof(uint64_t); }
 
@@ -221,6 +224,7 @@ private:
         ++m_version;
     }
     std::optional<SavedFrameMap> liveSlotMap(uint32_t offsetPlusOne) const;
+    template<typename Visitor> NEVER_INLINE static void visitFieldsListedByLongMap(SavedFrame*, Visitor&, uint32_t version);
     std::optional<uint32_t> narrowReferenceAt(uint32_t narrowLocation) const;
     void settle(JSGlobalObject*, VM&, JSValue, bool isRejected);
     uint32_t combinatorIndex() const { return static_cast<uint32_t>(m_continuation) - static_cast<uint32_t>(Continuation::CombinatorElement); }
@@ -291,6 +295,50 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
     }
     uint32_t version = saved->m_version;
     WTF::loadLoadFence();
+    uint32_t mapOffsetPlusOne = saved->m_liveSlotMapOffsetPlusOne;
+    if (version & 1) {
+        visitor.didRace(saved, "a SavedFrame is being written");
+        return;
+    }
+    uint64_t locations = 0;
+    if (mapOffsetPlusOne) {
+        std::optional<SavedFrameMap> map = saved->liveSlotMap(mapOffsetPlusOne);
+        std::optional<uint64_t> bits = map ? map->onlyValueBits() : std::nullopt;
+        if (!bits) {
+            visitFieldsListedByLongMap(saved, visitor, version);
+            return;
+        }
+        locations = *bits;
+    }
+    uint32_t skippedAtTop = saved->numberOfWordsSkippedAtTop();
+    uint32_t lastLocation = saved->m_numberOfWords + skippedAtTop;
+    bool isWellFormed = !(locations & ((2ull << skippedAtTop) - 2)) && (lastLocation >= 63 || !(locations >> (lastLocation + 1)));
+    if constexpr (preservedRegister == InvalidGPRReg)
+        isWellFormed &= !(locations & 1);
+    std::array<JSCell*, 64> cells;
+    unsigned numberOfCells = 0;
+    if (isWellFormed) [[likely]] {
+        const uint64_t* endOfWords = saved->words() + lastLocation;
+        for (; locations; locations &= locations - 1) {
+            unsigned location = ctz(locations);
+            JSValue value = JSValue::decode(static_cast<EncodedJSValue>(location == locationInRegister ? saved->m_preservedRegister : endOfWords[-static_cast<ptrdiff_t>(location)]));
+            if (value && value.isCell())
+                cells[numberOfCells++] = value.asCell();
+        }
+    }
+    WTF::loadLoadFence();
+    if (saved->m_version != version) {
+        visitor.didRace(saved, "a SavedFrame is being written");
+        return;
+    }
+    RELEASE_ASSERT(isWellFormed);
+    for (unsigned index = 0; index < numberOfCells; ++index)
+        visitor.appendUnbarriered(cells[index]);
+}
+
+template<typename Visitor>
+NEVER_INLINE void SavedFrame::visitFieldsListedByLongMap(SavedFrame* saved, Visitor& visitor, uint32_t version)
+{
     Vector<JSCell*, 32> cells;
     Vector<uint32_t, 8> narrowReferences;
     auto collectLiveCells = [&](uint32_t offsetPlusOne) {

@@ -529,8 +529,6 @@ static void checkDefinitionsByNativeCode(LoadedProgram& program)
     AOT_TEST_CHECK(put(program, object, lazy, jsNumber(9)) && hasOwnProperty(program, object, lazy, jsNumber(9), noAttributes));
     AOT_TEST_CHECK(object->shapeWord() == shapeWord);
 
-    // A custom value with a setter. A store hands the value to the setter, and so does a definition that gives a value and changes no attribute.
-    // The setter gets the object both times, and the property stays the custom value. A definition that changes an attribute replaces it.
     Identifier stateful = Identifier::fromString(vm, "stateful"_s);
     AOT_TEST_CHECK(object->putDirectCustomAccessor(vm, stateful, CustomGetterSetter::create(vm, getHolder, setSeen), static_cast<unsigned>(PropertyAttribute::CustomValue)));
     AOT_TEST_CHECK(put(program, object, stateful, jsNumber(10)) && lastHolderSeenBySetter == JSValue(object) && lastValueSeenBySetter == jsNumber(10));
@@ -682,7 +680,7 @@ static void checkTransitionTableGrows(LoadedProgram& program)
         createBag(program, order, [&](Object& bag, const FieldData& field, uint64_t wordsBefore) {
             AOT_TEST_CHECK(!bag.hasOutOfLineKeyOrder());
             KeyOrderTransition step { wordsBefore & orderCountAndShapeMask, slotKeyFor(field.slot.offset, field.isOutOfLine()), bag.orderWord() & orderAndCountMask };
-            std::optional<uint32_t> insideOrderOfImage = keyOrders.stepInsideOrderOfImage(bag.layout(), static_cast<uint32_t>(wordsBefore), bag.indexOf(field));
+            std::optional<uint32_t> insideOrderOfImage = keyOrders.stepInsideOrderOfImage(bag.layout(), static_cast<uint32_t>(wordsBefore) & orderAndCountMask, bag.indexOf(field));
             AOT_TEST_CHECK(!insideOrderOfImage || *insideOrderOfImage == step.orderAndCountAfter);
             (insideOrderOfImage ? seenInsideOrdersOfImage : seen).append(step);
         });

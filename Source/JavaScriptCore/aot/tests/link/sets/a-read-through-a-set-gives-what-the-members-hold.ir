@@ -3,7 +3,7 @@
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee {{*}}result=int[0, 2147483647]|string returns=
 # CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
-# CHECK: field L0.0 "x" proven=i32 writers-known
+# CHECK: field L0.0 "x" proven=int[0, 2147483647] writers-known
 # CHECK: field L1.0 "x" proven=string writers-known
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: layout L1 changes=[] stays-with-compiled-code

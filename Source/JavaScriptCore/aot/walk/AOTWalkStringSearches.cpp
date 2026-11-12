@@ -129,7 +129,7 @@ static Reference buildStartOfSearchForStringSearches(Walker& walker, Reference s
     return buildResultOfRangeForStrings(walker, walker.build(WTF::move(range)), startOfStringRange, origin);
 }
 
-static std::optional<PieceOfString> pieceToSearchForStringSearches(Walker& walker, Reference string, StringID text, Origin origin)
+static std::optional<PieceOfString> searchedStringPiece(Walker& walker, Reference string, StringID text, Origin origin)
 {
     Vector<char16_t> buffer;
     StringView view = walker.types().viewOf(text, buffer);
@@ -180,19 +180,34 @@ bool buildSearchInString(Walker& walker, const CallByOneRow& call)
         return true;
     }
 
-    Reference position = integerForStrings(walker, searchesFromEnd ? std::numeric_limits<int32_t>::max() : 0);
     if (hasPosition) {
         Type type = walker.types().at(walker.typeOf(call.arguments[1]));
         if (searchesFromEnd ? !type.isInt32() : !type.isNumber())
             return false;
     }
-    std::optional<PieceOfString> piece = pieceToSearchForStringSearches(walker, call.receiver, sought, origin);
-    if (hasPosition)
-        position = searchesFromEnd ? call.arguments[1] : buildStartOfSearchForStringSearches(walker, call.receiver, piece, call.arguments[1], origin);
-
-    Reference found = buildSearchForWrittenTextForStringSearches(walker, call.receiver, piece, sought, position, searchesFromEnd, origin);
-    if (found && asksWhetherFound)
-        found = buildNegationForStrings(walker, buildOperatorForStrings(walker, Opcode::StrictEq, found, integerForStrings(walker, -1), origin), origin);
+    std::optional<PieceOfString> piece = searchedStringPiece(walker, call.receiver, sought, origin);
+    auto buildAnswer = [&] {
+        Reference position = integerForStrings(walker, searchesFromEnd ? std::numeric_limits<int32_t>::max() : 0);
+        if (hasPosition)
+            position = searchesFromEnd ? call.arguments[1] : buildStartOfSearchForStringSearches(walker, call.receiver, piece, call.arguments[1], origin);
+        Reference place = buildSearchForWrittenTextForStringSearches(walker, call.receiver, piece, sought, position, searchesFromEnd, origin);
+        if (!place || !asksWhetherFound)
+            return place;
+        return buildNegationForStrings(walker, buildOperatorForStrings(walker, Opcode::StrictEq, place, integerForStrings(walker, -1), origin), origin);
+    };
+    auto isInvariant = [&](Reference reference) {
+        return reference.isConstant() || walker.isInvariantInInnermostLoop(reference);
+    };
+    Reference found;
+    if (isInvariant(call.receiver) && (!hasPosition || isInvariant(call.arguments[1]))) {
+        stringReadByStringSearches(walker, piece ? piece->string : call.receiver, origin);
+        TypeID answers = asksWhetherFound ? TypeTable::boolean : walker.types().integer(Range { -1, std::numeric_limits<int32_t>::max() });
+        found = walker.buildOnFirstArrival(call.call.id(), answers, origin, scopedLambda<Reference()>(buildAnswer));
+        if (walker.hasFailed())
+            return true;
+    }
+    if (!found)
+        found = buildAnswer();
     if (found)
         bindForStrings(walker, call.call.id(), found, origin);
     return true;
@@ -220,7 +235,7 @@ Reference buildSearchForAtomOfRegExp(Walker& walker, const BodyValue&, BuiltinOv
         return { };
 
     StringID text = pattern == StringView(summary.atom) ? regExp.pattern : walker.types().internText(encodeProgramString(StringView(summary.atom)).span());
-    std::optional<PieceOfString> piece = pieceToSearchForStringSearches(walker, string, text, origin);
+    std::optional<PieceOfString> piece = searchedStringPiece(walker, string, text, origin);
     Reference found = buildSearchForWrittenTextForStringSearches(walker, string, piece, text, integerForStrings(walker, 0), false, origin);
     if (!found)
         return { };

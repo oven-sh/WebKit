@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinTable.h"
@@ -25,7 +26,6 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/Lock.h>
 #include <wtf/HashSet.h>
 #include <wtf/MallocSpan.h>
@@ -82,9 +82,12 @@ public:
     Vector<TypeSite> typeSites;
     Vector<ExpectedResult> expectedResults;
     Vector<Layout> layouts;
+    bool someClassExtendsMixin { false };
     Vector<TaggedFamily> taggedFamilies;
     Vector<Variable> variables;
     Vector<Module> modules;
+    Vector<ModuleInstance> moduleInstances;
+    Vector<ModuleLink> moduleLinks;
     Vector<ModuleFailure> moduleFailures;
     Vector<AmbiguousExport> ambiguousExports;
     Vector<SourceStamp> sourceStamps;
@@ -161,7 +164,7 @@ public:
     static constexpr size_t fewestViewsIndexedByKey = 8;
     std::span<const FieldOfView> fieldsOfViews(PropertyKeyID) const LIFETIME_BOUND;
     template<typename Functor>
-    bool visitFieldsWrittenAbove(LayoutID id, PropertyKeyID key, const Functor& functor) const
+    bool visitInheritedFields(LayoutID id, PropertyKeyID key, const Functor& functor) const
     {
         std::span<const FieldOfView> fields = fieldsOfViews(key);
         std::span<const LayoutID> views = viewsAbove(id);
@@ -192,6 +195,22 @@ public:
     LayoutID layoutOfWholeNamespace(ModuleID) const;
     LayoutID layoutOfNamespaceThatListsNoName(ModuleID) const;
     VariableID variableBehindExport(ModuleID, uint32_t index) const;
+    std::span<const FieldReference> exportedFields() const LIFETIME_BOUND { return m_derivedTables.exportedFields.span(); }
+    struct InstanceField {
+        FieldReference field;
+        ModuleID linkTarget;
+    };
+    std::span<const InstanceField> instanceFields() const LIFETIME_BOUND { return m_derivedTables.instanceFields.span(); }
+    const ModuleInstance* findModuleInstance(ModuleID) const;
+    VariableID instanceVariable(ModuleID id) const { return id.index() < m_derivedTables.instanceVariables.size() ? m_derivedTables.instanceVariables[id.index()].first : VariableID(); }
+    VariableID severalInstancesVariable(ModuleID id) const { return id.index() < m_derivedTables.instanceVariables.size() ? m_derivedTables.instanceVariables[id.index()].second : VariableID(); }
+    bool isModuleInstance(LayoutID id) const { return moduleScopeKind(id) == ModuleScopeKind::IsInstance; }
+    bool isInstanceVariable(FieldReference) const;
+    bool isInstanceLink(FieldReference) const;
+    bool isInstanceConstant(FieldReference) const;
+    std::span<const ModuleLink> linksOfModule(ModuleID) const LIFETIME_BOUND;
+    void indexInstanceFields();
+    void indexModuleScopes();
     void internBuiltinNameKeys();
     uint32_t numberInTextOf(LayoutID) const;
     LayoutID layoutNumberedInText(uint32_t) const;
@@ -205,9 +224,13 @@ public:
     ModuleID compiledModuleOfNamespaceObject(BuiltinID canonical) const;
     bool isEntry(FunctionID) const;
     LineColumn lineColumnFor(ModuleID, uint32_t position) const;
+    static LineColumn lineColumnAfter(const SourcePositions&, size_t numberOfLines, size_t numberOfAdjustments, uint32_t position);
     const ConstructionStart* findConstructionReportedAt(ModuleID, uint32_t position) const;
 
 private:
+    enum class ModuleScopeKind : uint8_t { IsNone, IsInstance, IsOtherEnvironment };
+    ModuleScopeKind moduleScopeKind(LayoutID id) const { return id.index() < m_derivedTables.moduleScopeKinds.size() ? m_derivedTables.moduleScopeKinds[id.index()] : ModuleScopeKind::IsNone; }
+
     struct Bytes {
         std::span<const uint8_t> borrowed;
         OwnedBytes owned;
@@ -233,6 +256,10 @@ private:
         Vector<std::pair<BuiltinID, ModuleID>> compiledModulesOfNamespaceObjects;
         Vector<uint8_t> locationBitsOfVariables;
         Vector<uint8_t> locationBitsOfLayouts;
+        Vector<FieldReference> exportedFields;
+        Vector<InstanceField> instanceFields;
+        Vector<ModuleScopeKind> moduleScopeKinds;
+        Vector<std::pair<VariableID, VariableID>> instanceVariables;
     };
 
     static std::optional<uint8_t> locationBitAt(const Vector<uint8_t>& bits, uint32_t index)

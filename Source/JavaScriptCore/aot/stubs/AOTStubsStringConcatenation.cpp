@@ -13,6 +13,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsArithmetic.h"
 #include "AOTStubsConstants.h"
 #include "AOTVector.h"
 #include "JSString.h"
@@ -37,7 +38,7 @@ struct RopeRegisters {
     GPRReg allocator;
 };
 
-struct LateLengthOfRope {
+struct DeferredRopeLength {
     Jump isRope;
     Label isLoaded;
     GPRReg string;
@@ -45,7 +46,7 @@ struct LateLengthOfRope {
     GPRReg length;
 };
 
-[[nodiscard]] static LateLengthOfRope loadFlagsAndLength(StubAssembler& jit, GPRReg string, GPRReg flags, GPRReg length, JumpList& isEmpty)
+[[nodiscard]] static DeferredRopeLength loadFlagsAndLength(StubAssembler& jit, GPRReg string, GPRReg flags, GPRReg length, JumpList& isEmpty)
 {
     jit.loadPtr(Address(string, JSString::offsetOfValue()), flags);
     Jump isRope = jit.branchIfRopeStringImpl(flags);
@@ -55,7 +56,7 @@ struct LateLengthOfRope {
     return { isRope, jit.label(), string, flags, length };
 }
 
-static void emitLateLengthOfRope(StubAssembler& jit, const LateLengthOfRope& late, JumpList* mayGrow = nullptr)
+static void emitDeferredRopeLength(StubAssembler& jit, const DeferredRopeLength& late, JumpList* mayGrow = nullptr)
 {
     late.isRope.link(&jit);
     jit.load32(Address(late.string, JSRopeString::offsetOfLength()), late.length);
@@ -177,7 +178,7 @@ static void emitLateLengthOfRope(StubAssembler& jit, const LateLengthOfRope& lat
     return refill;
 }
 
-static void jumpToRopeOfSubstring(StubAssembler& jit, const LateLengthOfRope& late)
+static void jumpToRopeOfSubstring(StubAssembler& jit, const DeferredRopeLength& late)
 {
     jit.load32(Address(late.string, JSRopeString::offsetOfLength()), late.length);
     jit.loadPtr(Address(late.string, JSString::offsetOfValue()), late.flags);
@@ -207,8 +208,8 @@ void makeRopeOfTwoValuesAndReturn(StubAssembler& jit, GPRReg first, GPRReg secon
     slow.append(jit.branchIfNotString(second));
     JumpList firstIsEmpty;
     JumpList secondIsEmpty;
-    LateLengthOfRope lateLengthOfFirst = loadFlagsAndLength(jit, first, registers.flags, registers.length, firstIsEmpty);
-    LateLengthOfRope lateLengthOfSecond = loadFlagsAndLength(jit, second, registers.scratch, lengthOfSecond, secondIsEmpty);
+    DeferredRopeLength firstLateLength = loadFlagsAndLength(jit, first, registers.flags, registers.length, firstIsEmpty);
+    DeferredRopeLength secondLateLength = loadFlagsAndLength(jit, second, registers.scratch, lengthOfSecond, secondIsEmpty);
     jit.and32(registers.scratch, registers.flags);
     slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfSecond, registers.length));
     AssemblyHelpers::FreeListRefill refill = allocateAndFillRope(jit, registers, slow);
@@ -220,14 +221,14 @@ void makeRopeOfTwoValuesAndReturn(StubAssembler& jit, GPRReg first, GPRReg secon
     jit.returnToCaller();
 
     JumpList mayGrow;
-    emitLateLengthOfRope(jit, lateLengthOfFirst, &mayGrow);
-    emitLateLengthOfRope(jit, lateLengthOfSecond);
+    emitDeferredRopeLength(jit, firstLateLength, &mayGrow);
+    emitDeferredRopeLength(jit, secondLateLength);
 
     mayGrow.link(&jit);
     JumpList doesNotGrowHere;
     AssemblyHelpers::FreeListRefill refillForSubstring = appendInBufferAndReturn(jit, registers, doesNotGrowHere);
     doesNotGrowHere.link(&jit);
-    jumpToRopeOfSubstring(jit, lateLengthOfFirst);
+    jumpToRopeOfSubstring(jit, firstLateLength);
 
     emitLateRefill(jit, refill, slow);
     emitLateRefill(jit, refillForSubstring, slow);
@@ -268,7 +269,7 @@ void generateConcatenate(StubAssembler& jit)
     static_assert(gprOf(StubRegister::A3) == operationArgumentGPR(3));
     JumpList slow;
     Vector<AssemblyHelpers::FreeListRefill, 4> refills;
-    Vector<LateLengthOfRope, 9> lateLengths;
+    Vector<DeferredRopeLength, 9> lateLengths;
     auto loadLengthOf = [&](GPRReg string) {
         JumpList isEmpty;
         lateLengths.append(loadFlagsAndLength(jit, string, flags, length, isEmpty));
@@ -312,16 +313,16 @@ void generateConcatenate(StubAssembler& jit)
         joinTwoAndReturn(first, second);
 
     JumpList mayGrow;
-    const LateLengthOfRope lateLengthOfFirst = lateLengths.first();
-    emitLateLengthOfRope(jit, lateLengthOfFirst, &mayGrow);
-    for (const LateLengthOfRope& late : lateLengths.span().subspan(1))
-        emitLateLengthOfRope(jit, late);
+    const DeferredRopeLength firstLateLength = lateLengths.first();
+    emitDeferredRopeLength(jit, firstLateLength, &mayGrow);
+    for (const DeferredRopeLength& late : lateLengths.span().subspan(1))
+        emitDeferredRopeLength(jit, late);
 
     mayGrow.link(&jit);
     JumpList doesNotGrowHere;
     refills.append(appendInBufferAndReturn(jit, registers, doesNotGrowHere));
     doesNotGrowHere.link(&jit);
-    jumpToRopeOfSubstring(jit, lateLengthOfFirst);
+    jumpToRopeOfSubstring(jit, firstLateLength);
 
     for (AssemblyHelpers::FreeListRefill& refill : refills)
         emitLateRefill(jit, refill, slow);
@@ -338,6 +339,204 @@ StubSignature signatureOfConcatenateWithConstants(StubKey key)
     return signatureOfConcatenate(concatenate(numberOfOperands(static_cast<ConstantsOfConcatenation>(key.form()))));
 }
 
+StubSignature signatureOfConcatenateInteger(StubKey key)
+{
+    return signatureOfConcatenate(concatenate(numberOfOperands(static_cast<ConcatenatedInteger>(key.form()))));
+}
+
+static std::optional<ConstantsOfConcatenation> constantsOfConversion(StubKey key)
+{
+    if (key.form() >= numberOfConstantsOfConcatenation)
+        return std::nullopt;
+    return static_cast<ConstantsOfConcatenation>(key.form());
+}
+
+static unsigned numberOfOperandsOfConversion(StubKey key)
+{
+    std::optional<ConstantsOfConcatenation> constants = constantsOfConversion(key);
+    return constants ? numberOfOperands(*constants) : key.form() - numberOfConstantsOfConcatenation + 2;
+}
+
+StubSignature signatureOfConvertAndConcatenate(StubKey key) { return signatureOfConcatenate(concatenate(numberOfOperandsOfConversion(key))); }
+
+void generateConvertAndConcatenate(StubAssembler& jit)
+{
+    const std::optional<ConstantsOfConcatenation> constants = constantsOfConversion(jit.key());
+    const unsigned count = numberOfOperandsOfConversion(jit.key());
+    const unsigned converted = lastOperandThatIsNoConstant(constants, count);
+    const GPRReg value = jit.clobberOperand(converted);
+    Vector<GPRReg, 2> numbers;
+    Vector<GPRReg, 2> others;
+    for (unsigned operand = 0; operand < count; ++operand) {
+        if (operand == converted)
+            continue;
+        if (constants && isConstantOperand(*constants, operand))
+            numbers.append(jit.clobberOperand(operand));
+        others.append(jit.operand(operand));
+    }
+
+    JumpList isNoString;
+    isNoString.append(jit.branchIfNotCell(value));
+    isNoString.append(jit.branchIfNotString(value));
+    Label isString = jit.label();
+    if (numbers.isEmpty())
+        jit.jumpToStub(concatenate(count));
+    else
+        loadStringConstantsAndJump(jit, numbers.span(), concatenate(count));
+
+    isNoString.link(&jit);
+    const GPRReg operandOfConversion = gprOf(firstStubOperandRegister);
+    const StubKey toString = unaryOperation(UnaryOperationForm::ToString).withCallerFrame(jit.key().callerFrame());
+    jit.emitFunctionPrologue();
+    jit.preserving(others.span(), [&] {
+        jit.move(value, operandOfConversion);
+        jit.callStub(toString);
+        jit.move(GPRInfo::returnValueGPR, value);
+    });
+    jit.emitFunctionEpilogueWithEmptyFrame();
+    jit.jump().linkTo(isString, &jit);
+}
+
+static void joinStringBetweenConstantsAndReturn(StubAssembler& jit, GPRReg first, GPRReg string, GPRReg last)
+{
+    const RopeRegisters registers {
+        .first = first,
+        .second = string,
+        .third = last,
+        .flags = jit.allocateScratch(StubRegister::T9),
+#if CPU(ARM64)
+        .length = jit.allocateScratch(StubRegister::T14),
+        .scratch = jit.allocateScratch(StubRegister::T15),
+        .rope = jit.result(),
+#else
+        .length = jit.allocateScratch(StubRegister::T10),
+        .scratch = jit.allocateScratch(StubRegister::T11),
+        .rope = jit.allocateScratch(StubRegister::T12),
+#endif
+        .allocator = jit.allocateScratch(StubRegister::T13),
+    };
+    const GPRReg lengthOfNext = registers.rope;
+    JumpList slow;
+    DeferredRopeLength lateLength = loadFlagsAndLength(jit, string, registers.flags, registers.length, slow);
+    auto addConstant = [&](GPRReg constant) {
+        jit.loadPtr(Address(constant, JSString::offsetOfValue()), registers.scratch);
+        jit.load32(Address(registers.scratch, StringImpl::lengthMemoryOffset()), lengthOfNext);
+        jit.load32(Address(registers.scratch, StringImpl::flagsOffset()), registers.scratch);
+        jit.and32(registers.scratch, registers.flags);
+        slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfNext, registers.length));
+    };
+    addConstant(first);
+    addConstant(last);
+    AssemblyHelpers::FreeListRefill refill = allocateAndFillRope(jit, registers, slow);
+    returnResult(jit, registers.rope);
+
+    emitDeferredRopeLength(jit, lateLength);
+    emitLateRefill(jit, refill, slow);
+    slow.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTConcatThree, {
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .secondArgumentIn = first,
+        .thirdArgumentIn = string,
+    });
+}
+
+void generateConcatenateInteger(StubAssembler& jit)
+{
+    const auto form = static_cast<ConcatenatedInteger>(jit.key().form());
+    auto loadConstants = [&](std::initializer_list<unsigned> constants, ConcatenatedInteger target) {
+        Vector<GPRReg, 2> numbers;
+        for (unsigned operand : constants)
+            numbers.append(jit.clobberOperand(operand));
+        loadStringConstantsAndJump(jit, numbers.span(), concatenateInteger(target));
+    };
+    switch (form) {
+    case ConcatenatedInteger::ConstantThenInteger:
+        return loadConstants({ 0 }, ConcatenatedInteger::StringThenInteger);
+    case ConcatenatedInteger::IntegerThenConstant:
+        return loadConstants({ 1 }, ConcatenatedInteger::IntegerThenString);
+    case ConcatenatedInteger::ConstantIntegerString:
+        return loadConstants({ 0 }, ConcatenatedInteger::StringIntegerString);
+    case ConcatenatedInteger::StringIntegerConstant:
+        return loadConstants({ 2 }, ConcatenatedInteger::StringIntegerString);
+    case ConcatenatedInteger::ConstantIntegerConstant:
+        return loadConstants({ 0, 2 }, ConcatenatedInteger::StringIntegerString);
+    case ConcatenatedInteger::StringConstantInteger:
+        return loadConstants({ 1 }, ConcatenatedInteger::StringsThenInteger);
+    case ConcatenatedInteger::ConstantStringInteger:
+        return loadConstants({ 0 }, ConcatenatedInteger::StringsThenInteger);
+    default:
+        break;
+    }
+
+    const bool startsWithInteger = form == ConcatenatedInteger::IntegerThenString;
+    const bool endsWithInteger = form == ConcatenatedInteger::StringsThenInteger;
+    const GPRReg value = jit.clobberOperand(startsWithInteger ? 0 : endsWithInteger ? 2 : 1);
+    const GPRReg none = jit.allocateScratch(StubRegister::T9);
+#if CPU(ARM64)
+    const GPRReg entry = jit.allocateScratch(StubRegister::T14);
+    const GPRReg integer = jit.allocateScratch(StubRegister::T15);
+#else
+    const GPRReg entry = jit.allocateScratch(StubRegister::T10);
+    const GPRReg integer = jit.allocateScratch(StubRegister::T11);
+#endif
+    const StubKey joins = concatenate(numberOfOperands(form));
+    JumpList slow;
+    Jump isSmall = jit.branch64(CCallHelpers::Below, value, TrustedImm32(NumericStrings::cacheSize));
+    if (!jit.options().useWideReferences) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeys)), entry);
+        slow.append(jit.branchTestPtr(CCallHelpers::Zero, entry));
+        jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeyMask)), integer);
+        jit.and64(value, integer);
+        jit.load64(BaseIndex(entry, integer, CCallHelpers::TimesEight), entry);
+        jit.move(entry, integer);
+        jit.urshift64(TrustedImm32(32), integer);
+        slow.append(jit.branch32(CCallHelpers::NotEqual, integer, value));
+        jit.zeroExtend32ToWord(entry, entry);
+        slow.append(jit.branchTest32(CCallHelpers::Zero, entry));
+        decodeCell32(jit, entry, value);
+        jit.jumpToStub(joins);
+    } else
+        slow.append(jit.jump());
+
+    isSmall.link(&jit);
+    jit.zeroExtend32ToWord(value, entry);
+    jit.lshift64(TrustedImm32(1), entry);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.smallIntStrings)), integer);
+    jit.loadPtr(BaseIndex(integer, entry, CCallHelpers::TimesEight, NumericStrings::StringWithJSString::offsetOfJSString()), integer);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, integer));
+    jit.move(integer, value);
+    jit.jumpToStub(joins);
+
+    slow.link(&jit);
+    if (endsWithInteger) {
+        jit.callOperationAndReturn(Entry::operationAOTConcatenateStringsAndInteger, {
+            .saves = OperationCall::Saves::CallerSavedRegisters,
+            .secondArgumentIn = jit.operand(0),
+            .thirdArgumentIn = jit.operand(1),
+            .fourthArgumentIn = value,
+        });
+        return;
+    }
+    GPRReg tail;
+    if (form == ConcatenatedInteger::StringIntegerString)
+        tail = jit.operand(2);
+    else {
+        tail = jit.reuseScratch(StubRegister::A3);
+        if (startsWithInteger)
+            jit.move(jit.operand(1), tail);
+        else
+            jit.move(TrustedImm32(0), tail);
+    }
+    if (startsWithInteger)
+        jit.move(TrustedImm32(0), none);
+    jit.callOperationAndReturn(Entry::operationAOTConcatenateInteger, {
+        .saves = OperationCall::Saves::CallerSavedRegisters,
+        .secondArgumentIn = startsWithInteger ? none : jit.operand(0),
+        .thirdArgumentIn = value,
+        .fourthArgumentIn = tail,
+    });
+}
+
 void generateConcatenateWithConstants(StubAssembler& jit)
 {
     const auto constants = static_cast<ConstantsOfConcatenation>(jit.key().form());
@@ -345,6 +544,10 @@ void generateConcatenateWithConstants(StubAssembler& jit)
     for (unsigned operand = 0; operand < numberOfOperands(constants); ++operand) {
         if (isConstantOperand(constants, operand))
             numbers.append(jit.clobberOperand(operand));
+    }
+    if (constants == ConstantsOfConcatenation::FirstAndThirdOfThree) {
+        loadStringConstantsAndContinue(jit, numbers.span(), scopedLambda<void()>([&] { joinStringBetweenConstantsAndReturn(jit, numbers[0], jit.operand(1), numbers[1]); }));
+        return;
     }
     loadStringConstantsAndJump(jit, numbers.span(), concatenate(numberOfOperands(constants)));
 }

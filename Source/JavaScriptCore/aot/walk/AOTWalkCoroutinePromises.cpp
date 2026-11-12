@@ -205,6 +205,42 @@ void resolvePromiseThatNothingHasTaken(Walker& walker, Reference promise, Refere
     resolveInCoroutinePromises(walker, promise, value, mayTest, true, origin);
 }
 
+bool buildReturnsOfPromise(Walker& walker, Reference value, Origin origin, const ScopedLambda<bool(Reference promise)>& buildReturn)
+{
+    auto returnPromise = [&](const auto& resolve) {
+        Reference promise = walker.build(draftInCoroutinePromises(walker, Opcode::NewPromise, origin));
+        if (!promise)
+            return false;
+        resolve(promise);
+        return buildReturn(promise);
+    };
+    auto fulfill = [&](Reference promise) {
+        buildFulfillmentInCoroutinePromises(walker, promise, value, origin);
+    };
+    bool isTyped = walker.has(Mechanism::TypedOperations);
+    if (isTyped && leansOnProofOfNoThen(walker, value, origin))
+        return returnPromise(fulfill);
+    Reference hasNoThen = isTyped && walker.has(Mechanism::Guesses) && walker.opensGuesses() ? buildTestForNoThen(walker, value, origin) : Reference();
+    if (!hasNoThen || !hasNoThen.isValue()) {
+        return returnPromise([&](Reference promise) {
+            buildResolutionInCoroutinePromises(walker, promise, value, origin);
+        });
+    }
+
+    BlockID fulfills = walker.addBlock();
+    BlockID looksUp = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(hasNoThen, fulfills, looksUp);
+    walker.recordSpeculation();
+
+    walker.continueIn(fulfills);
+    if (!returnPromise(fulfill))
+        return false;
+    walker.continueIn(looksUp);
+    return returnPromise([&](Reference promise) {
+        buildResolutionInCoroutinePromises(walker, promise, value, origin, true);
+    });
+}
+
 Reference valueOfPromiseFulfilledHere(Walker& walker, Reference promise)
 {
     const KeptByCoroutinePromises* kept = findKeptByCoroutinePromises(walker);

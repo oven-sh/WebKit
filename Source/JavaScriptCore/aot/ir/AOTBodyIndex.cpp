@@ -220,8 +220,9 @@ void BodyIndexBuilder::adoptBlocks()
     using NarrowBlockPlace = BodyIndex::NarrowBlockPlace;
     std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<NarrowBlockPlace>(m_blocks.size()));
     std::span<NarrowBlockPlace> blocks = takeArrayOfBodyIndex<NarrowBlockPlace>(memory, m_blocks.size());
-    for (size_t block = 0; block < m_blocks.size(); ++block)
-        new (NotNull, &blocks[block]) NarrowBlockPlace(m_blocks[block]);
+    std::ranges::transform(m_blocks, blocks.begin(), [](const BlockPlace& place) {
+        return NarrowBlockPlace(place);
+    });
     m_index->m_narrowBlocks = blocks.data();
     m_index->m_hasNarrowBlocks = true;
 }

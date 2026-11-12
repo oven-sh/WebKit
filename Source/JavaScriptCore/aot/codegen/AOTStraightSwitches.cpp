@@ -61,6 +61,19 @@ static bool keepsSubjectOfStraightSwitch(const StubSummary& summary)
     return !summary.clobbered.contains(subjectOfStraightSwitchGPR, IgnoreVectors);
 }
 
+static std::optional<unsigned> lengthComparedByStraightSwitch(std::span<const uint8_t> programString)
+{
+    const StubDescriptor& descriptor = descriptorOf(StubFamily::ValueEqualsCharacters);
+    constexpr size_t maxEncodedSizeOfLatin1Character = 2;
+    if (programString.size() > descriptor.maxCount * maxEncodedSizeOfLatin1Character)
+        return std::nullopt;
+    Vector<char16_t> bufferForNonASCII;
+    StringView text = viewOfProgramString(programString, bufferForNonASCII);
+    if (text.length() < descriptor.minCount || text.length() > descriptor.maxCount || !(text.is8Bit() || WTF::charactersAreAllLatin1(text.span16())))
+        return std::nullopt;
+    return text.length();
+}
+
 static TestOfStraightSwitch testCaseOfStraightSwitch(StraightEmitter& emitter, Origin origin, StringID literal, bool jumpsIfEqual)
 {
     CCallHelpers& jit = emitter.jit();
@@ -72,8 +85,17 @@ static TestOfStraightSwitch testCaseOfStraightSwitch(StraightEmitter& emitter, O
     if (std::optional<TextPackedForStraightSwitch> text = tryPackTextForStraightSwitch(programString)) {
         StubKey stub = equalsLiteralOfLength(ComparedOperand::Value, text->length);
         const StubSummary& summary = emitter.catalog().summaryOf(stub);
+        emitter.recordInlined(programString);
         StraightArgument operands[] { subject, StraightArgument::word(text->packed) };
         emitter.callStub(origin, stub, operands, { });
+        bool zeroSaysEqual = summary.signature.trueCondition == MacroAssembler::Zero;
+        return { jit.branchOnFlags(jumpsIfEqual == zeroSaysEqual ? CCallHelpers::Equal : CCallHelpers::NotEqual), keepsSubjectOfStraightSwitch(summary) };
+    }
+
+    if (std::optional<unsigned> length = lengthComparedByStraightSwitch(programString)) {
+        StubKey stub = equalsCharacters(ComparedOperand::Value, *length);
+        const StubSummary& summary = emitter.catalog().summaryOf(stub);
+        emitter.callStub(origin, stub, { &subject, 1 }, { .numberedImmediate = NumberedImmediate { emitter.mentions().add(NumberSpace::StringCharacters, literal) } });
         bool zeroSaysEqual = summary.signature.trueCondition == MacroAssembler::Zero;
         return { jit.branchOnFlags(jumpsIfEqual == zeroSaysEqual ? CCallHelpers::Equal : CCallHelpers::NotEqual), keepsSubjectOfStraightSwitch(summary) };
     }

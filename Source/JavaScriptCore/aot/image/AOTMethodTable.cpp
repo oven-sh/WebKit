@@ -32,8 +32,8 @@ void encodeMethodTableDependents(TableEncoder& encoder)
         const Typed::MethodFamily& family = conventions.familyOf(selectors[selector]);
         if (!family.entersLookup())
             continue;
-        Mention mentionOfSelector { .space = NumberSpace::MethodSelector, .numberOfWords = 1, .firstWord = 0, .addend = 0 };
-        std::optional<uint32_t> distanceToWordOfSelector = encoder.numbers.valueOf(mentionOfSelector, std::span<const uint32_t>(&selector, 1), true);
+        Mention mentionOfSelector { .space = NumberSpace::MethodSelector, .numberOfWords = 1, .firstWord = selector, .addend = 0 };
+        std::optional<uint32_t> distanceToWordOfSelector = encoder.numbers.valueOf(mentionOfSelector, { }, true);
         if (!distanceToWordOfSelector)
             continue;
         for (const Typed::MethodTableRow& row : family.rows) {

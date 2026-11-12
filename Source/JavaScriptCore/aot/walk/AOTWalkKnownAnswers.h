@@ -10,6 +10,7 @@
 #include "AOTCode.h"
 #include "AOTEffects.h"
 #include "AOTSharedArray.h"
+#include "AOTThreadBlockCache.h"
 #include <bit>
 #include <span>
 #include <wtf/ScopedLambda.h>
@@ -448,6 +449,8 @@ public:
 private:
     struct Held {
         Held() { }
+        static void* operator new(size_t) { return ThreadBlockCache<Held, KindOfBlocks::HeldByKnownAnswers>::allocate(); }
+        static void operator delete(void* held) { ThreadBlockCache<Held, KindOfBlocks::HeldByKnownAnswers>::free(held); }
 
         SetOfAnswersForGood forGood;
         SetOfAnswersForGood untilSuspension;

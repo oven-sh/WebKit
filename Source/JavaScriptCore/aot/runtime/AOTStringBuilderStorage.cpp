@@ -615,7 +615,7 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
     if (length() < minLengthOfStringBuilderFiber)
         RELEASE_AND_RETURN(scope, createFlatRun(globalObject, pieces.span()));
 
-    constexpr size_t minLengthOfRunOfOtherWidth = 256;
+    constexpr size_t minMixedWidthRunLength = 256;
     auto isFiber = [&](const Piece& piece) {
         return piece.string && (piece.length >= minLengthOfStringBuilderFiber || (!piece.string->is8Bit() && piece.string->isRope() && !piece.string->isSubstring()));
     };
@@ -630,7 +630,7 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
             runIs8Bit = piece.is8Bit();
             return true;
         }
-        if (piece.is8Bit() != runIs8Bit && (lengthOfRun >= minLengthOfRunOfOtherWidth || piece.length >= minLengthOfRunOfOtherWidth))
+        if (piece.is8Bit() != runIs8Bit && (lengthOfRun >= minMixedWidthRunLength || piece.length >= minMixedWidthRunLength))
             return false;
         lengthOfRun += piece.length;
         runIs8Bit &= piece.is8Bit();

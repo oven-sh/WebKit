@@ -63,6 +63,18 @@ const creation = [
     implementation: b.hostCall,
   },
   {
+    args: { length: b.notPassed },
+    returns: newArrayOf(b.never),
+    ...allocationEffects,
+    implementation: b.hostCall,
+  },
+  {
+    args: { length: b.f64.or(b.undefined), second: b.notPassed },
+    returns: newArrayOf(b.undefined),
+    ...allocationEffects,
+    implementation: b.hostCall,
+  },
+  {
     args: { items: b.any.rest },
     returns: newDenseArrayOf(b.operand("items")),
     ...allocationEffects,
@@ -108,7 +120,7 @@ const searchFromStart = (name: string, inlineBuiltin: string, nativeSymbol: stri
       length: 1,
       boxedCallStub: inlineBuiltin,
       nativeSymbols: [nativeSymbol],
-      implementation: b.inline(inlineBuiltin, { max: 1, otherwise: b.hostCall }),
+      implementation: b.inline(inlineBuiltin, { max: 2, otherwise: b.hostCall }),
     },
     {
       this: arrayWithPristineStorage,
@@ -375,7 +387,7 @@ export default b.declarations(
           length: 1,
           boxedCallStub: "ArrayPush",
           nativeSymbols: ["arrayProtoFuncPush"],
-          implementation: b.inline("ArrayPush", { max: 1, otherwise: b.hostCall }),
+          implementation: b.inline("ArrayPush", { max: 16, otherwise: b.hostCall }),
         },
         {
           this: arrayLike,
@@ -493,7 +505,12 @@ export default b.declarations(
         },
       ],
       concat: [
-        concatenationOf(3),
+        {
+          ...concatenationOf(3),
+          length: 1,
+          boxedCallStub: "ArrayConcat",
+          nativeSymbols: ["arrayProtoFuncConcat"],
+        },
         concatenationOf(2),
         concatenationOf(1),
         concatenationOf(0),

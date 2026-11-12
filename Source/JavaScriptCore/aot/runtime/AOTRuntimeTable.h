@@ -42,6 +42,8 @@ enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
     v(CallLinkInfoForCall) \
     v(VirtualCallTrampoline) \
     v(ErrorConstructorClassInfo) \
+    v(ArrayConstructorClassInfo) \
+    v(ObjectConstructorClassInfo) \
     v(BooleanConstructorClassInfo) \
     v(CustomGetterClassInfo) \
     v(NumberConstructorClassInfo) \
@@ -253,6 +255,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(MapAndSetOperations, NewSet) \
     v(MapAndSetOperations, NewSetFromIterable) \
     v(MapAndSetOperations, NewSetIterator) \
+    v(MapAndSetOperations, NextSetElement) \
     v(MapAndSetOperations, SetClear) \
     v(MapAndSetOperations, SetNext) \
     v(MapAndSetOperations, TryNewMapFromEntries) \
@@ -354,6 +357,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(StringComparisonOperations, CompareStrings) \
     v(StringComparisonOperations, NarrowCharactersOfString) \
     v(StringComparisonOperations, StringCodeUnitAt) \
+    v(StringComparisonOperations, TryResolveRope) \
+    v(StringComparisonOperations, StringEqualsCharacters) \
     v(StringComparisonOperations, StringEqualsLiteral) \
     v(StringComparisonOperations, StringEqualsLiteralInRegister) \
     v(StringComparisonOperations, StringsAreEqual) \
@@ -523,7 +528,7 @@ private:
     uint32_t m_compactTableIterationEntry { 0 };
 };
 
-inline constexpr int64_t noOrderOfStringsInPlace = 2;
+inline constexpr int64_t cannotCompareInline = 2;
 
 } } // namespace JSC::AOT
 

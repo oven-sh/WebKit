@@ -899,7 +899,7 @@ static NEVER_INLINE void readLeavesOfScannedOperationTheLongWay(BackwardScan& sc
         readLeafOfScannedOperationOutOfLine(scan, operation, childIndex, leaf, early, hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult).index(), readsUpperHalf);
     }, [&](const Operation* user, unsigned childIndex, Operation* leaf) ALWAYS_INLINE_LAMBDA {
         bool isBelowTrunc = user->opcode() == Trunc;
-        Reg hint = isBelowTrunc && user == operation->child(0) ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
+        Reg hint = (isBelowTrunc || user->opcode() == ZExt32) && user == operation->child(0) ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
         readLeafOfScannedOperationOutOfLine(scan, user, childIndex, leaf, early, hint.index(), !isBelowTrunc);
     }, [&](const Operation* below, const Operation* selectAbove) ALWAYS_INLINE_LAMBDA {
         readLeavesBelowScannedOperation(scan, operation, below, selectAbove, early);
@@ -989,7 +989,7 @@ static NEVER_INLINE void readLeavesBelowFusedChildOfScannedOperation(BackwardSca
 {
     ValueFacts* facts = scan.m_facts;
     bool isBelowTrunc = opcodeBelow == Trunc;
-    unsigned hintOfFirstChildBelow = isBelowTrunc && below == operation->inlineChildren()[0] ? hintOfFirstChild : noHintOfScannedRead;
+    unsigned hintOfFirstChildBelow = (isBelowTrunc || opcodeBelow == ZExt32) && below == operation->inlineChildren()[0] ? hintOfFirstChild : noHintOfScannedRead;
     Operation* const* childBelow = below->inlineChildren();
     for (unsigned indexBelow = 0, numberOfChildrenBelow = below->numberOfInlineChildren(); indexBelow < numberOfChildrenBelow; ++indexBelow) {
         Operation* leaf = childBelow[indexBelow];
@@ -1115,6 +1115,7 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
 
 Liveness* scanBackward(Procedure& proc)
 {
+    proc.settleUpperHalvesOfPhis();
     Liveness* liveness = proc.arena().create<Liveness>();
     BackwardScan scan(proc, *liveness);
     scan.run();
@@ -1151,6 +1152,10 @@ BackwardScan::BackwardScan(Procedure& proc, Liveness& liveness)
     for (ValueFacts* endOfFacts = facts + mostOperations; nextFacts != endOfFacts; ++nextFacts)
         new (NotNull, nextFacts) ValueFacts();
     m_facts = facts;
+    for (const Operation* name : proc.namesOfWords()) {
+        if (isFreeZeroExtension(name) || isFreeTruncation(name))
+            facts[name->index()].flags = scanBitOf(ValueFlag::IsFused);
+    }
     m_places = m_order.places();
     m_liveness.m_uses.reserve(arena, 2 * numberOfOperations + 1);
     m_liveness.m_uses.append(arena, Use { noPosition, 0, noPosition, noPosition });

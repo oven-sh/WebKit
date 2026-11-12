@@ -44,7 +44,7 @@ std::optional<AwaitingBodyOfCoroutine> findAwaitingBodyOfCoroutine(Walker& walke
 
 Draft draftOfCoroutineCalls(Walker& walker, Opcode opcode, Origin origin)
 {
-    origin.isTailCall = false;
+    origin.isTailCall &= origin.inlineFrame && opcode == Opcode::AwaitCallBySavingFrame;
     Draft draft(opcode, origin);
     walker.chooseConservativeFields(draft);
     return draft;

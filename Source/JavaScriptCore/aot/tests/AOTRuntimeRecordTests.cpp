@@ -265,6 +265,16 @@ static void testHolderOutsideTheCageDoesNotPack()
     AOT_TEST_CHECK(packsAndUnpacks(inheritedField, cells.cageBase) && !PackedSlot::tryPack(inheritedField, testName, otherCageBase));
 }
 
+static void testForeignInstanceSlotStaysUnpacked()
+{
+    Realms realms;
+    Cells cells(realms);
+    SlotData slotData = SlotData::create(32, SlotRepresentation::Cell32);
+    constexpr uint8_t flags = Slot::isOwn | Slot::isInModuleInstance;
+    AOT_TEST_CHECK(packsAndUnpacks(Slot::createField(cells.id(), Slot::Kind::Variable, flags, slotData, 0, 0), cells.cageBase));
+    AOT_TEST_CHECK(!PackedSlot::tryPack(Slot::createField(cells.id(), Slot::Kind::Variable, flags, slotData, 1, 0), testName, cells.cageBase));
+}
+
 static void testHiddenWordOffsetOver1020DoesNotPack()
 {
     Realms realms;
@@ -397,6 +407,7 @@ std::span<const NativeTest> runtimeRecordTests()
         { "runtime-records/packed-slot-round-trip"_s, testPackedSlotRoundTrip },
         { "runtime-records/inherited-index-outside-eight-bits-does-not-pack"_s, testInheritedIndexOutsideEightBitsDoesNotPack },
         { "runtime-records/holder-outside-the-cage-does-not-pack"_s, testHolderOutsideTheCageDoesNotPack },
+        { "runtime-records/slot-naming-other-instance-does-not-pack"_s, testForeignInstanceSlotStaysUnpacked },
         { "runtime-records/hidden-word-offset-over-1020-does-not-pack"_s, testHiddenWordOffsetOver1020DoesNotPack },
         { "runtime-records/transition-index-outside-eight-bits-does-not-pack"_s, testTransitionIndexOutsideEightBitsDoesNotPack },
         { "runtime-records/own-inline-value-has-zero-bytes"_s, testOwnInlineValueHasZeroBytes },

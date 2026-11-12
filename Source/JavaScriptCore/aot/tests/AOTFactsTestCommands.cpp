@@ -15,6 +15,7 @@
 #include "AOTLinkTables.h"
 #include "AOTRemovableFeature.h"
 #include "AOTThinSummary.h"
+#include "AOTTypeOrigins.h"
 #include "VM.h"
 #include "YarrFlags.h"
 #include <wtf/CommaPrinter.h>
@@ -212,8 +213,8 @@ static ASCIILiteral nameInFactsText(SummaryTrait trait)
         return "OnlyPassesOnGatheredArguments"_s;
     case SummaryTrait::HoldsInt32Promise:
         return "HoldsInt32Promise"_s;
-    case SummaryTrait::ReturnsUInt32:
-        return "ReturnsUInt32"_s;
+    case SummaryTrait::NeverReturns:
+        return "NeverReturns"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -555,7 +556,7 @@ static void printOperatorOfSummary(IRPrinter& printer, const ThinSummary& summar
         printReferenceToNodeOfSummary(printer, summary, operation.operands[operand]);
         printNamedNodeOfSummary(printer, summary, "or "_s, operation.converted[operand]);
     }
-    out.println(operation.writtenDivisor == SummaryOperator::WrittenDivisor::None ? ")"_s : operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? ") divisor-written-below-two-to-31"_s : ") divisor-written-up-to-two-to-32"_s);
+    out.println(operation.writtenDivisor == SummaryOperator::WrittenDivisor::None ? ")"_s : operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? ") divisor-written-below-two-to-31"_s : ") divisor-written-up-to-two-to-32"_s, operation.shiftsRightByConstant ? " shifts-right-by-constant"_s : ""_s);
 }
 
 static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary, uint32_t index)
@@ -1138,6 +1139,13 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(receiver.site);
         printer.out().println();
     }
+    for (const LinkedReceiverAsMade& read : tables.plainListsRead) {
+        printer.out().print("plain-list "_s);
+        printer.print(read.function);
+        printer.out().print(" "_s);
+        printer.print(read.site);
+        printer.out().println();
+    }
     for (const LinkedReceiverAsMade& receiver : tables.receiversThatNobodyChanges) {
         printer.out().print("receiver-unchanged "_s);
         printer.print(receiver.function);
@@ -1340,6 +1348,8 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
             out.print(" stays-with-compiled-code"_s);
         if (layout.isAllocated && !layout.hasDirectInstances)
             out.print(" has-no-direct-instances"_s);
+        if (!layout.isMadeInSight)
+            out.print(" made-nowhere-in-sight"_s);
         if (layout.isRedefinedByLiteralsAlone)
             out.print(" redefined-by-literals-alone"_s);
         if (layout.isFilledUnderComputedKeys)
@@ -1775,6 +1785,42 @@ static void printLinkOfChainInWhyGone(PrintStream& out, const LinkFlow& flow, Fl
     out.println();
 }
 
+static void printTypeOrigins(PrintStream& out, const LinkFlow& flow)
+{
+    static constexpr ASCIILiteral users[] { "access"_s, "call"_s, "operator"_s };
+    static constexpr ASCIILiteral reasons[] { "unknown"_s, "untracked"_s, "builtin-result"_s, "call-result"_s, "property-read"_s, "outside-caller"_s, "exposed-object"_s, "exposed-variable"_s, "caught-exception"_s, "other-value"_s, "array-argument"_s, "other-builtin"_s, "other-function"_s, "many-shapes"_s, "many-functions"_s, "changed-shape"_s, "missing-field"_s, "checked-element"_s, "checked-result"_s, "checked-keys"_s, "static-field"_s, "builtin-property"_s, "computed-name"_s };
+    static_assert(std::size(reasons) == numberOfEnumerators<Wire::TypeOriginReason>);
+    auto printLocation = [&](const Wire::SourceLocation& location) {
+        if (hasModule(location))
+            out.print("m"_s, location.module, "@"_s, location.position);
+        else
+            out.print("nowhere"_s);
+    };
+    std::unique_ptr<TypeOrigins> origins = traceTypeOrigins(flow);
+    for (const TypeOrigins::User& user : origins->users) {
+        const TypeOrigin& origin = origins->origins[user.origin];
+        out.print("f"_s, user.function.index(), " "_s, users[static_cast<unsigned>(user.kind)], " "_s);
+        printLocation(user.location);
+        out.print(": "_s, reasons[static_cast<unsigned>(origin.reason)], " at "_s);
+        printLocation(origin.location);
+        if (hasModule(origin.entry)) {
+            out.print(" entry "_s);
+            printLocation(origin.entry);
+        }
+        if (origin.name) {
+            Vector<char16_t> buffer;
+            out.print(" \""_s, flow.program.strings.viewOf(origin.name, buffer), "\""_s);
+        }
+        if (origin.builtin)
+            out.print(" builtin"_s, origin.builtin.index());
+        if (origin.node) {
+            out.print(" from "_s);
+            flow.describe(out, FlowNodeID(*origin.node));
+        }
+        out.println(user.hasOtherOrigins ? " and others"_s : ""_s);
+    }
+}
+
 static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& asked)
 {
     size_t numberOfNodes = flow.numberOfNodesWithLists();
@@ -1899,6 +1945,14 @@ static void runLinkCommand(TestCommandContext& context)
     OrderOfWorklist order = OrderOfWorklist::NewestFirst;
     bool printsWhatIsHeld = false;
     bool printsCoroutines = false;
+    if (context.arguments.size() == 1 && context.arguments[0] == "origins"_s) {
+        context.build.askOfFlowAtRest([&](const LinkFlow& flow) {
+            printTypeOrigins(context.out, flow);
+        });
+        StagedBuild stage = context.stage(order);
+        stage.facts();
+        return;
+    }
     if (context.arguments.size() >= 2 && context.arguments[0] == "why-gone"_s) {
         context.build.askOfFlowAtRest([&](const LinkFlow& flow) {
             for (size_t place = 1; place < context.arguments.size(); ++place)
@@ -2213,7 +2267,7 @@ std::span<const TestCommand> factsTestCommands()
     static constexpr TestCommand commands[] {
         { "locks"_s, runLocksCommand, ProgramOfCommand::AsWritten, ""_s },
         { "summary"_s, runSummaryCommand, ProgramOfCommand::AsWritten, "f.."_s },
-        { "link"_s, runLinkCommand, ProgramOfCommand::AsWritten, "[functions|calls|accesses|fields|variables|captures|members|layouts|families|counts].. [oldest-first|scattered] | why-gone <L12 | L12.field3 | f7.parameter0>.."_s },
+        { "link"_s, runLinkCommand, ProgramOfCommand::AsWritten, "[functions|calls|accesses|fields|variables|captures|members|layouts|families|counts].. [oldest-first|scattered] | why-gone <L12 | L12.field3 | f7.parameter0>.. | origins"_s },
         { "locales"_s, runLocalesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "causes"_s, runCausesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "features"_s, runFeaturesCommand, ProgramOfCommand::AsWritten, ""_s },

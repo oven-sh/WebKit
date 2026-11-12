@@ -1169,13 +1169,18 @@ static uint32_t operationsInRowsOfStarts(const String& programText)
         for (size_t place = firstStep;; ++place) {
             AOT_TEST_CHECK(place < steps.size());
             ModuleStartStepData step = steps[place];
-            found |= 1u << static_cast<uint32_t>(step.operation());
-            AOT_TEST_CHECK(step.operation() != Operation::Trap && step.operation() <= Operation::Return);
-            if (step.operation() == Operation::CallStart)
+            AOT_TEST_CHECK(step.operation() != Operation::Trap && step.operation() <= Operation::CallStartUnlessStopped);
+            if (step.operation() == Operation::FinishAndReturn)
+                found |= 1u << static_cast<uint32_t>(Operation::Finish) | 1u << static_cast<uint32_t>(Operation::Return);
+            else if (step.operation() == Operation::CallStartUnlessStopped)
+                found |= 1u << static_cast<uint32_t>(Operation::ReturnIfLoadingStops) | 1u << static_cast<uint32_t>(Operation::CallStart);
+            else
+                found |= 1u << static_cast<uint32_t>(step.operation());
+            if (step.callsStart())
                 AOT_TEST_CHECK(step.operand() < starts.size() && starts[step.operand()]);
             if (step.operation() == Operation::CallBody)
                 AOT_TEST_CHECK(step.operand() < numberOfFunctions);
-            if (step.operation() == Operation::Return)
+            if (step.endsRow())
                 break;
         }
     }

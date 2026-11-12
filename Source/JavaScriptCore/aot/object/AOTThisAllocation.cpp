@@ -186,6 +186,19 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     return object;
 }
 
+JSObject* ClassTable::tryCreateInstanceBelowObject(VM& vm, JSObject* newTarget)
+{
+    std::optional<FunctionID> target = functionInInstance(m_state.instance, newTarget);
+    const LayoutData* layout = target ? classConstructedBy(*target) : nullptr;
+    if (!layout || !layout->shape)
+        return nullptr;
+    const LayoutData* topmost = layout;
+    while (const LayoutData* base = baseOf(*topmost))
+        topmost = base;
+    JSValue prototype = topmost->hasUntypedBase ? ownPrototypeProperty(vm, newTarget) : JSValue();
+    return prototype && prototype.isObject() ? createClassInstance(vm, *layout, asObject(prototype)) : nullptr;
+}
+
 void ClassTable::rememberThisBesideCallee(VM& vm, JSObject* callee, Structure* structureOfThis)
 {
     Structure* structure = callee->structure();

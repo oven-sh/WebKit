@@ -269,6 +269,8 @@ public:
         // True if this binding has to be read with moduleRecord->getLiveExport(localName) instead of from the module environment.
         // `export * as ns` from a live record doesn't count: it resolves to the namespace object, which is an ordinary binding.
         bool isLiveExport(VM&) const;
+        // `export * as ns` from a compiled original, which has no module environment. It is read with moduleRecord->getModuleNamespace().
+        bool isNamespaceOfCompiledOriginal(VM&) const;
 #endif
 
         Type type;
@@ -361,6 +363,11 @@ public:
     // Must be set before anything links against the record. It can't be unset.
     bool hasLiveExports() const { return m_hasLiveExports; }
     void setHasLiveExports();
+    // The original of a module mock whose body is AOT-compiled code. Its exports resolve as those of any module, and reads of them go to liveExportsSource(), which has their values.
+    bool isCompiledOriginal() const { return m_isCompiledOriginal; }
+    void setIsCompiledOriginal(VM&, JSObject* source);
+    bool hasExportsSource() const { return m_hasLiveExports || m_isCompiledOriginal; }
+    const Identifier& bindingName(const ExportEntry& entry) const { return m_isCompiledOriginal ? entry.exportName : entry.localName; }
     // Null until the embedder sets it. Reading an export before that throws a TDZ error.
     JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
     JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
@@ -393,6 +400,8 @@ public:
     JS_EXPORT_PRIVATE void convertPrelinkedToEager();
     // The record a pre-resolved binding's module index names, or null if index-based resolution must not be used for it.
     AbstractModuleRecord* prelinkedRecordForResolution(JSGlobalObject*, uint32_t moduleIndex) const;
+#else
+    const Identifier& bindingName(const ExportEntry& entry) const { return entry.localName; }
 #endif
 
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);
@@ -490,6 +499,7 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };
     bool m_hasLiveExports { false };
+    bool m_isCompiledOriginal { false };
     WriteBarrier<JSObject> m_liveExportsSource;
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;

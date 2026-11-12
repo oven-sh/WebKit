@@ -58,6 +58,7 @@ aot/codegen/AOTArrayBuiltinEmitterCopies.cpp
 aot/codegen/AOTArrayIntrinsicEmitter.cpp
 aot/codegen/AOTArrayStorageBuiltinEmitter.cpp
 aot/codegen/AOTBarrierEmitter.cpp
+aot/codegen/AOTBigIntValues.cpp
 aot/codegen/AOTBindingEmitter.cpp
 aot/codegen/AOTCallEmitter.cpp
 aot/codegen/AOTCallEmitterDirect.cpp
@@ -111,6 +112,7 @@ aot/codegen/AOTPrimitiveEmitter.cpp
 aot/codegen/AOTPrivateAccessEmitter.cpp
 aot/codegen/AOTPromiseBuiltinEmitter.cpp
 aot/codegen/AOTPromiseIntrinsicEmitter.cpp
+aot/codegen/AOTRegExpMatchEmitter.cpp
 aot/codegen/AOTRegExpMatchLiteral.cpp
 aot/codegen/AOTRepresentationEmitter.cpp
 aot/codegen/AOTResolvedCallEmitter.cpp
@@ -195,6 +197,7 @@ aot/facts/AOTLocalesPassedAtCalls.cpp
 aot/facts/AOTScan.cpp
 aot/facts/AOTScanStrings.cpp
 aot/facts/AOTTestRunsOfProgram.cpp
+aot/facts/AOTTypeOrigins.cpp
 aot/facts/AOTUnionTaggedMakers.cpp
 aot/image/AOTBodyFactsForTables.cpp
 aot/image/AOTCallSiteTable.cpp
@@ -227,6 +230,7 @@ aot/image/AOTPrefixCode.cpp
 aot/image/AOTProgramTablesDriver.cpp
 aot/image/AOTRegExpCompiler.cpp
 aot/image/AOTRegExpInProcessLoader.cpp
+aot/image/AOTRegExpMatchPlan.cpp
 aot/image/AOTRegExpRequests.cpp
 aot/image/AOTRegExpSection.cpp
 aot/image/AOTRegExpSummary.cpp
@@ -376,6 +380,7 @@ aot/plan/AOTEnvironmentsHandedBack.cpp
 aot/plan/AOTFieldsSlotForms.cpp
 aot/plan/AOTFieldsStorage.cpp
 aot/plan/AOTFunctionKinds.cpp
+aot/plan/AOTHeldRegExps.cpp
 aot/plan/AOTKeyOrders.cpp
 aot/plan/AOTModuleEvaluationPlan.cpp
 aot/plan/AOTNamePlan.cpp
@@ -418,6 +423,7 @@ aot/runtime/AOTJobs.cpp
 aot/runtime/AOTMembersLeftOut.cpp
 aot/runtime/AOTModuleEvaluation.cpp
 aot/runtime/AOTModuleGraph.cpp
+aot/runtime/AOTModuleInstances.cpp
 aot/runtime/AOTModuleLinking.cpp
 aot/runtime/AOTModuleTable.cpp
 aot/runtime/AOTModules.cpp
@@ -521,6 +527,7 @@ aot/walk/AOTWalkFolding.cpp
 aot/walk/AOTWalkForIn.cpp
 aot/walk/AOTWalkForInKeys.cpp
 aot/walk/AOTWalkFrontsOfLoops.cpp
+aot/walk/AOTWalkFusedChains.cpp
 aot/walk/AOTWalkGeneratorStepsByHand.cpp
 aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp
@@ -530,6 +537,7 @@ aot/walk/AOTWalkInlining.cpp
 aot/walk/AOTWalkInt32Promises.cpp
 aot/walk/AOTWalkIteration.cpp
 aot/walk/AOTWalkKeyOrdersAccessors.cpp
+aot/walk/AOTWalkKeyedAddresses.cpp
 aot/walk/AOTWalkKnownAnswers.cpp
 aot/walk/AOTWalkKnownEffects.cpp
 aot/walk/AOTWalkKnownElements.cpp
@@ -566,6 +574,7 @@ aot/walk/AOTWalkRegExps.cpp
 aot/walk/AOTWalkReplacements.cpp
 aot/walk/AOTWalkResolvedCalls.cpp
 aot/walk/AOTWalkResultsInParts.cpp
+aot/walk/AOTWalkScalarReplacement.cpp
 aot/walk/AOTWalkSlicesInSight.cpp
 aot/walk/AOTWalkStableBindings.cpp
 aot/walk/AOTWalkStackTests.cpp
@@ -613,4 +622,5 @@ aot/walk/AOTWalkUnionSlots.cpp
 aot/walk/AOTWalkUnionSwitches.cpp
 aot/walk/AOTWalkUnionTableCalls.cpp
 aot/walk/AOTWalkUnionTaggedMakers.cpp
+aot/walk/AOTWalkWideProducts.cpp
 aot/walk/AOTWalkWrittenDescriptors.cpp

@@ -203,7 +203,7 @@ public:
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
     void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
-    void noteFrameState(bool isSetUp)
+    ALWAYS_INLINE void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
         if (m_frameRangeIsOpen != isSetUp) [[unlikely]]
@@ -220,7 +220,7 @@ public:
     void runLatePaths();
     void linkPendingJumps();
     void findBlocksWithoutCode();
-    void findRareBlocksThatRepeatAnother(std::span<const uint32_t> layoutIndexesOfRareBlocksThatMoveAndJumpOn, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn);
+    void removeRepeatedMoveBlocks(std::span<const uint32_t> layoutIndexesOfMoveBlocks, std::span<const uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn);
     const Block* blockEnteredThrough(const Block* block) const { return m_blocksEntered[block->index()]; }
     void placeColdCodeNearItsJumps();
     bool hasCode(const Block* block) const { return blockEnteredThrough(block) == block; }
@@ -375,6 +375,7 @@ public:
     void encodeSwitchThroughTable(Block*, GPRReg value, int64_t firstValue, uint64_t numberOfEntries);
     void encodeBinarySearch(Block*, GPRReg value, Width, std::span<const int64_t> values, unsigned firstSuccessor);
     void encodeReturn(const Step&);
+    void noteReturnThatJumpsMayCopy();
     Test resolveTest(const Operation* user, LeafCursor&);
 
     MacroAssembler::JumpList branchOn(const Test&, bool whenItHolds);
@@ -394,7 +395,7 @@ public:
     void materializeBitsInFPR(uint64_t bits, Width, FPRReg destination);
     bool blockHasWrittenNumberRegisterInFrontOf(const Step&, FPRReg);
     bool writesNumberRegister(const Step&, FPRReg) const;
-    bool numberRegisterMayBeWrittenShortlyInFrontOf(const Step&, FPRReg) const;
+    bool wasNumberRegisterWrittenRecently(const Step&, FPRReg) const;
 
     void encodeLoad(const Step&);
     void encodeStore(const Step&);

@@ -19,18 +19,25 @@ struct ExpectationOfNumber {
 ExpectationOfNumber numbersExpectedOf(Walker&, ValueID input, ExpectationOfNumber found);
 TypeID typeHeldAtPositionOf(Walker&, ValueID input);
 bool usesSpeakForInt32(Walker&, ValueID input);
-ExpectationOfNumber numberExpectedOfAddendOfPosition(Walker&, const BodyValue& operation, ValueID operand, ExpectationOfNumber found);
+inline constexpr Range integersAddedWithoutRounding { -(1ll << 49), 1ll << 49 };
+bool isOnlyTruncated(Walker&, ValueID input);
+enum class TruncatedUse : uint8_t { None, OperandOfBits, TermOfSums };
+TruncatedUse findTruncatedUse(Walker&, ValueID input);
+bool isSignOfZeroIgnored(Walker&, ValueID input);
+bool isOnlyCalculatedWith(Walker&, ValueID input);
+ExpectationOfNumber expectedIndexAddend(Walker&, const BodyValue& operation, ValueID operand, ExpectationOfNumber found);
 ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker&, ValueID input, ExpectationOfNumber found);
 
 struct TestOfNumber {
     ValueID input;
     TypeID tested;
 };
-bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm);
+enum class EndOfNumberArms : uint8_t { Meet, MayTakeBranch };
+bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm, EndOfNumberArms = EndOfNumberArms::Meet);
 uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
 std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker&, const BodyValue& read);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
-Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin);
+Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin, bool passes = true);
 bool tryGuardNumericOperand(Walker&, Draft&, ValueID written);
 
 inline constexpr OpcodeSet opcodesThatBuildArmsInFrontOfTypedFormsTakes = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyIndex.h"
 #include "AOTBodyVerifier.h"
 #include "AOTEffectsDeclared.h"
@@ -19,7 +20,6 @@
 #include "AOTTestRunner.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/StringView.h>

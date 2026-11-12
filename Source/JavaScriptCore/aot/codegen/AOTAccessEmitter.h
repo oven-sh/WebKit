@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTOperationEmitter.h"
 #include "AOTStaleAnswers.h"
 #include <optional>
@@ -42,6 +43,16 @@ public:
     void generateGetGetterOfAccessorOrUndefined(const ValueContext&);
     void generateGetValueAtSiteOrAbsent(const ValueContext&);
     void generateGetOwnValueUnderKeyOrAbsent(const ValueContext&);
+    void generateGetGlobalPropertyAddress(const ValueContext&);
+    void generateIsPropertyFiled(const ValueContext&);
+    void generateGetKeyedPropertyAddress(const ValueContext&);
+    void generateGetKeyedProperty(const ValueContext&);
+    void generatePutKeyedProperty(const ValueContext&);
+    void generateGetKeyedValueOrAbsent(const ValueContext&);
+    std::array<const Machine::AbstractHeap*, 2> heapsOfKeyedProperty() const;
+    void generateGetGlobalProperty(const ValueContext&);
+    void generatePutGlobalBinding(const ValueContext&);
+    void generateGetValueUnderKeyOrAbsent(const ValueContext&);
     void generateGetPropertyOfHeir(const ValueContext&);
     void generatePutPropertyOfHeir(const ValueContext&);
     void generateElemGet(const ValueContext&);
@@ -70,6 +81,8 @@ public:
 
     Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID = { });
     Boxed getByIdThroughStub(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID);
+    bool isErrorMessageRead(const OperationContext&) const;
+    Boxed loadErrorMessage(Boxed receiver, ValueID receiverID, LBasicBlock whenNotKept);
     bool verifiesFastPathAnswers(PropertyKeyID);
     Word32 slowPathReadCount() { return loadMutable32(AOT_INSTANCE_OFFSET(propertyCaches.slowPathReadCount)); }
     Word32 recordPendingRead(Boxed receiver, PropertyKeyID);
@@ -135,12 +148,14 @@ private:
     Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
     Boxed getMemberAboveLayouts(const ValueContext&, Boxed receiver, Pointer site);
     Boxed getMemberInSlotOrByName(const ValueContext&, Boxed receiver, const PlacedSlot&);
+    bool storeLastIndexInLine(const ValueContext&, Boxed object, PutMode);
     bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);
     std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);
     void putFreeName(const ValueContext&);
     CellPointer globalObject();
     Pointer globalBindingAddress(PropertyKeyID, OptionSet<GlobalBindingFlags>);
+    Pointer propertyAddressOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
     TypedPointer globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
     bool lookVouchesForPropertyOfHeir(const ValueContext&) const;
     TypedPointer locationOfPropertyOfHeir(const ValueContext&, CellPointer object);
@@ -150,8 +165,8 @@ private:
         bool isInteger;
     };
     std::optional<ElementKey> elementKeyOf(const ValueContext&);
-    bool readsElementsInLoop(const ValueContext&, ValueID object);
-    Boxed presentElementOrElse(ValueID objectOperand, const ElementKey&, LBasicBlock outOfLine);
+    bool readsElementsRepeatedly(const ValueContext&, ValueID object);
+    Boxed presentElementOrElse(const ValueContext&, ValueID objectOperand, const ElementKey&, LBasicBlock outOfLine);
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
     struct ExcludedKeys {
         Word32 run;

@@ -189,6 +189,9 @@ void ModuleRegistryEntry::setRecord(VM& vm, AbstractModuleRecord* record)
 void ModuleRegistryEntry::setLoadPromise(VM& vm, JSPromise* promise)
 {
     m_loadPromise.set(vm, this, promise);
+#if USE(BUN_JSC_ADDITIONS)
+    m_wasLoadStartedSynchronously = !!vm.synchronousModuleQueue();
+#endif
 }
 
 void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue error)

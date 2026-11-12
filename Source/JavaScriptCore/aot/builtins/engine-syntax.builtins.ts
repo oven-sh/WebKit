@@ -60,6 +60,7 @@ export default b.declarations(
   b.excluded("GeneratorPrototype", "generatorResume"),
   b.excluded("ShadowRealmPrototype", "crossRealmThrow", "evaluate", "importValue", "wrapRemoteValue"),
   b.handwritten(
+    "ArrayConstructor",
     "ArrayIteratorPrototype",
     "ArrayPrototype",
     "AsyncDisposableStackPrototype",
@@ -70,11 +71,13 @@ export default b.declarations(
     "JSIteratorConstructor",
     "JSIteratorHelperPrototype",
     "JSIteratorPrototype",
+    "MapConstructor",
     "MapIteratorPrototype",
     "MapPrototype",
     "ObjectConstructor",
     "SetIteratorPrototype",
     "SetPrototype",
+    "TypedArrayConstructor",
     "TypedArrayPrototype",
   ),
 
@@ -86,6 +89,8 @@ export default b.declarations(
   b.intrinsic("arrayIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%ArrayIterator%.prototype.next" }),
   b.intrinsic("mapIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%MapIterator%.prototype.next" }),
   b.intrinsic("setIteratorProtoNext", "Value", { intrinsic: "Builtin", path: "%SetIterator%.prototype.next" }),
+  b.intrinsic("setProtoValues", "Value", { intrinsic: "Builtin", path: "Set.prototype.values" }),
+  b.intrinsic("mapProtoEntries", "Value", { intrinsic: "Builtin", path: "Map.prototype.entries" }),
   b.intrinsic("generatorProtoNext", "Value", { intrinsic: "Builtin", path: "%Generator%.prototype.next" }),
   b.intrinsic("stringProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "String.prototype.@@iterator" }),
   b.intrinsic("iteratorProtoSymbolIterator", "Value", { intrinsic: "Builtin", path: "Iterator.prototype.@@iterator" }),
@@ -111,6 +116,7 @@ export default b.declarations(
     "getAsyncDisposableStackInternalField",
     "getDisposableStackInternalField",
     "getIteratorHelperInternalField",
+    "getSetIteratorInternalField",
     "getWrapForValidIteratorInternalField",
   ),
   operation(
@@ -122,6 +128,7 @@ export default b.declarations(
   operation("CreatePromise", "createPromise"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
+  operation("IsPristineArray", "isPristineArray"),
   operation("ReadsIteratorOfListUnseen", "readsIteratorOfListUnseen"),
   operation("ToObject", "toObject"),
 
@@ -156,6 +163,8 @@ export default b.declarations(
     disposableStackFieldCapability: [1, "Capability"],
   }),
   enumerators("JSDisposableStack::State", { DisposableStackStateDisposed: [1, "Disposed"] }),
+  enumerators("IterationKind", { iterationKindEntries: [2, "Entries"] }),
+  enumerators("JSSetIterator::Field", { setIteratorFieldKind: [3, "Kind"] }),
   enumerators("JSIteratorHelper::Field", {
     iteratorHelperFieldGenerator: [0, "Generator"],
     iteratorHelperFieldUnderlyingIterator: [1, "UnderlyingIterator"],
@@ -214,6 +223,7 @@ export default b.declarations(
     "findIndexFrom",
     "flatIntoArray",
     "flatIntoArrayWithCallback",
+    "flatMapOfPristineArray",
     "forEachFrom",
     "getAsyncDisposeMethod",
     "getDisposeMethod",

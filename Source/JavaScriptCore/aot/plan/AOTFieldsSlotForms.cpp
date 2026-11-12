@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
 #include "AOTIRProgram.h"
@@ -16,7 +17,6 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 #include <wtf/OptionSet.h>
@@ -69,8 +69,9 @@ static OptionSet<ContentsInSlotForms> contentsOfTypeForSlotForms(const Program& 
             contents.add(brought);
         primitives &= ~some;
     };
+    bool isCount = proven.integers.minimum >= 0 && proven.integers.maximum == INT32_MAX;
     if (primitives & Primitive::Integer)
-        contents.add(proven.integers.isSubsetOf(claim == ClaimInSlotForms::IsHeld ? Range::int32() : integersOfNarrowSlotInSlotForms) ? Contents::NarrowIntegers : Contents::Integers);
+        contents.add(proven.integers.isSubsetOf(claim == ClaimInSlotForms::IsHeld ? Range::int32() : integersOfNarrowSlotInSlotForms) && (claim == ClaimInSlotForms::IsHeld || !isCount) ? Contents::NarrowIntegers : Contents::Integers);
     primitives &= ~Primitive::Integer;
     takeOut(Primitive::Number, Contents::Fractions);
     takeOut(Primitive::Boolean, Contents::Booleans);

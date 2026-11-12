@@ -25,6 +25,7 @@ bool classGuardHolds(const State&, const LayoutData& classLayout, ClassSide);
 bool classGuardOfNameHolds(const State&, const LayoutData& classLayout, ClassSide, uint32_t key);
 
 void endClassGuard(State&, const LayoutData& classLayout, ClassSide);
+void endGuardsOfInheritedMembers(State&, const LayoutData& classLayout, ClassSide);
 enum class GuardsOfNameToEnd : uint8_t { All, StoresStillPass, ReadsStillFind, OneObjectHidesName };
 void endClassGuardsOfName(State&, const LayoutData& classLayout, ClassSide, std::optional<uint32_t> key, GuardsOfNameToEnd = GuardsOfNameToEnd::All);
 

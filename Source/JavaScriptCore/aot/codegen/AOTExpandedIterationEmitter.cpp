@@ -15,6 +15,7 @@
 #include "AOTGuardEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsArrays.h"
+#include "AOTStubsCollections.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 #include "Butterfly.h"
@@ -40,7 +41,7 @@ void ExpandedIterationEmitter::generateDestructureIterable(const ValueContext& v
         return results;
     };
     static_assert(formDependsOnLoopOf(Opcode::DestructureIterable) && namedFormOf(Opcode::DestructureIterable, StateOfKnowledge::Always, Place::Loop) == Form::Open);
-    if (!value->readsListsByIndex() || !count || !generator().isInLoop(value.block())) {
+    if (!value->readsListsByIndex() || !count || !generator().usesLoopForms(value.block())) {
         defineResults(value, takeOutOfLine().span());
         return;
     }
@@ -91,6 +92,11 @@ void ExpandedIterationEmitter::generateAppendIterable(const ValueContext& value)
         return;
     }
     callVoidOperation(value, RuntimeOperation::AppendIterable, { in<CellPointer>(value->arrayOperand()), in<Boxed>(value->iterableOperand()) });
+}
+
+void ExpandedIterationEmitter::generateNextSetElement(const ValueContext& value)
+{
+    define(value, Boxed(callStub(value, nextSetElement(), { in<Boxed>(value->iteratorOperand()).value() }).first));
 }
 
 void GuardEmitter::generateIsEnumeratorCurrent(const ValueContext& value)

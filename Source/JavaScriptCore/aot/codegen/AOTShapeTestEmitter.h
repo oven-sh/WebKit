@@ -24,6 +24,7 @@ enum class MarkedObjects : uint8_t {
     MayBeRefused,
     AreRefused,
     AreAskedAgain,
+    PassAlone,
 };
 
 struct ShapeTestsKeptAcrossUnits {
@@ -79,7 +80,7 @@ public:
 private:
     TypeReader typeReader() const;
     ShapeTest testOf(LayoutSetID tested) const;
-    enum class WordOfTest : bool { WithoutMark, AsItLies };
+    enum class WordOfTest : uint8_t { WithoutMark, AsItLies, WithMark };
     Condition passes(CellPointer, LayoutSetID tested, const ShapeTest&, WordOfTest = WordOfTest::WithoutMark);
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);
     Condition passesRange(Word32 shapeWord, const ShapeTest&);

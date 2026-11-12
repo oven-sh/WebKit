@@ -1,7 +1,7 @@
 # If `n - 1` and `a + b` were the widest type of their rows whatever their operands hold, the parameter would be number|bigint and the result number|string|bigint, each operator would call a stub, and the number would be boxed across every call
 # function fib(n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }  fib(+text);
 # RUN: summary f1
-# CHECK: operator [[less]] v5 Sub (Parameter 0 or converted-{{*}}, Constant int[0, 2147483647])
+# CHECK: operator [[less]] v5 Sub ([[atLeastTwo]] or converted-{{*}}, Constant int[0, {{*}}])
 # CHECK: operator [[sum]] v10 Add (c0.0 or converted-{{*}}, c1.0 or converted-{{*}})
 # CHECK: edge [[sum]] -> Result 0
 # RUN(LINK): link functions mechanisms=all

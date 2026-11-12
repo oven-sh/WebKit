@@ -21,7 +21,9 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -55,18 +57,37 @@ private:
 };
 
 struct RangeOfBytes {
+    uint64_t size() const { return end - begin; }
+
     uint64_t begin;
     uint64_t end;
 };
 
+struct StringSection {
+    RangeOfBytes rangeInFile(RangeOfBytes characters) const
+    {
+        if (blockEnds.empty())
+            return { bytes.begin + characters.begin, bytes.begin + characters.end };
+        size_t firstBlock = static_cast<size_t>(characters.begin / sourceBlockSize);
+        size_t lastBlock = static_cast<size_t>((characters.end - 1) / sourceBlockSize);
+        return { bytes.begin + (firstBlock ? blockEnds[firstBlock - 1] : 0), bytes.begin + blockEnds[lastBlock] };
+    }
+
+    ASCIILiteral name;
+    RangeOfBytes bytes;
+    std::span<const uint32_t> blockEnds { };
+    Vector<RangeOfBytes> covered { };
+};
+
 class ReaderOfImage {
 public:
-    ReaderOfImage(std::span<const uint8_t> file, size_t offsetInFile, unsigned number, StoredStrings& result, DecompressSourceFunction decompress)
+    ReaderOfImage(std::span<const uint8_t> file, size_t offsetInFile, unsigned number, StoredStrings& result, DecompressSourceFunction decompress, StoredStringsForm form)
         : m_image(file.subspan(offsetInFile))
         , m_offsetInFile(offsetInFile)
         , m_number(number)
         , m_result(result)
         , m_decompress(decompress)
+        , m_form(form)
     {
     }
 
@@ -91,15 +112,20 @@ private:
     std::optional<std::span<const uint8_t>> section(ImageSection) const;
     std::optional<ImageLongString> listedString(RecordsInFile<uint32_t>, uint32_t at) const;
     VerdictOnStoredStrings readTextsOfProgramTables();
-    void appendString(std::span<const uint8_t> utf8);
-    void appendLatin1String(std::span<const uint8_t>);
-    VerdictOnStoredStrings reportSection(ASCIILiteral name, uint64_t offsetInImage, std::span<const uint8_t> bytes, Vector<RangeOfBytes>& covered);
+    void appendLine(ASCIILiteral type, const auto&... members);
+    void beginSection(const StringSection&);
+    void appendString(StringSection&, RangeOfBytes characters, ASCIILiteral encoding, StringView);
+    void appendUTF8String(StringSection&, RangeOfBytes characters, std::span<const uint8_t> utf8);
+    void appendCodedStrings(const CodedTexts&, std::span<const uint8_t> bytes, uint64_t offsetInFile);
+    void appendUncoveredRuns(const StringSection&);
+    VerdictOnStoredStrings reportSection(StringSection&, std::span<const uint8_t> text);
 
     std::span<const uint8_t> m_image;
     size_t m_offsetInFile;
     unsigned m_number;
     StoredStrings& m_result;
     DecompressSourceFunction m_decompress;
+    StoredStringsForm m_form;
     ImageHeader m_header;
 };
 
@@ -127,39 +153,118 @@ std::optional<ImageLongString> ReaderOfImage::listedString(RecordsInFile<uint32_
     return ImageListedString::read(copy);
 }
 
-void ReaderOfImage::appendString(std::span<const uint8_t> utf8)
+void ReaderOfImage::appendLine(ASCIILiteral type, const auto&... members)
 {
+    if (m_form != StoredStringsForm::JSONLines)
+        return;
+    StringBuilder line;
+    line.append("{\"type\":\""_s, type, "\",\"image\":"_s, m_number);
+    (line.append(members), ...);
+    line.append("}\n"_s);
+    m_result.strings.append(byteCast<uint8_t>(line.toString().utf8().span()));
+}
+
+void ReaderOfImage::beginSection(const StringSection& section)
+{
+    appendLine("section"_s, ",\"section\":\""_s, section.name, "\",\"offset\":"_s, section.bytes.begin, ",\"length\":"_s, section.bytes.size());
+}
+
+void ReaderOfImage::appendString(StringSection& section, RangeOfBytes characters, ASCIILiteral encoding, StringView string)
+{
+    section.covered.append(characters);
+    switch (m_form) {
+    case StoredStringsForm::ZeroTerminated:
+        m_result.strings.append(byteCast<uint8_t>(string.utf8().span()));
+        m_result.strings.append(0);
+        return;
+    case StoredStringsForm::JSONLines: {
+        RangeOfBytes range = section.rangeInFile(characters);
+        StringBuilder quoted;
+        quoted.appendQuotedJSONString(string.toString());
+        appendLine("string"_s, ",\"section\":\""_s, section.name, "\",\"offset\":"_s, range.begin, ",\"length\":"_s, range.size(), ",\"encoding\":\""_s, section.blockEnds.empty() ? encoding : "compressed"_s, "\",\"text\":"_s, quoted.toString());
+        return;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void ReaderOfImage::appendUTF8String(StringSection& section, RangeOfBytes characters, std::span<const uint8_t> utf8)
+{
+    if (m_form == StoredStringsForm::JSONLines) {
+        appendString(section, characters, "utf8"_s, String::fromUTF8ReplacingInvalidSequences(utf8));
+        return;
+    }
+    section.covered.append(characters);
     m_result.strings.append(utf8);
     m_result.strings.append(0);
 }
 
-void ReaderOfImage::appendLatin1String(std::span<const uint8_t> characters)
+void ReaderOfImage::appendCodedStrings(const CodedTexts& texts, std::span<const uint8_t> bytes, uint64_t offsetInFile)
 {
-    appendString(byteCast<uint8_t>(StringView(byteCast<Latin1Character>(characters)).utf8().span()));
+    if (!texts.count())
+        return;
+    StringSection section { "coded text"_s, { offsetInFile, offsetInFile + bytes.size() } };
+    beginSection(section);
+    RangeOfBytes group { 0, 0 };
+    for (uint32_t number = 0; number < texts.count(); ++number) {
+        if (!(number % CodedTexts::textsInGroup)) {
+            std::span<const uint8_t> bytesOfGroup = texts.bytesOfGroup(number / CodedTexts::textsInGroup);
+            group.begin = bytesOfGroup.data() - bytes.data();
+            group.end = group.begin + bytesOfGroup.size();
+        }
+        auto text = texts.at(number);
+        appendString(section, group, "coded"_s, StringView(byteCast<Latin1Character>(text.span())));
+    }
+    appendUncoveredRuns(section);
 }
 
-VerdictOnStoredStrings ReaderOfImage::reportSection(ASCIILiteral name, uint64_t offsetInImage, std::span<const uint8_t> bytes, Vector<RangeOfBytes>& covered)
+static void forEachUncoveredRun(Vector<RangeOfBytes>& covered, uint64_t size, NOESCAPE const Invocable<void(RangeOfBytes)> auto& functor)
 {
-    std::ranges::sort(covered, [](const RangeOfBytes& a, const RangeOfBytes& b) {
-        return a.begin < b.begin;
-    });
-    covered.append({ bytes.size(), bytes.size() });
-    uint64_t numberOfBytesBesideStrings = 0;
-    std::optional<uint64_t> firstThatIsNotZero;
+    std::ranges::sort(covered, { }, &RangeOfBytes::begin);
     uint64_t end = 0;
     for (const RangeOfBytes& range : covered) {
-        for (uint64_t at = end; at < range.begin; ++at) {
-            ++numberOfBytesBesideStrings;
-            if (bytes[at] && !firstThatIsNotZero)
-                firstThatIsNotZero = at;
-        }
+        if (end < range.begin)
+            functor(RangeOfBytes { end, range.begin });
         end = std::max(end, range.end);
     }
-    uint64_t offsetInFile = m_offsetInFile + offsetInImage;
-    report(name, " | offset ", offsetInFile, " | length ", bytes.size(), " | ", numberOfBytesBesideStrings, " bytes that no string covers");
+    if (end < size)
+        functor(RangeOfBytes { end, size });
+}
+
+void ReaderOfImage::appendUncoveredRuns(const StringSection& section)
+{
+    if (m_form != StoredStringsForm::JSONLines)
+        return;
+    Vector<RangeOfBytes> covered = section.covered.map([&](RangeOfBytes characters) {
+        RangeOfBytes range = section.rangeInFile(characters);
+        return RangeOfBytes { range.begin - section.bytes.begin, range.end - section.bytes.begin };
+    });
+    forEachUncoveredRun(covered, section.bytes.size(), [&](RangeOfBytes run) {
+        uint64_t offset = section.bytes.begin + run.begin;
+        bool isZero = std::ranges::all_of(m_image.subspan(static_cast<size_t>(offset - m_offsetInFile), static_cast<size_t>(run.size())), [](uint8_t byte) {
+            return !byte;
+        });
+        appendLine("uncovered"_s, ",\"section\":\""_s, section.name, "\",\"offset\":"_s, offset, ",\"length\":"_s, run.size(), ",\"isZero\":"_s, isZero ? "true"_s : "false"_s);
+    });
+}
+
+VerdictOnStoredStrings ReaderOfImage::reportSection(StringSection& section, std::span<const uint8_t> text)
+{
+    appendUncoveredRuns(section);
+    uint64_t numberOfBytesBesideStrings = 0;
+    std::optional<uint64_t> firstThatIsNotZero;
+    forEachUncoveredRun(section.covered, text.size(), [&](RangeOfBytes run) {
+        numberOfBytesBesideStrings += run.size();
+        for (uint64_t at = run.begin; at < run.end && !firstThatIsNotZero; ++at) {
+            if (text[at])
+                firstThatIsNotZero = at;
+        }
+    });
+    uint64_t offsetInFile = section.bytes.begin;
+    report(section.name, " | offset ", offsetInFile, " | length ", text.size(), " | ", numberOfBytesBesideStrings, " bytes that no string covers");
     if (!firstThatIsNotZero)
         return VerdictOnStoredStrings::NothingLiesBesideStrings;
-    report(name, " | the byte at offset ", offsetInFile + *firstThatIsNotZero, " is covered by no string and is not zero");
+    report(section.name, " | the byte at offset ", offsetInFile + *firstThatIsNotZero, " is covered by no string and is not zero");
     return VerdictOnStoredStrings::BytesBesideStringsAreNotZero;
 }
 
@@ -181,7 +286,11 @@ VerdictOnStoredStrings ReaderOfImage::read()
     if (!bytesOfWords || !bytesOfListedStrings || !bytesOfHeaders || !bytesOfConstants || !text)
         return refuse("a section lies outside the image");
     RecordsInFile<ImageStringWord> words(*bytesOfWords);
-    RecordsInFile<ImageStringWord> constants(*bytesOfConstants);
+    RecordsInFile<ImageStringWord> constantsAndHashes(*bytesOfConstants);
+    size_t numberOfPlacedConstants = m_header.numbers.numberOfPlacedConstants;
+    if (2 * numberOfPlacedConstants > constantsAndHashes.size())
+        return refuse("a section lies outside the image");
+    size_t numberOfConstants = constantsAndHashes.size() - numberOfPlacedConstants;
     RecordsInFile<uint32_t> listedStrings(*bytesOfListedStrings);
     RecordsInFile<ImageStringHeader> headers(*bytesOfHeaders);
     RecordsInFile<ImageStringRecord> records(*bytesOfHeaders);
@@ -191,19 +300,26 @@ VerdictOnStoredStrings ReaderOfImage::read()
     size_t numberOfWords = m_header.numbers.numberOfStringWords;
     if (numberOfWords > words.size())
         return refuse("a section lies outside the image");
-    CodedTexts codedTexts(bytesOfWords->subspan(numberOfWords * sizeof(ImageStringWord)), m_header.numbers.numberOfCodedTexts);
+    std::span<const uint8_t> bytesOfCodedTexts = bytesOfWords->subspan(numberOfWords * sizeof(ImageStringWord));
+    CodedTexts codedTexts(bytesOfCodedTexts, m_header.numbers.numberOfCodedTexts);
 
-    Vector<RangeOfBytes> covered;
+    appendLine("image"_s, ",\"offset\":"_s, static_cast<uint64_t>(m_offsetInFile), ",\"length\":"_s, m_header.size, ",\"format\":"_s, formatVersion);
+    uint64_t offsetOfText = m_offsetInFile + m_header.sections[static_cast<unsigned>(ImageSection::Text)].offset;
+    StringSection sectionOfText { "Text"_s, { offsetOfText, offsetOfText + text->size() } };
+    beginSection(sectionOfText);
     HashSet<uint32_t> bitsOfWords;
     size_t endOfIdentifiers = m_header.numbers.endOfIdentifiers;
     size_t endOfWords = endOfIdentifiers + numberOfWords;
-    for (size_t index = 0; index < endOfWords + constants.size(); ++index) {
-        ImageStringWord word = index < endOfIdentifiers ? ImageStringWord::ofIdentifier(static_cast<uint32_t>(index)) : index < endOfWords ? words[index - endOfIdentifiers] : constants[index - endOfWords];
+    for (size_t index = 0; index < endOfWords + numberOfConstants; ++index) {
+        bool isPlaced = index >= endOfWords && index - endOfWords < numberOfPlacedConstants;
+        ImageStringWord word = isPlaced ? ImageStringWord::ofPlacedConstant(static_cast<uint32_t>(index - endOfWords)) : index < endOfIdentifiers ? ImageStringWord::ofIdentifier(static_cast<uint32_t>(index)) : index < endOfWords ? words[index - endOfIdentifiers] : constantsAndHashes[index - endOfWords];
         bool is16Bit = word.is16Bit();
         if (!word.hasText() || !bitsOfWords.add(word.bits).isNewEntry)
             continue;
         std::optional<ImageLongString> range = ImageLongString { 0, 0 };
-        if (!word.hasHeader())
+        if (isPlaced)
+            range = ImagePlacedString::rangeOf(constantsAndHashes[word.number()].bits);
+        else if (!word.hasHeader())
             range = listedString(listedStrings, word.number());
         else if (word.number() >= (hasRecords ? records.size() : headers.size()))
             range = std::nullopt;
@@ -225,17 +341,16 @@ VerdictOnStoredStrings ReaderOfImage::read()
         if (!range->length)
             continue;
         std::span<const uint8_t> bytes = text->subspan(range->offset, range->length * sizeOfUnit);
-        covered.append({ range->offset, range->offset + bytes.size() });
+        RangeOfBytes characters { range->offset, range->offset + bytes.size() };
         if (is16Bit) {
             Vector<char16_t> units(range->length);
             memcpy(units.mutableSpan().data(), bytes.data(), bytes.size());
-            appendString(byteCast<uint8_t>(StringView(units.span()).utf8().span()));
+            appendString(sectionOfText, characters, "utf16le"_s, StringView(units.span()));
         } else
-            appendLatin1String(bytes);
+            appendString(sectionOfText, characters, "latin1"_s, StringView(byteCast<Latin1Character>(bytes)));
     }
-    for (uint32_t number = 0; number < codedTexts.count(); ++number)
-        appendLatin1String(codedTexts.at(number).span());
-    VerdictOnStoredStrings verdictOnText = reportSection("Text"_s, m_header.sections[static_cast<unsigned>(ImageSection::Text)].offset, *text, covered);
+    appendCodedStrings(codedTexts, bytesOfCodedTexts, m_offsetInFile + static_cast<uint64_t>(bytesOfCodedTexts.data() - m_image.data()));
+    VerdictOnStoredStrings verdictOnText = reportSection(sectionOfText, *text);
     return std::max(verdictOnText, readTextsOfProgramTables());
 }
 
@@ -278,6 +393,8 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
 
     VerdictOnStoredStrings worst = VerdictOnStoredStrings::NothingLiesBesideStrings;
     std::span<const uint8_t> quotedSourceText = tables.quotedSourceText();
+    uint64_t offsetOfQuotedSources = m_offsetInFile + offsetOfTables + tables.ranges[static_cast<unsigned>(ProgramTableIndex::quotedSourceText)].offset;
+    StringSection sectionOfQuotedSources { "quoted text"_s, { offsetOfQuotedSources, offsetOfQuotedSources + quotedSourceText.size() } };
     Vector<uint8_t> decompressedQuotedSources;
     if (std::span<const uint32_t> blocks = tables.quotedSourceBlocks(); !blocks.empty()) {
         std::span<const uint32_t> ends = blocks.subspan(1);
@@ -285,11 +402,12 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
             || !decompressBlocks(decompressedQuotedSources, quotedSourceText.data(), ends, blocks[0]))
             return refuse("the quoted source text is compressed and cannot be decompressed");
         quotedSourceText = decompressedQuotedSources.span();
+        sectionOfQuotedSources.blockEnds = ends;
     }
     if (std::span<const uint8_t> text = quotedSourceText; !text.empty()) {
         std::span<const QuotedSourceGroupData> groups = tables.quotedSourceGroups();
         std::span<const uint8_t> rows = tables.quotedSourceRows();
-        Vector<RangeOfBytes> covered;
+        beginSection(sectionOfQuotedSources);
         for (size_t index = 0; index < groups.size(); ++index) {
             uint64_t first = groups[index].offsetOfRows;
             uint64_t end = index + 1 < groups.size() ? groups[index + 1].offsetOfRows : rows.size();
@@ -304,11 +422,11 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
                     return refuse("a quoted source lies outside the quoted source text");
                 if (!row.length)
                     continue;
-                appendLatin1String(text.subspan(static_cast<size_t>(start), row.length));
-                covered.append({ static_cast<uint64_t>(start), static_cast<uint64_t>(start) + row.length });
+                RangeOfBytes characters { static_cast<uint64_t>(start), static_cast<uint64_t>(start) + row.length };
+                appendString(sectionOfQuotedSources, characters, "latin1"_s, StringView(byteCast<Latin1Character>(text.subspan(static_cast<size_t>(start), row.length))));
             }
         }
-        worst = std::max(worst, reportSection("quoted text"_s, offsetOfTables + tables.ranges[static_cast<unsigned>(ProgramTableIndex::quotedSourceText)].offset, text, covered));
+        worst = std::max(worst, reportSection(sectionOfQuotedSources, text));
     }
     for (const FunctionSources& sources : tables.functionSources()) {
         if (!sources.numberOfEntries)
@@ -319,6 +437,8 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
         uint64_t size = 0;
         for (const FunctionSourceEntry& entry : entries)
             size = std::max<uint64_t>(size, entry.end);
+        uint64_t offsetOfSource = m_offsetInFile + offsetOfTables + sources.sourceOffset;
+        StringSection sectionOfSource { "function text"_s, { offsetOfSource, offsetOfSource + size } };
         Vector<uint8_t> decompressedSource;
         if (sources.numberOfBlocks) {
             uint64_t expectedBlockCount = (static_cast<uint64_t>(sources.sourceSize) + sourceBlockSize - 1) / sourceBlockSize;
@@ -329,19 +449,20 @@ VerdictOnStoredStrings ReaderOfImage::readTextsOfProgramTables()
                 return refuse("the function sources lie outside the program tables");
             if (!decompressBlocks(decompressedSource, tables.at<uint8_t>(sources.sourceOffset), ends, sources.sourceSize))
                 return refuse("the function sources are compressed and cannot be decompressed");
+            sectionOfSource.bytes.end = offsetOfSource + ends.back();
+            sectionOfSource.blockEnds = ends;
         } else if (!liesInTables(sources.sourceOffset, size))
             return refuse("the function sources lie outside the program tables");
         std::span<const uint8_t> text = sources.numberOfBlocks ? decompressedSource.span().first(static_cast<size_t>(size)) : std::span<const uint8_t> { tables.at<uint8_t>(sources.sourceOffset), static_cast<size_t>(size) };
-        Vector<RangeOfBytes> covered;
+        beginSection(sectionOfSource);
         for (const FunctionSourceEntry& entry : entries) {
             uint32_t start = entry.start;
             uint32_t end = entry.end;
             if (start >= end)
                 continue;
-            appendString(text.subspan(start, end - start));
-            covered.append({ start, end });
+            appendUTF8String(sectionOfSource, { start, end }, text.subspan(start, end - start));
         }
-        worst = std::max(worst, reportSection("function text"_s, offsetOfTables + sources.sourceOffset, text, covered));
+        worst = std::max(worst, reportSection(sectionOfSource, text));
     }
     return worst;
 }
@@ -357,7 +478,7 @@ static bool isHeaderOfImage(std::span<const uint8_t> file, size_t at)
     return size && !(size % smallestPageOfImage) && codeOffset && !(codeOffset % smallestPageOfImage) && codeOffset < size && size <= file.size() - at;
 }
 
-StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceFunction decompress)
+StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceFunction decompress, StoredStringsForm form)
 {
     StoredStrings result;
     unsigned numberOfImages = 0;
@@ -365,7 +486,7 @@ StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceF
     for (size_t at = 0; at + sizeof(imageMagic) <= file.size(); at += smallestAlignmentOfImageInFile) {
         if (memcmp(file.data() + at, &imageMagic, sizeof(imageMagic)) || !isHeaderOfImage(file, at))
             continue;
-        worst = std::max(worst, ReaderOfImage(file, at, numberOfImages++, result, decompress).read());
+        worst = std::max(worst, ReaderOfImage(file, at, numberOfImages++, result, decompress, form).read());
     }
     if (!numberOfImages) {
         result.report.append(byteCast<uint8_t>("the file holds no image\n"_s.span8()));

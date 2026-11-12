@@ -4,7 +4,7 @@
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:Body
 # CHECK: = ShapeTest {{*}}layouts=[L0]
-# CHECK: = IsNotFrozen {{*}}[hasNoExtraProperties, hasNoFieldOutsideSlot]
+# CHECK: = IsNotFrozen {{*}}[hasNoExtraProperties, hasNoFieldOutsideSlot, isExtensible]
 # CHECK: = HasKeyOrder
 # CHECK: = HasLayoutPrototype
 # CHECK: = AreMembersUnchanged

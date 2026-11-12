@@ -50,14 +50,20 @@ struct OwnKeyOrder {
 struct OwnKeyPlan {
     explicit operator bool() const { return !orders.isEmpty(); }
     Vector<OwnKeyOrder, 2> orders;
+    Vector<LayoutID, 1> layoutsWithoutRequiredFields;
+    bool coversMakers { true };
     bool layoutsAreProven { false };
     bool isDeclared { false };
     bool hasArmForEveryExpectedOrder { false };
 };
 inline constexpr unsigned mostArmsOfOwnKeyWalk = 2;
+inline constexpr unsigned maxArmsOfCopiedSource = 5;
 inline constexpr size_t mostFieldsOfOwnKeyWalk = 12;
 std::optional<OwnKeyOrder> ownKeysInSight(Walker&, Reference object);
-OwnKeyPlan planOwnKeyWalk(Walker&, ValueID source, Reference built, size_t mostFields = mostFieldsOfOwnKeyWalk);
+bool objectsOfLayoutComeInSeveralOrders(Walker&, LayoutID);
+bool listsAllRequiredFields(const Walker&, LayoutID, std::span<const FieldIndex> created);
+bool isMadeWithKeys(Walker&, LayoutID, std::span<const FieldIndex> created);
+OwnKeyPlan planOwnKeyWalk(Walker&, ValueID source, Reference built, size_t mostFields = mostFieldsOfOwnKeyWalk, unsigned maxArmsInLoop = mostArmsOfOwnKeyWalk);
 bool continueIfOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, BlockID whereTestFails);
 struct WaysOutOfOwnKeyTests {
     BlockID whereLayoutDiffers;

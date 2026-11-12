@@ -103,18 +103,18 @@ static bool bodyStoresValueForStringPieces(Walker& walker, const BodyIndex& inde
     return stored.get(value.index());
 }
 
-static Reference buildPositionForStringPieces(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
+static Reference buildPiecePosition(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
 {
     Reference result = buildOperatorForStrings(walker, opcode, left, right, origin);
     return buildOperatorForStrings(walker, Opcode::BitAnd, result, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin);
 }
 
-static void noteThatBoundsAreInOrderForStringPieces(Walker& walker, Reference start, Reference end)
+static void noteOrderedPieceBounds(Walker& walker, Reference start, Reference end)
 {
     start = rootForStrings(walker, start);
     end = rootForStrings(walker, end);
     if (start.isValue() && end.isValue())
-        noteKnown(walker, KnownNote::BoundsOfPieceAreInOrder, start, end, 0, LocationMasks(), 1);
+        noteKnown(walker, KnownNote::OrderedPieceBounds, start, end, 0, LocationMasks(), 1);
 }
 
 bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
@@ -206,9 +206,9 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
     else {
         if (outer) {
             string = outer->string;
-            start = buildPositionForStringPieces(walker, Opcode::Add, outer->start, start, origin);
-            end = buildPositionForStringPieces(walker, Opcode::Add, outer->start, end, origin);
-            noteThatBoundsAreInOrderForStringPieces(walker, start, end);
+            start = buildPiecePosition(walker, Opcode::Add, outer->start, start, origin);
+            end = buildPiecePosition(walker, Opcode::Add, outer->start, end, origin);
+            noteOrderedPieceBounds(walker, start, end);
         }
         piece = buildPieceOfString(walker, string, start, end, origin);
         if (piece && piece.isValue() && bodyStoresValueForStringPieces(walker, walker.currentBodyIndex(), call.call.id()))
@@ -281,7 +281,7 @@ bool isRangeOfPieceInOrder(Walker& walker, const PieceOfString& piece)
 {
     Reference rootOfStart = rootForStrings(walker, piece.start);
     Reference rootOfEnd = rootForStrings(walker, piece.end);
-    if (rootOfStart.isValue() && rootOfEnd.isValue() && findKnown(walker, KnownNote::BoundsOfPieceAreInOrder, rootOfStart, rootOfEnd))
+    if (rootOfStart.isValue() && rootOfEnd.isValue() && findKnown(walker, KnownNote::OrderedPieceBounds, rootOfStart, rootOfEnd))
         return true;
     if (Reference range = rangeGivingBoundForStringPieces(walker, piece.start, startOfStringRange)) {
         if (range == rangeGivingBoundForStringPieces(walker, piece.end, endOfStringRange))
@@ -297,10 +297,10 @@ bool isRangeOfPieceInOrder(Walker& walker, const PieceOfString& piece)
 
 Reference buildLengthOfPiece(Walker& walker, const PieceOfString& piece, Origin origin)
 {
-    return buildPositionForStringPieces(walker, Opcode::Sub, piece.end, piece.start, origin);
+    return buildPiecePosition(walker, Opcode::Sub, piece.end, piece.start, origin);
 }
 
-static std::optional<PieceOfString> orderedPieceForStringPieces(Walker& walker, Reference text)
+static std::optional<PieceOfString> orderedStringPiece(Walker& walker, Reference text)
 {
     Reference root = rootForStrings(walker, text);
     if (!root.isValue() || walker.isUnreachable())
@@ -318,16 +318,16 @@ std::optional<PieceOfString> pieceReadInLoop(Walker& walker, Reference text, Ori
 {
     if (walker.isUnreachable() || !walker.isInLoop() || isOrCanBeFlattenedBeforeLoop(walker, text))
         return std::nullopt;
-    std::optional<PieceOfString> piece = orderedPieceForStringPieces(walker, text);
+    std::optional<PieceOfString> piece = orderedStringPiece(walker, text);
     while (piece && !isOrCanBeFlattenedBeforeLoop(walker, piece->string)) {
-        std::optional<PieceOfString> outer = orderedPieceForStringPieces(walker, piece->string);
+        std::optional<PieceOfString> outer = orderedStringPiece(walker, piece->string);
         if (!outer)
             break;
-        Reference start = buildPositionForStringPieces(walker, Opcode::Add, outer->start, piece->start, origin);
-        Reference end = start ? buildPositionForStringPieces(walker, Opcode::Add, outer->start, piece->end, origin) : Reference();
+        Reference start = buildPiecePosition(walker, Opcode::Add, outer->start, piece->start, origin);
+        Reference end = start ? buildPiecePosition(walker, Opcode::Add, outer->start, piece->end, origin) : Reference();
         if (!end)
             break;
-        noteThatBoundsAreInOrderForStringPieces(walker, start, end);
+        noteOrderedPieceBounds(walker, start, end);
         piece = PieceOfString { outer->string, start, end };
     }
     return piece;

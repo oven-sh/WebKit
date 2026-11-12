@@ -252,6 +252,8 @@ void Reader::forEachListReadIntoTableOfItsName(const Wire::Sections& sections, c
     functor(sections.expectedResults, m_program.expectedResults);
     functor(sections.variables, m_program.variables);
     functor(sections.modules, m_program.modules);
+    functor(sections.moduleInstances, m_program.moduleInstances);
+    functor(sections.moduleLinks, m_program.moduleLinks);
     functor(sections.moduleFailures, m_program.moduleFailures);
     functor(sections.ambiguousExports, m_program.ambiguousExports);
     functor(sections.sourceStamps, m_program.sourceStamps);

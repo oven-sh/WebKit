@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTFacts.h"
 #include "AOTSlotPlan.h"
 #include <wtf/ScopedLambda.h>

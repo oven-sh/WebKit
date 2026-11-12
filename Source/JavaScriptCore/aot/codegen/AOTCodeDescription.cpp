@@ -254,7 +254,7 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
     };
     for (const Machine::LinkedTrappingAccess& access : trappingAccesses) {
         for (; !callThrowSites.empty() && codeOffsetOfCallThatThrows(callThrowSites.front()) < access.codeOffset; callThrowSites = callThrowSites.subspan(1))
-            accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(callThrowSites.front()), OptionalIndex { }, callThrowSites.front().words, callThrowSites.front().wordsThatAreMentions);
+            accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(callThrowSites.front()), OptionalIndex { }, ThrowSiteWords(callThrowSites.front().words.span()), callThrowSites.front().wordsThatAreMentions);
         ValueID value = valueOfOrigin(access.origin);
         auto site = std::ranges::lower_bound(traps.trapSites, value, { }, &TrapSite::value);
         if (site == traps.trapSites.end() || site->value != value) {
@@ -268,10 +268,10 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
 #endif
         Vector<uint32_t, 3> words = throwSiteWords(site->throwSite, access.referenceIsNarrow ? Representation::Cell32 : site->representation, static_cast<unsigned>(access.reference));
         uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(site->throwSite, words.size());
-        accesses.appendWithinCapacity(access.codeOffset, OptionalIndex { site->callSite }, WTF::move(words), wordsThatAreMentions);
+        accesses.appendWithinCapacity(access.codeOffset, OptionalIndex { site->callSite }, ThrowSiteWords(words.span()), wordsThatAreMentions);
     }
     for (const CallThrowSite& site : callThrowSites)
-        accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(site), OptionalIndex { }, site.words, site.wordsThatAreMentions);
+        accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(site), OptionalIndex { }, ThrowSiteWords(site.words.span()), site.wordsThatAreMentions);
     if (accesses.size() > 1)
         AOT::sortInLine(accesses, { }, &FaultingAccess::codeOffset);
 }
@@ -1023,6 +1023,8 @@ CompiledCode describeCode(BuildContext& build, const CodeGenerationInputs& input
         measurements.bytesOutsideOperations = describeBytesOutsideOperations(result.body, emitted);
         measurements.ranges = describeRangesOfCode(code, result.body, emitted);
     }
+    if (!records.inlinedStrings.isEmpty())
+        records.inlinedStrings.moveTo(result.measurements.ensure());
     return result;
 }
 

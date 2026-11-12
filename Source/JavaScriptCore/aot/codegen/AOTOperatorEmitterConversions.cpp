@@ -125,6 +125,10 @@ public:
     {
         if (StringID constant = emitter<StringEmitter>().findNumberedStringConstant(context, id))
             return constant;
+        if (generator().isConversionLeftToConcatenation(id))
+            return StringEmitter::StringPart::toConvert(get(operationAt(id).valueOperand()).as<Boxed>());
+        if (Operand operand = get(id); typeOf(id).isInt32() && (operand.representation == Representation::Int32 || operand.representation == Representation::Int64))
+            return StringEmitter::StringPart::ofInteger(operand.representation == Representation::Int32 ? signExtended(operand.as<Word32>()) : operand.as<Integer>());
         return convertAddend(context, id);
     }
 
@@ -172,7 +176,7 @@ private:
     CellPointer convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form)
     {
         static_assert(formDependsOnLoopOf(Opcode::ToString));
-        FormAtPlace named = formByLoopAlone(Opcode::ToString, stateOf(form), context.block() && generator().isInLoop(context.block()));
+        FormAtPlace named = formByLoopAlone(Opcode::ToString, stateOf(form), context.block() && generator().usesLoopForms(context.block()));
         m_out.noteFormOf(conversionsToString, named.form, stateOf(form), named.place);
         if (named.form != Form::Open)
             return CellPointer(callStub(context, unaryOperation(UnaryOperationForm::ToString), { boxed.value() }).first);
@@ -232,6 +236,8 @@ static Vector<uint32_t, 8> firstOccurrencesOfStrcatParts(std::span<const ValueID
 
 void OperatorEmitter::generateToBoolean(const ValueContext& value)
 {
+    if (tryGenerateRemainderTest(value))
+        return;
     ValueID tested = value->valueOperand();
     TruthinessEmitter& truthiness = emitter<TruthinessEmitter>();
     switch (value->form()) {
@@ -251,7 +257,7 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     case OperatorForm::Bits:
     case OperatorForm::Booleans:
         m_out.noteForm(Form::Open, stateOf(value->form()));
-        if (ValueID check = generator().checkLeftToTruthTest(value.id())) {
+        if (ValueID check = generator().checkDeferredToTruthTest(value.id())) {
             emitter<CastEmitter>().checkBooleanOrBranch(value, check);
             if (value.isBranchCondition())
                 return;
@@ -279,6 +285,40 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     }
     fail(value, InternalErrorKind::OpcodeWithoutCode);
     defineTest(value, boolean(false));
+}
+
+bool OperatorEmitter::leavesConversionToConcatenation(BlockID block, ValueID id, const Operation& conversion, std::span<const ValueID> operationsBehind)
+{
+    if (operationsBehind.empty() || m_code.useCountOf(id) != 1 || m_code.onlyUserOf(id) != operationsBehind.front() || generator().usesLoopForms(block))
+        return false;
+    if (conversion.form() != OperatorForm::MayBeString && conversion.form() != OperatorForm::MayBeStringOrNumber)
+        return false;
+    ValueID operand = conversion.valueOperand();
+    if (representationOf(operand) != Representation::JSValue || typeOf(operand).isBoolean())
+        return false;
+    const Operation& concatenation = operationAt(operationsBehind.front());
+    if (concatenation.opcode != Opcode::Strcat || concatenation.isLikelyKey())
+        return false;
+    std::span<const ValueID> parts = concatenation.partsOperands();
+    if (parts.size() < 2 || parts[0] == parts[1])
+        return false;
+    auto mayRunCodeInConversion = [&](ValueID part) {
+        const Type& type = typeOf(part);
+        return part != id && (type.hasObjects() || type.primitives & Primitive::AnySymbol);
+    };
+    if (std::ranges::any_of(parts, mayRunCodeInConversion))
+        return false;
+    ValueContext context = generator().contextOf(block, operationsBehind.front());
+    std::span<const ValueID> joinedFirst = parts.first(std::min<size_t>(parts.size(), 3));
+    Vector<StringEmitter::StringPart, 3> joined;
+    std::optional<unsigned> converted;
+    for (unsigned index = 0; index < joinedFirst.size(); ++index) {
+        if (joinedFirst[index] == id)
+            converted = index;
+        StringID constant = emitter<StringEmitter>().findNumberedStringConstant(context, joinedFirst[index]);
+        joined.append(constant ? StringEmitter::StringPart(constant) : StringEmitter::StringPart(CellPointer()));
+    }
+    return converted && *converted == lastOperandThatIsNoConstant(StringEmitter::chooseConstants(joined.span()), static_cast<unsigned>(joined.size()));
 }
 
 void OperatorEmitter::generateToString(const ValueContext& value)

@@ -10,6 +10,7 @@
 
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTRelocation.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubsBarriers.h"
 #include "CallFrame.h"
@@ -149,14 +150,14 @@ void emitBranchUnlessFrameMayContinue(StubAssembler& jit, const AwaitRegisters& 
         emitBranchUnlessHolds(jit, condition, registers, mustSuspend);
 }
 
-static constexpr Address addressOfFrameThatMayContinue(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue));
+static constexpr Address resumableFrameAddress(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumableFrame));
 static constexpr int32_t maxBytesOfAwaitingFrames = 128 * KB;
 
-static void emitBranchUnlessCallIsAwaited(StubAssembler& jit, GPRReg returnAddress, GPRReg awaitStub, GPRReg scratch, JumpList& otherwise)
+static void emitBranchUnlessCallIsAwaited(StubAssembler& jit, GPRReg returnAddress, GPRReg awaitStub, GPRReg scratch, JumpList& otherwise, unsigned sizeOfHeadOfAwaitStub = 0)
 {
     RELEASE_ASSERT(noOverlap(returnAddress, awaitStub, scratch, instanceGPR));
 #if CPU(X86_64)
-    constexpr int32_t moveIntoSiteWord = 0xba41;
+    constexpr int32_t moveIntoSiteWord = moveIntoSiteWordOfAwaitedCall[0] | moveIntoSiteWordOfAwaitedCall[1] << 8;
     constexpr int32_t call = 0xe8;
     constexpr int32_t offsetOfCall = 6;
     constexpr int32_t offsetOfDisplacement = offsetOfCall + 1;
@@ -165,9 +166,10 @@ static void emitBranchUnlessCallIsAwaited(StubAssembler& jit, GPRReg returnAddre
     otherwise.append(jit.branch16(CCallHelpers::NotEqual, Address(returnAddress), TrustedImm32(moveIntoSiteWord)));
     otherwise.append(jit.branch8(CCallHelpers::NotEqual, Address(returnAddress, offsetOfCall), TrustedImm32(call)));
     jit.load32SignedExtendTo64(Address(returnAddress, offsetOfDisplacement), scratch);
-    jit.getEffectiveAddress(BaseIndex(returnAddress, scratch, CCallHelpers::TimesOne, offsetAfterCall), scratch);
+    jit.getEffectiveAddress(BaseIndex(returnAddress, scratch, CCallHelpers::TimesOne, offsetAfterCall + static_cast<int32_t>(sizeOfHeadOfAwaitStub)), scratch);
     otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, awaitStub));
 #elif CPU(ARM64)
+    RELEASE_ASSERT(!sizeOfHeadOfAwaitStub);
     constexpr int32_t branchWithLink = static_cast<int32_t>(0x94000000u);
     constexpr int32_t displacementMask = 0x3ffffff;
     JumpList isAwaited;
@@ -185,6 +187,40 @@ static void emitBranchUnlessCallIsAwaited(StubAssembler& jit, GPRReg returnAddre
     isAwaited.link(&jit);
 #endif
 }
+
+#if CPU(X86_64)
+void emitBranchUnlessResultIsAwaited(StubAssembler& jit, Address returnAddressOnStack, const AwaitedResultRegisters& registers, JumpList& otherwise)
+{
+    const auto [returnAddress, awaitStub, scratch] = registers;
+    jit.loadPtr(returnAddressOnStack, returnAddress);
+    jit.loadStubAddress(awaitBySavingFrame(), awaitStub);
+    emitBranchUnlessCallIsAwaited(jit, returnAddress, awaitStub, scratch, otherwise, sizeOfHeadOfStub(entryInFrontOfStub));
+}
+
+void emitReturnFulfillmentIfTakenInsteadOfPromise(StubAssembler& jit, GPRReg value, GPRReg result, const AwaitedResultRegisters& registers)
+{
+    JumpList isNotAwaited;
+    JumpList needsPromise;
+    Jump isNoCell = jit.branchIfNotCell(value);
+    needsPromise.append(jit.branchIfType(value, JSPromiseType));
+    isNoCell.link(&jit);
+    emitBranchUnlessResultIsAwaited(jit, Address(sp), registers, isNotAwaited);
+    if (value != result)
+        jit.move(value, result);
+    jit.returnToCaller();
+
+    isNotAwaited.link(&jit);
+    jit.loadStubAddress(handlerOfJobReturn(), registers.scratch);
+    needsPromise.append(jit.branchPtr(CCallHelpers::NotEqual, registers.returnAddress, registers.scratch));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), registers.returnAddress);
+    needsPromise.append(branchIfWatchpointSetIsNotWatched(jit, Address(registers.returnAddress, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet)), registers.scratch));
+    jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.handlerReturnsFulfillment)));
+    if (value != result)
+        jit.move(value, result);
+    jit.returnToCaller();
+    needsPromise.link(&jit);
+}
+#endif
 
 struct AwaitingCallerRegisters { GPRReg frame, returnAddress, awaitStub, scratch; };
 
@@ -204,7 +240,7 @@ static void emitBranchUnlessCallersAwait(StubAssembler& jit, const AwaitingCalle
     jit.loadPtr(Address(frame, sizeof(void*)), returnAddress);
     emitBranchUnlessCallIsAwaited(jit, returnAddress, awaitStub, scratch, otherwise);
     jit.loadPtr(Address(frame), frame);
-    jit.branchPtr(CCallHelpers::NotEqual, addressOfFrameThatMayContinue, frame).linkTo(nextFrame, &jit);
+    jit.branchPtr(CCallHelpers::NotEqual, resumableFrameAddress, frame).linkTo(nextFrame, &jit);
 }
 
 static void emitLoadSettledValue(StubAssembler& jit, const AwaitRegisters& registers, GPRReg result, JumpList& isOtherObject, JumpList& mustSuspend)
@@ -227,6 +263,58 @@ static void emitLoadSettledValue(StubAssembler& jit, const AwaitRegisters& regis
     notObject.link(&jit);
 }
 
+static void emitLoadSettledResolution(StubAssembler& jit, const AwaitRegisters& registers, GPRReg result, JumpList& isOtherObject, JumpList& mustSuspend)
+{
+    const auto [savedFrame, awaited, word, other] = registers;
+    RELEASE_ASSERT(noOverlap(result, awaited, word, other));
+    Jump notCell = jit.branchIfNotCell(awaited);
+    Jump isObject = jit.branchIfObject(awaited);
+    mustSuspend.append(jit.branchIfType(awaited, SentinelType));
+    Jump notObject = jit.jump();
+    isObject.link(&jit);
+    emitBranchUnlessHolds(jit, awaitedHasPromiseStructure, registers, isOtherObject);
+    emitBranchUnlessHolds(jit, awaitedIsFulfilled, registers, mustSuspend);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), word);
+    mustSuspend.append(branchIfWatchpointSetIsNotWatched(jit, Address(word, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet)), other));
+    mustSuspend.append(branchIfWatchpointSetIsNotWatched(jit, Address(word, OBJECT_OFFSETOF(JSGlobalObject, m_promiseSpeciesWatchpointSet)), other));
+    jit.load64(Address(awaited, JSPromise::offsetOfSlot()), result);
+    emitBranchIfMayBeThenable(jit, result, word, other, mustSuspend);
+    jit.load64(Address(awaited, JSPromise::offsetOfPacked()), word);
+    jit.move(TrustedImm64(static_cast<int64_t>(promiseIsHandledBits)), other);
+    jit.or64(other, word);
+    jit.store64(word, Address(awaited, JSPromise::offsetOfPacked()));
+    notCell.link(&jit);
+    notObject.link(&jit);
+}
+
+static void emitBranchUnlessQueueMaySettle(StubAssembler& jit, GPRReg awaited, JumpList& mustSuspend)
+{
+    mustSuspend.append(jit.branchPtr(CCallHelpers::NotEqual, awaited, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.lastPromiseResolvedWithSettled))));
+}
+
+static void emitSettleAwaitedPromise(StubAssembler& jit, GPRReg awaited, GPRReg siteWord, JumpList& mustSuspend)
+{
+    jit.preserving({ awaited, siteWord }, [&] {
+        jit.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
+        if (awaited != leafArgumentGPR(1))
+            jit.move(awaited, leafArgumentGPR(1));
+        jit.move(instanceGPR, leafArgumentGPR(0));
+        jit.callLeaf(Entry::operationAOTSettleAwaitedPromise, 2 * sizeof(CPURegister));
+        jit.move(GPRInfo::returnValueGPR, leafFunctionGPR);
+    });
+    mustSuspend.append(jit.branchTest32(CCallHelpers::Zero, leafFunctionGPR));
+}
+
+void emitSiteContinuationNote(StubAssembler& jit)
+{
+#if CPU(X86_64)
+    constexpr uint8_t clearCarry = 0xf8;
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(clearCarry));
+#else
+    UNUSED_PARAM(jit);
+#endif
+}
+
 static Label emitFunctionReturn(StubAssembler& jit)
 {
     Label returnToCallerOfFunction = jit.label();
@@ -237,11 +325,18 @@ static Label emitFunctionReturn(StubAssembler& jit)
 
 static void emitReturnToCallerOfFunction(StubAssembler& jit, GPRReg scratch, Label returnToCallerOfFunction)
 {
-    jit.loadLabelAddress(returnToCallerOfFunction, scratch);
 #if CPU(X86_64)
+    constexpr uint8_t setCarry = 0xf9;
+    jit.loadPtr(Address(sp), scratch);
+    Jump siteDoesNotLeaveFunction = jit.branch32(CCallHelpers::NotEqual, Address(scratch), TrustedImm32(std::bit_cast<int32_t>(leaveFunctionIfCarryIsSet)));
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(setCarry));
+    jit.ret();
+    siteDoesNotLeaveFunction.link(&jit);
+    jit.loadLabelAddress(returnToCallerOfFunction, scratch);
     jit.storePtr(scratch, Address(sp));
     jit.ret();
 #else
+    jit.loadLabelAddress(returnToCallerOfFunction, scratch);
     jit.m_assembler.ret(scratch);
 #endif
 }
@@ -249,6 +344,33 @@ static void emitReturnToCallerOfFunction(StubAssembler& jit, GPRReg scratch, Lab
 static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratch, Label returnToCallerOfFunction)
 {
     emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
+    emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
+}
+
+static constexpr int32_t jobsWorthUnexpectedReturns = 16;
+
+static void emitLeaveFunctionOfJob(StubAssembler& jit, GPRReg siteWord, GPRReg scratch, GPRReg jobs, Label returnToCallerOfFunction)
+{
+    emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
+    const Address loopOfJobs(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter));
+    jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), scratch);
+    jit.load64(Address(scratch, MicrotaskQueue::offsetOfEnd()), jobs);
+#if CPU(X86_64)
+    jit.sub64(Address(scratch, MicrotaskQueue::offsetOfStart()), jobs);
+#else
+    jit.load64(Address(scratch, MicrotaskQueue::offsetOfStart()), scratch);
+    jit.sub64(scratch, jobs);
+#endif
+    Jump fewJobsWait = jit.branch64(CCallHelpers::BelowOrEqual, jobs, TrustedImm32(jobsWorthUnexpectedReturns));
+    jit.loadPtr(Address(fp, sizeof(void*)), scratch);
+    Jump isNotJob = jit.branchPtr(CCallHelpers::NotEqual, scratch, loopOfJobs);
+    jit.emitFunctionEpilogue();
+#if CPU(X86_64)
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+#endif
+    jit.farJump(scratch, JSEntryPtrTag);
+    fewJobsWait.link(&jit);
+    isNotJob.link(&jit);
     emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
 }
 
@@ -321,7 +443,18 @@ static constexpr StubRegister secondRegisterOfFrameCopy = StubRegister::A0;
 static constexpr StubRegister secondRegisterOfFrameCopy = StubRegister::T10;
 #endif
 
-static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& registers)
+#if CPU(X86_64)
+struct FrameCopyScratch { };
+static FrameCopyScratch allocateFrameCopyScratch(StubAssembler&) { return { }; }
+#elif CPU(ARM64)
+struct FrameCopyScratch { GPRReg destination; FPRReg firstVector, secondVector; };
+static FrameCopyScratch allocateFrameCopyScratch(StubAssembler& jit)
+{
+    return { jit.allocateScratch(StubRegister::T11), jit.allocateScratch(FPRInfo::fpRegT0), jit.allocateScratch(FPRInfo::fpRegT1) };
+}
+#endif
+
+static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& registers, const FrameCopyScratch& scratch)
 {
     const auto [subject, saved, count, cursor, word, second] = registers;
     const GPRReg source = cursor;
@@ -329,7 +462,14 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
     jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), word);
 #if CPU(X86_64)
     constexpr int32_t offsetOfBottom = sizeof(void*);
-    const FPRReg pair = jit.allocateScratch(FPRInfo::fpRegT0);
+    constexpr int32_t bytesPerWord = sizeof(uint64_t);
+    UNUSED_PARAM(scratch);
+    auto copyPair = [&](int32_t wordsBelowCount) {
+        jit.load64(BaseIndex(source, count, CCallHelpers::TimesEight, -(wordsBelowCount + 2) * bytesPerWord), word);
+        jit.load64(BaseIndex(source, count, CCallHelpers::TimesEight, -(wordsBelowCount + 1) * bytesPerWord), second);
+        jit.store64(word, BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - (wordsBelowCount + 2) * bytesPerWord));
+        jit.store64(second, BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - (wordsBelowCount + 1) * bytesPerWord));
+    };
     RELEASE_ASSERT(subject == X86Registers::esi && second == X86Registers::edi && count == X86Registers::ecx);
     RELEASE_ASSERT(noOverlap(subject, saved, count, source, word, second));
     jit.getEffectiveAddress(BaseIndex(sp, word, CCallHelpers::TimesEight, offsetOfBottom), source);
@@ -342,16 +482,19 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
     jit.move(word, subject);
     Jump isMoved = jit.jump();
     isSmall.link(&jit);
+    Jump isMultipleOfFour = jit.branchTest32(CCallHelpers::Zero, count, TrustedImm32(2));
+    copyPair(0);
+    Jump isPair = jit.branchSub32(CCallHelpers::Zero, TrustedImm32(2), count);
+    isMultipleOfFour.link(&jit);
     Label next = jit.label();
-    jit.loadVector(BaseIndex(source, count, CCallHelpers::TimesEight, -16), pair);
-    jit.storeVector(pair, BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 16));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), count).linkTo(next, &jit);
+    copyPair(0);
+    copyPair(2);
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(4), count).linkTo(next, &jit);
+    isPair.link(&jit);
     isEmpty.link(&jit);
     isMoved.link(&jit);
 #elif CPU(ARM64)
-    const GPRReg destination = jit.allocateScratch(StubRegister::T11);
-    const FPRReg firstVector = jit.allocateScratch(FPRInfo::fpRegT0);
-    const FPRReg secondVector = jit.allocateScratch(FPRInfo::fpRegT1);
+    const auto [destination, firstVector, secondVector] = scratch;
     RELEASE_ASSERT(noOverlap(subject, saved, count, source, destination, word, second));
     jit.move(sp, source);
     jit.addLeftShift64(source, word, TrustedImm32(3), source);
@@ -371,8 +514,32 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
 #endif
 }
 
+static void emitSaveRegisterAndResumeAddress(StubAssembler& jit, GPRReg saved, GPRReg scratch)
+{
+#if CPU(X86_64)
+    jit.store64(SavedFrame::preservedRegister, Address(saved, SavedFrame::offsetOfPreservedRegister()));
+#endif
+    jit.loadCallerReturnAddress(0, scratch);
+    jit.storePtr(scratch, Address(saved, SavedFrame::offsetOfResumeAddress()));
+}
+
+static void emitSaveLiveSlotMapOffset(StubAssembler& jit, GPRReg siteWord, GPRReg saved, GPRReg scratch)
+{
+    jit.and32(TrustedImm32((1 << SavedFrame::liveSlotMapOffsetBits) - 1), siteWord, scratch);
+    jit.add32(TrustedImm32(1), scratch);
+    jit.store32(scratch, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+}
+
+static void emitSaveNewFrame(StubAssembler& jit, const FrameCopyRegisters& registers, const FrameCopyScratch& scratch, GPRReg siteWord)
+{
+    emitCopyFrameWords(jit, registers, scratch);
+    emitSaveRegisterAndResumeAddress(jit, registers.saved, registers.word);
+    emitSaveLiveSlotMapOffset(jit, siteWord, registers.saved, registers.word);
+    fenceAfterAllocation(jit);
+}
+
 enum class FrameMayLieOnHeap : bool { No, Yes };
-static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, FrameMayLieOnHeap mayLieOnHeap, uint8_t flags, uint8_t flagsKept = 0)
+static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, const FrameCopyScratch& scratch, GPRReg siteWord, FrameMayLieOnHeap mayLieOnHeap, uint8_t flags, uint8_t flagsKept = 0)
 {
     const GPRReg saved = registers.saved;
     const GPRReg word = registers.word;
@@ -382,12 +549,8 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
     Jump liesOnHeap;
     if (mayLieOnHeap == FrameMayLieOnHeap::Yes)
         liesOnHeap = jit.branchTest8(CCallHelpers::NonZero, Address(saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), TrustedImm32(SavedFrame::liesOnHeapBit));
-    emitCopyFrameWords(jit, registers);
-#if CPU(X86_64)
-    jit.store64(SavedFrame::preservedRegister, Address(saved, SavedFrame::offsetOfPreservedRegister()));
-#endif
-    jit.loadCallerReturnAddress(0, word);
-    jit.storePtr(word, Address(saved, SavedFrame::offsetOfResumeAddress()));
+    emitCopyFrameWords(jit, registers, scratch);
+    emitSaveRegisterAndResumeAddress(jit, saved, word);
     if (mayLieOnHeap == FrameMayLieOnHeap::Yes)
         liesOnHeap.link(&jit);
     if (flagsKept) {
@@ -398,9 +561,7 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
         jit.store8(word, Address(saved, SavedFrame::offsetOfFlags()));
     } else
         jit.store8(TrustedImm32(flags), Address(saved, SavedFrame::offsetOfFlags()));
-    jit.and32(TrustedImm32((1 << SavedFrame::liveSlotMapOffsetBits) - 1), siteWord, word);
-    jit.add32(TrustedImm32(1), word);
-    jit.store32(word, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+    emitSaveLiveSlotMapOffset(jit, siteWord, saved, word);
     jit.storeFence();
     jit.add32(TrustedImm32(1), version);
 }
@@ -525,7 +686,7 @@ static void emitBarrierPreservingOperands(StubAssembler& jit, GPRReg owner, GPRR
         jit.emitFunctionPrologue();
         jit.preserving({ firstStubOperand, siteWord }, [&] {
             jit.move(owner, firstStubOperand);
-            jit.callStub(writeBarrier());
+            jit.callStub(writeBarrier().withCallerFrame(CallerFrame::KeepsNoFPRs));
         });
         jit.emitFunctionEpilogue();
         jit.jump().linkTo(afterBarrier, &jit);
@@ -582,11 +743,69 @@ static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& 
     isRegistered.link(&jit);
 }
 
+#if CPU(X86_64)
+static void emitAwaitSettledValueInJob(StubAssembler& jit, const AwaitRegisters& registers, GPRReg siteWord, GPRReg result, GPRReg count, GPRReg second, uint8_t flagsKept, Label returnToCallerOfFunction, JumpList& otherwise)
+{
+    const auto [savedFrame, awaited, word, other] = registers;
+    const JobRegisters job { count, word, other, result };
+    const GPRReg value = second;
+    const GPRReg jobsThatWait = result;
+    RELEASE_ASSERT(noOverlap(savedFrame, awaited, word, other, siteWord, result, count, second, instanceGPR));
+
+    otherwise.append(branchIfBarrierIsNeeded(jit, savedFrame, word));
+    jit.move(awaited, value);
+    Jump isNotCell = jit.branchIfNotCell(awaited);
+    jit.load32(Address(awaited, JSCell::structureIDOffset()), word);
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, word, Address(instanceGPR, offsetOfPromiseHeader)));
+    constexpr unsigned bitsPerByte = 8;
+    static_assert(!(promiseFlagsShift % bitsPerByte) && awaitedIsFulfilled.bits == static_cast<uint64_t>(JSPromise::Status::Fulfilled) << promiseFlagsShift);
+    otherwise.append(jit.branchTest8(CCallHelpers::Zero, Address(awaited, JSPromise::offsetOfPacked() + promiseFlagsShift / bitsPerByte), TrustedImm32(static_cast<int32_t>(JSPromise::Status::Fulfilled))));
+    jit.load64(Address(awaited, JSPromise::offsetOfSlot()), value);
+    isNotCell.link(&jit);
+
+    emitReserveJob(jit, job, otherwise);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumeJobWords)), result);
+    jit.store64(result, Address(job.slot, QueuedTask::offsetOfDispatcher()));
+    jit.move(TrustedImm64(JSValue::ValueUndefined), result);
+    jit.store64(result, argumentOfJob(job.slot, 0));
+    jit.store64(value, argumentOfJob(job.slot, 1));
+    jit.store64(savedFrame, argumentOfJob(job.slot, 2));
+    jit.store64(result, argumentOfJob(job.slot, 3));
+    Jump tracksNoContext = emitBranchIfTracksNoAsyncContext(jit, result);
+    emitLoadCurrentAsyncContext(jit, result);
+    jit.store64(result, argumentOfJob(job.slot, 3));
+    tracksNoContext.link(&jit);
+    jit.store64(job.next, Address(job.queue, MicrotaskQueue::offsetOfEnd()));
+    jit.move(job.next, jobsThatWait);
+    jit.sub64(Address(job.queue, MicrotaskQueue::offsetOfStart()), jobsThatWait);
+
+    emitCopyFrameWords(jit, { awaited, savedFrame, count, word, other, second }, { });
+    emitSaveRegisterAndResumeAddress(jit, savedFrame, word);
+    if (flagsKept) {
+        jit.load8(Address(savedFrame, SavedFrame::offsetOfFlags()), word);
+        jit.and32(TrustedImm32(flagsKept), word);
+        jit.store8(word, Address(savedFrame, SavedFrame::offsetOfFlags()));
+    } else
+        jit.store8(TrustedImm32(0), Address(savedFrame, SavedFrame::offsetOfFlags()));
+    emitSaveLiveSlotMapOffset(jit, siteWord, savedFrame, word);
+    emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
+    Jump fewJobsWait = jit.branch64(CCallHelpers::BelowOrEqual, jobsThatWait, TrustedImm32(jobsWorthUnexpectedReturns));
+    jit.emitFunctionEpilogue();
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+    jit.jumpToStub(resumeNextJob());
+
+    fewJobsWait.link(&jit);
+    jit.loadPtr(Address(savedFrame, SavedFrame::offsetOfPromiseOrWaiter()), result);
+    emitReturnToCallerOfFunction(jit, other, returnToCallerOfFunction);
+}
+#endif
+
 StubSignature signatureOfAwaitBySavingFrame(StubKey key)
 {
     switch (static_cast<AwaitedOperand>(key.form())) {
     case AwaitedOperand::Value:
     case AwaitedOperand::ValueInModuleBody:
+    case AwaitedOperand::Resolution:
         return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) }).fillingOperandInFront(0);
     case AwaitedOperand::ResultOfCallWithoutPromise:
         return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) });
@@ -610,6 +829,8 @@ static AwaitOperations operationsOf(AwaitedOperand form)
         return { Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitCallWithSavedFrame };
     case AwaitedOperand::ValueInModuleBody:
         return { Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody };
+    case AwaitedOperand::Resolution:
+        return { Entry::operationAOTSaveFrameAndAwaitResolution, Entry::operationAOTAwaitResolutionWithSavedFrame };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -619,6 +840,7 @@ static void emitReturnAwaitedValue(StubAssembler& jit, GPRReg siteWord)
     static_assert(!static_cast<int32_t>(AsyncGeneratorStepStatus::Result));
     RELEASE_ASSERT(siteWord == gprOf(resumeModeRegister));
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Result)), siteWord);
+    emitSiteContinuationNote(jit);
     jit.returnToCaller();
 }
 
@@ -626,7 +848,8 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
 {
     const auto form = static_cast<AwaitedOperand>(jit.key().form());
     const bool awaitsCallWithoutPromise = form == AwaitedOperand::ResultOfCallWithoutPromise;
-    const bool queuesJobInOperation = form == AwaitedOperand::ValueInModuleBody;
+    const bool awaitsResolution = form == AwaitedOperand::Resolution;
+    const bool queuesJobInOperation = form == AwaitedOperand::ValueInModuleBody || awaitsResolution;
     const AwaitOperations operations = operationsOf(form);
     const GPRReg result = jit.result();
     const GPRReg awaited = awaitsCallWithoutPromise ? jit.allocateScratch(StubRegister::A1) : jit.operand(0);
@@ -642,14 +865,17 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     JumpList mustSuspend;
     JumpList isOtherFrame;
     JumpList isOtherObject;
+    JumpList queueHasJobs;
+    JumpList queueHasJobsUnderCallers;
     Label mayContinue;
+    Label mayContinueUnderCallers;
     const AwaitCondition& queueIsEmpty = awaitConditionsOnState[1];
     if (awaitsCallWithoutPromise)
         jit.move(result, awaited);
     if (form != AwaitedOperand::ValueInModuleBody) {
         emitBranchUnlessHolds(jit, awaitConditionsOnState[0], registers, isOtherFrame);
         mayContinue = jit.label();
-        emitBranchUnlessHolds(jit, queueIsEmpty, registers, mustSuspend);
+        emitBranchUnlessHolds(jit, queueIsEmpty, registers, queueHasJobs);
     }
     switch (form) {
     case AwaitedOperand::Value:
@@ -659,10 +885,16 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         break;
     case AwaitedOperand::ResultOfCallWithoutPromise:
         emitLoadSettledValue(jit, registers, result, isOtherObject, mustSuspend);
+        emitSiteContinuationNote(jit);
         jit.returnToCaller();
         break;
     case AwaitedOperand::ValueInModuleBody:
         mustSuspend.append(jit.jump());
+        break;
+    case AwaitedOperand::Resolution:
+        jit.move(awaited, result);
+        emitLoadSettledResolution(jit, registers, result, isOtherObject, mustSuspend);
+        emitReturnAwaitedValue(jit, siteWord);
         break;
     }
 
@@ -671,9 +903,12 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     isOtherObject.link(&jit);
     if (awaitsCallWithoutPromise) {
         mustSuspend.append(jit.branch32(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
+        emitSiteContinuationNote(jit);
         jit.returnToCaller();
     }
-    if (form == AwaitedOperand::Value) {
+    if (form == AwaitedOperand::Value)
+        mustSuspend.append(jit.branch32(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
+    if (form == AwaitedOperand::Value || awaitsResolution) {
         emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
         emitReturnAwaitedValue(jit, siteWord);
     }
@@ -681,44 +916,63 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     if (form != AwaitedOperand::ValueInModuleBody) {
         static_assert(mustSuspendAtNextAwaitBit == 1);
         isOtherFrame.link(&jit);
-        jit.loadPtr(addressOfFrameThatMayContinue, word);
+        jit.loadPtr(resumableFrameAddress, word);
         mustSuspend.append(jit.branchTestPtr(CCallHelpers::Zero, word));
         if (awaitsCallWithoutPromise) {
             const GPRReg frameOfCallee = savedFrame;
             jit.subPtr(sp, TrustedImm32(static_cast<int32_t>(prologueStackPointerDelta())), other);
             jit.move(word, frameOfCallee);
             jit.andPtr(TrustedImm32(~mustSuspendAtNextAwaitBit), frameOfCallee);
-            Jump calleeHasNotContinued = jit.branchPtr(CCallHelpers::NotEqual, frameOfCallee, other);
+            Jump calleeDidNotResume = jit.branchPtr(CCallHelpers::NotEqual, frameOfCallee, other);
             Jump tracksNone = emitBranchIfTracksNoAsyncContext(jit, other);
             emitStoreCurrentAsyncContext(jit, TrustedImm64(JSValue::ValueUndefined), other);
             tracksNone.link(&jit);
             jit.andPtr(TrustedImm32(mustSuspendAtNextAwaitBit), word);
             jit.orPtr(fp, word);
-            jit.storePtr(word, addressOfFrameThatMayContinue);
+            jit.storePtr(word, resumableFrameAddress);
             jit.branchPtr(CCallHelpers::Equal, word, fp).linkTo(mayContinue, &jit);
             mustSuspend.append(jit.jump());
-            calleeHasNotContinued.link(&jit);
+            calleeDidNotResume.link(&jit);
         }
 
-        JumpList isOtherObjectInOtherFrame;
-        emitBranchUnlessHolds(jit, queueIsEmpty, registers, mustSuspend);
+        JumpList isForeignFrameObject;
+        mayContinueUnderCallers = jit.label();
+        emitBranchUnlessHolds(jit, queueIsEmpty, registers, queueHasJobsUnderCallers);
         if (!awaitsCallWithoutPromise)
             jit.move(awaited, result);
-        emitLoadSettledValue(jit, registers, result, isOtherObjectInOtherFrame, mustSuspend);
+        if (awaitsResolution)
+            emitLoadSettledResolution(jit, registers, result, isForeignFrameObject, mustSuspend);
+        else
+            emitLoadSettledValue(jit, registers, result, isForeignFrameObject, mustSuspend);
         Label isSettled = jit.label();
         emitBranchUnlessCallersAwait(jit, { savedFrame, count, other, word }, mustSuspend);
-        jit.storePtr(fp, addressOfFrameThatMayContinue);
-        if (awaitsCallWithoutPromise)
+        jit.storePtr(fp, resumableFrameAddress);
+        if (awaitsCallWithoutPromise) {
+            emitSiteContinuationNote(jit);
             jit.returnToCaller();
-        else
+        } else
             emitReturnAwaitedValue(jit, siteWord);
 
-        isOtherObjectInOtherFrame.link(&jit);
-        if (awaitsCallWithoutPromise)
+        isForeignFrameObject.link(&jit);
+        if (!awaitsResolution)
             mustSuspend.append(jit.branch32(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
-        else
+        if (!awaitsCallWithoutPromise)
             emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
         jit.jump().linkTo(isSettled, &jit);
+    }
+
+    if (!queueHasJobs.empty()) {
+        queueHasJobs.link(&jit);
+        emitBranchUnlessQueueMaySettle(jit, awaited, mustSuspend);
+        emitSettleAwaitedPromise(jit, awaited, siteWord, mustSuspend);
+        jit.jump().linkTo(mayContinue, &jit);
+    }
+    if (!queueHasJobsUnderCallers.empty()) {
+        queueHasJobsUnderCallers.link(&jit);
+        emitBranchUnlessQueueMaySettle(jit, awaited, mustSuspend);
+        emitBranchUnlessCallersAwait(jit, { savedFrame, count, other, word }, mustSuspend);
+        emitSettleAwaitedPromise(jit, awaited, siteWord, mustSuspend);
+        jit.jump().linkTo(mayContinueUnderCallers, &jit);
     }
 
     mustSuspend.link(&jit);
@@ -726,12 +980,20 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     Jump isFirstSave = jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
     jit.loadPtr(Address(fp), word);
     jit.loadPtr(Address(word, static_cast<int>(CallFrameSlot::callee) * static_cast<int>(sizeof(Register))), savedFrame);
-    Label hasSavedFrame = jit.label();
+#if CPU(X86_64)
+    if (!queuesJobInOperation) {
+        JumpList otherwise;
+        emitAwaitSettledValueInJob(jit, { savedFrame, awaited, word, other }, siteWord, result, count, second, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0, returnToCallerOfFunction, otherwise);
+        otherwise.link(&jit);
+    }
+#endif
     if (form == AwaitedOperand::Value) {
         checkStubOperands(awaitWithSavedFrame(), { awaited, savedFrame, siteWord });
         jit.bindEntry(awaitWithSavedFrame());
     }
-    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, FrameMayLieOnHeap::No, 0, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0);
+    const FrameCopyScratch copyScratch = allocateFrameCopyScratch(jit);
+    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, copyScratch, siteWord, FrameMayLieOnHeap::No, 0, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0);
+    Label isSaved = jit.label();
 
     JumpList needsOperation;
     if (!queuesJobInOperation) {
@@ -758,7 +1020,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         Label isRegistered = jit.label();
         emitBarrierPreservingOperands(jit, savedFrame, result, siteWord, word);
         jit.loadPtr(Address(savedFrame, SavedFrame::offsetOfPromiseOrWaiter()), result);
-        emitLeaveFunction(jit, siteWord, other, returnToCallerOfFunction);
+        emitLeaveFunctionOfJob(jit, siteWord, other, word, returnToCallerOfFunction);
 
         isResumedByJob.link(&jit);
         Label queuesJob = jit.label();
@@ -778,8 +1040,15 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
 
         if (!isOtherObjectInSavedFrame.empty()) {
             isOtherObjectInSavedFrame.link(&jit);
+            Jump isFrameOfCallee = jit.branch32(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)));
             emitBranchIfMayBeThenable(jit, awaited, word, other, needsOperation);
             jit.jump().linkTo(queuesJob, &jit);
+
+            isFrameOfCallee.link(&jit);
+            jit.move(awaited, second);
+            emitResumeWhenCallSettles(jit, { savedFrame, second, word, other }, needsOperation, needsOperation, needsOperation);
+            emitBarrierPreservingOperands(jit, second, result, siteWord, word);
+            jit.jump().linkTo(isRegistered, &jit);
         }
     }
 
@@ -789,7 +1058,8 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     isFirstSave.link(&jit);
     JumpList createsInOperation;
     const AssemblyHelpers::FreeListRefill refill = emitAllocateSavedFrame(jit, CoroutineKind::AsyncFunction, siteWord, { savedFrame, count, word, other }, createsInOperation);
-    jit.jump().linkTo(hasSavedFrame, &jit);
+    emitSaveNewFrame(jit, { awaited, savedFrame, count, word, other, second }, copyScratch, siteWord);
+    jit.jump().linkTo(isSaved, &jit);
 
     emitLateRefill(jit, refill, createsInOperation);
     createsInOperation.link(&jit);
@@ -944,7 +1214,7 @@ void generateSuspendGenerator(StubAssembler& jit)
     emitStoreSuspendedState(jit, form, generator);
     Label hasSavedFrame = jit.label();
     const uint8_t keptAtAwait = form == GeneratorSuspension::AsyncAwait ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0;
-    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::Yield ? FrameMayLieOnHeap::No : FrameMayLieOnHeap::Yes, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag | keptAtAwait);
+    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, allocateFrameCopyScratch(jit), siteWord, form == GeneratorSuspension::Yield ? FrameMayLieOnHeap::No : FrameMayLieOnHeap::Yes, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag | keptAtAwait);
     emitBarrierPreservingOperands(jit, saved, value, siteWord, word);
     if (form == GeneratorSuspension::AsyncAwait) {
         JumpList isLeftToEngine;

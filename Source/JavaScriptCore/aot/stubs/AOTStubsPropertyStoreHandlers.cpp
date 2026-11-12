@@ -440,48 +440,83 @@ void generateStoreSlot(StubAssembler& jit)
         const GPRReg newStructureID = T10;
         const GPRReg oldCapacity = T11;
         const GPRReg newCapacity = T14;
+        const GPRReg storage = clobberNameRegister();
+        const GPRReg spare = allocateSpareRegister();
         const Address butterfly(receiver, JSObject::butterflyOffset());
         JumpList cannot;
 
         Jump hasIndexingHeader;
         if (traits.form == SlotForm::Slot)
             hasIndexingHeader = slot.branchIfFlag(jit, Slot::storageHasIndexingHeader);
-        slot.loadSecondPayloadWord(jit, newCapacity);
-        Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
-        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, butterfly));
-        jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
-        Jump hasCapacities = jit.jump();
-
-        isFirstStorage.link(&jit);
-        cannot.append(jit.branchTestPtr(CCallHelpers::NonZero, butterfly));
+        Jump hasStorage = jit.branchTestPtr(CCallHelpers::NonZero, butterfly);
         CCallHelpers::Label hasNoStorage = jit.label();
         branchUnlessOrdinaryFunction(newStructureID);
-        jit.move(TrustedImm32(0), oldCapacity);
+        slot.loadFirstPayloadWord(jit, newStructureID);
+        AssemblyHelpers::FreeListRefill refill = createOutOfLineStorage(jit, {
+            .object = receiver,
+            .newStructureID = newStructureID,
+            .oldCapacity = oldCapacity,
+            .newCapacity = newCapacity,
+            .storage = storage,
+            .scratch = spare,
+            .addedValue = value,
+        }, cannot);
+        jit.jumpToStub(writeBarrier());
+        emitLateRefill(jit, refill, cannot);
 
-        hasCapacities.link(&jit);
+        hasStorage.link(&jit);
+        slot.loadSecondPayloadWord(jit, newCapacity);
+        cannot.append(jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
+        jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
         slot.loadFirstPayloadWord(jit, newStructureID);
         growOutOfLineStorage(jit, {
             .object = receiver,
             .newStructureID = newStructureID,
             .oldCapacity = oldCapacity,
             .newCapacity = newCapacity,
-            .storage = clobberNameRegister(),
-            .scratch = allocateSpareRegister(),
+            .storage = storage,
+            .scratch = spare,
             .addedValue = value,
         }, cannot);
         jit.jumpToStub(writeBarrier());
 
         if (hasIndexingHeader.isSet()) {
             static_assert(propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
-            const GPRReg distanceToButterfly = oldCapacity;
+            const GPRReg oldButterfly = oldCapacity;
+            const GPRReg scratch = newStructureID;
             hasIndexingHeader.link(&jit);
             slot.loadSecondPayloadWord(jit, newCapacity);
-            cannot.append(jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
-            jit.loadPtr(butterfly, distanceToButterfly);
-            jit.branchTestPtr(CCallHelpers::Zero, distanceToButterfly).linkTo(hasNoStorage, &jit);
-            jit.subPtr(receiver, distanceToButterfly);
-            cannot.append(jit.branch64(CCallHelpers::NotEqual, distanceToButterfly, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
+            Jump keepsPristineFlag = slot.branchUnlessFlag(jit, Slot::clearsPristineFlag);
+            const Address flagsOfCell(receiver, JSCell::typeInfoFlagsOffset());
+            jit.load8(flagsOfCell, scratch);
+            jit.and32(TrustedImm32(static_cast<int32_t>(~IsPristine & 0xff)), scratch);
+            jit.store8(scratch, flagsOfCell);
+            Jump keepsStorage = jit.branchTest32(CCallHelpers::Zero, newCapacity);
+
+            keepsPristineFlag.link(&jit);
+            jit.loadPtr(butterfly, oldButterfly);
+            jit.branchTestPtr(CCallHelpers::Zero, oldButterfly).linkTo(hasNoStorage, &jit);
+            Jump hasStorageAlready = jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity));
+            jit.move(oldButterfly, scratch);
+            jit.subPtr(receiver, scratch);
+            Jump hasNoRoom = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray))));
+            keepsStorage.link(&jit);
             emitAdditionInStorage();
+
+            hasNoRoom.link(&jit);
+            hasStorageAlready.link(&jit);
+            cannot.append(slot.branchUnlessFlag(jit, Slot::copiesElements));
+            growStorageWithElements(jit, {
+                .object = receiver,
+                .newStructureID = operands.payload,
+                .butterfly = oldButterfly,
+                .newCapacity = newCapacity,
+                .storage = storage,
+                .allocator = spare,
+                .scratch = scratch,
+                .addedValue = value,
+            }, cannot);
+            jit.jumpToStub(writeBarrier());
         }
 
         linkToSlotCannot(jit, cannot, table, SlotFinisher::GrowStorage, slot);

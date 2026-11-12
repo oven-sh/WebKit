@@ -459,14 +459,17 @@ void generateStartModule(StubAssembler& jit)
     Jump callsStart = branchIfStepIs(Operation::CallStart);
     Jump callsBody = branchIfStepIs(Operation::CallBody);
     begins.append(branchIfStepIs(Operation::BeginOrReturn));
-    Jump finishes = branchIfStepIs(Operation::Finish);
+    Jump finishesAndReturns = branchIfStepIs(Operation::FinishAndReturn);
+    Jump callsStartUnlessStopped = branchIfStepIs(Operation::CallStartUnlessStopped);
     returns.append(branchIfStepIs(Operation::Return));
     Jump abandonsOnThrow = branchIfStepIs(Operation::AbandonOnThrow);
     begins.append(branchIfStepIs(Operation::Begin));
     Jump mayStopLoading = branchIfStepIs(Operation::ReturnIfLoadingStops);
+    Jump finishes = branchIfStepIs(Operation::Finish);
     jit.breakpoint();
 
     callsStart.link(&jit);
+    Label startsModule = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
     jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
     jit.branch32(CCallHelpers::Above, status, inRecord).linkTo(takesNextStep, &jit);
@@ -534,28 +537,51 @@ void generateStartModule(StubAssembler& jit)
     branchIfStepIs(Operation::Begin).linkTo(takesNextStep, &jit);
     returns.append(jit.jump());
 
+    auto finish = [&] {
+        JumpList hasFinished;
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
+        Jump storesOverAnyStatus = jit.branchTest32(CCallHelpers::Zero, step, flagOfStep);
+        jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
+        hasFinished.append(jit.branch32(CCallHelpers::Equal, status, inRecord));
+        storesOverAnyStatus.link(&jit);
+        jit.move(TrustedImm32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), status);
+        jit.store8(status, BaseIndex(table, operand, CCallHelpers::TimesOne));
+        hasFinished.append(jit.jump());
+        return hasFinished;
+    };
     finishes.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
-    Jump storesOverAnyStatus = jit.branchTest32(CCallHelpers::Zero, step, flagOfStep);
-    jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
-    jit.branch32(CCallHelpers::Equal, status, inRecord).linkTo(takesNextStep, &jit);
-    storesOverAnyStatus.link(&jit);
-    jit.move(TrustedImm32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), status);
-    jit.store8(status, BaseIndex(table, operand, CCallHelpers::TimesOne));
-    jit.jump().linkTo(takesNextStep, &jit);
+    finish().linkTo(takesNextStep, &jit);
+    finishesAndReturns.link(&jit);
+    returns.append(finish());
 
     abandonsOnThrow.link(&jit);
     jit.add32(TrustedImm32(1), operand);
     jit.store64(operand, moduleToAbandon);
     jit.jump().linkTo(takesNextStep, &jit);
 
+    auto branchUnlessLoadingStops = [&](Label continuation) {
+        jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone))).linkTo(continuation, &jit);
+        jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), table);
+        jit.load64(Address(table, MicrotaskQueue::offsetOfStart()), status);
+        jit.branch64(CCallHelpers::Equal, status, Address(table, MicrotaskQueue::offsetOfEnd())).linkTo(continuation, &jit);
+    };
+    auto loadOperandOfStep = [&](int32_t stepsBack) {
+        jit.load32(Address(nextStep, -stepsBack * static_cast<int32_t>(sizeof(ModuleStartStepData))), operand);
+        jit.and32(TrustedImm32(static_cast<int32_t>(ModuleStartStepData::operationMask)), operand, operation);
+        jit.urshift32(TrustedImm32(ModuleStartStepData::operandShift), operand);
+    };
     mayStopLoading.link(&jit);
-    jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone))).linkTo(takesNextStep, &jit);
-    jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), table);
-    jit.load64(Address(table, MicrotaskQueue::offsetOfStart()), status);
-    jit.branch64(CCallHelpers::Equal, status, Address(table, MicrotaskQueue::offsetOfEnd())).linkTo(takesNextStep, &jit);
+    branchUnlessLoadingStops(takesNextStep);
+    Jump asksAboutOperand = jit.jump();
+    callsStartUnlessStopped.link(&jit);
+    branchUnlessLoadingStops(startsModule);
+    loadOperandOfStep(2);
+    asksAboutOperand.link(&jit);
     callStatusOperation(Entry::operationAOTStopLoadingBehindFile, hasThrown);
-    jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR).linkTo(takesNextStep, &jit);
+    returns.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR));
+    loadOperandOfStep(1);
+    branchIfStepIs(Operation::CallStartUnlessStopped).linkTo(startsModule, &jit);
+    jit.jump().linkTo(takesNextStep, &jit);
 
     returns.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
@@ -647,10 +673,10 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.and32(TrustedImm32(static_cast<int32_t>(~ConstructEntrypointData::allocatesThis)), function);
     Address place = emitLocateRememberedConstructWord(jit, word, half);
     jit.load64(BaseIndex(first, function, CCallHelpers::TimesEight), wordOfConstruct);
-    Jump isNotMadeYet = jit.branchTest64(CCallHelpers::Zero, wordOfConstruct);
+    Jump isNotCreated = jit.branchTest64(CCallHelpers::Zero, wordOfConstruct);
     jit.store64(word, place.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfCall)));
     jit.store64(wordOfConstruct, place.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfConstruct)));
-    isNotMadeYet.link(&jit);
+    isNotCreated.link(&jit);
     jit.and64(TrustedImm64(static_cast<int64_t>(~(1ULL << ClosureWord::takesNewTargetBit))), word);
     jit.jump().linkTo(continuation, &jit);
 

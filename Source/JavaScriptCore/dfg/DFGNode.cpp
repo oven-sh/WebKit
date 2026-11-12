@@ -174,6 +174,8 @@ void Node::removeWithoutChecks()
 
 void Node::replaceWith(Graph& graph, Node* other)
 {
+    // The other node takes over the uses of this node, so it must not be narrowed further than they allow.
+    other->mergeFlags(m_flags & NodeBytecodeBackPropMask);
     remove(graph);
     setReplacement(other);
 }

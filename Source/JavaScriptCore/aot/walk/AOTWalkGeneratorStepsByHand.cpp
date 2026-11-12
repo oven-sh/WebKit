@@ -30,13 +30,6 @@ namespace {
 
 enum ParameterOfMeetingInStepsByHand : uint32_t { Whole, Answer, IsAnswered, Value, Done, numberOfParametersOfMeetingInStepsByHand };
 
-struct StepAtHandInStepsByHand {
-    Reference answer;
-    Reference isAnswered;
-    Reference value;
-    Reference done;
-};
-
 } // anonymous namespace
 
 static Reference buildInStepsByHand(Walker& walker, Draft&& operation)
@@ -66,7 +59,7 @@ static Reference buildTestOfStatusInStepsByHand(Walker& walker, Reference status
     return boxNumberIfNeeded(walker, walker.build(WTF::move(test)), origin);
 }
 
-static Reference buildResultObjectInStepsByHand(Walker& walker, Reference value, Reference done, Origin origin)
+Reference buildResultOfStep(Walker& walker, Reference value, Reference done, Origin origin)
 {
     if (walker.isUnreachable())
         return { };
@@ -111,7 +104,7 @@ static bool nothingSeenHappensBetweenInStepsByHand(const BodyIndex& index, Value
     return true;
 }
 
-static bool readFindsNextOfEngine(Walker& walker, const BodyValue& call)
+static bool readsEngineNext(Walker& walker, const BodyValue& call)
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -143,45 +136,92 @@ static bool calleeIsNextOfEngineInStepsByHand(Walker& walker, const BodyValue& c
         const BuiltinTable& table = walker.program().builtins();
         return table.canonicalID(named) == table.canonicalID(Builtins::GeneratorPrototypeNext);
     }
-    return readFindsNextOfEngine(walker, call);
+    return readsEngineNext(walker, call);
 }
 
 enum class ResultOfNextInStepsByHand : uint8_t { IsWhatCallGives, IsWhatAwaitOfCallGives };
 
-static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker& walker, ResultOfNextInStepsByHand result = ResultOfNextInStepsByHand::IsWhatCallGives)
+using OnlyReadSteps = LoopsOverGeneratorsOfUnit::OnlyReadSteps;
+
+static const OnlyReadSteps& findOnlyReadSteps(Walker& walker, ResultOfNextInStepsByHand result = ResultOfNextInStepsByHand::IsWhatCallGives)
 {
     bool isAwaited = result == ResultOfNextInStepsByHand::IsWhatAwaitOfCallGives;
-    auto& found = isAwaited ? walker.loopsOverGenerators().awaitedCallsOfNextWhoseResultIsOnlyRead : walker.loopsOverGenerators().callsOfNextWhoseResultIsOnlyRead;
-    auto added = found.add(walker.currentFunction().index(), BitVector());
-    BitVector& onlyRead = added.iterator->value;
+    auto& found = isAwaited ? walker.loopsOverGenerators().onlyReadAwaitedSteps : walker.loopsOverGenerators().onlyReadSteps;
+    auto added = found.add(walker.currentFunction().index(), OnlyReadSteps());
+    OnlyReadSteps& steps = added.iterator->value;
     if (!added.isNewEntry)
-        return onlyRead;
+        return steps;
 
     const BodyIndex& index = walker.currentBodyIndex();
     const Program& program = walker.program();
     PropertyKeyID next = program.keyOf(BuiltinNames::next);
     PropertyKeyID done = program.keyOf(BuiltinNames::done);
     PropertyKeyID value = program.keyOf(BuiltinNames::value);
+    BitVector& onlyRead = steps.values;
     onlyRead.ensureSize(index.numberOfValues());
-    Vector<uint32_t> callsBehindNames;
-    callsBehindNames.fill(UINT32_MAX, index.numberOfValues());
-    auto callBehind = [&](ValueID name) {
-        return name ? callsBehindNames[name.index()] : UINT32_MAX;
+    Vector<uint32_t> sources;
+    sources.fill(UINT32_MAX, index.numberOfValues());
+    auto sourceOf = [&](ValueID name) {
+        return name ? sources[name.index()] : UINT32_MAX;
     };
-    auto refuse = [&](ValueID mentioned) {
-        if (uint32_t call = callBehind(mentioned); call != UINT32_MAX)
-            onlyRead.quickClear(call);
+    auto isCallOfNext = [&](const BodyValue& user) {
+        return user.opcode() == Opcode::Call && user.calleeKey() == next;
     };
+    for (bool hasFoundMore = true; hasFoundMore;) {
+        hasFoundMore = false;
+        for (uint32_t blockIndex = 0; blockIndex < index.numberOfBlocks(); ++blockIndex) {
+            BodyBlock block = index.block(BlockID(blockIndex));
+            for (BodyValue user : block.values()) {
+                uint32_t source = UINT32_MAX;
+                if (isCallOfNext(user))
+                    source = user.id().index();
+                else if (opcodesThatStateTypes.contains(user.opcode()))
+                    source = sourceOf(user.operand(0));
+                else if (isAwaited && user.opcode() == Opcode::Await) {
+                    ValueID awaited = index.stripCasts(user.valueOperand());
+                    source = awaited && sourceOf(awaited) == awaited.index() && !index.isParameter(awaited) ? awaited.index() : UINT32_MAX;
+                }
+                if (source == UINT32_MAX)
+                    continue;
+                sources[user.id().index()] = source;
+                if (isCallOfNext(user))
+                    onlyRead.quickSet(source);
+            }
+            index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& handed) {
+                uint32_t source = sourceOf(handed.subject);
+                if (source == UINT32_MAX || sources[handed.parameter.index()] == source || index.valueNarrowedInto(handed.parameter) != handed.subject)
+                    return;
+                sources[handed.parameter.index()] = source;
+                hasFoundMore |= index.blockOf(handed.parameter).index() <= blockIndex;
+            });
+            if (isAwaited)
+                continue;
+            block.forEachOutgoingEdge([&](BodyTarget target, bool isHandler) {
+                std::span<const ValueID> arguments = target.arguments();
+                for (uint32_t position = 0; !isHandler && position < arguments.size(); ++position) {
+                    ValueID parameter = index.block(target.block()).parameter(position);
+                    if (sourceOf(arguments[position]) == UINT32_MAX || sources[parameter.index()] == parameter.index() || index.isUnused(parameter))
+                        continue;
+                    sources[parameter.index()] = parameter.index();
+                    onlyRead.quickSet(parameter.index());
+                    hasFoundMore |= target.block().index() <= blockIndex;
+                }
+            });
+        }
+    }
 
+    auto refuse = [&](ValueID mentioned) {
+        if (uint32_t source = sourceOf(mentioned); source != UINT32_MAX)
+            onlyRead.quickClear(source);
+    };
+    Vector<std::pair<uint32_t, uint32_t>, 4> passes;
     for (uint32_t blockIndex = 0; blockIndex < index.numberOfBlocks(); ++blockIndex) {
         BodyBlock block = index.block(BlockID(blockIndex));
         refuse(block.subject());
         for (BodyValue user : block.values()) {
             Opcode opcode = user.opcode();
-            if (opcodesThatStateTypes.contains(opcode))
-                callsBehindNames[user.id().index()] = callBehind(user.operand(0));
-            else if (ValueID awaited = isAwaited && opcode == Opcode::Await ? index.stripCasts(user.valueOperand()) : ValueID(); awaited && callBehind(awaited) == awaited.index()) {
-                callsBehindNames[user.id().index()] = awaited.index();
+            if (opcodesThatStateTypes.contains(opcode)) {
+            } else if (isAwaited && opcode == Opcode::Await && sourceOf(user.id()) != UINT32_MAX) {
                 for (ValueID held : user.heldOperands())
                     refuse(held);
             } else if (opcode == Opcode::TypeTest && walker.types().isSubset(user.as<Opcode::TypeTest>().testedType(), TypeTable::nullish)) {
@@ -191,40 +231,59 @@ static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker
                     refuse(operand);
                 });
             }
-            if (opcode == Opcode::Call && user.calleeKey() == next) {
-                callsBehindNames[user.id().index()] = user.id().index();
-                onlyRead.quickSet(user.id().index());
-            }
         }
         block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
             refuse(operand);
         });
         index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& handed) {
-            if (callBehind(handed.subject) == UINT32_MAX)
-                return;
-            if (index.valueNarrowedInto(handed.parameter) == handed.subject && index.blockOf(handed.parameter).index() > blockIndex)
-                callsBehindNames[handed.parameter.index()] = callBehind(handed.subject);
-            else
+            if (sourceOf(handed.subject) != UINT32_MAX && sourceOf(handed.parameter) != sourceOf(handed.subject))
                 refuse(handed.subject);
         });
         block.forEachOutgoingEdge([&](BodyTarget target, bool isHandler) {
             std::span<const ValueID> arguments = target.arguments();
             for (uint32_t position = 0; position < arguments.size(); ++position) {
-                if (isHandler || !index.isUnused(index.block(target.block()).parameter(position)))
+                ValueID parameter = index.block(target.block()).parameter(position);
+                uint32_t source = sourceOf(arguments[position]);
+                if (!isHandler && index.isUnused(parameter))
+                    continue;
+                if (source == UINT32_MAX || isHandler || sourceOf(parameter) != parameter.index())
                     refuse(arguments[position]);
+                else
+                    passes.append({ source, parameter.index() });
             }
         });
     }
-    return onlyRead;
+    for (bool hasRefusedMore = true; hasRefusedMore;) {
+        hasRefusedMore = false;
+        for (auto [source, parameter] : passes) {
+            if (onlyRead.quickGet(source) == onlyRead.quickGet(parameter))
+                continue;
+            onlyRead.quickClear(source);
+            onlyRead.quickClear(parameter);
+            hasRefusedMore = true;
+        }
+    }
+    for (uint32_t blockIndex = 0; blockIndex < index.numberOfBlocks(); ++blockIndex) {
+        for (BodyValue user : index.block(BlockID(blockIndex)).values()) {
+            if (isCallOfNext(user) && onlyRead.quickGet(user.id().index()))
+                steps.positionsOfCalls.append(user.origin().position);
+        }
+    }
+    return steps;
+}
+
+bool isOnlyReadStep(Walker& walker, ValueID step)
+{
+    return step.index() < walker.currentBodyIndex().numberOfValues() && findOnlyReadSteps(walker).values.quickGet(step.index());
 }
 
 static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Reference generator, Reference sent, bool resultIsOnlyRead)
 {
-    bool readsNextBehindStep = !walker.referenceOf(call.calleeOperand());
-    if (readsNextBehindStep)
+    bool readsNextAfterStep = !walker.referenceOf(call.calleeOperand());
+    if (readsNextAfterStep)
         walker.bind(call.calleeOperand(), generator);
     Draft written = walker.draftOf(call);
-    if (readsNextBehindStep)
+    if (readsNextAfterStep)
         walker.bind(call.calleeOperand(), Reference());
     Origin origin = written.origin();
     origin.isTailCall = false;
@@ -243,13 +302,13 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
     Reference whole;
     uint32_t numberOfParameters = resultIsOnlyRead ? static_cast<uint32_t>(numberOfParametersOfMeetingInStepsByHand) : 1;
     for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
-        Reference added = walker.addParameter(meeting, { }, Representation::JSValue);
+        bool isTruth = parameter == IsAnswered || parameter == Done;
+        Reference added = isTruth ? walker.addParameter(meeting, TypeTable::boolean, Representation::Boolean) : walker.addParameter(meeting, { }, Representation::JSValue);
         if (parameter == Whole)
             whole = added;
     }
     if (resultIsOnlyRead)
         walker.code().markMeetingOfStepWrittenByHand(meeting);
-    Reference nothing = undefinedOfCoroutineCalls(walker);
     bool someWayArrives = false;
     walker.branch(isNotStepped, byCall, isStepped);
 
@@ -257,7 +316,7 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
     written.setOrigin(origin);
     written.resultIsReturnedAtOnce = false;
     written.inputValueGiven = { };
-    if (readsNextBehindStep) {
+    if (readsNextAfterStep) {
         Draft read = walker.draftOf(walker.currentBodyIndex().value(call.calleeOperand()));
         read.inputValueGiven = { };
         walker.chooseConservativeFields(read);
@@ -268,13 +327,13 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
         walker.chooseConservativeFields(written);
         answer = walker.build(WTF::move(written));
     }
-    std::array answered { answer, answer, booleanInStepsByHand(walker, true, origin), nothing, nothing };
+    std::array answered { answer, answer, booleanInStepsByHand(walker, true, origin), answer, booleanInStepsByHand(walker, false, origin) };
     jumpToInStepsByHand(walker, meeting, std::span<const Reference>(answered).first(numberOfParameters), someWayArrives);
 
     walker.continueIn(isStepped);
     Reference isCompleted = buildTestOfStatusInStepsByHand(walker, status, GeneratorStepStatus::Completed, origin);
-    Reference made = buildResultObjectInStepsByHand(walker, value, isCompleted, origin);
-    std::array atHand { made, nothing, booleanInStepsByHand(walker, false, origin), value, isCompleted };
+    Reference made = buildResultOfStep(walker, value, isCompleted, origin);
+    std::array atHand { made, value, booleanInStepsByHand(walker, false, origin), value, isCompleted };
     jumpToInStepsByHand(walker, meeting, std::span<const Reference>(atHand).first(numberOfParameters), someWayArrives);
     if (!someWayArrives || walker.hasFailed())
         return true;
@@ -288,20 +347,146 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
     return true;
 }
 
-static std::optional<StepAtHandInStepsByHand> findStepBehindInStepsByHand(const Walker& walker, Reference name)
+static bool isResultOfLibraryStep(Walker& walker, const Operation& made)
+{
+    const Program& program = walker.program();
+    std::span<const InlineFrame> frames = walker.code().inlineFrames();
+    if (made.opcode != Opcode::NewObject || made.layout() != program.layoutOf(BuiltinLayouts::IteratorResult) || !made.inlineFrame)
+        return false;
+    const InlineFrame& frame = frames[made.inlineFrame];
+    return frame.parent == walker.inlineFrameAtWork() && frame.callee && program.at(frame.callee).role == FunctionRole::Library && findOnlyReadSteps(walker).positionsOfCalls.contains(frame.callPosition);
+}
+
+static std::optional<StepParts> findStepParts(Walker& walker, Reference name)
 {
     const Code& code = walker.code();
-    while (name && name.isValue() && cellPreservingOpcodes.contains(code.at(name.id()).opcode)) {
+    while (name && name.isValue() && !code.isConstant(name.id()) && cellPreservingOpcodes.contains(code.at(name.id()).opcode)) {
         ValueID record = code.at(name.id()).operand(0);
         name = code.isConstant(record) ? Reference::constant(record) : Reference::value(record);
     }
-    if (!name || !name.isValue())
+    if (!name || !name.isValue() || code.isConstant(name.id()))
         return std::nullopt;
+    const Operation& made = code.at(name.id());
+    if (made.opcode != Opcode::Parameter) {
+        if (!isResultOfLibraryStep(walker, made))
+            return std::nullopt;
+        std::span<const ValueID> values = made.valuesOperands();
+        auto partAt = [&](ValueID part) { return code.isConstant(part) ? Reference::constant(part) : Reference::value(part); };
+        return StepParts { partAt(values[0]), booleanInStepsByHand(walker, false, made.origin()), partAt(values[0]), partAt(values[1]), true };
+    }
+    const auto& partsOfParameters = walker.loopsOverGenerators().partsOfParameters;
+    if (auto parts = partsOfParameters.find(name.id().index()); parts != partsOfParameters.end()) {
+        const auto& [references, isRarelyAnswered] = parts->value;
+        return StepParts { Reference::fromBits(references[0]), Reference::fromBits(references[1]), Reference::fromBits(references[2]), Reference::fromBits(references[3]), isRarelyAnswered };
+    }
     const Block& meeting = code.at(code.blockOf(name.id()));
     std::span<const ValueID> parameters = meeting.parameters();
     if (!meeting.meetsStepWrittenByHand || parameters.size() != numberOfParametersOfMeetingInStepsByHand || parameters[Whole] != name.id())
         return std::nullopt;
-    return StepAtHandInStepsByHand { Reference::value(parameters[Answer]), Reference::value(parameters[IsAnswered]), Reference::value(parameters[Value]), Reference::value(parameters[Done]) };
+    return StepParts { Reference::value(parameters[Answer]), Reference::value(parameters[IsAnswered]), Reference::value(parameters[Value]), Reference::value(parameters[Done]) };
+}
+
+bool hasStepParts(Walker& walker, Reference result)
+{
+    return findStepParts(walker, result).has_value();
+}
+
+void appendStepParts(Walker& walker, Reference result, Vector<Reference, 8>& arguments)
+{
+    std::optional<StepParts> parts = findStepParts(walker, result);
+    if (!parts)
+        parts = StepParts { result, booleanInStepsByHand(walker, true, { }), result, booleanInStepsByHand(walker, false, { }) };
+    arguments.append(parts->answer);
+    arguments.append(parts->isAnswered);
+    arguments.append(parts->value);
+    arguments.append(parts->done);
+}
+
+static TypeID typeOfStepPart(uint32_t part)
+{
+    return part % 2 ? TypeID(TypeTable::boolean) : TypeID(TypeTable::anything);
+}
+
+static Representation formOfStepPart(uint32_t part)
+{
+    return part % 2 ? Representation::Boolean : Representation::JSValue;
+}
+
+static bool carriesSteps(Walker& walker)
+{
+    return walker.loopsOverGenerators().hasStepsWrittenByHand && !walker.isInGeneratorConsumer();
+}
+
+bool isUnlikelyStepResult(Walker& walker, Reference result)
+{
+    std::optional<StepParts> parts = findStepParts(walker, result);
+    return parts && parts->isRarelyAnswered;
+}
+
+void addStepParameters(Walker& walker, BlockID block, Reference whole, bool isRarelyAnswered, Vector<ValueID, 8>& parameters, Origin origin)
+{
+    LoopsOverGeneratorsOfUnit::CarriedParts parts { { }, isRarelyAnswered };
+    for (uint32_t part = 0; part < LoopsOverGeneratorsOfUnit::numberOfParts; ++part) {
+        parameters.append(walker.code().appendParameter(block, typeOfStepPart(part), formOfStepPart(part), origin));
+        parts.references[part] = Reference::value(parameters.last()).bits();
+    }
+    walker.loopsOverGenerators().partsOfParameters.set(whole.id().index(), parts);
+}
+
+void carryStepParts(Walker& walker, BlockID inputHead, BlockID header, Vector<Reference, 8>& entering, Vector<ValueID, 8>& parameters, Origin origin)
+{
+    if (!carriesSteps(walker))
+        return;
+    BodyBlock input = walker.currentBodyIndex().block(inputHead);
+    Vector<uint32_t, 2> positions;
+    for (uint32_t position = 0; position < input.numberOfParameters(); ++position) {
+        if (!isOnlyReadStep(walker, input.parameter(position)) || !hasStepParts(walker, entering[position]))
+            continue;
+        bool isRarelyAnswered = isUnlikelyStepResult(walker, entering[position]);
+        appendStepParts(walker, entering[position], entering);
+        addStepParameters(walker, header, Reference::value(parameters[position]), isRarelyAnswered, parameters, origin);
+        positions.append(position);
+    }
+    if (!positions.isEmpty())
+        walker.loopsOverGenerators().stepPositionsOfHeaders.set(header.index(), WTF::move(positions));
+}
+
+static bool isFalseConstant(const Walker& walker, Reference truth)
+{
+    const Code& code = walker.code();
+    return truth && truth.isRecord() && code.isConstant(truth.id()) && code.at(truth.id()).opcode == Opcode::Boolean && !code.at(truth.id()).boolean();
+}
+
+void addStepEntryParameters(Walker& walker, BlockID inputHead, BlockID entry, std::span<const Reference> entering, std::span<const Reference> results, Vector<Reference, 8>& arguments)
+{
+    if (!carriesSteps(walker))
+        return;
+    BodyBlock input = walker.currentBodyIndex().block(inputHead);
+    for (uint32_t position = 0; position < input.numberOfParameters() && position < results.size(); ++position) {
+        if (!isOnlyReadStep(walker, input.parameter(position)) || !hasStepParts(walker, entering[position]))
+            continue;
+        LoopsOverGeneratorsOfUnit::CarriedParts parts { { }, isUnlikelyStepResult(walker, entering[position]) };
+        for (uint32_t part = 0; part < LoopsOverGeneratorsOfUnit::numberOfParts; ++part)
+            parts.references[part] = walker.addParameter(entry, typeOfStepPart(part), formOfStepPart(part)).bits();
+        walker.loopsOverGenerators().partsOfParameters.set(results[position].id().index(), parts);
+        appendStepParts(walker, entering[position], arguments);
+    }
+}
+
+void appendHeldSteps(Walker& walker, BlockID header, Vector<Reference, 8>& held)
+{
+    Vector<Reference, 8> results = held;
+    appendCarriedSteps(walker, header, results.span(), held);
+}
+
+void appendCarriedSteps(Walker& walker, BlockID header, std::span<const Reference> results, Vector<Reference, 8>& arguments)
+{
+    const auto& positions = walker.loopsOverGenerators().stepPositionsOfHeaders;
+    auto carried = positions.find(header.index());
+    if (carried == positions.end())
+        return;
+    for (uint32_t position : carried->value)
+        appendStepParts(walker, results[position], arguments);
 }
 
 bool answerFromStepWrittenByHandOfItsOpcodes(Walker& walker, const BodyValue& value)
@@ -310,7 +495,7 @@ bool answerFromStepWrittenByHandOfItsOpcodes(Walker& walker, const BodyValue& va
     if (!isTest && value.isFreeName())
         return false;
     ValueID subject = isTest ? value.operand(0) : value.objectOperand();
-    std::optional<StepAtHandInStepsByHand> step = subject ? findStepBehindInStepsByHand(walker, walker.referenceBoundTo(subject)) : std::nullopt;
+    std::optional<StepParts> step = subject ? findStepParts(walker, walker.referenceBoundTo(subject)) : std::nullopt;
     if (!step)
         return false;
 
@@ -328,18 +513,37 @@ bool answerFromStepWrittenByHandOfItsOpcodes(Walker& walker, const BodyValue& va
     else
         return false;
 
+    if (isFalseConstant(walker, step->isAnswered)) {
+        walker.bind(value.id(), atHand);
+        return true;
+    }
+
+    ValueID onlyUser = isTest ? ValueID() : walker.currentBodyIndex().onlyUsingValue(value.id());
+    bool isTruthAlone = onlyUser && atHand == step->done && walker.currentBodyIndex().opcodeOf(onlyUser) == Opcode::ToBoolean;
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID ofStep = walker.addBlock();
     BlockID meeting = walker.addBlock();
-    Reference read = walker.addParameter(meeting, isTest ? TypeID(TypeTable::boolean) : TypeID(), Representation::JSValue);
+    Reference read = isTest || isTruthAlone ? walker.addParameter(meeting, TypeTable::boolean, Representation::Boolean) : walker.addParameter(meeting, { }, Representation::JSValue);
     bool someWayArrives = false;
     walker.branch(step->isAnswered, asWritten, ofStep);
 
     walker.continueIn(asWritten);
-    written.setOperand(0, step->answer);
-    walker.chooseConservativeFields(written);
-    Reference offAnswer = walker.build(WTF::move(written));
-    jumpToInStepsByHand(walker, meeting, singleElementSpan(offAnswer), someWayArrives);
+    {
+        std::optional<Walker::ClosedArm> closedArm;
+        if (step->isRarelyAnswered)
+            closedArm.emplace(walker, true);
+        Origin origin = written.origin();
+        written.setOperand(0, step->answer);
+        walker.chooseConservativeFields(written);
+        Reference offAnswer = buildInStepsByHand(walker, WTF::move(written));
+        if (isTruthAlone && !walker.isUnreachable()) {
+            Draft truth(Opcode::ToBoolean, origin);
+            truth.setValueOperand(offAnswer);
+            walker.chooseConservativeFields(truth);
+            offAnswer = walker.build(WTF::move(truth));
+        }
+        jumpToInStepsByHand(walker, meeting, singleElementSpan(offAnswer), someWayArrives);
+    }
 
     walker.continueIn(ofStep);
     jumpToInStepsByHand(walker, meeting, singleElementSpan(atHand), someWayArrives);
@@ -350,7 +554,7 @@ bool answerFromStepWrittenByHandOfItsOpcodes(Walker& walker, const BodyValue& va
     return true;
 }
 
-static bool isStepOfGenerator(Walker& walker, const BodyValue& call)
+static bool isGeneratorStep(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::BuiltinCalls) || !walker.opensGuesses())
         return false;
@@ -365,15 +569,16 @@ static bool isStepOfGenerator(Walker& walker, const BodyValue& call)
     TypeID typeOfGenerator = walker.typeOf(generator);
     if (!types.at(typeOfGenerator).isObject() || !types.isSubset(typeOfGenerator, types.builtinClass(BuiltinClasses::Generator))) {
         TypeID expected = walker.has(Mechanism::Guesses) ? findExpectation(walker, call.thisValueOperand()).type : TypeID();
-        if (!expected || !types.isSubset(types.withoutNullish(expected), types.builtinClass(BuiltinClasses::Generator)))
+        TypeID present = expected ? types.withoutNullish(expected) : TypeID();
+        if (!present || isNeverType(present) || !types.isSubset(present, types.builtinClass(BuiltinClasses::Generator)))
             return false;
     }
-    return walker.isInLoop() || findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(walker).quickGet(call.id().index());
+    return walker.isInLoop() || findOnlyReadSteps(walker).values.quickGet(call.id().index());
 }
 
 bool callStepsGeneratorOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
-    return isStepOfGenerator(walker, call) && readFindsNextOfEngine(walker, call);
+    return isGeneratorStep(walker, call) && readsEngineNext(walker, call);
 }
 
 bool leaveNextToStepOfItsOpcodes(Walker& walker, const BodyValue& read)
@@ -395,9 +600,9 @@ bool leaveNextToStepOfItsOpcodes(Walker& walker, const BodyValue& read)
 
 bool buildStepWrittenByHand(Walker& walker, const BodyValue& call)
 {
-    if (!isStepOfGenerator(walker, call) || !calleeIsNextOfEngineInStepsByHand(walker, call))
+    if (!isGeneratorStep(walker, call) || !calleeIsNextOfEngineInStepsByHand(walker, call))
         return false;
-    bool resultIsOnlyRead = findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(walker).quickGet(call.id().index());
+    bool resultIsOnlyRead = findOnlyReadSteps(walker).values.quickGet(call.id().index());
     Reference sent = call.argumentsOperands().empty() ? undefinedOfCoroutineCalls(walker) : walker.referenceOf(call.argumentsOperands()[0]);
     return sent && buildStepInStepsByHand(walker, call, walker.referenceOf(call.thisValueOperand()), sent, resultIsOnlyRead);
 }
@@ -436,13 +641,13 @@ static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& 
     BlockID meeting = walker.addBlock();
     Reference whole;
     for (uint32_t parameter = 0; parameter < numberOfParametersOfMeetingInStepsByHand; ++parameter) {
-        Reference added = walker.addParameter(meeting, { }, Representation::JSValue);
+        bool isTruth = parameter == IsAnswered || parameter == Done;
+        Reference added = isTruth ? walker.addParameter(meeting, TypeTable::boolean, Representation::Boolean) : walker.addParameter(meeting, { }, Representation::JSValue);
         if (parameter == Whole)
             whole = added;
     }
     if (resultIsOnlyRead)
         walker.code().markMeetingOfStepWrittenByHand(meeting);
-    Reference nothing = undefinedOfCoroutineCalls(walker);
     bool someWayArrives = false;
     bool someWayTurnsAway = false;
 
@@ -461,11 +666,11 @@ static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& 
         BlockID ofStep = walker.addBlock();
         walker.branch(isAnsweredByObject, ofEngine, ofStep);
         walker.continueIn(ofEngine);
-        jumpToInStepsByHand(walker, meeting, std::array { value, value, booleanInStepsByHand(walker, true, origin), nothing, nothing }, someWayArrives);
+        jumpToInStepsByHand(walker, meeting, std::array { value, value, booleanInStepsByHand(walker, true, origin), value, booleanInStepsByHand(walker, false, origin) }, someWayArrives);
         walker.continueIn(ofStep);
         Reference isCompleted = buildTestOfStatusInStepsByHand(walker, status, AsyncGeneratorStepStatus::Completed, origin);
-        Reference made = buildResultObjectInStepsByHand(walker, value, isCompleted, origin);
-        jumpToInStepsByHand(walker, meeting, std::array { made, nothing, booleanInStepsByHand(walker, false, origin), value, isCompleted }, someWayArrives);
+        Reference made = buildResultOfStep(walker, value, isCompleted, origin);
+        jumpToInStepsByHand(walker, meeting, std::array { made, value, booleanInStepsByHand(walker, false, origin), value, isCompleted }, someWayArrives);
     }
 
     if (someWayTurnsAway && !walker.hasFailed()) {
@@ -477,7 +682,7 @@ static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& 
         Reference promised = walker.build(WTF::move(written));
         Reference answer = promised ? buildAwaitBySavingFrame(walker, promised, held, originOfAwait) : Reference();
         if (answer)
-            jumpToInStepsByHand(walker, meeting, std::array { answer, answer, booleanInStepsByHand(walker, true, origin), nothing, nothing }, someWayArrives);
+            jumpToInStepsByHand(walker, meeting, std::array { answer, answer, booleanInStepsByHand(walker, true, origin), answer, booleanInStepsByHand(walker, false, origin) }, someWayArrives);
     }
     if (!someWayArrives || walker.hasFailed())
         return { };
@@ -503,7 +708,8 @@ bool buildAwaitedStepWrittenByHand(Walker& walker, const BodyValue& call)
     TypeID typeOfReceiver = walker.typeOf(receiver);
     if (!types.at(typeOfReceiver).isObject() || !types.isSubset(typeOfReceiver, generators)) {
         TypeID expected = findExpectation(walker, call.thisValueOperand()).type;
-        if (!expected || !types.isSubset(types.withoutNullish(expected), generators))
+        TypeID present = expected ? types.withoutNullish(expected) : TypeID();
+        if (!present || isNeverType(present) || !types.isSubset(present, generators))
             return false;
     }
 
@@ -519,7 +725,7 @@ bool buildAwaitedStepWrittenByHand(Walker& walker, const BodyValue& call)
     Vector<Reference, 4> held;
     if (!walkUpToAwaitOfCall(walker, index, block, *wait, held))
         return true;
-    bool resultIsOnlyRead = findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(walker, ResultOfNextInStepsByHand::IsWhatAwaitOfCallGives).quickGet(call.id().index());
+    bool resultIsOnlyRead = findOnlyReadSteps(walker, ResultOfNextInStepsByHand::IsWhatAwaitOfCallGives).values.quickGet(call.id().index());
     if (Reference whole = buildAwaitedStepInStepsByHand(walker, call, callee, receiver, sent, held.span(), resultIsOnlyRead, walker.originOf(index.value(wait->await))))
         finishWaitOfCall(walker, block, *wait, whole);
     return true;

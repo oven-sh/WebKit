@@ -10,6 +10,7 @@
 #include "AOTCodeTemplates.h"
 #include "AOTConstantPool.h"
 #include "AOTLinkedFunctions.h"
+#include "AOTImageText.h"
 #include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTStubBlob.h"
@@ -107,6 +108,8 @@ struct CodeLinkerInputs {
     const CodeLayout& layout;
     const ConstantPool& constants;
     const ImageNumbers& numbers;
+    std::span<const ImageString> strings { };
+    std::span<const ImageLongString> longStrings { };
 };
 
 unsigned chooseCodeGranuleShift(const LinkedFunctions&, BuildContext&);

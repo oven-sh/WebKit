@@ -77,6 +77,10 @@ struct SideTableShortWords {
         case SideTableByte::PrologueCall:
         case SideTableByte::InlineFunction:
         case SideTableByte::InlineFunctionContinuation:
+        case SideTableByte::SiteDetails:
+        case SideTableByte::SiteDetailsContinuation:
+        case SideTableByte::SiteDetailsAfterInlined:
+        case SideTableByte::SiteDetailsAfterInlinedContinuation:
             return 9;
         default:
             return 7;
@@ -196,7 +200,7 @@ struct HandlerCursor {
 
 class SiteDetailsReader {
 public:
-    explicit SiteDetailsReader(SideTableReader& reader)
+    ALWAYS_INLINE explicit SiteDetailsReader(SideTableReader& reader)
         : m_reader(reader)
         , m_numberLeft(static_cast<unsigned>(reader.nextVarint(SideTableByte::SitesWithDetails)))
     {
@@ -206,7 +210,7 @@ public:
     bool isAtEnd() const { return !m_numberLeft; }
     bool isAt(unsigned site) const { return m_numberLeft && m_site == site; }
     unsigned site() const { return m_site; }
-    CallSiteDetails next()
+    ALWAYS_INLINE CallSiteDetails next()
     {
         CallSiteDetails details = CallSiteDetails::read(*this);
         --m_numberLeft;
@@ -228,7 +232,7 @@ public:
     }
 
 private:
-    void skipSites()
+    ALWAYS_INLINE void skipSites()
     {
         if (m_numberLeft)
             m_site += static_cast<unsigned>(m_reader.nextVarint(SideTableByte::SitesSkipped));
@@ -255,7 +259,7 @@ struct InlineFrameCursor {
 };
 
 struct SideTableFrame {
-    static SideTableFrame read(SideTableReader& reader, uint32_t offset)
+    ALWAYS_INLINE static SideTableFrame read(SideTableReader& reader, uint32_t offset)
     {
         SideTableFrame result;
         uint64_t size = reader.nextVarint(SideTableByte::FrameChangesSize);

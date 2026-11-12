@@ -188,10 +188,11 @@ void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elem
     SlotRepresentation slot = elementStore(type);
     if (hasIntegerElements(type)) {
         Word32 bits;
+        static_assert(ConversionEmitter::numberOfLowestBits >= 8);
         if (stored.is<Number>())
-            bits = emitter<ConversionEmitter>().toInt32(stored.as<Number>());
+            bits = emitter<ConversionEmitter>().toInt32(stored.as<Number>(), elementSize(type) == 1 && isX86_64() ? ConversionEmitter::BitsOfInt32::Lowest : ConversionEmitter::BitsOfInt32::All);
         else
-            bits = stored.is<Integer>() ? low32(stored.as<Integer>()) : stored.as<Word32>();
+            bits = stored.is<Integer>() ? low32InWords(stored.as<Integer>()) : stored.as<Word32>();
         stored = slot == SlotRepresentation::Uint32 ? Operand(zeroExtended(bits)) : Operand(bits);
     } else if (isClamped(type))
         stored = stored.is<Number>() ? clampedToUint8(stored.as<Number>()) : stored.is<Word32>() ? clampedToUint8(stored.as<Word32>()) : clampedToUint8(stored.as<Integer>());
@@ -294,10 +295,10 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     LBasicBlock outside = newBlock();
     LBasicBlock otherwise = newBlock();
     OperandJoin join(m_out, nothingIsNaN ? Representation::Double : representation);
-    std::optional<Integer> indexMadeInFront = becomesIndexWithoutTest(value) ? std::optional(indexOfAccessOrElse(value, outside)) : std::nullopt;
+    std::optional<Integer> indexMadeInFront = becomesIndexWithoutTest(value) ? std::optional(indexOfAccessOrElse(value, outside, NaNIndexMode::ProduceOutOfBoundsIndex)) : std::nullopt;
     ScopeFork fork = m_out.forkScope();
 
-    Integer index = indexMadeInFront ? *indexMadeInFront : indexOfAccessOrElse(value, outside);
+    Integer index = indexMadeInFront ? *indexMadeInFront : indexOfAccessOrElse(value, outside, NaNIndexMode::ProduceOutOfBoundsIndex);
     std::optional<TypedArrayElements> named = typedArrayElementsNamedBy(value, view);
     LBasicBlock isNotBelowNamedLength = named ? newBlock() : nullptr;
     TypedArrayElements elements = named ? *named : typedArrayElementsOf(value->viewOperand(), otherwise);
@@ -338,7 +339,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
     CellPointer view = in<CellPointer>(value->viewOperand());
     Operand stored = takesAnyNaN(value.value(), OperandIndex::PutTypedArrayElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
     bool isOfSeveralKinds = type == NotTypedArray;
-    bool storesInline = (isOfSeveralKinds || hasInlineElementAccess(type)) && !stored.is<Boxed>() && (!(isClamped(type) && stored.is<Number>()) || generator().paysForCodeInLine(value.block()));
+    bool storesInline = (isOfSeveralKinds || hasInlineElementAccess(type)) && !stored.is<Boxed>();
     auto elementToStore = [&] {
         return (isOfSeveralKinds || isFloat(type)) && !stored.is<Number>() ? Operand(support.numberOperand(storedValue)) : stored;
     };
@@ -370,9 +371,9 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
     }
 
     LBasicBlock done = newBlock();
-    std::optional<Integer> indexMadeInFront = becomesIndexWithoutTest(value) ? std::optional(indexOfAccessOrElse(value, done)) : std::nullopt;
+    std::optional<Integer> indexMadeInFront = becomesIndexWithoutTest(value) ? std::optional(indexOfAccessOrElse(value, done, NaNIndexMode::ProduceOutOfBoundsIndex)) : std::nullopt;
     ScopeFork fork = m_out.forkScope();
-    Integer index = indexMadeInFront ? *indexMadeInFront : indexOfAccessOrElse(value, done);
+    Integer index = indexMadeInFront ? *indexMadeInFront : indexOfAccessOrElse(value, done, NaNIndexMode::ProduceOutOfBoundsIndex);
     if (isBigInt(type)) {
         Integer length = support.lengthOf(view);
         branchUnless(below(index, length), done);

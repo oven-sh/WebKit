@@ -38,6 +38,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_DECLARATIONS
 set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES aot/tests/host/own-properties.txt)
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
+    aot/builtins/handwritten/ArrayConstructor.ts
     aot/builtins/handwritten/ArrayIteratorPrototype.ts
     aot/builtins/handwritten/ArrayPrototype.ts
     aot/builtins/handwritten/AsyncDisposableStackPrototype.ts
@@ -50,9 +51,11 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/JSIteratorPrototype.ts
     aot/builtins/handwritten/MapPrototype.ts
     aot/builtins/handwritten/ObjectConstructor.ts
+    aot/builtins/handwritten/MapConstructor.ts
     aot/builtins/handwritten/MapIteratorPrototype.ts
     aot/builtins/handwritten/SetIteratorPrototype.ts
     aot/builtins/handwritten/SetPrototype.ts
+    aot/builtins/handwritten/TypedArrayConstructor.ts
     aot/builtins/handwritten/TypedArrayPrototype.ts
 )
 

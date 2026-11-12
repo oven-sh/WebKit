@@ -58,6 +58,8 @@ public:
     void generateResults(const ValueContext&);
     void generateResultAt(const ValueContext&);
 
+    const ArgumentLocations& ownLocations();
+
     Boxed callValue(const OperationContext&, const ValueCall&, const CallOptions& = { });
     void defineResultOfCallByValue(const ValueContext&, Boxed result);
     static CallPosition positionOf(const OperationContext& context) { return context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
@@ -82,6 +84,9 @@ public:
 
     void returnValues(const TerminatorContext&, std::span<const Operand>);
     void returnValues(std::span<const Operand>);
+    void returnAsyncResult(Boxed promise, Boxed result);
+    void returnFulfilledPromise(Boxed value);
+    std::optional<unsigned> findArgumentForPromiseBefore(CodeUnit body);
 
 private:
     ValueID listThatApplyWouldRead(const Operation& call);
@@ -122,7 +127,6 @@ private:
     Vector<Boxed, 8> boxedOperands(std::span<const ValueID>);
 
     CodeUnit calleeOf(const ValueContext& callDirect) const;
-    const ArgumentLocations& ownLocations();
     PlacedArguments placeArguments(CodeUnit callee, const ArgumentLocations&, std::span<const Operand>);
     PlacedArguments placeConventionArguments(const ConventionCall&);
     PlacedArguments placeConventionArguments(const ConventionCall&, const StubSignature&);
@@ -137,6 +141,7 @@ private:
     void chooseStubThatCallsValue(ConventionCall&, LValue& countOperand, bool calleeIsCell);
 
     void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&, const ArgumentLocations* locationsOfCalledUnit = nullptr);
+    void enterBodyAfterNewPromise(const ValueContext&, CodeUnit body, const ArgumentLocations&);
     Machine::PatchOperation* leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord>, const Invocable<void(CCallHelpers&)> auto& leave);
     void jumpAfterFrameTeardown(const CallTarget&, const PlacedArguments&);
     void callFromArgumentListFrame(const CallTarget&, const PlacedArguments&);

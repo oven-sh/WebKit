@@ -1,0 +1,39 @@
+# As in lowered-counter-is-accepted.ir, and here the edge that comes round brings the counter raised.
+# RUN: verify-grounds access=v12 view=v0 position=v11 length=v6 below=v8 lowered-counter=v9 lowered-from=v7 passed=v8 passed=v10
+# CHECK: v12 (GetTypedArrayElement): the counter that an access counts on may lie above its start: v9 (Parameter)
+# -- code
+# code f1:Body {
+#   constants:
+#     v4: 0 @Int64 = Integer integer=0
+#     v5: undefined @JSValue = Undefined
+#   b0(v0: Int32Array @Cell, v1: int[-2, 4294967294] @Int64, v2: int[0, 40] @Int32, v3: boolean @Boolean) entry=0:
+#     v6: int[0, 17179869184] @Int64 = GetTypedArrayLength v0 traits=[mayTouchMemory]
+#     v7: int[-3, 4294967293] @Int64 = Decrement v1 form=Integers
+#     v8: boolean @Boolean = Less v7, v6 form=Integers
+#     Branch v8 -> taken b1(), notTaken b4()
+#   b1():
+#     Jump -> next b2(v7)
+#   b2(v9: int[-3, 4294967297] @Int64) isInLoop=true isLoopHead=true:
+#     v10: boolean @Boolean = GreaterEq v9, v4 form=Integers
+#     Branch v10 -> taken b3(), notTaken b4()
+#   b3() isInLoop=true:
+#     v11: int[0, 4294967297] @Int64 = Narrowed v9, v10 [isOnTakenEdge]
+#     v12: i32 @Int32 = GetTypedArrayElement v0, v11 typedArrayType=6 level=Proven [keyIsIntegral, isInsideView] traits=[mayTouchMemory]
+#     v13: int[1, 4294967297] @Int64 = Increment v11 form=Integers
+#     Jump -> next b2(v13)
+#   b4():
+#     Return v5
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

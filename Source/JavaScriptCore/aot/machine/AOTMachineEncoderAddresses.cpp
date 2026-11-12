@@ -110,7 +110,7 @@ static ALWAYS_INLINE void resolveIndexOfAddress(const Liveness& liveness, Addres
         if (form.extension == IndexExtension::ZeroExtend32 && clearsUpperHalf(index))
             form.extension = IndexExtension::None;
     }
-    RELEASE_ASSERT(!liveness.isFused(index));
+    RELEASE_ASSERT(!liveness.isFused(index) || (index->opcode() == Trunc && form.extension != IndexExtension::None));
     form.index = resolvedAddressRegisterOf(leaves.take());
 
     if (shift) {
@@ -144,9 +144,9 @@ AddressForm Encoder::resolveAddressSlowCase(const Operation* access, LeafCursor&
 AddressForm Encoder::resolveScaledSum(const Operation* sum, LeafCursor& leaves)
 {
     RELEASE_ASSERT(addsScaledIndex(m_liveness, sum));
-    unsigned indexChildIndex = m_liveness.isFused(sum->child(1));
+    unsigned indexChildIndex = sum->child(1)->opcode() == Shl && m_liveness.isFused(sum->child(1));
     const Operation* base = sum->child(1 - indexChildIndex);
-    RELEASE_ASSERT(!m_liveness.isFused(base));
+    RELEASE_ASSERT(!m_liveness.isFused(base) || namesWord(base));
 
     AddressForm form;
     form.kind = AddressForm::BaseIndex;

@@ -7,13 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTSort.h"
 #include "AOTThinSummary.h"
 #include <algorithm>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -168,6 +168,14 @@ public:
     bool isNameOfSomeInstance(PropertyKeyID name) const { return m_isNameOfSomeInstance.get(name.index()); }
     bool isNameOfSomeLayout(PropertyKeyID name) const { return !holdersOf(name).empty(); }
     bool severalLayoutsHold(PropertyKeyID name) const { return holdersOf(name).size() > 1; }
+
+    template<typename Predicate>
+    bool isAnyOfFewHolders(PropertyKeyID name, const Predicate& predicate) const
+    {
+        constexpr size_t mostHolders = 4;
+        std::span<const uint32_t> holders = holdersOf(name);
+        return holders.size() <= mostHolders && std::ranges::any_of(holders, [&](uint32_t holder) { return predicate(LayoutID(holder)); });
+    }
 
     bool isInUse(LayoutID layout) const { return static_cast<size_t>(layout.index()) + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 

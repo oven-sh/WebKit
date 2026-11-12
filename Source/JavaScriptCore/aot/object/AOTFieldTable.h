@@ -125,11 +125,11 @@ struct FieldRecordIndex {
     static constexpr uint16_t isStoredWithoutTypeTest = 1u << 15;
     static constexpr uint16_t indexMask = isStoredWithoutTypeTest - 1;
 
-    static FieldRecordIndex create(const FieldData& field, uint16_t indexInLayoutRecord, const RuntimeType& type, uint32_t typeOfAnyValue)
+    static FieldRecordIndex create(const FieldData& field, uint16_t indexInLayoutRecord, const RuntimeType& type, uint16_t numberOfAnyType)
     {
         RELEASE_ASSERT(indexInLayoutRecord <= indexMask);
         constexpr uint16_t flagsBarringStore = fieldAttributeFlags;
-        return { static_cast<uint16_t>(indexInLayoutRecord | (typeAcceptsWhatSlotHolds(field, type, typeOfAnyValue) && !(field.flags & flagsBarringStore) ? isStoredWithoutTypeTest : 0)) };
+        return { static_cast<uint16_t>(indexInLayoutRecord | (typeAcceptsWhatSlotHolds(field, type, numberOfAnyType) && !(field.flags & flagsBarringStore) ? isStoredWithoutTypeTest : 0)) };
     }
 
     constexpr uint16_t indexInLayoutRecord() const { return bits & indexMask; }
@@ -139,11 +139,11 @@ struct FieldRecordIndex {
     uint16_t bits;
 
 private:
-    static bool typeAcceptsWhatSlotHolds(const FieldData& field, const RuntimeType& type, uint32_t typeOfAnyValue)
+    static bool typeAcceptsWhatSlotHolds(const FieldData& field, const RuntimeType& type, uint16_t numberOfAnyType)
     {
         switch (field.slot.representation()) {
         case SlotRepresentation::JSValue:
-            return field.type == typeOfAnyValue;
+            return field.typeNumber == numberOfAnyType;
         case SlotRepresentation::Int32:
         case SlotRepresentation::OptionalInt32:
             if (!type.primitiveSet().contains(PrimitiveSet::Integer))

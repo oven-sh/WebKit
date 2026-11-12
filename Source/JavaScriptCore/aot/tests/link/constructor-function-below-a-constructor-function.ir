@@ -4,8 +4,8 @@
 # RUN: link functions calls fields members layouts mechanisms=all
 # CHECK: function f3 callers-known one-callee {{*}}result=string
 # CHECK: call f0 v12 -> f3
-# CHECK: field L0.0 "a" proven=i32 writers-known
-# CHECK: field L1.1 "b" proven=i32 writers-known
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known
+# CHECK: field L1.1 "b" proven=int[0, 2147483647] writers-known
 # CHECK: on-prototype L0 "m" function=f3
 # CHECK: layout L0 {{*}}changes=[]
 # CHECK: layout L1 {{*}}changes=[]

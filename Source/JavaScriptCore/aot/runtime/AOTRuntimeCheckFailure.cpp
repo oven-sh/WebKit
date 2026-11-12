@@ -42,7 +42,7 @@ static String describePosition(const Image& image, const TraceFrame& frame)
     std::optional<SourcePosition> position = positionOf(frame);
     if (!position || !position->source)
         return { };
-    return makeString(displayPathOf(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column);
+    return makeString(displayPathOf(*position), ':', position->lineColumn.line, ':', position->lineColumn.column);
 }
 
 RuntimeCheckFailure& RuntimeCheckFailure::atReturnAddress(const void* returnAddress)

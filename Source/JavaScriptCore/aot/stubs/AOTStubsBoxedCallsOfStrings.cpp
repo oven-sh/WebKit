@@ -88,9 +88,17 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     jit.load8(BaseIndex(trail, unit, CCallHelpers::TimesOne), unit);
     jit.jump().linkTo(boxesUnit, &jit);
     pieceIs16Bit.link(&jit);
-    if (readsCodePoint)
-        callsHostFunction.append(jit.jump());
-    else {
+    Jump hasSubstringPair;
+    if (readsCodePoint) {
+        const GPRReg unitsLeft = impl;
+        jit.load32(Address(thisGPR, JSRopeString::offsetOfLength()), unitsLeft);
+        jit.sub32(unit, unitsLeft);
+        jit.getEffectiveAddress(BaseIndex(trail, unit, CCallHelpers::TimesTwo), trail);
+        jit.load16(Address(trail), unit);
+        jit.branch32(CCallHelpers::Equal, unitsLeft, TrustedImm32(1)).linkTo(boxesUnit, &jit);
+        jit.load16(Address(trail, sizeof(char16_t)), trail);
+        hasSubstringPair = jit.jump();
+    } else {
         jit.load16(BaseIndex(trail, unit, CCallHelpers::TimesTwo), unit);
         jit.jump().linkTo(boxesUnit, &jit);
     }
@@ -107,6 +115,7 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
         jit.loadPtr(Address(impl, StringImpl::dataOffset()), impl);
         jit.load16(BaseIndex(impl, trail, CCallHelpers::TimesTwo), trail);
         jit.load16(BaseIndex(impl, unit, CCallHelpers::TimesTwo), unit);
+        hasSubstringPair.link(&jit);
         jit.move(unit, impl);
         jit.and32(TrustedImm32(surrogateMask), impl);
         isOneUnit.append(jit.branch32(CCallHelpers::NotEqual, impl, TrustedImm32(leadSurrogate)));
@@ -127,6 +136,23 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
 
     isNotSubstring.link(&jit);
     flattenSubject(jit, thisGPR, { thisGPR, argumentGPR(0) }, hasString);
+}
+
+void emitStringLocaleCompare(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    const LocaleCompareRegisters registers {
+        thisGPR, argumentGPR(0), jit.reuseScratch(StubRegister::A1), jit.reuseScratch(StubRegister::A2), jit.reuseScratch(StubRegister::A3), scratch,
+        jit.allocateScratch(StubRegister::T11), jit.allocateScratch(StubRegister::T13)
+    };
+    RELEASE_ASSERT(noOverlap(registers.left, registers.right, registers.leftCharacters, registers.rightCharacters, registers.remaining, registers.leftUnit, registers.rightUnit, registers.weights, calleeGPR, instanceGPR));
+    checkRealmOfCalleeOfString(jit, scratch, callsHostFunction);
+    callsHostFunction.append(jit.branchIfNotCell(argumentGPR(0)));
+    callsHostFunction.append(jit.branchIfNotType(argumentGPR(0), StringType));
+    auto returnOrder = [&](int32_t order) {
+        jit.move(TrustedImm64(JSValue::encode(jsNumber(order))), jit.result());
+        jit.returnToCaller();
+    };
+    emitLocaleCompareOfASCII(jit, registers, ScopedLambda<void(int32_t)>(returnOrder), callsHostFunction);
 }
 
 void emitStringCharacterAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)

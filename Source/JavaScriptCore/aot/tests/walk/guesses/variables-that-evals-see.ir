@@ -1,0 +1,47 @@
+# var view = new Int32Array(4); function add(x) { return x; } function evaluate(text) { return eval(text); } function read(i) { return add(view[i]); }
+# The text may store anything into what it sees. The variables stay slots, and a guess rests on what the program itself stores: the view is tested for its class, the callee for the declared function.
+# LIBRARY: own
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: [[callee]]: anything{{*}} = GetModuleVariable variable=g1
+# CHECK: [[view]]: anything{{*}} = GetModuleVariable variable=g0
+# CHECK: = ElemGet [[view]], {{*}}expectedElements=Int32Array
+# CHECK: = TypeTest [[callee]] testedType=f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="add" module=m0 declared={type=anything} initialization=Function function=f1
+variable g2 name="evaluate" module=m0 declared={type=anything} initialization=Function function=f2
+variable g3 name="read" module=m0 declared={type=anything} initialization=Function function=f3
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="view" depth=1 variable=g0}, {name="add" depth=1 variable=g1}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=4
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g2
+    v5 = String string="1"
+    v6 = Call v4, -, v5
+    v7 = GetModuleVariable variable=g3
+    v8 = Call v7, -, v1
+    Return v8
+}
+function f1 name="add" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="evaluate" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = DirectEval v2, v0, v1 evalScope=e0
+    Return v3
+}
+function f3 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g0
+    v3 = ElemGet v2, v0
+    v4 = Call v1, -, v3
+    Return v4
+}

@@ -88,7 +88,8 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(layouts, uint32_t) \
     v(classes, uint32_t) \
     v(layoutSets, LayoutSetData) \
-    v(allocations, AllocationData) \
+    v(allocationRows, AllocationRow) \
+    v(allocationForms, AllocationData) \
     v(constructedAllocations, ConstructedAllocationData) \
     v(shapeSetBits, uint64_t) \
     v(propertyRuns, uint32_t) \
@@ -100,6 +101,7 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(classGuardCounts, ClassGuardCountData) \
     v(namesOfClassGuards, uint32_t) \
     v(classesBelowWithGuardsOfNames, ClassBelowWithGuardOfNameData) \
+    v(assignedMembers, AssignedMemberData) \
     v(closurePropertyNames, ClosurePropertyNameData) \
     v(addedPrototypeNames, AddedPrototypeNameData) \
     v(parsedRecordNames, uint32_t) \
@@ -130,6 +132,7 @@ struct ProgramTables {
     static constexpr uint32_t expectedMagic = 0x44505943;
     static constexpr uint32_t mayRunInMultipleInstances = 1;
     static constexpr uint32_t neverReadsLegacyRegExpStatics = 2;
+    static constexpr uint32_t shiftOfNearTypeNumbers = 2;
 
     uint32_t magic;
     uint32_t flags;
@@ -141,6 +144,7 @@ struct ProgramTables {
     uint32_t numberOfFieldTableColumns;
     uint32_t numberOfClosureCells;
     uint32_t sizeOfStructuresOfHeirs;
+    uint32_t shiftOfTypeNumbers;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];
 
@@ -184,6 +188,7 @@ struct ProgramTables {
         RELEASE_ASSERT(found != rows.end() && static_cast<uint32_t>(std::invoke(numberOf, *found)) == number);
         return *found;
     }
+    AllocationTable allocations() const { return { allocationRows(), allocationForms() }; }
     uint32_t constructorOfAllocation(uint32_t number) const
     {
         if (!allocations()[number].isConstructed)
@@ -221,6 +226,7 @@ struct ProgramTables {
         return groups[numberOfTypeGroupWords(numberOfTypes()) + groups[index / 32 * 2 + 1] + std::popcount(haveRecord & ((1u << index % 32) - 1))];
     }
     const RuntimeType& typeAt(uint32_t offset) const { return *at<RuntimeType>(offset); }
+    uint32_t offsetOfTypeOf(const FieldData& field) const { return static_cast<uint32_t>(field.typeNumber) << shiftOfTypeNumbers; }
     const ShapeTestData& shapeTestAt(uint32_t offset) const { return *at<ShapeTestData>(offset); }
     const KeyOrderData& keyOrder(const LayoutData& layout, uint32_t order) const
     {
@@ -275,14 +281,15 @@ struct ProgramTables {
         ASSERT(hasClosureNumber(number));
         return closureFunctions.first + number;
     }
+    const ClosureFacts& factsOfClosureNumber(uint32_t number) const { return closureFacts()[closureFactNumbers()[number]]; }
     uint32_t functionLengthOf(uint32_t function) const
     {
-        uint8_t length = functionLengths()[function - closureFunctions.first];
+        uint8_t length = factsOfClosureNumber(function - closureFunctions.first).length;
         return length == countsAreListed ? largeCountsOf(function).length() : length;
     }
     CaptureCounts captureCountsOfClosureNumber(uint32_t number) const
     {
-        uint8_t counts = closureCaptureCounts()[number];
+        uint8_t counts = factsOfClosureNumber(number).captureCounts;
         if (counts == countsAreListed) [[unlikely]]
             return largeCountsOf(closureFunctionWithNumber(number)).captureCounts;
         return CaptureCounts::decode(counts);
@@ -294,7 +301,7 @@ struct ProgramTables {
         auto entry = std::ranges::lower_bound(entries, number, { }, &ConstructEntrypointData::function);
         return entry != entries.end() && entry->function == number && entry->constructEntrypointAndFlag == ConstructEntrypointData::onlyReturns;
     }
-    FunctionKindData kindOfClosureNumber(uint32_t number) const { return closureFunctionKinds()[number]; }
+    FunctionKindData kindOfClosureNumber(uint32_t number) const { return factsOfClosureNumber(number).kind; }
     size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
     const FunctionRecordData& recordOfFunction(uint32_t function) const
     {
@@ -322,10 +329,9 @@ struct ProgramTables {
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
     FunctionKindData kindOfFunction(uint32_t function) const
     {
-        std::span<const FunctionKindData> kinds = closureFunctionKinds();
         uint32_t index = function - closureFunctions.first;
-        if (index < kinds.size()) [[likely]]
-            return kinds[index];
+        if (index < closureFactNumbers().size()) [[likely]]
+            return kindOfClosureNumber(index);
         return recordOfFunction(function).kind;
     }
     uint32_t sourceFunctionOf(uint32_t function) const

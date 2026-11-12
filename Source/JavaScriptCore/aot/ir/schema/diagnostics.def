@@ -107,6 +107,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     HandlerEdgePassesPlaceholder(Optimize, "an edge to a handler passes another value than the one that the header of its block bound for the handler")
     LoopSummaryMismatch(Optimize, "a visit of a loop does not fit the loop summary that its retained visit was made under")
     HoistedOperandNotInvariant(Optimize, "an operation that is built in the preheader of a loop takes a value that is defined in the iterations of that loop")
+    IterationCannotBeUndone(Optimize, "a loop iteration that cannot be undone restarts in the generic version")
     EnumeratorCurrentForFreshObject(Optimize, "an enumerator is marked current for an object that is still fresh")
     DuplicateCellAllocation(Optimize, "one operation of the body allocates two cells on one path in one visit of its block, and both are used")
     IntrinsicOutsideLibraryCode(ReadAndVerify, "an intrinsic is used outside library code")

@@ -624,8 +624,10 @@ private:
                     GetByOffsetMethod& method = data.cases[i].method();
                     if (method.kind() == GetByOffsetMethod::Constant) {
                         // It's possible there are non-Number constants that still predict NumberUse, e.g. undefined.
-                        std::optional<double> doubleConstant = method.constant()->value().toNumberFromPrimitive();
-                        method.setConstantValue(m_graph.freeze(jsDoubleNumber(*doubleConstant)));
+                        // They stay as they are, so that they fail the number check that this node now does for its uses.
+                        JSValue constant = method.constant()->value();
+                        if (constant.isNumber())
+                            method.setConstantValue(m_graph.freeze(jsDoubleNumber(constant.asNumber())));
                     }
                 }
                 candidate->setResult(NodeResultDouble);

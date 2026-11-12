@@ -6,14 +6,16 @@
 # RUN(NONE): summary f1
 # NONE-NOT: operator n
 # RUN(LOOP): summary f2
-# LOOP: operator [[step]] v6 Add ([[counter]], Constant int[0, 2147483647])
-# LOOP: edge [[counter]] -> Result 0
+# LOOP: operator [[step]] v6 Add ([[belowTen]], Constant int[0, {{*}}])
+# LOOP: edge [[counter]] -> [[belowTen]]
+# LOOP: edge [[counter]] -> [[atLeastTen]]
+# LOOP: edge [[atLeastTen]] -> Result 0
 # LOOP: edge Constant 0 -> [[counter]]
 # LOOP: edge [[step]] -> [[counter]]
 # RUN(CALLS): summary f2
 # CALLS-NOT: call
 # RUN(LINK): link functions mechanisms=all
-# LINK: function f2 {{*}}result=int|whole returns
+# LINK: function f2 {{*}}result=int[0, 9007199254740992] returns
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

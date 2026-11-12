@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTOperationEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTSlotRepresentation.h"
@@ -14,7 +15,6 @@
 #include <array>
 #include <limits>
 #include <optional>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -35,6 +35,7 @@ public:
     Boxed boxNumber(Operand);
     Boxed boxDouble(Number value) { return Boxed(m_out.sub(m_out.bitCast(value.value(), Machine::Int64), m_numberTag)); }
     Boxed boxNumberByStub(Number value) { return boxByStub(BoxedNumberForm::Double, value.value()); }
+    Boxed boxNumberByStub(OptionalInteger value) { return boxByStub(BoxedNumberForm::OptionalInteger, value.value()); }
     Boxed boxNumberByStub(OptionalNumber value) { return boxByStub(BoxedNumberForm::OptionalDouble, value.value()); }
     Boxed boxInteger(Integer, Range);
     Number toNumber(Integer, Range);
@@ -43,13 +44,24 @@ public:
     Word32 int32OrElse(Number, LBasicBlock isNoInt32);
     Word32 int32OrElse(Integer, Range, LBasicBlock isNoInt32);
     Integer truncateUnchecked(Number);
-    Word32 truncateToWord(Number value) { return low32(truncateUnchecked(value)); }
+    Word32 truncateToWord(Number);
     std::optional<Integer> exactIntegerBehind(Number);
     void noteIntegerBehind(Number number, LValue integer) { m_integersNotedBehindNumbers.add(number.value(), integer); }
-    void noteIndexBehind(Number number, Integer index) { m_indexesBehindNumbers.add(number.value(), index.value()); }
+    void noteIndexOfNumber(Number number, Integer index) { m_indexesOfNumbers.add(number.value(), index.value()); }
+    void noteIndexOfKey(Number);
+    void noteInt32OfNumber(Number number, Integer integer) { m_int32sOfNumbers.add(number.value(), integer.value()); }
+    void noteTruncationOfNumber(Number number, Word32 word) { m_truncationsOfNumbers.add(number.value(), word.value()); }
+    std::optional<Integer> int32Behind(Number number) const
+    {
+        LValue integer = m_int32sOfNumbers.get(number.value());
+        return integer ? std::optional(Integer(integer)) : std::nullopt;
+    }
+    void noteHeldAsIndex(Number number) { m_numbersHeldAsIndexes.add(number.value()); }
+    bool isHeldAsIndex(LValue number) const { return m_numbersHeldAsIndexes.contains(number); }
+    Number numberAsIndex(Number);
     std::optional<Integer> indexBehind(Number number) const
     {
-        LValue index = m_indexesBehindNumbers.get(number.value());
+        LValue index = m_indexesOfNumbers.get(number.value());
         return index ? std::optional(Integer(index)) : std::nullopt;
     }
     void noteInt32ElementBehindNumberOrNaN(Number number, Boxed element)
@@ -57,9 +69,21 @@ public:
         if (number.value()->opcode() == Machine::Select)
             m_int32ElementsBehindNumbersOrNaN.add(number.value(), element.value());
     }
+    bool isOptionalInteger(LValue number) const { return m_optionalIntegersOfNumbers.contains(number); }
+    std::optional<Number> convertOptionalInteger(LValue optional);
+    std::optional<Number> convertIntegerOrNull(LValue optional);
     void noteNumberOfInt32Element(Number number) { m_numbersOfInt32Elements.add(number.value()); }
+    void noteDoubleElement(LValue number) { m_doubleElements.add(number); }
     Integer widen(Word32, Range);
+    void noteSignExtended(Word32 word, Integer extended) { m_signExtendedWords.add(word.value(), extended.value()); }
+    std::optional<Integer> signExtendedIntegerOf(Word32 word) const
+    {
+        LValue extended = m_signExtendedWords.get(word.value());
+        return extended ? std::optional(Integer(extended)) : std::nullopt;
+    }
     Word32 lowHalfOfIntegerToldInsideInt32(Integer);
+    Word32 lowHalfOfOptionalInteger(OptionalInteger);
+    Integer integerKnownNotMarker(OptionalInteger);
     Word32 narrow(Integer value) { return low32(value); }
     enum class BitsOfInt32 : uint8_t { All, Lowest };
     static constexpr unsigned numberOfLowestBits = numberOfLowestBitsOfInt32;
@@ -77,6 +101,12 @@ public:
     static uint64_t markerBits(uint16_t primitive, Representation);
     Condition isMarker(Operand);
     Condition isNullOrAbsent(OptionalNumber);
+    struct ComparedInteger {
+        Integer value;
+        bool mayBeMarker;
+        bool markerIsNaN { false };
+    };
+    std::optional<ComparedInteger> findComparedInteger(Operand);
     Condition isMarker(Operand operand, uint64_t marker)
     {
         if (std::optional<Word32> narrow = operand.is<OptionalInteger>() ? narrowWordBehind(operand.as<OptionalInteger>()) : std::nullopt)
@@ -127,10 +157,29 @@ private:
 
     bool m_boxesNumbersByStub { false };
     Place m_placeThatBoxesByStub { Place::Anywhere };
+    StateOfKnowledge m_stateThatBoxesByStub { StateOfKnowledge::Always };
     UncheckedKeyHashMap<LValue, LValue> m_integersNotedBehindNumbers;
-    UncheckedKeyHashMap<LValue, LValue> m_indexesBehindNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_indexesOfNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_int32sOfNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_truncationsOfNumbers;
+    UncheckedKeyHashSet<LValue> m_numbersHeldAsIndexes;
     UncheckedKeyHashMap<LValue, LValue> m_int32ElementsBehindNumbersOrNaN;
+    struct OptionalIntegerOfNumber {
+        LValue integer;
+        Range range;
+        bool markerIsNaN { false };
+    };
+    UncheckedKeyHashMap<LValue, OptionalIntegerOfNumber> m_optionalIntegersOfNumbers;
+    UncheckedKeyHashMap<LValue, OptionalIntegerOfNumber> m_integersOrNullOfNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_signExtendedWords;
+    struct TruncatedNumber {
+        LValue number { nullptr };
+        LValue word { nullptr };
+        LBasicBlock block { nullptr };
+    };
+    TruncatedNumber m_lastTruncation;
     UncheckedKeyHashSet<LValue> m_numbersOfInt32Elements;
+    UncheckedKeyHashSet<LValue> m_doubleElements;
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
     UncheckedKeyHashMap<LValue, bool> m_holdsIntegerThatComesRound;
     LValue m_integerThatComesRound { nullptr };

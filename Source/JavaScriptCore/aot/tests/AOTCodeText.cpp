@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTCode.h"
 
 #include "AOTIRPrinter.h"
@@ -14,7 +15,6 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeText.h"
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/Noncopyable.h>
 

@@ -57,6 +57,7 @@ ALWAYS_INLINE bool isCompiledObject(const JSCell* cell) { return cell->type() ==
 JS_EXPORT_PRIVATE bool wouldHaveArrayStorage(JSObject* compiledObject);
 JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
 JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
+Result forEachOwnDescriptor(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath, Preparations = Preparations::NeedGenericPath);
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreatedAfterPreparing(JSGlobalObject*, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
 struct GetterWalkHooks {
@@ -94,6 +95,7 @@ void setIntegrity(VM&, JSObject*, Integrity);
 Presence testIntegrity(JSObject*, Integrity);
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);
 bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source);
+bool tryAssignThroughCaches(JSGlobalObject*, JSObject* target, JSObject* source);
 bool wouldPerformFastPut(VM&, JSObject* target);
 JS_EXPORT_PRIVATE void didBecomePrototype(VM&, JSObject*);
 JS_EXPORT_PRIVATE void didPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);

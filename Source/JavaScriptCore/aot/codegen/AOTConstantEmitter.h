@@ -46,6 +46,7 @@ public:
 
     CellPointer stringConstant(const OperationContext&, StringID);
     bool loadsStringConstantByStub(const OperationContext&, StringID);
+    bool tryStoreStringConstantByStub(const OperationContext&, ValueID string, CellPointer object, uint64_t offset, const TypedPointer& word);
     CellPointer keyConstant(const OperationContext&, PropertyKeyID);
     CellPointer bigIntConstant(const OperationContext&, StringID digits);
     CellPointer builtinCell(const OperationContext& context, BuiltinID id) { return builtinCell(context, BuiltinCellKey::object(id)); }

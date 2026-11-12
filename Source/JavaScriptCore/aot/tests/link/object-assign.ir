@@ -1,18 +1,18 @@
-# If the copy were not seen as a store into the target under every name of the source, the field of the target would stay proven a string while it holds a boolean, and the target would count as never gaining a property
+# If the copy were not seen as a store into the target under every name of the source, the field of the target would stay proven a string while it holds a boolean, and the target would have no field "z"
 # function mix(t, s) { Object.assign(t, s); }  mix({ x: "a" }, { x: true, z: null });
-# Neither object escapes. Which names the source has by then nobody can tell, because it may have gained some. So what it holds may land in any field of the target, after its construction, or beside the fields: the target gains a property. The source is only read.
+# Neither object escapes, and nothing is stored beside the fields of the source. So the copy stores its two names into the target after its construction: one into a listed field, one into a field that is appended. The source is only read.
 # RUN: summary f1
 # CHECK: change {{*}} v3 CopiesInto Parameter 0 other=Parameter 1
 # RUN(KEPT): summary f1
 # KEPT-NOT: Parameter 0 -> Unknown
 # KEPT-NOT: Parameter 1 -> Unknown
 # RUN(LINK): link fields layouts mechanisms=all
-# LINK: field L0.0 "x"
-# LINK-NOT: proven=string
+# LINK: field L0.0 "x" proven=true|string writers-known
 # LINK-NOT: written-at-construction-alone
+# LINK: field L0.1 "z" appended proven=null writers-known
 # LINK: field L1.0 "x" proven=true writers-known written-at-construction-alone
 # LINK: field L1.1 "z" proven=null writers-known written-at-construction-alone
-# LINK: layout L0 {{*}}changes=[GainsProperty
+# LINK: layout L0 {{*}}changes=[]
 # LINK: layout L1 {{*}}changes=[]
 
 layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]

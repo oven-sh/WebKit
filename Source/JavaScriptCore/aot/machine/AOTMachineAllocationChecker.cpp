@@ -136,6 +136,7 @@ private:
     bool isInRange(const SpillFacts& facts) const { return facts.begin <= m_now.upper && m_now.lower <= facts.end && !(facts.isInGap(m_now.lower) && facts.isInGap(m_now.upper)); }
     bool isPhiOfOnlySuccessor(const Operation*) const;
     bool beginsBehindExtractsAlone(const SpillFacts&) const;
+    bool isReadByItselfAlone(const Operation* phi) const;
     bool noteSpillRead(SpillIndex, const Operation* reader);
     bool noteSpillWrite(SpillIndex, Width, const Operation* writer);
 
@@ -637,6 +638,36 @@ bool AllocationChecker::beginsBehindExtractsAlone(const SpillFacts& facts) const
     return true;
 }
 
+bool AllocationChecker::isReadByItselfAlone(const Operation* phi) const
+{
+    Vector<const Operation*, 4> values { phi };
+    auto readsValue = [&](const Operation* operation) {
+        return std::ranges::any_of(operation->children(), [&](const Operation* child) {
+            return values.contains(child);
+        });
+    };
+    for (size_t numberBefore = 0; numberBefore != values.size();) {
+        numberBefore = values.size();
+        for (const Block* block : m_order.blocksInOrder()) {
+            for (const Operation* operation : block->operations()) {
+                if (m_liveness.isFused(operation) && !values.contains(operation) && readsValue(operation))
+                    values.append(operation);
+            }
+            for (const Operation* upsilon : block->upsilons()) {
+                if (values.contains(upsilon->child(0)) && !values.contains(upsilon->phi()) && !m_liveness.isDropped(upsilon->phi()))
+                    values.append(upsilon->phi());
+            }
+        }
+    }
+    for (const Block* block : m_order.blocksInOrder()) {
+        for (const Operation* operation : block->operations()) {
+            if (!m_liveness.isDropped(operation) && !m_liveness.isFused(operation) && readsValue(operation))
+                return false;
+        }
+    }
+    return true;
+}
+
 bool AllocationChecker::noteSpillRead(SpillIndex spill, const Operation* reader)
 {
     const SpillFacts& facts = m_spills[spill];
@@ -723,7 +754,7 @@ bool AllocationChecker::checkLeaf(const Operation* reader, const Operation* user
             return fail(FailureKind::WrongValueInRegister, reader);
         [[fallthrough]];
     case Location::Immediate:
-        if (location.isImmediate() && leaf->hasNoPosition() && comparesConstantInMemory(*user, childIndex, *leaf)) {
+        if (location.isImmediate() && leaf->hasNoPosition() && readsConstantInMemory(*user, childIndex, *leaf)) {
             ++numberOfMemoryOperands;
             return acceptsMemoryOperand(*user, childIndex) || fail(FailureKind::WrongValueInRegister, reader);
         }
@@ -1239,7 +1270,7 @@ bool AllocationChecker::enter(Block* block)
         SpillIndex spill = m_allocation.spillOf(phi);
         if (spill < m_spills.size() && m_spills[spill].isDeadSlot)
             continue;
-        if (spill >= m_spills.size() || m_state[m_firstSpillPlace + spill] != idOf(phi))
+        if (spill >= m_spills.size() || (m_state[m_firstSpillPlace + spill] != idOf(phi) && !isReadByItselfAlone(phi)))
             return fail(FailureKind::WrongValueInSpillSlot, phi);
     }
     m_now.lower = m_head;
@@ -1267,7 +1298,7 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
         const BlockPlace& place = m_order.of(block);
         return m_allocation.isInFramedPart(block) || (place.isRare() && m_allocation.needsFrameIn(place.rareRegion));
     };
-    bool exitsFramedPart = m_allocation.hasFramedPart() && !m_allocation.needsFrameAheadOfFramedPart() && runsInFrame(from) && (!runsInFrame(target) || m_allocation.isHeadOfFramedPart(target));
+    bool exitsFramedPart = from->numSuccessors() == 1 && m_allocation.hasFramedPart() && !m_allocation.needsFrameAheadOfFramedPart() && runsInFrame(from) && (!runsInFrame(target) || m_allocation.isHeadOfFramedPart(target));
     if (exitsFramedPart)
         killed |= m_file.calleeSaved;
 
@@ -1589,7 +1620,7 @@ bool CheckerOfSavesAtHeads::run()
             SetOfSlots heldBehindBlock = setHeldBehindBlock();
             for (unsigned index = 0; index < block->numSuccessors(); ++index) {
                 const Block* successor = block->successor(index).block();
-                bool losesFrame = runsInFrame(block) && (!runsInFrame(successor) || m_allocation.isHeadOfFramedPart(successor));
+                bool losesFrame = block->numSuccessors() == 1 && runsInFrame(block) && (!runsInFrame(successor) || m_allocation.isHeadOfFramedPart(successor));
                 SetOfSlots arrives = losesFrame ? noSlots : heldBehindBlock;
                 SetOfSlots heldThere = m_heldAtHeads[successor->index()];
                 SetOfSlots meets = heldThere == notReached ? arrives : meet(heldThere, arrives);

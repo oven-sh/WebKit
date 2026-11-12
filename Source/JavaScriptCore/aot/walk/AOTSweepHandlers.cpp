@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
 #include "AOTPlan.h"
@@ -16,7 +17,6 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/MakeString.h>
 

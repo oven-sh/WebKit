@@ -27,6 +27,8 @@ public:
     Condition isBeyondBarrierThreshold(CellPointer);
     void fenceAfterInitialization();
     void fenceAfterInitialization(const OperationContext& allocation);
+    void deferFenceToLastFirstStore();
+    void fenceAfterFirstStores(ValueID allocation);
     void fenceAfterLateStores();
 
 private:

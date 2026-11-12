@@ -338,7 +338,7 @@ static Representation formOfParameterProvenToBe(const Program& program, TypeID p
     if (!proven)
         return Representation::JSValue;
     Representation form = representationOf(program.at(proven));
-    return form == Representation::Int32 || form == Representation::Double ? form : Representation::JSValue;
+    return form == Representation::Int32 || form == Representation::Int64 || form == Representation::Double ? form : Representation::JSValue;
 }
 
 Representation CallingConventions::formBehindGuard(const Program& program, const FunctionConvention& convention, unsigned parameterIndex) const
@@ -699,16 +699,20 @@ void CallingConventions::setRemovedCaptures(const Program& program, const Promot
         m_parts.formsOfEntryParameters[m_parts.conventions[removed.function.index()].firstEntryParameter + removed.capture] = Representation::Void;
 }
 
+static constexpr Range uint32RangeInConvention { 0, std::numeric_limits<uint32_t>::max() };
+
 static Representation formOfResultProvenToBe(const Program& program, TypeID proven)
 {
     if (!proven)
         return Representation::JSValue;
-    switch (representationOf(program.at(proven))) {
+    const Type& type = program.at(proven);
+    switch (representationOf(type)) {
     case Representation::Boolean:
         return Representation::Boolean;
     case Representation::Int32:
         return Representation::Int32;
     case Representation::Int64:
+        return type.integers.isSubsetOf(uint32RangeInConvention) ? Representation::Int64 : Representation::Double;
     case Representation::Double:
         return Representation::Double;
     case Representation::OptionalInt64:
@@ -726,6 +730,13 @@ static bool tellsAbsentFromUndefinedInConvention(const Program& program, const D
     return written && (program.at(written).primitives & Primitive::Absent);
 }
 
+static Representation formOfParameterInConvention(const Program& program, const DeclaredType& parameter, TypeID proven)
+{
+    TypeID written = parameter.written();
+    bool isOptionalNumber = written && proven && representationOf(program.at(written)) == Representation::OptionalDouble && representationOf(program.at(proven)) == Representation::OptionalDouble;
+    return isOptionalNumber ? Representation::OptionalDouble : formOfParameterProvenToBe(program, proven);
+}
+
 static void fillFormsOfEntryParameters(const Program& program, const Facts& facts, FunctionID id, bool mayTakeUnboxedNumbers, std::span<Representation> forms)
 {
     const Function& function = program.at(id);
@@ -736,10 +747,12 @@ static void fillFormsOfEntryParameters(const Program& program, const Facts& fact
         Representation form = boxedFormOfEntryParameter(program, function, index);
         bool isPositional = index >= firstPositionalParameter && index - firstPositionalParameter < numberOfPositionalParameters;
         if (mayTakeUnboxedNumbers && isPositional && form == Representation::JSValue && !tellsAbsentFromUndefinedInConvention(program, function.parameters[index - firstPositionalParameter]))
-            form = formOfParameterProvenToBe(program, facts.typeOfEntryParameter(id, index).proven);
+            form = formOfParameterInConvention(program, function.parameters[index - firstPositionalParameter], facts.typeOfEntryParameter(id, index).proven);
         forms[index] = form;
     }
 }
+
+static constexpr RepresentationSet formsTakenAsDoublesInConvention { Representation::Int32, Representation::Int64, Representation::Double };
 
 static void boxResultsOfMethodsWhoseNamesakesReturnOtherwise(const Program& program, const LinkTables& linked, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
 {
@@ -754,16 +767,22 @@ static void boxResultsOfMethodsWhoseNamesakesReturnOtherwise(const Program& prog
     forEachMethodThatSharesCalls([&](PropertyKeyID key, FunctionID method) {
         Representation form = functionsThatReturnRawValues.get(method.index()) ? parts.formsOfResults[parts.conventions[method.index()].firstResult] : Representation::JSValue;
         Representation& known = formsUnderKeys[key.index()];
-        bool someSelectorCarriesForm = form == Representation::JSValue || form == Representation::Int32 || form == Representation::Double;
-        if (!someSelectorCarriesForm || (known != Representation::Unchosen && known != form))
+        static constexpr RepresentationSet formsOfSelectors { Representation::JSValue, Representation::Int32, Representation::Int64, Representation::Double };
+        if (known != Representation::Unchosen && known != form && formsTakenAsDoublesInConvention.contains(known) && formsTakenAsDoublesInConvention.contains(form))
+            known = form = Representation::Double;
+        if (!formsOfSelectors.contains(form) || (known != Representation::Unchosen && known != form))
             keysWhoseMethodsDiffer.quickSet(key.index());
         known = form;
     });
     forEachMethodThatSharesCalls([&](PropertyKeyID key, FunctionID method) {
-        if (!keysWhoseMethodsDiffer.quickGet(key.index()) || !functionsThatReturnRawValues.get(method.index()))
+        if (!functionsThatReturnRawValues.get(method.index()))
             return;
-        functionsThatReturnRawValues.clear(method.index());
-        parts.formsOfResults[parts.conventions[method.index()].firstResult] = Representation::JSValue;
+        Representation& form = parts.formsOfResults[parts.conventions[method.index()].firstResult];
+        if (keysWhoseMethodsDiffer.quickGet(key.index())) {
+            functionsThatReturnRawValues.clear(method.index());
+            form = Representation::JSValue;
+        } else if (formsTakenAsDoublesInConvention.contains(form))
+            form = formsUnderKeys[key.index()];
     });
 }
 
@@ -779,12 +798,14 @@ static BitVector collectDirectlyCalledClosures(const Program& program, const Lin
     };
     addCallees(linked.calls);
     addCallees(held.calls);
+    for (const LinkedFunctionWrittenOverBuiltin& written : linked.functionsWrittenOverBuiltins)
+        closures.quickSet(written.function.index());
     return closures;
 }
 
-static bool isUnboxedDouble(Representation form)
+static bool isUnboxedWiderThanInt32(Representation form)
 {
-    return form == Representation::Double || form == Representation::OptionalDouble;
+    return form == Representation::Int64 || form == Representation::Double || form == Representation::OptionalDouble;
 }
 
 static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTables& linked, const BitVector& directlyCalledClosures, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
@@ -863,7 +884,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
                 const LinkedFunction& proven = linked.function(id);
                 if (proven.ringsOfTailCallsAreListed && (proven.everyTakerOfResultKnowsCallee || directlyCalledClosures.get(index))) {
                     Representation form = formOfResultProvenToBe(program, proven.result);
-                    if (proven.everyTakerOfResultKnowsCallee || isUnboxedDouble(form))
+                    if (proven.everyTakerOfResultKnowsCallee || isUnboxedWiderThanInt32(form))
                         formsOfResults.back() = form;
                 }
                 if (formsOfResults.back() != Representation::JSValue)

@@ -35,6 +35,7 @@ struct ExtraPropertyAdditionExits {
 using StoreFinish = ScopedLambda<void(GPRReg owner, bool valueMayNeedBarrier)>;
 
 void loadExtraProperties(StubAssembler&, GPRReg object, GPRReg hiddenWordOffset, GPRReg result, JumpList& hasNone);
+void loadExtraPropertiesByStructure(StubAssembler&, GPRReg object, GPRReg structure, GPRReg scratch, GPRReg result, JumpList& hasNone);
 void locateExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, JumpList& miss);
 void readExtraPropertyAndReturn(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg result, JumpList& miss);
 void loadExtraPropertyByFrontCell(StubAssembler&, GPRReg cell, GPRReg object, GPRReg storage, GPRReg wordIndex, GPRReg result, JumpList& hasNone);

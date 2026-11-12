@@ -20,13 +20,15 @@ enum class VerdictOnStoredStrings : uint8_t {
     CannotBeRead,
 };
 
+enum class StoredStringsForm : uint8_t { ZeroTerminated, JSONLines };
+
 struct StoredStrings {
     VerdictOnStoredStrings verdict { VerdictOnStoredStrings::CannotBeRead };
     Vector<uint8_t> strings;
     Vector<uint8_t> report;
 };
 
-JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceFunction = nullptr);
+JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceFunction = nullptr, StoredStringsForm = StoredStringsForm::ZeroTerminated);
 
 } } // namespace JSC::AOT
 

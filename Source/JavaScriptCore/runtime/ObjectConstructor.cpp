@@ -307,6 +307,12 @@ static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* 
         if (didAssign)
             return;
     }
+    if (vm.hasCompiledCode() && !target->structure()->isCompiledStructure()) {
+        bool didAssign = AOT::PropertyWalk::tryAssignThroughCaches(globalObject, target, source);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (didAssign)
+            return;
+    }
 #else
     UNUSED_PARAM(goesOnKeyByKey);
 #endif

@@ -109,14 +109,86 @@ static void orderTestCheckLayout(OrderTest& test)
             loop = order.loops()[loop].parent;
         return order.loops()[loop].firstBlock;
     };
-    const Block* lastBlockPlacedByOrder = nullptr;
     for (uint32_t index = 0; index < layout.size(); ++index) {
         AOT_ORDER_TEST_CHECK(test, static_cast<int>(order.of(layout[index]).layoutPart) == partOf(layout[index]));
         AOT_ORDER_TEST_CHECK(test, !index || partOf(layout[index - 1]) <= partOf(layout[index]));
         if (order.of(layout[index]).wasSplitLate)
             continue;
-        AOT_ORDER_TEST_CHECK(test, !lastBlockPlacedByOrder || partOf(lastBlockPlacedByOrder) != partOf(layout[index]) || rankOf(lastBlockPlacedByOrder) <= rankOf(layout[index]));
-        lastBlockPlacedByOrder = layout[index];
+        bool precedesOrder = std::ranges::any_of(layout.subspan(index + 1), [&](const Block* behind) {
+            return !order.of(behind).wasSplitLate && partOf(behind) == partOf(layout[index]) && rankOf(behind) < rankOf(layout[index]);
+        });
+        if (!precedesOrder)
+            continue;
+        uint32_t front = index;
+        do
+            --front;
+        while (order.of(layout[front]).wasSplitLate);
+        AOT_ORDER_TEST_CHECK(test, !partOf(layout[index]) && std::ranges::any_of(layout[front]->successors(), [&](const Edge& edge) {
+            const Block* target = order.of(edge.block()).wasSplitLate ? edge.block()->successor(0).block() : edge.block();
+            return target == layout[index];
+        }));
+    }
+}
+
+template<bool isInLoop>
+static void testMachineOrderMovesShortRunAfterItsJump()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock head = out.newBlock();
+    LBasicBlock turn = out.newBlock();
+    LBasicBlock check = out.newBlock();
+    LBasicBlock slow = out.newBlock();
+    LBasicBlock other = out.newBlock();
+    LBasicBlock answer = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LBasicBlock exit = out.newBlock();
+    LValue index = out.phiIn(head, Int64);
+    LValue sum = out.phiIn(head, Int64);
+    LValue amount = out.phiIn(other, Int64);
+    LValue step = out.phiIn(join, Int64);
+    out.upsilon(out.int64Zero, index);
+    out.upsilon(out.int64Zero, sum);
+    out.jump(head);
+    out.appendTo(head);
+    out.branch(out.equal(index, test.first), normalEdge(turn), normalEdge(check));
+    test.passAndJump(turn, out.constInt64(100), amount, other);
+    out.appendTo(check);
+    out.branch(out.equal(index, test.second), rareEdge(slow), normalEdge(answer));
+    out.appendTo(slow);
+    out.upsilon(out.constInt64(1000), amount);
+    out.branch(out.equal(index, test.third), normalEdge(answer), normalEdge(other));
+    out.appendTo(other);
+    out.upsilon(out.add(amount, out.constInt64(1)), step);
+    out.jump(join);
+    out.appendTo(answer);
+    out.upsilon(out.add(index, out.constInt64(1)), step);
+    out.jump(join);
+    out.appendTo(join);
+    LValue nextIndex = out.add(index, out.constInt64(1));
+    LValue nextSum = out.add(sum, step);
+    if constexpr (isInLoop) {
+        out.upsilon(nextIndex, index);
+        out.upsilon(nextSum, sum);
+        out.branch(out.below(nextIndex, out.constInt64(8)), normalEdge(head), normalEdge(exit));
+    } else
+        out.jump(exit);
+    test.returnValue(exit, nextSum);
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, order.of(answer).layoutIndex == order.of(check).layoutIndex + 1);
+    AOT_ORDER_TEST_CHECK(test, order.of(other).layoutIndex == order.of(turn).layoutIndex + 1);
+    auto expected = [](int64_t first, int64_t secondValue, int64_t third) {
+        int64_t result = 0;
+        for (int64_t i = 0; i < (isInLoop ? 8 : 1); ++i)
+            result += i == first ? 101 : i == secondValue && i != third ? 1001 : i + 1;
+        return result;
+    };
+    for (int64_t first = -1; first < 9; ++first) {
+        for (int64_t secondValue = -1; secondValue < 9; ++secondValue) {
+            for (int64_t third : { secondValue, secondValue + 1 })
+                AOT_ORDER_TEST_CHECK(test, test.run(first, secondValue, third) == expected(first, secondValue, third));
+        }
     }
 }
 
@@ -1404,6 +1476,68 @@ static void testMachineThreadingOfTestThatNextTestImplies()
         AOT_ORDER_TEST_CHECK(test, test.run(0, 3, third) == 20 && test.run(2000, 3, third) == 10);
 }
 
+enum class OrderTestRereadWord : uint8_t {
+    ExitsToOneBlock,
+    ExitsToOneLikelyBlock,
+    IsReadBelow,
+    ExitsElsewhere,
+    IsReadLaterAndExitsElsewhere,
+    ExitsToAnotherLikelyBlock,
+    IsNarrowReference,
+    IsStoredBetween,
+    LetsZeroPass,
+};
+
+template<OrderTestRereadWord variant>
+static void testMachineThreadingOfTestBeforeRereadWord()
+{
+    using enum OrderTestRereadWord;
+    constexpr bool hasUsualPlaces = variant == ExitsToOneLikelyBlock || variant == ExitsToAnotherLikelyBlock || variant == IsNarrowReference;
+    constexpr bool exitsElsewhere = variant == ExitsElsewhere || variant == IsReadLaterAndExitsElsewhere || variant == ExitsToAnotherLikelyBlock || variant == IsNarrowReference;
+    constexpr bool isReadBelow = variant == IsReadBelow || variant == IsReadLaterAndExitsElsewhere;
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock next = out.newBlock();
+    LBasicBlock usual = out.newBlock();
+    LBasicBlock slow = out.newBlock();
+    LBasicBlock other = out.newBlock();
+    LBasicBlock start = test.entry;
+    auto edgeToPlace = [&](LBasicBlock block) {
+        return hasUsualPlaces ? normalEdge(block) : rareEdge(block);
+    };
+    auto readWord = [&] {
+        LValue word = out.load32(orderTestWordOf(test, test.first, OrderTestKey));
+        if (variant == IsNarrowReference)
+            word->markAsNarrowReference();
+        return word;
+    };
+    LValue word = readWord();
+    if (variant == IsStoredBetween)
+        out.store32(out.constInt32(20), orderTestWordOf(test, test.first, OrderTestKey));
+    out.branch(word, normalEdge(next), edgeToPlace(slow));
+    out.appendTo(next);
+    LValue readAgain = readWord();
+    if (variant == LetsZeroPass)
+        out.branch(out.below(readAgain, out.constInt32(11)), normalEdge(usual), edgeToPlace(slow));
+    else
+        out.branch(out.above(readAgain, out.constInt32(10)), normalEdge(usual), edgeToPlace(exitsElsewhere ? other : slow));
+    out.appendTo(usual);
+    out.ret(isReadBelow ? out.zeroExt(word, Int64) : out.constInt64(1));
+    test.returnConstant(slow, 2);
+    test.returnConstant(other, 3);
+    test.compile();
+
+    constexpr bool isAskedBehind = variant != ExitsToAnotherLikelyBlock && variant != IsStoredBetween && variant != LetsZeroPass;
+    AOT_ORDER_TEST_CHECK(test, start->last()->isUnconditionalJump() == isAskedBehind);
+    for (int64_t value : { 0, 1, 10, 11, 12, 2000000000 }) {
+        int64_t words[] { value, 0, 0 };
+        int64_t askedAgain = variant == IsStoredBetween ? 20 : value;
+        bool isUsual = variant == LetsZeroPass ? askedAgain < 11 : askedAgain > 10;
+        int64_t expected = !value ? 2 : isUsual ? (isReadBelow ? value : 1) : exitsElsewhere ? 3 : 2;
+        AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(words)) == expected);
+    }
+}
+
 static void testMachineThreadingAsksSecondOfTwoJoinedTestsOfBitsOfWordThatFirstRead()
 {
     OrderTest test;
@@ -1783,6 +1917,7 @@ std::span<const NativeTest> machineOrderTests()
     using Machine::OrderTestNextTest;
     using Machine::OrderTestSecondTest;
     using Machine::OrderTestThrowBlocks;
+    using Machine::OrderTestRereadWord;
     using Machine::OrderTestWordAskedTwice;
     static constexpr NativeTest tests[] = {
         { "machine-order/unlikely-arm-stands-outside-its-loop"_s, Machine::testMachineOrderTakesUnlikelyArmOutOfLoop },
@@ -1836,7 +1971,18 @@ std::span<const NativeTest> machineOrderTests()
         { "machine-order/test-for-zero-is-asked-behind-a-test-that-leaves-by-its-first-way"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::LeavesForZeroTooByItsFirstWay> },
         { "machine-order/test-of-bits-is-asked-behind-a-bound-that-words-without-them-fail"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::FollowsTestOfBits> },
         { "machine-order/the-second-of-two-joined-tests-of-bits-asks-the-word-that-the-first-read"_s, Machine::testMachineThreadingAsksSecondOfTwoJoinedTestsOfBitsOfWordThatFirstRead },
+        { "machine-order/test-is-left-to-next"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::ExitsToOneBlock> },
+        { "machine-order/test-is-left-for-usual-place"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::ExitsToOneLikelyBlock> },
+        { "machine-order/word-read-below-stays-read"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::IsReadBelow> },
+        { "machine-order/test-is-asked-behind-next-read"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::ExitsElsewhere> },
+        { "machine-order/word-read-below-is-compared"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::IsReadLaterAndExitsElsewhere> },
+        { "machine-order/test-for-usual-place-stays"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::ExitsToAnotherLikelyBlock> },
+        { "machine-order/filled-slot-is-asked-behind"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::IsNarrowReference> },
+        { "machine-order/test-ahead-of-store-stays"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::IsStoredBetween> },
+        { "machine-order/test-that-next-passes-stays"_s, Machine::testMachineThreadingOfTestBeforeRereadWord<OrderTestRereadWord::LetsZeroPass> },
         { "machine-order/test-of-bits-stays-ahead-of-a-bound-that-a-word-without-them-passes"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::FollowsTestOfBitsThatReachAboveItsBound> },
+        { "machine-order/short-run-moves-behind-its-jump"_s, Machine::testMachineOrderMovesShortRunAfterItsJump<false> },
+        { "machine-order/short-run-moves-within-its-loop"_s, Machine::testMachineOrderMovesShortRunAfterItsJump<true> },
         { "machine-order/cycle-of-jumps-ends-the-search"_s, Machine::testMachineThreadingEndsInCycleOfJumps },
         { "machine-order/identical-throw-blocks-merge"_s, Machine::testMachineMergingOfThrowBlocks<OrderTestThrowBlocks::AreAlike> },
         { "machine-order/throw-blocks-with-generators-of-their-own-stay-apart"_s, Machine::testMachineMergingOfThrowBlocks<OrderTestThrowBlocks::DifferInGenerator> },

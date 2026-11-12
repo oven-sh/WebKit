@@ -16,6 +16,7 @@ inline constexpr OpcodeSet callsThatGiveBoundsOfParts { Opcode::BoundsOfRegExpMa
 inline constexpr uint32_t firstBoundOfParts = 0;
 
 bool buildMatchInPartsByCodeOfRegExp(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
+Reference buildPlacesReadOfMatch(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 bool buildSplitInParts(Walker&, const CallByOneRow&);
 Reference partOfListThatIsOnlyTakenApart(Walker&, Reference name, Reference key);
 

@@ -10,6 +10,7 @@
 
 #include "AOTCaseConversions.h"
 #include "AOTCellFormat.h"
+#include "AOTImageText.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStringBuilderStorage.h"
@@ -35,19 +36,23 @@ static StubSignature signatureOfCharactersInPlace()
     return signature;
 }
 
-StubSignature signatureOfRopeCharacters(StubKey) { return signatureOfCharactersInPlace(); }
-StubSignature signatureOfSubstringCharacters(StubKey)
+static StubSignature signatureOfCharactersAndImpl()
 {
     StubSignature signature = signatureOfCharactersInPlace();
     signature.result = StubResult::TwoGPRs;
     signature.secondResult = gprOf(StubRegister::T9);
     return signature;
 }
+StubSignature signatureOfRopeCharacters(StubKey) { return signatureOfCharactersAndImpl(); }
+StubSignature signatureOfSubstringCharacters(StubKey) { return signatureOfCharactersAndImpl(); }
 StubSignature signatureOfFlattenString(StubKey) { return signatureOfCharactersInPlace(); }
 StubSignature signatureOfStringCodeUnitAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T12), gprOf(StubRegister::T11) }); }
 StubSignature signatureOfStringsAreEqual(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfDistinctStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
 StubSignature signatureOfStringEqualsValue(StubKey key) { return signatureOfStringsAreEqual(key); }
+StubSignature signatureOfStringEqualsNullable(StubKey key) { return signatureOfStringsAreEqual(key); }
+StubSignature signatureOfNullableStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
+StubSignature signatureOfNullableStringsAreLooselyEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
 StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 StubSignature signatureOfFindText8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::A4) }); }
@@ -286,19 +291,19 @@ void generateRopeCharacters(StubAssembler& jit)
 {
     const GPRReg string = jit.clobberOperand(0);
     const GPRReg data = jit.result();
-    const GPRReg fiber = jit.allocateScratch(StubRegister::T9);
+    const GPRReg impl = jit.secondResult();
     const GPRReg offset = jit.allocateScratch(StubRegister::T13);
-    RELEASE_ASSERT(string == data);
+    RELEASE_ASSERT(string == data && noOverlap(data, impl, offset));
     auto loadImplCharacters = [&] {
-        jit.loadPtr(Address(fiber, StringImpl::dataOffset()), data);
+        jit.loadPtr(Address(impl, StringImpl::dataOffset()), data);
     };
-    jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);
-    Jump isFlat = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSString::isRopeInPointer));
-    Jump notSubstring = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
-    loadSubstringBaseAndOffset(jit, string, fiber, offset);
-    jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
+    Jump isFlat = jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSString::isRopeInPointer));
+    Jump notSubstring = jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSRopeString::isSubstringInPointer));
+    loadSubstringBaseAndOffset(jit, string, impl, offset);
+    jit.loadPtr(Address(impl, JSString::offsetOfValue()), impl);
     loadImplCharacters();
-    Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.lshift64(TrustedImm32(1), offset);
     is8Bit.link(&jit);
     jit.addPtr(offset, data);
@@ -309,7 +314,7 @@ void generateRopeCharacters(StubAssembler& jit)
     jit.returnToCaller();
 
     notSubstring.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber }, loadImplCharacters);
+    jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = impl }, loadImplCharacters);
 }
 
 void generateSubstringCharacters(StubAssembler& jit)
@@ -649,7 +654,7 @@ void generateStringsAreEqual(StubAssembler& jit)
     areNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(secondFiber, StringImpl::lengthMemoryOffset()), length));
     jit.load32(Address(firstFiber, StringImpl::flagsOffset()), scratch);
     jit.and32(Address(secondFiber, StringImpl::flagsOffset()), scratch);
-    areNotEqual.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(StringImpl::flagIsAtom())));
+    areNotEqual.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(flagsOfUniqueTexts)));
     branchIfCharactersDiffer(jit, { firstFiber, secondFiber, length, scratch, word }, areNotEqual, needsLeaf);
 
     areEqual.link(&jit);
@@ -675,6 +680,25 @@ void generateStringsAreEqual(StubAssembler& jit)
     differ.linkTo(returnFalse, &jit);
     needsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringsAreEqual, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = first, .thirdArgumentIn = second });
+
+    jit.bindEntry(stringEqualsNullable());
+    jit.branchPtr(CCallHelpers::Equal, first, second).linkTo(returnTrue, &jit);
+    jit.branchIfCell(second).linkTo(areDistinct, &jit);
+    jit.jump().linkTo(returnFalse, &jit);
+
+    jit.bindEntry(nullableStringsAreEqual(true));
+    jit.branchPtr(CCallHelpers::Equal, first, second).linkTo(returnTrue, &jit);
+    jit.or64(first, second, scratch);
+    jit.branchIfCell(scratch).linkTo(areDistinct, &jit);
+    jit.jump().linkTo(returnFalse, &jit);
+
+    jit.bindEntry(nullableStringsAreEqual(false));
+    jit.branchPtr(CCallHelpers::Equal, first, second).linkTo(returnTrue, &jit);
+    jit.or64(first, second, scratch);
+    jit.branchIfCell(scratch).linkTo(areDistinct, &jit);
+    jit.and64(first, second, scratch);
+    jit.branchIfNotCell(scratch).linkTo(returnTrue, &jit);
+    jit.jump().linkTo(returnFalse, &jit);
 
     jit.bindEntry(stringEqualsValue());
     jit.branchPtr(CCallHelpers::Equal, first, second).linkTo(returnTrue, &jit);
@@ -755,19 +779,29 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
 
     static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4, StubRegister::A5, StubRegister::T9, StubRegister::T12));
     static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
+    const LocaleCompareRegisters registers {
+        operationArgumentGPR(1), operationArgumentGPR(2), jit.allocateScratch(StubRegister::A3), jit.allocateScratch(StubRegister::A4), jit.allocateScratch(StubRegister::A5),
+        jit.allocateScratch(StubRegister::T9), jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::R0)
+    };
+    auto returnOrder = [&](int32_t order) {
+        if (order < 0)
+            returnResult(jit, TrustedImm64(order));
+        else
+            returnResult(jit, TrustedImm32(order));
+    };
+    JumpList callsOperation;
+    emitLocaleCompareOfASCII(jit, registers, ScopedLambda<void(int32_t)>(returnOrder), callsOperation);
+    callsOperation.link(&jit);
+    return PreludeExit::CallsOperation;
+}
+
+void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& registers, const ScopedLambda<void(int32_t)>& returnOrder, JumpList& callsOperation)
+{
     constexpr int32_t wordSize = sizeof(uint64_t);
-    constexpr GPRReg left = operationArgumentGPR(1);
-    constexpr GPRReg right = operationArgumentGPR(2);
-    const GPRReg leftCharacters = jit.allocateScratch(StubRegister::A3);
-    const GPRReg rightCharacters = jit.allocateScratch(StubRegister::A4);
-    const GPRReg remaining = jit.allocateScratch(StubRegister::A5);
-    const GPRReg leftUnit = jit.allocateScratch(StubRegister::T9);
-    const GPRReg rightUnit = jit.allocateScratch(StubRegister::T12);
-    const GPRReg weights = jit.allocateScratch(StubRegister::R0);
+    auto [left, right, leftCharacters, rightCharacters, remaining, leftUnit, rightUnit, weights] = registers;
     const GPRReg nonASCIIBits = weights;
 
     JumpList isEqual;
-    JumpList callsOperation;
     JumpList comparesBytes;
     JumpList commonPartIsEqual;
 
@@ -804,17 +838,75 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     jit.sub32(TrustedImm32(wordSize), remaining);
     jit.branch32(CCallHelpers::AboveOrEqual, remaining, TrustedImm32(wordSize)).linkTo(wordLoop, &jit);
     comparesBytes.append(jit.jump());
+    constexpr int32_t halfWordSize = sizeof(uint32_t);
+    constexpr int32_t nonASCIIHalfwordBits = static_cast<int32_t>(0x80808080);
+    JumpList weightsDiffer;
+    JumpList readsEachByte;
+    auto compareDifferingBytes = [&](int32_t unitSize, int32_t offset, JumpList& weightsAreEqual) {
+        const bool isWord = unitSize == wordSize;
+        auto compareWeights = [&](int32_t likelyOrder) {
+            if (isWord) {
+                jit.xor64(rightUnit, leftUnit);
+                jit.countLeadingZeros64(leftUnit, leftUnit);
+            } else {
+                jit.xor32(rightUnit, leftUnit);
+                jit.countLeadingZeros32(leftUnit, leftUnit);
+            }
+            jit.urshift32(TrustedImm32(3), leftUnit);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
+            jit.load8(BaseIndex(rightCharacters, leftUnit, CCallHelpers::TimesOne, offset), rightUnit);
+            jit.load8(BaseIndex(leftCharacters, leftUnit, CCallHelpers::TimesOne, offset), leftUnit);
+            jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
+            jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
+            callsOperation.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
+            callsOperation.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
+            weightsAreEqual.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
+            weightsDiffer.append(jit.branch32(likelyOrder < 0 ? CCallHelpers::Above : CCallHelpers::Below, leftUnit, rightUnit));
+            returnOrder(likelyOrder);
+        };
+        Jump leftIsBelow;
+        if (isWord) {
+            jit.byteSwap64(leftUnit);
+            jit.byteSwap64(rightUnit);
+            leftIsBelow = jit.branch64(CCallHelpers::Below, leftUnit, rightUnit);
+        } else {
+            jit.byteSwap32(leftUnit);
+            jit.byteSwap32(rightUnit);
+            leftIsBelow = jit.branch32(CCallHelpers::Below, leftUnit, rightUnit);
+        }
+        compareWeights(1);
+        leftIsBelow.link(&jit);
+        compareWeights(-1);
+    };
     wordsDiffer.link(&jit);
-    jit.xor64(rightUnit, leftUnit);
-    jit.countTrailingZeros64(leftUnit, leftUnit);
-    jit.urshift64(TrustedImm32(3), leftUnit);
-    jit.add64(leftUnit, leftCharacters);
-    jit.add64(leftUnit, rightCharacters);
-    jit.sub32(leftUnit, remaining);
+    compareDifferingBytes(wordSize, 0, readsEachByte);
 
     comparesBytes.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
     commonPartIsEqual.append(jit.branchTest32(CCallHelpers::Zero, remaining));
+    jit.load8(Address(leftCharacters), leftUnit);
+    jit.load8(Address(rightCharacters), rightUnit);
+    readsEachByte.append(jit.branch32(CCallHelpers::NotEqual, leftUnit, rightUnit));
+    readsEachByte.append(jit.branch32(CCallHelpers::Below, remaining, TrustedImm32(halfWordSize)));
+    jit.load32(Address(leftCharacters), leftUnit);
+    jit.load32(Address(rightCharacters), rightUnit);
+    readsEachByte.append(jit.branchTest32(CCallHelpers::NonZero, leftUnit, TrustedImm32(nonASCIIHalfwordBits)));
+    readsEachByte.append(jit.branchTest32(CCallHelpers::NonZero, rightUnit, TrustedImm32(nonASCIIHalfwordBits)));
+    Jump halfwordsAreEqual = jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit);
+    compareDifferingBytes(halfWordSize, 0, readsEachByte);
+
+    halfwordsAreEqual.link(&jit);
+    readsEachByte.append(jit.branch32(CCallHelpers::Above, remaining, TrustedImm32(wordSize)));
+    jit.add64(remaining, leftCharacters);
+    jit.add64(remaining, rightCharacters);
+    jit.load32(Address(leftCharacters, -halfWordSize), leftUnit);
+    jit.load32(Address(rightCharacters, -halfWordSize), rightUnit);
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, leftUnit, TrustedImm32(nonASCIIHalfwordBits)));
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, rightUnit, TrustedImm32(nonASCIIHalfwordBits)));
+    commonPartIsEqual.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
+    compareDifferingBytes(halfWordSize, -halfWordSize, callsOperation);
+
+    readsEachByte.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
     Label byteLoop = jit.label();
     jit.load8(Address(leftCharacters), leftUnit);
     jit.load8(Address(rightCharacters), rightUnit);
@@ -833,10 +925,11 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
     jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit).linkTo(advance, &jit);
+    weightsDiffer.link(&jit);
     Jump leftIsGreater = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
-    returnResult(jit, TrustedImm64(-1));
+    returnOrder(-1);
     leftIsGreater.link(&jit);
-    returnResult(jit, TrustedImm32(1));
+    returnOrder(1);
 
     commonPartIsEqual.link(&jit);
     jit.loadPtr(Address(left, JSString::offsetOfValue()), leftUnit);
@@ -844,22 +937,20 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     jit.load32(Address(leftUnit, StringImpl::lengthMemoryOffset()), leftUnit);
     jit.load32(Address(rightUnit, StringImpl::lengthMemoryOffset()), rightUnit);
     callsOperation.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
     Jump leftIsLonger = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
     jit.load8(Address(rightCharacters), rightUnit);
     jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
-    returnResult(jit, TrustedImm64(-1));
+    returnOrder(-1);
     leftIsLonger.link(&jit);
     jit.load8(Address(leftCharacters), leftUnit);
     jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
-    returnResult(jit, TrustedImm32(1));
+    returnOrder(1);
 
     isEqual.link(&jit);
-    returnResult(jit, TrustedImm32(0));
-
-    callsOperation.link(&jit);
-    return PreludeExit::CallsOperation;
+    returnOrder(0);
 }
 
 static void returnRememberedCaseConversion(StubAssembler& jit, CaseConversions::LetterCase letterCase, GPRReg string, GPRReg source, GPRReg index, GPRReg table, GPRReg entry, GPRReg sourceOfEntry)

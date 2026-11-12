@@ -67,6 +67,7 @@
 #include "AddressSpaceBudget.h"
 #include "BooleanConstructor.h"
 #include "DeferGC.h"
+#include "ArrayConstructor.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
 #include "GlobalObjectMethodTable.h"
@@ -87,9 +88,11 @@
 #include "MarkedBlockCage.h"
 #include "NativeExecutable.h"
 #include "NumberConstructor.h"
+#include "ObjectConstructor.h"
 #include "ObjectPrototype.h"
 #include "Opcode.h"
 #include "Options.h"
+#include "ParserArena.h"
 #include "ReservedRangeHeap.h"
 #include "SlotVisitorInlines.h"
 #include "StringConstructor.h"
@@ -238,7 +241,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.fieldRecordIndices = image.programTables().fieldRecordIndices().data();
     words.classAccessors = image.programTables().classAccessors().data();
     words.data = image.programTables().data().data();
-    words.closureFunctionKinds = image.programTables().closureFunctionKinds().data();
+    words.closureFactNumbers = image.programTables().closureFactNumbers().data();
+    words.closureFacts = image.programTables().closureFacts().data();
     words.regExps = image.section<ImageRegExp>(ImageSection::RegExps).data();
     words.regExpCode = image.regExpCode().data();
     words.functionSteps = image.functionStarts().steps();
@@ -255,6 +259,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.endOfIdentifiers = image.header().numbers.endOfIdentifiers;
     words.stringWords = std::bit_cast<const uint32_t*>(std::bit_cast<uintptr_t>(image.section<uint32_t>(ImageSection::Strings).data()) - words.endOfIdentifiers * sizeof(uint32_t));
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
+    words.hashesOfPlacedConstants = image.text().hashesOfPlacedConstants().data();
+    words.numberOfPlacedConstants = image.text().hashesOfPlacedConstants().size();
     static_assert(!(InstanceLayout::largestPageSize % InstanceLayout::sizeOfIndexOfSiteAnswers) && !(InstanceLayout::distanceToPageEdge % InstanceLayout::sizeOfIndexOfSiteAnswers));
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
     RELEASE_ASSERT(InstanceLayout::offsetOfIndexOfSiteAnswers(image.programTables().instanceSizes, image.programTables().instanceSizes.numberOfSiteCaches) <= INT32_MAX);
@@ -290,6 +296,7 @@ static void fillNumberWords(Instance& instance)
     static_assert(std::size(WTF::intHashSecrets) == std::extent_v<decltype(NumberWords::hashSecrets)>);
     for (size_t i = 0; i < std::size(WTF::intHashSecrets); ++i)
         words.hashSecrets[i] = WTF::intHashSecrets[i];
+    words.keyMultiplierOfTables = CompactTable::keyMultiplier;
 }
 
 static void fillAllocationSpaces(Instance& instance, VM& vm)
@@ -329,6 +336,7 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = realm->boundFunctionStructure()->id().bits();
     words.hostFunctionStructureID = realm->hostFunctionStructure()->id().bits();
+    words.atomListStructureID = realm->vm().cellButterflyOnlyAtomStringsStructure->id().bits();
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
@@ -517,6 +525,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("growing flat text"_s, asMutableByteSpan(instance->state->growingFlatText));
     instance->state->caches->addClearedEachCollection("wide character strings"_s, asMutableByteSpan(instance->state->wideCharacterStrings));
+    instance->state->caches->addClearedEachCollection("released heap frames"_s, asMutableByteSpan(instance->coroutines.releasedHeapFrames));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
@@ -854,6 +863,8 @@ static void fillThunkAndPointers(void** entries, const Image& image)
     set(Entry::VirtualCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_virtual_call_trampoline).taggedPtr());
     set(Entry::NonConstructorHostFunction, std::bit_cast<void*>(&callHostFunctionAsConstructor));
     set(Entry::ErrorConstructorClassInfo, const_cast<ClassInfo*>(ErrorConstructor::info()));
+    set(Entry::ArrayConstructorClassInfo, const_cast<ClassInfo*>(ArrayConstructor::info()));
+    set(Entry::ObjectConstructorClassInfo, const_cast<ClassInfo*>(ObjectConstructor::info()));
     set(Entry::BooleanConstructorClassInfo, const_cast<ClassInfo*>(BooleanConstructor::info()));
     set(Entry::CustomGetterClassInfo, const_cast<ClassInfo*>(JSCustomGetterFunction::info()));
     set(Entry::NumberConstructorClassInfo, const_cast<ClassInfo*>(NumberConstructor::info()));
@@ -998,6 +1009,19 @@ VMState::~VMState()
     RELEASE_ASSERT(!hasCompiledCode);
 }
 
+void VMState::didParseSource(VM& vm, size_t length, std::unique_ptr<IdentifierArena>&& identifiers)
+{
+    constexpr size_t lengthBetweenPrunes = 1 * MB;
+    lengthOfSourcesSincePrune += length;
+    if (lengthOfSourcesSincePrune >= lengthBetweenPrunes) {
+        lengthOfSourcesSincePrune = 0;
+        vm.pruneUnusedSourceProviderCaches();
+    }
+    constexpr size_t mostTimesAsLarge = 8;
+    if (identifiers && (!identifiersOfLastSource || identifiersOfLastSource->size() <= mostTimesAsLarge * identifiers->size()))
+        identifiersOfLastSource = WTF::move(identifiers);
+}
+
 #if OS(LINUX) && ENABLE(AOT_GUARDED_PAGES)
 static void didMapPropertyCachesOfThread();
 #endif
@@ -1075,6 +1099,7 @@ void VMState::releaseImage(VM& vm)
     functionTables = nullptr;
     cyclesOfImports = nullptr;
     importersOfModules = nullptr;
+    modulesWithQuery = std::nullopt;
     reexportedNames = nullptr;
     callSiteCache = nullptr;
     runtimeTable = nullptr;

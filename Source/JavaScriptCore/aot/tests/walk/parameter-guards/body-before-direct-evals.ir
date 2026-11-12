@@ -1,0 +1,47 @@
+# var view = new Int32Array(4); function evaluate(text) { return eval(text); } function read(i) { return view[i]; } read(1); evaluate("1");
+# As long as no direct eval was handed a text, the variable holds what the program stores. No way leads from read() to the eval, so its body rests on the mark of the file, which its entry asks.
+# The version for what comes after tests the view as a guess does.
+# LIBRARY: own
+# RUN(GUARD): walk f2:ParameterGuard mechanisms=all
+# RUN(BODY): walk f2 mechanisms=all
+# GUARD: [[mark]]: {{*}} = GetModuleVariable variable=g2
+# GUARD: = TypeTest [[mark]] testedType=undefined
+# GUARD: function=f2 role=SlowBody
+# BODY-LABEL: code f2:Body
+# BODY: [[view]]: {{*}}Int32Array @JSValue = GetModuleVariable variable=g0
+# BODY-NOT: expectedElements=
+# BODY: = GetTypedArrayElement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="read" module=m0 declared={type=anything} initialization=Function function=f2
+variable g2 module=m0 declared={type=anything} initialization=Undefined flags=[MarksEvaluation]
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="view" depth=1 variable=g0}, {name="read" depth=1 variable=g1}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=4
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g1
+    v5 = Integer integer=1
+    v6 = Call v4, -, v5
+    v7 = NewClosure function=f1
+    v8 = String string="1"
+    v9 = Call v7, -, v8
+    Return v9
+}
+function f1 name="evaluate" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    PutModuleVariable v3 variable=g2
+    v5 = DirectEval v2, v0, v1 evalScope=e0
+    Return v5
+}
+function f2 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    Return v2
+}

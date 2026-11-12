@@ -335,7 +335,8 @@ static Test testOfUnfusedComparison(const Encoder& encoder, const Step& step)
     const Operation* comparison = step.operation;
     const Operation* left = comparison->child(0);
     const Operation* right = comparison->child(1);
-    RELEASE_ASSERT(!encoder.m_liveness.isFused(left) && !encoder.m_liveness.isFused(right));
+    for (const Operation* operand : { left, right })
+        RELEASE_ASSERT(!encoder.m_liveness.isFused(operand) || operand->opcode() == Trunc || namesWord(operand));
 
     LeafCursor leaves(step);
     Location leftLocation = leaves.take();
@@ -410,7 +411,8 @@ void Encoder::encodeSelect(const Step& step)
     ASSERT(step.kind == StepKind::Execute);
     const Operation* select = step.operation;
     ASSERT(select->opcode() == Select);
-    RELEASE_ASSERT(!m_liveness.isFused(select->child(1)) && !m_liveness.isFused(select->child(2)));
+    for (unsigned index : { 1u, 2u })
+        RELEASE_ASSERT(!m_liveness.isFused(select->child(index)) || select->child(index)->opcode() == Trunc || namesWord(select->child(index)));
 
     LeafCursor leaves(step);
     Test test = resolveTest(select, leaves);

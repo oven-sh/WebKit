@@ -1,0 +1,35 @@
+# const o = Object.create(null); o.a = x;   with nothing reading o
+# v4 lays null above v3, which throws nothing and tells nobody: it waits for v3 like the store v5, nothing needs v3, and all three go.
+# v7 lays what it was given: it may throw, so it stays, and keeps v6 with it. v9 stays with v8, which is returned.
+# RUN: sweep-code
+# CHECK: # dropped v0, v3, v4, v5
+# CHECK: v6: L0 @Cell = NewObject
+# CHECK: v7 @Void = SetLiteralPrototype v6, v1
+# CHECK: v8: L0 @Cell = NewObject
+# CHECK: v9 @Void = SetLiteralPrototype v8, v2
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   constants:
+#     v2: null @JSValue = Null
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v3: L0 @Cell = NewObject layout=L0 traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = SetLiteralPrototype v3, v2 [refusesOtherValues] traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = PutSlotOrAdd v3, v1 key="a" receivers=[L0] level=Proven traits=[mayWriteObservableState, mayTouchMemory]
+#     v6: L0 @Cell = NewObject layout=L0 traits=[mayCollect, mayTouchMemory]
+#     v7 @Void = SetLiteralPrototype v6, v1 [refusesOtherValues] traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v8: L0 @Cell = NewObject layout=L0 traits=[mayCollect, mayTouchMemory]
+#     v9 @Void = SetLiteralPrototype v8, v2 [refusesOtherValues] traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v10: L0 @JSValue = Box v8
+#     Return v10
+# }
+# -- end of code

@@ -166,6 +166,31 @@ bool Allocator::registerFileIsConsistent() const
 }
 #endif
 
+uint32_t Allocator::findReadOutsideUnlikelyRegions(const Operation* value, Position position) const
+{
+    if (m_numbersOfListsOutsideRareRegions.isEmpty())
+        m_numbersOfListsOutsideRareRegions.fill(m_arena, m_order.mostOperations(), 0);
+    uint32_t& numberOfList = m_numbersOfListsOutsideRareRegions[value->index()];
+    if (!numberOfList) {
+        size_t numberOfReads = 0;
+        for (uint32_t read = m_liveness.of(value).firstUse; read; read = m_liveness.use(read).next)
+            numberOfReads += !m_liveness.isUseInRareRegion(read);
+        std::span<uint32_t> reads = m_arena.createSpan<uint32_t>(numberOfReads);
+        size_t next = 0;
+        for (uint32_t read = m_liveness.of(value).firstUse; read; read = m_liveness.use(read).next) {
+            if (!m_liveness.isUseInRareRegion(read))
+                reads[next++] = read;
+        }
+        m_listsOutsideRareRegions.append(m_arena, reads);
+        numberOfList = m_listsOutsideRareRegions.size();
+    }
+    std::span<const uint32_t> list = m_listsOutsideRareRegions[numberOfList - 1];
+    auto found = std::ranges::lower_bound(list, position, { }, [&](uint32_t read) {
+        return m_liveness.use(read).position;
+    });
+    return found == list.end() ? 0 : *found;
+}
+
 uint32_t Allocator::findReadFromInList(const Operation* value, Position position) const
 {
     if (m_numbersOfListsOfReads.isEmpty())

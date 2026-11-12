@@ -10,6 +10,7 @@
 #if ENABLE(AOT)
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <limits>
 #include <wtf/BitVector.h>
@@ -17,6 +18,18 @@
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Machine {
+
+static constexpr std::array<uint16_t, sizeOfTableByOpcode> machineCoreChildFlags = [] {
+    std::array<uint16_t, sizeOfTableByOpcode> flags { };
+    for (unsigned index = 0; index < numberOfOpcodes; ++index) {
+        Opcode opcode = static_cast<Opcode>(index);
+        if (opcode != Trunc)
+            flags[index] |= static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
+        if (!readsZeroExtendedWord(opcode, 1))
+            flags[index] |= static_cast<uint16_t>(OperationFlag::HasOpaqueReader);
+    }
+    return flags;
+}();
 
 static bool machineCoreCountsChildrenAtThisRead(const Operation* operation)
 {
@@ -28,7 +41,7 @@ void Operation::countChildrenAtFirstUse()
     Operation* operation = this;
     do {
         ASSERT(operation->m_owner && countsChildrenAtFirstUse(operation->m_opcode));
-        uint16_t flagsOfChildren = operation->m_opcode == Trunc ? 0 : static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
+        uint16_t flagsOfChildren = machineCoreChildFlags[operation->m_opcode];
         Operation* childReadFirst = nullptr;
         Operation* secondChildReadFirst = nullptr;
         Operation* thirdChildReadFirst = nullptr;
@@ -71,7 +84,7 @@ NEVER_INLINE void Operation::countChildrenAtFirstUseWithWorklist()
     Operation* operation = this;
     for (;;) {
         ASSERT(operation->m_owner && countsChildrenAtFirstUse(operation->m_opcode));
-        uint16_t flagsOfChildren = operation->m_opcode == Trunc ? 0 : static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
+        uint16_t flagsOfChildren = machineCoreChildFlags[operation->m_opcode];
         for (Operation* child : std::span<Operation* const>(operation->m_children, operation->m_auxiliary)) {
             child->m_flags |= flagsOfChildren;
             if (child->m_useCount) {
@@ -291,6 +304,34 @@ void Procedure::stopAtStoresThatWayLeadsToAfterAll()
         if (wayLeadsFromEntrypointInto(*this, store->owner())) {
             fail(FailureKind::MalformedProcedure, store);
             return;
+        }
+    }
+}
+
+void Procedure::separateShiftsOfSums()
+{
+    for (auto [sum, own] : m_ownShiftsOfSums.span()) {
+        Operation* shared = sum->m_children[1];
+        ASSERT(shared->opcode() == Shl && own->opcode() == Shl);
+        if (!sum->useCount() || shared->useCount() < 2 || shared->useCount() == std::numeric_limits<uint16_t>::max())
+            continue;
+        sum->m_children[1] = own;
+        shared->loseUse();
+        if (own->gainUseLeavingChildrenUncounted(shared->m_flags))
+            own->countChildrenAtFirstUse();
+    }
+}
+
+void Procedure::settleUpperHalvesOfPhis()
+{
+    for (bool someChanged = !m_upsilonsOfWordsBetweenPhis.isEmpty(); someChanged;) {
+        someChanged = false;
+        for (const Operation* upsilon : m_upsilonsOfWordsBetweenPhis) {
+            Operation* phi = upsilon->phi();
+            if (!upsilon->child(0)->has(OperationFlag::UpperHalfMayBeSet) || phi->has(OperationFlag::UpperHalfMayBeSet))
+                continue;
+            phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+            someChanged = true;
         }
     }
 }

@@ -5,7 +5,7 @@
 # CHECK-LABEL: unit f1:Body
 # CHECK-COUNT-2: = Patch({{*}}effects = ControlDependent|Reads:{StringStorage
 # RUN(NEVER): emit-code
-# NEVER-NOT: effects = ControlDependent, pureFunction
+# NEVER-NOT: Double @{{*}} = Patch({{*}}pureFunction
 # -- code
 # code f1:Body {
 #   constants:

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
+#include "AOTCallEmitter.h"
 #include "AOTClosureWord.h"
 #include "AOTCodeRecords.h"
 #include "AOTConvention.h"
@@ -70,7 +71,7 @@ void countEntryIntoCode(Machine::PatchOperation* count)
 
 void EntryEmitter::generateEntries()
 {
-    generateEntry(0, conventions().locationsOf(m_program, m_unit));
+    generateEntry(0, emitter<CallEmitter>().ownLocations());
 }
 
 void EntryEmitter::generateEntry(uint16_t entry, const ArgumentLocations& locations)

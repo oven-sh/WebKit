@@ -103,7 +103,7 @@ void StraightEmitter::generateCast(const BodyValue& value)
         generateTypeTest(*this, value);
         return;
     case Opcode::IsUnlockedInstance:
-        if (!instancesMayBeLocked(program(), facts().linked(), value.testedType())) {
+        if (!hasLockableInstances(program(), facts().linked(), value.testedType())) {
             generateTypeTest(*this, value);
             return;
         }

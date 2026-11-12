@@ -88,11 +88,11 @@ Word32 BuiltinFamilyEmitter::int32Operand(ValueID id)
     case Representation::Int32:
         return in<Word32>(id);
     case Representation::Int64:
-        return conversions.narrow(in<Integer>(id));
+        return conversions.lowHalfOfIntegerToldInsideInt32(in<Integer>(id));
     case Representation::Double:
         return conversions.toInt32(in<Number>(id));
     case Representation::OptionalInt64:
-        return conversions.narrow(conversions.withoutMarkers(get(id)).as<Integer>());
+        return conversions.lowHalfOfIntegerToldInsideInt32(conversions.withoutMarkers(get(id)).as<Integer>());
     case Representation::OptionalDouble:
         return conversions.toInt32(conversions.withoutMarkers(get(id)).as<Number>());
     case Representation::JSValue:

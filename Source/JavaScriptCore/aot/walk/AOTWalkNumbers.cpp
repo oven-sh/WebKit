@@ -20,6 +20,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OperatorForm operatorFormFor(Walker&, const Draft&);
 OperatorForm operatorFormFor(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
+Reference checkIntegerBeforeLoop(Walker&, Reference value, TypeID tested, Origin, StatisticID counted);
 
 Representation representationOfNumber(const Walker& walker, TypeID type)
 {
@@ -75,7 +76,9 @@ void prepareOperandsForFormNumbers(Walker& walker, Draft& draft)
     Origin origin = draft.origin();
     for (uint32_t operandIndex = 0; operandIndex < draft.numberOfOperands(); ++operandIndex) {
         Reference operand = draft.operand(operandIndex);
-        if (!isTakenAsItIsByFormNumbers(walker.types().at(walker.typeOf(operand))))
+        const Type& type = walker.types().at(walker.typeOf(operand));
+        bool isConvertedBeforeLoop = (type.primitives & Primitive::Number) && !type.isNumber() && operand.isValue() && walker.has(Mechanism::LoopInvariants) && walker.isInvariantInInnermostLoop(operand);
+        if (isConvertedBeforeLoop || !isTakenAsItIsByFormNumbers(type))
             draft.setOperand(operandIndex, convertedForFormNumbers(walker, operand, origin));
     }
 }
@@ -92,6 +95,9 @@ static Reference buildRemainderByReciprocalMadeInFrontOfLoop(Walker& walker, con
     Type dividends = walker.types().at(walker.typeOf(dividend));
     Type divisors = walker.types().at(walker.typeOf(divisor));
     if (!dividends.isInteger() || (!dividends.integers.isSubsetOf(dividendsOfReciprocal) && !walker.shouldAssumeUInt32Dividends()) || !divisors.isInteger() || !divisors.integers.isSubsetOf(divisorsOfReciprocal) || divisors.integers.isSingleValue())
+        return { };
+    static constexpr uint32_t maxDividingIterations = 4;
+    if (std::optional<uint32_t> turns = walker.constantTripCountOf(*loop); turns && *turns <= maxDividingIterations)
         return { };
 
     Draft inFront(Opcode::ReciprocalOfDivisor, remainder.origin());
@@ -138,6 +144,33 @@ static Reference buildRemainderByWholeDivisor(Walker& walker, const Draft& remai
     return walker.build(WTF::move(byWholeDivisor));
 }
 
+static bool hoistOperandCheck(Walker& walker, Draft& draft)
+{
+    static constexpr OpcodeSet operators { Opcode::Add, Opcode::Sub, Opcode::Mul };
+    if (!operators.contains(draft.opcode) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
+        return false;
+    TypeArena& types = walker.types();
+    for (uint32_t side : { 0u, 1u }) {
+        Reference operand = draft.operand(side);
+        Reference other = draft.operand(1 - side);
+        if (!operand || !other || !operand.isValue() || !types.at(walker.typeOf(other)).isInteger())
+            continue;
+        Type type = types.at(walker.typeOf(operand));
+        if (!(type.primitives & Primitive::Integer) || !type.hasOnlyPrimitives(Primitive::Integer | Primitive::Undefined | Primitive::Absent) || type.isInteger())
+            continue;
+        if (!walker.isInvariantInSpecializedVersion(operand, Walker::IterationPurity::KnownEffectsOnly))
+            return false;
+        Reference integer = checkIntegerBeforeLoop(walker, operand, types.integer(type.integers), draft.origin(), StatisticID::InvariantNumberGuardsHoisted);
+        if (!integer)
+            return false;
+        if (!walker.state().checkedNameOf(operand))
+            walker.state().noteCheckedName(operand, integer);
+        draft.setOperand(side, integer);
+        return true;
+    }
+    return false;
+}
+
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     OperatorForm form = operatorFormFor(walker, value.opcode(), value, inputs);
@@ -147,6 +180,10 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
         return true;
 
     Draft draft = walker.draftOf(value);
+    if (form == OperatorForm::Numbers && hoistOperandCheck(walker, draft))
+        form = operatorFormFor(walker, draft);
+    if (walker.hasFailed())
+        return true;
     if (form == OperatorForm::Numbers) {
         prepareOperandsForFormNumbers(walker, draft);
         form = operatorFormFor(walker, draft);

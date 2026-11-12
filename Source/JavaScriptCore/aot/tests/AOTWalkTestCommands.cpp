@@ -191,6 +191,8 @@ static void runPositionInsideCommand(TestCommandContext& context)
             : named->first == "counter"_s ? &GroundsOfPosition::counter
             : named->first == "start"_s ? &GroundsOfPosition::start
             : named->first == "length-holds-bound"_s ? &GroundsOfPosition::limitWithinLengthCheck
+            : named->first == "lowered-counter"_s ? &GroundsOfPosition::loweredCounter
+            : named->first == "lowered-from"_s ? &GroundsOfPosition::loweredFrom
             : nullptr;
         if (!place) {
             context.out.println("bad argument "_s, word);
@@ -255,6 +257,8 @@ static void runVerifyGroundsCommand(TestCommandContext& context)
             : named->first == "counter"_s ? &GroundsOfPosition::counter
             : named->first == "start"_s ? &GroundsOfPosition::start
             : named->first == "length-holds-bound"_s ? &GroundsOfPosition::limitWithinLengthCheck
+            : named->first == "lowered-counter"_s ? &GroundsOfPosition::loweredCounter
+            : named->first == "lowered-from"_s ? &GroundsOfPosition::loweredFrom
             : nullptr;
         if (!place) {
             context.out.println("bad argument "_s, word);
@@ -480,9 +484,9 @@ std::span<const TestCommand> walkTestCommands()
         { "code-round-trip"_s, runCodeRoundTripCommand },
         { "verify-code"_s, runVerifyCodeCommand },
         { "sweep-code"_s, runSweepCodeCommand },
-        { "position-inside"_s, runPositionInsideCommand, ProgramOfCommand::AsWritten, "position=v<n> length=v<n> { below=v<n> | not-below=v<n> | from-zero-up=v<n> | counter=v<n> | start=v<n> | length-holds-bound=v<n> }"_s },
+        { "position-inside"_s, runPositionInsideCommand, ProgramOfCommand::AsWritten, "position=v<n> length=v<n> { below=v<n> | not-below=v<n> | from-zero-up=v<n> | counter=v<n> | start=v<n> | length-holds-bound=v<n> | lowered-counter=v<n> | lowered-from=v<n> }"_s },
         { "element-present"_s, runElementPresentCommand, ProgramOfCommand::AsWritten, "list=v<n> position=v<n> { passed=v<n> | failed=v<n> }"_s },
-        { "verify-grounds"_s, runVerifyGroundsCommand, ProgramOfCommand::AsWritten, "{ access=v<n> { view=v<n> | position=v<n> | length=v<n> | below=v<n> | from-zero-up=v<n> | length-holds-bound=v<n> | passed=v<n> | failed=v<n> } }"_s },
+        { "verify-grounds"_s, runVerifyGroundsCommand, ProgramOfCommand::AsWritten, "{ access=v<n> { view=v<n> | position=v<n> | length=v<n> | below=v<n> | from-zero-up=v<n> | length-holds-bound=v<n> | lowered-counter=v<n> | lowered-from=v<n> | passed=v<n> | failed=v<n> } }"_s },
     };
     return commands;
 }

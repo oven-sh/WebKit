@@ -386,8 +386,8 @@ static void testTextStoresIntoUnboxedSlots(LoadedProgram& program)
             { jsNumber(3.5), jsNumber(4), jsNumber(-1), negativeZero, notANumber, beyondInt32, jsNumber(std::numeric_limits<double>::infinity()) },
             { text, jsBoolean(true), jsBoolean(false), JSValue(program.realm()), jsUndefined(), jsNull() } },
         { "whole"_s, "((o, v) => { o.whole = v; })"_s, "(o => o.whole)"_s, SlotRepresentation::OptionalInt64,
-            { jsNumber(8), jsNumber(0), jsNumber(-1), jsNumber(std::numeric_limits<int32_t>::min()), jsNumber(std::numeric_limits<int32_t>::max()) },
-            { jsNumber(0.5), negativeZero, notANumber, jsNumber(std::numeric_limits<double>::infinity()), text, jsBoolean(true), JSValue(program.realm()), beyondInt32, jsUndefined(), jsNull() } },
+            { jsNumber(8), jsNumber(0), jsNumber(std::numeric_limits<int32_t>::max()) },
+            { jsNumber(0.5), jsNumber(-1), jsNumber(std::numeric_limits<int32_t>::min()), negativeZero, notANumber, jsNumber(std::numeric_limits<double>::infinity()), text, jsBoolean(true), JSValue(program.realm()), beyondInt32, jsUndefined(), jsNull() } },
     };
     for (const Case& testCase : cases) {
         Identifier name = Identifier::fromString(vm, testCase.name);

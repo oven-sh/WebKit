@@ -646,6 +646,18 @@ static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const Bui
         else
             withTellingFieldsOfGroup[group].append(layout);
     };
+    auto signatureOf = [](std::span<const uint32_t> namesOfLayout) {
+        uint64_t signature = 0;
+        for (uint32_t name : namesOfLayout)
+            signature |= 1ull << (name * 0x9e3779b1u >> 26);
+        return signature;
+    };
+    Vector<uint64_t> signatures;
+    signatures.grow(numberOfLayouts);
+    forEachRangeOfIndicesInParallel(loops, numberOfLayouts, [&](size_t first, size_t end) {
+        for (uint32_t layout = static_cast<uint32_t>(first); layout < end; ++layout)
+            signatures[layout] = signatureOf(names.of(layout));
+    });
     forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group) {
         for (uint32_t place = firstOfGroup[group]; place < firstOfGroup[group + 1]; ++place)
             result.groupOfType[typesByNames[place]] = group;
@@ -654,8 +666,13 @@ static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const Bui
         uint32_t firstType = typesByNames[firstOfGroup[group]];
         std::span<const uint32_t> ofRecords = requiredOfRecords.of(firstType);
         std::span<const uint32_t> ofInstances = requiredOfInstances.of(firstType);
+        uint64_t signatureOfRecords = signatureOf(ofRecords);
+        uint64_t signatureOfInstances = signatureOf(ofInstances);
         for (uint32_t layout : layoutsWithName[rarestNameOf(ofInstances)]) {
-            if (std::ranges::includes(names.of(layout), wireLayoutDeclaresEveryName(layouts[layout]) ? ofRecords : ofInstances))
+            bool declaresEveryName = wireLayoutDeclaresEveryName(layouts[layout]);
+            if ((declaresEveryName ? signatureOfRecords : signatureOfInstances) & ~signatures[layout])
+                continue;
+            if (std::ranges::includes(names.of(layout), declaresEveryName ? ofRecords : ofInstances))
                 takeLayoutThatMeetsGroup(group, layout);
         }
     });

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBody.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTCodeRole.h"
@@ -18,6 +19,7 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaRecords.h"
 #include "AOTSchemaSupport.h"
+#include "AOTSystemResources.h"
 #include "AOTTypeKinds.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTVector.h"
@@ -26,14 +28,15 @@
 #include "TypedArrayType.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <optional>
 #include <span>
 #include <type_traits>
-#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OSAllocator.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
@@ -110,18 +113,16 @@ static_assert(sizeof(Reference) == sizeof(uint32_t) && !Reference() && !Referenc
 
 static constexpr uint8_t byteOfRoomThatIsTaken = 0xa5;
 
-template<typename T, unsigned logOfSegmentSize>
+template<typename T, unsigned logOfMostRecords>
 class StableArray {
     WTF_MAKE_NONCOPYABLE(StableArray);
     static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
 public:
-    static constexpr uint32_t segmentSize = 1u << logOfSegmentSize;
-
     StableArray() = default;
     ~StableArray()
     {
-        for (uint32_t index = 0; index < m_capacity; index += segmentSize)
-            fastFree(recordAt(index));
+        if (m_records)
+            releaseAddresses(m_records, m_bytesReserved);
     }
 
     uint32_t size() const { return m_size; }
@@ -130,12 +131,12 @@ public:
     ALWAYS_INLINE T& operator[](uint32_t index) LIFETIME_BOUND
     {
         ASSERT(index < m_size);
-        return *recordAt(index);
+        return m_records[index];
     }
     ALWAYS_INLINE const T& operator[](uint32_t index) const LIFETIME_BOUND
     {
         ASSERT(index < m_size);
-        return *recordAt(index);
+        return m_records[index];
     }
     T& last() LIFETIME_BOUND { return (*this)[m_size - 1]; }
     const T& last() const LIFETIME_BOUND { return (*this)[m_size - 1]; }
@@ -144,7 +145,7 @@ public:
     {
         uint32_t index = m_size;
         if (index == m_capacity) [[unlikely]]
-            addSegment();
+            commitMoreRecords();
         ++m_size;
         (*this)[index] = value;
         return index;
@@ -153,7 +154,7 @@ public:
     {
         uint32_t index = m_size;
         if (index == m_capacity) [[unlikely]]
-            addSegment();
+            commitMoreRecords();
         ++m_size;
         return *new (NotNull, &(*this)[index]) T;
     }
@@ -171,39 +172,67 @@ public:
     void forgetUnit()
     {
 #if ASSERT_ENABLED
-        for (uint32_t index = 0; index < m_size; index += segmentSize)
-            memset(static_cast<void*>(recordAt(index)), byteOfRoomThatIsTaken, sizeof(T) * std::min(segmentSize, m_size - index));
+        if (m_size)
+            memset(static_cast<void*>(m_records), byteOfRoomThatIsTaken, sizeof(T) * m_size);
 #endif
         m_size = 0;
+        if (m_bytesCommitted > mostBytesKept) [[unlikely]]
+            decommitRest();
     }
 
 private:
-    ALWAYS_INLINE T* recordAt(uint32_t index) const
+    static constexpr size_t commitGranularity = 256 * KB;
+    static constexpr size_t mostBytesKept = 512 * KB;
+
+    COLD NEVER_INLINE void reserve()
     {
-        if (index < m_capacityOfFirstSegment) [[likely]]
-            return reinterpret_cast<T*>(m_addressOfFirstSegment + static_cast<uintptr_t>(index) * sizeof(T));
-        return recordBehindFirstSegment(index);
+        static constexpr size_t parts = 64;
+        static constexpr size_t mostBytesReserved = roundUpToMultipleOf<commitGranularity>(sizeof(T) << logOfMostRecords);
+        m_bytesReserved = mostBytesReserved;
+        static std::atomic<bool> addressesAreUnlimited { false };
+        if (addressesAreUnlimited.load(std::memory_order_relaxed))
+            m_records = static_cast<T*>(tryReserveAddresses(m_bytesReserved));
+        while (!m_records && m_bytesReserved > commitGranularity) {
+            if (void* probe = tryReserveAddresses(m_bytesReserved * parts)) {
+                releaseAddresses(probe, m_bytesReserved * parts);
+                addressesAreUnlimited.store(m_bytesReserved == mostBytesReserved, std::memory_order_relaxed);
+                break;
+            }
+            m_bytesReserved = roundUpToMultipleOf<commitGranularity>(m_bytesReserved / 2);
+        }
+        if (!m_records)
+            m_records = static_cast<T*>(tryReserveAddresses(m_bytesReserved));
+        while (!m_records && m_bytesReserved > commitGranularity) {
+            m_bytesReserved = roundUpToMultipleOf<commitGranularity>(m_bytesReserved / 2);
+            m_records = static_cast<T*>(tryReserveAddresses(m_bytesReserved));
+        }
+        if (!m_records) {
+            exitIfBuildIsOutOfMemory();
+            RELEASE_ASSERT_WITH_MESSAGE(m_records, "AOT: no addresses are left for the records of a unit");
+        }
     }
-    ALWAYS_INLINE T* recordBehindFirstSegment(uint32_t index) const
+    COLD NEVER_INLINE void commitMoreRecords()
     {
-        RELEASE_ASSERT(index < m_capacity);
-        return reinterpret_cast<T*>(m_addressOfIndexZeroBySegment[index >> logOfSegmentSize] + static_cast<uintptr_t>(index) * sizeof(T));
-    }
-    COLD NEVER_INLINE void addSegment()
-    {
-        m_addressesOfIndexZero.append(reinterpret_cast<uintptr_t>(fastMalloc(sizeof(T) * segmentSize)) - static_cast<uintptr_t>(m_capacity) * sizeof(T));
-        m_addressOfIndexZeroBySegment = m_addressesOfIndexZero.span().data();
-        m_capacity += segmentSize;
-        m_addressOfFirstSegment = m_addressesOfIndexZero[0];
-        m_capacityOfFirstSegment = segmentSize;
+        if (!m_records)
+            reserve();
+        RELEASE_ASSERT_WITH_MESSAGE(m_bytesCommitted < m_bytesReserved, "AOT: a unit has more records than the process may reserve addresses for");
+        OSAllocator::commit(reinterpret_cast<uint8_t*>(m_records) + m_bytesCommitted, commitGranularity, true, false);
+        m_bytesCommitted += commitGranularity;
+        m_capacity = static_cast<uint32_t>(m_bytesCommitted / sizeof(T));
     }
 
-    Vector<uintptr_t, 4> m_addressesOfIndexZero;
-    const uintptr_t* m_addressOfIndexZeroBySegment { nullptr };
-    uintptr_t m_addressOfFirstSegment { 0 };
-    uint32_t m_capacityOfFirstSegment { 0 };
+    COLD NEVER_INLINE void decommitRest()
+    {
+        OSAllocator::decommit(reinterpret_cast<uint8_t*>(m_records) + mostBytesKept, m_bytesCommitted - mostBytesKept);
+        m_bytesCommitted = mostBytesKept;
+        m_capacity = static_cast<uint32_t>(m_bytesCommitted / sizeof(T));
+    }
+
+    T* m_records { nullptr };
     uint32_t m_size { 0 };
     uint32_t m_capacity { 0 };
+    size_t m_bytesReserved { 0 };
+    size_t m_bytesCommitted { 0 };
 };
 
 class SideWords {
@@ -846,6 +875,16 @@ void DraftWords::copyWordsOf(const Instruction& instruction, NOESCAPE const Invo
     m_payload.replaceFrom(0, instruction.payload(), absentPayloadWord);
 }
 
+struct SteppedWithCounter {
+    ValueID stepped;
+    ValueID counter;
+    ValueID steppedStart;
+    ValueID counterStart;
+    bool counterRises { false };
+
+    bool operator==(const SteppedWithCounter&) const = default;
+};
+
 struct GroundsOfPosition {
     ValueID view;
     ValueID position;
@@ -853,11 +892,16 @@ struct GroundsOfPosition {
     ValueID isBelow;
     bool isBelowResult { true };
     ValueID isFromZeroUp;
-    bool isFromZeroUpResult { true };
+    bool isNonNegativeResult { true };
     ValueID counter;
     ValueID start;
     ValueID stepNonNegativeCheck;
     ValueID limitWithinLengthCheck;
+    ValueID loweredCounter;
+    ValueID loweredFrom;
+    SteppedWithCounter steppedBeside { };
+    ValueID counterTest;
+    bool counterTestResult { true };
 };
 
 class PassedTest {
@@ -1008,12 +1052,15 @@ public:
     std::span<const PollWithFate> pollsWithFates() const LIFETIME_BOUND { return m_pollsWithFates.span(); }
 
     bool hasHandlers() const { return m_hasHandlers; }
+    bool hasBoxesForHandlers() const { return m_hasBoxesForHandlers; }
+    void noteBoxForHandler() { m_hasBoxesForHandlers = true; }
     bool hasSuspensions() const { return m_hasSuspensions; }
     bool hasLoops() const { return m_hasLoops; }
     bool holdsFrameCells() const { return m_holdsFrameCells; }
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
     bool callsOfFunctionNeverCollect() const { return m_callsOfFunctionNeverCollect; }
     bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes; }
+    bool callsItself() const { return m_callsItself; }
     bool isEntryThatWalksBody() const { return m_isEntryThatWalksBody; }
     bool mayHoldReturnedCalls() const { return m_mayHoldReturnedCalls; }
     bool has(Mechanism mechanism, const Facts& facts) const { return facts.mechanisms().contains(mechanism) && !m_mechanismsWithheld.contains(mechanism); }
@@ -1110,6 +1157,7 @@ public:
     void makeTypeTestAskInFull(ValueID);
     void makeTestAskInFull(ValueID);
     void letJoinFailWhereItsReaderFails(ValueID);
+    void turnFinishIntoUnusedString(ValueID);
     void turnBranchIntoJump(BlockID, EdgeID lastOnWay);
     void leadJumpPastBlockThatJumps(BlockID);
     void leaveCheckOfProofToTestBehind(ValueID);
@@ -1120,8 +1168,11 @@ public:
     void noteEffectsBelieved(ValueID, const Effects&);
     void noteTestsPassedFor(ValueID, const PassedTest&);
     const PassedTest* testsPassedFor(ValueID) const;
+    void noteSteppedWithCounter(const SteppedWithCounter&);
+    std::span<const SteppedWithCounter> steppedWithCounters() const LIFETIME_BOUND { return m_steppedWithCounters.span(); }
     bool keepsTestsPassed() const { return m_keepsTestsPassed; }
     void setKeepsTestsPassed(bool keeps) { m_keepsTestsPassed = keeps; }
+    void setMarksLoops(bool marks) { m_marksLoops = marks; }
     const Effects* effectsBelievedOf(ValueID) const;
     void noteThatOperationWritesWhatTurnHasMade(ValueID);
     bool writesWhatTurnHasMade(ValueID) const;
@@ -1206,6 +1257,7 @@ public:
         uint32_t numberOfEffectsBelieved { 0 };
         uint32_t numberOfOperationsThatWriteWhatTurnHasMade { 0 };
         uint32_t numberOfTestsPassed { 0 };
+        uint32_t numberOfSteppedCounters { 0 };
         uint32_t numberOfTestsOfGuardsInFrontOfCopies { 0 };
         uint32_t numberOfInputsOfHolesReadAsNaN { 0 };
         uint32_t numberOfReadsAnsweredByHolesReadAsNaN { 0 };
@@ -1221,6 +1273,7 @@ public:
         bool holdsCallThatPlanHasNotCounted { false };
         bool callsOfFunctionNeverCollect { false };
         bool readsNumbersOutOfBytes { false };
+        bool callsItself { false };
     };
     Mark mark() const;
     OpenBlock stateOf(BlockID) const;
@@ -1253,9 +1306,9 @@ private:
     bool loopMarkIsDrawnAway(uint32_t block) const;
 
     CodeUnit m_unit;
-    StableArray<Operation, 14> m_operations;
-    StableArray<Block, 11> m_blocks;
-    StableArray<Edge, 12> m_edges;
+    StableArray<Operation, 26> m_operations;
+    StableArray<Block, 24> m_blocks;
+    StableArray<Edge, 25> m_edges;
     SideWords m_sideWords;
     Vector<InlineFrame, 4> m_inlineFrames;
     Vector<EntryOfCode, 2> m_entries;
@@ -1263,7 +1316,9 @@ private:
     Vector<std::pair<ValueID, Effects>> m_effectsBelieved;
     Vector<ValueID> m_operationsThatWriteWhatTurnHasMade;
     Vector<std::pair<ValueID, PassedTest>> m_testsPassed;
+    Vector<SteppedWithCounter> m_steppedWithCounters;
     bool m_keepsTestsPassed { false };
+    bool m_marksLoops { true };
     Vector<TestOfGuardInFrontOfCopy> m_testsOfGuardsInFrontOfCopies;
     Vector<InputOfHoleReadAsNaN> m_inputsOfHolesReadAsNaN;
     Vector<InputOfHoleReadAsNaN> m_readsAnsweredByHolesReadAsNaN;
@@ -1312,12 +1367,14 @@ private:
     OpcodeSet m_opcodesOfValues;
     uint32_t m_numberOfFrameWords { 0 };
     bool m_hasHandlers { false };
+    bool m_hasBoxesForHandlers { false };
     bool m_hasSuspensions { false };
     bool m_hasLoops { false };
     bool m_holdsFrameCells { true };
     bool m_holdsCallThatPlanHasNotCounted { false };
     bool m_callsOfFunctionNeverCollect { false };
     bool m_readsNumbersOutOfBytes { false };
+    bool m_callsItself { false };
     bool m_isEntryThatWalksBody { false };
     bool m_mayHoldReturnedCalls { false };
     Mechanisms m_mechanismsWithheld;

@@ -200,31 +200,72 @@ static constexpr bool pageGivenBackStaysAwayWhenRead = true;
 static constexpr bool pageGivenBackStaysAwayWhenRead = false;
 #endif
 
-static void zeroNonzeroPiecesAndGiveBackWholePages(std::span<uint8_t> bytes)
+namespace {
+
+class PagesToGiveBack {
+    WTF_MAKE_NONCOPYABLE(PagesToGiveBack);
+public:
+    PagesToGiveBack() = default;
+    ~PagesToGiveBack() { giveBack(); }
+
+    void add(std::span<uint8_t> page)
+    {
+        if (!m_pages.empty() && m_pages.data() + m_pages.size() == page.data()) {
+            m_pages = { m_pages.data(), m_pages.size() + page.size() };
+            return;
+        }
+        giveBack();
+        m_pages = page;
+    }
+
+private:
+    void giveBack()
+    {
+        if (!m_pages.empty())
+            decommitPagesOfZeros(m_pages.data(), m_pages.size());
+    }
+
+    std::span<uint8_t> m_pages;
+};
+
+} // anonymous namespace
+
+static void forEachPiece(std::span<uint8_t> bytes, NOESCAPE const Invocable<void(size_t number, std::span<uint8_t> piece, bool isWholePage)> auto& functor)
 {
-    size_t pieceSize = pageSize();
-    std::span<uint8_t> pagesToGiveBack;
-    auto giveBack = [&] {
-        if (!pagesToGiveBack.empty())
-            decommitPagesOfZeros(pagesToGiveBack.data(), pagesToGiveBack.size());
-        pagesToGiveBack = { };
-    };
-    while (!bytes.empty()) {
-        size_t upToNextPage = pieceSize - reinterpret_cast<uintptr_t>(bytes.data()) % pieceSize;
+    size_t sizeOfPage = pageSize();
+    for (size_t number = 0; !bytes.empty(); ++number) {
+        size_t upToNextPage = sizeOfPage - reinterpret_cast<uintptr_t>(bytes.data()) % sizeOfPage;
         auto piece = bytes.first(std::min(bytes.size(), upToNextPage));
         bytes = bytes.subspan(piece.size());
-        if (holdsOnlyZeros(piece))
-            continue;
-        zeroSpan(piece);
-        if (piece.size() != pieceSize)
-            continue;
-        if (pagesToGiveBack.empty() || pagesToGiveBack.data() + pagesToGiveBack.size() != piece.data()) {
-            giveBack();
-            pagesToGiveBack = piece;
-        } else
-            pagesToGiveBack = { pagesToGiveBack.data(), pagesToGiveBack.size() + pieceSize };
+        functor(number, piece, piece.size() == sizeOfPage);
     }
-    giveBack();
+}
+
+static void zeroNonzeroPiecesAndGiveBackWholePages(std::span<uint8_t> bytes)
+{
+    PagesToGiveBack pages;
+    forEachPiece(bytes, [&](size_t, std::span<uint8_t> piece, bool isWholePage) {
+        if (holdsOnlyZeros(piece))
+            return;
+        zeroSpan(piece);
+        if (isWholePage)
+            pages.add(piece);
+    });
+}
+
+static void zeroDirtyPiecesAndReleaseIdlePages(std::span<uint8_t> bytes, BitVector& writtenPages)
+{
+    PagesToGiveBack pages;
+    forEachPiece(bytes, [&](size_t number, std::span<uint8_t> piece, bool isWholePage) {
+        if (!holdsOnlyZeros(piece)) {
+            zeroSpan(piece);
+            if (isWholePage)
+                writtenPages.quickSet(number);
+        } else if (writtenPages.quickGet(number)) {
+            writtenPages.quickClear(number);
+            pages.add(piece);
+        }
+    });
 }
 
 void CacheRegistry::append(Entry&& entry)
@@ -262,9 +303,16 @@ void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_
         .size = zeroedByClear.size(),
         .mayBeFilled = mayBeFilled,
     };
+    if (pageGivenBackStaysAwayWhenRead && zeroedByClear.size() >= pageSize())
+        entry.writtenPages.ensureSize(zeroedByClear.size() / pageSize() + 2);
     entry.clear = [](Entry& entry) {
-        if (!entry.mayBeFilled || *entry.mayBeFilled)
-            zeroNonzeroPieces(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
+        if (entry.mayBeFilled && !*entry.mayBeFilled)
+            return;
+        auto bytes = unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size);
+        if (pageGivenBackStaysAwayWhenRead && entry.size >= pageSize())
+            zeroDirtyPiecesAndReleaseIdlePages(bytes, entry.writtenPages);
+        else
+            zeroNonzeroPieces(bytes);
     };
     append(WTF::move(entry));
 }

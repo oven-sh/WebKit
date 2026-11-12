@@ -25,6 +25,12 @@ public:
     void generateIsLinkedBelow(const ValueContext&);
     void generateMockSeenBy(const ValueContext&);
     void generateNamespaceSeenBy(const ValueContext&);
+    void generateInstanceNamespace(const ValueContext&);
+    void generateInstanceImportMeta(const ValueContext&);
+    void generateOriginalArgument(const ValueContext&);
+    void generateLinkedMock(const ValueContext&);
+    void generateKeepsOriginalNames(const ValueContext&);
+    void generateHasNameInMock(const ValueContext&);
     void generateCountExecution(const ValueContext&);
     void generateResolveModule(const ValueContext&);
     void generateThrowModuleFailure(const ValueContext&);

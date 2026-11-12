@@ -291,9 +291,9 @@ static bool tryResolveInGrowingBuffer(Instance& instance, JSRopeString* rope, St
     }
     uint32_t header = lengthOfBufferHeader(is8Bit);
     uint64_t capacity = header + 2 * static_cast<uint64_t>(length);
-    constexpr uint32_t minResolvesInTurn = 3;
-    growing.resolvesInTurn = growing.lastResolved == &text ? growing.resolvesInTurn + 1 : 0;
-    if (growing.resolvesInTurn < minResolvesInTurn || capacity > JSString::MaxLength)
+    constexpr uint32_t minConsecutiveResolves = 3;
+    growing.consecutiveResolves = growing.lastResolved == &text ? growing.consecutiveResolves + 1 : 0;
+    if (growing.consecutiveResolves < minConsecutiveResolves || capacity > JSString::MaxLength)
         return false;
     JSString* buffer = tryCreateTextBuffer(*instance.vm, is8Bit, static_cast<uint32_t>(capacity));
     if (!buffer)

@@ -73,7 +73,7 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
     };
     SavedFrameEmitter& frames = emitter<SavedFrameEmitter>();
     auto addRoot = [&](ValueID id) {
-        if (!id || frames.hasWordInMachineFrame(id) || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id))
+        if (!id || frames.hasWordInMachineFrame(id) || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id) || generator().isLeftToHandlers(id))
             return;
         if (typeOf(id).isOpaque(OpaqueKind::StringBuilder) && !stringBuilderIsCellOfHeap(m_code, id)) {
             fail(suspension, InternalErrorKind::FramePointerAcrossSuspension);

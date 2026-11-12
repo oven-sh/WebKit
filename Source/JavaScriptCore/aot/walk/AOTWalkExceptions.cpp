@@ -132,7 +132,7 @@ bool Walker::enterBehindHeadOfHandlerBlock(BlockID inputBlock, std::span<const u
         closeEdgesInto(catching, inputBlock, thrownEdges.span(), true);
         if (m_hasFailed)
             return true;
-        if (ValueID subject = input.subject()) {
+        if (ValueID subject = input.role() == BlockRole::IterationCleanup ? input.subject() : ValueID()) {
             if (Reference reference = referenceOf(subject); reference && reference.isRecord())
                 m_code.setSubject(catching, reference.id());
         }

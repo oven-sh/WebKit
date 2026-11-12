@@ -1,7 +1,7 @@
 # a value against a written text, outside of loops: one call of the stub. Nothing of the value, of its cell or of a StringImpl is read in line
 # function isText(part) { return part === "text"; }
 # function isTextAmongStrings(part) { return typeof part === "string" ? part === "text" : false; }   the stub for strings is called
-# function isLongerText(part) { return part === "a-longer-text"; }   the text fits no register, so the stub takes its number
+# function isLongerText(part) { return part === "a-longer-text"; }   the text fits no register, so the stub takes the place of its characters
 # function countTexts(next, times) { let count = 0; for (let i = 0; i < times; i++) if (next(i) === "text") count++; return count; }   in a loop the length and the characters are read in line, and nothing is asked of the flags of the cell
 # A rope, a piece of a longer string, a 16-bit copy and a string put together at run time equal the text all the same.
 # The shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
@@ -38,8 +38,8 @@
 # BYTES: {{*}} StringEqualsLiteralOfLength count 4
 # BYTES-NOT: EqualsLiteral
 # BYTES-LABEL: unit f3:Body
-# BYTES: Number String "a-longer-text"
-# BYTES: {{*}} ValueEqualsLiteral
+# BYTES: Number StringCharacters "a-longer-text"
+# BYTES: {{*}} ValueEqualsCharacters count 13
 # BYTES-NOT: EqualsLiteral
 # RUN(SHELL): run-in-shell globalThis.publish = (isText, isTextAmongStrings, isLongerText, countTexts) => { const join = (a, b) => a + b; const texts = ["text", join("te", "xt"), join(join("t", "e"), join("x", "t")), "atextb".slice(1, 5), "textĀ".slice(0, 4), "textĀ".replace("Ā", ""), String.fromCharCode(116, 101, 120, 116), "TEXT".toLowerCase()]; const others = ["test", join("te", "st"), "atestb".slice(1, 5), "testĀ".slice(0, 4), "tex", "texts", join("text", "s"), "", "texĀ", new String("text"), Symbol("text"), 4, 0.5, 4n, true, null, undefined, {}, ["text"]]; print(texts.map(isText).join()); print(others.map(isText).join()); print(texts.map(isTextAmongStrings).join()); print(others.map(isTextAmongStrings).join()); print(["a-longer-text", join("a-longer", "-text"), "xa-longer-textx".slice(1, 14), "a-longer-textĀ".slice(0, 13)].map(isLongerText).join()); print(["a-longer-test", join("a-longer", "-test"), "a-longer-tex", "text", 13, null].map(isLongerText).join()); const all = texts.concat(others); print(countTexts(i => all[i], all.length)); };
 # SHELL: true,true,true,true,true,true,true,true

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTCellFormat.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
@@ -23,7 +24,6 @@
 #include <optional>
 #include <span>
 #include <wtf/BitSet.h>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>

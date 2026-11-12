@@ -123,7 +123,7 @@ static void testCallsOfBuiltinsThatProgramCannotHoldInLanguageCallTests()
         for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count) {
             StubKey key = callBoxedBuiltin(static_cast<BoxedCallForm>(form), count);
             AOT_TEST_CHECK(holdsNone.recordingOf(bodyOf(key)).entriesUsed.isEmpty());
-            AOT_TEST_CHECK(refersToInLanguageCallTests(holdsNone, key, callHostFunctionWithoutBoxedCall(count)) || refersToInLanguageCallTests(holdsNone, key, callHostFunctionThatMayBeUnfetched(count)));
+            AOT_TEST_CHECK(refersToInLanguageCallTests(holdsNone, key, hostCallLeftTo(static_cast<BoxedCallForm>(form), count)));
         }
     }
 }

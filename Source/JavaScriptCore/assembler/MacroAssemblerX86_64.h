@@ -10465,11 +10465,40 @@ public:
         return start;
     }
 
+    // Relocations of this kind are the last bytes of the instruction. Only a Jump creates a Label that is not at the end of the buffer.
+    Label pcRelativeLoadLabel()
+    {
+        return Jump(m_assembler.buffer().label().labelAtOffset(-static_cast<int>(relocationSize(RelocationKind::Load64)))).label();
+    }
+
     Label loadPCRelativeDouble(FPRegisterID dest)
     {
         m_assembler.movsd_rip(dest);
-        // Relocations of this kind are the last bytes of the instruction. Only a Jump creates a Label that is not at the end of the buffer.
-        return Jump(m_assembler.buffer().label().labelAtOffset(-static_cast<int>(relocationSize(RelocationKind::Load64)))).label();
+        return pcRelativeLoadLabel();
+    }
+
+    Label addPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.addsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label subPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.subsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label mulPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.mulsd_rip(dest);
+        return pcRelativeLoadLabel();
+    }
+
+    Label divPCRelativeDouble(FPRegisterID dest)
+    {
+        m_assembler.divsd_rip(dest);
+        return pcRelativeLoadLabel();
     }
 
     Label moveInstanceAddress(RegisterID instance, RegisterID dest)

@@ -24,6 +24,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "ArrayIteratorPrototype.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "ArrayConstructor.h"
@@ -149,7 +150,7 @@ public:
     bool open(JSValue iterable, WordingOfIteration);
     bool tryOpenUnseen(JSValue iterable);
     bool step(JSValue&);
-    bool tryStepToEndUnseen(MarkedArgumentBuffer& values);
+    bool tryDrainUnobserved(MarkedArgumentBuffer& values);
     void close();
 
 private:
@@ -304,7 +305,7 @@ bool IterationInRunTime::step(JSValue& value)
     return true;
 }
 
-bool IterationInRunTime::tryStepToEndUnseen(MarkedArgumentBuffer& values)
+bool IterationInRunTime::tryDrainUnobserved(MarkedArgumentBuffer& values)
 {
     if (m_stepper != Stepper::ArrayIterator)
         return false;
@@ -828,6 +829,21 @@ static bool tryAppendNumbersOfView(JSGlobalObject* globalObject, JSArray* target
     return values.isEmpty() || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), *kind, values.span());
 }
 
+static JSArray* unmodifiedIteratedArray(JSGlobalObject* globalObject, JSArrayIterator* iterator)
+{
+    VM& vm = globalObject->vm();
+    JSArray* array = dynamicDowncast<JSArray>(iterator->iteratedObject());
+    if (!array || iterator->index() || iterator->structure() != globalObject->arrayIteratorStructure())
+        return nullptr;
+    if (!globalObject->arrayIteratorProtocolWatchpointSet().isStillValid() || !globalObject->mapIteratorProtocolWatchpointSet().isStillValid())
+        return nullptr;
+    JSObject* prototype = globalObject->arrayIteratorPrototype();
+    bool mayHaveIterator = !prototype->structure()->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(vm.propertyNames->iteratorSymbol.impl()));
+    if (mayHaveIterator && prototype->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
+        return nullptr;
+    return iterator->kind() == IterationKind::Keys || isReadByIndexUnseen(array) ? array : nullptr;
+}
+
 static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSArray* target, JSValue iterable)
 {
     VM& vm = globalObject->vm();
@@ -863,6 +879,24 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
                 RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, list));
             }
         } else if (!isJSArray(cell)) {
+            auto* iterator = cell->type() == JSArrayIteratorType ? uncheckedDowncast<JSArrayIterator>(cell) : nullptr;
+            if (JSArray* array = iterator ? unmodifiedIteratedArray(globalObject, iterator) : nullptr) {
+                switch (iterator->kind()) {
+                case IterationKind::Values:
+                    iterator->setIndex(JSArrayIterator::doneIndex);
+                    RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, array));
+                case IterationKind::Keys:
+                    if (!tryAppendKeysOfArray(vm, target, array))
+                        break;
+                    iterator->setIndex(JSArrayIterator::doneIndex);
+                    return;
+                case IterationKind::Entries:
+                    if (!tryAppendEntriesOfArray(globalObject, target, array))
+                        break;
+                    iterator->setIndex(JSArrayIterator::doneIndex);
+                    return;
+                }
+            }
             if (cell->type() == JSMapIteratorType && uncheckedDowncast<JSMapIterator>(cell)->kind() == IterationKind::Entries && tryAppendPairsLeftIn(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
                 return;
             if (cell->type() == JSMapIteratorType && tryAppendMembersOfIteratorNobodyStepped(globalObject, target, uncheckedDowncast<JSMapIterator>(cell)))
@@ -908,7 +942,7 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     if (!isOpen)
         return;
     MarkedArgumentBuffer values;
-    for (bool hasMore = !iteration.tryStepToEndUnseen(values); hasMore;) {
+    for (bool hasMore = !iteration.tryDrainUnobserved(values); hasMore;) {
         JSValue value;
         hasMore = iteration.step(value);
         RETURN_IF_EXCEPTION(scope, void());

@@ -7,7 +7,7 @@
 # report(K2.has(a));
 # The evaluations of the class share the layout. The emitter and the run time compare the brand and then look for a boxed value.
 # RUN: link fields mechanisms=all
-# CHECK: field L0.1 #"#x"@L0 proven=i32 writers-known
+# CHECK: field L0.1 #"#x"@L0 proven=int[0, 2147483647] writers-known
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: layout L0 CompiledObject
 # PLAN-NEXT: slot 0 #"#"@L0 JSValue Inline

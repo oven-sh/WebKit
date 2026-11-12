@@ -410,7 +410,7 @@ static void checkHostCallReferences(const StubCatalog& catalog)
             AOT_TEST_CHECK(refersOnceBy(catalog, callHostFunction(count), handler, StubReference::Kind::Jump));
             bool callsOperationOfItsCount = count > 1 && (form == BoxedCallForm::ArrayPush || form == BoxedCallForm::StringIndexOf);
             AOT_TEST_CHECK(refersToFamily(catalog, handler, family) == (acceptsArgumentCount(form, count) && !callsOperationOfItsCount));
-            AOT_TEST_CHECK(refersOnceBy(catalog, handler, fetchesFunctionOnlyToLeave(form, count) ? callHostFunctionThatMayBeUnfetched(count) : callHostFunctionWithoutBoxedCall(count), StubReference::Kind::Jump));
+            AOT_TEST_CHECK(refersOnceBy(catalog, handler, hostCallLeftTo(form, count), StubReference::Kind::Jump));
         }
     }
 }
@@ -431,7 +431,7 @@ static void testReachability()
     StubBlob keyedReadBlob = buildBlob(catalog, std::array { getByValCached() }, EntrySet { });
     for (StubKey key : { getByValCached(), getByValCachedCells(), getByVal(false), getByVal(true) })
         AOT_TEST_CHECK(keyedReadBlob.offsetOf(key));
-    AOT_TEST_CHECK(!keyedReadBlob.offsetOf(newPromise()));
+    AOT_TEST_CHECK(!keyedReadBlob.offsetOf(newMap()));
 
     StubBlob promiseBlob = buildBlob(catalog, std::array { newPromise() }, EntrySet { });
     AOT_TEST_CHECK(promiseBlob.offsetOf(newPromise()));
@@ -503,6 +503,12 @@ static void checkCoroutineSummaries(const StubCatalog& catalog)
     checkAwaitSummary(catalog, awaitBySavingFrame(), A1);
     checkAwaitSummary(catalog, awaitCallBySavingFrame(), R0);
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, returnAsyncResult()));
+#if CPU(X86_64)
+    for (RegistersSavedInAsyncFrame saved : { RegistersSavedInAsyncFrame::None, RegistersSavedInAsyncFrame::RBX, RegistersSavedInAsyncFrame::R15, RegistersSavedInAsyncFrame::Both }) {
+        AOT_TEST_CHECK(mayThrowAndCollect(catalog, returnAsyncResultInTailPosition(saved)));
+        AOT_TEST_CHECK(operationsCalledBy(catalog, returnAsyncResultInTailPosition(saved)) == operationsCalledBy(catalog, returnAsyncResult()));
+    }
+#endif
 
     Typed::Effects effectsOfPromiseCreation = catalog.effectsOf(newPromise());
     AOT_TEST_CHECK(!effectsOfPromiseCreation.mayThrow && effectsOfPromiseCreation.mayCollect);
@@ -654,16 +660,17 @@ static void testSummaries()
 
 static void checkCoroutineOperations(const StubCatalog& catalog)
 {
-    Vector<StubKey> keys { awaitBySavingFrame(), awaitCallBySavingFrame(), returnAsyncResult(), newPromise() };
+    Vector<StubKey> keys { awaitBySavingFrame(), awaitCallBySavingFrame(), returnAsyncResult(), resolveReturnedPromise(), newPromise() };
     for (GeneratorStepCheck check : stepChecks)
         keys.append(stepGenerator(check));
 
     EntrySet operationsCalled;
     for (StubKey key : keys)
         operationsCalled.merge(operationsCalledBy(catalog, key));
-    AOT_TEST_CHECK(operationsCalled == entrySetOf({ Entry::operationAOTNewPromise, Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitWithSavedFrame, Entry::operationAOTAwaitCallWithSavedFrame, Entry::operationAOTResolvePromiseOrReturnResult }));
+    AOT_TEST_CHECK(operationsCalled == entrySetOf({ Entry::operationAOTNewPromise, Entry::operationAOTSettleAwaitedPromise, Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitWithSavedFrame, Entry::operationAOTAwaitCallWithSavedFrame, Entry::operationAOTResolvePromiseOrReturnResult }));
 
     AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::Resolution)) == entrySetOf({ Entry::operationAOTSettleAwaitedPromise, Entry::operationAOTSaveFrameAndAwaitResolution, Entry::operationAOTAwaitResolutionWithSavedFrame }));
     for (StepConsumer consumer : stepConsumers)
         AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());
     AOT_TEST_CHECK(operationsCalledBy(catalog, runAsyncGeneratorStep()) == entrySetOf({ Entry::operationAOTAsyncIteratorStep, Entry::operationAOTFinishAsyncIteratorStep }));

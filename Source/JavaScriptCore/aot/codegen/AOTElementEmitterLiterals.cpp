@@ -5,12 +5,14 @@
 
 #include "config.h"
 #include "AOTAllocationEmitter.h"
+#include "AOTArrayStorageForms.h"
 
 #if ENABLE(AOT)
 
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTGuardEmitter.h"
+#include "JSCellButterfly.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -44,6 +46,12 @@ void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
     if (!accessToElementsHasCode(Opcode::HasArrayStorage, kind, value->admitsInt32Storage(), value->isWritable())) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         defineTest(value, boolean(false));
+        return;
+    }
+    const auto* written = value->data() ? m_program.at(value->data()).root.tryAs<DataNode::Array>() : nullptr;
+    if (written && !isStorageOfArray(*written)) {
+        Pointer storage(m_out.load64(instanceWord(m_heaps.AOTInstance_constantCells, m_mentions.add(NumberSpace::DataStorage, value->data()))));
+        defineTest(value, equal(emitter<ElementAccessEmitter>().storageOfList(in<CellPointer>(value->arrayOperand())), offsetBy(storage, JSCellButterfly::offsetOfData())));
         return;
     }
     if (value->data()) {

@@ -22,7 +22,7 @@ static ALWAYS_INLINE Test testOfEncodedOperands(Encoder& encoder, Test::Kind kin
     const Operation* left = childWithoutCheck(fused, 0);
     const Operation* right = childWithoutCheck(fused, 1);
     auto isFusedOperand = [&](const Operation* operand) ALWAYS_INLINE_LAMBDA {
-        return encoder.m_liveness.isFused(operand) && operand->opcode() != Trunc && !(isARM64() && namesWord(operand));
+        return encoder.m_liveness.isFused(operand) && operand->opcode() != Trunc && !namesWord(operand);
     };
     bool leftIsFused = isFusedOperand(left);
     bool rightIsFused = isFusedOperand(right);
@@ -482,13 +482,13 @@ void Encoder::encodeSwitch(Block* block, const Step& step)
                     ++end;
             } else
                 end = endOfDenseRunInEncodedSwitch(values, begin);
-            if (end - begin < minCasesForJumpTable) {
+            const bool goesByBits = isCutIntoWindows || (liesInOneWindow(begin, end - 1) && leadsToFewPlaces(begin, end));
+            if (end - begin < (goesByBits ? minCasesForSwitchWindow : minCasesForJumpTable)) {
                 ++begin;
                 continue;
             }
             if (beginOfSearch < begin)
                 segments.append(m_arena, EncodedSwitchSegment { beginOfSearch, begin, WayOfSwitchSegment::Search });
-            bool goesByBits = isCutIntoWindows || (liesInOneWindow(begin, end - 1) && leadsToFewPlaces(begin, end));
             segments.append(m_arena, EncodedSwitchSegment { begin, end, goesByBits ? WayOfSwitchSegment::Bits : WayOfSwitchSegment::Table });
             begin = end;
             beginOfSearch = end;
@@ -711,6 +711,33 @@ void Encoder::encodeBinarySearch(Block* block, GPRReg value, Width width, std::s
     encodeSearchOfSwitchValues(*this, search, 0, static_cast<unsigned>(values.size()), false, false);
 }
 
+#if CPU(X86_64)
+static bool stepsOnlyMove(const Allocation& allocation, uint32_t begin, uint32_t end)
+{
+    for (uint32_t index = begin; index < end; ++index) {
+        const Step& step = allocation.step(index);
+        if (step.kind == StepKind::Move || step.kind == StepKind::Materialize)
+            continue;
+        if (step.kind != StepKind::Execute)
+            return false;
+        const Opcode opcode = step.operation->opcode();
+        if (opcode != Nop && opcode != Phi && opcode != Upsilon && !isConstant(opcode))
+            return false;
+    }
+    return true;
+}
+
+void Encoder::noteReturnThatJumpsMayCopy()
+{
+    const size_t length = MacroAssembler::differenceBetween(*labelOf(m_block), m_jit.labelIgnoringWatchpoints());
+    if (length > X86Assembler::maxShortReturnLength)
+        return;
+    const BlockSteps& steps = stepsOf(m_block);
+    if (stepsOnlyMove(m_allocation, steps.begin, steps.end) && stepsOnlyMove(m_allocation, steps.beginOfEdgeMoves, steps.endOfEdgeMoves))
+        m_jit.m_assembler.noteShortReturnEndingHere(static_cast<uint32_t>(length));
+}
+#endif
+
 void Encoder::encodeReturn(const Step& step)
 {
     const Operation* operation = step.operation;
@@ -721,6 +748,9 @@ void Encoder::encodeReturn(const Step& step)
 
     if (!m_frameIsSetUp) {
         m_jit.ret();
+#if CPU(X86_64)
+        noteReturnThatJumpsMayCopy();
+#endif
         return;
     }
 
