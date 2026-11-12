@@ -117,6 +117,7 @@ GenerationResult CodeGenerator::run()
     m_storesBehindWhichOwnerIsRemembered.clearAll();
     m_storesWithLaterOrderWord.clearAll();
     m_lastFirstStores.shrink(0);
+    m_regionsAtHeads.shrink(0);
     m_carriedSubstrings.shrink(0);
     m_hasKeysAskedTwice = false;
     orderBlocks();
@@ -2328,6 +2329,78 @@ void CodeGenerator::passListStorages(const Edge& edge)
         m_out.upsilon(length, storage.length);
         m_out.upsilon(mode, storage.mode);
     }
+}
+
+bool CodeGenerator::loopMaySuspend(BlockID head, const BitVector& suspendingBlocks)
+{
+    BitVector seen;
+    seen.set(head.index());
+    Vector<BlockID, 8> worklist { head };
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (suspendingBlocks.get(block.index()))
+            return true;
+        code().forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+            bool isInLoop = code().isReached(edge.from) && (block != head || dominates(head, edge.from));
+            if (isInLoop && !seen.set(edge.from.index()))
+                worklist.append(edge.from);
+        });
+    }
+    return false;
+}
+
+void CodeGenerator::findSuspensionFreeRegions()
+{
+    const uint32_t numberOfBlocks = code().numberOfBlocks();
+    m_regionsAtHeads.fill(0, numberOfBlocks);
+    m_regionsAtEnds.fill(0, numberOfBlocks);
+    m_regionsBehindSuspensions.fill(0, code().numberOfValues());
+    BitVector suspensions;
+    BitVector suspendingBlocks;
+    for (const LiveAtSuspension& record : code().suspensions()) {
+        suspensions.set(record.suspension.index());
+        suspendingBlocks.set(code().blockOf(record.suspension).index());
+    }
+    for (BlockID id : m_order) {
+        const Block& block = code().at(id);
+        const uint32_t own = id.index() + 1;
+        uint32_t region = 0;
+        if (block.isEntry || block.isHandlerBlock() || (block.isLoopHead && loopMaySuspend(id, suspendingBlocks)))
+            region = own;
+        else {
+            code().forEachIncomingEdgeUnsealed(id, [&](const Edge& edge) {
+                if (!code().isReached(edge.from) || (block.isLoopHead && dominates(id, edge.from)))
+                    return;
+                uint32_t entering = m_regionsAtEnds[edge.from.index()];
+                region = entering && (!region || region == entering) ? entering : own;
+            });
+        }
+        if (!region)
+            region = own;
+        m_regionsAtHeads[id.index()] = region;
+        if (suspendingBlocks.get(id.index())) {
+            for (ValueID value : code().valuesOf(id)) {
+                if (region > numberOfBlocks)
+                    m_regionsBehindSuspensions[value.index()] = region;
+                if (suspensions.get(value.index()))
+                    region = numberOfBlocks + value.index() + 1;
+            }
+        }
+        m_regionsAtEnds[id.index()] = region;
+    }
+}
+
+uint32_t CodeGenerator::suspensionFreeRegionAt(const OperationContext& context)
+{
+    if (!code().hasSuspensions())
+        return 0;
+    if (m_regionsAtHeads.isEmpty())
+        findSuspensionFreeRegions();
+    const size_t block = context.block().index();
+    if (!context.valueID())
+        return m_regionsAtEnds[block];
+    uint32_t region = m_regionsBehindSuspensions[context.valueID().index()];
+    return region ? region : m_regionsAtHeads[block];
 }
 
 void CodeGenerator::findLoopCarriedTables()

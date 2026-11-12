@@ -72,10 +72,11 @@ bool ResolvedCallEmitter::isMatchedSeveralTimes(ValueID string)
 
 std::optional<OwnedCharacters> ResolvedCallEmitter::findLoadedSubject(const OperationContext& context, CellPointer string)
 {
-    if (m_generator.keepsValuesInHeapFrame())
+    if (m_generator.keepsValuesInHeapFrame() || m_loadedSubjects.isEmpty())
         return std::nullopt;
+    const uint32_t region = m_generator.suspensionFreeRegionAt(context);
     for (const LoadedSubject& loaded : m_loadedSubjects) {
-        if (loaded.string != string.value() || !m_generator.blockDominates(loaded.block, context.block()))
+        if (loaded.string != string.value() || loaded.suspensionFreeRegion != region || !m_generator.blockDominates(loaded.block, context.block()))
             continue;
         EdgeID handler = loaded.block != context.block() ? m_code.handlerOf(loaded.block) : EdgeID();
         if (!handler || !m_generator.blockDominates(loaded.block, m_code.at(handler).to))
@@ -97,7 +98,7 @@ OwnedCharacters ResolvedCallEmitter::loadCarriedSubstring(const OperationContext
         return *loaded;
     OwnedCharacters characters = emitter<StringEmitter>().loadCharacters(context, string, SubstringBounds { Word32(carried.start), Word32(carried.length) });
     if (isBeforeBranches && isNamedByItsOwner)
-        m_loadedSubjects.append({ context.block(), string.value(), characters });
+        m_loadedSubjects.append({ context.block(), m_generator.suspensionFreeRegionAt(context), string.value(), characters });
     return characters;
 }
 
@@ -118,7 +119,7 @@ std::optional<OwnedCharacters> ResolvedCallEmitter::loadSubject(const OperationC
     if (m_generator.keepsValuesInHeapFrame() || !isMatchedSeveralTimes(definitionOf(match.subject)))
         return std::nullopt;
     OwnedCharacters characters = emitter<StringEmitter>().loadCharacters(context, match.string);
-    m_loadedSubjects.append({ context.block(), match.string.value(), characters });
+    m_loadedSubjects.append({ context.block(), m_generator.suspensionFreeRegionAt(context), match.string.value(), characters });
     return characters;
 }
 

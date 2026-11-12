@@ -345,6 +345,7 @@ public:
     std::span<const BlockID> order() const { return m_order.span(); }
     BlockID onlyPredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
     bool blockDominates(BlockID above, BlockID below);
+    uint32_t suspensionFreeRegionAt(const OperationContext&);
     BlockID nearestDominatorOf(BlockID);
     Operand getIn(ValueID id, Representation wanted)
     {
@@ -714,6 +715,9 @@ private:
     Vector<std::pair<BlockID, uint32_t>, 4> m_listStoragesByBlock;
     Vector<std::pair<ValueID, uint32_t>, 4> m_lengthsOfListStorages;
     Vector<std::pair<BlockID, uint32_t>, 4> m_callsOnListStorages;
+    Vector<uint32_t> m_regionsAtHeads;
+    Vector<uint32_t> m_regionsAtEnds;
+    Vector<uint32_t> m_regionsBehindSuspensions;
     Vector<LoopCarriedTable, 2> m_loopCarriedTables;
     Vector<std::optional<CarriedKeysForm>, 2> m_formsOfCarriedTables;
     Vector<std::pair<ValueID, LValue>, 2> m_keysOfCheckedTables;
@@ -750,6 +754,8 @@ private:
     bool isReadByUnboxAlone(BlockID home, ValueID parameter) const;
     bool isUnboxedBeforeJoin(BlockID home, size_t place, Representation) const;
     bool isReachedWithoutCalls(BlockID from, BlockID to) const;
+    bool loopMaySuspend(BlockID head, const BitVector& suspendingBlocks);
+    void findSuspensionFreeRegions();
     bool isReadByBoxedSumAlone(BlockID home, ValueID parameter) const;
     bool unboxesNumber(const Operation&) const;
     ValueID boxPassedToJoin(BlockID from, ValueID argument) const;

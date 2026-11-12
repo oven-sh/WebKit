@@ -68,6 +68,7 @@ private:
     Boxed testByMatcher(const OperationContext&, const RegExpMatch&);
     struct LoadedSubject {
         BlockID block;
+        uint32_t suspensionFreeRegion;
         LValue string;
         OwnedCharacters characters;
     };
