@@ -8104,8 +8104,11 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
         Opcode maker = index.opcodeOf(operandWritten);
         TypeID givenByRow = widestPrimitiveResultOf(maker);
         ValueID judged = built.id();
-        if (m_code.at(judged).opcode == Opcode::NumberOrNaN)
+        if (m_code.at(judged).opcode == Opcode::NumberOrNaN) {
+            if (givenByRow && m_types.isSubset(m_code.at(judged).type, givenByRow))
+                continue;
             judged = m_code.at(judged).operand(0);
+        }
         TypeID recorded = m_code.at(judged).type;
         if (!givenByRow || !recorded || !m_types.at(recorded).isJavaScriptValue() || m_types.isSubset(recorded, givenByRow))
             continue;

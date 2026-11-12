@@ -149,6 +149,7 @@ private:
     void verifyRecords();
     void verifyNarrowedValues();
     void verifyUsersOfHolesReadAsNaN();
+    void verifyUsersOfReadNumbers();
     bool treatsUndefinedAsNaN(ValueID, const Operation& user, uint32_t operandIndex) const;
     bool isOperatorSpecializationCheck(ValueID test) const;
     void verifyTestsPassed();
@@ -264,6 +265,7 @@ String CodeVerifier::run()
         &CodeVerifier::verifyRecords,
         &CodeVerifier::verifyNarrowedValues,
         &CodeVerifier::verifyUsersOfHolesReadAsNaN,
+        &CodeVerifier::verifyUsersOfReadNumbers,
         &CodeVerifier::verifyTestsPassed,
         &CodeVerifier::verifyLengthsHeldAgainst,
         &CodeVerifier::verifyKindsOfStorageNamed,
@@ -288,6 +290,7 @@ String CodeVerifier::runOnSweptCode()
         &CodeVerifier::verifyRecords,
         &CodeVerifier::verifyNarrowedValues,
         &CodeVerifier::verifyUsersOfHolesReadAsNaN,
+        &CodeVerifier::verifyUsersOfReadNumbers,
         &CodeVerifier::verifyTestsPassed,
         &CodeVerifier::verifyLengthsHeldAgainst,
         &CodeVerifier::verifyKindsOfStorageNamed,
@@ -1448,6 +1451,92 @@ bool CodeVerifier::treatsUndefinedAsNaN(ValueID id, const Operation& user, uint3
         return isOperatorSpecializationCheck(id);
     }
     return user.opcode == Opcode::PutTypedArrayElement && user.valueOperand() == user.operand(operandIndex) && user.viewOperand() != user.operand(operandIndex) && user.positionOperand() != user.operand(operandIndex) && !isBigInt(user.typedArrayType());
+}
+
+void CodeVerifier::verifyUsersOfReadNumbers()
+{
+    Vector<ValueID, 8> numbers;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& read = m_code.at(id);
+            if (read.opcode == Opcode::NumberOrNaN && !m_types.at(m_code.at(read.valueOperand()).type).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent))
+                numbers.append(id);
+        }
+    }
+    if (numbers.isEmpty())
+        return;
+    Vector<ValueID, 8> tests;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& test = m_code.at(id);
+            if (test.opcode == Opcode::StrictEq && test.leftOperand() == test.rightOperand() && numbers.contains(test.leftOperand()))
+                tests.append(id);
+        }
+    }
+    Vector<std::pair<ValueID, ValueID>, 8> computed;
+    auto numberBehind = [&](ValueID value) -> ValueID {
+        bool isNumberByType = false;
+        for (; valuePreservingOpcodes.contains(m_code.at(value).opcode); value = m_code.at(value).operand(0))
+            isNumberByType |= m_code.at(value).opcode == Opcode::Narrowed && !m_types.at(m_code.at(value).type).mayBeNaN();
+        if (numbers.contains(value))
+            return isNumberByType ? ValueID() : value;
+        size_t place = computed.findIf([&](const auto& entry) { return entry.first == value; });
+        return place == notFound ? ValueID() : computed[place].second;
+    };
+    auto isTakenUntested = [&](ValueID operand, BlockID block, uint32_t place, EdgeID edge) -> bool {
+        ValueID number = operand ? numberBehind(operand) : ValueID();
+        return number && std::ranges::none_of(tests, [&](ValueID test) {
+            return m_code.at(test).leftOperand() == number && ((edge && findAnswerEdge(test, true, block) == edge) || isAnsweredAt(test, true, block, place));
+        });
+    };
+    auto isExempt = [&](const Operation& user) {
+        bool isTestWithoutNaN = user.opcode == Opcode::TypeTest && !m_types.at(user.testedType()).mayBeNaN();
+        return valuePreservingOpcodes.contains(user.opcode) || user.opcode == Opcode::StrictEq || user.opcode == Opcode::CheckProof || isTestWithoutNaN;
+    };
+    for (bool hasChanged = true; hasChanged;) {
+        hasChanged = false;
+        for (BlockID block : m_reachedBlocks) {
+            for (ValueID id : operationsOf(block)) {
+                const Operation& user = m_code.at(id);
+                if (!user.traits().isPure() || isExempt(user) || computed.containsIf([&](const auto& entry) { return entry.first == id; }))
+                    continue;
+                for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                    if (!isTakenUntested(user.operand(operandIndex), block, m_places[id.index()], { }))
+                        continue;
+                    computed.append({ id, numberBehind(user.operand(operandIndex)) });
+                    hasChanged = true;
+                    break;
+                }
+            }
+        }
+    }
+    constexpr ASCIILiteral rule = "a number is read out of a value and taken where it may be NaN for what is no number"_s;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& user = m_code.at(id);
+            if (user.traits().isPure() || isExempt(user))
+                continue;
+            for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                if (isTakenUntested(user.operand(operandIndex), block, m_places[id.index()], { }))
+                    return fail(block, id, rule, user.operand(operandIndex));
+            }
+        }
+        uint32_t placeOfEnd = operationsOf(block).size() + 1;
+        const Terminator& end = m_code.at(block).terminator;
+        for (uint32_t operandIndex = 0; operandIndex < end.numberOfOperands(); ++operandIndex) {
+            if (isTakenUntested(end.operand(operandIndex), block, placeOfEnd, { }))
+                return fail(block, end.operand(operandIndex), rule);
+        }
+        ValueID passedOn;
+        m_code.forEachEdgeOf(block, [&](EdgeID id, const Edge& edge) {
+            for (ValueID argument : edge.arguments()) {
+                if (isTakenUntested(argument, block, placeOfEnd, id))
+                    passedOn = argument;
+            }
+        });
+        if (passedOn)
+            return fail(block, passedOn, rule);
+    }
 }
 
 void CodeVerifier::verifyUsersOfHolesReadAsNaN()

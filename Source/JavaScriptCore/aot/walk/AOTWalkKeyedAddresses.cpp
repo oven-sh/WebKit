@@ -120,8 +120,8 @@ void narrowKeyedAccessEffects(Walker& walker, const Draft& draft, Effects& effec
     const Operation* address = isLookup ? nullptr : &walker.code().at(draft.addressOperand().id());
     narrowEffects(walker, draft.opcode, walker.typeOf(draft.objectOperand()), isLookup ? draft.findsOnlyFields() : address->findsOnlyFields(), effects);
     StringID text = isLookup || address->findsOnlyFields() ? StringID() : textKnownForStrings(walker, referenceToRecordForStrings(walker, address->propertyOperand()));
-    PropertyKeyID name = text ? walker.types().textKey(text) : PropertyKeyID();
-    if (name && !walker.program().isIndexLike(name) && walker.program().nameClassOf(name) != NameClass::Proto)
+    PropertyKeyID name = text && !liesInThread(text) ? walker.types().textKey(text) : PropertyKeyID();
+    if (name && !liesInThread(name) && !walker.program().isIndexLike(name) && walker.program().nameClassOf(name) != NameClass::Proto)
         narrowToName(walker, draft.opcode, name, effects);
 }
 
