@@ -26,7 +26,7 @@ void JSObject::moveFrozenElementsToSparseMap(VM& vm)
         frozenStructure->fireStructureTransitionWatchpoint(&deferred);
         setStructure(vm, frozenStructure->previousID());
     }
-    convertFromCopyOnWrite(vm);
+    convertFromCopyOnWrite(vm, /* additionalLength */ 0);
     switch (indexingType()) {
     case ALL_INT32_INDEXING_TYPES:
         convertInt32ToArrayStorage(vm);

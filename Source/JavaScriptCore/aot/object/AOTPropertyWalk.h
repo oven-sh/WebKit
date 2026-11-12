@@ -102,6 +102,7 @@ bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source
 bool tryAssignThroughCaches(JSGlobalObject*, JSObject* target, JSObject* source);
 bool wouldPerformFastPut(VM&, JSObject* target);
 JS_EXPORT_PRIVATE void didBecomePrototype(VM&, JSObject*);
+JS_EXPORT_PRIVATE void willPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);
 JS_EXPORT_PRIVATE void didPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);
 bool hasIndexedProperties(JSObject*);
 JSObject* objectHoldingIndexedProperties(const JSObject*);

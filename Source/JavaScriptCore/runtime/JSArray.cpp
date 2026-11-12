@@ -1424,7 +1424,7 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
             return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         if (newLength == butterfly->publicLength())
             return true;
-        convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm, /* additionalLength */ 0);
         butterfly = this->butterfly();
         [[fallthrough]];
 

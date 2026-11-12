@@ -551,7 +551,7 @@ bool CastEmitter::tryContinueClosureChain(const ValueContext& test)
 
 const Operation* CastEmitter::throwAfterFailedTest(const ValueContext& test)
 {
-    if (!isX86_64() || !test->asksInFull() || !test.isBranchCondition() || sourcesOfProofsCheckedUnder(build().options().testing))
+    if (!isX86_64() || !test->asksInFull() || !test.isBranchCondition() || sourcesOfProofsCheckedUnder(build().options().testing) || !generator().mayThrowInPlace())
         return nullptr;
     const Edge& failing = m_code.at(m_code.at(test.block()).terminator.notTaken());
     std::span<const ValueID> values = m_code.valuesOf(failing.to);

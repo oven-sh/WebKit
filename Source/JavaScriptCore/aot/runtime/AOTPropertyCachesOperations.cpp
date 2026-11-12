@@ -970,7 +970,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMovedStaticField, EncodedJSValue, 
     return JSValue::encode(asObject(classObject)->getDirect(*offset));
 }
 
-static NEVER_INLINE uint64_t searchOwnNamedPropertyAddress(PropertyCaches& caches, JSValue base, uint32_t key, uint32_t fitsFieldTypes)
+static NEVER_INLINE uint64_t searchOwnNamedPropertyAddress(PropertyCaches& caches, JSValue base, uint32_t key, bool fitsFieldTypes)
 {
     if (!base.isObject())
         return 0;
@@ -989,11 +989,31 @@ static NEVER_INLINE uint64_t searchOwnNamedPropertyAddress(PropertyCaches& cache
     return address;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, uint32_t fitsFieldTypes, SiteCache cache))
+static NEVER_INLINE uint64_t addressFoundAgain(JSObject* object, UniquedStringImpl* name)
+{
+    if (Object* compiled = compiledObjectOrNull(object)) {
+        if (const FieldData* field = compiled->fieldNamed(compiled->state(), name)) {
+            RELEASE_ASSERT(compiled->isInSlot(*field));
+            return std::bit_cast<uint64_t>(compiled->slotOf(*field));
+        }
+        object = compiled->extraProperties();
+    } else if (object->classInfo() == JSGlobalProxy::info())
+        object = uncheckedDowncast<JSGlobalProxy>(object)->target();
+    RELEASE_ASSERT(object);
+    unsigned attributes = 0;
+    std::optional<PropertyOffset> known = object->structure()->getWithoutMaterializing(name, attributes);
+    PropertyOffset offset = known ? *known : object->structure()->getConcurrently(name);
+    RELEASE_ASSERT(isValidOffset(offset));
+    return std::bit_cast<uint64_t>(object->locationForOffset(offset));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, uint32_t lookup, SiteCache cache))
 {
     JSValue base = JSValue::decode(encodedBase);
     LeafOperationScope leaf(*instance->vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
+    if (static_cast<AddressLookup>(lookup) == AddressLookup::FindsAgain)
+        return addressFoundAgain(asObject(base), caches.nameOf(key).uid);
     if (base.isCell() && base.asCell()->type() == FinalObjectType) {
         JSObject* object = asObject(base);
         Structure* structure = object->structure();
@@ -1012,7 +1032,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t,
             return std::bit_cast<uint64_t>(object->locationForOffset(offset));
         }
     }
-    return searchOwnNamedPropertyAddress(caches, base, key, fitsFieldTypes);
+    return searchOwnNamedPropertyAddress(caches, base, key, static_cast<AddressLookup>(lookup) == AddressLookup::FitsFieldTypes);
 }
 
 static JSValue ownDataValue(JSObject* holder, UniquedStringImpl* name)

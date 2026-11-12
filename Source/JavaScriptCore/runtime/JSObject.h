@@ -771,7 +771,7 @@ protected:
     void createInitialForValueAndSet(VM&, unsigned index, JSValue);
     void convertInt32ForValue(VM&, JSValue);
     void convertDoubleForValue(VM&, JSValue);
-    void convertFromCopyOnWrite(VM&);
+    void convertFromCopyOnWrite(VM&, unsigned additionalLength);
     static JSCellButterfly* tryCreateCopyOnWriteButterfly(VM&, JSObject*);
     bool tryConvertArrayStorageToContiguous(VM&);
     bool tryMoveElementsStartForward(VM&, unsigned count);

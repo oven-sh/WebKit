@@ -1486,16 +1486,11 @@ static ALWAYS_INLINE JSValue getByVal(VM& vm, JSGlobalObject* globalObject, Code
             RELEASE_AND_RETURN(scope, *result);
     }
 #endif
-    if (baseValue.isCell() && subscript.isString()) [[likely]] {
-        Structure& structure = *baseValue.asCell()->structure();
-        if (JSCell::canUseFastGetOwnProperty(structure)) {
-            auto existingAtomString = asString(subscript)->toExistingAtomString(globalObject);
-            RETURN_IF_EXCEPTION(scope, JSValue());
-            if (existingAtomString) {
-                if (JSValue result = baseValue.asCell()->fastGetOwnProperty(vm, structure, existingAtomString.data))
-                    return result;
-            }
-        }
+    if (baseValue.isObject() && subscript.isString()) [[likely]] {
+        auto existingAtomString = asString(subscript)->toExistingAtomString(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        if (existingAtomString)
+            RELEASE_AND_RETURN(scope, CommonSlowPaths::getByValObject(globalObject, vm, asObject(baseValue), existingAtomString.data));
     }
     
     if (std::optional<uint32_t> index = subscript.tryGetAsUint32Index()) {

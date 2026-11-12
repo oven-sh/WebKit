@@ -164,6 +164,7 @@ private:
         bool asksTableOfFields { false };
         LBasicBlock hasOtherStructure { nullptr };
         LBasicBlock asksStub { nullptr };
+        LBasicBlock hasMovingStorage { nullptr };
     };
     template<typename UsePlace> void checkStoreSiteInline(Boxed receiver, Pointer site, const ShapesOfStoreAtSite&, const UsePlace&);
     bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);

@@ -3256,7 +3256,10 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (static_cast<unsigned>(argumentCountIncludingThis) >= MIN_SPARSE_ARRAY_INDEX)
                 return CallOptimizationResult::DidNothing;
 
-            ArrayMode arrayMode = getArrayMode(Array::Write);
+            ArrayMode arrayMode = getArrayMode(Array::Read);
+            // push() with no arguments becomes GetArrayLength, which does not throw for an array that is frozen in copy-on-write storage. Keep Array::Write for it.
+            if (argumentCountIncludingThis == 1 || (arrayMode.type() != Array::Int32 && arrayMode.type() != Array::Double && arrayMode.type() != Array::Contiguous))
+                arrayMode = getArrayMode(Array::Write);
             if (!arrayMode.isJSArray())
                 return CallOptimizationResult::DidNothing;
 

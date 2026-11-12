@@ -1953,12 +1953,12 @@ void moveToProperties(VM& vm, Closure& classObject)
         if (!value)
             continue;
         Identifier name = identifiersOf(state.instance).identifier(field.name);
+        ProgramStatics::emptyVariableWhoseValueHasMoved(state.instance, field.slot);
         if (std::exchange(cachesReadVariables, false))
             classObject.putDirect(vm, name, value, static_cast<unsigned>(PropertyAttribute::None));
         else
             classObject.putDirectWithoutTransition(vm, name, value, static_cast<unsigned>(PropertyAttribute::None));
         didPutFieldInPlaceOfFunctionProperty(vm, classObject, name.impl());
-        ProgramStatics::emptyVariableWhoseValueHasMoved(state.instance, field.slot);
         state.countWriteForEffectsNet(Typed::CountInEffectsNet::StaticFieldsMoved);
     }
     classes.didEmptyStaticFields(classLayout);
