@@ -42,6 +42,11 @@ public:
     size_t size() const { return m_bytes.size(); }
     uint8_t at(size_t index) const { return WTF::atomicLoad<MemoryOrder::Relaxed>(&m_bytes[index]); }
     void set(size_t index, uint8_t value) { WTF::atomicStore<MemoryOrder::Relaxed>(&m_bytes[index], value); }
+    void add(size_t index, uint8_t bits)
+    {
+        if ((at(index) & bits) != bits)
+            WTF::atomicExchangeOr<MemoryOrder::Relaxed>(&m_bytes[index], bits);
+    }
 
 private:
     mutable Vector<uint8_t> m_bytes;

@@ -1534,10 +1534,9 @@ public:
     const TestRunsInLink& testRuns() const { return *m_testRuns; }
 
     BitVector reached;
-    BitVector iterationCallbacks;
-    BitVector repeatedCallbacks;
-    BitVector trapsOfProxies;
-    BitVector makersOfProxies;
+    enum class FoundByCalls : uint8_t { IsIterationCallback = 1 << 0, IsRepeatedCallback = 1 << 1, IsTrapOfProxy = 1 << 2, MakesProxies = 1 << 3 };
+    void noteFunctionFoundByCalls(FunctionID function, FoundByCalls found) { m_foundByCalls.add(function.index(), static_cast<uint8_t>(found)); }
+    OptionSet<FoundByCalls> foundByCalls(FunctionID function) const { return OptionSet<FoundByCalls>::fromRaw(m_foundByCalls.at(function.index())); }
     BitVector allocatedLayouts;
     BitVector constructedClasses;
     BitVector lostLayouts;
@@ -2119,6 +2118,7 @@ public:
     void tellNameThatBecomesText(FunctionID);
     static constexpr uint8_t nothingIsLeftToTell = 1;
     static constexpr uint8_t waitsForProgramToAsk = 2;
+    BytesSharedByThreads m_foundByCalls;
     BytesSharedByThreads m_keysOfLayoutAreTold;
     BytesSharedByThreads m_nameOfFunctionIsTold;
     BytesSharedByThreads m_functionsThatReadOffViewsMadeAtSites;

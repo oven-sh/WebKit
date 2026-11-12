@@ -4900,6 +4900,7 @@ void CodeGenerator::emitFirstConditions(CountedLoop& loop)
                 phisOfWrittenTurn.append({ parameter, m_values[parameter.index()] });
         }
         m_headOfTurnsLaidOut = head;
+        m_iterationMayThrowInPlace = true;
         m_turnLaidOut = blocks;
         LBasicBlock restart = nullptr;
         m_blockLeavingTurnLaidOut = [&] {
@@ -4962,6 +4963,7 @@ void CodeGenerator::emitFirstConditions(CountedLoop& loop)
         }
         RELEASE_ASSERT(!m_nextBlockGoesOnHere && !currentBlockIsOpen());
         m_headOfTurnsLaidOut = BlockID();
+        m_iterationMayThrowInPlace = false;
         m_turnLaidOut = { };
         m_blockLeavingTurnLaidOut = nullptr;
         m_blockLeavingLoop = nullptr;
@@ -5411,6 +5413,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
 
     m_out.appendTo(turns);
     m_headOfTurnsLaidOut = head;
+    m_iterationMayThrowInPlace = loop.loopCarriedValueStores.isEmpty();
     m_rotatesUnrolledIterationNumbers = loop.rotatesNumbers;
     for (auto& [index, number] : numbersOfTurns)
         m_numbersOfIntegers.append({ phisOfTurns[index], number });
@@ -5672,6 +5675,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     for (size_t index : takingAnyNaNInTurnsAlone)
         m_valuesHoldingAnyNaN.quickClear(parameters[index].index());
     m_headOfTurnsLaidOut = BlockID();
+    m_iterationMayThrowInPlace = false;
     m_turnLaidOut = { };
     m_listsAskedForKindInFrontOfTurnsLaidOut = { };
     m_boundsAskedInFrontOfTurnsLaidOut = { };

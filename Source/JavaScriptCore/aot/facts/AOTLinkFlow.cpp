@@ -612,10 +612,7 @@ void LinkFlow::makeTablesThatNeedNoNodes()
     size_t numberOfFunctions = program.functions.size();
     size_t numberOfLayouts = program.layouts.size();
     reached.ensureSize(numberOfFunctions);
-    iterationCallbacks.ensureSize(numberOfFunctions);
-    repeatedCallbacks.ensureSize(numberOfFunctions);
-    trapsOfProxies.ensureSize(numberOfFunctions);
-    makersOfProxies.ensureSize(numberOfFunctions);
+    m_foundByCalls = BytesSharedByThreads(numberOfFunctions);
     lostFunctions.ensureSize(numberOfFunctions);
     m_functionsWithAddedResults.ensureSize(numberOfFunctions);
     escapedFunctions.ensureSize(numberOfFunctions);
