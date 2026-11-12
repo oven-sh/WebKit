@@ -183,16 +183,6 @@ static ALWAYS_INLINE void putWithThis(JSGlobalObject* globalObject, EncodedJSVal
     baseValue.putInline(globalObject, ident, putValue, slot);
 }
 
-ALWAYS_INLINE static JSValue getByValObject(JSGlobalObject* globalObject, VM& vm, JSObject* base, PropertyName propertyName)
-{
-    Structure& structure = *base->structure();
-    if (JSCell::canUseFastGetOwnProperty(structure)) {
-        if (JSValue result = base->fastGetOwnProperty(vm, structure, propertyName))
-            return result;
-    }
-    return base->get(globalObject, propertyName);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationToThis, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOp))
 {
     VM& vm = globalObject->vm();
@@ -947,7 +937,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectString, EncodedJSValue, (JSGloba
     auto propertyName = asString(string)->toAtomString(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName.data)));
+    OPERATION_RETURN(scope, JSValue::encode(CommonSlowPaths::getByValObject(globalObject, vm, asObject(base), propertyName.data)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValObjectSymbol, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* base, JSCell* symbol))
@@ -958,7 +948,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValObjectSymbol, EncodedJSValue, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto propertyName = asSymbol(symbol)->privateName();
-    OPERATION_RETURN(scope, JSValue::encode(getByValObject(globalObject, vm, asObject(base), propertyName.data)));
+    OPERATION_RETURN(scope, JSValue::encode(CommonSlowPaths::getByValObject(globalObject, vm, asObject(base), propertyName.data)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValCellStringStrict, void, (JSGlobalObject* globalObject, JSCell* cell, JSCell* string, EncodedJSValue encodedValue))
@@ -1260,7 +1250,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPushDoubleMultiple, EncodedJSValue, (JSGl
     // If it can cause any JS interactions, we can call the caller JS function of this function and overwrite the
     // content of ScratchBuffer. If the IndexingType is now ArrayWithDouble, we can ensure
     // that there is no indexed accessors in this object and its prototype chain.
-    ASSERT(array->indexingMode() == ArrayWithDouble);
+    ASSERT(array->indexingType() == ArrayWithDouble);
 
     for (int32_t i = 0; i < elementCount; ++i) {
         array->pushInline(globalObject, JSValue(JSValue::EncodeAsDouble, buffer[i]));
@@ -4011,8 +4001,26 @@ JSC_DEFINE_JIT_OPERATION(operationStringLocaleCompare, UCPUStrictInt32, (JSGloba
     OPERATION_RETURN(scope, toUCPUStrictInt32(collator->compareStrings(globalObject, string, that)));
 }
 
+static ALWAYS_INLINE std::optional<UCPUStrictInt32> tryStringIndexOfOneCharWithoutGC(JSString* base, JSString* argument, int32_t position)
+{
+    if (argument->isRope())
+        return std::nullopt;
+
+    auto* argumentImpl = argument->getValueImpl();
+    if (argumentImpl->length() != 1 || base->isRope())
+        return std::nullopt;
+
+    size_t result = base->getValueImpl()->find((*argumentImpl)[0], static_cast<unsigned>(std::max(position, 0)));
+    if (result == notFound)
+        return toUCPUStrictInt32(-1);
+    return toUCPUStrictInt32(static_cast<int32_t>(result));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationStringIndexOf, UCPUStrictInt32, (JSGlobalObject* globalObject, JSString* base, JSString* argument))
 {
+    if (auto result = tryStringIndexOfOneCharWithoutGC(base, argument, /* position */ 0))
+        return { *result, nullptr };
+
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -4075,6 +4083,9 @@ JSC_DEFINE_JIT_OPERATION(operationStringIndexOfWithOneChar, UCPUStrictInt32, (JS
 
 JSC_DEFINE_JIT_OPERATION(operationStringIndexOfWithIndex, UCPUStrictInt32, (JSGlobalObject* globalObject, JSString* base, JSString* argument, int32_t position))
 {
+    if (auto result = tryStringIndexOfOneCharWithoutGC(base, argument, position))
+        return { *result, nullptr };
+
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -5680,54 +5691,6 @@ JSC_DEFINE_JIT_OPERATION(operationLoadVarargs, void, (JSGlobalObject* globalObje
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-JSC_DEFINE_JIT_OPERATION(operationSizeOfVarargsWithSpread, UCPUStrictInt32, (JSGlobalObject* globalObject, EncodedJSValue* buffer, uint32_t argc))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), argc);
-
-    CheckedUint32 length = 0;
-    for (uint32_t i = 0; i < argc; ++i) {
-        if (JSCellButterfly* array = dynamicDowncast<JSCellButterfly>(JSValue::decode(buffer[i])))
-            length += array->publicLength();
-        else
-            length += 1U;
-    }
-
-    if (length.hasOverflowed() || length > maxArguments) [[unlikely]] {
-        throwStackOverflowError(globalObject, scope);
-        OPERATION_RETURN(scope, toUCPUStrictInt32(0));
-    }
-    OPERATION_RETURN(scope, toUCPUStrictInt32(length.value()));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationLoadVarargsWithSpread, void, (JSGlobalObject* globalObject, int32_t firstElementDest, EncodedJSValue* buffer, uint32_t argc, uint32_t lengthIncludingThis, uint32_t mandatoryMinimum))
-{
-    VirtualRegister firstElement { firstElementDest };
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), argc);
-
-    JSValue* dest = std::bit_cast<JSValue*>(&callFrame->r(firstElement));
-    for (uint32_t i = 0; i < argc; ++i) {
-        JSValue value = JSValue::decode(buffer[i]);
-        if (JSCellButterfly* array = dynamicDowncast<JSCellButterfly>(value)) {
-            unsigned n = array->publicLength();
-            array->copyToArguments(globalObject, dest, 0, n);
-            dest += n;
-        } else
-            *dest++ = value;
-    }
-
-    for (uint32_t i = lengthIncludingThis - 1; i < mandatoryMinimum; ++i)
-        callFrame->r(firstElement + i) = jsUndefined();
-    OPERATION_RETURN(scope);
-}
-
 static ALWAYS_INLINE unsigned forwardedRestLengthForDescriptor(CallFrame* callFrame, const VarargsSpreadForwardDescriptor& descriptor)
 {
     InlineCallFrame* inlineCallFrame = descriptor.inlineCallFrame;
@@ -5755,61 +5718,6 @@ static ALWAYS_INLINE void copyForwardedRestForDescriptor(CallFrame* callFrame, c
     JSValue* source = std::bit_cast<JSValue*>(&callFrame->r(start));
     for (unsigned i = 0; i < count; ++i)
         dest[i] = source[i];
-}
-
-JSC_DEFINE_JIT_OPERATION(operationSizeOfVarargsWithSpreadForward, UCPUStrictInt32, (JSGlobalObject* globalObject, EncodedJSValue* buffer, uint32_t argc, const VarargsSpreadForwardDescriptor* descriptors))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), argc);
-
-    CheckedUint32 length = 0;
-    for (uint32_t i = 0; i < argc; ++i) {
-        JSValue value = JSValue::decode(buffer[i]);
-        if (!value)
-            length += forwardedRestLengthForDescriptor(callFrame, descriptors[i]);
-        else if (JSCellButterfly* array = dynamicDowncast<JSCellButterfly>(value))
-            length += array->publicLength();
-        else
-            length += 1U;
-    }
-
-    if (length.hasOverflowed() || length > maxArguments) [[unlikely]] {
-        throwStackOverflowError(globalObject, scope);
-        OPERATION_RETURN(scope, toUCPUStrictInt32(0));
-    }
-    OPERATION_RETURN(scope, toUCPUStrictInt32(length.value()));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationLoadVarargsWithSpreadForward, void, (JSGlobalObject* globalObject, int32_t firstElementDest, EncodedJSValue* buffer, uint32_t argc, const VarargsSpreadForwardDescriptor* descriptors, uint32_t lengthIncludingThis, uint32_t mandatoryMinimum))
-{
-    VirtualRegister firstElement { firstElementDest };
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), argc);
-
-    JSValue* dest = std::bit_cast<JSValue*>(&callFrame->r(firstElement));
-    for (uint32_t i = 0; i < argc; ++i) {
-        JSValue value = JSValue::decode(buffer[i]);
-        if (!value) {
-            unsigned n = forwardedRestLengthForDescriptor(callFrame, descriptors[i]);
-            copyForwardedRestForDescriptor(callFrame, descriptors[i], dest, n);
-            dest += n;
-        } else if (JSCellButterfly* array = dynamicDowncast<JSCellButterfly>(value)) {
-            unsigned n = array->publicLength();
-            array->copyToArguments(globalObject, dest, 0, n);
-            dest += n;
-        } else
-            *dest++ = value;
-    }
-
-    for (uint32_t i = lengthIncludingThis - 1; i < mandatoryMinimum; ++i)
-        callFrame->r(firstElement + i) = jsUndefined();
-    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationSizeFrameForVarargsWithSpreadForwardBuffer, size_t, (JSGlobalObject* globalObject, EncodedJSValue* buffer, int32_t argc, const VarargsSpreadForwardDescriptor* descriptors, int32_t numUsedStackSlots))
