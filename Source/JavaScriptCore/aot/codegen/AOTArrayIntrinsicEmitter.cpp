@@ -15,6 +15,7 @@
 #include "AOTElementEmitterAllocation.h"
 #include "AOTSweep.h"
 #include "AOTThrowEmitter.h"
+#include "AOTVectorOutput.h"
 #include "JSType.h"
 #include <bit>
 #include <optional>
@@ -274,8 +275,6 @@ void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArraySt
         rawElement = emitter<ConversionEmitter>().inFormOfType(rawElement, typeOf(stored));
     if (elements().checksBounds())
         elements().stopUnlessInside(value, logicalOr(isInt32(rawElement.as<Boxed>()), elements().hasArrayStorage(elements().askedAnew(array), ArrayStorage::Contiguous)));
-    if (value.opcode() == Opcode::PutContiguousIndex && elements().updateInt32InPlace(value, storage, position, rawElement.as<Boxed>()))
-        return;
     elements().storeWordOfOperand(value, stored, rawElement.as<Boxed>(), storage, position);
     barrierAfterStore(value, array, typeOf(stored));
 }
@@ -447,9 +446,12 @@ void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
     branchUnless(Condition(m_out.notNull(source.value())), isMadeOfNoList);
     branchUnless(hasCellType(source, ArrayType), isMadeOfNoList);
     std::optional<Integer> roomOfEmptyList;
-    if (isEmpty && value->capacityOperand())
+    std::optional<Pointer> profile;
+    if (isEmpty && value->capacityOperand()) {
         roomOfEmptyList = integerOperand(value->capacityOperand());
-    allocation.allocateListLike(value, source, count, roomOfEmptyList, isMadeOfNoList, scopedLambda<void(CellPointer)>([&](CellPointer list) {
+        profile = allocation.emptyArraySiteProfile(value.origin());
+    }
+    allocation.allocateListLike(value, source, count, roomOfEmptyList, profile, isMadeOfNoList, scopedLambda<void(CellPointer)>([&](CellPointer list) {
         join.add(list);
     }));
 
@@ -458,7 +460,10 @@ void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { source, count, word32(contiguous.indexingType), word32(0) }, { .isOnRarePath = true }));
-    define(value, join.finish());
+    CellPointer list = join.finish();
+    if (profile)
+        allocation.countEmptyArrayAtSite(value, *profile, list);
+    define(value, list);
 }
 
 void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
@@ -582,6 +587,26 @@ void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& f
     m_out.jump(loop);
 
     m_out.appendTo(done);
+}
+
+void ArrayIntrinsicEmitter::fillElements(const ArrayStorageForm& form, const ArrayElements& storage, Integer length, Operand filler)
+{
+    constexpr int elementsOfVector = 2;
+    constexpr int logElementsInIteration = 3;
+    constexpr int elementsInIteration = 1 << logElementsInIteration;
+    generator().procedure().noteVectors();
+    VectorOutput vectors(m_out);
+    LValue word = form.element == Representation::Double ? nullptr : filler.as<Boxed>().value();
+    LValue fillers = word ? vectors.joinWords(word, word) : vectors.splat(filler.as<Number>().value());
+    forEachPositionBelow(Integer(m_out.lShr(length.value(), logElementsInIteration)), [&](Integer iteration) {
+        TypedPointer first = m_out.baseIndex(*m_heaps.forIndexingType(form.indexingType), storage.butterfly.value(), m_out.shl(iteration.value(), logElementsInIteration));
+        for (int element = 0; element < elementsInIteration; element += elementsOfVector)
+            m_out.store(fillers, TypedPointer(*first.heap(), first.base(), first.offset() + element * static_cast<int>(sizeof(EncodedJSValue))));
+    });
+    LValue inVectors = m_out.bitAnd(length.value(), -int64_t { elementsInIteration });
+    forEachPositionBelow(Integer(m_out.sub(length.value(), inVectors)), [&](Integer position) {
+        elements().storeRawElement(form, storage, Integer(m_out.add(inVectors, position.value())), filler);
+    });
 }
 
 Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues)
@@ -713,9 +738,7 @@ void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
     Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
     auto fill = [&](const ArrayStorageForm& form, Operand filler) {
         ArrayElements storage = elements().elementsOf(array);
-        forEachPositionBelow(elements().publicLength(storage), [&](Integer position) {
-            elements().storeRawElement(form, storage, position, filler);
-        });
+        fillElements(form, storage, elements().publicLength(storage), filler);
         if (generator().keepsValuesInHeapFrame()) [[unlikely]]
             emitter<BarrierEmitter>().barrier(value, array);
         else
@@ -764,9 +787,7 @@ void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
     {
         ArrayElements storage = elements().elementsOf(array);
         Integer length = elements().publicLength(storage);
-        forEachPositionBelow(length, [&](Integer position) {
-            elements().storeRawElement(doubles, storage, position, fraction);
-        });
+        fillElements(doubles, storage, length, fraction);
         forEachPositionBelow(sub(elements().vectorLength(storage), length), [&](Integer position) {
             elements().storeRawElement(doubles, storage, add(length, position), elements().rawHole(doubles));
         });
@@ -791,6 +812,19 @@ void ArrayIntrinsicEmitter::generateSortNumbers(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer direction = integerOperand(value->directionOperand());
     define(value, callOperation<Condition>(value, RuntimeOperation::SortNumbers, { array, low32(direction) }));
+}
+
+void ArrayIntrinsicEmitter::generateSortKeyArray(const ValueContext& value)
+{
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::SortKeyArray, { integerOperand(value->lengthOperand()) }));
+}
+
+void ArrayIntrinsicEmitter::generateSortByKeys(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    CellPointer keys = in<CellPointer>(value->keysOperand());
+    Integer direction = integerOperand(value->directionOperand());
+    define(value, callOperation<Condition>(value, RuntimeOperation::SortByKeys, { array, keys, low32(direction) }));
 }
 
 void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)

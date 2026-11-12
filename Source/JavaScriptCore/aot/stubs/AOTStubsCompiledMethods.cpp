@@ -13,6 +13,7 @@
 #include "AOTInstance.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsPropertyKeys.h"
 #include "Butterfly.h"
@@ -103,6 +104,72 @@ static void emitReturnElementAt(StubAssembler& jit, const CallRegisters& registe
     jit.jumpToCallOfOperation(Entry::operationAOTArrayAtGeneric);
 }
 
+enum class EmptyArrayResult : uint8_t { CallsMethod, Constant, InitialValue, NewArray };
+
+struct EmptyArrayMethodResult {
+    EmptyArrayResult kind { EmptyArrayResult::CallsMethod };
+    EncodedJSValue constant { 0 };
+};
+
+static EmptyArrayMethodResult emptyArrayMethodResult(CompiledMethodOfArray method, unsigned count)
+{
+    if (!count)
+        return { };
+    switch (method) {
+    case CompiledMethodOfArray::At:
+        return { };
+    case CompiledMethodOfArray::Filter:
+    case CompiledMethodOfArray::FlatMap:
+    case CompiledMethodOfArray::Map:
+        return { EmptyArrayResult::NewArray };
+    case CompiledMethodOfArray::Every:
+        return { EmptyArrayResult::Constant, JSValue::encode(jsBoolean(true)) };
+    case CompiledMethodOfArray::Some:
+        return { EmptyArrayResult::Constant, JSValue::encode(jsBoolean(false)) };
+    case CompiledMethodOfArray::FindIndex:
+    case CompiledMethodOfArray::FindLastIndex:
+        return { EmptyArrayResult::Constant, JSValue::encode(jsNumber(-1)) };
+    case CompiledMethodOfArray::Find:
+    case CompiledMethodOfArray::FindLast:
+    case CompiledMethodOfArray::ForEach:
+        return { EmptyArrayResult::Constant, JSValue::encode(jsUndefined()) };
+    case CompiledMethodOfArray::Reduce:
+    case CompiledMethodOfArray::ReduceRight:
+        return { count > 1 ? EmptyArrayResult::InitialValue : EmptyArrayResult::CallsMethod };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void emitReturnForEmptyArray(StubAssembler& jit, const CallRegisters& registers, EmptyArrayMethodResult result)
+{
+    const GPRReg callback = argumentGPR(0);
+    const GPRReg butterfly = registers.scratch;
+    JumpList callsMethod;
+    callsMethod.append(jit.branchTest8(CCallHelpers::Zero, Address(thisGPR, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), butterfly);
+    callsMethod.append(jit.branchTest32(CCallHelpers::NonZero, Address(butterfly, Butterfly::offsetOfPublicLength())));
+    callsMethod.append(jit.branchIfNotCell(callback));
+    callsMethod.append(branchIfNotFunctionType(jit, callback, registers.scratch));
+    switch (result.kind) {
+    case EmptyArrayResult::CallsMethod:
+        RELEASE_ASSERT_NOT_REACHED();
+    case EmptyArrayResult::Constant:
+        jit.move(TrustedImm64(result.constant), jit.result());
+        jit.returnToCaller();
+        break;
+    case EmptyArrayResult::InitialValue:
+        jit.move(argumentGPR(1), jit.result());
+        jit.returnToCaller();
+        break;
+    case EmptyArrayResult::NewArray:
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), registers.scratch);
+        callsMethod.append(branchIfWatchpointSetIsNotWatched(jit, Address(registers.scratch, OBJECT_OFFSETOF(JSGlobalObject, m_arraySpeciesWatchpointSet)), registers.scratch));
+        jit.jumpToStub(newEmptyArray(EmptyArray::Int32Capacity1));
+        break;
+    }
+    callsMethod.link(&jit);
+}
+
 static void emitCallCompiledMethodOfArray(StubAssembler& jit, unsigned lentArguments)
 {
     const unsigned count = jit.key().count();
@@ -123,6 +190,8 @@ static void emitCallCompiledMethodOfArray(StubAssembler& jit, unsigned lentArgum
     }
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs.wordsOfCompiledMethodsOfArray) + static_cast<ptrdiff_t>(jit.key().form() * sizeof(uint64_t))), registers.word);
     looksUp.append(lentArguments ? branchUnlessWordBorrows(jit, registers.word, registers.scratch, lentArguments) : jit.branchTest64(CCallHelpers::Zero, registers.word));
+    if (EmptyArrayMethodResult result = emptyArrayMethodResult(static_cast<CompiledMethodOfArray>(jit.key().form()), count); result.kind != EmptyArrayResult::CallsMethod)
+        emitReturnForEmptyArray(jit, registers, result);
     emitFillMissingArgumentRegisters(jit, count);
     jit.move(TrustedImm32(count), countGPR);
     toCodeAddress(jit, registers.word, registers.scratch, StackIsTested::No);

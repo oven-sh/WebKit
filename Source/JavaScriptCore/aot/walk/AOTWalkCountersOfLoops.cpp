@@ -17,6 +17,7 @@
 #include "AOTResultRules.h"
 #include "AOTWalkBlocksThatEveryTurnPasses.h"
 #include "AOTWalkListReadsInLoops.h"
+#include "AOTWalkNumberGuesses.h"
 #include "AOTWalkNumberForms.h"
 #include <limits>
 #include <algorithm>
@@ -31,6 +32,7 @@ static constexpr OpcodeSet stepsByNumberOrFactorOfCountersOfLoops = stepsByNumbe
 static constexpr OpcodeSet operatorsOnBitsOfCountersOfLoops { Opcode::BitOr, Opcode::BitAnd, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift };
 static constexpr OpcodeSet accessesUnderKeysInCountersOfLoops { Opcode::ElemGet, Opcode::ElemSet };
 static constexpr size_t mostNamesOfCounterOfLoop = 16;
+static constexpr size_t maxLoopCounterSteps = 64;
 
 using NamesOfCounterOfLoop = Vector<ValueID, mostNamesOfCounterOfLoop>;
 
@@ -215,7 +217,8 @@ bool isNumberCarriedBesideTextOrBigInt(const Walker& walker, Reference enters, T
 TypeID findCarriedNumberType(Walker& walker, BlockID inputHead, const LoopPreview& preview, Reference enters, uint32_t position)
 {
     TypeArena& types = walker.types();
-    if (!enters || !enters.isValue() || !types.isUninformative(walker.typeOf(enters)))
+    bool isUnknown = enters && enters.isValue() && types.isUninformative(walker.typeOf(enters));
+    if (!enters || !enters.isValue() || (!isUnknown && !types.at(walker.typeOf(enters)).isNumber()))
         return { };
     const BodyIndex& index = walker.currentBodyIndex();
     LoopID loop = index.loopOf(inputHead);
@@ -256,8 +259,12 @@ TypeID findCarriedNumberType(Walker& walker, BlockID inputHead, const LoopPrevie
     }
     if (!isComputedWith)
         return { };
-    if (carriesIntegers && widthOfDigit)
-        return types.integer(Range { 0, (int64_t { 1 } << *widthOfDigit) - 1 });
+    if (carriesIntegers && widthOfDigit) {
+        TypeID digit = types.integer(Range { 0, (int64_t { 1 } << *widthOfDigit) - 1 });
+        return isUnknown || !types.isSubset(walker.typeOf(enters), digit) ? digit : TypeID();
+    }
+    if (!isUnknown)
+        return { };
     return carriesIntegers ? TypeTable::int32 : TypeTable::number;
 }
 
@@ -287,6 +294,12 @@ static VariableID findNumberInVariableThatNoTurnWritesInCountersOfLoops(Walker& 
     if (Reference known = walker.state().variable(definition.variable()); known && !isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, known))
         return { };
     return mayBeInt32 ? definition.variable() : VariableID();
+}
+
+static ValueID variableReadInLoopCounters(const BodyIndex& index, ValueID written)
+{
+    ValueID read = index.stripCasts(written);
+    return index.opcodeOf(read) == Opcode::CheckInitialized ? index.stripCasts(index.value(read).operand(0)) : read;
 }
 
 static VariableID findViewInUnwrittenVariable(Walker& walker, const BodyIndex& index, const Effects& ofTurns, ValueID written)
@@ -324,6 +337,38 @@ static TypeID typeByLookInCountersOfLoops(Walker& walker, const BodyIndex& index
     return built ? walker.typeOf(built) : TypeID();
 }
 
+bool addsFieldsToIndexes(Walker& walker, BlockID inputHead, const LoopPreview& preview)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    if (index.loop(loop).numberOfLoopsWithin != 1 || !index.holdsAnyOf(OpcodeSet { Opcode::ElemGet, Opcode::ElemSet }) || !index.holdsAnyOf(stepsByNumberOfCountersOfLoops))
+        return false;
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    return std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
+        return std::ranges::any_of(index.block(member).values(), [&](BodyValue access) {
+            if (access.opcode() != Opcode::ElemGet && access.opcode() != Opcode::ElemSet)
+                return false;
+            ValueID key = index.stripCasts(access.propertyOperand());
+            if (!key || key.index() < firstValueOfLoop || index.isParameter(key) || !stepsByNumberOfCountersOfLoops.contains(index.opcodeOf(key)))
+                return false;
+            BodyValue sum = index.value(key);
+            for (uint32_t side : { 0u, 1u }) {
+                ValueID read = index.stripCasts(sum.operand(side));
+                if (!read || read.index() < firstValueOfLoop || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet)
+                    continue;
+                TypeID addend = typeByLookInCountersOfLoops(walker, index, preview, sum.operand(side));
+                TypeID beside = typeByLookInCountersOfLoops(walker, index, preview, sum.operand(1 - side));
+                if (!addend || !beside || isNeverType(addend) || isNeverType(beside) || !walker.types().at(beside).isInt32())
+                    continue;
+                Type type = walker.types().at(addend);
+                if (type.hasOnlyPrimitives(Primitive::Integer | Primitive::Undefined) && type.primitives & Primitive::Undefined && type.primitives & Primitive::Integer)
+                    return true;
+            }
+            return false;
+        });
+    });
+}
+
 static bool mayBeIntegerBeforeInnerLoop(Walker& walker, const BodyIndex& index, const LoopPreview& preview, ValueID value)
 {
     TypeID type = typeByLookInCountersOfLoops(walker, index, preview, value);
@@ -335,6 +380,7 @@ static bool mayBeIntegerBeforeInnerLoop(Walker& walker, const BodyIndex& index, 
 static bool hasNoFractionByLookInCountersOfLoops(Walker& walker, const BodyIndex& index, const LoopPreview& preview, ValueID value)
 {
     TypeID type = typeByLookInCountersOfLoops(walker, index, preview, value);
+    type = type ? walker.types().withoutPrimitives(type, Primitive::BigInt) : type;
     return type && !isNeverType(type) && walker.types().at(type).primitives & Primitive::Integer && walker.types().at(type).hasOnlyPrimitives(Primitive::NumberWithoutFraction);
 }
 
@@ -378,9 +424,11 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
     Vector<ValueID, 2> takenOnTrust;
     size_t numberOfStepsAskedInFrontBefore = stepsAskedInFront ? stepsAskedInFront->size() : 0;
     UsersOfNamesInCountersOfLoops usersLeft(users);
+    size_t numberOfStepsByOne = 0;
     auto add = [&](ValueID name, bool standsBehindStep) {
-        if (names.size() >= mostNamesOfCounterOfLoop)
+        if (names.size() >= mostNamesOfCounterOfLoop + std::min<size_t>(numberOfStepsByOne * 2, maxLoopCounterSteps))
             return;
+        numberOfStepsByOne += !index.isParameter(name) && stepsByOneOfCountersOfLoops.contains(index.opcodeOf(name));
         names.append(name);
         usersLeft.takeUsersBehind(name);
         if (standsBehindStep)
@@ -548,7 +596,7 @@ static bool isOnlyUsedInArithmetic(Walker& walker, const BodyIndex& index, const
     return true;
 }
 
-static bool isIncreasingKey(const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, const NamesOfCounterOfLoop& names)
+static bool isSteppedKey(const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, const NamesOfCounterOfLoop& names, Opcode step)
 {
     static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet };
     auto isName = [&](ValueID operand) {
@@ -560,15 +608,21 @@ static bool isIncreasingKey(const BodyIndex& index, const UsersOfValuesInCounter
         if (index.isParameter(user))
             continue;
         BodyValue operation = index.value(user);
-        if (isName(operation.id()) && !opcodesThatStateTypes.contains(operation.opcode()) && operation.opcode() != Opcode::ToNumeric && operation.opcode() != Opcode::ToPropertyKey && operation.opcode() != Opcode::Increment)
+        if (isName(operation.id()) && !opcodesThatStateTypes.contains(operation.opcode()) && operation.opcode() != Opcode::ToNumeric && operation.opcode() != Opcode::ToPropertyKey && operation.opcode() != step)
             return false;
         isKey |= accessesByKey.contains(operation.opcode()) && isName(operation.propertyOperand());
     }
     return isKey;
 }
 
+static bool isIncreasingKey(const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, const NamesOfCounterOfLoop& names)
+{
+    return isSteppedKey(index, users, names, Opcode::Increment);
+}
+
 struct BackEdgeInputs {
     Vector<ValueID, 4> elements;
+    Vector<ValueID, 2> remainders;
     bool hasOtherInputs { false };
     Vector<ValueID, 8> joins;
 };
@@ -583,6 +637,8 @@ static void collectBackEdgeInput(Walker& walker, const BodyIndex& index, BlockID
     if (!index.isParameter(input)) {
         if (index.opcodeOf(input) == Opcode::ElemGet && index.isInLoop(block, loop))
             inputs.elements.append(input);
+        else if (index.opcodeOf(input) == Opcode::Mod && index.isInLoop(block, loop))
+            inputs.remainders.append(input);
         else
             inputs.hasOtherInputs = true;
         return;
@@ -619,14 +675,15 @@ static BackEdgeInputs findBackEdgeInputs(Walker& walker, const BodyIndex& index,
 
 static bool hasElementBackEdgeInput(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position)
 {
-    return findBackEdgeInputs(walker, index, inputHead, position, { index.block(inputHead).parameter(position) }).elements.size();
+    BackEdgeInputs inputs = findBackEdgeInputs(walker, index, inputHead, position, { index.block(inputHead).parameter(position) });
+    return inputs.elements.size() || inputs.remainders.size();
 }
 
 static bool isElementCarriedIndex(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, uint32_t position, NamesOfCounterOfLoop& names, Vector<ValueID, 4>* elements = nullptr)
 {
     isSteppedAllRoundInCountersOfLoops(walker, index, users, inputHead, position, names);
     BackEdgeInputs inputs = findBackEdgeInputs(walker, index, inputHead, position, names);
-    if (inputs.elements.isEmpty() || inputs.hasOtherInputs)
+    if ((inputs.elements.isEmpty() && inputs.remainders.isEmpty()) || inputs.hasOtherInputs)
         return false;
     if (elements)
         elements->appendVector(inputs.elements);
@@ -636,6 +693,103 @@ static bool isElementCarriedIndex(Walker& walker, const BodyIndex& index, const 
             return true;
     }
     return false;
+}
+
+static bool yieldsNonNegativeRemainders(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position, const NamesOfCounterOfLoop& names, Reference enters)
+{
+    static constexpr OpcodeSet differences { Opcode::Sub, Opcode::Decrement, Opcode::Negate };
+    BackEdgeInputs inputs = findBackEdgeInputs(walker, index, inputHead, position, names);
+    Type entered = walker.types().at(walker.typeOf(enters));
+    return inputs.elements.isEmpty() && (!entered.isInteger() || entered.integers.minimum >= 0) && std::ranges::none_of(inputs.remainders, [&](ValueID remainder) {
+        ValueID dividend = index.stripCasts(index.value(remainder).operand(OperandIndex::Mod::left));
+        return !dividend || (!index.isParameter(dividend) && differences.contains(index.opcodeOf(dividend)));
+    });
+}
+
+static bool bringsWordRound(Walker& walker, const BodyIndex& index, BlockID inputHead, ValueID word, ValueID input, unsigned operatorsLeft, Vector<ValueID, 8>& joins, bool& isComputed)
+{
+    static constexpr unsigned mostJoins = 8;
+    static constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement };
+    input = index.stripCasts(input);
+    if (input == word || joins.contains(input))
+        return true;
+    if (index.isParameter(input)) {
+        BlockID block = index.blockOf(input);
+        if (block == inputHead || index.isLoopHead(block) || !index.isInLoop(block, index.loopOf(inputHead)) || joins.size() == mostJoins)
+            return false;
+        joins.append(input);
+        uint32_t position = input.index() - index.block(block).firstParameter().index();
+        return std::ranges::all_of(walker.incomingEdgesOf(index, block), [&](const BodyIncomingEdge& edge) {
+            std::span<const ValueID> arguments = edge.target.arguments();
+            return position < arguments.size() && bringsWordRound(walker, index, inputHead, word, arguments[position], operatorsLeft, joins, isComputed);
+        });
+    }
+    Opcode opcode = index.opcodeOf(input);
+    if (opcode == Opcode::Integer || operatorsOnBitsOfCountersOfLoops.contains(opcode))
+        return true;
+    if (opcode == Opcode::URShift) {
+        ValueID distance = index.stripCasts(index.value(input).operand(1));
+        return distance && !index.isParameter(distance) && index.opcodeOf(distance) == Opcode::Integer && index.value(distance).as<Opcode::Integer>().integer() & 31;
+    }
+    if (!arithmetic.contains(opcode) || !operatorsLeft)
+        return false;
+    BodyValue operation = index.value(input);
+    if (opcode == Opcode::Mul) {
+        static constexpr int64_t greatestFactor = 0xffff;
+        static constexpr OpcodeSet mixers { Opcode::BitXor, Opcode::BitNot };
+        ValueID factor = index.stripCasts(operation.operand(1));
+        ValueID multiplied = index.stripCasts(operation.operand(0));
+        if (index.opcodeOf(factor) != Opcode::Integer)
+            std::swap(factor, multiplied);
+        if (index.opcodeOf(factor) != Opcode::Integer)
+            return false;
+        int64_t by = index.value(factor).as<Opcode::Integer>().integer();
+        if (by > greatestFactor || by < -greatestFactor || (!index.isParameter(multiplied) && mixers.contains(index.opcodeOf(multiplied))))
+            return false;
+        isComputed = true;
+    }
+    if (opcode == Opcode::Add || opcode == Opcode::Sub) {
+        ValueID addend = index.stripCasts(operation.operand(1));
+        isComputed |= !index.isParameter(addend) && operatorsOnBitsOfCountersOfLoops.contains(index.opcodeOf(addend));
+    }
+    for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex) {
+        if (!bringsWordRound(walker, index, inputHead, word, operation.operand(operandIndex), operatorsLeft - 1, joins, isComputed))
+            return false;
+    }
+    return true;
+}
+
+static bool isCarriedWord(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position)
+{
+    static constexpr unsigned mostOperators = 3;
+    LoopID loop = index.loopOf(inputHead);
+    if (index.loop(loop).numberOfLoopsWithin > 1)
+        return false;
+    ValueID word = index.block(inputHead).parameter(position);
+    Vector<ValueID, 8> joins;
+    bool isComputed = false;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+        if (!index.isInLoop(edge.from, loop))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        if (position >= arguments.size() || !bringsWordRound(walker, index, inputHead, word, arguments[position], mostOperators, joins, isComputed))
+            return false;
+    }
+    if (!isComputed)
+        return false;
+    auto takesBitsOfWord = [&](const BodyValue& operation) {
+        if (!operatorsOnBitsOfCountersOfLoops.contains(operation.opcode()))
+            return false;
+        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(operation.opcode()); ++operandIndex) {
+            if (index.stripCasts(operation.operand(operandIndex)) == word)
+                return true;
+        }
+        return false;
+    };
+    BackEdgeDominators backEdgeDominators(index, loop);
+    return std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
+        return backEdgeDominators.contains(member) && std::ranges::any_of(index.block(member).values(), takesBitsOfWord);
+    });
 }
 
 enum class WhatComesRoundInCountersOfLoops : uint8_t { NotAsked, IsBeingAsked, Int32, Other };
@@ -664,6 +818,8 @@ static bool comesRoundAsInt32InCountersOfLoops(Walker& walker, const BodyIndex& 
                 size_t place = brought.index() - preview.firstValue;
                 TypeID found = brought.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
                 TypeID number = found ? types.withoutPrimitives(found, Primitive::BigInt) : TypeID();
+                if (!found && !index.isParameter(brought) && allBitwiseOperators.contains(index.opcodeOf(brought)))
+                    number = TypeTable::int32;
                 if (!number || isNeverType(number) || !types.at(number).isInteger() || !types.at(number).integers.isSubsetOf(Range::int32().unionWith(Range::uint32())))
                     return false;
             }
@@ -722,6 +878,15 @@ static bool isEqualityLoopTest(const BodyIndex& index, BlockID inputHead, ValueI
     return end.kind() == TerminatorKind::Branch && end.as<TerminatorKind::Branch>().conditionOperand() == test && !index.isInLoop(end.targets()[0].block(), loop) && index.isInLoop(end.targets()[1].block(), loop);
 }
 
+static TypeID testedBoundType(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, const NamesOfCounterOfLoop& names, Opcode relation, bool counterIsLeft)
+{
+    bool admitsBound = relation == (counterIsLeft ? Opcode::GreaterEq : Opcode::LessEq);
+    bool falls = admitsBound || relation == (counterIsLeft ? Opcode::Greater : Opcode::Less);
+    if (!falls || !isSteppedKey(index, users, names, Opcode::Decrement))
+        return TypeTable::int32;
+    return walker.types().integer(Range { admitsBound ? 0 : -1, std::numeric_limits<int32_t>::max() });
+}
+
 static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, BlockID inputHead, const NamesOfCounterOfLoop& names, NamesBeforeLoop& namesBeforeLoop, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses)
 {
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
@@ -742,10 +907,11 @@ static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index,
             size_t listed = guesses.findIf([&](const HoistedSpeculation& guess) {
                 return guess.value == value;
             });
+            TypeID tested = testedBoundType(walker, index, users, names, operation.opcode(), !place);
             if (listed == notFound)
-                guesses.append(HoistedSpeculation { value, TypeTable::int32, { }, namesBeforeLoop.findNamesOf(value) });
+                guesses.append(HoistedSpeculation { value, tested, { }, namesBeforeLoop.findNamesOf(value) });
             else if (walker.types().at(guesses[listed].tested).isNumber())
-                guesses[listed].tested = TypeTable::int32;
+                guesses[listed].tested = tested;
         }
     }
 }
@@ -838,8 +1004,11 @@ static void guessAddendsOfKeysInCountersOfLoops(Walker& walker, const BodyIndex&
                     continue;
                 if (!addendMayBeGuessedInt32(walker, value) || std::ranges::find(entering, value) != entering.end())
                     continue;
-                if (guesses.containsIf([&](const HoistedSpeculation& guess) { return guess.value == value; }))
+                if (size_t guessed = guesses.findIf([&](const HoistedSpeculation& guess) { return guess.value == value; }); guessed != notFound) {
+                    if (guesses[guessed].tested == TypeID(TypeTable::number) || guesses[guessed].tested == walker.types().unionOf(TypeTable::number, TypeTable::string))
+                        guesses[guessed].tested = TypeTable::int32;
                     continue;
+                }
                 guesses.append(HoistedSpeculation { value, TypeTable::int32, { }, namesBeforeLoop.findNamesOf(value) });
                 if (addend.index() >= firstValueOfLoop)
                     guesses.last().names.append(addend);
@@ -1063,7 +1232,42 @@ AccessesNearCounter findAccessesNearCounter(Walker& walker, BlockID inputHead, N
     return found;
 }
 
-CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker& walker, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront, NOESCAPE const ScopedLambda<TypeID(Reference)>& typeOfNameInFront, NOESCAPE const ScopedLambda<bool(ValueID)>& isListOnlyReadInLoop, NOESCAPE const ScopedLambda<std::optional<int64_t>(ValueID)>& integerInFront, const Effects& ofTurns)
+static bool findInvariantViewElement(Walker& walker, BlockID inputHead, ValueID written, const Effects& ofTurns, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront, NOESCAPE const ScopedLambda<TypeID(Reference)>& typeOfNameInFront, CounterHeldBelowRoomOfViews& found)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock head = index.block(inputHead);
+    uint32_t firstValueOfLoop = head.firstParameter().index();
+    ValueID read = index.stripCasts(written);
+    if (!read || read.index() < firstValueOfLoop || index.isParameter(read) || !head.holds(read) || index.opcodeOf(read) != Opcode::ElemGet || !isRowKeyInvariant(index, index.value(read).propertyOperand(), firstValueOfLoop, 2))
+        return false;
+    ValueID view = index.value(read).objectOperand();
+    if (view.index() >= firstValueOfLoop)
+        view = index.stripCasts(view);
+    TypeID type;
+    if (view.index() < firstValueOfLoop)
+        type = typeInFront(view);
+    else {
+        found.boundFieldView = nameOfListThatEntersLoopAround(walker, index, index.value(read));
+        found.boundVariable = found.boundFieldView ? VariableID() : findViewInUnwrittenVariable(walker, index, ofTurns, view);
+        type = found.boundFieldView && found.boundFieldView.isValue() ? typeOfNameInFront(found.boundFieldView) : found.boundVariable ? walker.types().withoutPrimitives(widestTypeOfOperation(walker, index.value(variableReadInLoopCounters(index, view))), Primitive::Absent) : TypeID();
+    }
+    if (!type || !isViewOfNumbersReadInLine(walker, type) || isFloat(typedArrayTypeOf({ walker.program(), walker.types() }, type)))
+        return false;
+    bool storesNoView = walker.shouldAssumeInvariantLoopBounds() || std::ranges::all_of(index.membersOf(index.loopOf(inputHead)), [&](BlockID member) {
+        return std::ranges::all_of(index.block(member).values(), [&](BodyValue operation) {
+            if (operation.opcode() != Opcode::ElemSet)
+                return effectRuleOf(operation.opcode()) != EffectRule::Call || isMathCall(walker, index, operation);
+            ValueID stored = index.stripCasts(operation.objectOperand());
+            TypeID typeOfStored = stored && stored.index() < firstValueOfLoop ? typeInFront(stored) : TypeID();
+            return typeOfStored && hasKind(walker.types(), typeOfStored, OperandKind::Array);
+        });
+    });
+    if (storesNoView)
+        found.boundElement = read;
+    return storesNoView;
+}
+
+CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker& walker, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront, NOESCAPE const ScopedLambda<TypeID(Reference)>& typeOfNameInFront, NOESCAPE const ScopedLambda<bool(ValueID)>& isListOnlyReadInLoop, NOESCAPE const ScopedLambda<std::optional<int64_t>(ValueID)>& integerInFront, const Effects& ofTurns, ValueID relationBoundByVariable)
 {
     static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq };
     CounterHeldBelowRoomOfViews found;
@@ -1106,7 +1310,10 @@ CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker& walker, Bloc
         if (view.index() < firstValueOfLoop && isViewOfNumbersReadInLine(walker, typeInFront(view)))
             found.viewWhoseLengthIsBound = view;
     }
-    if (!counter || (!found.viewWhoseLengthIsBound && !rangeOfIntegerFromInFront(relation.operand(1)) && !integerInFront(relation.operand(1))))
+    bool isHoistedBound = found.viewWhoseLengthIsBound || rangeOfIntegerFromInFront(relation.operand(1)) || integerInFront(relation.operand(1));
+    found.isBoundByVariable = !isHoistedBound && asked == relationBoundByVariable;
+    isHoistedBound |= found.isBoundByVariable;
+    if (!counter || (!isHoistedBound && !findInvariantViewElement(walker, inputHead, relation.operand(1), ofTurns, typeInFront, typeOfNameInFront, found)))
         return found;
     found.position = counter.index() - firstValueOfLoop;
     found.relation = asked;
@@ -1567,13 +1774,211 @@ std::optional<Range> findIterationSteps(Walker& walker, BlockID inputHead, uint3
     return isCounter ? std::optional { found } : std::nullopt;
 }
 
+static std::optional<Range> findAddendRange(Walker& walker, const BodyIndex& index, uint32_t firstValueOfLoop, ValueID addend)
+{
+    static constexpr OpcodeSet operatorsOnBits { Opcode::BitAnd, Opcode::RShift, Opcode::URShift };
+    static constexpr OpcodeSet neverIntegers { Opcode::Div, Opcode::String, Opcode::TypeOf, Opcode::NewObject, Opcode::NewArray };
+    if (addend.index() < firstValueOfLoop) {
+        Reference built = walker.referenceOf(addend);
+        TypeID type = built && built.isRecord() ? walker.typeOf(built) : TypeID();
+        if (!type || !walker.types().at(type).isInteger())
+            return std::nullopt;
+        return walker.types().at(type).integers;
+    }
+    if (index.isParameter(addend))
+        return Range::full();
+    BodyValue operation = index.value(addend);
+    TypeID type;
+    switch (operation.opcode()) {
+    case Opcode::Integer:
+        return Range::one(operation.as<Opcode::Integer>().integer());
+    case Opcode::ElemGet: {
+        ValueID view = operation.objectOperand().index() < firstValueOfLoop ? operation.objectOperand() : index.stripCasts(operation.objectOperand());
+        Reference built = view.index() < firstValueOfLoop ? walker.referenceOf(view) : Reference();
+        TypeID typeOfView = built && built.isRecord() ? walker.typeOf(built) : TypeID();
+        if (view.index() >= firstValueOfLoop && !index.isParameter(view) && index.opcodeOf(view) == Opcode::PropGet && !index.value(view).isFreeName())
+            typeOfView = widestTypeOfOperation(walker, index.value(view));
+        if (!typeOfView || !isViewOfNumbersReadInLine(walker, typeOfView))
+            return Range::full();
+        type = elementTypeOf(typedArrayTypeOf({ walker.program(), walker.types() }, typeOfView));
+        break;
+    }
+    case Opcode::Call: {
+        ValueID callee = index.stripCasts(operation.calleeOperand());
+        bool countsZeros = callee && !index.isParameter(callee) && index.opcodeOf(callee) == Opcode::Builtin && walker.program().builtins().canonicalID(index.value(callee).as<Opcode::Builtin>().builtin()) == Builtins::MathClz32;
+        return countsZeros ? Range { 0, 32 } : Range::full();
+    }
+    default:
+        if (neverIntegers.contains(operation.opcode()))
+            return std::nullopt;
+        if (!operatorsOnBits.contains(operation.opcode()))
+            return Range::full();
+        type = widestTypeOfOperation(walker, operation);
+        if (!type || !walker.types().at(type).isInteger())
+            return Range::full();
+        break;
+    }
+    return type && walker.types().at(type).isInteger() ? std::optional { walker.types().at(type).integers } : std::nullopt;
+}
+
+std::optional<SummedAddends> findSummedAddends(Walker& walker, BlockID inputHead, uint32_t position)
+{
+    static constexpr size_t mostNames = 24;
+    static constexpr Range mostAdded { -(1 << 20), 1 << 20 };
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    ValueID sum = index.block(inputHead).parameter(position);
+    if (index.isEnteredByHandlerEdge(inputHead))
+        return std::nullopt;
+
+    SummedAddends found;
+    bool isSummed = false;
+    bool isBounded = true;
+    Vector<ValueID, 8> reached;
+    auto follow = [&](ValueID next) {
+        next = next ? index.stripCasts(next) : ValueID();
+        isBounded &= next && reached.size() < mostNames;
+        if (isBounded && next != sum && !reached.contains(next))
+            reached.append(next);
+    };
+    auto followEdges = [&](BlockID block, uint32_t place) {
+        for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, block)) {
+            if (!index.isInLoop(edge.from, loop))
+                continue;
+            std::span<const ValueID> arguments = edge.target.arguments();
+            follow(place < arguments.size() ? arguments[place] : ValueID());
+        }
+    };
+    auto isSumOrJoin = [&](ValueID value) {
+        value = index.stripCasts(value);
+        if (value == sum || reached.contains(value))
+            return true;
+        if (value.index() < firstValueOfLoop)
+            return false;
+        return index.isParameter(value) || stepsByNumberOfCountersOfLoops.contains(index.opcodeOf(value)) || stepsByOneOfCountersOfLoops.contains(index.opcodeOf(value));
+    };
+    followEdges(inputHead, position);
+    for (size_t next = 0; next < reached.size() && isBounded; ++next) {
+        ValueID value = reached[next];
+        BlockID block = index.blockOf(value);
+        if (!index.isInLoop(block, loop))
+            return std::nullopt;
+        if (index.isParameter(value)) {
+            if (ValueID narrowed = index.valueNarrowedInto(value)) {
+                follow(narrowed);
+                continue;
+            }
+            if (index.isEnteredByHandlerEdge(block))
+                return std::nullopt;
+            if (index.isLoopHead(block)) {
+                if (!walker.hasUnrolledInnerLoops(inputHead))
+                    return std::nullopt;
+                found.hasUnknown = true;
+            }
+            followEdges(block, value.index() - index.block(block).firstParameter().index());
+            continue;
+        }
+        BodyValue made = index.value(value);
+        Opcode opcode = made.opcode();
+        if (opcode == Opcode::ToNumeric || opcode == Opcode::ToNumber) {
+            follow(made.operand(0));
+            continue;
+        }
+        bool isSubtracted = opcode == Opcode::Sub || opcode == Opcode::Decrement;
+        Range addend = Range::one(1);
+        bool addendIsFirst = false;
+        if (stepsByNumberOfCountersOfLoops.contains(opcode)) {
+            addendIsFirst = opcode == Opcode::Add && index.stripCasts(made.operand(0)) != sum && (index.stripCasts(made.operand(1)) == sum || !isSumOrJoin(made.operand(0)));
+            ValueID written = made.operand(addendIsFirst ? 0 : 1);
+            ValueID stripped = index.stripCasts(written);
+            if (!stripped || stripped == sum)
+                return std::nullopt;
+            std::optional<Range> range = findAddendRange(walker, index, firstValueOfLoop, stripped.index() < firstValueOfLoop && written.index() < firstValueOfLoop ? written : stripped);
+            if (!range)
+                return std::nullopt;
+            addend = *range;
+        } else if (!stepsByOneOfCountersOfLoops.contains(opcode))
+            return std::nullopt;
+        isSummed = true;
+        follow(made.operand(addendIsFirst ? 1 : 0));
+        Range added = isSubtracted ? Range { addend.isSubsetOf(mostAdded) ? -addend.maximum : 0, addend.isSubsetOf(mostAdded) ? -addend.minimum : 0 } : addend;
+        if (!addend.isSubsetOf(mostAdded))
+            found.hasUnknown = true;
+        else
+            found.known = Range { found.known.minimum + std::min<int64_t>(added.minimum, 0), found.known.maximum + std::max<int64_t>(added.maximum, 0) };
+    }
+    return isBounded && isSummed ? std::optional { found } : std::nullopt;
+}
+
+bool isSimpleCountedLoop(Walker& walker, BlockID inputHead)
+{
+    static constexpr OpcodeSet simple = allNumericOperators | allBitwiseOperators | allRelations | allEqualities | opcodesThatStateTypes | stepsByOneOfCountersOfLoops | OpcodeSet { Opcode::LoopHint, Opcode::Integer, Opcode::Double, Opcode::Boolean, Opcode::Undefined, Opcode::ToBoolean, Opcode::LogicalNot, Opcode::ToNumeric, Opcode::ToNumber, Opcode::ToPropertyKey, Opcode::NarrowByTest, Opcode::ElemGet, Opcode::PropGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CheckInitialized };
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    if (index.loop(loop).numberOfLoopsWithin != 1)
+        return false;
+    BodyTerminator end = index.terminator(inputHead);
+    ValueID condition = end.kind() == TerminatorKind::Branch ? end.as<TerminatorKind::Branch>().conditionOperand() : ValueID();
+    if (!condition || index.isParameter(condition) || !allRelations.contains(index.opcodeOf(condition)))
+        return false;
+    if (!parameterOfHeadNamedInCountersOfLoops(index, index.value(condition).operand(0), inputHead) && !parameterOfHeadNamedInCountersOfLoops(index, index.value(condition).operand(1), inputHead))
+        return false;
+    return std::ranges::all_of(index.membersOf(loop), [&](BlockID member) {
+        return std::ranges::all_of(index.block(member).values(), [&](BodyValue operation) {
+            if (simple.contains(operation.opcode()))
+                return true;
+            ValueID callee = operation.opcode() == Opcode::Call ? index.stripCasts(operation.calleeOperand()) : ValueID();
+            return callee && !index.isParameter(callee) && index.opcodeOf(callee) == Opcode::PropGet && index.value(callee).key() == walker.program().keyOf(BuiltinNames::charCodeAt);
+        });
+    });
+}
+
+bool isSummedByUnrolledIterations(Walker& walker, BlockID inputHead, uint32_t position)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    ValueID sum = index.block(inputHead).parameter(position);
+    ValueID added;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+        if (!index.isInLoop(edge.from, loop))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID next = position < arguments.size() ? arguments[position] : ValueID();
+        while (next && !index.isParameter(next) && opcodesThatStateTypes.contains(index.opcodeOf(next)) && index.useCount(next) == 1)
+            next = index.value(next).operand(0);
+        if (!next || index.isParameter(next) || index.opcodeOf(next) != Opcode::Add || (added && added != next))
+            return false;
+        added = next;
+    }
+    if (!added || index.useCount(added) != 1 || (index.stripCasts(index.value(added).operand(0)) != sum && index.stripCasts(index.value(added).operand(1)) != sum) || !isSimpleCountedLoop(walker, inputHead))
+        return false;
+    unsigned numberOfReads = 0;
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (opcodesThatStateTypes.contains(operation.opcode()))
+                continue;
+            operation.forEachOperand([&](ValueID operand, uint32_t) { numberOfReads += operand && index.stripCasts(operand) == sum; });
+        }
+        BodyTerminator end = index.terminator(member);
+        end.forEachOperand([&](ValueID operand, uint32_t) { numberOfReads += operand && index.stripCasts(operand) == sum; });
+        for (BodyTarget target : end.targets()) {
+            if (!index.isInLoop(target.block(), loop))
+                continue;
+            for (ValueID argument : target.arguments())
+                numberOfReads += argument && index.stripCasts(argument) == sum;
+        }
+    }
+    return numberOfReads == 1;
+}
+
 std::optional<Range> findCounterRange(Walker& walker, BlockID inputHead, uint32_t position, int64_t start)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock head = index.block(inputHead);
     BodyTerminator end = head.terminator();
     ValueID condition = end.kind() == TerminatorKind::Branch ? end.as<TerminatorKind::Branch>().conditionOperand() : ValueID();
-    if (!condition || index.isParameter(condition) || !head.holds(condition) || index.isEnteredByHandlerEdge(inputHead))
+    if (!condition || index.isParameter(condition) || !head.holds(condition) || index.isEnteredByHandlerEdge(inputHead) || position >= head.numberOfParameters())
         return std::nullopt;
     LoopID loop = index.loopOf(inputHead);
     if (index.loop(loop).numberOfLoopsWithin != 1)
@@ -1651,7 +2056,7 @@ static std::optional<int64_t> findCounterStep(const BodyIndex& index, ValueID wr
 bool counterOnlyFalls(Walker& walker, BlockID inputHead, uint32_t position)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    if (index.isEnteredByHandlerEdge(inputHead))
+    if (index.isEnteredByHandlerEdge(inputHead) || position >= index.block(inputHead).numberOfParameters())
         return false;
     ValueID counter = index.block(inputHead).parameter(position);
     LoopID loop = index.loopOf(inputHead);
@@ -2189,7 +2594,7 @@ BitVector namesOfCountersAskedForInt32InFrontOfLoop(Walker& walker, BlockID inpu
 {
     BitVector found;
     const BodyIndex& index = walker.currentBodyIndex();
-    if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops | OpcodeSet { Opcode::ElemGet }))
+    if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops | OpcodeSet { Opcode::ElemGet, Opcode::Mod }))
         return found;
     std::shared_ptr<const UsersOfValuesInCountersOfLoops> users;
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
@@ -2197,6 +2602,22 @@ BitVector namesOfCountersAskedForInt32InFrontOfLoop(Walker& walker, BlockID inpu
     for (uint32_t position = 0; position < numberOfParameters && position < entering.size(); ++position) {
         bool entersAsInt32 = entering[position] && walker.types().at(walker.typeOf(entering[position])).isInt32();
         bool bringsElement = hasElementBackEdgeInput(walker, index, inputHead, position);
+        if (entersAsInt32 && !bringsElement && isCarriedWord(walker, index, inputHead, position)) {
+            ValueID word = index.block(inputHead).parameter(position);
+            found.set(word.index() - firstValueOfLoop);
+            for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+                for (BodyValue operation : index.block(member).values()) {
+                    if (!accessesUnderKeysInCountersOfLoops.contains(operation.opcode()))
+                        continue;
+                    ValueID key = index.stripCasts(findUpdatedKey(walker, index, operation.propertyOperand()));
+                    while (index.isParameter(key) && index.valueNarrowedInto(key))
+                        key = index.stripCasts(index.valueNarrowedInto(key));
+                    if (key == word && operation.propertyOperand().index() >= firstValueOfLoop)
+                        found.set(operation.propertyOperand().index() - firstValueOfLoop);
+                }
+            }
+            continue;
+        }
         if (entersAsInt32 ? !bringsElement : !isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, entering[position]) || std::ranges::find(entering.first(position), entering[position]) != entering.first(position).end())
             continue;
         if (!users)
@@ -2381,6 +2802,58 @@ std::optional<HoistedCounterCheck> findCounterOfAnyKind(Walker& walker, BlockID 
     return std::nullopt;
 }
 
+static TypeID findCarriedOptionalNumber(Walker& walker, BlockID inputHead, const LoopPreview& preview, Reference enters, uint32_t position)
+{
+    static constexpr size_t mostJoins = 8;
+    TypeArena& types = walker.types();
+    TypeID entering = enters && enters.isValue() ? walker.typeOf(enters) : TypeID();
+    if (!entering || types.isUninformative(entering) || !(types.at(entering).primitives & Primitive::Undefined) || !(types.at(entering).primitives & Primitive::Number) || !types.at(entering).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined))
+        return { };
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    ValueID parameter = index.block(inputHead).parameter(position);
+    TypeID brought = types.withoutPrimitives(entering, Primitive::Undefined);
+    Vector<ValueID, mostJoins> joins;
+    auto isNumber = [&](auto& self, ValueID value) -> bool {
+        value = index.stripCasts(value);
+        if (value == parameter || joins.contains(value))
+            return true;
+        if (index.isParameter(value)) {
+            BlockID block = index.blockOf(value);
+            if (block == inputHead || !index.isInLoop(block, loop) || joins.size() == mostJoins)
+                return false;
+            joins.append(value);
+            uint32_t place = value.index() - index.block(block).firstParameter().index();
+            return std::ranges::all_of(walker.incomingEdgesOf(index, block), [&](const BodyIncomingEdge& edge) {
+                std::span<const ValueID> arguments = edge.target.arguments();
+                return place < arguments.size() && self(self, arguments[place]);
+            });
+        }
+        size_t place = value.index() - preview.firstValue;
+        TypeID found = value.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
+        TypeID number = found && !isNeverType(found) && !types.isUninformative(found) ? types.withoutPrimitives(found, Primitive::Undefined) : TypeID();
+        if (!number || isNeverType(number) || !types.at(number).isNumber())
+            return false;
+        brought = types.unionOf(brought, number);
+        return true;
+    };
+    bool bringsNumberRound = std::ranges::all_of(walker.incomingEdgesOf(index, inputHead), [&](const BodyIncomingEdge& edge) {
+        if (!index.isInLoop(edge.from, loop))
+            return true;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        return position < arguments.size() && isNumber(isNumber, arguments[position]);
+    });
+    if (!bringsNumberRound)
+        return { };
+    std::shared_ptr<const UsersOfValuesInCountersOfLoops> users = usersOfValuesOfLoopInCountersOfLoops(walker, index, inputHead);
+    UsersOfNamesInCountersOfLoops usersLeft(*users, { parameter });
+    while (ValueID user = usersLeft.next()) {
+        if (!index.isParameter(user) && (allRelations.contains(index.opcodeOf(user)) || allNumericOperators.contains(index.opcodeOf(user))))
+            return types.at(brought).isInt32() ? TypeID(TypeTable::int32) : TypeID(TypeTable::number);
+    }
+    return { };
+}
+
 Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses)
 {
     Vector<HoistedCounterCheck, 2> counters;
@@ -2388,7 +2861,7 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
         return counters;
     const BodyIndex& index = walker.currentBodyIndex();
     bool holdsOperatorsOnBits = index.holdsAnyOf(operatorsOnBitsOfCountersOfLoops | OpcodeSet { Opcode::URShift });
-    bool holdsElementReads = index.holdsAnyOf(OpcodeSet { Opcode::ElemGet });
+    bool holdsElementReads = index.holdsAnyOf(OpcodeSet { Opcode::ElemGet, Opcode::Mod });
     if (!holdsOperatorsOnBits && !holdsElementReads && !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops | divisionsOfCountersOfLoops))
         return counters;
     bool holdsAccessesUnderKeys = index.holdsAnyOf(accessesUnderKeysInCountersOfLoops) && index.holdsAnyOf(stepsByNumberOfCountersOfLoops);
@@ -2428,8 +2901,16 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
             }));
             NamesOfCounterOfLoop names;
             if (!isTested && isElementCarriedIndex(walker, index, users(), inputHead, position, names)) {
-                counters.append({ position, TypeTable::int32, true });
+                bool isFromZeroUp = yieldsNonNegativeRemainders(walker, index, inputHead, position, names, enters);
+                counters.append({ position, isFromZeroUp ? walker.types().integer(Range { 0, std::numeric_limits<int32_t>::max() }) : TypeID(TypeTable::int32), true });
                 walker.count(StatisticID::CarriedIndexGuardsHoisted);
+                continue;
+            }
+        }
+        if (holdsOperatorsOnBits && inTurns && !isNeverType(inTurns) && !walker.types().at(inTurns).isInteger() && walker.types().at(inTurns).isNumberWithoutFraction() && (entersAsInt32 || mayBeInt32InCountersOfLoops(walker, enters)) && isCarriedWord(walker, index, inputHead, position)) {
+            bool isTested = !entersAsInt32 && (std::ranges::find(entering.first(position), enters) != entering.first(position).end() || guesses.containsIf([&](const HoistedSpeculation& guess) { return guess.value == enters; }));
+            if (!isTested) {
+                counters.append({ position, TypeTable::int32, true });
                 continue;
             }
         }
@@ -2447,7 +2928,8 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
                     guessBoundsInCountersOfLoops(walker, index, users(), inputHead, names, namesBeforeLoop, entering, guesses);
             }
             TypeID byLook = position < preview.typesOfParameters.size() ? preview.typesOfParameters[position] : TypeID();
-            if (byLook && !isNeverType(byLook) && !walker.types().at(byLook).isInteger() && walker.types().at(byLook).isNumberWithoutFraction()) {
+            TypeID number = byLook ? walker.types().withoutPrimitives(byLook, Primitive::Undefined) : TypeID();
+            if (byLook && !isNeverType(byLook) && !walker.types().at(byLook).isInteger() && !isNeverType(number) && walker.types().at(number).isNumberWithoutFraction()) {
                 names.shrink(0);
                 if (isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names, &preview) && turnsTakeCounterAsIntegerInCountersOfLoops(index, users(), names))
                     counters.append({ position, TypeTable::int32, true });
@@ -2457,7 +2939,8 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
         if (!mayBeInt32InCountersOfLoops(walker, enters))
             continue;
         size_t placeOfGuess = guesses.findIf([&](const HoistedSpeculation& guess) { return guess.value == enters; });
-        if (NamesOfCounterOfLoop names; placeOfGuess != notFound && guesses[placeOfGuess].tested == TypeID(TypeTable::number) && isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, enters) && isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names) && isElementKey(walker, index, users(), names)) {
+        bool isCheckedForNumber = placeOfGuess != notFound && (guesses[placeOfGuess].tested == TypeID(TypeTable::number) || guesses[placeOfGuess].tested == walker.types().unionOf(TypeTable::number, TypeTable::string));
+        if (NamesOfCounterOfLoop names; isCheckedForNumber && isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, enters) && isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names) && isElementKey(walker, index, users(), names)) {
             TypeID asked = isIncreasingKey(index, users(), names) ? walker.types().integer(Range { 0, std::numeric_limits<int32_t>::max() }) : TypeID(TypeTable::int32);
             guesses[placeOfGuess].tested = asked;
             counters.append({ position, asked });
@@ -2477,14 +2960,15 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
             bool isComparedByHead = asked && !index.isParameter(asked) && allRelations.contains(index.opcodeOf(asked)) && (isThisWord(index.value(asked).operand(0)) || isThisWord(index.value(asked).operand(1)));
             TypeID tested = entersAsWiderInteger ? TypeID(TypeTable::number) : TypeID(TypeTable::int32);
             if (entering.primitives & Primitive::Double && !isComparedByHead) {
-                tested = walker.types().integer(Range::int32().unionWith(Range::uint32()));
+                tested = walker.types().integer(integersAddedWithoutRounding);
                 walker.count(StatisticID::Int32OrUint32GuardsHoisted);
             }
             counters.append({ position, tested });
             continue;
         }
         NamesOfCounterOfLoop names;
-        if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, enters))
+        bool mayBeUndefined = walker.representationOf(enters) == Representation::OptionalInt64;
+        if (!mayBeUndefined && !isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, enters))
             continue;
         bool isCheckedOnBackEdge = !isSteppedAllRoundInCountersOfLoops(walker, index, users(), inputHead, position, names);
         Vector<ValueID, 2> stepsAskedInFront;
@@ -2543,6 +3027,16 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
         guessAddendsOfSumsCutToInt32InCountersOfLoops(walker, index, inputHead, namesBeforeLoop, entering, guesses);
     for (uint32_t position = 0; !walker.sumsAreNotAskedInRow() && position < numberOfParameters && position < entering.size() && position < preview.typesOfParameters.size(); ++position) {
         Reference enters = entering[position];
+        if (TypeID numbers = findCarriedOptionalNumber(walker, inputHead, preview, enters, position)) {
+            bool isTestedAlready = std::ranges::find(entering.first(position), enters) != entering.first(position).end()
+                || counters.containsIf([&](const HoistedCounterCheck& counter) { return counter.position == position; })
+                || guesses.containsIf([&](const HoistedSpeculation& guess) { return guess.value == enters; });
+            if (!isTestedAlready) {
+                counters.append({ position, numbers, true });
+                walker.count(StatisticID::InvariantNumberGuardsHoisted);
+            }
+            continue;
+        }
         TypeID carriedType = findCarriedNumberType(walker, inputHead, preview, enters, position);
         if (!carriedType && !isNumberCarriedBesideTextOrBigInt(walker, enters, preview.typesOfParameters[position]))
             continue;
@@ -2926,6 +3420,49 @@ void hoistKeyFields(Walker& walker, BlockID inputHead)
     });
 }
 
+static constexpr OpcodeSet numberConversionsOfLoopCounters { Opcode::ToNumber, Opcode::ToNumeric };
+
+struct ConvertedField {
+    ValueID holder;
+    ValueID readOfVariable;
+    PropertyKeyID key;
+};
+
+static std::optional<ConvertedField> findConvertedField(const BodyIndex& index, uint32_t firstValueOfLoop, const BodyValue& conversion)
+{
+    ValueID read = index.stripCasts(conversion.operand(0));
+    if (!read || read.index() < firstValueOfLoop || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || index.value(read).isFreeName())
+        return std::nullopt;
+    ValueID holder = index.stripCasts(index.value(read).objectOperand());
+    if (holder && holder.index() < firstValueOfLoop)
+        return ConvertedField { holder, { }, index.value(read).key() };
+    ValueID readOfVariable = holder ? variableReadInLoopCounters(index, holder) : ValueID();
+    if (!readOfVariable || index.isParameter(readOfVariable) || index.opcodeOf(readOfVariable) != Opcode::GetModuleVariable)
+        return std::nullopt;
+    return ConvertedField { { }, readOfVariable, index.value(read).key() };
+}
+
+void hoistConvertedFields(Walker& walker, BlockID inputHead)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (walker.isUnreachable() || !walker.has(Mechanism::UnboxedNumbers) || !walker.framesKeepFields() || !index.holdsAnyOf(OpcodeSet { Opcode::Mod }) || !index.holdsAnyOf(numberConversionsOfLoopCounters))
+        return;
+    LoopID loop = index.loopOf(inputHead);
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    for (BlockID member : index.membersOf(loop)) {
+        if (index.loopOf(member) != loop)
+            continue;
+        for (BodyValue operation : index.block(member).values()) {
+            std::optional<ConvertedField> field = numberConversionsOfLoopCounters.contains(operation.opcode()) ? findConvertedField(index, firstValueOfLoop, operation) : std::nullopt;
+            if (!field || !field->holder || walker.isUnreachable())
+                continue;
+            Origin origin = walker.originOf(*index.block(inputHead).values().begin());
+            origin.isTailCall = false;
+            readFilledFieldOfProvenObject(walker, walker.referenceOf(field->holder), field->key, origin);
+        }
+    }
+}
+
 void speculateOnKeyTerms(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses, Vector<HoistedVariableCheck, 2>& variables)
 {
     if (!computesKeys(walker))
@@ -3000,6 +3537,146 @@ void speculateOnKeyTerms(Walker& walker, BlockID inputHead, const LoopPreview& p
             walker.count(StatisticID::InvariantNumberGuardsHoisted);
         }
     });
+}
+
+void guessTermsOfRemainders(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, bool mayConvertTexts, Vector<HoistedSpeculation, 4>& guesses, Vector<HoistedVariableCheck, 2>& variables)
+{
+    static constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Mod, Opcode::Increment, Opcode::Decrement };
+    static constexpr unsigned depthOfDividend = 5;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !index.holdsAnyOf(OpcodeSet { Opcode::Mod }))
+        return;
+    TypeArena& types = walker.types();
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    Vector<TypeID, 8> typesEntering;
+    for (Reference enters : entering)
+        typesEntering.append(enters && enters.isRecord() ? walker.typeOf(enters) : TypeID());
+    Vector<TypeID, 8> carried;
+    Vector<ValueID, 4> remainders;
+    for (uint32_t position = 0; position < index.block(inputHead).numberOfParameters(); ++position) {
+        carried.append(TypeID());
+        TypeID enters = position < typesEntering.size() ? typesEntering[position] : TypeID();
+        if (!enters || !types.at(enters).isInteger() || !types.at(enters).integers.isSubsetOf(Range::int32()))
+            continue;
+        if (std::optional<NumberThatDivisionsBringRound> found = findNumberThatDivisionsBringRound(walker, inputHead, position, typesEntering.span(), WhatEntersHead::IsInteger)) {
+            carried.last() = types.unionOf(types.integer(found->integers), enters);
+            remainders.appendVector(found->remainders);
+        } else if (std::optional<Range> steps = findIterationSteps(walker, inputHead, position)) {
+            Range integers = types.at(enters).integers;
+            carried.last() = types.integer(Range { steps->minimum >= 0 ? integers.minimum : std::numeric_limits<int32_t>::min(), steps->maximum <= 0 ? integers.maximum : std::numeric_limits<int32_t>::max() });
+        }
+    }
+    if (remainders.isEmpty())
+        return;
+
+    TypeID smallIntegers = types.integer(Range { 0, std::numeric_limits<uint16_t>::max() });
+    struct ConvertedText {
+        Reference text;
+        std::optional<HoistedSpeculation::FieldInPreheader> field;
+    };
+    Vector<Reference, 2> values;
+    Vector<VariableID, 2> variablesRead;
+    Vector<ConvertedText, 2> texts;
+    Vector<HoistedVariableCheck, 2> holders;
+    auto typeOfConversion = [&](const BodyValue& conversion) -> TypeID {
+        ConvertedText converted;
+        ValueID read = index.stripCasts(conversion.operand(0));
+        if (read && read.index() < firstValueOfLoop)
+            converted.text = walker.referenceOf(read);
+        else if (std::optional<ConvertedField> field = findConvertedField(index, firstValueOfLoop, conversion); field && field->readOfVariable) {
+            BodyValue readOfVariable = index.value(field->readOfVariable);
+            TypeID widest = widestTypeOfOperation(walker, readOfVariable);
+            TypeID objects = widest ? types.withoutPrimitives(widest, Primitive::Absent) : TypeID();
+            if (!mayConvertTexts || !objects || isNeverType(objects) || !types.at(objects).isObject() || !types.at(objects).hasOnlyLayouts() || !singleLayoutOf(types, types.at(objects)))
+                return { };
+            if (!holders.containsIf([&](const HoistedVariableCheck& other) { return other.variable == readOfVariable.variable(); }))
+                holders.append({ readOfVariable.variable(), objects, StatisticID::AbsenceTestedVariableReadsHoisted, false, { }, { }, field->key });
+            return smallIntegers;
+        } else if (field) {
+            converted.field = HoistedSpeculation::FieldInPreheader { walker.referenceOf(field->holder), field->key };
+            converted.text = findFieldValue(walker, converted.field->holder, field->key);
+        }
+        TypeID type = converted.text && converted.text.isValue() ? walker.typeOf(converted.text) : TypeID();
+        if (!type || !types.at(type).isJavaScriptValue() || !types.overlap(type, TypeTable::string) || std::ranges::find(entering, converted.text) != entering.end() || !mayConvertTexts)
+            return { };
+        if (!texts.containsIf([&](const ConvertedText& other) { return other.text == converted.text; }))
+            texts.append(WTF::move(converted));
+        return smallIntegers;
+    };
+    auto typeOfTerm = [&](auto& self, ValueID written, unsigned depth) -> TypeID {
+        if (ValueID parameter = parameterOfHeadNamedInCountersOfLoops(index, written, inputHead); parameter && carried[parameter.index() - firstValueOfLoop])
+            return carried[parameter.index() - firstValueOfLoop];
+        ValueID value = written ? index.stripCasts(written) : ValueID();
+        if (!value)
+            return { };
+        if (value.index() < firstValueOfLoop) {
+            Reference built = walker.referenceOf(value);
+            TypeID type = built && built.isRecord() ? walker.typeOf(built) : TypeID();
+            if (!type || types.at(type).isInteger())
+                return type;
+            if (!built.isValue() || !isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, built) || std::ranges::find(entering, built) != entering.end())
+                return { };
+            if (!values.contains(built))
+                values.append(built);
+            return smallIntegers;
+        }
+        if (VariableID variable = findNumberInVariableThatNoTurnWritesInCountersOfLoops(walker, index, preview.effects, value)) {
+            if (!variablesRead.contains(variable))
+                variablesRead.append(variable);
+            return smallIntegers;
+        }
+        if (!index.isParameter(value) && numberConversionsOfLoopCounters.contains(index.opcodeOf(value))) {
+            if (TypeID converted = typeOfConversion(index.value(value)))
+                return converted;
+        }
+        if (!depth || index.isParameter(value) || !arithmetic.contains(index.opcodeOf(value))) {
+            TypeID byLook = typeByLookInCountersOfLoops(walker, index, preview, value);
+            bool isUnknown = !byLook || isNeverType(byLook) || types.at(byLook).isAnything() || types.at(byLook).isNumber();
+            return isUnknown && callsCharCodeAt(walker.program(), index, value) ? types.integer(Range { 0, std::numeric_limits<uint16_t>::max() }) : byLook;
+        }
+        BodyValue operation = index.value(value);
+        Vector<TypeID, 2> operands;
+        for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(operation.opcode()); ++operandIndex) {
+            operands.append(self(self, operation.operand(operandIndex), depth - 1));
+            if (!operands.last() || isNeverType(operands.last()))
+                return { };
+        }
+        return resultTypeOfOperator(walker.typing(), operation.opcode(), operands.span());
+    };
+    for (ValueID remainder : remainders) {
+        BodyValue operation = index.value(remainder);
+        TypeID dividend = typeOfTerm(typeOfTerm, operation.operand(0), depthOfDividend);
+        TypeID divisor = typeOfDivisorInCountersOfLoops(walker, index, firstValueOfLoop, operation.operand(1));
+        if (!dividend || isNeverType(dividend) || !divisor || chooseFormOfOperator(walker.program(), types, Opcode::Mod, OperatorTypes { dividend, divisor }) != OperatorForm::Integers)
+            return;
+    }
+    NamesBeforeLoop namesBeforeLoop(walker, inputHead);
+    for (Reference value : values) {
+        if (guesses.containsIf([&](const HoistedSpeculation& guess) { return guess.value == value; }))
+            continue;
+        guesses.append(HoistedSpeculation { value, smallIntegers, { }, namesBeforeLoop.findNamesOf(value) });
+        walker.count(StatisticID::InvariantNumberGuardsHoisted);
+    }
+    for (ConvertedText& converted : texts) {
+        if (guesses.containsIf([&](const HoistedSpeculation& guess) { return guess.value == converted.text; }))
+            continue;
+        guesses.append(HoistedSpeculation { converted.text, TypeTable::string, { }, converted.field ? Vector<ValueID, 2>() : namesBeforeLoop.findNamesOf(converted.text) });
+        guesses.last().fieldInPreheader = converted.field;
+        guesses.last().isConvertedToInteger = true;
+        walker.count(StatisticID::InvariantNumberGuardsHoisted);
+    }
+    for (HoistedVariableCheck& holder : holders) {
+        if (variables.containsIf([&](const HoistedVariableCheck& check) { return check.variable == holder.variable; }))
+            continue;
+        variables.append(WTF::move(holder));
+        walker.count(StatisticID::InvariantNumberGuardsHoisted);
+    }
+    for (VariableID variable : variablesRead) {
+        if (variables.containsIf([&](const HoistedVariableCheck& check) { return check.variable == variable; }))
+            continue;
+        variables.append({ variable, smallIntegers, StatisticID::DivisorVariableReadsHoisted });
+        walker.count(StatisticID::InvariantNumberGuardsHoisted);
+    }
 }
 
 void guessFactorsInVariables(Walker& walker, BlockID inputHead, const LoopPreview& preview, Vector<HoistedVariableCheck, 2>& variables)
@@ -3140,41 +3817,52 @@ void findNumbersOnlyReckonedWith(Walker& walker, BlockID inputHead, Vector<Hoist
     }
 }
 
+static bool isArithmeticOnHoistedNumbers(Walker& walker, const BodyIndex& index, const BodyBlock& head, ValueID value, unsigned operatorsLeft)
+{
+    static constexpr OpcodeSet operators { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
+    if (!value)
+        return false;
+    if (value.index() < head.firstParameter().index()) {
+        Reference built = walker.referenceOf(value);
+        return built && walker.types().isSubset(walker.typeOf(built), TypeTable::number);
+    }
+    if (index.isParameter(value) || !head.holds(value))
+        return false;
+    if (index.opcodeOf(value) == Opcode::Integer)
+        return true;
+    return operatorsLeft && operators.contains(index.opcodeOf(value)) && std::ranges::all_of(std::array { index.value(value).operand(0), index.value(value).operand(1) }, [&](ValueID operand) {
+        return isArithmeticOnHoistedNumbers(walker, index, head, operand, operatorsLeft - 1);
+    });
+}
+
+static bool buildHoistedArithmetic(Walker& walker, const BodyIndex& index, uint32_t firstValueOfLoop, ValueID value)
+{
+    if (value.index() < firstValueOfLoop)
+        return true;
+    BodyValue written = index.value(value);
+    if (written.opcode() == Opcode::Integer) {
+        Draft integer(Opcode::Integer, walker.originOf(written));
+        integer.setInteger(written.as<Opcode::Integer>().integer());
+        walker.bind(value, walker.constant(WTF::move(integer)));
+        return true;
+    }
+    return buildHoistedArithmetic(walker, index, firstValueOfLoop, written.operand(0)) && buildHoistedArithmetic(walker, index, firstValueOfLoop, written.operand(1)) && buildTypedOperator(walker, written) && !walker.hasFailed();
+}
+
 static Reference makeBoundOutOfNumberFromInFrontInCountersOfLoops(Walker& walker, const BodyIndex& index, const BodyBlock& head, ValueID bound)
 {
-    static constexpr OpcodeSet operators { Opcode::Add, Opcode::Sub };
+    static constexpr unsigned mostOperators = 3;
     if (Reference made = walker.nameOfOperatorMadeInFrontOfLoop(bound))
         return made;
-    if (index.isParameter(bound) || !head.holds(bound) || !operators.contains(index.opcodeOf(bound)))
-        return { };
     uint32_t firstValueOfLoop = head.firstParameter().index();
-    BodyValue written = index.value(bound);
-    ValueID writtenInteger;
-    for (uint32_t place : { 0u, 1u }) {
-        ValueID operand = written.operand(place);
-        if (!operand)
-            return { };
-        if (operand.index() >= firstValueOfLoop) {
-            if (writtenInteger || index.isParameter(operand) || index.opcodeOf(operand) != Opcode::Integer)
-                return { };
-            writtenInteger = operand;
-            continue;
-        }
-        Reference value = walker.referenceOf(operand);
-        if (!value || !walker.types().isSubset(walker.typeOf(value), TypeTable::number))
-            return { };
-    }
-    if (!writtenInteger)
+    if (index.isParameter(bound) || index.opcodeOf(bound) == Opcode::Integer || !isArithmeticOnHoistedNumbers(walker, index, head, bound, mostOperators))
         return { };
     if (walker.isVersioningDryRun())
         return walker.referenceOf(bound);
     Reference made;
     {
         Walker::ClosedArm takesNameBack(walker);
-        Draft integer(Opcode::Integer, walker.originOf(index.value(writtenInteger)));
-        integer.setInteger(index.value(writtenInteger).as<Opcode::Integer>().integer());
-        walker.bind(writtenInteger, walker.constant(WTF::move(integer)));
-        if (buildTypedOperator(walker, written) && !walker.hasFailed())
+        if (buildHoistedArithmetic(walker, index, firstValueOfLoop, bound))
             made = walker.referenceOf(bound);
     }
     if (made)
@@ -3206,6 +3894,13 @@ LoopBoundComparison findLoopBoundComparison(Walker& walker, BlockID inputHead, c
     ValueID counter = parameterOfHeadNamedInCountersOfLoops(index, relation.operand(0), inputHead);
     ValueID number = index.stripCasts(relation.operand(1));
     if (!counter || !number)
+        return { };
+    if (number.index() < firstValueOfLoop && relation.operand(1).index() < firstValueOfLoop && !walker.referenceOf(number))
+        number = relation.operand(1);
+    Reference written = relation.operand(1).index() < firstValueOfLoop ? walker.referenceOf(relation.operand(1)) : Reference();
+    while (Reference checked = written ? walker.state().checkedNameOf(written) : Reference())
+        written = checked;
+    if (written && written.isValue() && walker.types().at(walker.typeOf(written)).isInt32())
         return { };
     VariableID variable = number.index() >= firstValueOfLoop ? findNumberInVariableThatNoTurnWritesInCountersOfLoops(walker, index, ofTurns, number) : VariableID();
     Reference madeInFront = number.index() >= firstValueOfLoop && !variable ? makeBoundOutOfNumberFromInFrontInCountersOfLoops(walker, index, head, number) : Reference();

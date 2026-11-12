@@ -55,6 +55,8 @@ private:
     bool tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand);
     ValueID conversionAfterInt32Test(const ValueContext& test);
     bool tryBranchOnTruncatedInt32(const ValueContext& test, Operand);
+    ValueID integerAfterDoubleTest(const ValueContext& test);
+    bool tryBranchOnWholeDouble(const ValueContext& test, Operand);
     ValueID sumAfterNumberTest(const ValueContext& test);
     bool tryDeferTestToSum(const ValueContext& test, Operand);
     bool tryTestSlotWord(const ValueContext& test, Boxed, const TypeTestPlan&);

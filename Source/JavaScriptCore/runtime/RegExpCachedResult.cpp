@@ -37,7 +37,7 @@ void RegExpCachedResult::visitAggregateImpl(Visitor& visitor)
 {
     visitor.append(m_lastInput);
     visitor.append(m_lastRegExp);
-    if (m_reified) {
+    if (m_state == State::Reified) {
         visitor.append(m_reifiedInput);
         visitor.append(m_reifiedResult);
         visitor.append(m_reifiedLeftContext);
@@ -47,13 +47,41 @@ void RegExpCachedResult::visitAggregateImpl(Visitor& visitor)
 
 DEFINE_VISIT_AGGREGATE(RegExpCachedResult);
 
+NEVER_INLINE void RegExpCachedResult::resolveSubstringInput(JSGlobalObject* globalObject, JSObject* owner)
+{
+    ASSERT(m_state == State::LazyWithSubstringInput);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* input = jsSubstring(globalObject, m_lastInput.get(), m_inputStart, m_inputLength);
+    RETURN_IF_EXCEPTION(scope, void());
+    m_lastInput.set(vm, owner, input);
+    m_result.start -= m_inputStart;
+    m_result.end -= m_inputStart;
+    m_state = State::Lazy;
+}
+
+JSString* RegExpCachedResult::input(JSGlobalObject* globalObject, JSObject* owner)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return m_state == State::Reified ? m_reifiedInput.get() : m_lastInput.get();
+}
+
 NEVER_INLINE JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* owner)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::lastResult);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_reified) {
+    if (m_state == State::LazyWithSubstringInput) [[unlikely]] {
+        resolveSubstringInput(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (m_state != State::Reified) {
         m_reifiedInput.set(vm, owner, m_lastInput.get());
         if (!m_lastRegExp)
             m_lastRegExp.set(vm, owner, vm.regExpCache()->ensureEmptyRegExp(vm));
@@ -93,7 +121,7 @@ NEVER_INLINE JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObjec
         m_reifiedResult.setWithoutWriteBarrier(result);
         m_reifiedLeftContext.clear();
         m_reifiedRightContext.clear();
-        m_reified = true;
+        m_state = State::Reified;
         vm.writeBarrier(owner);
     }
     return m_reifiedResult.get();
@@ -149,7 +177,7 @@ NEVER_INLINE void RegExpCachedResult::setInput(JSGlobalObject* globalObject, JSO
     RETURN_IF_EXCEPTION(scope, void());
     rightContext(globalObject, owner);
     RETURN_IF_EXCEPTION(scope, void());
-    ASSERT(m_reified);
+    ASSERT(m_state == State::Reified);
     m_reifiedInput.set(vm, owner, input);
 }
 

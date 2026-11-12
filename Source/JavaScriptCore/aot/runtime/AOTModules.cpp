@@ -1691,6 +1691,48 @@ bool Modules::isLinkedToLibraryModuleBeforeReset(ModuleID importer, ModuleID tar
     return !link || !mockWord(*link, instance);
 }
 
+void Modules::detachImportersLinkedBeforeReset(ModuleID module)
+{
+    if (!m_momentOfModuleReset || !data(module).isOfLibrary() || isReloadedLibraryModule(module) || isLibraryOriginalDisplaced(module) || !hasBeenImportedSinceReset(module))
+        return;
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    listImportersAndRequirers();
+    ModuleNamespace* word = nullptr;
+    for (uint32_t index : copyToVector(m_importersByStatement[module.index()])) {
+        ModuleID importer(index);
+        Environment* instance = isLinkedToLibraryModuleBeforeReset(importer, module) && m_linkedInstances.get(index) ? currentInstance(importer) : nullptr;
+        const ModuleLinkData* link = instance ? findModuleLink(importer, module) : nullptr;
+        if (!link || !link->hasMock)
+            continue;
+        if (!word) {
+            if (!didCaptureExports(module)) {
+                captureExports(module);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            JSGlobalObject* realm = m_instance.globalObject;
+            JSObject* before = ensureLoaded(module).exportsBeforeMock;
+            JSObject* exports = createTableOfExports();
+            forEachCapturedExport(module, [&](const Identifier& name, JSValue value) {
+                JSValue original = before ? storedValue(realm, before, name) : JSValue();
+                if (original)
+                    value = original == JSValue(before) ? JSValue() : original;
+                exports->putDirectMayBeIndex(realm, name, value ? value : JSValue(exports));
+            });
+            RETURN_IF_EXCEPTION(scope, void());
+            word = ModuleNamespace::create(vm, namespaceStructure(true), module, ModulePhase::Evaluation, { });
+            word->setMockWord();
+            word->setKeepsToModule(true);
+            word->setMockOfView(vm, exports);
+            fixMockNames(word);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        writeField(instance, link->mock, word);
+    }
+    if (word)
+        didChangeLinkState();
+}
+
 void Modules::separateReloadedNamespace(ModuleID module)
 {
     if (!isReloadedLibraryModule(module) || isLibraryOriginalDisplaced(module))
@@ -5386,7 +5428,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             addImportAwaitingSource(module);
         return startImportInLaterTurn(module, referrerAsyncOrder);
     }
-    if (text == ImportSourceState::MayArriveLater && (!hasTextAtHand() || isFetchedBesideFactory(module)) && textOfImportComesInLaterTurn(module, AskedBy::Import)) [[unlikely]] {
+    bool isRequestedDuringOwnFactory = m_isInJobsAfterArrival && isMockPending(fileOf(module)) && !isFetchedBesideFactory(module);
+    if (text == ImportSourceState::MayArriveLater && !hasTextAtHand() && !isRequestedDuringOwnFactory && textOfImportComesInLaterTurn(module, AskedBy::Import)) [[unlikely]] {
         if (isNewCallAfterTests)
             return promiseForCaller();
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
@@ -9424,8 +9467,11 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
         RETURN_IF_EXCEPTION(scope, void());
         ModuleStatus status = modules.status(module);
         bool comesAheadOfLoad = modules.data(module).kind == ModuleKind::SourceText && (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module);
-        if (modules.table().anyModuleHasInstances() && !comesAheadOfLoad)
+        if (modules.table().anyModuleHasInstances() && !comesAheadOfLoad) {
+            modules.detachImportersLinkedBeforeReset(module);
+            RETURN_IF_EXCEPTION(scope, void());
             modules.releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
+        }
         modules.willMockLibraryModule(module);
         if (modules.isReloadedLibraryModule(module) && !modules.isReloadedLibraryModuleRead(module) && !modules.doesMockReplaceLibraryModule(module)) {
             modules.displaceLibraryOriginal(module, Modules::LibraryMock::Patches);
@@ -10720,6 +10766,7 @@ ModuleNamespace::ModuleNamespace(VM& vm, Structure* structure, ModuleID module, 
     , m_isDeferred(phase == ModulePhase::Defer)
     , m_mayNeedEvaluation(m_isDeferred && modules().data(module).hasExportTable())
     , m_hasInstances(modules().hasInstances(module))
+    , m_wasMadeUnderMock(m_isDeferred && modules().activeMock(module))
 {
 }
 
@@ -10934,12 +10981,16 @@ bool ModuleNamespace::isOrdinaryKey(PropertyName name) const
 
 bool ModuleNamespace::evaluateIfNeeded(JSGlobalObject* globalObject)
 {
-    if (!m_mayNeedEvaluation)
+    if (!m_isDeferred)
         return true;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    modules().evaluateSynchronously(m_module, SynchronousEvaluationReason::DeferredNamespace);
-    RETURN_IF_EXCEPTION(scope, false);
-    m_mayNeedEvaluation = false;
+    if (m_mayNeedEvaluation) {
+        modules().evaluateSynchronously(m_module, SynchronousEvaluationReason::DeferredNamespace);
+        RETURN_IF_EXCEPTION(scope, false);
+        m_mayNeedEvaluation = false;
+    }
+    if (m_wasMadeUnderMock != !!activeMock() && modules().isCommonJSModuleOrFacade(m_module)) [[unlikely]]
+        modules().tellOfKeptRun(modules().table().moduleBehindFacade(m_module).value_or(m_module));
     return true;
 }
 

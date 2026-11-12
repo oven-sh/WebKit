@@ -844,6 +844,15 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             continue;
         if (conditions.empty() || (walker.shouldSkipHierarchyGuards() && conditions.data() == form->hierarchyGuards.data()) || (walker.shouldSkipClassGuards() && conditions.data() == form->conditions.span().data()))
             continue;
+        bool isKnownToHold = walker.has(Mechanism::Folding) && std::ranges::all_of(conditions, [&](const MemberConditionRecord& condition) {
+            if (condition.kind == MemberConditionKind::PrototypeLinkUnchanged)
+                return walker.state().isPrototypeLinkUnchanged(condition.layout, condition.side);
+            return condition.kind == MemberConditionKind::MemberUnchanged && walker.state().guardOfReadsHolds(condition.layout, condition.key, condition.side);
+        });
+        if (isKnownToHold) {
+            checkGuardsThatAreRemembered(walker, conditions, origin);
+            continue;
+        }
         bool asksInFront = prototypeObjectIsInTable && !hasOneClosedArm && walker.canRestartIteration() && walker.iterationsPreserveMemberGuards();
         Reference areUnchanged;
         {
@@ -924,8 +933,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     };
 
     bool testsPrototype = form->testsPrototypeOfInstance && !knownCellFacts(walker, value).contains(CellFact::HasLayoutPrototype) && !(walker.shouldAssumeLayoutPrototype() && form->hierarchyDecidesEveryShape);
-    if (form->testsPrototypeOfInstance && !testsPrototype)
+    bool verifiesKnownPrototype = form->testsPrototypeOfInstance && !testsPrototype && walker.checksProofs();
+    if (verifiesKnownPrototype && form->valueIsSurelyObject)
         walker.checkFactsRememberedOfCell(value, origin, CellFact::HasLayoutPrototype);
+    bool verifiesPrototypeOfInstance = verifiesKnownPrototype && !form->valueIsSurelyObject;
     auto buildAnswerWhereClassIsUnchanged = [&]() -> Reference {
         if (!form->instances)
             return buildAnswerOfMiss();
@@ -940,7 +951,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         shapeTest.setLayouts(form->instances);
         bool rejectsMarkedObjects = answers.armsEndWithBranch() && !form->missMeansFalse && !form->hierarchyDecidesEveryShape;
         shapeTest.setRejectsMarkedObjects(rejectsMarkedObjects);
-        bool shapeTestIsAnswer = form->missMeansFalse && !testsPrototype && !shouldVerifyHierarchyResults && !answers.armsEndWithBranch();
+        bool shapeTestIsAnswer = form->missMeansFalse && !testsPrototype && !shouldVerifyHierarchyResults && !verifiesPrototypeOfInstance && !answers.armsEndWithBranch();
         if (!hasArms && shapeTestIsAnswer)
             shapeTest.inputValueGiven = test.id();
         Reference isInstance = walker.build(WTF::move(shapeTest));
@@ -968,8 +979,12 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         }
 
         walker.continueIn(hasShape);
+        Reference instance;
+        if (testsPrototype || verifiesPrototypeOfInstance || answers.armsEndWithBranch())
+            instance = buildNarrowedValue(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
+        if (verifiesPrototypeOfInstance)
+            walker.checkFactsRememberedOfCell(instance, origin, CellFact::HasLayoutPrototype);
         if (testsPrototype) {
-            Reference instance = buildNarrowedValue(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
             Reference prototypeCheck;
             if (instance) {
                 Draft prototypeCheckDraft(Opcode::HasLayoutPrototype, origin);
@@ -990,7 +1005,6 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             } else
                 verifyAgainstChainWalk(true);
         } else if (answers.armsEndWithBranch()) {
-            Reference instance = buildNarrowedValue(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
             verifyAgainstChainWalk(true);
             if (instance) {
                 recordCheckedName(instance);
@@ -1091,6 +1105,11 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 walker.restartIteration();
             else if (answers.armsEndWithBranch()) {
                 Walker::ClosedArm closedArm(walker);
+                if (form->testedIsConstructorFunction && walker.plan().hasClassRecord(form->tested) && !walker.isUnreachable() && !walker.state().guardsHaveBegun(form->tested)) {
+                    Draft begin(Opcode::BeginMemberGuards, origin);
+                    begin.setLayout(form->tested);
+                    walker.build(WTF::move(begin));
+                }
                 answers.arrive(buildInstanceOfAsWritten(walker, test));
             } else
                 answers.arrive(buildInstanceOfAsWritten(walker, test));

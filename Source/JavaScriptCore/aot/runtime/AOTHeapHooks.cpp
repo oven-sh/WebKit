@@ -84,9 +84,16 @@ WTF::Vector<std::unique_ptr<MarkingConstraint>> createMarkingConstraints(VM& vm)
     return constraints;
 }
 
+static void setBarrierThreshold(Instance& instance, unsigned threshold)
+{
+    static_assert(JSCell::cellStateOffset() == sizeof(uint64_t) - 1 && std::endian::native == std::endian::little);
+    instance.barrierThreshold = threshold;
+    instance.barrierHeaderThreshold = (static_cast<uint64_t>(threshold) + 1) << 8 * JSCell::cellStateOffset();
+}
+
 void initializeCollectorWords(VM& vm, Instance& instance)
 {
-    instance.barrierThreshold = vm.heap.barrierThreshold();
+    setBarrierThreshold(instance, vm.heap.barrierThreshold());
     instance.mutatorShouldBeFenced = vm.heap.mutatorShouldBeFenced();
     instance.cellCageBase = vm.heap.cage().base();
     instance.heap.storedCellLog = &vm.heap.storedCellLog();
@@ -111,6 +118,10 @@ void finalize(VM& vm, CollectionScope scope)
         });
         state.didChangeInstances();
     }
+    state.realmsWithBorrowedTables.removeAllMatching([&](JSGlobalObject* realm) {
+        return !vm.heap.isMarked(realm);
+    });
+    state.lendTablesOfLivingInstances();
     if (state.realmWhoseDatesAreWrittenInPlace && !vm.heap.isMarked(state.realmWhoseDatesAreWrittenInPlace))
         state.realmWhoseDatesAreWrittenInPlace = nullptr;
 
@@ -126,7 +137,7 @@ void didChangeBarrierThreshold(VM& vm, unsigned threshold, bool mutatorShouldBeF
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
     for (Instance* instance : state.instances) {
-        instance->barrierThreshold = threshold;
+        setBarrierThreshold(*instance, threshold);
         instance->mutatorShouldBeFenced = mutatorShouldBeFenced;
     }
 }

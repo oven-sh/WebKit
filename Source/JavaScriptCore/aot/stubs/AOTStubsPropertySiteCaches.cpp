@@ -575,6 +575,8 @@ void generatePutByIdAtSite(StubAssembler& jit)
         emitSiteMiss(jit, registers, accessFor(mode), SiteReceiver::IsCell, { putByIdBehindFieldTable(mode), putByIdHashed(mode) });
         return;
     }
+    if (siteStoreChecksReplacedMembers(jit.key()))
+        storeToReplacedMemberAndReturn(jit, registers.receiver, registers.identifierNumber, jit.operand(1), registers.payload, registers.structureID);
     jit.linkToStub(jit.branchIfNotCell(registers.receiver), slotExit(table, SlotExit::Miss));
     if (storeAtSiteAsksTableOfFields(jit.key())) {
         JumpList isNotInFieldTable;
@@ -584,6 +586,49 @@ void generatePutByIdAtSite(StubAssembler& jit)
     jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
     emitSiteProbe(jit, registers, table);
     emitSiteMiss(jit, registers, accessFor(mode), SiteReceiver::IsCell, { putByIdBehindFieldTable(mode), putByIdHashed(mode) });
+}
+
+StubSignature signatureOfFindReplaceableValue(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ });
+    signature.addOperand(gprOf(firstStubOperandRegister));
+    signature.addOperand(gprOf(readSiteCacheRegister));
+    signature.immediate = gprOf(slotNameRegister);
+    return signature;
+}
+
+void generateFindReplaceableValue(StubAssembler& jit)
+{
+    const SiteRegisters registers = allocateSiteRegisters(jit, 1);
+    const GPRReg name = registers.identifierNumber;
+    const GPRReg cell = registers.header;
+    const GPRReg result = jit.result();
+    JumpList isDue;
+    JumpList isInNoCell;
+    countSiteCacheMiss(jit, registers.site, registers.scratch, isDue);
+    isInNoCell.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
+    jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
+    loadFrontCell(jit, SlotAccess::Store, { registers.structureID, name, registers.payload, cell, registers.scratch });
+    Jump isNotOwnInlineValue = branchUnlessOwnInlineValue(jit, name, cell, registers.scratch);
+    jit.zeroExtend32ToWord(cell, cell);
+    jit.getEffectiveAddress(BaseIndex(registers.receiver, cell, CCallHelpers::TimesEight), result);
+    jit.returnToCaller();
+
+    isNotOwnInlineValue.link(&jit);
+    isInNoCell.append(branchIfCellNameDiffers(jit, name, cell, registers.scratch));
+    extractBits(jit, cell, 8 * PackedSlot::offsetOfBiasedKindAndFlags(), 8, registers.scratch);
+    static_assert(((static_cast<uint8_t>(Slot::Kind::Value) | PackedSlot::isOwn | PackedSlot::isOutOfLine) ^ PackedSlot::ownInlineValueBits) == PackedSlot::isOutOfLine);
+    isInNoCell.append(jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(PackedSlot::isOutOfLine)));
+    jit.signExtend32ToPtr(cell, cell);
+    jit.loadPtr(Address(registers.receiver, JSObject::butterflyOffset()), registers.scratch);
+    jit.getEffectiveAddress(BaseIndex(registers.scratch, cell, CCallHelpers::TimesEight), result);
+    jit.returnToCaller();
+
+    isDue.link(&jit);
+    jit.store16(TrustedImm32(0), Address(registers.scratch));
+    isInNoCell.link(&jit);
+    jit.move(TrustedImm32(0), result);
+    jit.returnToCaller();
 }
 
 static_assert(!OBJECT_OFFSETOF(SiteAnswers, first) && OBJECT_OFFSETOF(SiteAnswers, second) == sizeof(SiteAnswers::Answer) && !OBJECT_OFFSETOF(SiteAnswers::Answer, key) && OBJECT_OFFSETOF(SiteAnswers::Answer, operand) == sizeof(uint32_t));
@@ -1953,7 +1998,7 @@ void generateFindsNameAtSite(StubAssembler& jit)
     hasNoMoreAnswers.link(&jit);
     jit.move(receiver, result);
     Jump isNoObject = jit.branchIfNotObject(result);
-    countMissAtSite(jit, result, distance, nameOfMiss, scratchOfMiss, use);
+    countMissAtSite(jit, result, distance, nameOfMiss, scratchOfMiss, use, stubAsksForPresence);
     isNoObject.link(&jit);
     askGeneralStub();
 

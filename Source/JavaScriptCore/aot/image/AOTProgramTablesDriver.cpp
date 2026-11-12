@@ -113,7 +113,6 @@ static ProgramTables makeHeaderOfProgramTables(const TableInputs& inputs, const 
     header.numberOfFieldTableRows = shapes.firstEnvironmentShape() - 1;
     header.numberOfFieldTableColumns = numbers.identifiers().countWithFieldTableColumn();
     header.numberOfClosureCells = numbers.numberOfClosureCells();
-    header.sizeOfStructuresOfHeirs = numbers.sizeOfStructuresOfHeirs();
     header.closureFunctions = { firstClosureFunction, functions.endOfClosureFunctions().index(), firstClosureFunction };
     return header;
 }

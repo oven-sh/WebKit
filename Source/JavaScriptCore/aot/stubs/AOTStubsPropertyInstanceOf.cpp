@@ -91,7 +91,7 @@ void generateInstanceOf(StubAssembler& jit)
         jit.move(TrustedImm32(result), jit.result());
         jit.returnToCaller();
     };
-    auto followPrototypeChainAndReturn = [&] {
+    auto followPrototypeChainAndReturn = [&](const Invocable<void()> auto& beforeThirdLink) {
         struct Link {
             Jump hasPolyProto;
             Label hasPrototype;
@@ -139,12 +139,22 @@ void generateInstanceOf(StubAssembler& jit)
         Link first = followLink(value, readsPrototypeOutOfCell);
         if (!readsPrototypeOutOfCell)
             first.goesOn.link(&jit);
+        std::optional<Link> second;
+        if (operand == InstanceOfOperand::Constructor) {
+            reachesEndOfChain.append(jit.branchIfNotCell(next));
+            jit.move(next, current);
+            second = followLink(current, false);
+            second->goesOn.link(&jit);
+            beforeThirdLink();
+        }
         Label nextLink = jit.label();
         reachesEndOfChain.append(jit.branchIfNotCell(next));
         jit.move(next, current);
         Link further = followLink(current, false);
         further.goesOn.linkTo(nextLink, &jit);
         readPolyProto(first, value);
+        if (second)
+            readPolyProto(*second, current);
         readPolyProto(further, current);
 
         reachesEndOfChain.link(&jit);
@@ -182,7 +192,7 @@ void generateInstanceOf(StubAssembler& jit)
     if (isGivenPrototype || readsPrototypeOutOfCell) {
         notInstance.append(jit.branchIfNotCell(value));
         notInstance.append(jit.branchIfNotObject(value));
-        followPrototypeChainAndReturn();
+        followPrototypeChainAndReturn([] { });
         return;
     }
 
@@ -237,9 +247,88 @@ void generateInstanceOf(StubAssembler& jit)
     Label hasReadPrototype = jit.label();
     slowCases.append(jit.branchIfNotCell(prototype));
     slowCases.append(jit.branchIfNotObject(prototype));
-    followPrototypeChainAndReturn();
+    Label hasCheckedPrototype = jit.label();
+    followPrototypeChainAndReturn([&] {
+        jit.load64(headerAtPlace, method);
+        jit.or64(TrustedImm32(PlaceOfOrdinaryConstructor::asksFilter), method);
+        jit.store64(method, headerAtPlace);
+    });
 
     isNotRemembered.link(&jit);
+    {
+        JumpList notInstance;
+        const GPRReg filterPlace = place;
+        const GPRReg bit = probe.entry;
+        const GPRReg objects = method;
+        const Address filters(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.prototypeChainFilters));
+        auto loadPlaceOfFilter = [&] {
+            static_assert(sizeof(PrototypeChainFilter) == 2 * sizeof(uint64_t));
+            jit.load32(Address(value, JSCell::structureIDOffset()), current);
+            jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), current, filterPlace);
+            jit.urshift32(TrustedImm32(32 - PrototypeChainFilter::numberOfFiltersLog2), filterPlace);
+            jit.lshift32(TrustedImm32(1), filterPlace);
+            jit.getEffectiveAddress(BaseIndex(bit, filterPlace, CCallHelpers::TimesEight), filterPlace);
+        };
+        auto loadBitOf = [&](GPRReg object) {
+            jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), object, bit);
+            jit.urshift32(TrustedImm32(32 - PrototypeChainFilter::numberOfBitsLog2), bit);
+        };
+        jit.xor32(TrustedImm32(PlaceOfOrdinaryConstructor::asksFilter), probe.structureID);
+        Jump asksNoFilter = jit.branch32(CCallHelpers::NotEqual, probe.header, probe.structureID);
+        notInstance.append(jit.branchIfNotCell(value));
+        loadOwnValueBySlot(jit, valueSlot, constructor, probe.structureID, probe.header, prototype);
+        Jump prototypeIsNoCell = jit.branchIfNotCell(prototype);
+        Jump prototypeIsNoObject = jit.branchIfNotObject(prototype);
+        jit.loadPtr(filters, bit);
+        Jump hasNoFilters = jit.branchTestPtr(CCallHelpers::Zero, bit);
+        loadPlaceOfFilter();
+        Jump hasNoFilter = jit.branch32(CCallHelpers::NotEqual, current, Address(filterPlace, OBJECT_OFFSETOF(PrototypeChainFilter, structureID)));
+        jit.load64(Address(filterPlace, OBJECT_OFFSETOF(PrototypeChainFilter, objects)), objects);
+        loadBitOf(prototype);
+        jit.urshift64(bit, objects);
+        Jump isOnChainPerhaps = jit.branchTest32(CCallHelpers::NonZero, objects, TrustedImm32(1));
+        returnBoolean(false);
+
+        hasNoFilter.link(&jit);
+        JumpList hasNone;
+        notInstance.append(jit.branchIfNotObject(value));
+        hasNone.append(jit.branchIfType(value, JSTypeRange { ArrayBufferType, static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }));
+        jit.move(value, current);
+        jit.move(TrustedImm32(0), objects);
+        Label nextObject = jit.label();
+        hasNone.append(jit.branchTest8(CCallHelpers::NonZero, Address(current, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+        loadStructure(jit, current, next);
+        jit.load64(Address(next, Structure::prototypeOffset()), current);
+        hasNone.append(jit.branchTest64(CCallHelpers::Zero, current));
+        Jump isEndOfChain = jit.branchIfNotCell(current);
+        loadBitOf(current);
+        jit.move(TrustedImm32(1), filterPlace);
+        jit.lshift64(bit, filterPlace);
+        jit.or64(filterPlace, objects);
+        jit.jump().linkTo(nextObject, &jit);
+        isEndOfChain.link(&jit);
+        jit.loadPtr(filters, bit);
+        loadPlaceOfFilter();
+        jit.store32(current, Address(filterPlace, OBJECT_OFFSETOF(PrototypeChainFilter, structureID)));
+        jit.store64(objects, Address(filterPlace, OBJECT_OFFSETOF(PrototypeChainFilter, objects)));
+        jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.prototypeChainFiltersMayBeFilled)));
+
+        hasNoFilters.link(&jit);
+        notInstance.append(jit.branchIfNotObject(value));
+        hasNone.link(&jit);
+        isOnChainPerhaps.link(&jit);
+        jit.move(TrustedImm32(PlaceOfOrdinaryConstructor::placeThatIsNeverRead), place);
+        jit.jump().linkTo(hasCheckedPrototype, &jit);
+
+        prototypeIsNoCell.link(&jit);
+        prototypeIsNoObject.link(&jit);
+        notInstance.append(jit.branchIfNotObject(value));
+        jit.callOperationAndReturn(Entry::operationAOTDefaultHasInstance, { .secondArgumentIn = value, .thirdArgumentIn = prototype });
+        notInstance.link(&jit);
+        returnBoolean(false);
+        asksNoFilter.link(&jit);
+        jit.xor32(TrustedImm32(PlaceOfOrdinaryConstructor::asksFilter), probe.structureID);
+    }
     miss.append(jit.branchIfNotObject(constructor));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID)), probe.uid);
     SlotRead methodRead = readFromConstructor(method, false);

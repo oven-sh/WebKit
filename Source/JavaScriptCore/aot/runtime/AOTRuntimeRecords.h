@@ -125,6 +125,8 @@ struct alignas(16) Slot {
 #undef AOT_DECLARE_SLOT_KIND
     };
 
+    static constexpr Kind fieldOfGetter = Kind::FieldCreation;
+
     static constexpr uint8_t isOutOfLine = 1 << 0;
     static constexpr uint8_t dependsOnChain = 1 << 1;
     static constexpr uint8_t isOwn = 1 << 2;
@@ -279,6 +281,13 @@ struct alignas(16) Slot {
         slot.customAccessor = { index, 0 };
         return slot;
     }
+    static Slot createReportedReplacement(StructureID structureID, PropertyOffset offset)
+    {
+        int32_t index = wordIndexFor(offset);
+        if (!fitsInLocation(index))
+            return createWithoutPayload(structureID, Kind::Uncacheable, 0);
+        return create(structureID, Kind::Uncacheable, isInlineOffset(offset) ? isOwn : isOwn | isOutOfLine, static_cast<uint16_t>(static_cast<int16_t>(index)));
+    }
     static Slot createForProxies(StructureID structureID, JSCell* key, uint16_t columnOfName)
     {
         Slot slot = create(structureID, Kind::Uncacheable, 0, columnOfName);
@@ -293,6 +302,7 @@ struct alignas(16) Slot {
     }
 
     bool isEmpty() const { return kind == Kind::Empty; }
+    bool isForProxies() const { return kind == Kind::Uncacheable && holder; }
     bool has(uint8_t flag) const { return flags & flag; }
     int32_t wordIndex() const
     {
@@ -514,7 +524,12 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
 {
     ASSERT(name != noName);
     uint8_t carriedFlag = Slot::kindFlagOf(slot.kind);
-    if (slot.flags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::needsHandler | carriedFlag))
+    uint8_t slotFlags = slot.flags;
+    if (slot.kind == Slot::Kind::Field && (slotFlags & (Slot::isOwn | Slot::absentIsUndefined | Slot::emptySlotMayBeUndefined)) == (Slot::isOwn | Slot::emptySlotMayBeUndefined))
+        slotFlags = (slotFlags & ~(Slot::isOwn | Slot::emptySlotMayBeUndefined)) | Slot::absentIsUndefined;
+    else if (slot.kind == Slot::Kind::Field && (slotFlags & (Slot::isOwn | Slot::absentIsUndefined)) == Slot::absentIsUndefined)
+        return std::nullopt;
+    if (slotFlags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::needsHandler | carriedFlag))
         return std::nullopt;
     Slot::Kind kind = slot.kind;
     uint32_t payload = 0;
@@ -569,8 +584,13 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         payload = slot.customAccessor.index;
         break;
     case SlotPayload::Key:
-        if (slot.holder)
+        if (slot.has(Slot::isOwn))
             return std::nullopt;
+        if (!slot.holder)
+            break;
+        if (MarkedBlockCage::baseOf(slot.holder) != cageBase || (slot.location && slot.location != name))
+            return std::nullopt;
+        payload = MarkedBlockCage::encode(cageBase, slot.holder);
         break;
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
@@ -580,11 +600,11 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         return std::nullopt;
     }
     uint8_t kindAndFlags = static_cast<uint8_t>(kind);
-    if (slot.flags & Slot::isOwn)
+    if (slotFlags & Slot::isOwn)
         kindAndFlags |= isOwn;
-    if (slot.flags & Slot::isOutOfLine)
+    if (slotFlags & Slot::isOutOfLine)
         kindAndFlags |= isOutOfLine;
-    if (carriedFlag && slot.flags & carriedFlag)
+    if (carriedFlag && slotFlags & carriedFlag)
         kindAndFlags |= kindFlag;
     return PackedSlot { payload, location, static_cast<uint8_t>(kindAndFlags ^ ownInlineValueBits), name };
 }
@@ -597,11 +617,12 @@ inline bool PackedSlot::canOutliveWhatItNames() const
     case SlotPayload::Transition:
     case SlotPayload::CustomAccessor:
         return true;
+    case SlotPayload::Key:
+        return payload;
     case SlotPayload::None:
     case SlotPayload::WordIndex:
     case SlotPayload::Field:
     case SlotPayload::ExtraProperty:
-    case SlotPayload::Key:
         return false;
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
@@ -626,11 +647,16 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
         flags |= Slot::isOutOfLine;
     if (kindAndFlags & kindFlag)
         flags |= Slot::kindFlagOf(kind);
+    if (kind == Slot::Kind::Field && (kindAndFlags & (isOwn | kindFlag)) == kindFlag)
+        flags = (flags & ~Slot::absentIsUndefined) | Slot::isOwn | Slot::emptySlotMayBeUndefined;
     int32_t shortWordIndex = static_cast<int8_t>(location);
     uint16_t hiddenWordOffset = static_cast<uint16_t>(location << hiddenWordOffsetShift);
     switch (Slot::payloadOf(kind)) {
-    case SlotPayload::None:
     case SlotPayload::Key:
+        if (payload)
+            return Slot::createForProxies(structureID, MarkedBlockCage::decode(cageBase, payload), name);
+        [[fallthrough]];
+    case SlotPayload::None:
         return Slot::create(structureID, kind, flags, 0);
     case SlotPayload::Holder: {
         if (kind == Slot::Kind::InheritedField)
@@ -678,6 +704,7 @@ static constexpr uint32_t tablesAreFiledForSiteWithoutAnswers = 1u << 8;
 static constexpr uint32_t stubOfSiteFollowsFurtherAnswers = 1u << 9;
 static constexpr uint32_t visitorHitFurtherAnswer = 1u << 10;
 static constexpr uint32_t stubJumpsToArmOfAnswer = 1u << 11;
+static constexpr uint32_t stubAsksForPresence = 1u << 12;
 static constexpr uint16_t indexOfSiteAnswersThatHoldNothing = 2;
 
 struct alignas(16) SiteAnswers {

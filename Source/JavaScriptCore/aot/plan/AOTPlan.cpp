@@ -29,6 +29,7 @@
 #include "AOTThinSummary.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTTypedArrayKinds.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
 #include <array>
@@ -358,6 +359,135 @@ static SlotRepresentation formOfNumbersProvenOfVariableInPlan(const Program& pro
     return proven.primitives & Primitive::Double ? SlotRepresentation::OptionalDouble : SlotRepresentation::OptionalInt64;
 }
 
+template<typename Functor>
+static auto findInClassOfVariable(const Program& program, const Facts& facts, VariableID id, const Functor& functor) -> decltype(functor(std::declval<const ClassPart&>()))
+{
+    auto findIn = [&](TypeID held) -> decltype(functor(std::declval<const ClassPart&>())) {
+        if (!held || isNeverType(held))
+            return { };
+        Type type = program.at(held);
+        type.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
+        const ClassPart* onlyClass = singleBuiltinClassOf(TypeReader(program), type);
+        return onlyClass ? functor(*onlyClass) : decltype(functor(*onlyClass)) { };
+    };
+    if (auto found = findIn(facts.beforeEvaluation().typeOf(id)))
+        return found;
+    return id.index() < facts.linked().variables.size() ? findIn(facts.linked().variable(id).proven) : decltype(functor(std::declval<const ClassPart&>())) { };
+}
+
+static std::optional<TypedArrayType> findViewTypeOfVariable(const Program& program, const Facts& facts, VariableID id)
+{
+    return findInClassOfVariable(program, facts, id, [&](const ClassPart& held) -> std::optional<TypedArrayType> {
+        TypedArrayType kind = program.builtins().typedArrayTypeOf(held.builtinClass);
+        return isTypedView(kind) && hasInlineElementAccess(kind) ? std::optional(kind) : std::nullopt;
+    });
+}
+
+static bool isViewVariable(const Program& program, const Facts& facts, VariableID id)
+{
+    return findViewTypeOfVariable(program, facts, id).has_value();
+}
+
+static bool isBufferVariable(const Program& program, const Facts& facts, VariableID id)
+{
+    return findInClassOfVariable(program, facts, id, [](const ClassPart& held) {
+        return held.builtinClass == BuiltinClasses::ArrayBuffer;
+    });
+}
+
+static void findViewsOfOneBuffer(const Program& program, const Facts& facts, Vector<PlannedVariable>& variables)
+{
+    BitVector modulesWithViews(program.modules.size());
+    BitVector modulesAsked(program.modules.size());
+    Vector<uint32_t> views;
+    for (uint32_t index = 0; index < variables.size(); ++index) {
+        ModuleID module = program.variables[index].module;
+        if (!variables[index].hasViewMirror || !module)
+            continue;
+        views.append(index);
+        if (modulesWithViews.quickSet(module.index()))
+            modulesAsked.quickSet(module.index());
+    }
+    if (modulesAsked.isEmpty())
+        return;
+
+    struct BufferOfVariable {
+        VariableID variable;
+        uint32_t buffer;
+    };
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> buffersOfViews;
+    BitVector givenOtherwise(variables.size());
+    uint32_t numberOfBuffers = 0;
+    for (uint32_t number = 0; number < program.functions.size(); ++number) {
+        ModuleID module = program.functions[number].module;
+        const BodyIndex* index = module && modulesAsked.quickGet(module.index()) ? facts.bodies().find(FunctionID(number)) : nullptr;
+        if (!index || !index->opcodes().contains(Opcode::PutModuleVariable))
+            continue;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            Vector<BufferOfVariable, 2> buffers;
+            auto bufferOfView = [&](ValueID stored) -> std::optional<uint32_t> {
+                if (index->isParameter(stored) || index->opcodeOf(stored) != Opcode::Construct)
+                    return std::nullopt;
+                std::span<const ValueID> arguments = index->value(stored).argumentsOperands();
+                ValueID given = arguments.size() == 1 ? index->stripCasts(arguments[0]) : ValueID();
+                if (!given || index->isParameter(given) || index->opcodeOf(given) != Opcode::GetModuleVariable || index->blockOf(given) != BlockID(block))
+                    return std::nullopt;
+                VariableID variable = index->value(given).variable();
+                if (!isBufferVariable(program, facts, variable))
+                    return std::nullopt;
+                auto found = std::ranges::find(buffers, variable, &BufferOfVariable::variable);
+                if (found == buffers.end()) {
+                    buffers.append({ variable, numberOfBuffers++ });
+                    return buffers.last().buffer;
+                }
+                return found->buffer;
+            };
+            for (BodyValue store : index->block(BlockID(block)).values()) {
+                if (store.opcode() != Opcode::PutModuleVariable)
+                    continue;
+                VariableID variable = store.variable();
+                buffers.removeAllMatching([&](const BufferOfVariable& held) {
+                    return held.variable == variable;
+                });
+                if (!variables[variable.index()].hasViewMirror)
+                    continue;
+                ValueID stored = index->stripCasts(store.valueOperand());
+                if (!index->isParameter(stored) && (index->opcodeOf(stored) == Opcode::Undefined || index->opcodeOf(stored) == Opcode::Null))
+                    continue;
+                if (std::optional<uint32_t> buffer = bufferOfView(stored))
+                    buffersOfViews.add(variable.index(), Vector<uint32_t, 2>()).iterator->value.append(*buffer);
+                else
+                    givenOtherwise.quickSet(variable.index());
+            }
+        }
+    }
+
+    for (uint32_t place = 0; place < views.size(); ++place) {
+        auto buffers = buffersOfViews.find(views[place]);
+        if (buffers == buffersOfViews.end() || givenOtherwise.quickGet(views[place]) || variables[views[place]].firstViewOfBuffer)
+            continue;
+        Vector<uint32_t, 8> together;
+        for (uint32_t other : views.span().subspan(place)) {
+            auto buffersOfOther = buffersOfViews.find(other);
+            if (buffersOfOther != buffersOfViews.end() && buffersOfOther->value == buffers->value && !givenOtherwise.quickGet(other))
+                together.append(other);
+        }
+        if (together.size() < 2)
+            continue;
+        uint64_t locations = 0;
+        for (uint32_t view : together)
+            locations |= Typed::maskOf(program, MemoryLocation::moduleVariable(VariableID(view)));
+        for (uint32_t view : together) {
+            unsigned size = logElementSize(*findViewTypeOfVariable(program, facts, VariableID(view)));
+            variables[view].firstViewOfBuffer = VariableID(together[0]);
+            variables[view].firstViewOfElementSize = VariableID(*std::ranges::find_if(together, [&](uint32_t other) {
+                return logElementSize(*findViewTypeOfVariable(program, facts, VariableID(other))) == size;
+            }));
+            variables[view].locationsOfViewsOfBuffer = locations;
+        }
+    }
+}
+
 static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Facts& facts, const BitVector& described)
 {
     bool leavesOutWordsNeverStored = facts.mechanisms().contains(Mechanism::TypedSlots);
@@ -371,6 +501,9 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
         planned.isDescribedToRunTime = described.quickGet(index);
         if (declaration.owner)
             continue;
+        planned.hasViewMirror = holdsNumbersRaw && declaration.initialization != VariableInitialization::Function
+            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance })
+            && isViewVariable(program, facts, VariableID(index));
         if (holdsNumbersRaw && !planned.isDescribedToRunTime && declaration.initialization != VariableInitialization::Function && !filledByRunTime.get(index)
             && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
             planned.representation = formOfNumbersProvenOfVariableInPlan(program, facts.linked(), VariableID(index));
@@ -391,6 +524,8 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
             break;
         }
     }
+    if (holdsNumbersRaw)
+        findViewsOfOneBuffer(program, facts, variables);
     return variables;
 }
 

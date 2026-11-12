@@ -30,6 +30,7 @@ public:
     Bounds match(LBasicBlock misses, Begin = Begin::AtStart, LValue first = nullptr);
     LValue addressAt(Word32 index);
     bool isSearched(Begin) const;
+    bool testsFirstCharacterAtPlace() const;
     Word32 indexOf(LValue bound);
     Word32 indexOfGroupBound(LValue boundOrNull);
 
@@ -41,7 +42,7 @@ private:
         LValue base { nullptr };
         unsigned offset { 0 };
         unsigned available { 0 };
-        bool isFirstCharacterTested { false };
+        std::optional<Latin1Set> next;
         std::optional<Latin1Set> previous;
         Bounds bounds;
     };
@@ -64,7 +65,9 @@ private:
     void emitRun(const Node&, std::span<const Node> rest, unsigned minimumLengthAfter, State&&, LBasicBlock fails, const Continuation&);
     void emitGroup(const Node&, std::span<const Node> rest, unsigned minimumLengthAfter, State&&, LBasicBlock fails, const Continuation&);
     void emitGroupLoop(const Node&, std::span<const Node> rest, unsigned minimumLengthAfter, State&&, LBasicBlock fails, const Continuation&);
-    void emitAlternatives(std::span<const Sequence>, bool mayBeLeftOut, unsigned minimumLengthAfter, const State&, LBasicBlock fails, const Continuation& matches, const Continuation& isLeftOut);
+    void emitAlternatives(std::span<const Sequence>, std::span<const Latin1Set> beginnings, bool mayBeLeftOut, unsigned minimumLengthAfter, const State&, LBasicBlock fails, const Continuation& matches, const Continuation& isLeftOut);
+    void emitAlternativesInOrder(std::span<const Sequence>, uint64_t chosen, unsigned minimumLengthAfter, const State&, LBasicBlock fails, const Continuation& matches);
+    void emitChoiceOfAlternatives(std::span<const Sequence>, std::span<const Latin1Set> beginnings, unsigned minimumLengthAfter, const State&, LBasicBlock fails, const Continuation& matches);
     void emitLookahead(const Node&, State&, LBasicBlock fails);
     void emitWordBoundary(const Node&, std::span<const Node> rest, State&, LBasicBlock fails);
 

@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTRegExpMatcher.h"
 #include "AOTRegExpRecord.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -355,6 +357,8 @@ RegExpSummaries::RegExpSummaries(unsigned parenthesesDepthLimit)
 {
 }
 
+RegExpSummaries::~RegExpSummaries() = default;
+
 auto RegExpSummaries::keyOf(StringID pattern, OptionSet<Yarr::Flags> flags) -> Key
 {
     return static_cast<uint64_t>(pattern.index()) << 16 | ImageRegExp::significantFlags(flags).toRaw();
@@ -423,7 +427,7 @@ const RegExpMatchPlan* RegExpSummaries::matchPlanOf(StringID pattern, OptionSet<
         Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
         Yarr::YarrPattern yarrPattern(patternText, ImageRegExp::significantFlags(flags), error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::CharacterClassForms);
         RELEASE_ASSERT(!Yarr::hasError(error));
-        plan = planRegExpMatch(yarrPattern);
+        plan = planRegExpMatch(yarrPattern, flags.contains(Yarr::Flags::Sticky));
     };
     if (hasStackForRegExpCompiler())
         planMatch();
@@ -431,6 +435,22 @@ const RegExpMatchPlan* RegExpSummaries::matchPlanOf(StringID pattern, OptionSet<
         runOnBuildThread(planMatch);
     Locker locker { m_lock };
     return m_matchPlans.add(summary, WTF::move(plan)).iterator->value.get();
+}
+
+const RegExpCode* RegExpSummaries::matcherOf(StringID pattern, OptionSet<Yarr::Flags> flags, StringView patternText, BuildContext& context)
+{
+    const RegExpMatchPlan* plan = matchPlanOf(pattern, flags, patternText);
+    if (!plan)
+        return nullptr;
+    {
+        Locker locker { m_lock };
+        auto found = m_matchers.find(plan);
+        if (found != m_matchers.end())
+            return found->value.get();
+    }
+    std::unique_ptr<const RegExpCode> matcher = compileRegExpMatcher(*plan, m_recordsMatches, context.assemblerPolicy(), &context);
+    Locker locker { m_lock };
+    return m_matchers.add(plan, WTF::move(matcher)).iterator->value.get();
 }
 
 const RegExpSummary* RegExpSummaries::summaryIfComputed(StringID pattern, OptionSet<Yarr::Flags> flags) const

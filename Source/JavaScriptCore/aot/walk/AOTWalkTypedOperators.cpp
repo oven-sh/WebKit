@@ -16,6 +16,7 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeTable.h"
+#include "AOTWalkKnown.h"
 #include "JSGlobalObjectFunctions.h"
 #include <cmath>
 #include <optional>
@@ -81,15 +82,26 @@ OperatorForm operatorFormFor(Walker& walker, Opcode opcode, const BodyValue& val
     return chooseFormOfOperator(walker.program(), walker.types(), opcode, operands);
 }
 
+static bool hoistBoundCheck(Walker&, Draft& relation);
+
 static ALWAYS_INLINE bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
 {
     walker.chooseConservativeFields(draft);
-    if (form == OperatorForm::NumberAndValue && tryGuardNumericOperand(walker, draft, input))
+    OperatorForm unguardedForm = form;
+    if (form == OperatorForm::NumberAndValue && (tryGuardCounterBound(walker, draft, input) || tryGuardNumericOperand(walker, draft, input)))
         form = operatorFormFor(walker, draft);
     else if (Walker::NumberAskedBesideNumber asked = form == OperatorForm::NumberAndValue ? walker.askValueBesideNumberForNumber(walker.currentBodyIndex().value(input)) : Walker::NumberAskedBesideNumber()) {
         draft.setOperand(asked.operandIndex, asked.proven);
         form = operatorFormFor(walker, draft);
     }
+    if (form != unguardedForm && form == OperatorForm::Numbers && allRelations.contains(draft.opcode)) {
+        if (hoistBoundCheck(walker, draft))
+            form = OperatorForm::Integers;
+        if (walker.hasFailed())
+            return true;
+    }
+    if (form == OperatorForm::NumberAndValue && draft.opcode == Opcode::Sub && keepsDifferenceBoxed(walker, walker.currentBodyIndex().value(input), draft)) [[unlikely]]
+        form = OperatorForm::Generic;
     draft.setForm(form);
     Origin origin = draft.origin();
     walker.bind(input, boxNumberIfNeeded(walker, walker.build(WTF::move(draft)), origin));
@@ -208,6 +220,13 @@ static bool rowsOfMethodThatGaveValueGiveNumbersAlone(Walker& walker, Reference 
 Reference checkIntegerBeforeLoop(Walker& walker, Reference value, TypeID tested, Origin origin, StatisticID counted)
 {
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
+    Reference fails;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
+        fails = walker.drawWhetherGuessFails(origin);
+    }
+    if (fails)
+        walker.tryBranchInPreheader(fails, false, purity);
     Reference test;
     {
         Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
@@ -218,13 +237,6 @@ Reference checkIntegerBeforeLoop(Walker& walker, Reference value, TypeID tested,
     }
     if (walker.hasFailed() || !test || !walker.tryBranchInPreheader(test, true, purity))
         return { };
-    Reference fails;
-    {
-        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
-        fails = walker.drawWhetherGuessFails(origin);
-    }
-    if (fails)
-        walker.tryBranchInPreheader(fails, false, purity);
     walker.recordSpeculation();
     walker.count(counted);
     Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
@@ -329,6 +341,23 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
     return buildInFormOfTypedOperator(walker, WTF::move(draft), form, value.id());
 }
 
+Reference roundBoundBeforeLoop(Walker& walker, Opcode relation, Origin origin, Reference bound, bool boundIsOnLeft)
+{
+    if (walker.representationOf(bound) == Representation::Double && !walker.has(Mechanism::UnboxedNumbers))
+        return { };
+    Reference rounded;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, Walker::IterationPurity::KnownEffectsOnly);
+        Draft rounding(Opcode::IntegerBound, origin);
+        walker.chooseConservativeFields(rounding);
+        rounding.setNumberOperand(bound);
+        rounding.setComparison(!walker.shouldMisroundLoopBounds() ? relation : relation == Opcode::Less ? Opcode::LessEq : Opcode::Less);
+        rounding.setNumberIsOnLeft(boundIsOnLeft);
+        rounded = walker.build(WTF::move(rounding));
+    }
+    return rounded && rounded.isValue() ? checkIntegerBeforeLoop(walker, rounded, TypeTable::int32, origin, StatisticID::IntegerBoundGuardsHoisted) : Reference();
+}
+
 static bool hoistBoundCheck(Walker& walker, Draft& relation)
 {
     if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses())
@@ -340,11 +369,15 @@ static bool hoistBoundCheck(Walker& walker, Draft& relation)
         if (!bound || !counter || !bound.isValue() || !types.at(walker.typeOf(counter)).isInteger())
             continue;
         Type type = types.at(walker.typeOf(bound));
-        if (!(type.primitives & Primitive::Integer) || !type.hasOnlyPrimitives(Primitive::Integer | Primitive::Undefined | Primitive::Absent) || type.isInteger())
+        Representation held = walker.representationOf(bound);
+        bool isNumber = type.isNumber() && type.primitives & Primitive::Integer && (held == Representation::JSValue || held == Representation::Double);
+        if (!isNumber && (!(type.primitives & Primitive::Integer) || !type.hasOnlyPrimitives(Primitive::Integer | Primitive::Undefined | Primitive::Absent)))
+            continue;
+        if (type.isInteger())
             continue;
         if (!walker.isInvariantInSpecializedVersion(bound, Walker::IterationPurity::KnownEffectsOnly))
             return false;
-        Reference integer = checkIntegerBeforeLoop(walker, bound, types.integer(type.integers), relation.origin(), StatisticID::IntegerBoundGuardsHoisted);
+        Reference integer = isNumber ? roundBoundBeforeLoop(walker, relation.opcode, relation.origin(), bound, !side) : checkIntegerBeforeLoop(walker, bound, types.integer(type.integers), relation.origin(), StatisticID::IntegerBoundGuardsHoisted);
         if (!integer)
             return false;
         if (side)
@@ -390,6 +423,15 @@ bool buildTypedOperator(Walker& walker, const BodyValue& value, const InputsOfTy
     if (allRelations.contains(opcode))
         return buildRelationAsTypedOperator(walker, value, inputs);
 
+    if (!inputs.areOnlyTypes() && (opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric)) {
+        Reference text = walker.referenceOf(value.operand(0));
+        while (Reference checked = text && text.isValue() ? walker.state().checkedNameOf(text) : Reference())
+            text = checked;
+        if (std::optional<uint64_t> number = text && text.isValue() ? findKnown(walker, KnownNote::NumberOfText, text) : std::nullopt) {
+            walker.bind(value.id(), Reference::fromBits(static_cast<uint32_t>(*number)));
+            return true;
+        }
+    }
     OperatorForm form = operatorFormFor(walker, opcode, value, inputs);
     if (form == OperatorForm::Generic || inputs.areOnlyTypes())
         return form != OperatorForm::Generic;

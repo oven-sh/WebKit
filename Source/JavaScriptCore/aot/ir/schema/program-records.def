@@ -92,7 +92,7 @@ record ModuleLink wire { module: Module(Referrer) target: Module(Target) link: U
 record DeclaredRecord wire { module: Module(Referrer) position: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
-    externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
+    externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data? exposesGlobalObject: Bool
     requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
     requiredNames: Span<RequiredName> otherNames: Span<String> namesOfStatements: Span<String> positions: SourcePositions functionSource: Span<Byte>
     | engine namespaceLayout: Layout?

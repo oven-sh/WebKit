@@ -114,12 +114,45 @@ static bool conversionAsksForNoType(Opcode conversion, Representation from, Repr
     }
 }
 
+std::optional<Integer> RepresentationEmitter::integerOfStep(const ValueContext& value)
+{
+    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement };
+    ValueID number = value->valueOperand();
+    if (value.representation() != Representation::Int64 || m_code.isConstant(number))
+        return std::nullopt;
+    const Operation& step = operationAt(number);
+    if (!steps.contains(step.opcode) || step.form() != OperatorForm::CheckedIntegers || step.representation != Representation::Double || m_code.blockOf(number) != value.block())
+        return std::nullopt;
+    std::span<const ValueID> values = m_code.valuesOf(m_code.blockOf(number));
+    auto found = std::ranges::find(values, number);
+    if (found == values.end() || found + 1 == values.end() || *(found + 1) != value.id())
+        return std::nullopt;
+    ValueID stepped = step.valueOperand();
+    Range range = typeOf(stepped).integers;
+    Representation form = representationOf(stepped);
+    if (!typeOf(stepped).isInteger() || !range.isSubsetOf(Range::exact()) || (form != Representation::Int32 && form != Representation::Int64))
+        return std::nullopt;
+    const int64_t one = step.opcode == Opcode::Increment ? 1 : -1;
+    Integer operand = form == Representation::Int32 ? signExtended(in<Word32>(stepped)) : in<Integer>(stepped);
+    Integer sum = add(operand, integer(one));
+    if (one > 0 && range.maximum == maxExactInteger)
+        sum = select(lessThan(operand, integer(maxExactInteger)), sum, operand);
+    if (one < 0 && range.minimum == -maxExactInteger)
+        sum = select(greaterThan(operand, integer(-maxExactInteger)), sum, operand);
+    return heldToWhatConversionGives(value, in<Number>(number), sum);
+}
+
 void RepresentationEmitter::generate(const ValueContext& value)
 {
     ValueID converted = value->valueOperand();
     if (generator().isCarriedBoxed(converted)) [[unlikely]] {
         RELEASE_ASSERT(value.opcode() == Opcode::Box && value.representation() == Representation::JSValue);
         define(value, get(converted));
+        return;
+    }
+    if (generator().isCarriedUnboxed(converted)) [[unlikely]] {
+        RELEASE_ASSERT(value.opcode() == Opcode::Unbox && value.representation() == generator().carriedRepresentationOf(converted));
+        define(value, Operand(value.representation(), generator().wordOf(converted)));
         return;
     }
     if (std::optional<Boxed> boxed = generator().findBoxed(converted)) [[unlikely]] {
@@ -143,6 +176,12 @@ void RepresentationEmitter::generate(const ValueContext& value)
         if (std::optional<Operand> handedOn = emitter<CastEmitter>().takeIntegerHandedOnTo(value.id())) {
             bool isWidened = value.representation() == Representation::Int64 && handedOn->is<Word32>();
             define(value, isWidened ? Operand(signExtended(handedOn->as<Word32>())) : *handedOn);
+            return;
+        }
+    }
+    if (value.opcode() == Opcode::NumberToInteger) {
+        if (std::optional<Integer> stepped = integerOfStep(value)) {
+            define(value, *stepped);
             return;
         }
     }

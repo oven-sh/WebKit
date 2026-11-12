@@ -80,6 +80,34 @@ void HintEmitter::generateEndCellLifetime(const ValueContext& value)
     emitLifetimeEnd(value, value->cellOperand());
 }
 
+void HintEmitter::generateReleaseArray(const ValueContext& value)
+{
+    m_out.store64(generator().wordOf(value->arrayOperand()), instanceField(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(arrays.releasedArray)));
+}
+
+void HintEmitter::generateReleaseList(const ValueContext& value)
+{
+    Boxed list = in<Boxed>(value->listOperand());
+    bool mayBeNoCell = typeOf(value->listOperand()).primitives;
+    if (shouldEmitLifetimeEnds()) {
+        LBasicBlock isCellHere = newBlock();
+        LBasicBlock goesOn = newBlock();
+        branch(isCell(list), { normalEdge(isCellHere), normalEdge(goesOn) });
+        m_out.appendTo(isCellHere);
+        m_out.suspendDeclaredAccesses();
+        callVoidOperation(value, RuntimeOperation::PoisonCell, { unboxCell(list), word32(static_cast<int32_t>(generator().code().inlineFrames()[value->inlineFrame].callee.index())), word32(static_cast<int32_t>(value->position)) });
+        m_out.resumeDeclaredAccesses();
+        m_out.jump(goesOn);
+        m_out.appendTo(goesOn);
+        return;
+    }
+    Integer released(list.value());
+    if (mayBeNoCell)
+        released = select(isCell(list), released, integer(0));
+    ptrdiff_t place = value->isCopy() ? AOT_INSTANCE_OFFSET(arrays.releasedCopy) : AOT_INSTANCE_OFFSET(arrays.releasedArray);
+    m_out.store64(released.value(), instanceField(m_heaps.entire(AbstractHeap::AllocatorState), place));
+}
+
 void HintEmitter::generateAskObjectAgain(const ValueContext& value)
 {
     if (!emitter<AccessEmitter>().verifiesFastPathAnswers(value->key()))
@@ -204,6 +232,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     effects.writes.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
     emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    m_out.procedure().noteLoopPoll(patchpoint);
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(value);
 
     bool leavesOwedError = m_code.marksOf(value.id()).contains(SweepMark::LeavesOwedError);

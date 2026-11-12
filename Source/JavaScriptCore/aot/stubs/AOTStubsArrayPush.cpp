@@ -161,9 +161,10 @@ void generateAppendElements(StubAssembler& jit)
     const GPRReg kind = jit.allocateScratch(StubRegister::T12);
     const GPRReg position = jit.allocateScratch(StubRegister::T14);
     const GPRReg element = jit.allocateScratch(firstStubOperandRegister);
+    const GPRReg nextElement = jit.allocateScratch(StubRegister::T13);
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
-    RELEASE_ASSERT(noOverlap(array, source, newLength, target, elements, kind, position, element));
+    RELEASE_ASSERT(noOverlap(array, source, newLength, target, elements, kind, position, element, nextElement));
     const BaseIndex read(elements, position, CCallHelpers::TimesEight);
     const BaseIndex written(target, position, CCallHelpers::TimesEight);
     const Address lengthOfTarget(target, Butterfly::offsetOfPublicLength());
@@ -179,6 +180,25 @@ void generateAppendElements(StubAssembler& jit)
         copyElement();
         jit.add32(TrustedImm32(1), position);
         jit.branch32(CCallHelpers::Below, position, newLength).linkTo(loop, &jit);
+    };
+    auto copyPairsUpToHole = [&] {
+        constexpr int32_t distanceToNext = sizeof(EncodedJSValue);
+        JumpList isHole;
+        jit.sub32(TrustedImm32(1), newLength);
+        Jump hasNoPair = jit.branch32(CCallHelpers::AboveOrEqual, position, newLength);
+        Label loop = jit.label();
+        jit.load64(read, element);
+        jit.load64(BaseIndex(elements, position, CCallHelpers::TimesEight, distanceToNext), nextElement);
+        isHole.append(jit.branchTest64(CCallHelpers::Zero, element));
+        isHole.append(jit.branchTest64(CCallHelpers::Zero, nextElement));
+        jit.store64(element, written);
+        jit.store64(nextElement, BaseIndex(target, position, CCallHelpers::TimesEight, distanceToNext));
+        jit.add32(TrustedImm32(2), position);
+        jit.branch32(CCallHelpers::Below, position, newLength).linkTo(loop, &jit);
+        isHole.link(&jit);
+        hasNoPair.link(&jit);
+        jit.add32(TrustedImm32(1), newLength);
+        return jit.branch32(CCallHelpers::AboveOrEqual, position, newLength);
     };
     auto setLengthAndReturn = [&] {
         jit.store32(newLength, lengthOfTarget);
@@ -208,6 +228,7 @@ void generateAppendElements(StubAssembler& jit)
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
     copiesValues.link(&jit);
     jit.store32(newLength, lengthOfTarget);
+    Jump valuesAreCopied = copyPairsUpToHole();
     forEachElement([&] {
         jit.load64(read, element);
         Jump isNoHole = jit.branchTest64(CCallHelpers::NonZero, element);
@@ -215,6 +236,7 @@ void generateAppendElements(StubAssembler& jit)
         isNoHole.link(&jit);
         jit.store64(element, written);
     });
+    valuesAreCopied.link(&jit);
     Jump holdsNoCells = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, array, kind);
     holdsNoCells.link(&jit);
@@ -266,11 +288,13 @@ void generateAppendElements(StubAssembler& jit)
     loadKindOfSource();
     Jump takesInt32OutOfValues = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
+    Jump integersAreCopied = copyPairsUpToHole();
     forEachElement([&] {
         jit.load64(read, element);
         hasHole.append(jit.branchTest64(CCallHelpers::Zero, element));
         jit.store64(element, written);
     });
+    integersAreCopied.link(&jit);
     setLengthAndReturn();
 
     takesInt32OutOfValues.link(&jit);

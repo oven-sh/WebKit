@@ -188,7 +188,7 @@ void ClassEmitter::generateSuperConstructList(const ValueContext& value)
     Boxed parent = in<Boxed>(value->parentOperand());
     Boxed newTarget = in<Boxed>(value->newTargetOperand());
     CellPointer list = in<CellPointer>(value->listOperand());
-    define(value, emitter<CallEmitter>().superConstructWithArray(value, parent, newTarget, list));
+    define(value, emitter<CallEmitter>().constructWithArray(value, ConstructSyntax::SuperCall, parent, newTarget, list));
 }
 
 } } } // namespace JSC::AOT::Typed

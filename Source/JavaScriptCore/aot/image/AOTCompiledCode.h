@@ -94,6 +94,7 @@ struct RareListsOfBody {
     ListOfUnit<uint8_t> bytesOfMadeTexts;
     ListOfUnit<uint32_t> firstsOfMadeTexts;
     ListOfUnit<uint32_t> endsOfMadeTexts;
+    uint64_t placesInLine { UINT64_MAX };
 };
 
 template<>
@@ -111,6 +112,7 @@ void forEachListOfUnitIn(RareListsOfBody& lists, auto& visit)
 
 struct CodeBody {
     uint32_t primaryEntryOffset() const { return entries[0].offset; }
+    uint64_t placesInLine() const { return rareLists->placesInLine; }
     std::optional<uint32_t> offsetOfEntry(uint16_t id) const;
 
     ListOfUnit<uint8_t> bytes;

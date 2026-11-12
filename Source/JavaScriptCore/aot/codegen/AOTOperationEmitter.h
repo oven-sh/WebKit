@@ -48,6 +48,7 @@ struct CallOptions {
     bool followsThrow { false };
     bool convertsNoCells { false };
     bool callerSuspendsAtReturn { false };
+    bool callerDelegates { false };
     bool rejectsOnThrow { false };
     bool returnsWord32 { false };
 };
@@ -144,6 +145,8 @@ protected:
     std::optional<Pointer> siteCacheAddress(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersAtSite(const OperationContext&, PropertyKeyID, SiteUse);
     std::optional<NumberedImmediate> answersAtSite(Origin, PropertyKeyID, SiteUse);
+    std::optional<NumberedImmediate> presenceTestSiteAnswers(Origin, PropertyKeyID);
+    std::optional<NumberedImmediate> isAnsweredAtUse(Origin, PropertyKeyID, uint32_t use);
 
     COLD void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 

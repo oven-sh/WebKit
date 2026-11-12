@@ -170,7 +170,7 @@ struct CachedStubIndex {
 };
 
 struct RememberedStubKeys {
-    static constexpr unsigned logOfNumberOfKeys = 8;
+    static constexpr unsigned logOfNumberOfKeys = 10;
 
     std::array<RememberedStubKey, 1u << logOfNumberOfKeys> keys { };
     std::array<CachedStubIndex, 1u << logOfNumberOfKeys> indexCache { };

@@ -134,7 +134,7 @@ static void testMarkersHoldNoCell(LoadedProgram& program)
         uint64_t slot = untouchedBits;
         clearSlot(representation, &slot);
         AOT_TEST_CHECK(slotHoldsAbsent(representation, &slot) == traits.hasAbsent);
-        AOT_TEST_CHECK(readSlotBits(representation, &slot) == (traits.hasAbsent ? traits.absentBits : 0));
+        AOT_TEST_CHECK(readSlotBits(representation, &slot) == bitsBeforeCreation(representation));
         AOT_TEST_CHECK(bitsOutsideSlot(representation, slot) == bitsOutsideSlot(representation, untouchedBits));
         AOT_TEST_CHECK(!cellInSlot(representation, &slot, cageBase));
     }

@@ -421,14 +421,32 @@ void Encoder::encodeSelect(const Step& step)
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     switch (select->type().kind()) {
+    case Int64: {
+        bool holdsRarely = isEndOfExactIntegers(select->child(1));
+        GPRReg destination = gprOfComparisonOperand(step.destination);
+        GPRReg rare = gprOfComparisonOperand(holdsRarely ? whenNotZero : whenZero);
+        if (test.kind != Test::CompareNumbers && holdsRarely != isEndOfExactIntegers(select->child(2)) && rare != destination && placeOf(m_block).loop != noLoop) {
+            MacroAssembler::RelationalCondition condition = setFlagsForTestOfIntegers(m_jit, test);
+            MacroAssembler::Jump isRare = m_jit.branchOnFlags(holdsRarely ? condition : MacroAssembler::invert(condition));
+            m_jit.move(gprOfComparisonOperand(holdsRarely ? whenZero : whenNotZero), destination);
+            auto moveRareArm = [rare, destination, isRare, done = m_jit.label()](CCallHelpers& jit) {
+                isRare.link(&jit);
+                jit.move(rare, destination);
+                jit.jump().linkTo(done, &jit);
+            };
+            addLatePath(m_arena.create<LatePathOf<decltype(moveRareArm)>>(moveRareArm));
+            return;
+        }
+        [[fallthrough]];
+    }
     case Int32:
-    case Int64:
         selectIntegerOnTest(m_jit, test, gprOfComparisonOperand(whenNotZero), gprOfComparisonOperand(whenZero), gprOfComparisonOperand(step.destination));
         return;
     case Float:
     case Double:
         selectNumberOnTest(m_jit, test, fprOfComparisonOperand(whenNotZero), fprOfComparisonOperand(whenZero), fprOfComparisonOperand(step.destination));
         return;
+    case Vector128:
     case Void:
     case Tuple:
         break;

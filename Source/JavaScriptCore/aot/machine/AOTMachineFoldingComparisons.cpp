@@ -268,7 +268,7 @@ static Operation* comparisonFoldConvertedIntegers(Builder& builder, Opcode opcod
 {
     constexpr double limit = 0x1p52;
     bool isConstant = right->hasDouble() && std::trunc(right->asDouble()) == right->asDouble() && std::abs(right->asDouble()) <= limit;
-    if (!isExactConvertedInteger(left) || (!isConstant && !isExactConvertedInteger(right)))
+    if (!isConstant && (right->opcode() != IToD || (!isExactConvertedInteger(left) && !isExactConvertedInteger(right))))
         return nullptr;
     if (opcode == EqualOrUnordered)
         opcode = Equal;

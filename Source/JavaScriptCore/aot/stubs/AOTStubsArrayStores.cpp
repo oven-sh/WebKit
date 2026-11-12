@@ -220,7 +220,7 @@ void generateSetArrayLength(StubAssembler& jit)
 
     isShorterOrLonger.link(&jit);
     callsOperation.append(jit.branch32(CCallHelpers::Below, length, jit.operand(1)));
-    callsOperation.append(jit.branch32(CCallHelpers::Above, Address(butterfly, Butterfly::offsetOfVectorLength()), TrustedImm32((MarkedSpace::largeCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue))));
+    callsOperation.append(jit.branch32(CCallHelpers::Above, Address(butterfly, Butterfly::offsetOfVectorLength()), TrustedImm32(ListWhoseLengthIsStoredWithoutRunTime::mostElementsOfVector)));
     jit.move(TrustedImm64(0), hole);
     Jump holeIsEmptyValue = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ArrayWithDouble - ArrayWithUndecided));
     jit.move(TrustedImm64(static_cast<int64_t>(PNaNAsBits)), hole);

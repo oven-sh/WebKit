@@ -1092,7 +1092,8 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
 
         unsigned resultSize = result.size();
         if (limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime() && resultSize < MIN_SPARSE_ARRAY_INDEX) [[likely]] {
-            bool makeAtomStringsArray = subjectCanBeKey && input->impl()->isAtom() && resultSize < atomStringsArrayLimit;
+            const bool isWorthCaching = subjectCanBeKey && StringSplitCache::isWorthCaching(*input->impl());
+            bool makeAtomStringsArray = isWorthCaching && (input->impl()->isAtom() || StringSplitCache::canBeKey(separator->impl())) && resultSize < atomStringsArrayLimit;
             Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
 
             auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultSize);
@@ -1130,7 +1131,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                 Structure* replacementStructure = vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
                 newButterfly->setStructure(vm, replacementStructure);
             }
-            if (subjectCanBeKey && StringSplitCache::isWorthCaching(*input->impl()))
+            if (isWorthCaching)
                 vm.ensureStringSplitCache().setForString(input, separator, newButterfly);
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, newButterfly->toButterfly());

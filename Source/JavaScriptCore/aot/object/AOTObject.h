@@ -210,6 +210,7 @@ public:
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
     void setIntegrity(JSGlobalObject*, Integrity);
+    bool tryFreezeFields(VM&);
     bool testIntegrity(VM&, Integrity) const;
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
@@ -255,6 +256,7 @@ public:
     static JSObject* createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
     bool tryCreateExtraPropertiesOfNewObject(VM&, std::span<const ExtraProperty> inOrder);
     void didChangeExtraProperties(VM&);
+    bool tryNameHeldStructure(VM&);
     void ensureStructureForExtraProperties(VM&);
     static bool ensureStructureForExtraPropertiesIfNeeded(VM&, JSCell*);
     enum class ExtraPropertyStore : uint8_t { NotHandled, Replaced, Added };
@@ -328,7 +330,10 @@ public:
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
     JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
+    JSCellButterfly* enumerableKeys(VM&) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);
+    static JSPropertyNameEnumerator* enumeratorOfFinalObject(JSGlobalObject*, JSObject*);
+    static bool areEnumeratedNamesFixed(JSGlobalObject*, JSObject*, const JSPropertyNameEnumerator*);
     bool keysDependOnlyOnStructureAndOrderWord() const;
 
     static bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*);
@@ -426,7 +431,9 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
     case SlotRepresentation::JSValue:
         return functor(JSValue::decode(at<EncodedJSValue>(field.slot.offset)));
     case SlotRepresentation::Int32:
-        return functor(at<int32_t>(field.slot.offset));
+        if (int32_t word = at<int32_t>(field.slot.offset); word != absentInt32) [[likely]]
+            return functor(word);
+        return functor(read(field));
     case SlotRepresentation::Double:
         return functor(at<double>(field.slot.offset));
     case SlotRepresentation::Uint8:

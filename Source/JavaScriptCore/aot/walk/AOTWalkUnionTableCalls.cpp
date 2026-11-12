@@ -18,6 +18,7 @@
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTTypeArena.h"
 #include "AOTWalkKnown.h"
+#include "AOTWalkScalarReplacement.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -37,6 +38,7 @@ struct ReceiversOfTableCallInUnionTableCalls {
     bool someRowIsGuarded { false };
     bool hasProfitableLoopCopy { false };
     bool hasSmallLeafMethod { false };
+    bool hasCallbackMethod { false };
     bool areAllMethodsSmallLeaves { true };
     size_t numberInUse { 0 };
     Vector<FunctionID, 4> methods;
@@ -147,6 +149,7 @@ static void describeReceiversInUnionTableCalls(Walker& walker, uint32_t selector
         bool calleeIsSmallLeaf = isSmallLeaf(walker, row->method, conventions.methodSelector(selector).numberOfArguments);
         receivers.hasProfitableLoopCopy |= !own || !types.isSubset(types.withoutNullish(own), types.forLayout(member));
         receivers.hasSmallLeafMethod |= calleeIsSmallLeaf;
+        receivers.hasCallbackMethod |= walker.facts().linked().function(row->method).mayCallBack;
         receivers.areAllMethodsSmallLeaves &= calleeIsSmallLeaf;
     }
     std::ranges::sort(receivers.methods);
@@ -231,9 +234,15 @@ static ALWAYS_INLINE std::optional<TableCallInUnionTableCalls> planTableCallInUn
         readOfEveryOtherReceiverIsConstant &= !holdsNameItself && typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == TypedForm::Built;
     }
     bool someReceiverHasNoRow = !receivers.withoutRows.isEmpty();
-    bool armsTakeCall = armsMayTakeCall == ArmsMayTakeCallInUnionTableCalls::Yes && (receivers.hasProfitableLoopCopy || receivers.hasSmallLeafMethod) && receivers.numberInUse <= (receivers.areAllMethodsSmallLeaves ? maxLeafReceivers : mostReceiversToldApartByArmsInUnionTableCalls) && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses() && !walker.standsInArmOfRowOfShapeTests();
+    bool someMethodCallsBack = receivers.hasCallbackMethod && std::ranges::any_of(receivers.withRows, [&](LayoutID member) {
+        const MethodTableRow* row = conventions.findRowOfMethodTable(*selector, member);
+        return row && walker.callsEnclosingReceiver(row->method, member);
+    });
+    bool isInLoopWithArms = armsMayTakeCall == ArmsMayTakeCallInUnionTableCalls::Yes && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses() && !walker.standsInArmOfRowOfShapeTests();
+    bool removesObjects = isInLoopWithArms && !receivers.hasProfitableLoopCopy && !receivers.hasSmallLeafMethod && !someMethodCallsBack && !someReceiverHasNoRow && armsRemoveObjects(walker, receivers.methods.span(), index, call);
+    bool armsTakeCall = isInLoopWithArms && (receivers.hasProfitableLoopCopy || receivers.hasSmallLeafMethod || someMethodCallsBack || removesObjects) && receivers.numberInUse <= (receivers.areAllMethodsSmallLeaves ? maxLeafReceivers : mostReceiversToldApartByArmsInUnionTableCalls);
     if (armsTakeCall) {
-        bool dispatchesThroughTable = !receivers.hasProfitableLoopCopy && (walker.receiverOfLargerMethod() == receiver || callsLargerMethod(walker, index, read, receivers.withRows));
+        bool dispatchesThroughTable = !receivers.hasProfitableLoopCopy && !someMethodCallsBack && !removesObjects && (walker.receiverOfLargerMethod() == receiver || callsLargerMethod(walker, index, read, receivers.withRows));
         if (!dispatchesThroughTable)
             return std::nullopt;
         walker.receiverOfLargerMethod() = receiver;

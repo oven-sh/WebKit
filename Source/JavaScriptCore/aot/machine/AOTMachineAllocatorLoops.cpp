@@ -270,6 +270,23 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
     }
 }
 
+static constexpr unsigned fewestReadsForCalleeSave = 8;
+static constexpr unsigned fewestReadsWorthEviction = 24;
+
+static unsigned countReadsInLoop(const Allocator& allocator, const Operation* constant, const Loop& loop, bool loopIsRare)
+{
+    const Liveness& liveness = allocator.m_liveness;
+    unsigned numberOfReads = 0;
+    unsigned stepsLeft = 64;
+    for (uint32_t read = allocator.findReadFrom(constant, loop.begin); read && stepsLeft--; read = liveness.use(read).next) {
+        if (liveness.use(read).position >= loop.end)
+            break;
+        if (loopIsRare || !liveness.isUseInRareRegion(read))
+            ++numberOfReads;
+    }
+    return numberOfReads;
+}
+
 bool Allocator::isReadInside(const Operation* value, const Loop& loop) const
 {
     return firstReadAtOrBehindStartOfLoop(*this, value, loop) < loop.end;
@@ -305,11 +322,31 @@ void Allocator::bringInWhatLoopReads(const Loop& loop, Position limitOfDefinitio
             --numberAcrossPatches;
     });
 
+    struct ConstantReadByLoop {
+        Operation* value;
+        unsigned numberOfReads;
+    };
+    ConstantReadByLoop pinnedConstants[numberOfHeldConstants] { };
+    auto holdThroughLoop = [&](Reg reg, Operation* value) {
+        bind(reg, value);
+        m_rematerializedValueKeptIn[reg.index()] = value;
+        m_rematerializedValueIsKeptUntil[reg.index()] = loop.end;
+        m_endOfLastLoopThatKeepsValueMadeAgain = std::max(m_endOfLastLoopThatKeepsValueMadeAgain, loop.end);
+    };
+
     for (Operation* value : loopFacts.valuesReadFromOutside) {
         if (stateOf(value).registers || !value->type().isNumeric() || !isReadInsideLoopOutsideRareRegions(*this, value, loop, loopIsRare))
             continue;
         const ValueFacts& facts = m_liveness.of(value);
         bool isRematerialized = facts.has(ValueFlag::IsRematerialized);
+        if (isRematerialized && heldConstantIndex(*value)) {
+            ConstantReadByLoop found { value, countReadsInLoop(*this, value, loop, loopIsRare) };
+            for (ConstantReadByLoop& kept : pinnedConstants) {
+                if (found.numberOfReads > kept.numberOfReads)
+                    std::swap(found, kept);
+            }
+            continue;
+        }
         if (!isRematerialized && (!spillHoldsValueAtHeadOf(head, value) || facts.definition >= limitOfDefinitions))
             continue;
 
@@ -324,18 +361,38 @@ void Allocator::bringInWhatLoopReads(const Loop& loop, Position limitOfDefinitio
 
         Reg hint = hintOf(value);
         Reg reg = takeRegister(bank, candidates, hint && (candidates & maskOf(hint)) ? hint : Reg());
-        bind(reg, value);
         --numberFree[index];
-        if (isRematerialized) {
-            m_rematerializedValueKeptIn[reg.index()] = value;
-            m_rematerializedValueIsKeptUntil[reg.index()] = loop.end;
-            m_endOfLastLoopThatKeepsValueMadeAgain = std::max(m_endOfLastLoopThatKeepsValueMadeAgain, loop.end);
-        } else {
+        if (isRematerialized)
+            holdThroughLoop(reg, value);
+        else {
+            bind(reg, value);
             if (numberStillAskedFor[index])
                 --numberStillAskedFor[index];
             if (numberStillAskedForAcrossPatches[index])
                 --numberStillAskedForAcrossPatches[index];
         }
+    }
+
+    for (const ConstantReadByLoop& constant : pinnedConstants) {
+        if (constant.numberOfReads < fewestHeldConstantReads)
+            break;
+        constexpr unsigned index = static_cast<unsigned>(Bank::GP);
+        RegisterMask candidates = registers[index] & ~m_bound & ~loopFacts.registersTakenByPatches;
+        if (constant.numberOfReads < fewestReadsForCalleeSave || loopIsRare)
+            candidates &= ~m_file.calleeSaved | m_allocation.usedCalleeSaves();
+        bool isSavedByCallee = candidates & m_file.calleeSaved;
+        bool leavesRoom = numberFree[index] > numberStillAskedFor[index] && (isSavedByCallee || static_cast<unsigned>(std::popcount(candidates)) > numberStillAskedForAcrossPatches[index]);
+        if (!candidates || (!leavesRoom && (!isSavedByCallee || constant.numberOfReads < fewestReadsWorthEviction)))
+            continue;
+        Reg reg;
+        if (RegisterMask withoutNewCalleeSave = candidates & (~m_file.calleeSaved | m_allocation.usedCalleeSaves()))
+            reg = takeRegister(Bank::GP, withoutNewCalleeSave);
+        else {
+            reg = lowestRegisterIn(candidates);
+            noteCalleeSaveUse(reg);
+        }
+        --numberFree[index];
+        holdThroughLoop(reg, constant.value);
     }
 }
 

@@ -234,11 +234,32 @@ static Vector<uint32_t, 8> firstOccurrencesOfStrcatParts(std::span<const ValueID
     return firstOccurrences;
 }
 
+static bool isAnswerOfBooleanMethod(const BuiltinTable& table, const Operation& made)
+{
+    BuiltinID method = made.opcode == Opcode::Call ? made.methodOfReceiverAsMade() : BuiltinID();
+    if (!method)
+        return false;
+    std::span<const BuiltinOverload> overloads = table.overloadsOf(table.canonicalID(method));
+    return !overloads.empty() && std::ranges::all_of(overloads, [&](const BuiltinOverload& overload) {
+        BuiltinTypeID answer = overload.result.type;
+        return answer && table.at(answer).flags.isEmpty() && table.at(answer).primitives == OptionSet<BuiltinPrimitive> { BuiltinPrimitive::Boolean } && table.at(answer).parts.empty();
+    });
+}
+
 void OperatorEmitter::generateToBoolean(const ValueContext& value)
 {
     if (tryGenerateRemainderTest(value))
         return;
     ValueID tested = value->valueOperand();
+    if (tested == m_remainderKnownByTruth) {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+        defineTest(value, m_truthOfRemainder);
+        return;
+    }
+    if (const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(tested)) [[unlikely]] {
+        defineTest(value, isNotZero(Word32(carried->length)));
+        return;
+    }
     TruthinessEmitter& truthiness = emitter<TruthinessEmitter>();
     switch (value->form()) {
     case OperatorForm::Generic:
@@ -246,7 +267,11 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
             Operand operand = get(tested);
             if (!operand.is<Boxed>())
                 m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
-            truthiness.branchOnTruthiness(value, operand, typeOf(tested), value.branchTargets(), value->expectsObjectOrNothing(), value->expectsInt32OrNothing(), (callsByValue | OpcodeSet { Opcode::CallResolved }).contains(generator().code().at(tested).opcode), value->expectsBoolean());
+            if (operand.is<Boxed>() && truthiness.tryDeferToShapeTest(value, operand.as<Boxed>()))
+                return;
+            const Operation& made = generator().code().at(tested);
+            bool expectsBoolean = value->expectsBoolean() || (generator().usesLoopForms(value.block()) && isAnswerOfBooleanMethod(m_program.builtins(), made));
+            truthiness.branchOnTruthiness(value, operand, typeOf(tested), value.branchTargets(), value->expectsObjectOrNothing(), value->expectsInt32OrNothing(), (callsByValue | OpcodeSet { Opcode::CallResolved }).contains(made.opcode), expectsBoolean);
             return;
         }
         m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);

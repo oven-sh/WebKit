@@ -94,6 +94,11 @@ void ExpandedIterationEmitter::generateAppendIterable(const ValueContext& value)
     callVoidOperation(value, RuntimeOperation::AppendIterable, { in<CellPointer>(value->arrayOperand()), in<Boxed>(value->iterableOperand()) });
 }
 
+void ExpandedIterationEmitter::generateReserveTableCapacity(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ReserveTableCapacity, { in<CellPointer>(value->tableOperand()), in<Boxed>(value->sourceOperand()) });
+}
+
 void ExpandedIterationEmitter::generateNextSetElement(const ValueContext& value)
 {
     define(value, Boxed(callStub(value, nextSetElement(), { in<Boxed>(value->iteratorOperand()).value() }).first));

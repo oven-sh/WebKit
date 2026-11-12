@@ -13,6 +13,7 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTStubsCoroutines.h"
+#include "AOTSweep.h"
 #include "LinkTimeConstant.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -24,6 +25,25 @@ static_assert(awaitedHasPromiseStructure.test == AwaitConditionTest::EqualsOther
 CellPointer PromiseIntrinsicEmitter::newPromise(const OperationContext& context)
 {
     return CellPointer(callStub(context, AOT::newPromise(), { }).first);
+}
+
+void PromiseIntrinsicEmitter::generateNewPromise(const ValueContext& value)
+{
+    if (value->endsReactionChain() && !isPromiseOfReactionChain(value.valueID())) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    define(value, newPromise(value));
+}
+
+bool PromiseIntrinsicEmitter::isPromiseOfReactionChain(ValueID promise)
+{
+    for (uint32_t index = promise.index() + 1; index < m_code.numberOfValues(); ++index) {
+        ValueID id(index);
+        if (!m_code.isConstant(id) && m_code.at(id).opcode == Opcode::StartReactionChain && underlyingCellOf(m_code, m_code.at(id).promiseOperand()) == promise)
+            return true;
+    }
+    return false;
 }
 
 void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)

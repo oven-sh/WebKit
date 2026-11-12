@@ -282,6 +282,34 @@ static void testTwoPlacesOfOneUnitEachAreSearchedForAtOnce()
     AOT_TEST_CHECK((!pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { Yarr::Flags::Sticky }, 1)));
 }
 
+#if CPU(X86_64)
+static unsigned lengthOfPrefixesSearchedFor(ASCIILiteral patternString, OptionSet<Yarr::Flags> flags = { }, size_t width = 0)
+{
+    CompiledRegExp regExp = compileToCode({ patternString, flags });
+    for (const RegExpSymbol& symbol : regExp.code[width]->symbols) {
+        auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
+        if (routine && routine->kind() == Yarr::SharedRoutine::Kind::FindEitherPrefix)
+            return std::get<Yarr::SharedRoutine::FindEitherPrefix>(routine->payload).prefixLength;
+    }
+    return 0;
+}
+
+static void testTwoPrefixesAreSearchedTogether()
+{
+    OptionSet<Yarr::Flags> ignoreCase { Yarr::Flags::IgnoreCase };
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcdefgh|hgfedcba"_s) == 8);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("[acg]bcdefgh|hgfed[c-e]ba"_s, ignoreCase) == 8);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s) == 4);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efghijklm"_s) == 4);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { }, 1) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { Yarr::Flags::Sticky }) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { Yarr::Flags::Unicode }) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efgh"_s) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abc|efgh"_s) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh|ijkl"_s) == 0);
+}
+#endif
+
 static void testUnicodePropertyLookup()
 {
     OptionSet<Yarr::Flags> unicode { Yarr::Flags::Unicode };
@@ -346,6 +374,9 @@ std::span<const NativeTest> regExpCompilerTests()
         { "regexp-compiler/one-pattern-serves-both-widths-and-retries"_s, testOnePatternServesBothWidthsAndRetries },
         { "regexp-compiler/only-a-rare-first-character-is-searched-for"_s, testOnlyARareFirstCharacterIsSearchedFor },
         { "regexp-compiler/two-places-of-one-unit-each-are-searched-for-at-once"_s, testTwoPlacesOfOneUnitEachAreSearchedForAtOnce },
+#if CPU(X86_64)
+        { "regexp-compiler/two-prefixes-are-searched-for-at-once"_s, testTwoPrefixesAreSearchedTogether },
+#endif
         { "regexp-compiler/unicode-property-lookup"_s, testUnicodePropertyLookup },
         { "regexp-compiler/class-table-limits-are-counted"_s, testClassTableLimitsAreCounted },
     };

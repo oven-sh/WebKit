@@ -375,6 +375,8 @@ static TypeID bitwiseResultType(TypeArena& types, Opcode opcode, Range a, Range 
     case Opcode::BitOr:
     case Opcode::BitXor: {
         bool mayBeNegative = a.minimum < 0 || b.minimum < 0;
+        if (a == Range::one(0) || b == Range::one(0))
+            return naturalTypeOfIntegers(types, a == Range::one(0) ? b : a);
         if (mayBeNegative && opcode == Opcode::BitXor)
             return TypeTable::int32;
         if (a.maximum < 0 || b.maximum < 0)
@@ -542,6 +544,12 @@ static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalO
         Range b = operands[1].boundsOfNumbers();
         return numbersWithinExactBounds(types, CheckedInt64(a.minimum) - b.maximum, CheckedInt64(a.maximum) - b.minimum);
     }
+    case Opcode::Mul: {
+        Range b = operands[1].boundsOfNumbers();
+        if (a.minimum < 0 || b.minimum < 0)
+            return { };
+        return numbersWithinExactBounds(types, CheckedInt64(a.minimum) * b.minimum, CheckedInt64(a.maximum) * b.maximum);
+    }
     case Opcode::Increment:
         return numbersWithinExactBounds(types, CheckedInt64(a.minimum) + 1, CheckedInt64(a.maximum) + 1);
     case Opcode::Decrement:
@@ -556,6 +564,11 @@ static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalO
     default:
         return { };
     }
+}
+
+static bool isBoundedFraction(const NaturalOperand& operand)
+{
+    return operand.primitives & Primitive::FractionalNumber && operand.isNumberWithinBounds() && operand.boundsOfNumbers().isSubsetOf(Range::int32());
 }
 
 static bool isIntegerOrNullish(const NaturalOperand& operand)
@@ -573,6 +586,17 @@ static TypeID numberResultOf(TypeArena& types, Opcode opcode, NaturalOperands op
                 continue;
             converted.last().primitives = Primitive::Integer;
             converted.last().integers = operand.integers.unionWith(Range::one(0));
+        }
+        return numberResultOf(types, opcode, converted.span());
+    }
+    if (allBitwiseOperators.contains(opcode) && std::ranges::any_of(operands, isBoundedFraction)) {
+        Vector<NaturalOperand, 2> converted;
+        for (const NaturalOperand& operand : operands) {
+            converted.append(operand);
+            if (!isBoundedFraction(operand))
+                continue;
+            converted.last().primitives = Primitive::Integer;
+            converted.last().integers = operand.boundsOfNumbers();
         }
         return numberResultOf(types, opcode, converted.span());
     }

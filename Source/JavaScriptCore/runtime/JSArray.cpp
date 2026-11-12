@@ -214,6 +214,8 @@ void JSArray::setLengthWritable(JSGlobalObject* globalObject, bool writable)
     SparseArrayValueMap* map = arrayStorage()->m_sparseMap.get();
     ASSERT(map);
     map->setLengthIsReadOnly();
+    if (mayBePrototype()) [[unlikely]]
+        globalObject->vm().invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this);
 }
 
 // https://tc39.es/ecma262/#sec-array-exotic-objects-defineownproperty-p-desc

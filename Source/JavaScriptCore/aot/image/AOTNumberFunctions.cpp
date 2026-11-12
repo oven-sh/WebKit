@@ -187,18 +187,6 @@ void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
         if (program.layouts[index].kind == LayoutKind::Instance)
             numbers.m_classRanks[index] = numberOfClassRecords++;
     }
-
-    Vector<LayoutID> heirsLookedAt;
-    Vector<uint32_t> offsetsOfStructuresOfHeirs;
-    uint32_t sizeOfStructuresOfHeirs = 0;
-    for (size_t index : mentions.byID(NumberSpace::HeirLookedAt).isMentioned) {
-        heirsLookedAt.append(LayoutID(index));
-        offsetsOfStructuresOfHeirs.append(sizeOfStructuresOfHeirs);
-        sizeOfStructuresOfHeirs += static_cast<uint32_t>(StructuresOfHeir::sizeWithDisplacementsOfFields(program.layouts[index].fields.size()));
-    }
-    numbers.m_heirsLookedAt = WTF::move(heirsLookedAt);
-    numbers.m_offsetsOfStructuresOfHeirs = WTF::move(offsetsOfStructuresOfHeirs);
-    numbers.m_sizeOfStructuresOfHeirs = sizeOfStructuresOfHeirs;
 }
 
 static NEVER_INLINE void reportMentionWithoutNumber(const CompiledCode& code, const Mention& mention, ASCIILiteral holder, BuildContext& context)

@@ -322,6 +322,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
     bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::CachesEvaluationError, ModuleFlags::ReachesModuleObjects }) || isFileOfProgram(module);
+    hasValidFlagsOfFiles &= !module.exposesGlobalObject || isFileOfProgram(module);
     bool hasValidRuntimeModule = module.runtimeModule
         ? rules.hasRuntimeModule && program.builtins().contains(module.runtimeModule)
         : !rules.hasRuntimeModule || isLibrary;

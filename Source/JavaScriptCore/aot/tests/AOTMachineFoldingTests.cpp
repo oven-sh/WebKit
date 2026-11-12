@@ -168,6 +168,7 @@ public:
             return single(static_cast<float>(value));
         case Double:
             return number(static_cast<double>(value));
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -283,6 +284,7 @@ private:
             return floatOperand;
         case Double:
             return doubleOperand;
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -333,6 +335,7 @@ private:
             return foldingTestBitsOf(static_cast<double>(m_test.call<float>(first, second)));
         case Double:
             return foldingTestBitsOf(m_test.call<double>(first, second));
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -503,6 +506,11 @@ static void testMachineFoldingOfBitOperations()
     checkFoldingTestCases(FoldingTestOperands::Integers, cases);
 }
 
+static LValue foldingTestRotation(FoldingTest& v, LValue value, int amount)
+{
+    return v.make(BitOr, v.make(ZShr, value, amount), v.make(Shl, value, (value->type() == Int32 ? 32 : 64) - amount));
+}
+
 static void testMachineFoldingOfShifts()
 {
     static constexpr FoldingTestCase cases[] = {
@@ -564,7 +572,16 @@ static void testMachineFoldingOfShifts()
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(ZShr, v.j, 27)); } },
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.a, 5), v.make(ZShr, v.a, 27)); } },
         { "BitXor(ZShr(i, Const32(11)), RotR(i, Const32(6)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(ZShr, v.i, 6), v.make(ZShr, v.i, 11)), v.make(Shl, v.i, 26)); } },
-        { "BitXor(RotR(i, Const32(6)), RotR(i, Const32(11)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(BitXor, v.make(ZShr, v.i, 6), v.make(ZShr, v.i, 11)), v.make(Shl, v.i, 26)), v.make(Shl, v.i, 21)); } },
+        { isX86_64() ? "RotR(BitXor(i, RotR(i, Const32(5))), Const32(6))"_s : "BitXor(RotR(i, Const32(6)), RotR(i, Const32(11)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(BitXor, v.make(ZShr, v.i, 6), v.make(ZShr, v.i, 11)), v.make(Shl, v.i, 26)), v.make(Shl, v.i, 21)); } },
+        { isX86_64() ? "RotR(BitXor(i, RotR(BitXor(i, RotR(i, Const32(14))), Const32(5))), Const32(6))"_s : foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, foldingTestRotation(v, v.i, 25), foldingTestRotation(v, v.i, 6)), foldingTestRotation(v, v.i, 11)); } },
+        { isX86_64() ? "RotR(BitXor(a, RotR(a, Const32(7))), Const32(1))"_s : foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, foldingTestRotation(v, v.a, 8), foldingTestRotation(v, v.a, 1)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, foldingTestRotation(v, v.i, 2), v.j), foldingTestRotation(v, v.i, 13)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.i, foldingTestRotation(v, v.i, 9)), foldingTestRotation(v, v.i, 17)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, foldingTestRotation(v, v.make(BitXor, v.i, foldingTestRotation(v, v.i, 20)), 20), foldingTestRotation(v, v.i, 3)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, foldingTestRotation(v, v.make(BitXor, v.i, foldingTestRotation(v, v.i, 5)), 6), foldingTestRotation(v, v.i, 11)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, foldingTestRotation(v, v.make(BitXor, v.i, foldingTestRotation(v, v.i, 5)), 6), foldingTestRotation(v, v.make(BitXor, v.i, foldingTestRotation(v, v.i, 9)), 13)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { LValue x = v.make(BitXor, v.j, foldingTestRotation(v, v.j, 3)); return v.make(BitXor, x, foldingTestRotation(v, x, 7)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, foldingTestRotation(v, v.i, 2), foldingTestRotation(v, v.j, 13)); } },
         { "BitOr(j, RotR(i, Const32(6)))"_s, [](FoldingTest& v) { return v.make(BitOr, v.make(BitOr, v.make(ZShr, v.i, 6), v.j), v.make(Shl, v.i, 26)); } },
         { "BitXor(b, RotR(a, Const32(14)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(ZShr, v.a, 14), v.b), v.make(Shl, v.a, 50)); } },
         { "BitXor(ZShr(i, Const32(11)), RotR(i, Const32(6)))"_s, [](FoldingTest& v) { Operation* older = v.make(Shl, v.i, 26); return v.make(BitXor, older, v.make(BitXor, v.make(ZShr, v.i, 6), v.make(ZShr, v.i, 11))); } },
@@ -739,6 +756,11 @@ static void testMachineFoldingOfIntegerComparisons()
         { "Equal(a, Const64(5))"_s, [](FoldingTest& v) { return v.make(Equal, 5, v.a); } },
         { "LessThan(a, Const64(5))"_s, [](FoldingTest& v) { return v.make(LessThan, v.a, 5); } },
         { "LessThan(b, a)"_s, [](FoldingTest& v) { return v.make(LessThan, v.b, v.a); } },
+        { "LessThan(a, SExt32(i))"_s, [](FoldingTest& v) { return v.make(LessThan, v.make(IToD, v.a), v.make(IToD, v.i)); } },
+        { "Equal(a, SExt32(i))"_s, [](FoldingTest& v) { return v.make(Equal, v.make(IToD, v.i), v.make(IToD, v.a)); } },
+        { "GreaterEqual(a, Const64(4503599627370496))"_s, [](FoldingTest& v) { return v.make(GreaterEqual, v.make(IToD, v.a), 0x1p52); } },
+        { "LessThan(IToD(a), ConstDouble(9007199254740992))"_s, [](FoldingTest& v) { return v.make(LessThan, v.make(IToD, v.a), 0x1p53); } },
+        { "Equal(IToD(a), IToD(b))"_s, [](FoldingTest& v) { LValue left = v.make(IToD, v.a); return v.make(Equal, left, v.make(IToD, v.b)); } },
 
         { "Const32(1)"_s, [](FoldingTest& v) { return v.make(LessThan, v.int64(-1), 1); } },
         { "Const32(0)"_s, [](FoldingTest& v) { return v.make(Below, v.int64(-1), 1); } },

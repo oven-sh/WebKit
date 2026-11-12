@@ -215,6 +215,8 @@ static ASCIILiteral nameInFactsText(SummaryTrait trait)
         return "HoldsInt32Promise"_s;
     case SummaryTrait::NeverReturns:
         return "NeverReturns"_s;
+    case SummaryTrait::SuspendsAfterStart:
+        return "SuspendsAfterStart"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -521,6 +523,8 @@ static void printAccessOfSummary(IRPrinter& printer, const ThinSummary& summary,
         out.print(" on-no-way-to-return"_s);
     if (access.storesObjectMadeForIt)
         out.print(" made-for-it"_s);
+    if (access.storesConstructedObject)
+        out.print(" constructed-for-it"_s);
     if (access.laysAccessorAsWritten) {
         const SummaryWrittenAccessor& written = summary.writtenAccessorOf(index);
         out.print(" accessor-as-written"_s);
@@ -1050,6 +1054,14 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
             out.println();
         }
 
+        for (const LinkedTableCallee& held : tables.tableCalleesOf(id)) {
+            out.print("  table-callee of "_s, held.capture, " "_s);
+            if (held.callee)
+                printer.print(held.callee);
+            else
+                printer.print(held.builtin);
+            out.println();
+        }
         if (const LinkedEffectsGivenArguments* given = tables.known.findEffectsGivenArguments(id)) {
             out.print("  given-arguments"_s);
             printEntryParametersInFactsText(out, "as-expected"_s, given->parametersTakenAsExpected);
@@ -1842,17 +1854,33 @@ static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& a
     };
 
     bool namesLayout = asked.length() > 1 && asked[0] == 'L' && !asked.contains('.');
-    if (namesLayout) {
+    bool namesFunction = asked.length() > 1 && asked[0] == 'f' && !asked.contains('.');
+    if (namesLayout || namesFunction) {
         std::optional<uint32_t> number = parseInteger<uint32_t>(StringView(asked).substring(1));
-        if (!number || *number >= flow.program.layouts.size()) {
-            out.println("why-gone "_s, asked, ": no such layout"_s);
+        if (!number || *number >= (namesLayout ? flow.program.layouts.size() : flow.program.functions.size())) {
+            out.println("why-gone "_s, asked, namesLayout ? ": no such layout"_s : ": no such function"_s);
             return;
         }
-        LayoutID layout(*number);
-        out.println("why-gone "_s, asked, flow.escapedLayouts.get(*number) ? ": it has gone"_s : ": it has not gone"_s);
+        LayoutID layout(namesLayout ? *number : 0);
+        bool hasGone = namesLayout ? flow.escapedLayouts.get(*number) : flow.escapedFunctions.get(*number);
+        out.println("why-gone "_s, asked, hasGone ? ": it has gone"_s : ": it has not gone"_s);
         auto holds = [&](uint32_t node) {
+            LinkType type = flow.typeAt(FlowNodeID(node));
+            if (namesFunction) {
+                switch (type.functions) {
+                case LinkType::Functions::None:
+                    return false;
+                case LinkType::Functions::Set:
+                    return std::ranges::contains(flow.functionsOfSet(type), FunctionID(*number));
+                case LinkType::Functions::Closure:
+                case LinkType::Functions::Constructors:
+                    return type.function.index() == *number;
+                case LinkType::Functions::Lost:
+                    return true;
+                }
+            }
             bool isHeld = false;
-            flow.forEachLayoutOf(flow.typeAt(FlowNodeID(node)), [&](LayoutID member) {
+            flow.forEachLayoutOf(type, [&](LayoutID member) {
                 isHeld |= member == layout;
             });
             return isHeld;
@@ -1860,26 +1888,30 @@ static void printWhyGone(PrintStream& out, const LinkFlow& flow, const String& a
         for (uint32_t function = 0; function < flow.program.functions.size(); ++function) {
             const ThinSummary& summary = flow.summaries.at(FunctionID(function));
             for (uint32_t node = 0; node < summary.nodes.size(); ++node) {
-                if (summary.nodes[node].kind == SummaryNode::Kind::Allocation && summary.nodes[node].first == *number) {
+                if (summary.nodes[node].kind == (namesLayout ? SummaryNode::Kind::Allocation : SummaryNode::Kind::Closure) && summary.nodes[node].first == *number) {
                     uint32_t made = flow.nodeOf(FunctionID(function), node).index();
                     reach(made, made);
                 }
             }
         }
         out.println("made at "_s, reached.size(), " nodes"_s);
+        constexpr unsigned maxChains = 40;
+        unsigned numberOfChains = 0;
         for (size_t place = 0; place < reached.size(); ++place) {
             for (FlowNodeID end : flow.endsOfEdgesOutOf(FlowNodeID(reached[place]))) {
                 if (end == flow.unseen()) {
-                    out.println("an edge leads it to what is unseen; the chain, the root last:"_s);
-                    out.println("  unseen"_s);
-                    printChainFrom(reached[place]);
-                    return;
-                }
-                if (holds(end.index()))
+                    if (numberOfChains++ < maxChains) {
+                        out.println("an edge leads it to what is unseen; the chain, the root last:"_s);
+                        out.println("  unseen"_s);
+                        printChainFrom(reached[place]);
+                    }
+                } else if (holds(end.index()))
                     reach(end.index(), reached[place]);
             }
         }
-        out.println(flow.escapedLayouts.get(*number) ? "no edge leads it to what is unseen: a rule let it go; "_s : ""_s, "every node that it reaches, "_s, reached.size(), ", with what is told there:"_s);
+        if (numberOfChains)
+            return;
+        out.println(hasGone ? "no edge leads it to what is unseen: a rule let it go; "_s : ""_s, "every node that it reaches, "_s, reached.size(), ", with what is told there:"_s);
         for (uint32_t node : reached)
             printLinkOfChainInWhyGone(out, flow, FlowNodeID(node));
         return;

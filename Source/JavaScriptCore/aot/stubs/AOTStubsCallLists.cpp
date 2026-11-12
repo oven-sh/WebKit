@@ -33,7 +33,7 @@ void emitAlignedSizeOfWords(StubAssembler& jit, GPRReg count, int32_t extraWords
 static_assert(gprOf(StubRegister::A0) == argumentGPR(0));
 StubSignature signatureOfCallWithArray(StubKey) { return callConventionSignature({ StubRegister::A0 }); }
 StubSignature signatureOfTailCallWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2) }); }
-StubSignature signatureOfSuperConstructWithArray(StubKey) { return StubSignature::withGPRResult({ calleeGPR, argumentGPR(0), argumentGPR(1) }); }
+StubSignature signatureOfConstructWithArray(StubKey) { return StubSignature::withGPRResult({ calleeGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfReturnFromArgumentListFrame(StubKey) { return { }; }
 
 StubSignature signatureOfCallFromArgumentListFrame(StubKey)
@@ -113,8 +113,9 @@ static void branchIfNotCompiledCallee(StubAssembler& jit, GPRReg scratch, JumpLi
     isClosure.link(&jit);
 }
 
-void generateSuperConstructWithArray(StubAssembler& jit)
+void generateConstructWithArray(StubAssembler& jit)
 {
+    const ConstructSyntax syntax = static_cast<ConstructSyntax>(jit.key().form());
     const CallRegisters registers = CallRegisters::allocate(jit);
     const GPRReg newTarget = jit.operand(1);
     const GPRReg list = jit.clobberOperand(2);
@@ -166,11 +167,12 @@ void generateSuperConstructWithArray(StubAssembler& jit)
     didLoadRegisters.link(&jit);
     jit.add32(TrustedImm32(1), countGPR);
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.clobberRegister(thisGPR));
-    jit.jumpToStub(constructValue(ConstructSyntax::SuperCall));
+    jit.jumpToStub(constructValue(syntax));
 
     genericPath.link(&jit);
     jit.move(calleeGPR, storage);
-    jit.callOperationAndReturn(Entry::operationAOTSuperConstructList, { .secondArgumentIn = storage, .thirdArgumentIn = newTarget, .fourthArgumentIn = preservedList });
+    const Entry operation = syntax == ConstructSyntax::SuperCall ? Entry::operationAOTSuperConstructList : Entry::operationAOTConstructWithArray;
+    jit.callOperationAndReturn(operation, { .secondArgumentIn = storage, .thirdArgumentIn = newTarget, .fourthArgumentIn = preservedList });
 }
 
 static void emitCopyListBelowFrame(StubAssembler& jit, GPRReg count, GPRReg source, GPRReg destination, GPRReg index, GPRReg word)

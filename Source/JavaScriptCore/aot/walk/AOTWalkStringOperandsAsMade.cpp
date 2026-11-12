@@ -214,14 +214,17 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     return true;
 }
 
-void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace, std::span<const ValueID> readsOffHolders)
+void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace, std::span<const ValueID> readsOffHolders, ValueID last)
 {
     const BodyIndex& index = walker.currentBodyIndex();
+    if (!last)
+        last = call.id();
     BlockID inputBlock = index.blockOf(call.id());
     uint32_t place = call.id().index() - index.block(inputBlock).firstValue().index();
+    uint32_t endOfArms = last.index() - index.block(inputBlock).firstValue().index() + 1;
     BodyTerminator end = index.terminator(inputBlock);
-    bool isReturnedAtOnce = end.kind() == TerminatorKind::ReturnCall && end.operand(0) == call.id();
-    bool isReadBehind = !index.isUnused(call.id());
+    bool isReturnedAtOnce = end.kind() == TerminatorKind::ReturnCall && end.operand(0) == last;
+    bool isReadBehind = !index.isUnused(last);
 
     Vector<ValueID, 2> names;
     call.forEachOperand([&](ValueID operand, uint32_t) {
@@ -300,12 +303,12 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
 
     Vector<Walker::JoinArm, 2> arms;
     auto walkCallToEndOfArm = [&] {
-        walker.walkStretch(inputBlock, firstPlace.value_or(place), place + 1);
+        walker.walkStretch(inputBlock, firstPlace.value_or(place), endOfArms);
         if (isReturnedAtOnce)
             walker.threadReturnOf(inputBlock);
         if (walker.isUnreachable())
             return;
-        Reference result = isReadBehind ? walker.referenceOf(call.id()) : Reference();
+        Reference result = isReadBehind ? walker.referenceOf(last) : Reference();
         if (isReadBehind && (!result || !result.isRecord()))
             return walker.fail("an arm of a guess at an operand has no value for what is read behind it"_s);
         arms.append(Walker::JoinArm { walker.currentBlock(), { result } });
@@ -342,7 +345,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
 
     Reference met;
     if (walker.joinArms(arms.span(), meetingBlock, singleElementSpan(met).first(isReadBehind)) && isReadBehind)
-        walker.bind(call.id(), met);
+        walker.bind(last, met);
 }
 
 } } } // namespace JSC::AOT::Typed

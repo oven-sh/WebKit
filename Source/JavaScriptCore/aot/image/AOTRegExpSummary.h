@@ -30,6 +30,8 @@
 
 namespace JSC { namespace AOT {
 
+struct RegExpCode;
+
 enum class RegExpMetadata : uint8_t {
     Unknown,
     Known,
@@ -85,10 +87,13 @@ class RegExpSummaries {
     WTF_MAKE_NONCOPYABLE(RegExpSummaries);
 public:
     explicit RegExpSummaries(unsigned parenthesesDepthLimit);
+    ~RegExpSummaries();
 
     JS_EXPORT_PRIVATE const RegExpSummary& summaryOf(StringID pattern, OptionSet<Yarr::Flags>, StringView patternText);
+    void setRecordsMatches(bool recordsMatches) { m_recordsMatches = recordsMatches; }
     const RegExpSummary* summaryIfComputed(StringID pattern, OptionSet<Yarr::Flags>) const;
     const RegExpMatchPlan* matchPlanOf(StringID pattern, OptionSet<Yarr::Flags>, StringView patternText);
+    const RegExpCode* matcherOf(StringID pattern, OptionSet<Yarr::Flags>, StringView patternText, BuildContext&);
 
 private:
     using Key = uint64_t;
@@ -97,10 +102,12 @@ private:
     const RegExpSummary& summaryOfText(StringView patternText, OptionSet<Yarr::Flags>);
 
     const unsigned m_parenthesesDepthLimit;
+    bool m_recordsMatches { false };
     mutable Lock m_lock;
     UncheckedKeyHashMap<Key, std::unique_ptr<const RegExpSummary>, DefaultHash<Key>, WTF::UnsignedWithZeroKeyHashTraits<Key>> m_summaries WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashMap<RegExpKey, std::unique_ptr<const RegExpSummary>> m_summariesByText WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashMap<const RegExpSummary*, std::unique_ptr<const RegExpMatchPlan>> m_matchPlans WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<const RegExpMatchPlan*, std::unique_ptr<const RegExpCode>> m_matchers WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } } // namespace JSC::AOT

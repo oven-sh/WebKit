@@ -64,6 +64,10 @@ private:
         std::optional<BlockEdge> otherwise;
     };
     bool testByteOfTableInPlaceOfSwitch(const TerminatorContext&, LValue subject, LType, BlockEdge otherwise, SwitchesBehindSwitch&);
+    bool tryLowerToValueTables(const TerminatorContext&, LValue subject, LType, BlockEdge otherwise);
+    static size_t valueTableEntrySize(std::span<const LValue> constants);
+    static size_t numberOfDistinctConstants(std::span<const LValue> constants);
+    LValue loadFromValueTable(std::span<const LValue> constants, Integer position);
     BlockEdge switchOnInteger(const TerminatorContext&, LValue subject, LType, BlockEdge otherwise);
     void switchOnBoxedInteger(const TerminatorContext&, Boxed subject, BlockEdge otherwise);
 };

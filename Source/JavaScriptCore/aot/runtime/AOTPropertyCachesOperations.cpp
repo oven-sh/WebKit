@@ -21,7 +21,9 @@
 #include "AOTPendingStars.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSlimClosure.h"
+#include "AOTStaticFields.h"
 #include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
@@ -33,6 +35,7 @@ namespace JSC { namespace AOT {
 static void fileRead(Instance* instance, JSValue base, Structure* structureBefore, const CachedName& name, const PropertySlot& slot)
 {
     PropertyAnswer answer = classifyRead({ instance->globalObject, base, structureBefore, name.uid, slot });
+    answerByGetterField(base, structureBefore, answer);
     if (answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && base.isObject()) {
         VM& vm = *instance->vm;
         DeferTerminationForAWhile deferTermination(vm);
@@ -86,6 +89,21 @@ static void createClassObjectsOnChain(VM& vm, JSCell* receiver)
         uncheckedDowncast<Closure>(next.asCell())->ensureClassObject(vm);
 }
 
+static void createStaticsOnChain(VM& vm, JSCell* receiver, UniquedStringImpl* uid, StaticFieldIsRead staticFieldIsRead = StaticFieldIsRead::AsProperty)
+{
+    for (JSValue next = receiver; next.isCell() && isCompiledClosure(next.asCell()); next = asObject(next)->getPrototypeDirect()) {
+        auto* closure = uncheckedDowncast<Closure>(next.asCell());
+        if (staticFieldIsRead == StaticFieldIsRead::InVariable && closure == receiver && StaticFields::tryRead(*closure, uid)) {
+            closure->ensureStaticMethods(vm);
+            return;
+        }
+        if (closure->canHoldStaticFieldInVariable(uid))
+            closure->ensureClassObject(vm);
+        else
+            closure->ensureStaticMethods(vm);
+    }
+}
+
 static bool hasSlotForEveryClosure(const NamedAccess& access, JSCell* base)
 {
     if (base->type() != SlimClosureType && base->type() != CompiledClosureType)
@@ -94,7 +112,7 @@ static bool hasSlotForEveryClosure(const NamedAccess& access, JSCell* base)
     return slot && (slot->kind == Slot::Kind::ClosureName || slot->kind == Slot::Kind::ClosureLength);
 }
 
-JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
+JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver, StaticFieldIsRead staticFieldIsRead)
 {
     VM& vm = *access.instance->vm;
     JSGlobalObject* globalObject = access.instance->globalObject;
@@ -114,7 +132,7 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     }
     if (base.isCell()) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, base.asCell());
-        createClassObjectsOnChain(vm, base.asCell());
+        createStaticsOnChain(vm, base.asCell(), uid, staticFieldIsRead);
     }
     LazyPrototypeRead lazy;
     if (base.isObject()) {
@@ -126,7 +144,9 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     }
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     if (lazy.result == LazyPrototypeReadResult::Answered) {
-        access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, lazy.answer);
+        PropertyAnswer filed = lazy.answer;
+        answerByGetterField(base, structureBefore, filed);
+        access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, filed);
         RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, receiver, lazy.answer));
     }
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
@@ -153,6 +173,7 @@ void fileReadWithoutCode(Instance* instance, JSObject* base, const Identifier& i
     }
     Structure* structureBefore = base->structure();
     if (lazy.result == LazyPrototypeReadResult::Answered) {
+        answerByGetterField(base, structureBefore, lazy.answer);
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, lazy.answer);
         return;
     }
@@ -174,7 +195,7 @@ JSValue getUnderKeyForReceiver(Instance* instance, JSObject* base, const Identif
     return JSValue(base).get(instance->globalObject, name, slot);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, SiteCache))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, uint32_t isInStubFrame))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByIdAndCache);
     ++instance->propertyCaches.slowPathReadCount;
@@ -187,7 +208,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance*
         OPERATION_RETURN(scope, encodedJSValue());
     }
     LookByName look(vm, base, access.ident.impl());
-    OPERATION_RETURN(scope, JSValue::encode(getAndCache(access, base)));
+    OPERATION_RETURN(scope, JSValue::encode(getAndCache(access, base, base, isInStubFrame ? StaticFieldIsRead::InVariable : StaticFieldIsRead::AsProperty)));
 }
 
 static bool tryStoreToPermanentDictionary(const NamedAccess& access, JSObject* object, JSValue value, PutMode mode, PutPropertySlot& slot)
@@ -351,7 +372,7 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     ensureStillAliveHere(structureBefore);
 }
 
-static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, JSValue value, PutMode mode)
+bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, JSValue value, PutMode mode)
 {
     if (!base.isCell())
         return false;
@@ -403,7 +424,7 @@ bool instanceOfAndCache(Instance* instance, JSValue value, JSValue constructorVa
 
     JSObject* constructor = asObject(constructorValue);
     const Identifier& hasInstanceSymbol = vm.propertyNames->hasInstanceSymbol;
-    createClassObjectsOnChain(vm, constructor);
+    createStaticsOnChain(vm, constructor, hasInstanceSymbol.impl());
     Structure* structureBefore = WTF::opaque(constructor->structure());
     PropertySlot hasInstanceSlot(constructor, PropertySlot::InternalMethodType::Get);
     JSValue hasInstance = JSValue(constructor).get(globalObject, hasInstanceSymbol, hasInstanceSlot);
@@ -463,19 +484,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* 
     if (!caches.answersAtSites().isDueForFilling(place))
         return;
     LeafOperationScope leaf(*instance->vm);
-    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~(stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer)), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer);
+    constexpr uint32_t whatStubDoes = stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer | stubAsksForPresence;
+    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~whatStubDoes), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer, use & stubAsksForPresence);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimReadGroupRow, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimReadGroupRow, void, (Instance* instance, EncodedJSValue base, EncodedJSValue* group, uint32_t numberOfReads))
 {
     LeafOperationScope leaf(*instance->vm);
-    return std::bit_cast<size_t>(PropertyCaches::claimReadGroupRow(JSValue::decode(base), *std::bit_cast<ReadGroupCache*>(group)));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillReadGroupOffset, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index))
-{
-    LeafOperationScope leaf(*instance->vm);
-    return JSValue::encode(instance->state->propertyCaches->fillReadGroupOffset(base, key, *std::bit_cast<ReadGroupCache::Row*>(row), index));
+    instance->state->propertyCaches->claimAndFillReadGroupRow(JSValue::decode(base), *std::bit_cast<ReadGroupCache*>(group), numberOfReads);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
@@ -573,6 +589,100 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByValOfPlainList, EncodedJSValue, (Insta
     OPERATION_RETURN(scope, JSValue::encode(slot.getPureResult()));
 }
 
+static bool isOrdinaryObjectForReflectSet(Structure* structure)
+{
+    return structure->isCompiledStructure() || (!structure->typeInfo().overridesGetOwnPropertySlot() && !structure->typeInfo().overridesPut() && !structure->typeInfo().hasStaticPropertyTable());
+}
+
+static bool forwardsDefinitionsToTarget(JSGlobalObject* globalObject, JSValue handler)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!handler.isObject())
+        return false;
+    for (const Identifier* name : { &vm.propertyNames->getOwnPropertyDescriptor, &vm.propertyNames->defineProperty }) {
+        PropertySlot slot(handler, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isFound = asObject(handler)->getPropertySlot(globalObject, *name, slot);
+        scope.assertNoException();
+        if (isFound || slot.isTaintedByOpaqueObject())
+            return false;
+    }
+    return true;
+}
+
+static bool isOrdinaryReflectSet(JSGlobalObject* globalObject, JSObject* target, JSValue receiver, const Identifier& name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (parseIndex(name) || !isOrdinaryObjectForReflectSet(target->structure()))
+        return false;
+    if (Object* compiled = compiledObjectOrNull(target); compiled && (hasPendingStars(*compiled) || compiled->isFrozen()))
+        return false;
+    PropertySlot slot(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = target->methodTable()->getOwnPropertySlot(target, globalObject, name, slot);
+    scope.assertNoException();
+    if (!isFound || slot.isTaintedByOpaqueObject() || !slot.isValue() || (slot.attributes() & PropertyAttribute::ReadOnly) || target->structure()->isImmutableProperty(name.impl()))
+        return false;
+    if (receiver == JSValue(target))
+        return true;
+    if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
+        return false;
+    auto* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
+    return !proxy->isRevoked() && proxy->target() == target && forwardsDefinitionsToTarget(globalObject, proxy->handler());
+}
+
+static void cacheForwardingHandler(Instance* instance, JSObject* handler)
+{
+    static_assert(JSObject::butterflyOffset() == sizeof(uint64_t) && offsetOfOrderWord == sizeof(uint64_t));
+    VM& vm = *instance->vm;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Structure* structure = handler->structure();
+    Object* compiled = compiledObjectOrNull(handler);
+    if (structure->isDictionary() || (compiled ? compiled->hasFlagsInOrderWord() : handler->type() != FinalObjectType))
+        return;
+    for (const Identifier* name : { &vm.propertyNames->getOwnPropertyDescriptor, &vm.propertyNames->defineProperty }) {
+        getUnderKeyForReceiver(instance, handler, *name, handler);
+        scope.assertNoException();
+        const Slot* slot = instance->state->propertyCaches->findByKey(structure, name->impl(), SlotAccess::Read);
+        if (!slot || handler->structure() != structure)
+            return;
+        if (slot->kind != Slot::Kind::Absent && (slot->kind != Slot::Kind::Field || !(slot->has(Slot::absentIsUndefined) || slot->has(Slot::emptySlotMayBeUndefined))))
+            return;
+    }
+    ForwardingProxyHandlers::Entry& entry = instance->propertyCaches.forwardingProxyHandlers.entries[ForwardingProxyHandlers::offsetFor(structure->id().bits()) >> ForwardingProxyHandlers::sizeShift];
+    entry.wordAfterHeader = *std::bit_cast<const uint64_t*>(std::bit_cast<const char*>(handler) + JSObject::butterflyOffset());
+    entry.structureID = structure->id().bits();
+    instance->propertyCaches.placesSayAbsence = 1;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTReflectSet, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedProperty, EncodedJSValue encodedValue, EncodedJSValue encodedReceiver))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReflectSet);
+    JSValue value = JSValue::decode(encodedTarget);
+    JSValue property = JSValue::decode(encodedProperty);
+    JSValue receiver = JSValue::decode(encodedReceiver);
+    auto resultOf = [](ReflectSetResult result) { return static_cast<size_t>(result); };
+    if (!value.isObject()) {
+        throwTypeError(globalObject, scope, "Reflect.set requires the first argument be an object"_s);
+        OPERATION_RETURN(scope, resultOf(ReflectSetResult::Refused));
+    }
+    JSObject* target = asObject(value);
+    auto name = property.toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, resultOf(ReflectSetResult::Refused));
+    bool convertsWithoutOtherCode = property.isString() || property.isSymbol();
+    if (convertsWithoutOtherCode && isOrdinaryReflectSet(globalObject, target, receiver, name)) {
+        if (receiver != value)
+            cacheForwardingHandler(instance, asObject(uncheckedDowncast<ProxyObject>(receiver.asCell())->handler()));
+        OPERATION_RETURN(scope, resultOf(ReflectSetResult::IsOrdinaryStore));
+    }
+    if (receiver == value && parseIndex(name) && target->structure()->hasImmutableIndexedProperties()) [[unlikely]]
+        OPERATION_RETURN(scope, resultOf(ReflectSetResult::Refused));
+    PutPropertySlot slot(receiver, false, PutPropertySlot::ReflectSet);
+    bool isStored = target->methodTable()->put(target, globalObject, name, JSValue::decode(encodedValue), slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, resultOf(ReflectSetResult::Refused));
+    OPERATION_RETURN(scope, resultOf(isStored ? ReflectSetResult::Stored : ReflectSetResult::Refused));
+}
+
 static const ProxyAccessWords& proxyAccessWords(EncodedJSValue* words) { return *std::bit_cast<const ProxyAccessWords*>(words); }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue trap))
@@ -584,33 +694,56 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, JSValue::encode(ProxyObject::getWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, words.proxy)));
 }
 
-static bool isTrapResultAllowed(VM& vm, JSObject* target, JSCell* key, JSValue answer)
+struct FixedProperty {
+    bool isFound { false };
+    unsigned attributes { 0 };
+    JSValue value;
+};
+
+static std::optional<FixedProperty> findFixedProperty(VM& vm, JSObject* target, JSCell* key)
 {
     if (!key->isString())
-        return false;
+        return std::nullopt;
     StringImpl* impl = const_cast<StringImpl*>(uncheckedDowncast<JSString>(key)->tryGetValueImpl());
     if (!impl || !impl->isAtom() || parseIndex(*impl))
-        return false;
+        return std::nullopt;
     auto* name = static_cast<UniquedStringImpl*>(impl);
     JSObject* holder = target;
     if (target->type() == CompiledObjectType) {
         auto* object = uncheckedDowncast<Object>(target);
         if (object->isFrozen() || object->isSealed() || !object->compiledStructure().hasOnlyConfigurableFields())
-            return false;
+            return std::nullopt;
         holder = extraPropertiesIfCreated(*object);
         if (!holder)
-            return !object->hasExtraProperties();
+            return object->hasExtraProperties() ? std::nullopt : std::optional(FixedProperty { });
     }
     Structure* structure = holder->structure();
     if (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable())
-        return false;
+        return std::nullopt;
     unsigned attributes;
     PropertyOffset offset = structure->get(vm, name, attributes);
     if (!isValidOffset(offset) || !(attributes & PropertyAttribute::DontDelete))
-        return true;
-    if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+        return FixedProperty { };
+    return FixedProperty { true, attributes, holder->getDirect(offset) };
+}
+
+static bool isTrapResultAllowed(VM& vm, JSObject* target, JSCell* key, JSValue answer)
+{
+    std::optional<FixedProperty> fixed = findFixedProperty(vm, target, key);
+    if (!fixed || !fixed->isFound)
+        return !!fixed;
+    if (fixed->attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
         return false;
-    return !(attributes & PropertyAttribute::ReadOnly) || holder->getDirect(offset) == answer;
+    return !(fixed->attributes & PropertyAttribute::ReadOnly) || fixed->value == answer;
+}
+
+static bool mayTrapDenyProperty(VM& vm, JSObject* target, JSCell* key)
+{
+    bool isExtensible = target->type() == CompiledObjectType ? !uncheckedDowncast<Object>(target)->isNotExtensible() : target->type() == FinalObjectType && target->structure()->isStructureExtensible();
+    if (!isExtensible)
+        return false;
+    std::optional<FixedProperty> fixed = findFixedProperty(vm, target, key);
+    return fixed && !fixed->isFound;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
@@ -634,6 +767,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFinishHasThroughProxy, size_t, (Instance* i
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishHasThroughProxy);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    if (JSValue::decode(answer).isFalse() && mayTrapDenyProperty(vm, words.target, words.key)) {
+        countEvent(vm, RuntimeCounterID::ProxyTrapAnswersAdmitted);
+        OPERATION_RETURN(scope, false);
+    }
     OPERATION_RETURN(scope, ProxyObject::finishHas(globalObject, JSValue::decode(answer), words.target, words.key));
 }
 
@@ -645,10 +782,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetWithProxyTrap, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTFinishAccessThroughProxy, void, (Instance* instance, EncodedJSValue target, EncodedJSValue answer, EncodedJSValue stored, EncodedJSValue encodedName, uint32_t isStrict))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishAccessThroughProxy);
+    JSValue name = JSValue::decode(encodedName);
+    if (JSValue value = JSValue::decode(stored))
+        ProxyObject::finishSet(globalObject, JSValue::decode(answer), asObject(JSValue::decode(target)), name, value, isStrict);
+    else
+        ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), asObject(JSValue::decode(target)), name);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTFinishSetThroughProxy, void, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishSetThroughProxy);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    if (JSValue::decode(answer).isTrue() && isTrapResultAllowed(vm, words.target, words.key, JSValue::decode(words.storedValue))) {
+        countEvent(vm, RuntimeCounterID::ProxyTrapAnswersAdmitted);
+        OPERATION_RETURN(scope);
+    }
     ProxyObject::finishSet(globalObject, JSValue::decode(answer), words.target, words.key, JSValue::decode(words.storedValue), words.storeIsStrictOrHeaderOfSlot);
     OPERATION_RETURN(scope);
 }
@@ -778,7 +930,16 @@ static uint64_t addressInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
     return std::bit_cast<uint64_t>(target->locationForOffset(*offset));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnPropertyAddress, uint64_t, (EncodedJSValue encodedBase, EncodedJSValue encodedProperty, uint32_t findsOnlyFields, uint32_t fitsFieldTypes))
+static uint64_t addressInFunction(Closure& function, UniquedStringImpl* name)
+{
+    VM& vm = function.vm();
+    const CommonIdentifiers& names = *vm.propertyNames;
+    if (function.classData() || name == names.prototype.impl() || name == names.name.impl() || name == names.length.impl() || function.refusesOwnProperty(vm, name))
+        return 0;
+    return addressOfReplaceableValue(&function, name);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnPropertyAddress, uint64_t, (EncodedJSValue encodedBase, EncodedJSValue encodedProperty, uint32_t findsOnlyFields, uint32_t fitsFieldTypes, uint32_t takesFunctions))
 {
     JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject())
@@ -793,9 +954,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnPropertyAddress, uint64_t, (Enc
     JSObject* object = asObject(base);
     if (object->type() == GlobalProxyType)
         return addressInGlobalObject(object, name.get());
+    if (takesFunctions && isCompiledClosure(object))
+        return addressInFunction(*uncheckedDowncast<Closure>(object), name.get());
     if (object->type() != FinalObjectType || object->structure()->isCompiledStructure() || object->structure()->typeInfo().overridesGetOwnPropertySlot() || !object->canPerformFastPutInlineExcludingProto())
         return 0;
     return addressOfReplaceableValue(object, name.get());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMovedStaticField, EncodedJSValue, (Instance* instance, JSCell* classObject, uint32_t key))
+{
+    LeafOperationScope leaf(*instance->vm);
+    unsigned attributes = 0;
+    auto offset = classObject->structure()->getWithoutMaterializing(instance->state->propertyCaches->nameOf(key).uid, attributes);
+    RELEASE_ASSERT(offset && isValidOffset(*offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
+    return JSValue::encode(asObject(classObject)->getDirect(*offset));
 }
 
 static NEVER_INLINE uint64_t searchOwnNamedPropertyAddress(PropertyCaches& caches, JSValue base, uint32_t key, uint32_t fitsFieldTypes)
@@ -817,7 +989,7 @@ static NEVER_INLINE uint64_t searchOwnNamedPropertyAddress(PropertyCaches& cache
     return address;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, uint32_t fitsFieldTypes))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, uint32_t fitsFieldTypes, SiteCache cache))
 {
     JSValue base = JSValue::decode(encodedBase);
     LeafOperationScope leaf(*instance->vm);
@@ -827,9 +999,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t,
         Structure* structure = object->structure();
         bool mayBeReplaced = !structure->isCompiledStructure() && !structure->isDictionary() && !structure->mayBePrototype() && !structure->mayHaveImmutableProperties() && !structure->isWatchingReplacement()
             && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !structure->typeInfo().overridesGetOwnPropertySlot();
-        const Slot* filed = mayBeReplaced ? caches.findByKey(structure, caches.nameOf(key).uid, SlotAccess::Read) : nullptr;
-        if (filed && filed->kind == Slot::Kind::Value && filed->has(Slot::isOwn))
-            return std::bit_cast<uint64_t>(object->locationForOffset(filed->offsetInStorage()));
+        UniquedStringImpl* name = caches.nameOf(key).uid;
+        const Slot* filed = mayBeReplaced ? caches.findByKey(structure, name, SlotAccess::Read) : nullptr;
+        if (filed && filed->kind == Slot::Kind::Value && filed->has(Slot::isOwn)) {
+            PropertyOffset offset = filed->offsetInStorage();
+            if (cache && caches.siteCaches().mayBeFilledAfterMiss(cache))
+                caches.fillStoreSiteCache(cache, structure, name, offset);
+            if (cache && !caches.findByKey(structure, name, SlotAccess::Store) && caches.shouldFile(structure->id(), name, SlotAccess::Store)) {
+                structure->didCachePropertyReplacement(*instance->vm, offset);
+                caches.cache({ structure, caches.nameOf(key), SlotAccess::Store }, PropertyAnswer::own(PropertyAnswerKind::Value, SlotAccess::Store, offset));
+            }
+            return std::bit_cast<uint64_t>(object->locationForOffset(offset));
+        }
     }
     return searchOwnNamedPropertyAddress(caches, base, key, fitsFieldTypes);
 }
@@ -917,7 +1098,7 @@ static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Ident
         shouldFile = false;
     if (object && shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
-        createClassObjectsOnChain(vm, object);
+        createStaticsOnChain(vm, object, name.impl());
     }
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     LazyPrototypeRead lazy;
@@ -1087,11 +1268,11 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     shouldFile &= !starsWait;
     if (shouldFile) {
         std::optional<Slot> known = caches.tables().find(object->structureID(), name, SlotAccess::Read);
-        shouldFile = !known || known->kind != Slot::Kind::Uncacheable;
+        shouldFile = !known || (known->kind != Slot::Kind::Uncacheable && known->kind != Slot::fieldOfGetter);
     }
     if (shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
-        createClassObjectsOnChain(vm, object);
+        createStaticsOnChain(vm, object, name.uid);
     }
     Structure* structureBefore = WTF::opaque(object->structure());
 

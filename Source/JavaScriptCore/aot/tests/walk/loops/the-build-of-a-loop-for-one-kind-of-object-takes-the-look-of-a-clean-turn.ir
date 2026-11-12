@@ -7,12 +7,18 @@
 # CHECK: = ShapeTest
 # CHECK: = ShapeTest
 # CHECK: frequency=Rare isLoopHead=true
-# CHECK: = GetSlot {{*}}key="side"
 # CHECK: isInLoop=true isLoopHead=true
+# CHECK: = NarrowInteger
+# CHECK-NEXT: = Unbox
+# CHECK-NEXT: = GetSlot {{*}}key="side"
+# CHECK: () isInLoop=true
 # CHECK-NOT: = GetSlot
 # CHECK: = Add {{*}}form=Numbers
-# CHECK: = GetSlot {{*}}key="w"
 # CHECK: isInLoop=true isLoopHead=true
+# CHECK: = NarrowInteger
+# CHECK-NEXT: = Unbox
+# CHECK-NEXT: = GetSlot {{*}}key="w"
+# CHECK: () isInLoop=true
 # CHECK-NOT: = GetSlot
 # CHECK: = Add {{*}}form=Numbers
 # RUN(SHELL): run-in-shell globalThis.hidden = () => 3; globalThis.sink = sum => { print(String(sum)); };

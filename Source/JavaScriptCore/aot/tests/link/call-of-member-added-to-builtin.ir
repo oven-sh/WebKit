@@ -1,0 +1,33 @@
+# `Reflect.decorate = decorate`: the call hands the closure to the function that the program lays there, which hands it on.
+# OPTIONS: exclude=CodeOutsideImage,UnlistedGlobals
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 callers-known
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Reflect
+    PropSet v2, v1 key="decorate" mode=Strict
+    v4 = PropGet v2 key="decorate"
+    v5 = Call v4, v2, v0 calleeKey="decorate" calleeName="Reflect.decorate"
+    v6 = Integer integer=1
+    v7 = Call v0, -, v6 calleeName="target"
+    Return
+}
+function f1 name="target" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="decorate" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="console" [isFreeName]
+    v5 = PropGet v4 key="log"
+    v6 = Call v5, v4, v0 calleeKey="log" calleeName="console.log"
+    Return v2
+}

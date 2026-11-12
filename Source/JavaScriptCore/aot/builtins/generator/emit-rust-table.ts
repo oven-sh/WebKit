@@ -393,6 +393,16 @@ function formatSymbolConstants(builtins: readonly ModelBuiltin[]): string[] {
   });
 }
 
+function formatNumberConstants(builtins: readonly ModelBuiltin[]): string[] {
+  return builtins.flatMap(builtin => {
+    const { constant } = builtin;
+    if (constant === null || constant.constant !== "Number") return [];
+    const bits = new DataView(new ArrayBuffer(8));
+    bits.setFloat64(0, constant.value);
+    return [`(${formatBuiltinId(builtin)}, f64::from_bits(0x${bits.getBigUint64(0).toString(16).padStart(16, "0")}))`];
+  });
+}
+
 function emitNames(model: TableModel): string {
   return [
     emitTexts(
@@ -411,6 +421,7 @@ function emitNames(model: TableModel): string {
       "static SYMBOL_CONSTANTS: &[(BuiltinId, BuiltinName, WellKnownSymbol)]",
       formatSymbolConstants(model.builtins),
     ),
+    emitSlice("static NUMBER_CONSTANTS: &[(BuiltinId, f64)]", formatNumberConstants(model.builtins)),
   ].join("");
 }
 

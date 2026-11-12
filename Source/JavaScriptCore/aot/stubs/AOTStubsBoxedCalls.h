@@ -77,6 +77,9 @@ constexpr std::optional<HostResult> checkedResultOf(BoxedCallForm form)
     case BoxedCallForm::MapHas:
     case BoxedCallForm::ObjectHasOwnProperty:
     case BoxedCallForm::ObjectIs:
+    case BoxedCallForm::ObjectIsExtensible:
+    case BoxedCallForm::ObjectIsFrozen:
+    case BoxedCallForm::ObjectIsSealed:
     case BoxedCallForm::RegExpTest:
     case BoxedCallForm::SetDelete:
     case BoxedCallForm::SetHas:
@@ -124,7 +127,7 @@ static_assert(descriptorOf(StubFamily::CallMethodOfAnyReceiverThatMayBeUnread).n
 static_assert(descriptorOf(StubFamily::CallMethodThatMayBeUnreadInTailPosition).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::ReadMethodAtSiteUnlessReceiverFindsIt).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).minCount == BoxedCallEntry::minArgumentCount && descriptorOf(StubFamily::CallBoxedBuiltin).maxCount == BoxedCallEntry::maxArgumentCount);
-static_assert(numberOfBuiltinBoxedStubs * 3 <= StubWords::numberOfBoxedCallEntries * 2);
+static_assert(numberOfBuiltinBoxedStubs * 4 <= StubWords::numberOfBoxedCallEntries * 3);
 
 } } // namespace JSC::AOT
 

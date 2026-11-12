@@ -245,7 +245,7 @@ export default b.declarations(
         capability: "heap",
         throws: b.propagated,
         deterministic: true,
-        implementation: b.inline("StringFromCharCode", { max: 1, otherwise: b.hostCall }),
+        implementation: b.inline("StringFromCharCode", { max: 4, otherwise: b.hostCall }),
       },
       fromCodePoint: {
         args: { codePoints: b.any.rest },

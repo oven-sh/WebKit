@@ -74,17 +74,21 @@ RegExpRecordID RegExpRequests::recordOf(StringID pattern, OptionSet<Yarr::Flags>
 static Vector<RegExpRequest> requestsForMentionedRegExps(const NumberedKeys& mentionedKeys, const ParallelLoops& loops)
 {
     Vector<RegExpRequestKey> keys;
+    Vector<RegExpRequestKey> keysWithMatcher;
     keys.reserveInitialCapacity(mentionedKeys.size());
     for (uint32_t index = 0; index < mentionedKeys.size(); ++index) {
         std::span<const uint32_t> words = mentionedKeys.keyAt(index);
         RELEASE_ASSERT(words.size() == 2);
         auto flags = OptionSet<Yarr::Flags>::fromRaw(safeCast<uint16_t>(words[1]));
         keys.append(RegExpRequestKey { words[0], ImageRegExp::significantFlags(flags).toRaw() });
+        if (flags.containsAll(MentionList::flagsOfMatcher))
+            keysWithMatcher.append(keys.last());
     }
     sortAndRemoveDuplicates(loops, keys);
+    sortAndRemoveDuplicates(loops, keysWithMatcher);
 
-    return keys.map([](const RegExpRequestKey& key) {
-        return RegExpRequest { .pattern = StringID(key.first), .flags = OptionSet<Yarr::Flags>::fromRaw(key.second) };
+    return keys.map([&](const RegExpRequestKey& key) {
+        return RegExpRequest { .pattern = StringID(key.first), .flags = OptionSet<Yarr::Flags>::fromRaw(key.second), .needsMatcher = std::ranges::binary_search(keysWithMatcher, key) };
     });
 }
 

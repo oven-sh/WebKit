@@ -38,6 +38,9 @@ public:
     Operand loadSlotThatHoldsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Operand loadSlotOrLeaveIfEmpty(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, BlockEdge isEmpty);
     static constexpr bool storeLooksAtType(SlotRepresentation slot) { return slot == SlotRepresentation::OptionalInt32; }
+    static bool isNarrowIntegerOrOneMarker(const Type&);
+    OptionalInteger widenBySelect(Word32, const Type&);
+    Word32 narrowOptionalInt32(OptionalInteger, uint16_t primitives);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord, const Type& storedType);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord = nullptr);
     Condition isFilled(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
@@ -50,6 +53,8 @@ public:
     CellPointer extraPropertiesOf(CellPointer, const PlacedSlot& extraPropertiesWord, LBasicBlock hasNone);
     void storeInExtension(Pointer extension, const PlacedSlot&, const MemoryLocation&, Operand);
     void storeIfExtensionHolds(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot& extensionWord);
+    ScopeFork storeIntoFilledSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const Type& storedType, const PlacedSlot& extensionWord, BlockEdge lacksGranule, BlockEdge isEmpty);
+    void reserveGranules(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t reservedBits, OwnerBarrier, bool mayCollect);
     void ensureExtensionHolds(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits, OwnerBarrier, bool mayCollect = true);
     void store(TypedPointer, SlotRepresentation, Operand, const Type& storedType);
     void ensureExtensionHoldsWithoutCollecting(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits)
@@ -78,11 +83,9 @@ private:
         ScopeFork fork;
     };
     TestedExtension branchUnlessExtensionHolds(CellPointer, const PlacedSlot& extensionWord, uint64_t granuleBits, BlockEdge lacksGranule, bool asksForExtensionFirst = false);
-    void reserveGranules(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t reservedBits, OwnerBarrier, bool mayCollect);
     void keepOwnerOfExtensionAlive(CellPointer cell) { ensureStillAliveHere(cell); }
 
     OptionalInteger widenOptionalInt32(Word32, AbsentReadsAs);
-    Word32 narrowOptionalInt32(OptionalInteger);
 
     LValue loadBits(TypedPointer, SlotRepresentation);
     void storeBits(TypedPointer, SlotRepresentation, LValue);

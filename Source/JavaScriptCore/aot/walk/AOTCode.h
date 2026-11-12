@@ -38,6 +38,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/OptionSet.h>
+#include <wtf/PageBlock.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
@@ -169,6 +170,19 @@ public:
         m_size = newSize;
     }
     void clear() { m_size = 0; }
+    void releasePages(uint32_t first, uint32_t end)
+    {
+#if ASSERT_ENABLED
+        memset(static_cast<void*>(m_records + first), byteOfRoomThatIsTaken, sizeof(T) * (end - first));
+#else
+        uintptr_t begin = roundUpToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(m_records + first));
+        uintptr_t behind = std::bit_cast<uintptr_t>(m_records + end) & ~(static_cast<uintptr_t>(pageSize()) - 1);
+        if (begin < behind) {
+            OSAllocator::decommit(std::bit_cast<void*>(begin), behind - begin);
+            OSAllocator::commit(std::bit_cast<void*>(begin), behind - begin, true, false);
+        }
+#endif
+    }
     void forgetUnit()
     {
 #if ASSERT_ENABLED
@@ -899,6 +913,7 @@ struct GroundsOfPosition {
     ValueID limitWithinLengthCheck;
     ValueID loweredCounter;
     ValueID loweredFrom;
+    bool loweringLoopIsClosed { false };
     SteppedWithCounter steppedBeside { };
     ValueID counterTest;
     bool counterTestResult { true };
@@ -1059,7 +1074,7 @@ public:
     bool holdsFrameCells() const { return m_holdsFrameCells; }
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
     bool callsOfFunctionNeverCollect() const { return m_callsOfFunctionNeverCollect; }
-    bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes; }
+    bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes || m_opcodesOfValues.contains(Opcode::GetDataViewElement); }
     bool callsItself() const { return m_callsItself; }
     bool isEntryThatWalksBody() const { return m_isEntryThatWalksBody; }
     bool mayHoldReturnedCalls() const { return m_mayHoldReturnedCalls; }
@@ -1147,6 +1162,7 @@ public:
     void noteBeliefAheadOfEdges(BlockID, BeliefAheadOfEdges);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
+    void makeBlockNormal(BlockID);
     void makeBlockUnlikely(BlockID, bool thoughRare = false);
     void setSubject(BlockID, ValueID);
     void markMeetingOfStepWrittenByHand(BlockID);
@@ -1218,6 +1234,8 @@ public:
         m_syntheticVariableReads.append(read);
     }
     std::span<const ValueID> syntheticVariableReads() const LIFETIME_BOUND { return m_syntheticVariableReads.span(); }
+    void setMergedObjects(const BitVector& parameters) { m_mergedObjects = parameters; }
+    bool isMergedObject(ValueID parameter) const { return m_mergedObjects.get(parameter.index()); }
     void noteValueThatFoldedArithmeticGives(ValueID given) { m_valuesThatFoldedArithmeticGives.append(given); }
     std::span<const ValueID> valuesThatFoldedArithmeticGives() const LIFETIME_BOUND { return m_valuesThatFoldedArithmeticGives.span(); }
     ValueID appendConversion(BlockID, Opcode, ValueID operand, Representation, TypeID proven, Origin);
@@ -1286,6 +1304,7 @@ public:
         auto behind = std::ranges::upper_bound(m_recordsAbandoned, record.index(), { }, &std::pair<uint32_t, uint32_t>::first);
         return record.index() < (behind - 1)->second;
     }
+    void releaseAbandonedBlocks();
     void keepChangesToOlderParts(bool keeps)
     {
         m_keepsChangesToOlderParts = keeps;
@@ -1324,6 +1343,7 @@ private:
     Vector<InputOfHoleReadAsNaN> m_readsAnsweredByHolesReadAsNaN;
     Vector<CellsMadeForOneOperation> m_cellsMadeForOneOperation;
     Vector<ValueID> m_syntheticVariableReads;
+    BitVector m_mergedObjects;
     Vector<ValueID> m_valuesThatFoldedArithmeticGives;
     Vector<PollWithFate> m_pollsWithFates;
     struct ChangeToOlderPart {

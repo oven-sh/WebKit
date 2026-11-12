@@ -656,7 +656,7 @@ TypeID ResultRules::declaredContents(const Operation& operation, uint32_t operan
     if (protocolsOf(opcode, operandIndex).contains(Protocol::Thenable))
         return provenOrUnknown(tryTypeOfAwaited(context, container), seed);
     if (opcode == Opcode::GetArrayElement) {
-        bool findsElement = operation.isPresent() || operation.readsHoleAsNaN();
+        bool findsElement = operation.isPresent() || operation.readsHoleAsNaN() || (operation.listHasNoHoles() && operation.isInBounds());
         return provenOrUnknown(tryTypeOfArrayElementRead(context, container, operation.arrayStorage(), operation.admitsInt32Storage(), findsElement, operation.readsHoleAsNaN()), seed);
     }
     if (readsOutOfArrayStorageInResultRules.contains(opcode))

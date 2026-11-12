@@ -18,8 +18,11 @@ using Node = RegExpMatchNode;
 using Sequence = RegExpMatchNode::Sequence;
 
 static constexpr unsigned maxNodesOfPlan = 24;
+static constexpr unsigned maxNodesOfStickyPlan = 64;
 static constexpr unsigned maxCopiesOfGroup = 6;
 static constexpr unsigned maxFixedCharacters = 64;
+static constexpr unsigned minAlternativesChosen = 4;
+static constexpr unsigned maxAlternativesChosen = 64;
 
 static unsigned addLengths(unsigned a, unsigned b)
 {
@@ -108,12 +111,14 @@ static constexpr Beginning endOfPattern() { return { .characters = { }, .takesAn
 
 class Planner {
 public:
-    explicit Planner(const Yarr::YarrPattern& pattern)
+    Planner(const Yarr::YarrPattern& pattern, bool isSticky)
         : m_pattern(pattern)
+        , m_maxNodes(isSticky ? maxNodesOfStickyPlan : maxNodesOfPlan)
     {
     }
 
     std::unique_ptr<const RegExpMatchPlan> plan();
+    std::unique_ptr<const RegExpMatchPlan> planOfPrefix() const;
 
 private:
     bool addAlternatives(const Yarr::PatternDisjunction&, Vector<Sequence>&);
@@ -123,9 +128,13 @@ private:
     bool addGroup(const Yarr::PatternTerm&, Sequence&);
     static std::optional<Latin1Set> charactersOf(const Yarr::PatternTerm&);
 
+    static std::optional<bool> addFirstCharacters(const Yarr::PatternAlternative&, Latin1Set&);
+    static std::optional<bool> addFirstCharacters(const Yarr::PatternDisjunction&, Latin1Set&);
+
     Beginning beginningOf(const Node&, const Beginning& rest) const;
     Beginning beginningOf(std::span<const Node>, const Beginning& rest) const;
     bool areExclusive(const Vector<Sequence>&, const Beginning& rest) const;
+    Vector<Latin1Set> beginningsOf(const Vector<Sequence>&) const;
 
     bool analyze(Sequence&, const Beginning& rest);
     bool analyze(Node&, const Beginning& rest);
@@ -134,6 +143,7 @@ private:
     unsigned costOf(std::span<const Node>, unsigned costOfRest) const;
 
     const Yarr::YarrPattern& m_pattern;
+    const unsigned m_maxNodes;
     unsigned m_numberOfNodes { 0 };
     bool m_isRefused { false };
 };
@@ -220,7 +230,7 @@ bool Planner::addGroup(const Yarr::PatternTerm& term, Sequence& sequence)
 
 bool Planner::addTerm(const Yarr::PatternTerm& term, Sequence& sequence)
 {
-    if (++m_numberOfNodes > maxNodesOfPlan || term.matchDirection() != Yarr::Forward)
+    if (++m_numberOfNodes > m_maxNodes || term.matchDirection() != Yarr::Forward)
         return false;
     switch (term.type) {
     case Yarr::PatternTerm::Type::AssertionBOL:
@@ -355,6 +365,19 @@ bool Planner::areExclusive(const Vector<Sequence>& alternatives, const Beginning
     return true;
 }
 
+Vector<Latin1Set> Planner::beginningsOf(const Vector<Sequence>& alternatives) const
+{
+    Vector<Latin1Set> beginnings;
+    if (alternatives.size() < minAlternativesChosen || alternatives.size() > maxAlternativesChosen)
+        return beginnings;
+    for (const Sequence& alternative : alternatives) {
+        if (!minimumLengthOf(alternative.span()))
+            return { };
+        beginnings.append(beginningOf(alternative.span(), { }).characters);
+    }
+    return beginnings;
+}
+
 bool Planner::analyzeGroup(Node& group, const Beginning& rest)
 {
     const bool isLoop = group.maximum == Node::unbounded;
@@ -399,6 +422,8 @@ bool Planner::analyzeGroup(Node& group, const Beginning& rest)
     group.commits = isDeterministic && isExclusive;
     if (isLoop && !group.commits)
         m_isRefused = true;
+    if (group.commits)
+        group.beginnings = beginningsOf(group.alternatives);
     return group.commits;
 }
 
@@ -416,6 +441,7 @@ bool Planner::analyze(Node& node, const Beginning& rest)
     case Node::Kind::NegativeLookahead:
         for (Sequence& alternative : node.alternatives)
             analyze(alternative, endOfPattern());
+        node.beginnings = beginningsOf(node.alternatives);
         return true;
     case Node::Kind::StartOfSubject:
     case Node::Kind::StartOfLine:
@@ -486,8 +512,9 @@ std::unique_ptr<const RegExpMatchPlan> Planner::plan()
         maximumLengthToEnd = std::max(maximumLengthToEnd, alternative.isEmpty() || alternative.last().kind != Node::Kind::EndOfSubject ? Node::unbounded : maximumLengthOf(alternative));
         beginning.characters.merge(beginningOf(alternative.span(), endOfPattern()).characters);
     }
-    if (m_isRefused || plan->cost > maxNodesOfPlan || plan->minimumLength > maxFixedCharacters)
+    if (m_isRefused || plan->cost > m_maxNodes || plan->minimumLength > maxFixedCharacters)
         return nullptr;
+    plan->beginnings = beginningsOf(plan->alternatives);
     if (maximumLengthToEnd != Node::unbounded)
         plan->maximumLengthToEnd = maximumLengthToEnd;
     if (plan->minimumLength)
@@ -495,9 +522,77 @@ std::unique_ptr<const RegExpMatchPlan> Planner::plan()
     return plan;
 }
 
-std::unique_ptr<const RegExpMatchPlan> planRegExpMatch(const Yarr::YarrPattern& pattern)
+std::optional<bool> Planner::addFirstCharacters(const Yarr::PatternAlternative& alternative, Latin1Set& characters)
 {
-    return Planner(pattern).plan();
+    for (const Yarr::PatternTerm& term : alternative.m_terms) {
+        switch (term.type) {
+        case Yarr::PatternTerm::Type::AssertionBOL:
+        case Yarr::PatternTerm::Type::AssertionEOL:
+        case Yarr::PatternTerm::Type::AssertionWordBoundary:
+        case Yarr::PatternTerm::Type::ParentheticalAssertion:
+            continue;
+        case Yarr::PatternTerm::Type::PatternCharacter:
+        case Yarr::PatternTerm::Type::CharacterClass: {
+            std::optional<Latin1Set> own = charactersOf(term);
+            if (!own)
+                return std::nullopt;
+            characters.merge(*own);
+            if (term.quantityMinCount)
+                return false;
+            continue;
+        }
+        case Yarr::PatternTerm::Type::ParenthesesSubpattern: {
+            std::optional<bool> mayBeEmpty = addFirstCharacters(*term.parentheses.disjunction, characters);
+            if (!mayBeEmpty)
+                return std::nullopt;
+            if (term.quantityMinCount && !*mayBeEmpty)
+                return false;
+            continue;
+        }
+        case Yarr::PatternTerm::Type::NumberedBackReference:
+        case Yarr::PatternTerm::Type::NamedBackReference:
+        case Yarr::PatternTerm::Type::NumberedForwardReference:
+        case Yarr::PatternTerm::Type::NamedForwardReference:
+        case Yarr::PatternTerm::Type::DotStarEnclosure:
+            return std::nullopt;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    return true;
+}
+
+std::optional<bool> Planner::addFirstCharacters(const Yarr::PatternDisjunction& disjunction, Latin1Set& characters)
+{
+    bool mayBeEmpty = false;
+    for (auto& alternative : disjunction.m_alternatives) {
+        std::optional<bool> ofAlternative = addFirstCharacters(*alternative, characters);
+        if (!ofAlternative)
+            return std::nullopt;
+        mayBeEmpty |= *ofAlternative;
+    }
+    return mayBeEmpty;
+}
+
+std::unique_ptr<const RegExpMatchPlan> Planner::planOfPrefix() const
+{
+    Latin1Set characters;
+    std::optional<bool> mayBeEmpty = addFirstCharacters(*m_pattern.m_body, characters);
+    if (!mayBeEmpty || *mayBeEmpty || characters.count() == characters.size())
+        return nullptr;
+    auto plan = makeUnique<RegExpMatchPlan>();
+    plan->alternatives.append(Sequence { Node { .characters = characters } });
+    plan->cost = 1;
+    plan->minimumLength = 1;
+    plan->firstCharacters = characters;
+    plan->isPrefix = true;
+    return plan;
+}
+
+std::unique_ptr<const RegExpMatchPlan> planRegExpMatch(const Yarr::YarrPattern& pattern, bool isSticky)
+{
+    Planner planner(pattern, isSticky);
+    std::unique_ptr<const RegExpMatchPlan> plan = planner.plan();
+    return plan || !isSticky ? WTF::move(plan) : planner.planOfPrefix();
 }
 
 } } // namespace JSC::AOT

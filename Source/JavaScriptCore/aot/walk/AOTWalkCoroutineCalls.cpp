@@ -291,7 +291,7 @@ bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return true;
     bool walksOwnBody = walker.walksOwnBodyOfUnit();
     return (walker.currentBodyIndex().opcodes().contains(Opcode::NewArray) && buildPromiseAllOfElements(walker, value))
-        || buildStepWrittenByHand(walker, value)
+        || ((written.calleeKey() == walker.program().keyOf(BuiltinNames::next) || walker.armHoldsKeyOf(written.calleeOperand())) && buildStepWrittenByHand(walker, value))
         || (walksOwnBody && walker.unit().role == CodeRole::CoroutineBody && buildAwaitedStepWrittenByHand(walker, value))
         || ((walksOwnBody ? walker.unit().role == CodeRole::CoroutineBody : !!walker.coroutineState().keptByCalls) && buildAwaitedCall(walker, value))
         || (walksOwnBody && walker.isInLoop() && buildRampAtCall(walker, value));

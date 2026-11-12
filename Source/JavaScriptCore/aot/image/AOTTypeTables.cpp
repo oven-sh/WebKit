@@ -366,9 +366,20 @@ static uint32_t findShiftOfTypeNumbers(const TablePart& part, const TypeRecordsB
     }
 }
 
+static uint32_t appendTypeRecordAtUnit(TablePart& part, std::span<const uint8_t> record, size_t unit)
+{
+    static constexpr size_t alignmentInPart = 8;
+    static_assert(!(FirstTableParts::startOfTypes % alignmentInPart));
+    if (unit <= alignmentInPart) [[likely]]
+        return part.append(record, unit);
+
+    size_t end = FirstTableParts::startOfTypes + roundUpToMultipleOf<alignmentInPart>(std::max(part.size(), alignmentInPart));
+    part.allocate(roundUpToMultipleOf(unit, end) - end, alignmentInPart);
+    return part.appendUnshared(record, alignmentInPart);
+}
+
 static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeingEncoded& records, uint32_t shiftOfTypeNumbers)
 {
-    static_assert(!(FirstTableParts::startOfTypes % 8));
     size_t numberOfTypes = records.firstWord.size() - 1;
     std::span<const OperandOfShapeTestInTypeRecords> operands = records.operandsOfShapeTests.span();
     Vector<uint32_t> offsets;
@@ -382,7 +393,7 @@ static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeing
             continue;
         }
         std::span<const uint32_t> record = records.words.span().subspan(first, end - first);
-        uint32_t offset = part.append(asBytes(record), size_t { 1 } << shiftOfTypeNumbers);
+        uint32_t offset = appendTypeRecordAtUnit(part, asBytes(record), size_t { 1 } << shiftOfTypeNumbers);
         for (; nextOperand < operands.size() && operands[nextOperand].word < end; ++nextOperand)
             part.link(offset + static_cast<uint32_t>((operands[nextOperand].word - first) * sizeof(uint32_t)));
         offsets.append(offset);

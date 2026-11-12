@@ -12,6 +12,7 @@
 #include "AOTMemoryLocation.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "JSArrayBufferView.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,11 +34,14 @@ TypedPointer StaticsEmitter::addressOfStaticField(VariableID id)
     return instanceWord(m_heaps.entire(AbstractHeap::NamedProperties), m_mentions.add(NumberSpace::Variable, id));
 }
 
-void StaticsEmitter::storeStaticField(VariableID id, Boxed stored)
+void StaticsEmitter::storeStaticField(VariableID id, Boxed stored, const Type& storedType, bool isUndoneAtRestart)
 {
     emitter<SlotEmitter>().store(addressOfStaticField(id), SlotRepresentation::JSValue, stored);
-    emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::StaticFieldsStored);
-    emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
+    if (!isUndoneAtRestart)
+        emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::StaticFieldsStored);
+    if (storedType.hasCells())
+        emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
+    refreshViewMirror(id, stored, storedType);
 }
 
 Operand StaticsEmitter::loadFieldOfEnvironment(VariableID id, LayoutID layout, uint32_t field)
@@ -56,6 +60,7 @@ void StaticsEmitter::storeFieldOfEnvironment(VariableID id, LayoutID layout, uin
         emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfScopesInStaticsStored);
     if (traitsOf(variable.representation).holdsCell && storedType.hasCells())
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
+    refreshViewMirror(id, stored, storedType);
 }
 
 Operand StaticsEmitter::loadVariable(VariableID id)
@@ -71,6 +76,52 @@ void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& st
         emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfModulesStored);
     if (traitsOf(variable.representation).holdsCell && storedType.hasCells())
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
+    refreshViewMirror(id, stored, storedType);
+}
+
+void StaticsEmitter::refreshViewMirror(VariableID id, Operand stored, const Type& storedType)
+{
+    if (!m_plan.variable(id).hasViewMirror)
+        return;
+    auto wordOfMirror = [&](int32_t offset) {
+        return instanceWord(m_heaps.entire(AbstractHeap::TypedArrayStorage), m_mentions.add(NumberSpace::Variable, id.index(), offset));
+    };
+    const ClassPart* onlyClass = storedType.primitives || (!stored.is<CellPointer>() && !stored.is<Boxed>()) ? nullptr : singleBuiltinClassOf(types(), storedType);
+    TypedArrayType typedArrayType = onlyClass ? m_program.builtins().typedArrayTypeOf(onlyClass->builtinClass) : NotTypedArray;
+    bool mirrorsAlone = !m_plan.variable(id).firstViewOfBuffer;
+    if (mirrorsAlone && isTypedView(typedArrayType)) {
+        Machine::DeclaredAccessesSuspension mirrorsStore(m_out);
+        CellPointer view(stored.value);
+        Integer length = loadField<Integer>(view, m_heaps.JSArrayBufferView_length);
+        int64_t greatest = (1ll << 31) >> logElementSize(typedArrayType);
+        Integer mirrored = select(below(length, greatest), length, greatest);
+        Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
+        m_out.store64(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value(), wordOfMirror(viewMirrorVectorOffset));
+        m_out.store64(select(hasFixedLength, mirrored, 0).value(), wordOfMirror(viewMirrorLengthOffset));
+    } else if (mirrorsAlone && storedType.isUndefinedOrNull()) {
+        Machine::DeclaredAccessesSuspension mirrorsStore(m_out);
+        m_out.store64(m_out.constInt64(0), wordOfMirror(viewMirrorLengthOffset));
+    } else
+        callLeaf<Integer>(RuntimeOperation::RefreshViewMirror, { Integer(m_out.valueOf(addressOf(id))), Pointer(m_instance) });
+}
+
+Integer StaticsEmitter::loadMirroredLength(VariableID id, bool isOfBuffer)
+{
+    RELEASE_ASSERT(m_plan.variable(id).hasViewMirror);
+    int32_t offset = isOfBuffer ? bufferLengthOffsetInViewMirror : viewMirrorLengthOffset;
+    return zeroExtended(Word32(m_out.load32(instanceWord(m_heaps.entire(AbstractHeap::TypedArrayStorage), m_mentions.add(NumberSpace::Variable, id.index(), offset)))));
+}
+
+Pointer StaticsEmitter::loadMirroredVector(VariableID id)
+{
+    RELEASE_ASSERT(m_plan.variable(id).hasViewMirror);
+    return Pointer(m_out.load64(instanceWord(m_heaps.entire(AbstractHeap::TypedArrayStorage), m_mentions.add(NumberSpace::Variable, id.index(), viewMirrorVectorOffset))));
+}
+
+CellPointer StaticsEmitter::loadMirroredView(VariableID id)
+{
+    RELEASE_ASSERT(m_plan.variable(id).hasViewMirror);
+    return CellPointer(m_out.load64(instanceWord(m_heaps.entire(AbstractHeap::TypedArrayStorage), m_mentions.add(NumberSpace::Variable, id))));
 }
 
 ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side)

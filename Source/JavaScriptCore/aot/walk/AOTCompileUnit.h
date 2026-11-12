@@ -334,7 +334,7 @@ private:
     WalkInputs m_walkInputs;
     std::unique_ptr<KeptBetweenUnits> m_keptBetweenUnits;
     WalkerInRoom m_walker;
-    RoomsOfSweep m_roomsOfSweep;
+    std::unique_ptr<RoomsOfSweep> m_roomsOfSweep { makeUniqueWithoutFastMallocCheck<RoomsOfSweep>() };
     CodeGenerationTotals m_totals;
     Vector<WalkNotes> m_notes;
     Vector<FunctionID, 8> m_functionsThatUnitMayEnterByValue;

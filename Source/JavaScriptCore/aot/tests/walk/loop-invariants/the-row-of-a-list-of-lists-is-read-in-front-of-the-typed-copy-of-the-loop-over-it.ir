@@ -6,9 +6,9 @@
 # typed copy, failing to the other copy, and the read stands behind it, in the front. The rule on what may leave a loop is as it was: a read that relies on its bounds stays where its proof holds.
 # The row's class and storage are then asked in the front by the code that asks them of any list from in front, and the turns read raw numbers.
 # RUN(FORM): walk f1 mechanisms=all
-# FORM: [[there]]: boolean @Boolean = IsElementPresent [[rows]], [[r]] arrayStorage=Contiguous [keyIsIntegral]
+# FORM: [[there]]: boolean @Boolean = IsElementPresent [[rows]], [[r]], {{*}} arrayStorage=Contiguous [keyIsIntegral]
 # FORM: Branch [[there]]
-# FORM: = GetArrayElement [[rows]], [[r]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# FORM: = GetArrayElement [[rows]], [[r]], {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
 # FORM: number @Double = GetArrayElement {{*}} arrayStorage=Double level=Proven
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 7.5

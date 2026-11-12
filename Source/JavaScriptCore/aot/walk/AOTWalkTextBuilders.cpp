@@ -13,7 +13,9 @@
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
+#include <limits>
 #include <functional>
 #include <optional>
 #include <span>
@@ -472,6 +474,104 @@ bool terminatorUsesStringInBuilder(Walker& walker, const BodyTerminator& termina
         takesText |= operand && isStringInBuilder(walker, walker.nameLastBoundTo(operand));
     });
     return takesText;
+}
+
+bool Walker::branchOnSwitchedStringLength(const BodyTerminator& terminator)
+{
+    auto overStrings = terminator.as<TerminatorKind::SwitchString>();
+    ValueID subject = overStrings.subjectOperand();
+    Reference name = nameLastBoundTo(subject);
+    if (!isStringInBuilder(*this, name) || isUnreachable())
+        return false;
+    StringInBuilder* text = findTextOfOperandInTextBuilders(*this, subject, name);
+    if (!text || (text->stringOfState && text->blockOfState == currentBlock()))
+        return false;
+    Vector<StringID, 16> cases;
+    for (StringID written : overStrings.strings())
+        cases.append(written);
+    if (cases.isEmpty())
+        return false;
+
+    unsigned shortest = std::numeric_limits<unsigned>::max();
+    unsigned longest = 0;
+    for (StringID written : cases) {
+        unsigned length = lengthOfTextForStrings(*this, written);
+        shortest = std::min(shortest, length);
+        longest = std::max(longest, length);
+    }
+    Origin origin = m_origin;
+    origin.isTailCall = false;
+    Reference length = lengthOfStringInBuilder(*this, *text, name, origin);
+    if (!length)
+        return true;
+    count(StatisticID::BuilderSwitchLengthChecks);
+    BlockID otherwise = addBlock();
+    auto leaveIf = [&](Reference isOutside) {
+        if (!isOutside)
+            return;
+        BlockID inside = addBlock();
+        branch(isOutside, otherwise, inside);
+        continueIn(inside);
+    };
+    if (shortest)
+        leaveIf(buildIntegerOperator(*this, Opcode::Less, length, integerForStrings(*this, shortest), origin));
+    if (!isUnreachable())
+        leaveIf(buildIntegerOperator(*this, Opcode::Less, integerForStrings(*this, longest), length, origin));
+    Vector<BlockID, 16> matches;
+    for (size_t place = 0; place < cases.size(); ++place)
+        matches.append(addBlock());
+    static constexpr size_t mostCasesCompared = 24;
+    bool comparesInPlace = cases.size() <= mostCasesCompared && std::ranges::all_of(cases, [&](StringID written) { return canCompareBuilderWithLiteral(*this, *text, written); });
+    if (Reference isOnStack = comparesInPlace && !isUnreachable() ? buildBuilderIsOnStack(*this, name, origin) : Reference()) {
+        BlockID onStack = addBlock();
+        BlockID elsewhere = addBlock(BlockFrequency::Unlikely);
+        branch(isOnStack, onStack, elsewhere);
+        continueIn(onStack);
+        Vector<int64_t, 16> lengths;
+        Vector<BlockID, 16> casesOfLength;
+        for (StringID written : cases) {
+            int64_t caseLength = lengthOfTextForStrings(*this, written);
+            if (lengths.contains(caseLength))
+                continue;
+            lengths.append(caseLength);
+            casesOfLength.append(addBlock());
+        }
+        switchOn(length, lengths.span(), casesOfLength.span(), otherwise);
+        for (size_t group = 0; group < lengths.size(); ++group) {
+            continueIn(casesOfLength[group]);
+            for (size_t place = 0; place < cases.size() && !isUnreachable(); ++place) {
+                if (static_cast<int64_t>(lengthOfTextForStrings(*this, cases[place])) != lengths[group])
+                    continue;
+                Reference isEqual = buildBuilderEqualsLiteral(*this, name, cases[place], origin);
+                if (!isEqual)
+                    break;
+                BlockID next = addBlock();
+                branch(isEqual, matches[place], next);
+                continueIn(next);
+            }
+            if (!isUnreachable())
+                jumpTo(otherwise);
+        }
+        continueIn(elsewhere);
+        text->stringOfState = { };
+    }
+    if (Reference string = isUnreachable() ? Reference() : materializeStringInBuilder(*this, *text, name, origin)) {
+        TerminatorDraft compare(TerminatorKind::SwitchString, origin);
+        compare.setSubjectOperand(string);
+        compare.setStrings(cases.span());
+        endWithSwitchOverOwnBlocks(compare, matches.span(), otherwise);
+    }
+    for (size_t place = 0; place < matches.size() && !m_hasFailed; ++place) {
+        continueIn(matches[place]);
+        EdgeToTargetOfBody match { terminator.block(), static_cast<uint32_t>(place) };
+        endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, origin), singleElementSpan(match));
+    }
+    if (m_hasFailed)
+        return true;
+    continueIn(otherwise);
+    EdgeToTargetOfBody noMatch { terminator.block(), static_cast<uint32_t>(cases.size()) };
+    endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, origin), singleElementSpan(noMatch));
+    return true;
 }
 
 MaterializedStringsScope::MaterializedStringsScope(Walker& walker, const BodyTerminator& terminator)

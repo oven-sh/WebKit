@@ -359,7 +359,7 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
     };
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         Typed::Module& module = program.modules[index];
-        if (isRead.quickGet(index) || module.kind != ModuleKind::SourceText || module.flags.containsAny(isKnownByPath))
+        if (isRead.quickGet(index) || module.kind != ModuleKind::SourceText || module.flags.containsAny(isKnownByPath) || module.exposesGlobalObject)
             continue;
         if (facts.isPathReadByOperation(ModuleID(index)))
             continue;

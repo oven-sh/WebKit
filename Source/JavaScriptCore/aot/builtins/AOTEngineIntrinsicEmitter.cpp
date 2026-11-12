@@ -70,7 +70,7 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
     std::optional<Integer> roomOfEmptyList;
     if (Operand room = value->capacityOperand() ? get(value->capacityOperand()) : Operand(); isEmpty && value->capacityOperand() && room.is<Number>())
         roomOfEmptyList = wholeNumberBehind(room.as<Number>()) ? Integer(wholeNumberBehind(room.as<Number>())) : emitter<ConversionEmitter>().toInteger(room.as<Number>());
-    allocation.allocateListLike(value, array, count, roomOfEmptyList, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
+    allocation.allocateListLike(value, array, count, roomOfEmptyList, std::nullopt, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
         join.add(Boxed(list.value()));
     }), value->likeOperand() && typeOf(value->likeOperand()).isUndefinedOrNull() ? &arrayStorageFormOf(ArrayStorage::Int32) : nullptr);
 

@@ -33,6 +33,10 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     PropDefine v4, v5 key="x"
     v7 = FinishObject v4
     PutModuleVariable v7 variable=g0
+    v9 = NewObject layout=L0
+    v10 = Integer integer=2
+    PropDefine v9, v10 key="x"
+    v12 = FinishObject v9
     Return v3
 }
 function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {

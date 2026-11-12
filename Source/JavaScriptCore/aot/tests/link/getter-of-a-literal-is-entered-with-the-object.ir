@@ -11,7 +11,7 @@
 # CHECK-NEXT: parameter 0 {{*}}proven=L0
 # CHECK: function f2 callers-known
 # CHECK: field L0.0 "a" proven=undefined|int[0, 2147483647] writers-known
-# CHECK: field L1.0 "b" proven=int[0, 2147483647] writers-known
+# CHECK: field L1.0 "b" proven=2 writers-known
 # The slot of such a field is empty, so the tables say that objects of the layout get accessors. Nothing else may change.
 # CHECK: layout L0 changes=[GetsAccessor]
 # CHECK: layout L1 changes=[]

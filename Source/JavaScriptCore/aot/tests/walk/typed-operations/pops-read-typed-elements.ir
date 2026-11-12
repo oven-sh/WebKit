@@ -1,0 +1,146 @@
+# Loops that pop numbers off a literal as they push them read the last element in the storage that the version knows, and the length goes down by one. Behind the pop of `storesBack` the position that was found inside is the length: the store under it appends.
+# function pops(L) { const q = []; let s = 0; for (let i = 0; i < L.length; i++) { const x = L[i]; if (q.length > 0 && q[q.length - 1] > x) s += q.pop(); else q.push(x); } return s * 100 + q.length; }
+# function storesBack(L) { const q = [3, 2, 1]; for (let i = 0; i < L.length; i++) { q.push(1); if (L[i] === q[q.length - 1]) q[q.length - 1] = q.pop(); } return q.length; }
+# function given(q, L) { let s = 0; for (let i = 0; i < L.length; i++) { q.push(L[i]); if (q.length > 2) s += q.pop(); } return s; }
+# RUN(POPS): walk f1 mechanisms=all
+# POPS-LABEL: code f1:Body
+# POPS: ShortenArray
+# RUN(GIVEN): walk f3 mechanisms=all
+# GIVEN-NOT: ShortenArray
+# RUN(WITHHELD): walk f1 mechanisms=all-TypedOperations
+# WITHHELD-NOT: ShortenArray
+# RUN(SHELL): run-in-shell globalThis.sink = (pops, storesBack, given) => { if (!given) return; const L = [5, 3, 8, 1, 2, 7]; print([pops(L), pops([1.5, 0.5, 2.5]), storesBack([0, 1, 1, 5]), storesBack(L), given([], L)].join()); };
+# SHELL: 1302,151,7,9,18
+
+module m0 path="main.js" displayPath="main.js" body=f0
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=3}, Number{value=2}, Number{value=1}]} module=m0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="pops" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d0
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = PropGet v0 key="length"
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(), notTaken b7()
+  b2():
+    v11 = ElemGet v0, v7
+    v12 = PropGet v1 key="length"
+    v13 = Integer
+    v14 = Greater v12, v13
+    Branch v14 -> taken b3(), notTaken b5()
+  b3():
+    v15 = PropGet v1 key="length"
+    v16 = Integer integer=1
+    v17 = Sub v15, v16
+    v18 = ElemGet v1, v17
+    v19 = Greater v18, v11
+    Branch v19 -> taken b4(), notTaken b5()
+  b4():
+    v20 = PropGet v1 key="pop"
+    v21 = Call v20, v1 calleeKey="pop" calleeName="q.pop"
+    v22 = Add v6, v21
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    Jump -> next b6(v23)
+  b5():
+    v24 = PropGet v1 key="push"
+    v25 = Call v24, v1, v11 calleeKey="push" calleeName="q.push"
+    Jump -> next b6(v6)
+  b6(v26):
+    v27 = Increment v7
+    v28 = Convert v27 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v26, v28)
+  b7():
+    v29 = Integer integer=100
+    v30 = Mul v6, v29
+    v31 = PropGet v1 key="length"
+    v32 = Add v30, v31
+    Return v32
+}
+function f2 name="storesBack" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d1
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = PropGet v1 key="push"
+    v9 = Integer integer=1
+    v10 = Call v8, v1, v9 calleeKey="push" calleeName="q.push"
+    v11 = ElemGet v0, v4
+    v12 = PropGet v1 key="length"
+    v13 = Integer integer=1
+    v14 = Sub v12, v13
+    v15 = ElemGet v1, v14
+    v16 = StrictEq v11, v15
+    Branch v16 -> taken b3(), notTaken b4()
+  b3():
+    v17 = PropGet v1 key="length"
+    v18 = Integer integer=1
+    v19 = Sub v17, v18
+    v20 = PropGet v1 key="pop"
+    v21 = Call v20, v1 calleeKey="pop" calleeName="q.pop"
+    ElemSet v1, v19, v21
+    Jump -> next b4()
+  b4():
+    v23 = Increment v4
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v24)
+  b5():
+    v25 = PropGet v1 key="length"
+    Return v25
+}
+function f3 name="given" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = PropGet v1 key="length"
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(), notTaken b5()
+  b2():
+    v11 = PropGet v0 key="push"
+    v12 = ElemGet v1, v7
+    v13 = Call v11, v0, v12 calleeKey="push" calleeName="q.push"
+    v14 = PropGet v0 key="length"
+    v15 = Integer integer=2
+    v16 = Greater v14, v15
+    Branch v16 -> taken b3(), notTaken b4(v6)
+  b3():
+    v17 = PropGet v0 key="pop"
+    v18 = Call v17, v0 calleeKey="pop" calleeName="q.pop"
+    v19 = Add v6, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v20)
+  b4(v21):
+    v22 = Increment v7
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v21, v23)
+  b5():
+    Return v6
+}

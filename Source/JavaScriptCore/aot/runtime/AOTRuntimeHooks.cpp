@@ -15,6 +15,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTGenerator.h"
 #include "AOTInstance.h"
+#include "AOTProgramStatics.h"
 #include "AOTRuntimeCheckFailure.h"
 #include "AOTState.h"
 #include "BuiltinExecutables.h"
@@ -194,8 +195,14 @@ void didCreateRealm(JSGlobalObject* realm)
     Instance* instance = Instance::of(realm);
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
-    if (!instance)
+    if (!instance) {
+        VMState& state = realm->vm().aotState();
+        if (Instance* lender = state.findInstanceThatLendsTables()) {
+            realm->setAOTTableInstance(lender);
+            state.realmsWithBorrowedTables.append(realm);
+        }
         return;
+    }
 
     makeBuiltinsImmutable(*instance);
     Instance::create(realm);
@@ -209,6 +216,12 @@ void willRecompileRegExp(VM& vm)
 {
     for (Instance* instance : vm.aotState().instances)
         instance->regExpsAreRecompiled = true;
+}
+
+void didMoveStorageOf(VM& vm, JSCell* view)
+{
+    for (Instance* instance : vm.aotState().instances)
+        instance->state->statics->didMoveStorageOf(view);
 }
 
 void didChangeMicrotaskQueueing(VM& vm)

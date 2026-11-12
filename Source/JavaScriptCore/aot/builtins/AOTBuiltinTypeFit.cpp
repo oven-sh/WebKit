@@ -440,9 +440,21 @@ static FitWithoutPristineProofs fitWithoutPristineProofs(const BuiltinTypeContex
     if (!operand.isJavaScriptValue())
         return { };
 
+    static constexpr uint8_t question = static_cast<uint8_t>(AnswerKeptInArena::FitInBuiltinType);
+    static constexpr uint32_t bitOfProofNeeded = 4;
+    static constexpr uint32_t bitOfFitIfPristine = 8;
+    TypeArena& types = context.types;
+    bool isRemembered = types.keeps() == ArenaKeeps::UntilReset && types.table().isFrozen();
+    if (isRemembered) {
+        if (std::optional<uint32_t> known = types.rememberedAnswer(question, operandOrNotPassed.bits(), testedID.index()))
+            return { static_cast<TypeFit>(*known & 3), !!(*known & bitOfProofNeeded), !!(*known & bitOfFitIfPristine) };
+    }
     BuiltinTypeFitWalk walk(context, operand, tested);
     TypeFit fit = walk.run();
-    return { fit, fit == TypeFit::Inside && walk.needsPristineProof(), walk.fitsIfPristine() };
+    FitWithoutPristineProofs found { fit, fit == TypeFit::Inside && walk.needsPristineProof(), walk.fitsIfPristine() };
+    if (isRemembered)
+        types.rememberAnswer(question, operandOrNotPassed.bits(), testedID.index(), static_cast<uint32_t>(fit) | (found.needsPristineProof ? bitOfProofNeeded : 0) | (found.fitsIfPristine ? bitOfFitIfPristine : 0));
+    return found;
 }
 
 static std::optional<PristineAspectsOfOperand> pristineAspectsAskedOf(const BuiltinTypeContext& context, TypeID operandID, BuiltinTypeID testedID)

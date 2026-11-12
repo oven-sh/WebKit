@@ -374,7 +374,8 @@ static void testEmptySlotsThatMayBeUndefined()
     reads.file(field);
     AOT_TEST_CHECK(reads.read(objectWithoutField.address()).calledOperation && readsField());
     field.flags |= Slot::dependsOnChain | Slot::emptySlotMayBeUndefined;
-    AOT_TEST_CHECK(!PackedSlot::tryPack(field, PropertyReads::name, cageBase));
+    std::optional<PackedSlot> packed = PackedSlot::tryPack(field, PropertyReads::name, cageBase);
+    AOT_TEST_CHECK(packed && packed->unpack(field.structureID, cageBase, true).headerBits() == field.headerBits());
     reads.file(field);
     StubRun nothingAbove = reads.read(objectWithoutField.address());
     AOT_TEST_CHECK(!nothingAbove.calledOperation && nothingAbove.result == bitsOf(jsUndefined()) && readsField());
@@ -2122,6 +2123,87 @@ static void testInstanceOfRemembersOrdinaryConstructors()
         AOT_TEST_CHECK(answersWithoutTables(true));
         forgetPlaces();
         AOT_TEST_CHECK(ask(value.address()).calledOperation);
+    }
+
+    {
+        std::array<PrototypeChainFilter, PrototypeChainFilter::numberOfFilters> filters { };
+        struct {
+            FakeObject<sizeof(Structure)> ofValues;
+            FakeObject<sizeof(Structure)> ofPrototypes;
+            FakeObject<sizeof(Structure)> ofEnd;
+            FakeObject<sizeof(Structure)> ofPolyProto;
+        } structures;
+        FakeObject<16> end;
+        FakeObject<64> polyProto;
+        std::array<FakeObject<16>, 16> others;
+        uint64_t base = std::exchange(instance.prefix().structureIDBase, structures.ofValues.address() - structureIDOfValues);
+        auto idOf = [&](auto& structure) { return static_cast<uint32_t>(structure.address() - instance.prefix().structureIDBase); };
+        auto setPrototypeIn = [](auto& structure, uint64_t prototype) { structure.template at<uint64_t>(Structure::prototypeOffset()) = prototype; };
+        setPrototypeIn(structures.ofValues, otherPrototypeObject.address());
+        setPrototypeIn(structures.ofPrototypes, end.address());
+        setPrototypeIn(structures.ofEnd, bitsOf(jsNull()));
+        setPrototypeIn(structures.ofPolyProto, 0);
+        otherPrototypeObject.setHeader(idOf(structures.ofPrototypes), FinalObjectType);
+        end.setHeader(idOf(structures.ofEnd), FinalObjectType);
+        polyProto.setHeader(idOf(structures.ofPolyProto), FinalObjectType);
+        polyProto.at<uint64_t>(offsetRelativeToBase(knownPolyProtoOffset)) = end.address();
+        for (auto& other : others)
+            other.setHeader(idOf(structures.ofEnd), FinalObjectType);
+
+        auto askBelow = [&](uint64_t asked, uint64_t prototype) {
+            constructor.property(FakeHolder::inlineOffset) = prototype;
+            StubRun run = ask(asked);
+            AOT_TEST_CHECK(!run.calledOperation);
+            return run.result;
+        };
+        uint64_t& header = words.headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::indexFor(PropertyReads::structureID)];
+        auto asksFilter = [&] { return static_cast<uint32_t>(header) == (PropertyReads::structureID ^ PlaceOfOrdinaryConstructor::asksFilter); };
+        auto numberOfFilters = [&] { return std::ranges::count_if(filters, [](const PrototypeChainFilter& filter) { return filter.structureID; }); };
+        auto bitOf = [](uint64_t object) { return static_cast<uint32_t>(object) * HashedSlot::structureMultiplier >> (32 - PrototypeChainFilter::numberOfBitsLog2); };
+
+        forgetPlaces();
+        reads.clear();
+        fileMethodIn(functionPrototype);
+        reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, FakeHolder::inlineOffset), words.prototypeUID);
+        AOT_TEST_CHECK(askBelow(value.address(), otherPrototypeObject.address()) == 1 && askBelow(value.address(), end.address()) == 1 && !asksFilter());
+        AOT_TEST_CHECK(!askBelow(value.address(), others[0].address()) && asksFilter());
+        reads.clear();
+        AOT_TEST_CHECK(askBelow(value.address(), end.address()) == 1 && !askBelow(value.address(), others[0].address()) && !words.prototypeChainFiltersMayBeFilled);
+
+        words.prototypeChainFilters = filters.data();
+        AOT_TEST_CHECK(askBelow(value.address(), end.address()) == 1 && numberOfFilters() == 1 && words.prototypeChainFiltersMayBeFilled);
+        uint64_t objects = std::ranges::find_if(filters, [](const PrototypeChainFilter& filter) { return filter.structureID; })->objects;
+        AOT_TEST_CHECK(objects == (1ull << bitOf(end.address()) | 1ull << bitOf(otherPrototypeObject.address())));
+        AOT_TEST_CHECK(askBelow(value.address(), otherPrototypeObject.address()) == 1);
+        for (auto& other : others) {
+            AOT_TEST_CHECK(!askBelow(value.address(), other.address()));
+            if (objects >> bitOf(other.address()) & 1)
+                continue;
+            setPrototypeIn(structures.ofValues, other.address());
+            AOT_TEST_CHECK(!askBelow(value.address(), other.address()));
+            words.forgetPrototypeChainFilters();
+            AOT_TEST_CHECK(!numberOfFilters() && askBelow(value.address(), other.address()) == 1 && numberOfFilters() == 1);
+            setPrototypeIn(structures.ofValues, otherPrototypeObject.address());
+            words.forgetPrototypeChainFilters();
+        }
+        for (uint64_t primitive : { bitsOf(jsNumber(7)), bitsOf(jsNull()) })
+            AOT_TEST_CHECK(!askBelow(primitive, end.address()));
+        words.forgetPrototypeChainFilters();
+        AOT_TEST_CHECK(askBelow(polyProto.address(), end.address()) == 1 && !askBelow(polyProto.address(), others[0].address()) && !numberOfFilters());
+        polyProto.at<uint8_t>(JSObject::typeInfoFlagsOffset()) = OverridesGetPrototype;
+        constructor.property(FakeHolder::inlineOffset) = end.address();
+        runner.recordCallsOf(Entry::operationAOTDefaultHasInstance);
+        StubRun trapped = ask(polyProto.address());
+        constructor.property(FakeHolder::inlineOffset) = bitsOf(jsNumber(3));
+        StubRun withoutPrototypeObject = ask(value.address());
+        runner.countCallsOf(Entry::operationAOTDefaultHasInstance);
+        AOT_TEST_CHECK(trapped.numberOfRecordedCalls == 1 && withoutPrototypeObject.numberOfRecordedCalls == 1 && !numberOfFilters() && asksFilter());
+
+        words.prototypeChainFilters = nullptr;
+        words.prototypeChainFiltersMayBeFilled = 0;
+        instance.prefix().structureIDBase = base;
+        otherPrototypeObject.setHeader(0, FinalObjectType);
+        constructor.property(FakeHolder::inlineOffset) = prototypeObject.address();
     }
 
     forgetPlaces();

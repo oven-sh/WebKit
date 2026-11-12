@@ -431,6 +431,9 @@ export default b.declarations(
           returns: self,
           ...nativeEffects,
           uses: { this: [b.movesElements] },
+          length: 0,
+          boxedCallStub: "ArrayReverse",
+          nativeSymbols: ["arrayProtoFuncReverse"],
           implementation: b.hostCall,
         },
         ...returningReceiverAsObject({

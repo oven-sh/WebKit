@@ -150,7 +150,7 @@ void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     std::optional<ConversionEmitter::ComparedInteger> leftInteger = relation ? conversions.findComparedInteger(left) : std::nullopt;
     std::optional<ConversionEmitter::ComparedInteger> rightInteger = leftInteger ? conversions.findComparedInteger(right) : std::nullopt;
-    if (rightInteger && (leftInteger->mayBeMarker || rightInteger->mayBeMarker)) {
+    if (rightInteger && (leftInteger->mayBeMarker || rightInteger->mayBeMarker) && ConversionEmitter::areComparedAsIntegers(*leftInteger, *rightInteger)) {
         bool leftIsGreater = *relation == Relation::Greater || *relation == Relation::GreaterOrEqual;
         const ConversionEmitter::ComparedInteger& greater = leftIsGreater ? *leftInteger : *rightInteger;
         Condition holds = compare(relation, leftInteger->value, rightInteger->value);

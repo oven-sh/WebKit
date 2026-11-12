@@ -242,6 +242,7 @@ Operation* foldFloatingPoint(Builder& builder, Opcode opcode, Type type, Operati
         return foldMachineNumber<float>(builder, opcode, left, rightOrNull);
     case Double:
         return foldMachineNumber<double>(builder, opcode, left, rightOrNull);
+    case Vector128:
     case Void:
     case Int32:
     case Int64:

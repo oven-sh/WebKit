@@ -909,6 +909,7 @@ struct GeneratorSettings {
     const CodeGenerationPolicy& policy;
     FrameMode frameMode;
     StackCheck& stackCheck;
+    std::optional<bool>* remembersFailedSearches;
 };
 
 #endif
@@ -6543,6 +6544,29 @@ class YarrGenerator final : public YarrJITInfo {
                 }
 #endif
 
+#if defined(YARR_FOR_IMAGE) && CPU(X86_64)
+                if (op.m_maskedAltInfo) {
+                    if (auto prefixes = planTwoPrefixSearch()) {
+                        MacroAssembler::JumpList matched;
+                        m_jit.add32(MacroAssembler::TrustedImm32(prefixSearchVectorLength), m_regs.index, m_regs.regT1);
+                        auto restIsShort = m_jit.branch32(MacroAssembler::Above, m_regs.regT1, m_regs.length);
+                        generateTwoPrefixSearch(op, *prefixes, matched);
+                        auto isOutOfInput = m_jit.jump();
+                        restIsShort.link(&m_jit);
+                        auto range = op.m_bmInfo ? op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, false) : std::nullopt;
+                        if (range) {
+                            auto [beginIndex, endIndex] = *range;
+                            auto [map, charactersFastPath] = op.m_bmInfo->createCandidateBitmap(beginIndex, endIndex);
+                            generateBoyerMooreScalarLoop(map, charactersFastPath, endIndex - beginIndex, endIndex, op.m_checkedOffset, matched);
+                        } else
+                            matched.append(m_jit.jump());
+                        isOutOfInput.link(&m_jit);
+                        finishSearch(matched);
+                        return;
+                    }
+                }
+#endif
+
                 // Emit fast skip path with stride if we have BoyerMooreInfo.
                 if (op.m_bmInfo) {
                     auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan());
@@ -11157,6 +11181,98 @@ class YarrGenerator final : public YarrJITInfo {
         m_usesT2 = true;
     }
 
+#if CPU(X86_64)
+    // The input of FindEitherPrefix: the characters at the first positions of each prefix, by their low halves.
+    struct TwoPrefixes {
+        unsigned length { 0 };
+        std::array<uint8_t, 2 * prefixSearchVectorLength> table { };
+    };
+
+    std::optional<TwoPrefixes> planTwoPrefixSearch() const
+    {
+        static constexpr unsigned halves = 16;
+        static constexpr unsigned minPrefixRarity = 8;
+        auto& alternatives = m_pattern.m_body->m_alternatives;
+        if (m_direction != Forward || m_executionMode == ExecutionMode::InlineTest || m_charSize != CharSize::Char8 || !m_jit.supportsSupplementalSSE3())
+            return std::nullopt;
+        // The search ends when too little input is left for the first alternative, so the second must not need less.
+        if (alternatives.size() != 2 || alternatives[0]->m_minimumSize > alternatives[1]->m_minimumSize)
+            return std::nullopt;
+
+        std::array<Vector<WTF::BitSet<halves>, longPrefixLength>, 2> prefixes;
+        for (unsigned i = 0; i < alternatives.size(); ++i) {
+            for (const PatternTerm& term : alternatives[i]->m_terms) {
+                if (prefixes[i].size() == longPrefixLength)
+                    break;
+                if (term.quantityType != QuantifierType::FixedCount || term.quantityMinCount != 1 || term.quantityMaxCount != 1)
+                    break;
+                WTF::BitSet<halves> characters;
+                auto add = [&](char32_t character) {
+                    characters.set(character % halves);
+                };
+                if (term.type == PatternTerm::Type::PatternCharacter) {
+                    // Both cases of a letter have the same low half.
+                    if (!isASCII(term.patternCharacter))
+                        break;
+                    add(term.patternCharacter);
+                } else if (term.type == PatternTerm::Type::CharacterClass) {
+                    const CharacterClass& characterClass = *term.characterClass;
+                    if (term.m_invert || !characterClass.m_matches32.isEmpty() || !characterClass.m_ranges32.isEmpty())
+                        break;
+                    for (char32_t character : characterClass.m_matches8)
+                        add(character);
+                    for (auto& range : characterClass.m_ranges8) {
+                        for (char32_t character = range.begin; character <= range.end; ++character)
+                            add(character);
+                    }
+                    bool isASCIIOnly = std::ranges::all_of(characterClass.m_matches8, [](char32_t character) { return isASCII(character); })
+                        && std::ranges::all_of(characterClass.m_ranges8, [](auto& range) { return isASCII(range.end); });
+                    if (!isASCIIOnly || characters.isEmpty())
+                        break;
+                } else
+                    break;
+                prefixes[i].append(characters);
+            }
+        }
+
+        TwoPrefixes result;
+        size_t known = std::min(prefixes[0].size(), prefixes[1].size());
+        result.length = known >= longPrefixLength ? longPrefixLength : shortPrefixLength;
+        if (known < result.length)
+            return std::nullopt;
+        for (unsigned i = 0; i < prefixes.size(); ++i) {
+            unsigned rarity = 0;
+            for (unsigned position = 0; position < result.length; ++position) {
+                rarity += 4 - std::bit_width(prefixes[i][position].count() - 1);
+                prefixes[i][position].forEachSetBit([&](size_t half) {
+                    if (result.length == longPrefixLength)
+                        result.table[i * prefixSearchVectorLength + half] |= 1u << position;
+                    else
+                        result.table[half] |= 1u << (i * shortPrefixLength + position);
+                });
+            }
+            if (rarity < minPrefixRarity)
+                return std::nullopt;
+        }
+        return result;
+    }
+
+    void generateTwoPrefixSearch(YarrOp& beginOp, const TwoPrefixes& prefixes, MacroAssembler::JumpList& matched)
+    {
+        unsigned claimed = beginOp.m_checkedOffset.value();
+        JIT_COMMENT(m_jit, "search for two prefixes");
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for two prefixes of ", prefixes.length, " characters");
+        m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
+        m_addressing.moveAddressOfData(std::span { prefixes.table }, m_regs.regT1);
+        callRoutine(SharedRoutine::FindEitherPrefix { static_cast<uint8_t>(prefixes.length) });
+        m_jit.add32(MacroAssembler::Imm32(claimed), m_regs.index);
+        matched.append(m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, m_regs.length));
+
+        m_usesSIMD = true;
+        m_usesT2 = true;
+    }
+#endif
+
     // The search looks at one place in as many as the range is long.
     static unsigned rarityOfStops(const BoyerMooreInfo& info, std::tuple<unsigned, unsigned> range)
     {
@@ -12437,6 +12553,7 @@ public:
         , m_sizePolicy(settings.policy.sizePolicy)
         , m_frameMode(settings.frameMode)
         , m_stackCheck(settings.stackCheck)
+        , m_remembersFailedSearches(settings.remembersFailedSearches)
 #endif
         , m_codeBlock(codeBlock)
         , m_boyerMooreData(static_cast<YarrBoyerMooreData*>(codeBlock))
@@ -12475,6 +12592,7 @@ public:
         , m_sizePolicy(settings.policy.sizePolicy)
         , m_frameMode(settings.frameMode)
         , m_stackCheck(settings.stackCheck)
+        , m_remembersFailedSearches(settings.remembersFailedSearches)
 #endif
         , m_codeBlock(nullptr)
         , m_boyerMooreData(yarrBMData)
@@ -12766,7 +12884,7 @@ public:
             // table of the searches that have failed takes a time in proportion to the length, and gives the match up where the JIT does. So this code stops after a number of turns that an
             // ordinary search does not come near, nine a unit and 65,537, and whoever called it makes the match again as for a pattern made at run time. However long the subject is, it makes no
             // more than matchLimit: see generateTurnsOfLongSubject(). The count is a word of 32 bits, which the sum fits up to that length.
-            m_handsLongSearchesOver = hasFlatProgramsThatRememberFailedSearches(m_patternString, m_pattern.m_flags);
+            m_handsLongSearchesOver = remembersFailedSearches();
             if (m_handsLongSearchesOver) {
                 static_assert(static_cast<uint64_t>(greatestLengthWithFewerTurnsThanMatchLimit) * 9 + turnsBeforeHandingOver <= matchLimit);
                 m_subjectIsLong = m_jit.branch32(MacroAssembler::Above, m_regs.length, MacroAssembler::TrustedImm32(greatestLengthWithFewerTurnsThanMatchLimit));
@@ -13284,6 +13402,17 @@ public:
     }
 
 private:
+#if defined(YARR_FOR_IMAGE)
+    bool remembersFailedSearches() const
+    {
+        std::optional<bool> answer;
+        std::optional<bool>& known = m_remembersFailedSearches ? *m_remembersFailedSearches : answer;
+        if (!known)
+            known = hasFlatProgramsThatRememberFailedSearches(m_pattern, m_patternString);
+        return *known;
+    }
+
+#endif
     CCallHelpers& m_jit;
 #if !defined(YARR_FOR_IMAGE)
     VM* m_vm;
@@ -13293,6 +13422,7 @@ private:
     const CodeSizePolicy m_sizePolicy;
     const FrameMode m_frameMode;
     StackCheck& m_stackCheck;
+    std::optional<bool>* const m_remembersFailedSearches;
     bool m_didUseFrame { false };
     RequiredTexts m_requiredTexts;
     unsigned m_requiredTextFrameLocation { 0 };
@@ -13610,7 +13740,7 @@ static std::unique_ptr<CodeGenerationAttempt> generateAttempt(const CodeGenerati
 {
     auto attempt = makeUnique<CodeGenerationAttempt>();
     attempt->addressing = request.createCodeAddressing(attempt->jit);
-    GeneratorSettings settings { *attempt->addressing, request.policy, frameMode, attempt->stackCheck };
+    GeneratorSettings settings { *attempt->addressing, request.policy, frameMode, attempt->stackCheck, request.remembersFailedSearches };
     attempt->generator = makeUnique<YarrGenerator<YarrJITDefaultRegisters>>(attempt->jit, settings, request.codeBlock, attempt->registers, request.pattern, request.patternString, request.charSize, request.executionMode, request.sampleString);
     bool didGenerate = attempt->generator->generateCode();
     ASSERT_UNUSED(didGenerate, didGenerate == !attempt->generator->failureReason());

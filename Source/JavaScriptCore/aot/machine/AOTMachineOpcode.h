@@ -21,6 +21,7 @@ enum TypeKind : uint8_t {
     Int64,
     Float,
     Double,
+    Vector128,
     Tuple,
 };
 
@@ -43,7 +44,9 @@ public:
     constexpr uint16_t tupleIndex() const { return m_tupleIndex; }
     constexpr bool isInt() const { return m_kind == Int32 || m_kind == Int64; }
     constexpr bool isFloat() const { return m_kind == Float || m_kind == Double; }
-    constexpr bool isNumeric() const { return isInt() || isFloat(); }
+    constexpr bool isVector() const { return m_kind == Vector128; }
+    constexpr bool isInNumberRegister() const { return isFloat() || isVector(); }
+    constexpr bool isNumeric() const { return isInt() || isInNumberRegister(); }
 
     friend constexpr bool operator==(Type, Type) = default;
 
@@ -62,12 +65,14 @@ inline constexpr unsigned numberOfBanks = 2;
 constexpr Bank bankOf(Type type)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(type.isNumeric());
-    return type.isFloat() ? Bank::FP : Bank::GP;
+    return type.isInNumberRegister() ? Bank::FP : Bank::GP;
 }
 
 constexpr Width widthOf(Type type)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(type.isNumeric());
+    if (type.isVector())
+        return Width128;
     return type == Int32 || type == Float ? Width32 : Width64;
 }
 

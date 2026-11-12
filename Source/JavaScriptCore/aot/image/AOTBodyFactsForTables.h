@@ -22,8 +22,14 @@ class Plan;
 class Program;
 }
 
+struct FieldReturnedByGetter {
+    FunctionID getter;
+    Typed::PropertyKeyID field;
+};
+
 struct BodyFactsForTables {
     BitVector functionsThatOnlyReturn;
+    Vector<FieldReturnedByGetter> fieldsReturnedByGetters;
     BitVector functionsWithFrames;
 };
 

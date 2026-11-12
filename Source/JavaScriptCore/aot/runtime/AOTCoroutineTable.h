@@ -32,6 +32,7 @@ public:
 
     Structure* generatorStructure() const { return m_generatorStructure; }
     Structure* savedFrameStructure() const { return m_savedFrameStructure; }
+    Structure* reactionChainStructure(VM&);
     Structure* structureOfGeneratorsOfLibrary(VM&, bool isAsync);
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
     void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
@@ -48,6 +49,7 @@ private:
     void* m_handlerOfJobEntrypoint;
     Structure* m_generatorStructure { nullptr };
     Structure* m_savedFrameStructure { nullptr };
+    Structure* m_reactionChainStructure { nullptr };
     std::array<std::unique_ptr<PropertyValueWatchpoint>, 2> m_watchesAboveGeneratorFunctionsOfLibrary;
     std::array<bool, 2> m_hasAskedAboveGeneratorFunctionsOfLibrary { };
 };

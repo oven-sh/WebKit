@@ -2,7 +2,7 @@
 # `lists.every(Array.isArray)`: the question is asked in line for each element. It was a call of the text that is entered by value, which called Array.isArray by value.
 # Only a built-in whose rows take no receiver, and only in a loop: outside one the call stays a call.
 # declare function print(...values: unknown[]): void;
-# const lists: unknown[] = [[1], [2], [3]];
+# const lists: unknown[] = [[1], [2], 3];
 # function inLoop(turns: number): number { let all = 0; for (let turn = 0; turn < turns; turn++) if (lists.every(Array.isArray)) all++; return all; }
 # function once(): boolean { return lists.every(Array.isArray); }
 # print(inLoop(3), once());
@@ -11,7 +11,7 @@
 # LIBRARY: own
 # RUN(LOOP): walk f1
 # LOOP: frame 1 callee=f
-# LOOP: TryCallInline {{*}}inlineBuiltin=ArrayIsArray
+# LOOP: = TypeTest {{*}}testedType=Array
 # LOOP-NOT: [isNeverInlined]
 # RUN(ONCE): walk f2
 # ONCE-NOT: frame 1 callee=f
@@ -25,7 +25,7 @@ module m4 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/en
 module m5 path="/$bun/js/prelude/decorators.ts" displayPath="/$bun/js/prelude/decorators.ts" flags=[IsLibrary] namespaceLayout=L(m5)
 entry module=m0
 layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
-data d0 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=1}]}, Array{contents=anything elements=[Number{value=2}]}, Array{contents=anything elements=[Number{value=3}]}]} module=m0
+data d0 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=1}]}, Array{contents=anything elements=[Number{value=2}]}, Number{value=3}]} module=m0
 variable g0 name="lists" module=m0 declared={type=undefined|null|absent|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=4
 variable g1 name="metadataSymbol" module=m5 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable] place=12
 variable g2 name="defineNormalProperty" module=m5 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable] place=14

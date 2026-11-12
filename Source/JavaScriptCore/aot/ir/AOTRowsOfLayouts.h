@@ -81,6 +81,8 @@ Vector<LayoutID> findNearestWantedAbove(size_t numberOfLayouts, NOESCAPE const I
     Vector<LayoutID, 32> passed;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         LayoutID current(index);
+        if (!layoutAbove(current))
+            continue;
         for (; current && states[current.index()] == State::Unknown; current = layoutAbove(current)) {
             states[current.index()] = State::OnTheWay;
             passed.append(current);

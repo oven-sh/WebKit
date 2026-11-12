@@ -337,6 +337,8 @@ bool isEncodableArithmeticConstant(int64_t constant)
 
 bool isEncodableIndexedAddress(Width accessWidth, unsigned shift, IndexExtension, int32_t offset)
 {
+    if (accessWidth == Width128)
+        return !offset && !shift;
     return !offset && (!shift || shift == static_cast<unsigned>(std::countr_zero(bytesForWidth(accessWidth))));
 }
 

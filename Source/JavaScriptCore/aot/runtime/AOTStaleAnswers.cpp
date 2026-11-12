@@ -221,12 +221,24 @@ static void reportFailedLookupCheck(const Parts&... detail)
     CRASH();
 }
 
+static bool isReadByFieldGetter(const Instance& instance, JSValue receiver, const FreshAnswer& fresh, JSValue value, bool isTruth = false)
+{
+    Object* object = fresh.kind == KindOfAnswer::Accessor && fresh.value && receiver.isCell() ? compiledObjectOrNull(receiver.asCell()) : nullptr;
+    const FieldData* field = object ? findFieldReadByGetter(*object, asObject(fresh.value)) : nullptr;
+    if (!field)
+        return false;
+    JSValue held = object->read(*field);
+    return isTruth ? value == jsBoolean(held.toBoolean(instance.globalObject)) : areSameAnswer(held, value);
+}
+
 void stopAtStaleAnswer(Instance& instance, JSValue receiver, UniquedStringImpl* name, KindOfAnswer kind, JSValue value, ASCIILiteral whoAnswered)
 {
     std::optional<FreshAnswer> fresh = askAgain(instance, receiver, name, kind == KindOfAnswer::AbsentFromObjectItself);
     if (!fresh)
         return;
     if (kind == KindOfAnswer::Present ? fresh->kind != KindOfAnswer::Absent : kind == KindOfAnswer::AbsentFromObjectItself ? fresh->kind == KindOfAnswer::Absent : kind == fresh->kind && (kind != KindOfAnswer::Value || areSameAnswer(fresh->value, value)))
+        return;
+    if (kind == KindOfAnswer::Value && isReadByFieldGetter(instance, receiver, *fresh, value))
         return;
     stop(instance, whoAnswered, name, kind, *fresh);
 }
@@ -485,7 +497,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtStaleAnswer, void, (Instance
         return;
     if (fresh->kind == KindOfAnswer::Accessor && fresh->value) {
         auto* function = dynamicDowncast<JSFunction>(fresh->value);
-        if (!function || !function->isHostOrBuiltinFunction())
+        if ((!function || !function->isHostOrBuiltinFunction()) && !isReadByFieldGetter(*instance, JSValue::decode(receiver), *fresh, answered, stub == StubThatAnswers::TruthByName))
             stop(*instance, textOf(stub), name, KindOfAnswer::Value, *fresh);
         return;
     }

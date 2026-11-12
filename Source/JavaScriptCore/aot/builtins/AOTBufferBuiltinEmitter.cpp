@@ -242,7 +242,7 @@ LValue BufferBuiltinEmitter::inByteOrder(LValue bits, unsigned size, const ByteO
     return order.isLittle ? swapped : m_out.select(order.isLittleAtRunTime.value(), bits, swapped);
 }
 
-Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer address, TypedArrayType elements, const ByteOrder& order)
+Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer address, TypedArrayType elements, const ByteOrder& order, NaNBits bitsOfNaN)
 {
     TypedPointer pointer(m_heaps.TypedArrayProperties, address.value());
     unsigned size = elementSize(elements);
@@ -283,7 +283,7 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
     }
     if (isBigInt(elements))
         return newBigInt(context, element.as<Integer>(), elements == TypeBigInt64);
-    if (isFloat(elements))
+    if (isFloat(elements) && bitsOfNaN == NaNBits::Purified)
         return emitter<ConversionEmitter>().purified(element.as<Number>());
     return element;
 }

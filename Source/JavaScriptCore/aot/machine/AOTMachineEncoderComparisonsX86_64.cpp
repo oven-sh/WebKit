@@ -603,6 +603,7 @@ static void moveArmOfX86Select(Encoder& encoder, const X86SelectArm& arm, Reg de
         case Double:
             jit.loadDouble(address, destination.fpr());
             return;
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -696,6 +697,31 @@ static bool tryEncodeX86SelectWithUnlikelyArm(Encoder& encoder, const X86Compari
         AllowMacroScratchRegisterUsage allowScratchOnLatePath(jit);
         isRare.link(&jit);
         moveArmOfX86SelectAfterTest(*encoder, rare, destination);
+        jit.jump().linkTo(done, &jit);
+    };
+    encoder.addLatePath(encoder.m_arena.create<LatePathOf<decltype(moveRareArm)>>(moveRareArm));
+    return true;
+}
+
+static bool tryEncodeX86SelectOfExactIntegerBound(Encoder& encoder, const X86Comparison& comparison, const X86SelectArm& whenItHolds, const X86SelectArm& otherwise, GPRReg destination)
+{
+    bool holdsRarely = Encoder::isEndOfExactIntegers(whenItHolds.value);
+    if (holdsRarely == Encoder::isEndOfExactIntegers(otherwise.value) || comparison.kind == Test::CompareNumbers || encoder.placeOf(encoder.m_block).loop == noLoop)
+        return false;
+    const X86SelectArm& rare = holdsRarely ? whenItHolds : otherwise;
+    const X86SelectArm& usual = holdsRarely ? otherwise : whenItHolds;
+    if (!usual.location.isRegister() || rare.location == Location::reg(destination) || (!rare.location.isRegister() && !rare.location.isImmediate()))
+        return false;
+
+    CCallHelpers& jit = encoder.m_jit;
+    MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(encoder, comparison);
+    MacroAssembler::Jump isRare = jit.branchOnFlags(holdsRarely ? condition : MacroAssembler::invert(condition));
+    jit.move(usual.location.gpr(), destination);
+    MacroAssembler::Label done = jit.label();
+    auto moveRareArm = [encoder = &encoder, rare, destination, isRare, done](CCallHelpers& jit) {
+        AllowMacroScratchRegisterUsage allowScratchOnLatePath(jit);
+        isRare.link(&jit);
+        moveArmOfX86SelectAfterTest(*encoder, rare, Reg(destination));
         jit.jump().linkTo(done, &jit);
     };
     encoder.addLatePath(encoder.m_arena.create<LatePathOf<decltype(moveRareArm)>>(moveRareArm));
@@ -1038,6 +1064,8 @@ void Encoder::encodeSelect(const Step& step)
     X86SelectArm otherwise = takeArmOfX86Select(*this, operation, 2, cursor);
 
     Reg destination = step.destination.reg();
+    if (destination.isGPR() && tryEncodeX86SelectOfExactIntegerBound(*this, comparison, whenItHolds, otherwise, destination.gpr()))
+        return;
     if (destination.isGPR() && canMoveArmOfX86SelectWithoutClobberingFlags(whenItHolds) && canMoveArmOfX86SelectWithoutClobberingFlags(otherwise)) {
         encodeX86SelectByConditionalMove(*this, comparison, whenItHolds, otherwise, destination.gpr());
         return;

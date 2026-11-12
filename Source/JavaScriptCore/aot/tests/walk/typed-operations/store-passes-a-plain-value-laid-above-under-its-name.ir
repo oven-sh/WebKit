@@ -4,6 +4,10 @@
 # function run(n) { var t; for (var i = 0; i < n; i++) t = new Reply(i); return t; }
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# The guard is asked in front of the loop, and where it holds no turn asks. The other copy of the loop asks in each turn.
+# CHECK-NOT: = NewObject
+# CHECK: [[before]]: {{*}} = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="sent"}]
+# CHECK-NEXT: Branch [[before]] -> taken [[unchanged]](), notTaken
 # CHECK-NOT: = NewObject
 # CHECK: [[test]]: {{*}} = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="sent"}]
 # CHECK-NEXT: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
@@ -13,13 +17,18 @@
 # CHECK: = NewObject {{*}}layout=L0 fields=[0, 1]
 # CHECK: [[closed]]() frequency=Rare isInLoop=true:
 # CHECK: = Construct
+# CHECK: [[unchanged]]():
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: = NewObject {{*}}layout=L0 fields=[0, 1]
+# CHECK-NOT: AreMembersUnchanged
 # Nothing lies above under `code`: nobody asks a guard about it.
 # RUN(CODE): walk f2 mechanisms=all
 # CODE-NOT: key="code"}]
-# A read finds what lies above: an empty slot is no answer, and no guard of reads is asked, which the default has ended.
+# A read finds what lies above: an empty slot is no answer, so the read looks above it, and no guard of reads is asked, which the default has ended.
 # function read(r) { return r.sent; }
 # RUN(READ): walk f3 mechanisms=all
-# READ-NOT: GetSlotOrUndefined
+# READ-NOT: AreMembersUnchanged conditions=[{layout=L0 key="sent"}]
+# READ: = GetSlotOrUndefined {{*}}key="sent" receivers=[L0] level=Expected [looksAboveEmptySlot]
 # READ-NOT: AreMembersUnchanged conditions=[{layout=L0 key="sent"}]
 # READ: Return
 

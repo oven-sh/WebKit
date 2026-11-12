@@ -9,6 +9,7 @@
 
 #include "AOTArrayAllocationProfile.h"
 #include "AOTStubRunner.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
 #include "AOTStubsCalls.h"
@@ -108,7 +109,7 @@ static void testFormsThatMatchInLanguageCallTests()
 static void testCallsOfBuiltinsThatProgramCannotHoldInLanguageCallTests()
 {
     StubCatalog holdsAll(StubOptions { });
-    StubOptions options { .callsNumberOrStringByValue = false };
+    StubOptions options { .callsNumberOrStringByValue = false, .callsArrayByValue = false };
     options.boxedCallsOutOfReach.setAll();
     StubCatalog holdsNone(options);
     auto uses = [](const StubCatalog& catalog, StubKey key, Entry entry) {
@@ -119,6 +120,8 @@ static void testCallsOfBuiltinsThatProgramCannotHoldInLanguageCallTests()
     StubKey constructor = callInternalFunction(CodeSpecializationKind::CodeForCall, 1);
     for (Entry entry : { Entry::operationAOTNumberOfAnyValue, Entry::operationAOTStringOfAnyValue })
         AOT_TEST_CHECK(uses(holdsAll, constructor, entry) && !uses(holdsNone, constructor, entry));
+    const StubKey makesArray = newArrayOfLength(ArrayElementKind::Contiguous);
+    AOT_TEST_CHECK(refersToInLanguageCallTests(holdsAll, constructor, makesArray) && !refersToInLanguageCallTests(holdsNone, constructor, makesArray));
     for (unsigned form = 0; form < numberOfBuiltinBoxedStubs; ++form) {
         for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count) {
             StubKey key = callBoxedBuiltin(static_cast<BoxedCallForm>(form), count);
@@ -828,12 +831,15 @@ static void testSpliceOfOneItemInLanguageCallTests()
     constexpr StubKey takesOut = callBoxedBuiltin(BoxedCallForm::ArraySplice, 2);
     constexpr StubKey putsIn = callBoxedBuiltin(BoxedCallForm::ArraySplice, 3);
 
-    auto copyOf = [](ListInLanguageCallTests& list) {
+    constexpr uint32_t mostValuesMoved = 256;
+    using LongList = ListOfCapacityInLanguageCallTests<mostValuesMoved + 3>;
+
+    auto copyOf = [](auto& list) {
         Vector<uint64_t, 20> values;
         values.append(list.elements().first(list.length()));
         return values;
     };
-    auto goesOutInStub = [&](ListInLanguageCallTests& list, int32_t start, uint32_t place, uint64_t header) {
+    auto goesOutInStub = [&](auto& list, int32_t start, uint32_t place, uint64_t header) {
         Vector<uint64_t, 20> expected = copyOf(list);
         uint64_t gone = expected[place];
         expected.removeAt(place);
@@ -844,7 +850,7 @@ static void testSpliceOfOneItemInLanguageCallTests()
         AOT_TEST_CHECK(static_cast<uint32_t>(made[2]) == 1 && made[3] == gone);
         AOT_TEST_CHECK(list.length() == expected.size() && std::ranges::equal(list.elements().first(list.length()), expected.span()) && !list.elements()[list.length()]);
     };
-    auto comesInInStub = [&](ListInLanguageCallTests& list, int32_t start, uint32_t place, uint64_t item) {
+    auto comesInInStub = [&](auto& list, int32_t start, uint32_t place, uint64_t item) {
         Vector<uint64_t, 20> expected = copyOf(list);
         expected.insert(place, item);
         made.fill(0);
@@ -853,7 +859,15 @@ static void testSpliceOfOneItemInLanguageCallTests()
         AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uintptr_t>(made.data()) && made[0] == headerOfValues && !static_cast<uint32_t>(made[2]));
         AOT_TEST_CHECK(list.length() == expected.size() && std::ranges::equal(list.elements().first(list.length()), expected.span()));
     };
-    auto isLeftToOperation = [&](ListInLanguageCallTests& list, uint64_t start, uint64_t deleteCount, std::optional<uint64_t> item = std::nullopt) {
+    auto removesNothingInStub = [&](auto& list, uint64_t start) {
+        Vector<uint64_t, 20> before = copyOf(list);
+        made.fill(0);
+        allocatorOfNone.makeRoomAt(std::bit_cast<uintptr_t>(made.data()), sizeOfArrayWithStorage(arrayLiteralVectorLength(0)));
+        StubRun run = runner.runCall(takesOut, callee.address(), list.cell.address(), { start, none });
+        AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uintptr_t>(made.data()) && made[0] == headerOfValues && !static_cast<uint32_t>(made[2]));
+        AOT_TEST_CHECK(list.length() == before.size() && std::ranges::equal(list.elements().first(list.length()), before.span()));
+    };
+    auto isLeftToOperation = [&](auto& list, uint64_t start, uint64_t deleteCount, std::optional<uint64_t> item = std::nullopt) {
         Vector<uint64_t, 20> before = copyOf(list);
         StubRun run = item ? runner.runCall(putsIn, callee.address(), list.cell.address(), { start, deleteCount, *item }) : runner.runCall(takesOut, callee.address(), list.cell.address(), { start, deleteCount });
         AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == answerOfOperation);
@@ -880,14 +894,22 @@ static void testSpliceOfOneItemInLanguageCallTests()
         auto stillEmpty = listOf(shape, 0);
         isLeftToOperation(stillEmpty, none, one);
 
-        auto thirtyThree = listOf(shape, 33);
-        goesOutInStub(thirtyThree, 0, 0, header);
-        auto thirtyTwo = listOf(shape, 32);
-        comesInInStub(thirtyTwo, 0, 0, come);
-        auto thirtyFour = listOf(shape, 34);
-        isLeftToOperation(thirtyFour, none, one);
-        auto thirtyThreeMore = listOf(shape, 33);
-        isLeftToOperation(thirtyThreeMore, none, none, come);
+        for (uint32_t count : { 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 33u, 34u }) {
+            for (uint32_t place : { 0u, 1u, count - 5, count - 4, count - 1 }) {
+                auto takenOutOf = listOf(shape, count);
+                goesOutInStub(takenOutOf, place, place, header);
+                auto putInto = listOf(shape, count);
+                comesInInStub(putInto, place, place, come);
+            }
+        }
+        LongList longestTakenOutOf(shape, integersInLanguageCallTests(mostValuesMoved + 1).span(), IsPristine, ofThisRealm);
+        goesOutInStub(longestTakenOutOf, 0, 0, header);
+        LongList longestPutInto(shape, integersInLanguageCallTests(mostValuesMoved).span(), IsPristine, ofThisRealm);
+        comesInInStub(longestPutInto, 0, 0, come);
+        LongList arrayTooLongForRemoval(shape, integersInLanguageCallTests(mostValuesMoved + 2).span(), IsPristine, ofThisRealm);
+        isLeftToOperation(arrayTooLongForRemoval, none, one);
+        LongList arrayTooLongForInsertion(shape, integersInLanguageCallTests(mostValuesMoved + 1).span(), IsPristine, ofThisRealm);
+        isLeftToOperation(arrayTooLongForInsertion, none, none, come);
         auto full = listOf(shape, ListInLanguageCallTests::capacity);
         isLeftToOperation(full, int32InLanguageCallTests(ListInLanguageCallTests::capacity - 1), none, come);
 
@@ -895,7 +917,9 @@ static void testSpliceOfOneItemInLanguageCallTests()
         isLeftToOperation(five, int32InLanguageCallTests(5), one);
         isLeftToOperation(five, int32InLanguageCallTests(INT32_MAX), one);
         isLeftToOperation(five, int32InLanguageCallTests(6), none, come);
-        isLeftToOperation(five, one, none);
+        removesNothingInStub(five, one);
+        removesNothingInStub(five, int32InLanguageCallTests(-9));
+        isLeftToOperation(five, static_cast<uint64_t>(JSValue::encode(jsDoubleNumber(1))), none);
         isLeftToOperation(five, one, int32InLanguageCallTests(2));
         isLeftToOperation(five, one, one, come);
         isLeftToOperation(five, one, static_cast<uint64_t>(JSValue::encode(jsDoubleNumber(1))));

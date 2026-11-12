@@ -358,16 +358,30 @@ std::optional<int64_t> ArrayBuiltinEmitter::deleteCountOfInlineSplice(const Inli
     return deleteCount.integers.minimum;
 }
 
+Word32 ArrayBuiltinEmitter::int32OrElse(ValueID id, LBasicBlock otherwise)
+{
+    Integer operand = wholeNumberOrElse(id, otherwise);
+    if (!typeOf(id).isInt32())
+        branchUnless(equal(signExtended(low32(operand)), operand), otherwise);
+    return low32(operand);
+}
+
+void ArrayBuiltinEmitter::spliceDiscardingByOperation(const InlineCall& call, LBasicBlock otherwise, const CallOptions& options)
+{
+    Word32 start = int32OrElse(call.argument(0), otherwise);
+    Word32 deleteCount = int32OrElse(call.argument(1), otherwise);
+    Vector<Boxed, maxInlineSpliceInsertions> boxedItems;
+    for (ValueID item : itemsInsertedBySplice(call))
+        boxedItems.append(boxedOperand(call.context(), item));
+    Word32 count = word32(static_cast<int32_t>(boxedItems.size()));
+    Condition isDone = callOperation<Condition>(call.context(), RuntimeOperation::ArraySpliceDiscarding, { receiverOf(call), start, deleteCount, count, argumentBuffer(boxedItems.span()) }, options);
+    branchUnless(isDone, otherwise);
+}
+
 Boxed ArrayBuiltinEmitter::spliceByOperation(const InlineCall& call, LBasicBlock otherwise, const CallOptions& options)
 {
-    auto int32OrElse = [&](ValueID id) {
-        Integer operand = wholeNumberOrElse(id, otherwise);
-        if (!typeOf(id).isInt32())
-            branchUnless(equal(signExtended(low32(operand)), operand), otherwise);
-        return low32(operand);
-    };
-    Word32 start = int32OrElse(call.argument(0));
-    Word32 deleteCount = int32OrElse(call.argument(1));
+    Word32 start = int32OrElse(call.argument(0), otherwise);
+    Word32 deleteCount = int32OrElse(call.argument(1), otherwise);
     Vector<Boxed, maxInlineSpliceInsertions> boxedItems;
     for (ValueID item : itemsInsertedBySplice(call))
         boxedItems.append(boxedOperand(call.context(), item));
@@ -406,8 +420,13 @@ void ArrayBuiltinEmitter::generateArraySplice(const InlineCall& call)
         m_out.appendTo(outOfLine);
     }
 
-    Boxed removedElements = spliceByOperation(call, missBlockOf(call), { .isOnRarePath = inlineDeleteCount.has_value() });
-    join.add(inRepresentation(call.context(), representation, removedElements, resultTypeOf(call)));
+    if (representation == Representation::Void) {
+        spliceDiscardingByOperation(call, missBlockOf(call), { .isOnRarePath = inlineDeleteCount.has_value() });
+        join.add(Operand());
+    } else {
+        Boxed removedElements = spliceByOperation(call, missBlockOf(call), { .isOnRarePath = inlineDeleteCount.has_value() });
+        join.add(inRepresentation(call.context(), representation, removedElements, resultTypeOf(call)));
+    }
     finishInlineCall(call, join.finish());
 }
 

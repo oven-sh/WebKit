@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
+#include "AOTGrowingText.h"
 #include "AOTImage.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
@@ -326,11 +328,68 @@ uint32_t CompactTable::numberOfTakenSlots() const
     return static_cast<uint32_t>(std::ranges::count_if(std::span { at<uint8_t>(offsetOfIndex()), static_cast<size_t>(1) << indexBits() }, [](uint8_t tag) { return !!tag; }));
 }
 
+template<CompactTable::SlotKind kind>
+NEVER_INLINE void CompactTable::fillLargeTableIndex(uint8_t* index, unsigned indexBits, uint32_t count)
+{
+    constexpr uint32_t distance = 8;
+    uintptr_t base = cageBaseOf(this);
+    const uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    uint8_t* entries = index + (static_cast<size_t>(1) << indexBits);
+    std::array<const StringImpl*, distance> texts;
+    std::array<unsigned, distance> hashes;
+    auto prefetchCell = [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        __builtin_prefetch(MarkedBlockCage::decode(base, keys[entry]));
+    };
+    auto prefetchText = [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        const StringImpl* text = stringKeyOrNull(base, keys[entry]);
+        __builtin_prefetch(text);
+        texts[entry % distance] = text;
+    };
+    auto prefetchSlot = [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        const StringImpl* text = texts[entry % distance];
+        unsigned hash = text ? text->existingHash() : hashOfStoredKey(uncheckedKeyAt(entry));
+        hashes[entry % distance] = hash;
+        uint32_t slot = probeStartFor(indexBits, hash);
+        __builtin_prefetch(index + slot, 1);
+        __builtin_prefetch(entries + static_cast<size_t>(slot) * SlotFormat<kind>::entryBytes, 1);
+    };
+    auto insert = [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        insertIntoIndex<kind>(index, indexBits, entry, hashes[entry % distance]);
+    };
+    RELEASE_ASSERT(count >= 3 * distance);
+    for (uint32_t entry = 0; entry < 3 * distance; ++entry)
+        prefetchCell(entry);
+    for (uint32_t entry = 0; entry < distance; ++entry)
+        prefetchText(entry);
+    for (uint32_t entry = 0; entry < distance; ++entry) {
+        prefetchSlot(entry);
+        prefetchText(entry + distance);
+    }
+    uint32_t entry = 0;
+    for (; entry < count - 3 * distance; ++entry) {
+        prefetchCell(entry + 3 * distance);
+        insert(entry);
+        prefetchSlot(entry + distance);
+        prefetchText(entry + 2 * distance);
+    }
+    for (; entry < count; ++entry) {
+        insert(entry);
+        if (entry + distance < count)
+            prefetchSlot(entry + distance);
+        if (entry + 2 * distance < count)
+            prefetchText(entry + 2 * distance);
+    }
+}
+
 void CompactTable::fillIndex(uint32_t count)
 {
     uint8_t* index = at<uint8_t>(offsetOfIndex());
     unsigned indexBits = this->indexBits();
     withSlotKind(slotKind(), [&](auto kind) ALWAYS_INLINE_LAMBDA {
+        if constexpr (kind() == SlotKind::Long) {
+            if (hasNarrowKeys() && count >= minLargeTableEntries)
+                return fillLargeTableIndex<kind()>(index, indexBits, count);
+        }
         for (uint32_t entry = 0; entry < count; ++entry)
             insertIntoIndex<kind()>(index, indexBits, entry, hashOfStoredKey(uncheckedKeyAt(entry)));
     });
@@ -787,7 +846,7 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
     if (key.isString() && asString(key)->isRope()) {
         if (asString(key)->isSubstring())
             table->resolveSubstringKey(uncheckedDowncast<JSRopeString>(asString(key)));
-        else {
+        else if (!tryResolveLongText(*Instance::of(globalObject), asString(key))) {
             asString(key)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -1112,13 +1171,16 @@ std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, 
     return entries.find(image, StringView { impl }, impl.hash());
 }
 
-CompactTable::QuickLookup CompactTable::tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, JSValue& value) const
+static constexpr unsigned maxLengthHashedAgain = 48;
+
+CompactTable::QuickLookup CompactTable::tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, bool isMembershipTest, JSValue& value) const
 {
     const TableInImage& entries = tableInImage();
     ProgramStrings& strings = *stateOfTableInImage().strings;
     std::optional<uint32_t> entry = entries.find(*vm().aotState().image, characters, hash);
     JSString* equal = entry ? strings.constantIfCreated(entries.stringConstants()[*entry]) : nullptr;
-    if (!equal || !tryShareCharactersOfEqual(key, *const_cast<StringImpl*>(equal->tryGetValueImpl())))
+    const bool staysRope = key->length() <= maxLengthHashedAgain && (!entry || (isMembershipTest && equal));
+    if (!staysRope && (!equal || !tryShareCharactersOfEqual(key, *const_cast<StringImpl*>(equal->tryGetValueImpl()))))
         key->resolveBySharing(StringImpl::createSubstringSharingImpl(*const_cast<StringImpl*>(key->substringBase()->tryGetValueImpl()), key->substringOffset(), key->length(), hash).get());
     if (!entry)
         return QuickLookup::Absent;
@@ -1265,6 +1327,7 @@ std::optional<uint32_t> CompactTable::findString(JSGlobalObject* globalObject, J
         return lookup.result == QuickLookup::Found ? std::optional { lookup.entry } : std::nullopt;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    tryResolveLongText(*Instance::of(globalObject), key);
     auto string = key->value(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     const StringImpl* impl = string->impl();
@@ -1795,7 +1858,7 @@ static ALWAYS_INLINE CompactTable::Lookup tryFindRopeOfPartsQuickly(VM& vm, Comp
     return rope->is8Bit() ? tryFindPartsQuickly<Latin1Character>(vm, table, rope) : tryFindPartsQuickly<char16_t>(vm, table, rope);
 }
 
-static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject* collection, JSValue key, JSValue& value)
+static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject* collection, JSValue key, bool isMembershipTest, JSValue& value)
 {
     using QuickLookup = CompactTable::QuickLookup;
     if (!key.isString() || !asString(key)->isSubstring())
@@ -1807,16 +1870,23 @@ static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject*
     size_t length = rope->length();
     size_t offset = rope->substringOffset();
     const StringImpl* baseImpl = rope->substringBase()->tryGetValueImpl();
+    const bool keepsHash = length <= maxLengthHashedAgain;
     ASSERT(baseImpl);
     auto find = [&]<typename CharacterType>(std::span<const CharacterType> text) ALWAYS_INLINE_LAMBDA {
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(text);
+        unsigned hash = rope->hashOfSubstring();
+        if (!hash) {
+            hash = StringHasher::computeHashAndMaskTop8Bits(text);
+            if (keepsHash && !canPassShapeTest(hash))
+                rope->setHashOfSubstring(hash);
+        }
         if (table->isInImage())
-            return table->tryFindSubstringInImage(rope, text, hash, value);
+            return table->tryFindSubstringInImage(rope, text, hash, isMembershipTest, value);
         auto lookup = table->tryFindCharactersQuickly(text, hash);
         if (lookup.result == QuickLookup::Found) {
             value = table->valueAt(lookup.entry);
-            tryShareCharactersOfEqual(rope, *asString(table->uncheckedKeyAt(lookup.entry))->tryGetValueImpl());
-        } else if (lookup.result == QuickLookup::Absent) {
+            if (!isMembershipTest || !keepsHash)
+                tryShareCharactersOfEqual(rope, *asString(table->uncheckedKeyAt(lookup.entry))->tryGetValueImpl());
+        } else if (lookup.result == QuickLookup::Absent && !keepsHash) {
             rope->resolveBySharing(StringImpl::createSubstringSharingImpl(const_cast<StringImpl&>(*baseImpl), offset, length, hash).get());
         }
         return lookup.result;
@@ -1852,7 +1922,7 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
 JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue lookupKey))
 {
     JSValue value;
-    switch (tryFindSubstringQuickly(uncheckedDowncast<JSMap>(map), JSValue::decode(lookupKey), value)) {
+    switch (tryFindSubstringQuickly(uncheckedDowncast<JSMap>(map), JSValue::decode(lookupKey), false, value)) {
     case CompactTable::QuickLookup::Found:
         return { JSValue::encode(value), nullptr };
     case CompactTable::QuickLookup::Absent:
@@ -1866,7 +1936,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance
 JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue lookupKey))
 {
     JSValue value;
-    if (auto lookup = tryFindSubstringQuickly(asObject(map), JSValue::decode(lookupKey), value); lookup != CompactTable::QuickLookup::Unknown)
+    if (auto lookup = tryFindSubstringQuickly(asObject(map), JSValue::decode(lookupKey), true, value); lookup != CompactTable::QuickLookup::Unknown)
         return { JSValue::encode(jsBoolean(lookup == CompactTable::QuickLookup::Found)), nullptr };
     [[clang::musttail]] return findInCollectionGeneric<Entry::operationAOTMapHas>(instance, map, lookupKey);
 }

@@ -24,7 +24,7 @@ static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::s
 static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeof(IndexingHeader)) && Butterfly::offsetOfVectorLength() == Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
 
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
-enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3, ContiguousCapacity7, ContiguousCapacity9, ContiguousCapacity13, ContiguousCapacity17 };
+enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3, ContiguousCapacity5, ContiguousCapacity7, ContiguousCapacity9, ContiguousCapacity13, ContiguousCapacity17 };
 enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles };
 enum class ArrayStoredValue : uint8_t { Value, Number, ValueInSloppyCode };
 enum class ArrayRead : uint8_t { OfListAsMade, OfAnyList, OfPlainList };
@@ -108,6 +108,7 @@ struct ListWhoseLengthIsStoredWithoutRunTime {
     static constexpr IndexingType firstKind = ArrayWithUndecided;
     static constexpr IndexingType lastKind = ArrayWithContiguous;
     static constexpr uint32_t bitsThatItsStructureMayNotHave = Structure::s_anyImmutablePropertiesBits;
+    static constexpr uint32_t mostElementsOfVector = (MarkedSpace::largeCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue);
 };
 constexpr StubKey setArrayLength(bool isInSloppyCode) { return StubKey(StubFamily::SetArrayLength).withForm(isInSloppyCode); }
 constexpr StubKey arrayGetAtIndex(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtIndex).withForm(static_cast<uint8_t>(read)); }
@@ -132,7 +133,7 @@ static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInR
 static_assert(exists(arrayLiteralWithRoom(1, true)) && exists(arrayLiteralWithRoom(maxArrayElementsInRegisters, false)) && !exists(arrayLiteralWithRoom(1, false).withCount(0)));
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
 static_assert(exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite)) && !exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite).withForm(6)));
-static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity17)) && !exists(newEmptyArray(EmptyArray::ContiguousCapacity17).withForm(12)));
+static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity17)) && !exists(newEmptyArray(EmptyArray::ContiguousCapacity17).withForm(13)));
 static_assert(exists(newArrayWithLengthAtSite(ArrayElementKind::Double)) && !exists(newArrayWithLengthAtSite(ArrayElementKind::Contiguous)));
 static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous)) && exists(newArrayOfGiven()));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));

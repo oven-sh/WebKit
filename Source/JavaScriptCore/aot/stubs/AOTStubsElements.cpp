@@ -48,21 +48,98 @@
 
 namespace JSC { namespace AOT {
 
-StubSignature signatureOfMoveElementsDown(StubKey)
+StubSignature signatureOfShiftArrayStart(StubKey)
 {
-    return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A2) });
+    return StubSignature::withoutResult({ gprOf(StubRegister::T9) });
 }
 
-void generateMoveElementsDown(StubAssembler& jit)
+void generateShiftArrayStart(StubAssembler& jit)
 {
-    const GPRReg butterfly = jit.operand(0);
-    const GPRReg count = jit.operand(1);
-    const GPRReg second = jit.reuseScratch(StubRegister::A1);
-    RELEASE_ASSERT(butterfly == leafArgumentGPR(0) && second == leafArgumentGPR(1) && count == leafArgumentGPR(2));
-    jit.move(butterfly, second);
-    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), second);
-    jit.lshift64(TrustedImm32(CCallHelpers::TimesEight), count);
-    jit.callLeaf(Entry::operationAOTMoveBytes);
+    static_assert(Structure::greatestMaxOffsetOutsideRareData + 1 == std::numeric_limits<uint16_t>::max() - 1);
+    constexpr ptrdiff_t offsetOfHeader = -static_cast<ptrdiff_t>(sizeof(IndexingHeader));
+    constexpr ptrdiff_t offsetOfStartOffset = offsetOfHeader - static_cast<ptrdiff_t>(sizeof(uint64_t));
+    constexpr int32_t noProperties = std::numeric_limits<uint16_t>::max() - 1;
+    constexpr int64_t oneOfEachLength = int64_t { 1 } << 32 | 1;
+    const GPRReg array = jit.operand(0);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
+    const GPRReg word = jit.allocateScratch(StubRegister::T11);
+    const GPRReg lengths = jit.allocateScratch(StubRegister::T12);
+    JumpList isLeftToOperation;
+
+    isLeftToOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+    loadStructure(jit, array, word);
+    Jump hasNoOffset = jit.branchTest32(CCallHelpers::Zero, Address(word, Structure::bitFieldOffset()), TrustedImm32(static_cast<int32_t>(Structure::s_hasElementsStartOffsetBits)));
+    jit.load16(Address(word, Structure::maxOffsetOffset()), word);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(noProperties)));
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load64(Address(butterfly, offsetOfHeader), lengths);
+    jit.move(TrustedImm64(oneOfEachLength), word);
+    jit.sub64(word, lengths);
+    jit.load64(Address(butterfly, offsetOfStartOffset), word);
+    jit.add64(TrustedImm32(1), word);
+    Label hasWords = jit.label();
+    jit.store64(word, Address(butterfly, offsetOfHeader));
+    jit.store64(lengths, Address(butterfly));
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), butterfly);
+    jit.storePtr(butterfly, Address(array, JSObject::butterflyOffset()));
+    jit.returnToCaller();
+
+    hasNoOffset.link(&jit);
+    constexpr ptrdiff_t offsetOfStructures = AOT_INSTANCE_OFFSET(arrays.structuresAroundFirstShift);
+    jit.load32(Address(array, JSCell::structureIDOffset()), word);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(instanceGPR, offsetOfStructures)));
+    isLeftToOperation.append(branchIfBarrierIsNeeded(jit, array, word));
+    jit.load32(Address(instanceGPR, offsetOfStructures + sizeof(uint32_t)), word);
+    jit.store32(word, Address(array, JSCell::structureIDOffset()));
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load64(Address(butterfly, offsetOfHeader), lengths);
+    jit.move(TrustedImm64(oneOfEachLength), word);
+    jit.sub64(word, lengths);
+    jit.move(TrustedImm32(1), word);
+    jit.jump().linkTo(hasWords, &jit);
+
+    isLeftToOperation.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTShiftArrayStart, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = array });
+}
+
+StubSignature signatureOfShiftFewElements(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::T9) });
+}
+
+void generateShiftFewElements(StubAssembler& jit)
+{
+    constexpr int32_t size = sizeof(EncodedJSValue);
+    const bool holdsDoubles = jit.key().form();
+    const GPRReg array = jit.operand(0);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
+    const GPRReg last = jit.allocateScratch(StubRegister::T11);
+    const GPRReg word = jit.allocateScratch(StubRegister::T12);
+    const FPRReg pair = jit.allocateScratch(FPRInfo::fpRegT0);
+
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), last);
+    jit.sub32(TrustedImm32(1), last);
+    jit.store32(last, Address(butterfly, Butterfly::offsetOfPublicLength()));
+    jit.getEffectiveAddress(BaseIndex(butterfly, last, CCallHelpers::TimesEight), butterfly);
+    Jump wasAlone = jit.branchTest32(CCallHelpers::Zero, last);
+    jit.neg64(last);
+    Jump isEven = jit.branchTest32(CCallHelpers::Zero, last, TrustedImm32(1));
+    jit.load64(BaseIndex(butterfly, last, CCallHelpers::TimesEight, size), word);
+    jit.store64(word, BaseIndex(butterfly, last, CCallHelpers::TimesEight));
+    Jump wereTwo = jit.branchAdd64(CCallHelpers::Zero, TrustedImm32(1), last);
+    isEven.link(&jit);
+    Label moves = jit.label();
+    jit.loadVector(BaseIndex(butterfly, last, CCallHelpers::TimesEight, size), pair);
+    jit.storeVector(pair, BaseIndex(butterfly, last, CCallHelpers::TimesEight));
+    jit.branchAdd64(CCallHelpers::NonZero, TrustedImm32(2), last).linkTo(moves, &jit);
+    wereTwo.link(&jit);
+    wasAlone.link(&jit);
+    if (holdsDoubles)
+        jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), word);
+    else
+        jit.move(TrustedImm32(0), word);
+    jit.store64(word, Address(butterfly));
     jit.returnToCaller();
 }
 
@@ -527,24 +604,48 @@ void loadKeptTextOfIndex(StubAssembler& jit, GPRReg key, GPRReg storage, GPRReg 
     hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
 }
 
-static void loadStorageOfPlainArray(StubAssembler& jit, const ElementRegisters& registers, JumpList& notHandled)
+static void replaceImmediateKeyWithString(StubAssembler& jit, GPRReg key, GPRReg string, JumpList& isNoImmediate)
+{
+    isNoImmediate.append(jit.branch64(CCallHelpers::AboveOrEqual, key, TrustedImm32(RealmWords::numberOfImmediates)));
+    jit.loadPtr(BaseIndex(instanceGPR, key, CCallHelpers::TimesEight, AOT_INSTANCE_OFFSET(realm.stringsOfImmediates)), string);
+    isNoImmediate.append(jit.branchTestPtr(CCallHelpers::Zero, string));
+    jit.move(string, key);
+}
+
+struct PlainArrayBranches {
+    Jump isContiguous;
+    Jump isInt32;
+};
+
+static PlainArrayBranches branchOnPlainArray(StubAssembler& jit, const ElementRegisters& registers, JumpList& notHandled)
 {
     const auto [base, index, storage, length, type, number] = registers;
 
     notHandled.append(jit.branchIfNotCell(base));
-    notHandled.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(ArrayWithContiguous)));
+    jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), type);
+    notHandled.append(jit.branchTest32(CCallHelpers::Zero, type));
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    Jump isContiguous = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(ArrayWithContiguous));
+    Jump isInt32 = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(ArrayWithInt32));
+    notHandled.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(ArrayWithDouble)));
     notHandled.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    return { isContiguous, isInt32 };
 }
 
-static Jump emitGetByValAtConstantIndexEntry(StubAssembler& jit, const ElementRegisters& registers)
+static Jump emitGetByValAtConstantIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch)
 {
     const auto [base, index, storage, length, type, number] = registers;
+    const BaseIndex element(storage, index, CCallHelpers::TimesEight);
     JumpList notHandled;
 
     jit.bindEntry(getByValAtConstantIndex());
-    loadStorageOfPlainArray(jit, registers, notHandled);
-    returnValueUnlessHole(jit, registers, BaseIndex(storage, index, CCallHelpers::TimesEight), notHandled);
+    auto [isContiguous, isInt32] = branchOnPlainArray(jit, registers, notHandled);
+    returnDoubleUnlessHole(jit, registers, element, numberScratch, notHandled);
+
+    isContiguous.link(&jit);
+    isInt32.link(&jit);
+    notHandled.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    returnValueUnlessHole(jit, registers, element, notHandled);
 
     notHandled.link(&jit);
     boxInt32(jit, index, index);
@@ -595,7 +696,7 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     if (registersOfCaller == RegistersOfCaller::AreLost)
         emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject, isInsideView);
     else
-        isConstantIndex = emitGetByValAtConstantIndexEntry(jit, registers);
+        isConstantIndex = emitGetByValAtConstantIndexEntry(jit, registers, numberScratch);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();
@@ -666,7 +767,9 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
 
     notNumber.link(&jit);
     slow.append(jit.branchIfNotCell(base));
-    slow.append(jit.branchIfNotCell(key));
+    Jump keyIsCell = jit.branchIfCell(key);
+    replaceImmediateKeyWithString(jit, key, storage, slow);
+    keyIsCell.link(&jit);
     checkStubOperands(getByValCachedCells(registersOfCaller), { base, key });
     jit.jumpToStub(getByValCachedCells(registersOfCaller));
 
@@ -715,9 +818,27 @@ static Jump emitPutByValAtConstantIndexEntry(StubAssembler& jit, const ElementRe
     const auto [base, index, storage, length, type, number] = registers;
     JumpList notHandled;
 
+    const BaseIndex element(storage, index, CCallHelpers::TimesEight);
+
     jit.bindEntry(putByValAtConstantIndex(mode));
-    loadStorageOfPlainArray(jit, registers, notHandled);
-    jit.store64(value, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    auto [isContiguous, isInt32] = branchOnPlainArray(jit, registers, notHandled);
+    Jump storesInt32 = jit.branch64(CCallHelpers::AboveOrEqual, value, numberTag);
+    notHandled.append(jit.branchTest64(CCallHelpers::Zero, value, numberTag));
+    unboxDouble(jit, value, type, number);
+    notHandled.append(jit.branchIfNaN(number));
+    Label isReady = jit.label();
+    jit.storeDouble(number, element);
+    jit.returnToCaller();
+
+    storesInt32.link(&jit);
+    jit.convertInt32ToDouble(value, number);
+    jit.jump().linkTo(isReady, &jit);
+
+    isInt32.link(&jit);
+    notHandled.append(jit.branch64(CCallHelpers::Below, value, numberTag));
+    isContiguous.link(&jit);
+    notHandled.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    jit.store64(value, element);
     returnAfterStoring(jit, base, value);
 
     notHandled.link(&jit);
@@ -1149,6 +1270,13 @@ void generatePutByVal(StubAssembler& jit)
         jit.jumpToStub(throughProxy(TrapOfProxy::Set));
         operationStores.link(&jit);
     }
+    JumpList keyIsNoImmediate;
+    const StubKey storeUnderName = putByValCached(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy);
+    keyIsNoImmediate.append(jit.branchIfNotCell(base));
+    replaceImmediateKeyWithString(jit, key, shape, keyIsNoImmediate);
+    checkStubOperands(storeUnderName, { base, key, value });
+    jit.jumpToStub(storeUnderName);
+    keyIsNoImmediate.link(&jit);
     jit.move(value, valueArgument);
     jit.move(TrustedImm32(mode.isStrict() ? 1 : 0), isStrictArgument);
     jit.callOperationAndReturn(Entry::operationAOTPutByVal, {
@@ -1185,17 +1313,22 @@ static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegi
     if (!value) {
         switch (expected) {
         case ExpectedElements::Int32Array:
-            jit.load32(BaseIndex(storage, index, CCallHelpers::TimesFour), storage);
+            jit.load32(BaseIndex(storage, index, CCallHelpers::TimesFour), jit.result());
             break;
         case ExpectedElements::Uint8Array:
-            jit.load8(BaseIndex(storage, index, CCallHelpers::TimesOne), storage);
+            jit.load8(BaseIndex(storage, index, CCallHelpers::TimesOne), jit.result());
             break;
         case ExpectedElements::Float64Array:
             jit.loadDouble(BaseIndex(storage, index, CCallHelpers::TimesEight), number);
             returnBoxedDouble(jit, registers, PureDouble::purify(jit, number, number), numberScratch);
             return;
         }
-        returnBoxedInt32(jit, registers);
+#if CPU(X86_64)
+        jit.or64(numberTag, jit.result());
+#else
+        boxInt32(jit, jit.result(), jit.result());
+#endif
+        jit.returnToCaller();
         return;
     }
     if (expected == ExpectedElements::Float64Array) {

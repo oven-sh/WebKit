@@ -50,7 +50,11 @@ constinit const OpcodeSet opcodesWithoutEmitterInCode = opcodesWithoutEmitterByL
 
 bool readsNumberOutOfBytes(const Operation& operation)
 {
-    if (operation.opcode != Opcode::GetTypedArrayElement || !operation.isInsideView() || operation.representation != Representation::Double)
+    if (operation.representation != Representation::Double)
+        return false;
+    if (operation.opcode == Opcode::GetDataViewElement)
+        return isFloat(operation.typedArrayType());
+    if (operation.opcode != Opcode::GetTypedArrayElement || !operation.isInsideView())
         return false;
     return operation.typedArrayType() == NotTypedArray || (isFloat(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType()));
 }
@@ -76,6 +80,8 @@ bool takesAnyNaN(const Operation& user, uint32_t operandIndex)
         return user.form() == OperatorForm::Numbers;
     if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32)
         return true;
+    if (user.opcode == Opcode::PutDataViewElement)
+        return operandIndex == OperandIndex::PutDataViewElement::value;
     if (user.opcode == Opcode::PutTypedArrayElement)
         return operandIndex == OperandIndex::PutTypedArrayElement::value && hasInlineElementAccess(user.typedArrayType()) && !isClamped(user.typedArrayType());
     return handsOnBitsOfNaN(user);
@@ -306,6 +312,7 @@ void Code::reset(CodeUnit unit)
     m_readsAnsweredByHolesReadAsNaN.shrink(0);
     m_cellsMadeForOneOperation.shrink(0);
     m_syntheticVariableReads.shrink(0);
+    m_mergedObjects = BitVector();
     m_valuesThatFoldedArithmeticGives.shrink(0);
     m_pollsWithFates.shrink(0);
     m_opcodesOfValues = { };
@@ -463,6 +470,13 @@ void Code::makeBlockRare(BlockID block)
     RELEASE_ASSERT(!m_isSwept);
     keepMarksOfOlderBlock(checkedIndexInCode(block, m_blocks.size()));
     m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = frequencyTakenFor(block.index(), BlockFrequency::Rare);
+}
+
+void Code::makeBlockNormal(BlockID block)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    keepMarksOfOlderBlock(checkedIndexInCode(block, m_blocks.size()));
+    m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = frequencyTakenFor(block.index(), BlockFrequency::Normal);
 }
 
 void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
@@ -1185,6 +1199,26 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     m_callsOfFunctionNeverCollect = mark.callsOfFunctionNeverCollect;
     m_readsNumbersOutOfBytes = mark.readsNumbersOutOfBytes;
     m_callsItself = mark.callsItself;
+}
+
+void Code::releaseAbandonedBlocks()
+{
+    RELEASE_ASSERT(m_isSwept);
+    uint32_t numberOfBlocks = 0;
+    for (const PartsAbandoned& parts : m_partsAbandoned)
+        numberOfBlocks += parts.blocks.second - parts.blocks.first;
+    static constexpr uint32_t mostBlocksKept = ASSERT_ENABLED ? 0 : 1 << 13;
+    if (numberOfBlocks <= mostBlocksKept)
+        return;
+    for (const PartsAbandoned& parts : m_partsAbandoned) {
+        uint32_t first = parts.blocks.first;
+        if (m_graveyard && first <= m_graveyard.index() && m_graveyard.index() < parts.blocks.second) {
+            m_blocks.releasePages(first, m_graveyard.index());
+            first = m_graveyard.index() + 1;
+        }
+        m_blocks.releasePages(first, parts.blocks.second);
+        m_edges.releasePages(parts.edges.first, parts.edges.second);
+    }
 }
 
 uint32_t Code::addInlineFrame(const InlineFrame& frame)

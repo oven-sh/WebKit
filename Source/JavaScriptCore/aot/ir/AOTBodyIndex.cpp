@@ -98,6 +98,14 @@ Vector<ConstructionStartInModule> BodyIndexTable::takeConstructionStarts()
     return result;
 }
 
+Vector<EvaluationOfClass> BodyIndexTable::takeEvaluationsOfClasses()
+{
+    Vector<EvaluationOfClass> result;
+    for (const std::unique_ptr<Worker>& worker : m_workers)
+        result.appendVector(std::exchange(worker->evaluationsOfClasses, { }));
+    return result;
+}
+
 uint64_t BodyIndexTable::valuesGoneOver() const
 {
     uint64_t result = 0;
@@ -119,7 +127,7 @@ size_t BodyIndexTable::sizeInBytes() const
     }
     for (const std::unique_ptr<Worker>& worker : m_workers) {
         result += sizeof(Worker) + worker->allocatedBytes;
-        result += capacityInBytes(worker->chunks) + capacityInBytes(worker->constructionStarts);
+        result += capacityInBytes(worker->chunks) + capacityInBytes(worker->constructionStarts) + capacityInBytes(worker->evaluationsOfClasses);
         result += capacityInBytes(worker->edges) + capacityInBytes(worker->retreatingEdges);
         result += capacityInBytes(worker->firstPredecessor) + capacityInBytes(worker->predecessors);
         result += capacityInBytes(worker->sizesOfSubtrees) + capacityInBytes(worker->nextNumbersBelow);
@@ -337,6 +345,8 @@ void BodyIndexBuilder::fileWhatFewOperationsBring(const BodyValue& value, BlockI
         return place && !(place & BodyIndex::isParameterBit) && body.operationAt(place, named).opcode() == Opcode::IteratorOpen;
     };
 
+    if (value.opcode() == Opcode::NewClass)
+        m_worker.evaluationsOfClasses.append(EvaluationOfClass { m_index, value.id() });
     if (opcodesThatMayNameIterationsInBodyIndex.contains(value.opcode())) {
         value.forEachOperand([&](ValueID operand, uint32_t) {
             if (isIteratorOpen(operand))
@@ -379,7 +389,7 @@ void BodyIndexBuilder::indexWords()
             value.forEachOperand([&](ValueID operand, uint32_t) {
                 fileUse(operand, BodyUseKind::Operand, user);
             });
-            if (opcodesThatMayNameIterationsInBodyIndex.contains(value.opcode()) || value.words()[0] & Wire::WrittenPositionFollows) [[unlikely]]
+            if (opcodesInBodyIndex.contains(value.opcode()) || value.words()[0] & Wire::WrittenPositionFollows) [[unlikely]]
                 fileWhatFewOperationsBring(value, id);
         }
 

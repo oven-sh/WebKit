@@ -78,6 +78,8 @@ Integer BuiltinCallEmitter::divide(Integer dividend, Range dividends, Integer di
             quotient = Integer(m_out.aShr(quotient.value(), m_out.constInt32(magic.shift)));
         if (dividends.minimum >= 0 && divisors.minimum > 0)
             return quotient;
+        if (divisors.minimum > 0)
+            return sub(quotient, Integer(m_out.aShr(dividend.value(), m_out.constInt32(63))));
         return add(quotient, Integer(m_out.lShr(quotient.value(), 63)));
     }
     return Integer(m_out.div(dividend.value(), divisor.value()));
@@ -164,6 +166,8 @@ void BuiltinCallEmitter::findDivisions()
     m_hasFoundDivisions = true;
     const Code& code = generator().code();
     for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+        if (!code.isReached(BlockID(block)))
+            continue;
         uint32_t place = 0;
         for (ValueID id : code.valuesOf(BlockID(block))) {
             ++place;
@@ -256,7 +260,14 @@ void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
         return;
     }
     if (!convertsToInt32) {
-        defineAs(value, roundedQuotient(rounding, dividend, dividends, divisor, divisors), type);
+        Integer quotient = roundedQuotient(rounding, dividend, dividends, divisor, divisors);
+        if (value.representation() == Representation::Int32 && type.integers.isSubsetOf(Range::int32())) {
+            Word32 word = low32(quotient);
+            emitter<ConversionEmitter>().noteSignExtended(word, quotient);
+            defineAs(value, word, type);
+            return;
+        }
+        defineAs(value, quotient, type);
         return;
     }
     if (!divisors.contains(0)) {

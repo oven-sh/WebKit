@@ -1,5 +1,5 @@
 # Two closures that have met and are only called are not lost, so nothing of theirs is in the queue from the start. A caller may know which of the two it passes, and what it has proven of its argument is proven of the parameter: `pass` may come to mention either, and it may mention only what it leads to.
-# function a() {}  function b() {}  function pass(f) { return f; }  pass(a); pass(b)();
+# function a() {}  function b() {}  let kept; function pass(f) { kept = f; return kept; }  pass(a); pass(b)();
 # RUN: link functions mechanisms=all
 # CHECK: function f1 callers-known
 # CHECK: referrers f0, f3
@@ -10,6 +10,7 @@
 # NEVER-NOT: in-queue-from-start
 
 module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="kept0" module=m0 declared={type=anything} initialization=Undefined
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -34,5 +35,7 @@ function f2 name="b" module=m0 thisType={type=anything} results=[{type=anything}
 }
 function f3 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    Return v0
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    Return v2
 }

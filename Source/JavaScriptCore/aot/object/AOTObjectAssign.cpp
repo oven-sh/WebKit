@@ -1883,15 +1883,14 @@ JSFinalObject* tryCopyTwoObjects(VM& vm, State& state, JSGlobalObject* realm, JS
 {
     if (compiledObjectOrNull(first))
         return nullptr;
-    std::array<std::optional<AssignmentSource>, 2> sources;
     std::array<JSValue, 2> values { first, second };
+    auto sourceOf = [](JSValue value) {
+        return value.isObject() ? assignmentSourceFor(asObject(value), { }, true) : std::nullopt;
+    };
+    std::array<std::optional<AssignmentSource>, 2> sources { sourceOf(first), sourceOf(second) };
     for (size_t index = 0; index < values.size(); ++index) {
-        JSValue value = values[index];
-        if (!value.isCell())
+        if (!values[index].isCell())
             continue;
-        if (!value.isObject())
-            return nullptr;
-        sources[index] = assignmentSourceFor(asObject(value), { }, true);
         if (!sources[index] || (sources[index]->compiledObject && &sources[index]->compiledObject->state() != &state))
             return nullptr;
     }

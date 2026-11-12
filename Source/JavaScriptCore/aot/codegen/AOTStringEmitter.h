@@ -34,6 +34,17 @@ struct CharacterSource {
     Word32 implFlags;
 };
 
+struct OwnedCharacters {
+    CharacterSource source;
+    CellPointer owner;
+    Word32 start;
+};
+
+struct SubstringBounds {
+    Word32 start;
+    Word32 length;
+};
+
 struct CodeUnitRange {
     Word32 start;
     Word32 end;
@@ -121,6 +132,10 @@ public:
     Pointer implOfFlatString(FlatStringCell);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
     CharacterView viewWithoutResolving(const OperationContext&, CellPointer string, BlockEdge otherwise);
+    CharacterView viewOfCharacters(const OwnedCharacters& characters) { return viewOfSource(characters.source, characters.owner); }
+    OwnedCharacters loadCharacters(const OperationContext&, CellPointer string, std::optional<SubstringBounds> = std::nullopt);
+    CellPointer makeSubstring(const OperationContext&, const OwnedCharacters&);
+    CellPointer makeCarriedSubstring(const ValueContext& cut, const CodeGenerator::CarriedSubstring&);
 
     Word32 codeUnitAt(const CharacterView&, Word32 index, std::optional<Integer> indexInWholeNumber = std::nullopt);
     Word32 codeUnitOfPossibleRope(const CharacterView&, Word32 index);

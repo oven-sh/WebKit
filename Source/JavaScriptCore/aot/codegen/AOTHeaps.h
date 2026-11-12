@@ -154,6 +154,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSSet_storage, (JSSet::offsetOfStorage()), Mutable, CollectionStorage) \
     v(JSPromise_packed, JSPromise::offsetOfPacked(), Mutable, PromiseState) \
     v(JSPromise_slot, JSPromise::offsetOfSlot(), Mutable, PromiseState) \
+    v(Symbol_description, Symbol::offsetOfDescription(), OutsideDeclaredEffects, RuntimeState) \
+    v(Symbol_string, Symbol::offsetOfString(), OutsideDeclaredEffects, RuntimeState) \
     v(WatchpointSet_state, WatchpointSet::offsetOfState(), Mutable, RuntimeState)
 
 #define FOR_EACH_JSC_FIELD_HEAP_UNDER_FIELD_HEAP(v) \

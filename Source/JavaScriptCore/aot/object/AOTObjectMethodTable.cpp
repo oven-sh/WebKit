@@ -217,14 +217,14 @@ bool Object::tryRepeat(VM& vm, const FieldReturn& back, JSValue value)
 
 bool Object::mayBearMark() const
 {
-    return std::ranges::any_of(layout().fields(), [](const FieldData& field) {
+    return std::ranges::any_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [](const FieldData& field) {
         return field.isFilledAtBirth || field.holdsRawValueFromBirth;
     });
 }
 
 bool Object::hasEveryFieldOfBirth() const
 {
-    return std::ranges::all_of(layout().fields() | std::views::reverse, [&](const FieldData& field) {
+    return std::ranges::all_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [&](const FieldData& field) {
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
             return slot && !slotHoldsMarker(field.slot.representation(), slot);
@@ -785,6 +785,16 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
     countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
 }
 
+bool Object::tryFreezeFields(VM& vm)
+{
+    const LayoutData& layout = this->layout();
+    if (orderWord() & (orderWordHasExtraProperties | orderWordIntegrityBits) || mayBePrototype() || layout.hasFieldsWithSymbolKeys || layout.impossibleMutations().contains(ObjectMutation::ChangeIntegrity))
+        return false;
+    at<uint32_t>(offsetOfOrderWord) |= orderWordIntegrityBits;
+    countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
+    return true;
+}
+
 bool Object::testIntegrity(VM& vm, Integrity integrity) const
 {
     if (!isNotExtensible())
@@ -1052,10 +1062,24 @@ static bool putOutsideDataSlot(JSGlobalObject* globalObject, Object* object, Pro
     return true;
 }
 
-static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
+static bool hasNoTraps(VM& vm, State& state, JSObject* handler, std::initializer_list<const Identifier*> traps)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    for (const Identifier* trap : { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) {
+    Object* compiledWithFieldsAlone = compiledObjectOrNull(handler);
+    if (compiledWithFieldsAlone && !compiledWithFieldsAlone->hasFlagsInOrderWord()) {
+        JSObject* above = handler->realm()->objectPrototype();
+        Structure* structureAbove = above->structure();
+        bool inheritsNoTrap = handler->getPrototypeDirect() == JSValue(above) && std::ranges::all_of(traps, [&](const Identifier* trap) {
+            return structureAbove->isImmutablePropertyForReader(trap->impl());
+        });
+        if (inheritsNoTrap) {
+            return std::ranges::all_of(traps, [&](const Identifier* trap) {
+                const FieldData* field = compiledWithFieldsAlone->fieldNamed(state, trap->impl());
+                return !field || !compiledWithFieldsAlone->isInSlot(*field);
+            });
+        }
+    }
+    for (const Identifier* trap : traps) {
         UniquedStringImpl* uid = trap->impl();
         if (const Slot* filed = state.propertyCaches->findByKey(handler->structure(), uid, SlotAccess::Read)) {
             if (filed->kind == Slot::Kind::Absent)
@@ -1092,23 +1116,19 @@ JSObject* RuntimeHooks::proxyDefinePropertyTarget(VM& vm, JSValue receiver)
     Object* compiled = compiledHandler ? compiledHandler : compiledObjectOrNull(proxy->target());
     if (!compiled)
         return nullptr;
-    State& state = compiled->state();
-    auto handlerHasTrapsOnlyInSlots = [&] {
-        if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
-            return false;
-        JSObject* above = handler->realm()->objectPrototype();
-        Structure* structureAbove = above->structure();
-        return handler->getPrototypeDirect() == JSValue(above)
-            && structureAbove->isImmutablePropertyForReader(vm.propertyNames->defineProperty.impl())
-            && structureAbove->isImmutablePropertyForReader(vm.propertyNames->getOwnPropertyDescriptor.impl());
-    };
-    if (!handlerHasTrapsOnlyInSlots())
-        return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
-    auto hasEmptySlot = [&](const Identifier& trap) {
-        const FieldData* field = compiledHandler->fieldNamed(state, trap.impl());
-        return !field || !compiledHandler->isInSlot(*field);
-    };
-    return hasEmptySlot(vm.propertyNames->defineProperty) && hasEmptySlot(vm.propertyNames->getOwnPropertyDescriptor) ? proxy->target() : nullptr;
+    return hasNoTraps(vm, compiled->state(), handler, { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) ? proxy->target() : nullptr;
+}
+
+JSObject* RuntimeHooks::proxyOwnKeysTarget(VM& vm, JSObject* object, bool asksDescriptors)
+{
+    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(object);
+    Object* handler = proxy->handler().isObject() ? compiledObjectOrNull(asObject(proxy->handler())) : nullptr;
+    JSObject* target = proxy->target();
+    if (!handler || !(compiledObjectOrNull(target) || target->type() == FinalObjectType || target->type() == ArrayType))
+        return nullptr;
+    State& state = handler->state();
+    bool listsTarget = asksDescriptors ? hasNoTraps(vm, state, handler, { &vm.propertyNames->ownKeys, &vm.propertyNames->getOwnPropertyDescriptor }) : hasNoTraps(vm, state, handler, { &vm.propertyNames->ownKeys });
+    return listsTarget ? target : nullptr;
 }
 
 static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)

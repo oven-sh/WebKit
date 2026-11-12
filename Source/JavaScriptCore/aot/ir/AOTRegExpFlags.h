@@ -46,6 +46,10 @@ inline OptionSet<Yarr::Flags> toYarrFlags(OptionSet<RegExpFlags> flags)
 
 inline constexpr OptionSet<RegExpFlags> flagsOfMatchesUsingObject { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::HasIndices };
 
+inline constexpr uint32_t privateRegExpParameter = 1u << 8;
+
+inline constexpr uint32_t countedMatchesParameter = 1u << 31;
+
 inline constexpr unsigned longestRegExpPatternWithCode = 1048576;
 
 } } } // namespace JSC::AOT::Typed

@@ -1,5 +1,5 @@
 # What is held of a read under a key that nobody knows is the same whether the read or a copy of the same record stands first in the program
-# function pick(r, k) { return r[k]; }  function fill(t, s) { Object.assign(t, s); }  function holder() {}  const options = { width: 1, title: "x" };  fill(holder, options);  pick(options, "width");  pick(options, "title");
+# function pick(r, k) { return r[k]; }  function fill(t, s) { Object.assign(t, s); }  function holder() {}  const options = { width: 1, title: "x" };  fill(holder, options);  pick(options, "width");  pick(options, typeof options);
 # The program of read-under-an-unknown-key-expects-undefined-and-null-though-a-copy-asks-first.ir with the two functions in the other order: here the read has the lower number
 # RUN: link held accesses mechanisms=all
 # CHECK: read f1 v2 proven=undefined|null|i32|string
@@ -21,7 +21,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = NewClosure function=f3
     v7 = Call v5, -, v6, v3 calleeName="fill"
     v8 = String string="width"
-    v9 = String string="title"
+    v9 = TypeOf v3
     v10 = Call v4, -, v3, v8 calleeName="pick"
     v11 = Call v4, -, v3, v9 calleeName="pick"
     Return v11

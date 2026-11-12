@@ -226,7 +226,7 @@ struct WaysToFieldInExtension {
 void computeFieldAddress(StubAssembler&, const FieldAddressRegisters&, bool isOutOfLine, JumpList& hasNoStorage, WaysToFieldInExtension* = nullptr, std::optional<SlotRepresentation> known = std::nullopt);
 void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&, std::optional<SlotRepresentation> known = std::nullopt);
 void loadGetterSetterInField(StubAssembler&, GPRReg address, GPRReg representation, GPRReg result, JumpList& isAbsent);
-void branchOnFieldPresence(StubAssembler&, const FieldAddressRegisters&, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent);
+void branchOnFieldPresence(StubAssembler&, const FieldAddressRegisters&, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent, JumpList& keyOrderDecides);
 void returnFieldPresence(StubAssembler&, const CachedSlot&, const FieldAddressRegisters&, JumpList& isUnknown, JumpList* keyOrderSays = nullptr);
 void branchUnlessTypeAccepts(StubAssembler&, const TypeTestRegisters&, JumpList& isRejected, JumpList& cannot);
 void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&, const ScopedLambda<void(GPRReg classOfSlot)>* rememberStore = nullptr);

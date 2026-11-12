@@ -85,6 +85,8 @@ static bool someOperationGivenToEmittersMayCollect(const Facts& facts, const Cod
         return false;
     uint32_t numberOfBlocks = code.numberOfBlocks();
     for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        if (!code.isReached(BlockID(index)))
+            continue;
         for (ValueID value : code.valuesOf(BlockID(index))) {
             if (code.at(value).traits().mayCollect())
                 return true;

@@ -17,7 +17,9 @@ struct Instance;
 
 static constexpr uint32_t minAdditionsToGrowingText = MarkedBlock::blockSize / sizeof(JSRopeString);
 static constexpr uint32_t minLengthOfGrowingText = minAdditionsToGrowingText;
-static constexpr uint32_t maxLengthOfPieceWrittenByStub = 16;
+static constexpr uint32_t maxLengthOfPieceWrittenByStub = 256;
+static constexpr uint32_t minLengthSharedWithBuffer = 64 * 1024;
+static constexpr int32_t lengthWrittenAtOnce = 16;
 static constexpr ptrdiff_t offsetOfEndOfTextInCharactersOfBuffer = 0;
 
 JS_EXPORT_PRIVATE JSString* tryAppendToGrowingText(Instance&, JSString* text, std::span<JSString* const> pieces);
@@ -35,6 +37,12 @@ JS_EXPORT_PRIVATE bool canGrowInPlace(Instance&, JSString* text);
 
 bool tryResolveInGrowingBuffer(Instance&, JSRopeString*);
 void noteResolvedText(Instance&, const JSString*);
+bool tryResolveInOwnBuffer(Instance&, JSRopeString*);
+
+ALWAYS_INLINE bool tryResolveLongText(Instance& instance, JSString* text)
+{
+    return text->length() >= minLengthSharedWithBuffer && text->isNonSubstringRope() && tryResolveInOwnBuffer(instance, uncheckedDowncast<JSRopeString>(text));
+}
 
 } } // namespace JSC::AOT
 

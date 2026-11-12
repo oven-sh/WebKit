@@ -227,7 +227,10 @@ static ObjectShapesOfBuiltin objectShapesInRowsOf(const BuiltinTable& builtins, 
             notePlace(action.value);
     }
 
-    if (!builtins.moduleLoadsOf(canonical).empty() || !builtins.calledFunctionsOf(canonical).empty())
+    bool callsUndescribedFunction = std::ranges::any_of(builtins.calledFunctionsOf(canonical), [](const BuiltinCalledFunction& called) {
+        return !called.uses.areListed;
+    });
+    if (!builtins.moduleLoadsOf(canonical).empty() || callsUndescribedFunction)
         shapes.contents.noteObjectThatNoRowDescribes();
     return shapes;
 }

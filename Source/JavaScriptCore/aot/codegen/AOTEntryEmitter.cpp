@@ -193,8 +193,10 @@ static bool passesStackWordsInTailCall(const CodeGenerationInputs& inputs, const
         return false;
     for (uint32_t index = 0; index < code.numberOfBlocks(); ++index) {
         BlockID block(index);
+        if (!code.isReached(block))
+            continue;
         const Terminator& terminator = code.at(block).terminator;
-        if (terminator.kind == TerminatorKind::ReturnCall && code.isReached(block) && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
+        if (terminator.kind == TerminatorKind::ReturnCall && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
             return true;
     }
     return false;

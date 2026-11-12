@@ -47,12 +47,12 @@ Reference buildSliceOfElementsInSight(Walker& walker, const SliceOfElementsInSig
     walker.checkWhatIsInSightOfList(asked.sliced, asked.origin);
 
     Draft literal(Opcode::NewArray, asked.origin);
-    walker.chooseConservativeFields(literal);
     literal.setContents(TypeTable::anything);
     literal.setElementsOperands(*start < *end ? elements->span().subspan(*start, *end - *start) : std::span<const Reference>());
     literal.expected = asked.expected;
     literal.resultIsReturnedAtOnce = asked.resultIsReturnedAtOnce;
     literal.inputValueGiven = asked.call.id();
+    walker.chooseConservativeFields(literal);
     Reference list = walker.build(WTF::move(literal));
     noteFreshList(walker, list);
     if (list)

@@ -236,8 +236,8 @@ static void fillAndCopyByPairs(StubAssembler& jit, const VectorGrowth& growth, G
     jit.and32(TrustedImm32(~1), length, index);
     Jump hasNoPair = jit.branchTest32(CCallHelpers::Zero, index);
     Label copyPrevious = jit.label();
-    loadPair(jit, BaseIndex(butterfly, index, CCallHelpers::TimesEight, -2 * elementSize));
-    storePair(jit, BaseIndex(storage, index, CCallHelpers::TimesEight, -2 * elementSize));
+    for (int32_t offset : { -elementSize, -2 * elementSize })
+        jit.transfer64(BaseIndex(butterfly, index, CCallHelpers::TimesEight, offset), BaseIndex(storage, index, CCallHelpers::TimesEight, offset));
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), index).linkTo(copyPrevious, &jit);
     hasNoPair.link(&jit);
 

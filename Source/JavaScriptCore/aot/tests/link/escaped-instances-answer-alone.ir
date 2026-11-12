@@ -1,0 +1,84 @@
+# function D() { this.a = 1; }  D.prototype.valueOf = function () { return this.a; };  const date = new Date(1); globalThis.kept = date;  +(test ? new D() : date);  String(test ? new D() : date);  (test ? new D() : date).clone();
+# Code out of sight may have laid its own methods on the date. What it answers is called on the date: the other object is not handed to it.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: layout L2 {{*}}changes=[]
+# The argument of what is called out of sight leaves.
+# CHECK: layout L3 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="D" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="E" module=m0 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="G" module=m0 constructor=f4 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L3 kind=Instance name="H" module=m0 constructor=f5 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="valueOf"
+    v4 = Construct v0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Date" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Date) flags=[IsExpected]}
+    v8 = Integer integer=1
+    v9 = Construct v7, -, v8 calleeName="Date"
+    PropSet v5, v9 key="kept"
+    v11 = PropGet v5 key="test"
+    v12 = NewClosure function=f3
+    v13 = Construct v12
+    v14 = NewClosure function=f4
+    v15 = Construct v14
+    v16 = NewClosure function=f5
+    v17 = Construct v16
+    v18 = ToBoolean v11
+    Branch v18 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4, v13, v15)
+  b2():
+    Jump -> next b3(v9, v9, v9)
+  b3(v19, v20, v21):
+    v22 = ToNumeric v19
+    v23 = Builtin builtin=String
+    v24 = Call v23, -, v20 calleeName="String"
+    v25 = PropGet v21 key="clone"
+    v26 = Call v25, v21, v17 calleeKey="clone"
+    v27 = PropGet v4 key="a"
+    Return v27
+}
+function f1 name="D" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+function f3 name="E" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="G" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="H" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] constructedClass=L3 {
+  b0(v0: L3):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}

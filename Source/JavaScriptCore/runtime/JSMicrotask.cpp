@@ -31,6 +31,7 @@
 #include "AOTCompiledCall.h"
 #include "AOTModuleMicrotasks.h"
 #include "AOTModuleRecord.h"
+#include "AOTReactionChain.h"
 #include "MicrotaskQueueInlines.h"
 #endif
 #include "AggregateError.h"
@@ -2001,6 +2002,13 @@ static void runPromiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM&
         return;
     }
 
+#if ENABLE(AOT)
+    if (auto* chain = promiseOrCapability.isCell() ? dynamicDowncast<AOT::ReactionChain>(promiseOrCapability.asCell()) : nullptr) {
+        chain->settle(vm, resolution, status);
+        return;
+    }
+#endif
+
     promiseResolveWithoutHandlerJobSlow(globalObject, vm, promiseOrCapability, resolution, status);
 }
 
@@ -2178,10 +2186,13 @@ static void runPromiseResolveThenableJobFast(JSGlobalObject* globalObject, VM& v
         promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->fulfillPromise(vm, argument0);
     }
+    auto* promiseToResolve = dynamicDowncast<JSPromise>(argument1);
+    if (!promiseToResolve)
+        promiseToResolve = uncheckedDowncast<AOT::ReactionChain>(argument1.asCell())->createLink(vm);
 #else
     auto* promise = uncheckedDowncast<JSPromise>(argument0);
-#endif
     auto* promiseToResolve = uncheckedDowncast<JSPromise>(argument1);
+#endif
 
     if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
         return promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
@@ -2391,6 +2402,16 @@ static void runAsyncFunctionResume(JSGlobalObject* globalObject, VM& vm, Interna
 static void runCompiledAsyncFunctionResume(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* microtaskCallCache)
 {
     LEAVE_FOR_COMPILED_JOB(AOT::runAsyncFunctionResumeJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
+}
+
+static void runCompiledReactionChainStep(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue, JSValue, MicrotaskCallCache* microtaskCallCache)
+{
+    JSValue promise;
+    JSValue handler;
+    if (AOT::takeStepOfReactionChain(vm, argument0, argument1, static_cast<JSPromise::Status>(payload), promise, handler))
+        LEAVE_FOR_COMPILED_JOB(runPromiseReactionJob(globalObject, vm, InternalMicrotask::PromiseReactionJob, payload, promise, handler, argument1, JSValue(), microtaskCallCache));
+    if (promise)
+        LEAVE_FOR_COMPILED_JOB(runPromiseResolveWithoutHandlerJob(globalObject, vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, payload, promise, argument1, jsUndefined(), JSValue(), microtaskCallCache));
 }
 
 static void runCompiledModuleBodyResume(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* microtaskCallCache)

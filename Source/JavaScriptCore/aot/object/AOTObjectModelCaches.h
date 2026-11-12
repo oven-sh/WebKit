@@ -72,7 +72,11 @@ struct GetterSourceList {
     uint32_t orderWord { 0 };
     StructureID extraPropertiesStructure;
     Structure* structureOfCopy { nullptr };
+    bool hasGetter { false };
     Vector<Property, 8> properties;
+    uint32_t excludedRunNumberPlusOne { 0 };
+    Structure* structureOfRest { nullptr };
+    Vector<PropertyOffset, 8> offsetsInRest;
 };
 
 class GetterSourceLists {
@@ -88,6 +92,8 @@ public:
         for (GetterSourceList& list : m_lists) {
             list.structure = StructureID();
             list.structureOfCopy = nullptr;
+            list.structureOfRest = nullptr;
+            list.excludedRunNumberPlusOne = 0;
         }
     }
 

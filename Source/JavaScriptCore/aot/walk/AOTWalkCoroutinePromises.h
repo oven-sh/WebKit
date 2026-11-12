@@ -26,6 +26,7 @@ void resolvePromiseThatNothingHasTaken(Walker&, Reference promise, Reference val
 bool buildReturnsOfPromise(Walker&, Reference value, Origin, const ScopedLambda<bool(Reference promise)>& buildReturn);
 bool buildPromiseOperation(Walker&, const BodyValue&);
 Reference valueOfPromiseFulfilledHere(Walker&, Reference promise);
+Reference buildLinkOfReactionChain(Walker&, const BodyValue& call, BuiltinID, Reference receiver, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

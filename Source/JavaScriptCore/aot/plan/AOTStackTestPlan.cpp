@@ -185,6 +185,8 @@ auto CounterOfCoveredFrames::traitsOf(FunctionID id, const BitVector& methodsOfT
     bool isCoroutine = function.isCoroutine();
     if (!convention.has(CodeRole::Body) || (isCoroutine ? function.isModuleBody() : m_facts.summaries().at(id).has(SummaryTrait::Suspends)))
         return { };
+    if (convention.generatorNeverYields)
+        return { };
     if (function.isModuleBody())
         return { BodyTrait::MayBeCovered, BodyTrait::IsBodyOfModule };
 

@@ -238,14 +238,15 @@ void noteSubclassesOfBuiltinClasses(Program& program, std::span<const ClassBelow
     };
 
     Vector<LayoutID> nearestAbove = findNearestWantedAbove(numberOfLayouts, layoutAbove, extendsBuiltinClass);
-    BitVector liesAtOrBelowConstructorFunction = answerAlongRows(numberOfLayouts, false, [&](LayoutID id) -> StepAlongRow {
+    AnswersAlongRows liesAtOrBelowConstructorFunction(numberOfLayouts, false);
+    auto askConstructorFunction = [&](LayoutID id) -> StepAlongRow {
         LayoutID above = layoutAbove(id);
         if (extendsBuiltinClass(id) || !above)
             return { false, { } };
         if (program.at(id).has(LayoutFlags::IsConstructorFunction))
             return { true, { } };
         return { std::nullopt, above };
-    });
+    };
 
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         BuiltinClassID builtinClass = classRightAbove[index];
@@ -253,7 +254,12 @@ void noteSubclassesOfBuiltinClasses(Program& program, std::span<const ClassBelow
             builtinClass = classRightAbove[nearest.index()];
         Layout& layout = program.layouts[index];
         layout.writtenBuiltinBase = builtinClass;
-        layout.mayBeOrdinaryObject = builtinClass && liesAtOrBelowConstructorFunction.quickGet(index);
+        layout.mayBeOrdinaryObject = builtinClass && liesAtOrBelowConstructorFunction.answerFor(LayoutID(index), askConstructorFunction);
+        if (!builtinClass)
+            continue;
+        program.someClassExtendsArray |= builtinClass == BuiltinClasses::Array;
+        program.someClassExtendsIterable |= builtinClass && (builtinClass == BuiltinClasses::Array || builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || isTypedView(program.builtins().typedArrayTypeOf(builtinClass)));
+        program.someClassExtendsView |= isTypedView(program.builtins().typedArrayTypeOf(builtinClass));
     }
 }
 
@@ -279,6 +285,32 @@ void noteSubclassesOfMixins(Program& program, std::span<const ClassBelowBuiltinC
     hasSeveralSubclasses.forEachSetBit([&](size_t mixin) {
         program.layouts[mixin].mixedSubclass = { };
     });
+    if (!program.someClassExtendsMixin)
+        return;
+    auto isTopmostOfMixin = [](const Layout& layout) {
+        return layout.kind == LayoutKind::Instance && layout.has(LayoutFlags::HasHeritage) && !layout.base && !layout.writtenBuiltinBase;
+    };
+    Vector<uint32_t, 4> withSubclass;
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (program.layouts[index].mixedSubclass)
+            withSubclass.append(index);
+    }
+    for (Layout& copy : program.layouts) {
+        if (!isTopmostOfMixin(copy) || copy.mixedSubclass || !copy.name)
+            continue;
+        LayoutID subclass;
+        for (uint32_t index : withSubclass) {
+            const Layout& mixin = program.layouts[index];
+            if (mixin.name != copy.name || mixin.module != copy.module)
+                continue;
+            if (subclass) {
+                subclass = { };
+                break;
+            }
+            subclass = mixin.mixedSubclass;
+        }
+        copy.mixedSubclass = subclass;
+    }
 }
 
 void noteLayoutsOfDictionaries(Program& program, const BitVector& layoutsOfDictionaries)

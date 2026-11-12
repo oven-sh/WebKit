@@ -82,6 +82,7 @@ public:
         instance.closures.closureHeaders[0] = idOf(StructureOf::PlainClosure);
         instance.slimClosureHeaders[0] = idOf(StructureOf::SlimClosure);
         instance.functionTables.closureWords = m_closureWords.data();
+        instance.classes.heirTemplates = m_heirTemplates.data();
         instance.realm.hostFunctionStructureID = idOf(StructureOf::HostFunction);
         instance.realm.boundFunctionStructureID = idOf(StructureOf::BoundFunction);
         instance.realm.functionPrototypeCall = std::bit_cast<JSCell*>(m_functionPrototypeCall.address());
@@ -120,6 +121,7 @@ public:
 private:
     std::array<FakeStructure, numberOfStructures> m_structures;
     std::array<uint64_t, functionWithProperties + 1> m_closureWords { };
+    std::array<HeirTemplate, numberOfSubclassTemplates> m_heirTemplates { };
     FakeObject<64> m_storage;
     FakeObject<16> m_realm;
     FakeObject<16> m_otherRealm;

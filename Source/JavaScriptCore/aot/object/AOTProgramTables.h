@@ -71,6 +71,14 @@ struct ClosurePropertyNameData {
 };
 static_assert(sizeof(ClosurePropertyNameData) == 8 && isImageRecord<ClosurePropertyNameData>);
 
+struct FieldGetterData {
+    uint32_t function;
+    uint32_t field;
+
+    friend auto operator<=>(const FieldGetterData&, const FieldGetterData&) = default;
+};
+static_assert(sizeof(FieldGetterData) == 8 && isImageRecord<FieldGetterData>);
+
 struct AddedPrototypeNameData {
     uint32_t classLayout;
     uint32_t name;
@@ -104,6 +112,7 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(assignedMembers, AssignedMemberData) \
     v(closurePropertyNames, ClosurePropertyNameData) \
     v(addedPrototypeNames, AddedPrototypeNameData) \
+    v(fieldGetters, FieldGetterData) \
     v(parsedRecordNames, uint32_t) \
     v(parsedRecordStarts, uint32_t) \
     v(parsedRecordShapes, Number24)
@@ -143,7 +152,6 @@ struct ProgramTables {
     uint32_t numberOfFieldTableRows;
     uint32_t numberOfFieldTableColumns;
     uint32_t numberOfClosureCells;
-    uint32_t sizeOfStructuresOfHeirs;
     uint32_t shiftOfTypeNumbers;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];

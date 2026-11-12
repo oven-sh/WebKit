@@ -64,10 +64,12 @@ void finishFillingObjects(VM&);
 void transferEagerLoadsToLoader(VM&);
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
+void didMoveStorageOf(VM&, JSCell* view);
 void willRecompileRegExp(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 void setLoopPollsEnabled(VM&, bool);
 JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);
+JSObject* proxyOwnKeysTarget(VM&, JSObject* proxy, bool asksDescriptors);
 
 JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
 

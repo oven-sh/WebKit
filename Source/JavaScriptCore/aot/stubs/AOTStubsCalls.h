@@ -20,6 +20,9 @@ constexpr StubKey callValueWithoutThis(unsigned count, CallPosition position = C
 constexpr StubKey callValueCell(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueCell).withCount(count).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callValueCellWithoutThis(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueCellWithoutThis).withCount(count).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callValueFunctionOfEngine(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueFunctionOfEngine).withCount(count).withForm(static_cast<uint8_t>(position)); }
+constexpr unsigned numberOfCallValueCopies = descriptorOf(StubFamily::CallValue).numberOfForms - 1;
+constexpr bool isCallValueCopy(StubKey key) { return key.form() > static_cast<uint8_t>(CallPosition::Tail); }
+constexpr StubKey callValueCopy(StubKey ordinary, unsigned copy) { return ordinary.withForm(copy ? static_cast<uint8_t>(CallPosition::Tail) + copy : static_cast<uint8_t>(CallPosition::Ordinary)); }
 constexpr unsigned numberOfSetsOfLentArguments = 3;
 constexpr StubKey callValueLending(unsigned count, unsigned lentArguments, CallPosition position = CallPosition::Ordinary) { return lentArguments ? StubKey(StubFamily::CallValueLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1 + numberOfSetsOfLentArguments * static_cast<unsigned>(position))) : callValue(count, position); }
 constexpr StubKey callValueWithCount(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueWithCount).withForm(static_cast<uint8_t>(position)); }

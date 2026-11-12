@@ -338,6 +338,11 @@ private:
                 add(NumberSpace::DataStorage, data);
             return;
         }
+        case Typed::DataEncoding::SharedObject:
+            if (!m_program.at(DataID(data[0])).root.tryAs<Typed::DataNode::Object>())
+                break;
+            add(NumberSpace::DataStorage, data);
+            return;
         case Typed::DataEncoding::Unselected:
             break;
         }

@@ -546,7 +546,7 @@ TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation
 }
 
 static constexpr OpcodeSet opcodesWhosePayloadIsHeldByTypeVerifier {
-    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetKeyedValueOrAbsent, Opcode::GetValueUnderKeyOrAbsent, Opcode::GetElementInStorageOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
+    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::HasPropertyOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetKeyedValueOrAbsent, Opcode::GetValueUnderKeyOrAbsent, Opcode::GetElementInStorageOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
 };
 static_assert([]() consteval {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -563,8 +563,17 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
     case Opcode::Unspecified:
     case Opcode::GetHeapFrameWord:
         return;
-    case Opcode::GetStaticFieldOrAbsent:
+    case Opcode::GetStaticFieldOrAbsent: {
+        const LinkedStaticField* linked = operation.findsProperty() ? m_arrivals.facts().linked().findStaticField(operation.variable()) : nullptr;
+        TypeID held = linked ? linked->type : TypeID(TypeTable::anything);
+        if (!operation.isKnownInitialized() && !operation.findsProperty())
+            held = m_types.withPrimitives(held, Primitive::Absent);
+        if (!m_types.isSubset(held, stated))
+            fail(block, id, "the payload says more of a static field than what is stored into it"_s);
+        return;
+    }
     case Opcode::GetValueAtSiteOrAbsent:
+    case Opcode::HasPropertyOrAbsent:
     case Opcode::GetOwnValueUnderKeyOrAbsent:
     case Opcode::GetKeyedValueOrAbsent:
     case Opcode::GetValueUnderKeyOrAbsent:
