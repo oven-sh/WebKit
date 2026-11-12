@@ -4408,6 +4408,7 @@ private:
     bool isOnlyTestedSinceCall(Reference generator) const;
     bool checkPassedGenerator(Reference generator, Origin);
     bool runsNothingSinceCall(Reference generator) const;
+    bool isOnlyPassedToCopy(Reference generator);
     Reference functionOfGenerator(Reference generator) const;
     Reference makeGeneratorAgain(Reference generator);
     Frame& frameLeftForCall();

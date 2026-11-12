@@ -116,6 +116,7 @@ GenerationResult CodeGenerator::run()
     m_storesBehindWhichOwnerIsRemembered.clearAll();
     m_storesWithLaterOrderWord.clearAll();
     m_lastFirstStores.shrink(0);
+    m_carriedSubstrings.shrink(0);
     m_hasKeysAskedTwice = false;
     orderBlocks();
     createBlocks();
@@ -3494,7 +3495,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         if (!isCounter(loop.counter))
             return std::nullopt;
     }
-    if (std::ranges::any_of(parameters, [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
+    if (std::ranges::any_of(parameters, [&](ValueID parameter) { return isCarriedBoxed(parameter) || findCarriedSubstring(parameter); }))
         return std::nullopt;
     bool rotatesNumbers = false;
     code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
@@ -3565,7 +3566,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         const Block& block = code().at(id);
         if (!block.isInLoop || block.isLoopHead || code().handlerOf(id) || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
             return false;
-        if (std::ranges::any_of(block.parameters(), [&](ValueID parameter) { return isCarriedBoxed(parameter); }) || findLiteralChain(id))
+        if (std::ranges::any_of(block.parameters(), [&](ValueID parameter) { return isCarriedBoxed(parameter) || findCarriedSubstring(parameter); }) || findLiteralChain(id))
             return false;
         const RowGuard* checkingGuard = findCheckingGuard(id);
         for (ValueID value : code().valuesOf(id)) {
