@@ -373,6 +373,8 @@ bool fuseChainOfCallbacks(Walker& walker, const BodyValue& firstCall, BuiltinID 
     if (!walker.opensGuesses() || !walker.has(Mechanism::Inlining) || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::EscapeAnalysis) || walker.program().admitsReplacedBuiltins || walker.standsUnderHandler() || walker.hasStringsInBuilders()
         || walker.isInFusedChain() || walker.program().at(walker.unit().function).isCoroutine())
         return false;
+    if (!firstCall.thisValueOperand())
+        return false;
     FusedChain chain;
     if (!collectFusedChain(walker, firstCall, firstMethod, fewestLinks, chain))
         return false;
