@@ -3216,6 +3216,7 @@ void Walker::restartIteration()
                     lookup.setObjectOperand(store.object);
                     lookup.setPropertyOperand(constant(WTF::move(name)));
                     lookup.setKey(store.key);
+                    lookup.setTakesFunctions(true);
                     store.address = build(WTF::move(lookup));
                     if (m_hasFailed || isUnreachable())
                         return;

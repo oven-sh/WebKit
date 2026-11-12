@@ -853,7 +853,7 @@ EffectTraits CodeVerifier::boundOnTraitsOf(const Operation& operation)
 
 void CodeVerifier::verifySharedObjects(BlockID block, ValueID id, const Operation& operation)
 {
-    static constexpr OpcodeSet lookups { Opcode::ElemGet, Opcode::ElemHas, Opcode::GetKeyedPropertyAddress };
+    static constexpr OpcodeSet lookups { Opcode::ElemGet, Opcode::ElemGetByKeyParts, Opcode::ElemHas, Opcode::GetKeyedPropertyAddress };
     static constexpr OptionSet<OperandUse> leakingUses { OperandUse::Retains, OperandUse::Returns, OperandUse::WritesContents };
     Opcode opcode = operation.opcode;
     for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands(); ++operandIndex) {

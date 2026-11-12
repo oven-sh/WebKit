@@ -603,7 +603,7 @@ static bool narrowIntegersPassedToItself(Walker& walker, const Draft& written, F
         if (hasProvenWhatGuardTestsInWalkCalls(walker, callee, index, operands[index]))
             continue;
         TypeID type = operands[index] && operands[index].isValue() ? walker.typeOf(operands[index]) : TypeID();
-        if (conventions.typeBehindGuard(callee, index) != int32 || !type || !types.at(type).isInteger())
+        if (conventions.typeBehindGuard(callee, index) != int32 || !type || !types.at(type).isInteger() || !types.overlap(type, int32))
             return false;
         integers.append(index);
     }
@@ -619,7 +619,7 @@ static bool narrowIntegersPassedToItself(Walker& walker, const Draft& written, F
         test.setTestedType(int32);
         Reference passes = walker.build(WTF::move(test));
         if (!passes)
-            return true;
+            break;
         BlockID passing = walker.addBlock();
         walker.branch(passes, passing, failing);
         walker.continueIn(passing);
@@ -631,7 +631,7 @@ static bool narrowIntegersPassedToItself(Walker& walker, const Draft& written, F
         draft.setIsOnTakenEdge(true);
         narrowed[index] = walker.build(WTF::move(draft));
         if (!narrowed[index])
-            return true;
+            break;
     }
     BlockID enters = walker.addBlock();
     walker.jumpTo(enters);
@@ -702,8 +702,13 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
     if (planning.provesNumbers && !bringOperandsIntoFormsOfCalleeInWalkCalls(walker, originInFrontOfCall, entered, operands))
         return true;
     if (entered.role == CodeRole::ParameterGuard && !asksLength && !request.isConstruction && narrowIntegersPassedToItself(walker, written, request.callee, operands, originInFrontOfCall, continuationBlock, mergedResult)) {
-        if (walker.isUnreachable())
+        if (walker.isUnreachable()) {
+            if (continuationBlock) {
+                walker.continueIn(continuationBlock);
+                walker.bind(call.id(), mergedResult);
+            }
             return true;
+        }
         entered = conventions.entryBehindGuardOf(request.callee);
     }
 
