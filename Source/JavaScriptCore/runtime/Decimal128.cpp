@@ -203,22 +203,23 @@ alignas(sizeof(Decimal128::Divisor)) static constexpr auto divisorsOf64Bits = []
     return result;
 }();
 
-static ALWAYS_INLINE DecimalDivision128 divideByShortPowerOf10(UInt128 value, unsigned power)
+static ALWAYS_INLINE DecimalDivision64 divide64ByPowerOf10(uint64_t value, unsigned power)
 {
     ASSERT(power);
-    uint64_t divisor = powersOf10In64Bits[power];
-    uint64_t high = highOf(value);
-    if (!high) {
-        uint64_t quotient = highOf(multiply64(lowOf(value) >> power, divisorsOf64Bits[power].reciprocal)) >> divisorsOf64Bits[power].shift;
-        return { quotient, lowOf(value) - quotient * divisor };
+    auto& divisor = divisorsOf64Bits[power];
+    uint64_t quotient = highOf(multiply64(value >> power, divisor.reciprocal)) >> divisor.shift;
+    return { quotient, value - quotient * divisor.value };
+}
+
+static ALWAYS_INLINE DecimalDivision128 divideByShortPowerOf10(UInt128 value, unsigned power)
+{
+    if (!highOf(value)) {
+        auto division = divide64ByPowerOf10(lowOf(value), power);
+        return { division.quotient, division.remainder };
     }
-    uint64_t quotientHigh = 0;
-    if (high >= divisor) {
-        quotientHigh = high / divisor;
-        high %= divisor;
-    }
-    auto division = divide128ByPowerOf10(high, lowOf(value), power);
-    return { makeUInt128(quotientHigh, division.quotient), division.remainder };
+    auto upper = divide64ByPowerOf10(highOf(value), power);
+    auto lower = divide128ByPowerOf10(upper.remainder, lowOf(value), power);
+    return { makeUInt128(upper.quotient, lower.quotient), lower.remainder };
 }
 
 struct DecimalQuotient {
@@ -288,9 +289,36 @@ static ALWAYS_INLINE int stripTrailingZeros(uint64_t& value)
     return count;
 }
 
-static NEVER_INLINE int stripTrailingZerosOfEven(UInt128& value)
+// 2^64 is 1 more than a multiple of 5.
+static ALWAYS_INLINE unsigned remainderBy5(UInt128 value)
 {
-    int count = 0;
+    uint64_t sum = highOf(value) + lowOf(value);
+    sum += sum < lowOf(value);
+    return sum % 5;
+}
+
+static ALWAYS_INLINE bool isMultipleOf10(UInt128 value)
+{
+    return !((lowOf(value) & 1) | remainderBy5(value));
+}
+
+// With the inverse of 5 modulo 2^128.
+static ALWAYS_INLINE UInt128 divideMultipleOf10By10(UInt128 value)
+{
+    constexpr uint64_t inverseHigh = 0xccccccccccccccccull;
+    constexpr uint64_t inverseLow = 0xcccccccccccccccdull;
+    value = value >> 1;
+    UInt128 product = multiply64(lowOf(value), inverseLow);
+    return makeUInt128(highOf(product) + lowOf(value) * inverseHigh + highOf(value) * inverseLow, lowOf(product));
+}
+
+// Of a multiple of 10.
+static NEVER_INLINE int stripTrailingZerosOfLong(UInt128& value)
+{
+    value = divideMultipleOf10By10(value);
+    int count = 1;
+    if (!isMultipleOf10(value)) [[likely]]
+        return count;
     // A value of 39 digits has at most 38.
     for (int power : { 16, 16, 8, 4, 2, 1 }) {
         if (!highOf(value) || lowOf(value) & ((1ull << power) - 1))
@@ -576,8 +604,8 @@ ALWAYS_INLINE Decimal128 Decimal128::fromExact(bool isNegative, uint64_t high, u
     } else {
         UInt128 value = makeUInt128(high, low);
         ASSERT(value < powersOf10In128Bits[precision]);
-        if (!(low & 1))
-            exponent += stripTrailingZerosOfEven(value);
+        if (isMultipleOf10(value)) [[unlikely]]
+            exponent += stripTrailingZerosOfLong(value);
         result.m_low = lowOf(value);
         result.m_high = highOf(value);
     }
@@ -699,6 +727,16 @@ Decimal128 Decimal128::roundToDomainSlow(bool isNegative, uint64_t high, uint64_
     UInt128 value = makeUInt128(high, low);
     if (!value)
         return zero(false);
+
+    // One digit too many, as many a sum has, and no more once it is rounded.
+    if (value >= powersOf10In128Bits[precision] && value < powersOf10In128Bits[precision + 1] - 5 && exponent >= minimumQuantumExponent && exponent < maximumQuantumExponent) {
+        unsigned digit = remainderBy5(value);
+        digit += (digit ^ low) & 1 ? 5 : 0;
+        value = divideMultipleOf10By10(value - digit);
+        if (digit > 5 || (digit == 5 && (isInexact || lowOf(value) & 1)))
+            value = value + 1;
+        return fromExact(isNegative, highOf(value), lowOf(value), exponent + 1);
+    }
 
     int digits = JSC::numberOfDigits(value);
     ASSERT(!isInexact || digits > precision);
@@ -1229,6 +1267,8 @@ std::partial_ordering Decimal128::compare(Decimal128 x, Decimal128 y)
         uint64_t yFactor = powersOf10In64Bits[std::max(-distance, 0)];
         return order(multiply64(x.m_low, xFactor), multiply64(y.m_low, yFactor), x.isNegative());
     }
+    if (!distance && x.m_isNegative == y.m_isNegative && !x.isNaN())
+        return order(makeUInt128(x.m_high, x.m_low), makeUInt128(y.m_high, y.m_low), x.isNegative());
     return compareSlow(x, y);
 }
 
@@ -1246,10 +1286,6 @@ NEVER_INLINE std::partial_ordering Decimal128::compareSlow(Decimal128 x, Decimal
     auto compareMagnitudes = [](const Decimal128& x, const Decimal128& y) -> std::strong_ordering {
         if (x.isInfinity() || y.isInfinity())
             return x.isInfinity() <=> y.isInfinity();
-        UInt128 xCoefficient = makeUInt128(x.m_high, x.m_low);
-        UInt128 yCoefficient = makeUInt128(y.m_high, y.m_low);
-        if (x.m_exponent == y.m_exponent)
-            return xCoefficient < yCoefficient ? std::strong_ordering::less : xCoefficient == yCoefficient ? std::strong_ordering::equal : std::strong_ordering::greater;
         if (auto order = x.scientificExponent() <=> y.scientificExponent(); order != 0)
             return order;
         // The same scientific exponent: the quanta are at most 33 apart.

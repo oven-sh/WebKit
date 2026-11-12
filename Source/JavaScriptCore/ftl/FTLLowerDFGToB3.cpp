@@ -10146,6 +10146,12 @@ IGNORE_CLANG_WARNINGS_END
     // Whether any coefficient can have it.
     LValue isQuantumExponent(LValue exponent) { return m_out.belowOrEqual(m_out.sub(exponent, m_out.constInt64(Decimal128::minimumQuantumExponent)), m_out.constInt64(Decimal128::maximumQuantumExponent - Decimal128::minimumQuantumExponent)); }
 
+    LValue withSignOfDecimal(LValue magnitude, LValue upper)
+    {
+        LValue sign = m_out.aShr(upper, m_out.constInt32(63));
+        return m_out.sub(m_out.bitXor(magnitude, sign), sign);
+    }
+
     // False for 0. See Granlund and Montgomery, Division by Invariant Integers using Multiplication, section 9.
     LValue hasNoTrailingZero(LValue value)
     {
@@ -10180,12 +10186,7 @@ IGNORE_CLANG_WARNINGS_END
         continueIf(m_out.belowOrEqual(otherLow, load(OBJECT_OFFSETOF(Alignment, otherLimit))), slowCase);
         LValue count = m_out.mul(low, load(OBJECT_OFFSETOF(Alignment, factor)));
         LValue otherCount = m_out.mul(otherLow, load(OBJECT_OFFSETOF(Alignment, otherFactor)));
-
-        auto withSign = [&](LValue magnitude, LValue upper) {
-            LValue sign = m_out.aShr(upper, m_out.constInt32(63));
-            return m_out.sub(m_out.bitXor(magnitude, sign), sign);
-        };
-        return { withSign(count, upper), withSign(otherCount, otherUpper), m_out.select(m_out.lessThan(distance, m_out.int64Zero), upper, otherUpper) };
+        return { withSignOfDecimal(count, upper), withSignOfDecimal(otherCount, otherUpper), m_out.select(m_out.lessThan(distance, m_out.int64Zero), upper, otherUpper) };
     }
 
     std::array<LValue, 2> roundShortDecimal(LValue low, LValue upper, LValue digits, LBasicBlock slowCase)
@@ -10365,12 +10366,26 @@ IGNORE_CLANG_WARNINGS_END
     template<typename FastFunctor, typename SlowFunctor>
     LValue compareDecimals(LType type, NOESCAPE const FastFunctor& ofIntegers, NOESCAPE const SlowFunctor& ofOrder)
     {
+        LBasicBlock notShortCase = m_out.newBlock();
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
-        LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(notShortCase);
 
-        auto [x, y, upperOfUnit] = alignShortDecimals(slowCase);
+        auto [x, y, upperOfUnit] = alignShortDecimals(notShortCase);
         ValueFromBlock fastResult = m_out.anchor(ofIntegers(x, y));
+        m_out.jump(continuation);
+
+        // Of one sign and one exponent: the upper word of the difference, with a bit behind it for the lower word.
+        m_out.appendTo(notShortCase, slowCase);
+        LValue low = lowDecimalWord(0);
+        LValue upper = lowDecimalWord(1);
+        LValue otherLow = lowDecimalWord(2);
+        LValue otherUpper = lowDecimalWord(3);
+        continueIf(m_out.isZero64(m_out.lShr(m_out.bitXor(upper, otherUpper), m_out.constInt32(Decimal128::shiftOfExponent))), slowCase);
+        continueIf(m_out.logicalNot(isDecimalNaN(upper)), slowCase);
+        LValue high = m_out.sub(m_out.sub(upper, otherUpper), m_out.zeroExt(m_out.below(low, otherLow), Int64));
+        LValue difference = m_out.bitOr(m_out.shl(high, m_out.int32One), m_out.zeroExt(m_out.notEqual(low, otherLow), Int64));
+        ValueFromBlock longResult = m_out.anchor(ofIntegers(withSignOfDecimal(difference, upper), m_out.int64Zero));
         m_out.jump(continuation);
 
         m_out.appendTo(slowCase, continuation);
@@ -10378,7 +10393,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        return m_out.phi(type, fastResult, slowResult);
+        return m_out.phi(type, fastResult, longResult, slowResult);
     }
 
     // The representation of a value is unique, but for the sign of 0.

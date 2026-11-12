@@ -106,3 +106,61 @@ for (const mode of ["ceil", "floor", "trunc", "halfExpand", "halfEven"]) {
         });
     }
 }
+
+// Long coefficients of one exponent, which differ in the upper word, in the lower one, or in both in opposite ways.
+{
+    const coefficients = [0n, 1n, 2n ** 62n + 3n, 2n ** 63n + 1n, 2n ** 64n - 1n, 2n ** 64n, 2n ** 64n + 1n, 2n ** 65n - 1n, 2n ** 65n, 2n ** 65n + 2n ** 63n + 1n, 2n ** 112n + 1n, 10n ** 34n - 1n];
+    const signed = [...coefficients, ...coefficients.map(c => -c)];
+    const tests = { lessThan: (a, b) => a < b, lessThanOrEqual: (a, b) => a <= b, greaterThan: (a, b) => a > b, greaterThanOrEqual: (a, b) => a >= b, compare: (a, b) => (a > b) - (a < b) };
+    for (const method in tests) {
+        const f = new Function("x", "y", `return x.${method}(y); // long`);
+        noInline(f);
+        const cases = [];
+        for (const exponent of [0, -33, 6111, -6176]) {
+            for (const a of signed) {
+                for (const b of signed)
+                    cases.push([new Decimal(`${a}e${exponent}`), new Decimal(`${b}e${exponent}`), tests[method](a, b)]);
+            }
+        }
+        const special = ["-Infinity", "-0", "0", "Infinity", "NaN"];
+        for (const a of special) {
+            for (const b of special)
+                cases.push([new Decimal(a), new Decimal(b), method === "compare" && (a === "NaN" || b === "NaN") ? NaN : tests[method](Number(a), Number(b))]);
+        }
+        for (let i = 0; i < testLoopCount + cases.length; ++i) {
+            const [x, y, expected] = cases[i % cases.length];
+            if (!Object.is(f(x, y), expected))
+                throw new Error(`${x.toExponential()}.${method}(${y.toExponential()}) is not ${expected}`);
+        }
+    }
+}
+
+// The zeros at the end of a long result are removed, also where the sum of its words overflows.
+for (const c of [2n ** 64n * 5n, 2n ** 64n * 10n - 10n, 2n ** 64n * 25n + 2n ** 64n - 6n, 2n ** 64n * 3n + 2n, 2n ** 64n * 4n + 2n ** 64n - 4n, 10n ** 33n + 10n, 10n ** 33n + 5n, 10n ** 33n + 2n, 10n ** 33n + 10n ** 20n]) {
+    for (let delta = -12n; delta <= 12n; ++delta) {
+        const sum = new Decimal(c + delta - 7n).add(7m);
+        if (!sum.equals(new Decimal(c + delta)) || sum.toExponential() !== new Decimal(String(c + delta)).toExponential() || /0e/.test(sum.toExponential()))
+            throw new Error(`${c + delta} is ${sum.toExponential()}`);
+    }
+}
+
+// A sum of 35 digits loses one, to the even one at a tie, up to where it gets a digit more or is infinite.
+for (const exponent of [0, -6176, 6110, 6111]) {
+    for (const base of [10n ** 34n, 10n ** 34n + 10n ** 20n, 2n * 10n ** 34n - 40n]) {
+        for (let delta = 0n; delta < 38n; ++delta) {
+            const exact = base + delta, half = exact / 2n, digit = exact % 10n;
+            const rounded = exact / 10n + (digit > 5n || (digit === 5n && exact / 10n % 2n) ? 1n : 0n);
+            for (const sign of ["", "-"]) {
+                const sum = new Decimal(`${sign}${half}e${exponent}`).add(new Decimal(`${sign}${exact - half}e${exponent}`));
+                const expected = exponent === 6111 ? `${sign}Infinity` : `${sign}${rounded}e${exponent + 1}`;
+                if (!sum.equals(new Decimal(expected)))
+                    throw new Error(`${sign}${exact}e${exponent} is ${sum.toExponential()}`);
+            }
+        }
+    }
+}
+for (let delta = 1n; delta <= 16n; ++delta) {
+    const exact = 10n ** 35n - delta;
+    if (!new Decimal(exact).equals(new Decimal(delta <= 5n ? "1e35" : delta < 15n ? `${10n ** 34n - 1n}e1` : `${10n ** 34n - 2n}e1`)))
+        throw new Error(`10^35 - ${delta}`);
+}
