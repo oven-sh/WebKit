@@ -178,6 +178,11 @@ static JSCell* tryNewSetFromIterable(JSGlobalObject* globalObject, Structure* st
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (set)
             return set;
+        set = CompactTable::tryCreateSetOfIdentities(globalObject, { butterfly->contiguous().data(), butterfly->publicLength() });
+        ensureStillAliveHere(list);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (set)
+            return set;
     }
     if (JSArray* list = iterable.isCell() ? dynamicDowncast<JSArray>(iterable.asCell()) : nullptr; list && structure == globalObject->setStructure() && list->isIteratorProtocolFastAndNonObservable()) {
         JSSet* set = CompactTable::tryCreateSetOfNumbers(globalObject, list);

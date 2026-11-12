@@ -90,7 +90,9 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
         return;
     unsigned attributes;
     exit.offset = extraStructure->get(vm, name, attributes);
-    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes != leaving.attributes)
+    if (!isValidOffset(exit.offset) || attributes != leaving.attributes)
+        return;
+    if (!isInlineOffset(exit.offset) && (!exit.isDefinition || !extraBefore))
         return;
     exit.structureAfter = structureID();
     exit.extraPropertiesAfter = extraStructure->id();
@@ -109,7 +111,9 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
 bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
 {
     const FieldData& field = *exit.field;
-    if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInSlot(field) != exit.wasInSlot)
+    const bool holdsBoxedValueInCell = field.slot.representation() == SlotRepresentation::JSValue && !field.isOutOfLine();
+    const bool isInItsSlot = holdsBoxedValueInCell ? !!at<EncodedJSValue>(field.slot.offset) : isInSlot(field);
+    if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInItsSlot != exit.wasInSlot)
         return false;
     if (!exit.isDefinition && state().objects->layouts.slotAdmits(field, value))
         return false;
@@ -125,17 +129,22 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     uint32_t orderWordAfter = exit.orderWordAfter;
     PropertyOffset offset = exit.offset;
     if (extra) {
-        extra->putDirectOffset(vm, offset, value);
-        extra->setStructure(vm, extraStructureAfter);
-        JSCell::setStructure(vm, structureAfter);
+        if (!isInlineOffset(offset)) [[unlikely]]
+            extra->growOutOfLineStorageForTransition(vm, extraStructureAfter);
+        [[clang::always_inline]] extra->putDirectOffset(vm, offset, value);
+        [[clang::always_inline]] extra->setStructure(vm, extraStructureAfter);
+        [[clang::always_inline]] setVariantOfStructure(vm, structureAfter);
     } else {
         extra = constructEmptyObject(vm, extraStructureAfter);
         extra->putDirectOffset(vm, offset, value);
         setExtraProperties(vm, extra, structureAfter);
     }
     at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
-    setBearsMark(true);
-    clear(field);
+    [[clang::always_inline]] setBearsMark(true);
+    if (holdsBoxedValueInCell)
+        at<EncodedJSValue>(field.slot.offset) = JSValue::encode(JSValue());
+    else
+        clear(field);
     countFieldThatLeftSlot(vm, layout().index, indexOf(field), counterFor(reason), value);
     ensureStillAliveHere(structureAfter);
     ensureStillAliveHere(extraStructureAfter);
@@ -209,7 +218,7 @@ bool Object::tryRepeat(VM& vm, const FieldReturn& back, JSValue value)
     forgetPlacesOfPositionedKeys(state());
     extra->setStructure(vm, extraStructureAfter);
     extra->locationForOffset(offset)->clear();
-    JSCell::setStructure(vm, structureAfter);
+    setVariantOfStructure(vm, structureAfter);
     ensureStillAliveHere(structureAfter);
     ensureStillAliveHere(extraStructureAfter);
     return true;
@@ -224,7 +233,23 @@ bool Object::mayBearMark() const
 
 bool Object::hasEveryFieldOfBirth() const
 {
+    static_assert(!traitsOf(SlotRepresentation::JSValue).absentBits && !traitsOf(SlotRepresentation::Cell32).absentBits && !traitsOf(SlotRepresentation::OptionalCell32).absentBits);
+    auto holdsWordInCell = [&](const FieldData& field) ALWAYS_INLINE_LAMBDA {
+        if (field.isOutOfLine())
+            return false;
+        switch (field.slot.representation()) {
+        case SlotRepresentation::JSValue:
+            return !!at<EncodedJSValue>(field.slot.offset);
+        case SlotRepresentation::Cell32:
+        case SlotRepresentation::OptionalCell32:
+            return !!at<uint32_t>(field.slot.offset);
+        default:
+            return false;
+        }
+    };
     return std::ranges::all_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [&](const FieldData& field) {
+        if (!field.holdsRawValueFromBirth && holdsWordInCell(field)) [[likely]]
+            return true;
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
             return slot && !slotHoldsMarker(field.slot.representation(), slot);
@@ -232,6 +257,13 @@ bool Object::hasEveryFieldOfBirth() const
         if (!field.isFilledAtBirth || isInSlot(field))
             return true;
         return field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state(), field) && !livesInExtraProperties(vm(), *this, field);
+    });
+}
+
+bool Object::lacksFieldOfBirth() const
+{
+    return std::ranges::any_of(layout().fieldsThroughLastAllocated(), [&](const FieldData& field) {
+        return field.isFilledAtBirth && !field.holdsRawValueFromBirth && !isInSlot(field) && !isInKeyOrder(state(), field);
     });
 }
 
@@ -243,8 +275,34 @@ bool Object::hasAccessorAmongExtraProperties() const
 
 void Object::tryFinishBirth()
 {
-    if (bearsMark() && !(orderWord() & orderWordHasFieldOutsideSlot) && !hasAccessorAmongExtraProperties() && hasEveryFieldOfBirth())
+    if (!bearsMark())
+        return;
+    KeyOrderTable& keyOrders = state().objects->keyOrders;
+    const uint32_t word = orderWord();
+    if (keyOrders.isOrderOfFinishedBirth(layout(), word)) {
         setBearsMark(false);
+        return;
+    }
+    UnfinishedBirth& remembered = state().objects->caches->unfinishedBirthAt(structureID(), word);
+    if (remembered.structureID == structureID().bits() && remembered.orderWord == word)
+        return;
+    if (layout().marksFrozenObjects && isFrozen())
+        return;
+    if (word & orderWordHasFieldOutsideSlot || hasAccessorAmongExtraProperties())
+        return;
+    if (!hasEveryFieldOfBirth()) {
+        if (!hasOutOfLineKeyOrder() && lacksFieldOfBirth())
+            remembered = { structureID().bits(), word };
+        return;
+    }
+    setBearsMark(false);
+    if (word & ~orderAndCountMask || isOrderStoredOutOfLine(word) || orderOf(word) >= layout().numberOfOrders)
+        return;
+    bool listsEveryFieldOfBirth = std::ranges::all_of(layout().fieldsThroughLastAllocated(), [&](const FieldData& field) {
+        return !field.holdsRawValueFromBirth && (!field.isFilledAtBirth || (!field.isPrivate() && !field.isBrand() && isInKeyOrder(state(), field)));
+    });
+    if (listsEveryFieldOfBirth)
+        keyOrders.rememberOrderOfFinishedBirth(layout(), word);
 }
 
 void Object::deleteField(VM& vm, const FieldData& field)
@@ -434,13 +492,16 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
     Object* object = uncheckedDowncast<Object>(cell);
     if (object->tryDefineAsOnTheLastObject(globalObject->vm(), name, descriptor))
         return true;
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     const FieldData* field = object->fieldNamed(object->state(), name);
     ASSERT(!field || !field->isPrivate());
     if (name.isSymbol()) [[unlikely]] {
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
+    if (descriptor.isAccessorDescriptor() && object->tryRepeatAccessorDefinition(vm, globalObject, field, name, descriptor))
+        return true;
     if (field)
         RELEASE_AND_RETURN(scope, defineFieldProperty(object, globalObject, *field, name, descriptor, shouldThrow));
     RELEASE_AND_RETURN(scope, defineExtraProperty(object, globalObject, name, descriptor, shouldThrow));
@@ -639,7 +700,7 @@ bool Object::tryRepeat(VM& vm, const AddedExtraProperty& added, JSValue value)
     if (extra) {
         extra->putDirectOffset(vm, offset, value);
         extra->setStructure(vm, extraStructureAfter);
-        JSCell::setStructure(vm, structureAfter);
+        setVariantOfStructure(vm, structureAfter);
     } else {
         extra = constructEmptyObject(vm, extraStructureAfter);
         extra->putDirectOffset(vm, offset, value);
@@ -656,6 +717,53 @@ bool Object::tryDefineAsOnTheLastObject(VM& vm, PropertyName name, const Propert
         return false;
     const AddedExtraProperty* added = state().propertyCaches->findAddedExtraProperty(structureID(), name.uid());
     return added && added->attributes == (descriptor.attributes() & ~PropertyAttribute::Accessor) && tryRepeat(vm, *added, descriptor.value() ? descriptor.value() : jsUndefined());
+}
+
+bool Object::tryRepeatAccessorDefinition(VM& vm, JSGlobalObject* globalObject, const FieldData* field, PropertyName name, const PropertyDescriptor& descriptor)
+{
+    ASSERT(descriptor.isAccessorDescriptor());
+    if (!descriptor.enumerablePresent() || !descriptor.configurablePresent())
+        return false;
+    const unsigned attributes = (descriptor.attributes() & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor;
+    return tryRepeatAccessorDefinition(vm, globalObject, field, name, descriptor.getterPresent() ? descriptor.getterObject() : nullptr, descriptor.setterPresent() ? descriptor.setterObject() : nullptr, attributes);
+}
+
+bool Object::tryRepeatAccessorDefinition(VM& vm, JSGlobalObject* globalObject, const FieldData* field, PropertyName name, JSObject* getter, JSObject* setter, unsigned attributes)
+{
+    if (isPreparedBeforeLookups(vm, name.uid()))
+        return false;
+    if (field && (field->isAccessor() || field->getterIsProven || field->setterIsProven))
+        return false;
+    PropertyCaches& caches = *state().propertyCaches;
+    FieldExit* exit = nullptr;
+    AddedExtraProperty* added = nullptr;
+    auto findsDefinition = [&] {
+        if (field) {
+            exit = caches.findFieldExit(structureID(), field->name);
+            return exit && exit->isDefinition && exit->attributes == attributes;
+        }
+        added = caches.findAddedExtraProperty(structureID(), name.uid());
+        return added && added->attributes == attributes;
+    };
+    if (!findsDefinition())
+        return false;
+    GetterSetter* accessor = exit ? exit->accessorOfDefinition : added->lastAccessor;
+    bool holdsBoth = accessor && accessor->getter() == (getter ? getter : globalObject->nullGetterFunction()) && accessor->setter() == (setter ? setter : globalObject->nullSetterFunction());
+    if (!holdsBoth) {
+        accessor = GetterSetter::create(vm, globalObject, getter, setter);
+        if (!findsDefinition())
+            return false;
+        if (exit)
+            exit->accessorOfDefinition = accessor;
+        else
+            added->lastAccessor = accessor;
+    }
+    if (exit ? !tryRepeat(vm, *exit, accessor) : !tryRepeat(vm, *added, accessor))
+        return false;
+    if (holdsBoth)
+        countEvent(vm, RuntimeCounterID::AccessorsShared);
+    countEvent(vm, RuntimeCounterID::AccessorDefinitionsReplayed);
+    return true;
 }
 
 bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes, MemoryOfAddedNames memory)
@@ -780,6 +888,8 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
         didChangeExtraProperties(vm);
     }
     at<uint32_t>(offsetOfOrderWord) |= bits;
+    if (layout().marksFrozenObjects && integrity == Integrity::Frozen)
+        setBearsMark(true);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, nullptr);
     didChangeIndexedProperties(vm, *this, interceptedIndexedAccesses);
     countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
@@ -791,6 +901,8 @@ bool Object::tryFreezeFields(VM& vm)
     if (orderWord() & (orderWordHasExtraProperties | orderWordIntegrityBits) || mayBePrototype() || layout.hasFieldsWithSymbolKeys || layout.impossibleMutations().contains(ObjectMutation::ChangeIntegrity))
         return false;
     at<uint32_t>(offsetOfOrderWord) |= orderWordIntegrityBits;
+    if (layout.marksFrozenObjects)
+        setBearsMark(true);
     countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
     return true;
 }
@@ -845,7 +957,7 @@ void Object::setPrototypeKeepingShape(VM& vm, JSValue prototype)
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
     bool chainAlreadyMayInterceptIndexedAccesses = mayBePrototype() && anyObjectInChainMayInterceptIndexedAccesses();
-    JSCell::setStructure(vm, state().objects->structures.withPrototype(vm, compiledStructure(), prototype));
+    setVariantOfStructure(vm, state().objects->structures.withPrototype(vm, compiledStructure(), prototype));
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Prototype, nullptr);
     if (mayBePrototype() && !chainAlreadyMayInterceptIndexedAccesses && anyObjectInChainMayInterceptIndexedAccesses())
         structure()->realm()->haveABadTime(vm, this);
@@ -857,7 +969,7 @@ void Object::setPrototypeAtCreation(VM& vm, JSValue prototype)
     ASSERT(!mayBePrototype());
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
-    JSCell::setStructure(vm, state().objects->structures.withPrototype(vm, compiledStructure(), prototype));
+    setVariantOfStructure(vm, state().objects->structures.withPrototype(vm, compiledStructure(), prototype));
 }
 
 bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrow)

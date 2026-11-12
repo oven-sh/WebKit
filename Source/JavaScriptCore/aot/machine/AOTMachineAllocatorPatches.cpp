@@ -737,6 +737,36 @@ static ALWAYS_INLINE Reg takeRegisterForPatchResultWithFacts(Allocator& allocato
     return allocator.takeRegister(bank, allowed, hintOfPatchResultAmong(allocator.hintOf(value), allowed));
 }
 
+static NEVER_INLINE bool trySwapWithHolder(Allocator& allocator, Operation* value, Reg reg, Operation* holder, RegisterMask unavailable, ArenaVector<Step>& steps)
+{
+    if (allocator.isInRareRegion() || value->hasNoPosition() || holder->hasNoPosition() || !holder->type().isNumeric())
+        return false;
+    Allocator::ValueState& state = allocator.stateOf(value);
+    Allocator::ValueState& stateOfHolder = allocator.stateOf(holder);
+    if (!std::has_single_bit(state.registers) || (state.registers & unavailable) || stateOfHolder.registers != maskOf(reg))
+        return false;
+    Reg other = Allocator::lowestRegisterIn(state.registers);
+    Bank bank = bankOf(reg);
+    const Position early = allocator.m_position;
+    if (bankOf(other) != bank || allocator.isLiveBehind(value, early + 1) || !allocator.isLiveBehind(holder, std::max<Position>(early, 1) - 1) || liesInMemoryForPatchAllocation(allocator, holder))
+        return false;
+    RegisterMask allowed = allocator.m_file.allocatableIn(bank) & ~(unavailable | maskOf(reg));
+    allowed &= ~allocator.m_file.calleeSaved | allocator.calleeSavesWorthTakingFor(holder, bank, allocator.m_block);
+    const RegisterMask candidates = allocator.registersThatMayBeTaken(bank, allowed);
+    if ((candidates & ~allocator.m_bound) || allocator.canDropSomeRegisterForFree(candidates))
+        return false;
+
+    allocator.m_pendingMoves.clear();
+    allocator.m_pendingMoves.append(allocator.m_arena, PendingMove { value, Location::reg(reg), Location::reg(other), widthOf(value->type()) });
+    allocator.m_pendingMoves.append(allocator.m_arena, PendingMove { holder, Location::reg(other), Location::reg(reg), widthOf(holder->type()) });
+    resolveParallelMoves(allocator.m_arena, allocator.m_pendingMoves.span(), steps);
+    allocator.unbind(reg);
+    allocator.unbind(other);
+    bindFreeRegisterNotedForPatch(allocator, reg, value, state);
+    bindFreeRegisterNotedForPatch(allocator, other, holder, stateOfHolder);
+    return true;
+}
+
 static ALWAYS_INLINE void bringOperandOfPatchToNamedRegister(Allocator& allocator, PatchOperation* patch, Operation* value, Reg reg, RegisterMask wanted, ArenaVector<Step>& steps)
 {
     const Position early = allocator.m_position;
@@ -744,6 +774,8 @@ static ALWAYS_INLINE void bringOperandOfPatchToNamedRegister(Allocator& allocato
     Operation* holder = allocator.m_valueIn[reg.index()];
     if (holder && holder != value && !isReadOnlyByFixedPatchOperands(allocator, patch, holder, early + 1)) {
         RegisterMask unavailable = wanted | patch->earlyClobberedMask() | patch->lateClobberedMask() | registersOfFixedPatchResults(patch);
+        if (trySwapWithHolder(allocator, value, reg, holder, unavailable, steps))
+            return;
         vacateRegistersForPatch(allocator, maskOf(reg), std::max<Position>(early, 1) - 1, unavailable);
     }
 

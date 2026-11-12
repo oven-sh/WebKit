@@ -1228,6 +1228,8 @@ ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
     const PlaceOfReads& at = m_placeOfReads;
     const Block* origin = rareRegion != noRareRegion ? m_liveness.blockThatRareBlockBranchesOff(block) : nullptr;
     findPlaceOfReadsInScannedBlock<regionsHaveKinds>(*this, m_placeOfReads, loopOfBlock, rareRegion, origin, headOfBlockPassedOnEveryPathToScannedBlock(*this, place, origin));
+    if (place.layoutPart == LayoutPart::Unlikely) [[unlikely]]
+        m_placeOfReads.traitsOfUses |= Liveness::useIsInUnlikelyPart;
     for (Operation* upsilon : block->upsilons()) {
         ValueFacts& factsOfUpsilon = m_facts[upsilon->index()];
         if (!upsilonStaysInScan(*this, block, upsilon, early)) {

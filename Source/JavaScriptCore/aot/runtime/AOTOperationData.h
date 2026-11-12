@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
+#include "AOTPrefetchStep.h"
 #include "AOTPrimitives.h"
 #include "AOTRecordTypes.h"
 #include "AOTSlotRepresentation.h"
@@ -308,6 +309,17 @@ struct ImportChecksRequest {
 };
 static_assert(sizeof(ImportChecksRequest) == 4 && sizeof(ImportChecksRequest::Check) == 8);
 
+struct PrefetchRequest {
+    struct Step {
+        uint32_t name;
+        PrefetchStep step;
+    };
+
+    uint32_t count;
+    Step steps[];
+};
+static_assert(sizeof(PrefetchRequest) == 4 && sizeof(PrefetchRequest::Step) == 8);
+
 constexpr bool isAssignableBinding(EvalBindingKind kind)
 {
     return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
@@ -565,6 +577,7 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(eagerBuiltinCells, uint32_t) \
     v(constantAndUnlockedBuiltinMembers, uint32_t) \
     v(namesTakenForAbsent, uint32_t) \
+    v(lockedAbsentNames, uint64_t) \
     v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 

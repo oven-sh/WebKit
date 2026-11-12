@@ -25,6 +25,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
+#include "AOTProgramStatics.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesStringKeys.h"
@@ -55,6 +56,7 @@
 #include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/UnalignedAccess.h>
 #if OS(LINUX)
 #include <sys/mman.h>
 #if !defined(MADV_POPULATE_WRITE)
@@ -971,13 +973,31 @@ VMPropertyCaches::VMPropertyCaches(VM& vm)
     vm.aotState().caches->add(CacheKind::WeakByKey, "absence filters"_s, *this);
 }
 
+void VMPropertyCaches::rememberFirstElement(StructureID before, Structure* after)
+{
+    IndexingType shape = after->indexingType() & IndexingShapeMask;
+    m_tables.firstElementTransitions[FirstElementTransition::indexFor(before, shape)] = { before.bits(), shape, after };
+}
+
 size_t VMPropertyCaches::removeDeadEntries(VM& vm, CollectionScope)
 {
     size_t numberRemoved = 0;
+    for (FirstElementTransition& entry : m_tables.firstElementTransitions) {
+        if (!entry.after || (vm.heap.isMarked(entry.after) && vm.heap.isMarked(std::bit_cast<StructureID>(entry.structureIDBefore).decode())))
+            continue;
+        entry = { };
+        ++numberRemoved;
+    }
     for (AbsenceFilter& filter : m_absenceFilters) {
         if (!filter.structureID || vm.heap.isMarked(std::bit_cast<StructureID>(filter.structureID).decode()))
             continue;
         filter = { };
+        ++numberRemoved;
+    }
+    for (NameShapesOfStructure& shapes : m_tables.nameShapes) {
+        if (!shapes.structureID || vm.heap.isMarked(std::bit_cast<StructureID>(shapes.structureID).decode()))
+            continue;
+        shapes = { };
         ++numberRemoved;
     }
     forgetCreations();
@@ -1018,14 +1038,45 @@ void VMPropertyCaches::rememberNameOfText(UniquedStringImpl* uid)
     static_assert(std::endian::native == std::endian::little);
     memcpy(&first, characters, width);
     memcpy(&last, characters + length - width, width);
-    NameOfText* pair = &m_namesOfTexts[NameOfText::firstIndexFor(first, last, length)];
-    if (pair[0].uid == uid || pair[1].uid == uid)
+    rememberNameOfText({ first, last, length, uid });
+}
+
+void VMPropertyCaches::rememberNameOfText(const NameOfText& name)
+{
+    size_t indexOfPair = NameOfText::hashOf(name.first, name.last, name.length) >> NameOfText::pairShift;
+    NameOfText* pair = &m_namesOfTexts[2 * indexOfPair];
+    if ((pair[0].uid == name.uid && pair[0].length == name.length) || (pair[1].uid == name.uid && pair[1].length == name.length))
         return;
-    uid->ref();
-    if (pair[1].uid)
-        pair[1].uid->deref();
-    pair[1] = pair[0];
-    pair[0] = { first, last, length, uid };
+    bool isFourth = !(++m_tables.numbersOfNamesRemembered[indexOfPair] % 4);
+    NameOfText& entry = pair[pair[0].uid && !isFourth];
+    name.uid->ref();
+    if (entry.uid)
+        entry.uid->deref();
+    entry = name;
+}
+
+void VMPropertyCaches::rememberNameOfWideText(UniquedStringImpl* uid)
+{
+    uint32_t length = uid->length();
+    if (uid->isSymbol() || !uid->is8Bit() || length < NameOfText::minLength || length > NameOfText::maxLength)
+        return;
+    std::array<char16_t, NameOfText::maxLength> units;
+    StringImpl::copyCharacters(std::span { units }.first(length), uid->span8());
+    const char16_t* end = units.data() + length;
+    uint32_t lengthOfEntry = length + NameOfText::lengthOfWideText;
+    if (length < 4) {
+        rememberNameOfText({ WTF::unalignedLoad<uint32_t>(units.data()), WTF::unalignedLoad<uint32_t>(end - 2), lengthOfEntry, uid });
+        return;
+    }
+    uint64_t first = WTF::unalignedLoad<uint64_t>(units.data());
+    uint64_t last = WTF::unalignedLoad<uint64_t>(end - 4);
+    if (length >= 8) {
+        uint64_t second = WTF::unalignedLoad<uint64_t>(units.data() + 4);
+        uint64_t third = WTF::unalignedLoad<uint64_t>(end - 8);
+        first |= second << 8;
+        last = third | last << 8;
+    }
+    rememberNameOfText({ first, last, lengthOfEntry, uid });
 }
 
 static bool listsEveryNameInItsTable(Structure* structure)
@@ -1068,15 +1119,18 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
 
 void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull)
 {
-    Structure* structure = prototype->structure();
+    Structure* structure = WTF::opaque(prototype->structure());
     const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, structure->realm());
     forgetCreations();
     if (!identifiers || !listsEveryNameInItsTable(structure) || !structure->storedPrototype().isNull()) {
         m_namesOfObjectPrototypes.fill(UINT64_MAX);
         m_objectPrototypeStoreStoppers.fill(UINT64_MAX);
+        m_tables.nameShapesOfObjectPrototypes = { UINT64_MAX, UINT64_MAX };
         return;
     }
     auto add = [&](UniquedStringImpl* uid, bool stopsStores) {
+        if (!uid->isSymbol())
+            m_tables.nameShapesOfObjectPrototypes.add(*uid);
         if (stopsStores && uid != m_vm.propertyNames->underscoreProto.impl())
             setBitOfName(m_objectPrototypeStoreStoppers, FieldTableEntry::noName);
         std::optional<uint32_t> number = identifiers->numberOf(uid);
@@ -1098,6 +1152,89 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
         add(entry.key(), stopsStores(entry.attributes()));
         return true;
     });
+}
+
+static Structure* structureOfListedNames(Structure* structure)
+{
+    return structure->isCompiledStructure() ? uncheckedDowncast<CompiledStructure>(structure)->extraPropertiesStructure() : structure;
+}
+
+NameShapesOfStructure VMPropertyCaches::shapesBeforeListing(JSGlobalObject* globalObject, Structure* structure) const
+{
+    NameShapesOfStructure neverListed { structure->id().bits(), 0, 0, 0, NameShapes::ofAnyName() };
+    JSValue prototype = structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype() ? JSValue() : structure->storedPrototype();
+    if (!prototype || (!prototype.isNull() && prototype != JSValue(globalObject->objectPrototype())))
+        return neverListed;
+    size_t numberOfNames = 0;
+    if (structure->isCompiledStructure()) {
+        auto* compiled = uncheckedDowncast<CompiledStructure>(structure);
+        if (!compiled->describesObject() || !identifiersOfRealm(m_vm, structure->realm()) || compiled->layout().kind() != LayoutKind::Record || (compiled->hasExtraProperties() && !compiled->listsEveryExtraProperty()))
+            return neverListed;
+        numberOfNames = compiled->layout().fields().size();
+    } else if (structure->typeInfo().type() != FinalObjectType)
+        return neverListed;
+    if (Structure* listed = structureOfListedNames(structure)) {
+        if (listed->isDictionary() || !listsEveryNameInItsTable(listed))
+            return neverListed;
+        numberOfNames += numberOfSlotsForMaxOffset(listed->maxOffset(), listed->inlineCapacity());
+    }
+    return { structure->id().bits(), static_cast<uint32_t>(1 + numberOfNames / 2), !prototype.isNull(), 0, NameShapes::ofAnyName() };
+}
+
+NameShapes VMPropertyCaches::listOwnNames(Structure* structure) const
+{
+    NameShapes names;
+    if (structure->isCompiledStructure()) {
+        ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, structure->realm());
+        for (const FieldData& field : uncheckedDowncast<CompiledStructure>(structure)->layout().fields()) {
+            UniquedStringImpl* name = identifiers->identifier(field.name).impl();
+            if (name && !name->isSymbol())
+                names.add(*name);
+        }
+    }
+    if (Structure* listed = structureOfListedNames(structure)) {
+        listed->forEachPropertyConcurrently([&](const auto& entry) {
+            if (!entry.key()->isSymbol())
+                names.add(*entry.key());
+            return true;
+        });
+    }
+    return names;
+}
+
+bool VMPropertyCaches::mayHaveNameEqualTo(JSGlobalObject* globalObject, JSObject* object, const JSString& key)
+{
+    constexpr unsigned maxIndexLength = NameShapesOfStructure::maxIndexLength;
+    unsigned length = key.length();
+    Structure* structure = object->structure();
+    NameShapesOfStructure& shapes = m_tables.nameShapes[NameShapesOfStructure::indexFor(structure->id())];
+    if (!length)
+        return true;
+    if (shapes.structureID != structure->id().bits())
+        shapes = shapesBeforeListing(globalObject, structure);
+    if (shapes.ownNames.areOfAnyName()) {
+        if (!shapes.questionsBeforeListing || --shapes.questionsBeforeListing)
+            return true;
+        shapes.ownNames = listOwnNames(structure);
+    }
+    if (Object* compiled = compiledObjectOrNull(object); compiled && hasPendingStars(*compiled))
+        return true;
+    NameShapes above;
+    if (shapes.isBelowObjectPrototype)
+        above = m_tables.nameShapesOfObjectPrototypes;
+    bool isLengthOfName = (shapes.ownNames.lengths | above.lengths) & NameShapes::bitOfLength(length);
+    if (!isLengthOfName && length > maxIndexLength)
+        return false;
+    constexpr int mostUnitsThatTellNamesApart = 32;
+    if (isLengthOfName && std::popcount(shapes.ownNames.firstUnits | above.firstUnits) > mostUnitsThatTellNamesApart)
+        return true;
+    JSRopeString::LeafIterator pieces(&key);
+    StringView piece = pieces.next();
+    while (piece.isEmpty() && !pieces.isAtEnd())
+        piece = pieces.next();
+    if (piece.isEmpty() || (length <= maxIndexLength && isASCIIDigit(piece[0])))
+        return true;
+    return isLengthOfName && (shapes.ownNames.firstUnits | above.firstUnits) & NameShapes::bitOfUnit(piece[0]);
 }
 
 size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image&)
@@ -1124,6 +1261,8 @@ void VMPropertyCaches::publishWords(Instance& instance) const
     words.namesChangedOnChains = m_namesChangedOnChains.data();
     words.namesOfObjectPrototypes = m_namesOfObjectPrototypes.data();
     words.objectPrototypeStoreStoppers = m_objectPrototypeStoreStoppers.data();
+    words.nameShapes = m_tables.nameShapes.data();
+    words.nameShapesOfObjectPrototypes = &m_tables.nameShapesOfObjectPrototypes;
     words.missesOfPairs = const_cast<uint8_t*>(m_missesOfPairs.data());
     words.namesOfTexts = m_namesOfTexts.data();
     words.infoOfClassPrototypes = ClassPrototype::info();
@@ -1139,7 +1278,7 @@ static bool listsOwnNames(JSGlobalObject* globalObject, JSObject* object)
     return object->classInfo() == ClassPrototype::info() || listsEveryNameInItsTable(structure) || isArrayPrototypeWithWritableLength(globalObject, object);
 }
 
-static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifiers, JSObject* object, AbsenceFilter& filter)
+static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifiers, JSObject* object, bool listsNames, AbsenceFilter& filter)
 {
     auto addNamesInTable = [&](Structure* structure) {
         bool isArrayPrototype = isArrayPrototypeWithWritableLength(structure->realm(), object);
@@ -1147,6 +1286,8 @@ static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifi
             return false;
         if (!isArrayPrototype && (structure->typeInfo().overridesPut() || structure->typeInfo().overridesGetPrototype()))
             filter.generationForStores = 0;
+        if (!listsNames)
+            return true;
         structure->forEachProperty(vm, [&](const auto& entry) {
             std::optional<uint32_t> number = entry.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue ? identifiers.numberOf(entry.key()) : std::nullopt;
             if (number)
@@ -1162,6 +1303,8 @@ static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifi
             return false;
         bool isFrozen = uncheckedDowncast<Object>(object)->orderWord() & orderWordIsFrozen;
         for (const FieldData& field : compiled->layout().fields()) {
+            if (!listsNames)
+                break;
             if (isFrozen || field.flags & (fieldIsReadOnly | fieldIsAccessor) || field.slot.representation() == SlotRepresentation::DeferredClosure)
                 filter.addNameThatStopsStores(field.name);
         }
@@ -1190,6 +1333,7 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
     if (structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype())
         return;
     static constexpr unsigned maxObjectsAbove = 8;
+    static constexpr unsigned mostFieldsAskedOneByOne = 8;
     AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
     if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.changesUnderNames == m_changesUnderNamesOnChains)
         return;
@@ -1202,17 +1346,19 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
         if (!listsOwnNames(globalObject, holder))
             return;
     }
+    const Object* receiver = compiledObjectOrNull(object);
+    const bool listsNamesAbove = !receiver || receiver->layout().fields().size() > mostFieldsAskedOneByOne;
     AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, m_changesUnderNamesOnChains, 0 };
     unsigned numberOfObjects = 0;
     for (JSObject* holder = object->getPrototypeDirect().getObject(); holder; holder = holder->getPrototypeDirect().getObject()) {
-        if (++numberOfObjects > maxObjectsAbove || !addOwnNamesThatStopStores(m_vm, *identifiers, holder, filled))
+        if (++numberOfObjects > maxObjectsAbove || !addOwnNamesThatStopStores(m_vm, *identifiers, holder, listsNamesAbove, filled))
             return;
         m_filteredObjects.add(holder);
     }
-    if (const Object* receiver = compiledObjectOrNull(object)) {
+    if (receiver) {
         AbsenceFilter ofAllNames = std::exchange(filled, AbsenceFilter { filled.structureID, filled.generationForStores, { }, filled.changesUnderNames, 0 });
         for (const FieldData& field : receiver->layout().fields()) {
-            if (ofAllNames.letsStoresPass(field.name) || !FieldTableEntry::hasColumn(field.name))
+            if ((listsNamesAbove && ofAllNames.letsStoresPass(field.name)) || !FieldTableEntry::hasColumn(field.name))
                 continue;
             ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, identifiersOfRealm(m_vm, structure->realm())->identifier(field.name).impl());
             if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
@@ -1220,6 +1366,8 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
         }
     }
     filter = filled;
+    if (listsNamesAbove)
+        countEvent(m_vm, RuntimeCounterID::AbsenceFiltersFilled);
 }
 
 bool VMPropertyCaches::storeCreatesOwnField(const Object& object, uint32_t name) const
@@ -1300,6 +1448,8 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
         didChangeFilteredObject(changed, uidOrNull);
     for (Instance* instance : m_vm.aotState().instances) {
         instance->propertyCaches.accessTable.didChangeObjectOnSomeChain();
+        if (std::exchange(instance->propertyCaches.readGroupsSayAbsence, 0))
+            instance->state->statics->clearCaches();
         if (std::exchange(instance->propertyCaches.placesSayAbsence, 0)) {
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
             instance->propertyCaches.forwardingProxyHandlers = { };
@@ -1539,14 +1689,17 @@ PropertyCaches::PropertyCaches(State& state)
     , m_prototypeChainFilters(state.tableArena.allocate<PrototypeChainFilter>(PrototypeChainFilter::numberOfFilters), PrototypeChainFilter::numberOfFilters)
     , m_switchTargets(state.tableArena.allocate<StringSwitchTarget>(StringSwitchTarget::numberOfTargets), StringSwitchTarget::numberOfTargets)
     , m_functionAllocationEntries(state.tableArena.allocate<FunctionAllocationEntry>(FunctionAllocationEntry::numberOfBirths), FunctionAllocationEntry::numberOfBirths)
+    , m_closureAdditions(state.tableArena.allocate<ClosureAddition>(ClosureAddition::numberOfPlaces), ClosureAddition::numberOfPlaces)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
     state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
     state.caches->addClearedEachCollection("returns of fields"_s, asMutableByteSpan(std::span { m_fieldReturns }));
+    state.caches->addClearedEachCollection("traps of proxy handlers"_s, asMutableByteSpan(std::span { m_proxyHandlerTraps }));
     state.caches->addClearedEachCollection("filters of prototype chains"_s, asMutableByteSpan(std::span { m_prototypeChainFilters }), &state.instance.propertyCaches.prototypeChainFiltersMayBeFilled);
     state.caches->addClearedEachCollection("targets of switches"_s, asMutableByteSpan(std::span { m_switchTargets }), &m_switchTargetsMayBeFilled);
     state.caches->addClearedEachCollection("births of functions"_s, asMutableByteSpan(std::span { m_functionAllocationEntries }), &m_functionAllocationsMayBeFilled);
+    state.caches->addClearedEachCollection("additions to closures"_s, asMutableByteSpan(std::span { m_closureAdditions }), &m_closureAdditionsMayBeFilled);
     state.caches->addClearedEachCollection("extra properties added"_s, asMutableByteSpan(std::span { m_addedExtraProperties }));
     state.caches->addClearedEachCollection("ordinary constructors"_s, asMutableByteSpan(std::span { state.instance.propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors }));
     state.caches->add(CacheKind::ClearedEachCollection, "exits of fields beside their table"_s, m_fieldExitsBesideTable);
@@ -1556,6 +1709,7 @@ PropertyCaches::PropertyCaches(State& state)
     state.instance.propertyCaches.prototypeChainFilters = m_prototypeChainFilters.data();
     state.instance.propertyCaches.switchTargets = m_switchTargets.data();
     state.instance.propertyCaches.functionAllocationEntries = m_functionAllocationEntries.data();
+    state.instance.propertyCaches.closureAdditions = m_closureAdditions.data();
 }
 
 PropertyCaches::~PropertyCaches() = default;
@@ -1765,8 +1919,11 @@ FirstAdditions& firstAdditionsOf(State& state)
 
 bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl* uid)
 {
-    if (structure->id() == m_structureMade)
-        return true;
+    return structure->id() == m_structureMade || recordAddition(structure, uid);
+}
+
+bool FirstAdditions::recordAddition(Structure* structure, UniquedStringImpl* uid)
+{
     constexpr uint32_t cameOnce = 1u << 31;
     uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
     constexpr uint32_t numberOfSets = numberOfPairs / pairsPerSet;
@@ -2435,7 +2592,7 @@ void AnswersAtSites::didFailToFill(uint32_t place)
 
 static bool isRoad(SiteUse use, SiteAnswers::Answer answer)
 {
-    return isRead(use) && answer.isByStructure() && SiteAnswers::formOf(use, answer.key) == SiteAnswers::Form::Nothing;
+    return isRead(use) && answer.isByStructure() && !answer.operand && SiteAnswers::formOf(use, answer.key) == SiteAnswers::Form::Nothing;
 }
 
 static bool borrowsOperandOfOtherAnswer(SiteUse use, SiteAnswers::Answer answer)
@@ -2657,10 +2814,17 @@ bool AnswersAtSites::findsSlotOf(uint32_t place, SiteUse use, const Object& obje
         return false;
     if (answers->holdsShape() && !((answers->first.key ^ object.shapeWordWithMark()) & ~SiteAnswers::bitsTurnedForAnswersByShape))
         return true;
+    auto isFieldOfObject = [](SiteAnswers::Form form) {
+        return form == SiteAnswers::Form::OwnFieldInCell || form == SiteAnswers::Form::OwnNarrowReferenceInCell || form == SiteAnswers::Form::OwnInt32InCell || form == SiteAnswers::Form::OwnFieldInExtension;
+    };
+    if (const WideSiteAnswers* wide = wideAnswersOf(place)) {
+        auto found = std::ranges::find(wide->structuresOfFurtherAnswers, object.structureID().bits());
+        if (found != wide->structuresOfFurtherAnswers.end() && isFieldOfObject(SiteAnswers::formOf(use, wide->formsOfFurtherAnswersHeld[found - wide->structuresOfFurtherAnswers.begin()].bits)))
+            return true;
+    }
     if (!answers->second.isByStructure() || answers->second.structureID() != object.structureID())
         return false;
-    SiteAnswers::Form form = SiteAnswers::formOf(use, answers->second.key);
-    return form == SiteAnswers::Form::OwnFieldInCell || form == SiteAnswers::Form::OwnNarrowReferenceInCell || form == SiteAnswers::Form::OwnInt32InCell || form == SiteAnswers::Form::OwnFieldInExtension;
+    return isFieldOfObject(SiteAnswers::formOf(use, answers->second.key));
 }
 
 void AnswersAtSites::fillAboveFieldLeftOut(uint32_t place, StructureID id, WhatStandsAbove above, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
@@ -2900,6 +3064,13 @@ static std::optional<AnswersAtSites::WhatStandsAbove> findWhatStandsAboveFieldLe
     }
 }
 
+bool PropertyCaches::structureSaysFieldIsAbsent(Structure& structure, const CachedName& name)
+{
+    const CompiledStructure& compiled = *compiledObjectStructureOrNull(&structure);
+    std::optional<Slot> slot = compiled.listsEveryExtraProperty() ? m_tables.find(structure.id(), name, SlotAccess::Read) : std::nullopt;
+    return slot && slot->kind == Slot::Kind::Field && slot->has(Slot::absentIsUndefined);
+}
+
 bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, SiteUse use, Object& object, const CachedName& name)
 {
     Structure* structure = object.structure();
@@ -3057,15 +3228,33 @@ static uint16_t wordOfExtraProperties(JSObject& base, bool usesWideReferences)
     return slot->offset % sizeof(uint32_t) || slot->offset / sizeof(uint32_t) > UINT16_MAX ? 0 : static_cast<uint16_t>(slot->offset / sizeof(uint32_t));
 }
 
-ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCache& group, bool usesWideReferences)
+std::optional<uint16_t> PropertyCaches::holderOfReadGroup(JSObject& object, const ReadGroupCache& group, uint32_t numberOfReads)
+{
+    Structure* structure = WTF::opaque(object.structure());
+    if (!structure->isCompiledStructure()) {
+        if (structure->isDictionary() || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(object.inlineTypeFlags()))
+            return std::nullopt;
+        return 0;
+    }
+    uint32_t numberOfFields = 0;
+    if (Object* compiled = structure->isDictionary() ? nullptr : compiledObjectOrNull(&object)) {
+        for (uint32_t index = 0; index < numberOfReads; ++index) {
+            const FieldData* field = compiled->fieldNamed(m_state, nameOf(group.keys[index]).uid);
+            numberOfFields += field && offsetOfPlainValueInCell(*field);
+        }
+    }
+    uint16_t wordOfExtension = numberOfFields == numberOfReads ? 0 : wordOfExtraProperties(object, m_state.instance.options().useWideReferences());
+    if (wordOfExtension)
+        return wordOfExtension;
+    return numberOfFields ? std::optional<uint16_t>(0) : std::nullopt;
+}
+
+ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCache& group, uint32_t numberOfReads)
 {
     JSObject* object = base.getObject();
-    Structure* structure = object ? WTF::opaque(object->structure()) : nullptr;
-    uint16_t wordOfExtension = structure && structure->isCompiledStructure() ? wordOfExtraProperties(*object, usesWideReferences) : 0;
-    bool isAnsweredByStubAlone = !structure || structure->isDictionary() || (structure->isCompiledStructure() && !wordOfExtension) || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags());
-    if (wordOfExtension)
-        isAnsweredByStubAlone = false;
-    uint32_t id = isAnsweredByStubAlone ? 0 : structure->id().bits();
+    std::optional<uint16_t> holder = object ? holderOfReadGroup(*object, group, numberOfReads) : std::nullopt;
+    const uint16_t wordOfExtension = holder.value_or(0);
+    uint32_t id = holder ? object->structureID().bits() : 0;
     RELEASE_ASSERT(!(id & (ReadGroupCache::markOfHiddenRow | ReadGroupCache::markOfExtension | ReadGroupCache::markOfStorage)));
 
     if (group.samplesLeft) {
@@ -3086,6 +3275,13 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
         }
         group.samplesThatHadRow += !!hidden;
         if (!--group.samplesLeft) {
+            size_t mostCommon = std::ranges::max_element(group.cameInLastSample) - std::begin(group.cameInLastSample);
+            if (mostCommon) {
+                if (hidden == &group.rows[0] || hidden == &group.rows[mostCommon])
+                    hidden = &group.rows[hidden == &group.rows[0] ? mostCommon : 0];
+                std::swap(group.rows[0], group.rows[mostCommon]);
+                std::swap(group.cameInLastSample[0], group.cameInLastSample[mostCommon]);
+            }
             for (ReadGroupCache::Row& row : group.rows)
                 row.show();
             if (group.samplesThatHadRow * 3 < ReadGroupCache::numberOfSamples)
@@ -3126,6 +3322,11 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
     }
     if (claimed)
         claimed->claim(id, wordOfExtension);
+    if (claimed && !putsOutRow && claimed != &group.rows[0]) {
+        std::swap(*claimed, group.rows[0]);
+        std::swap(group.cameInLastSample[claimed - group.rows], group.cameInLastSample[0]);
+        claimed = &group.rows[0];
+    }
     if (!id || putsOutRow) {
         for (ReadGroupCache::Row& row : group.rows) {
             if (row.structure)
@@ -3138,13 +3339,36 @@ ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCa
     return claimed;
 }
 
-void PropertyCaches::fillReadGroupPlace(JSCell* base, uint32_t identifierNumber, ReadGroupCache::Row& row, uint32_t index)
+bool PropertyCaches::isAbsentFromPlainObject(JSObject* object, UniquedStringImpl* uid)
+{
+    Structure* structure = WTF::opaque(object->structure());
+    if (structure->typeInfo().type() != FinalObjectType || structure->isCompiledStructure() || structure->isDictionary() || !structure->propertyAccessesAreCacheableForAbsence() || structure->needImpurePropertyWatchpoint())
+        return false;
+    if (PropertyName(uid).isPrivateName() || isNeverCachedName(m_vm, uid) || isPreparedBeforeLookups(m_vm, uid) || parseIndex(*uid))
+        return false;
+    if (JSGlobalObject* realm = structure->realm(); realm && Instance::of(realm) != &m_state.instance)
+        return false;
+    ChainWalk walk = walkChain({ m_state.instance.globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, uid);
+    if (walk.result != ChainWalkResult::Absent || walk.firstObjectWithEmptySlot)
+        return false;
+    ensureChangesAreReported(walk.changeableObjects.span());
+    return true;
+}
+
+void PropertyCaches::fillReadGroupPlace(JSCell* base, uint32_t identifierNumber, ReadGroupCache::Row& row, uint32_t index, bool mayBeAbsent)
 {
     int16_t& place = row.places[index];
     if (place != ReadGroupCache::placeIsNotKnown)
         return;
     place = ReadGroupCache::placeIsAskedOfStub;
     JSObject* holder = asObject(base);
+    if (!row.wordOfExtension && holder->structure()->isCompiledStructure()) {
+        const FieldData* field = uncheckedDowncast<Object>(base)->fieldNamed(m_state, nameOf(identifierNumber).uid);
+        std::optional<uint32_t> offset = field ? offsetOfPlainValueInCell(*field) : std::nullopt;
+        if (offset && *offset / sizeof(EncodedJSValue) <= static_cast<size_t>(INT16_MAX))
+            place = static_cast<int16_t>(*offset / sizeof(EncodedJSValue));
+        return;
+    }
     if (row.wordOfExtension) {
         auto* object = uncheckedDowncast<Object>(base);
         holder = object->extraProperties();
@@ -3153,6 +3377,11 @@ void PropertyCaches::fillReadGroupPlace(JSCell* base, uint32_t identifierNumber,
     }
     unsigned attributes;
     std::optional<PropertyOffset> offset = holder->structure()->getWithoutMaterializing(nameOf(identifierNumber).uid, attributes);
+    if (mayBeAbsent && !row.wordOfExtension && offset && !isValidOffset(*offset) && isAbsentFromPlainObject(holder, nameOf(identifierNumber).uid)) {
+        row.absentReads |= 1u << index;
+        m_state.instance.propertyCaches.readGroupsSayAbsence = 1;
+        return;
+    }
     if (!offset || !isValidOffset(*offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
         return;
     static_assert(!(JSObject::offsetOfInlineStorage() % sizeof(EncodedJSValue)));
@@ -3161,17 +3390,17 @@ void PropertyCaches::fillReadGroupPlace(JSCell* base, uint32_t identifierNumber,
         place = static_cast<int16_t>(wordIndex);
 }
 
-void PropertyCaches::claimAndFillReadGroupRow(JSValue base, ReadGroupCache& group, uint32_t numberOfReads)
+void PropertyCaches::claimAndFillReadGroupRow(JSValue base, ReadGroupCache& group, uint32_t numberOfReads, uint32_t optionalReads)
 {
     RELEASE_ASSERT(numberOfReads && numberOfReads <= ReadGroupCache::numberOfPlaces);
-    ReadGroupCache::Row* row = claimReadGroupRow(base, group, m_state.instance.options().useWideReferences());
+    ReadGroupCache::Row* row = claimReadGroupRow(base, group, numberOfReads);
     if (!row)
         return;
     bool isHidden = row->structure & ReadGroupCache::markOfHiddenRow;
     RELEASE_ASSERT(base.isObject() && (row->structure & ~ReadGroupCache::markOfHiddenRow) == base.asCell()->structureID().bits());
-    row->numberOfReads = static_cast<uint16_t>(numberOfReads);
+    row->numberOfReads = static_cast<uint8_t>(numberOfReads);
     for (uint32_t index = 0; index < numberOfReads; ++index)
-        fillReadGroupPlace(base.asCell(), group.keys[index], *row, index);
+        fillReadGroupPlace(base.asCell(), group.keys[index], *row, index, optionalReads >> index & 1);
     if (!isHidden)
         row->show();
 }
@@ -3235,7 +3464,7 @@ bool PropertyCaches::fillFromHeldValue(uint32_t place, SiteUse use, Object& obje
     return true;
 }
 
-void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use, bool stubFollowsFurtherAnswers, bool stubJumpsToArmOfAnswer, bool testsForPresence)
+void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use, bool stubFollowsFurtherAnswers, bool stubJumpsToArmOfAnswer, bool testsForPresence, bool readsForOtherReceiver)
 {
     Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
@@ -3268,7 +3497,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     if (compiledObjectStructureOrNull(structure)) {
         auto* object = uncheckedDowncast<Object>(base);
         const FieldData* field = object->fieldNamed(m_state, name.uid);
-        bool isLeftOut = field && isRead(use) && !object->isInSlot(*field) && !(object->orderWord() & orderWordHasFieldOutsideSlot);
+        bool isLeftOut = field && isRead(use) && !object->isInSlot(*field) && (!(object->orderWord() & orderWordHasFieldOutsideSlot) || structureSaysFieldIsAbsent(*structure, name));
         if (isLeftOut && fillAboveFieldLeftOut(place, use, *object, name))
             return;
         if (std::optional<uint32_t> offset = field ? offsetOfPlainValueInCell(*field) : std::nullopt; offset && (object->isInSlot(*field) || isLeftOut)) {
@@ -3326,7 +3555,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter) && belongsToOneObject(structure))
         slot = std::nullopt;
     bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
-    std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !testsForPresence ? getterFieldAnswer(use, *slot) : std::nullopt;
+    std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !testsForPresence && !readsForOtherReceiver ? getterFieldAnswer(use, *slot) : std::nullopt;
     if (!answer && slot && slot->kind == Slot::fieldOfGetter) {
         ChainWalk above = walkChain({ m_state.instance.globalObject, structure, asObject(base), ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
         if (above.result == ChainWalkResult::Found && above.holder && isValidOffset(above.offset) && (above.attributes & PropertyAttribute::Accessor))
@@ -3334,6 +3563,13 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     }
     if (!answer)
         answer = slot && !placeMayNotCallGetter ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
+    if (!answer && slot && slot->isForProxies() && isRead(use) && stubJumpsToArmOfAnswer && !m_state.instance.options().useWideReferences() && slot->location == identifierNumber && RowDisplacementTable::hasColumn(identifierNumber) && m_keysForTraps.get(name.uid) == slot->holder) {
+        uintptr_t wordsToKey = (std::bit_cast<uintptr_t>(slot->holder) - m_vm.heap.cage().base()) / sizeof(EncodedJSValue);
+        if (std::optional<SiteAnswers::Answer> throughProxy = wordsToKey <= UINT32_MAX ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::Nothing, static_cast<uint32_t>(wordsToKey)) : std::nullopt) {
+            answer = AnswersAtSites::AnswerByStructure { *throughProxy, 0 };
+            countEvent(m_vm, RuntimeCounterID::SiteCacheProxyEntriesStored);
+        }
+    }
     if (!answer && rowAnswers && !m_answersAtSites.holdsAnotherStructure(place, use, id)) {
         if (std::optional<SiteAnswers::Answer> road = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::Nothing, 0))
             answer = AnswersAtSites::AnswerByStructure { *road, 0 };
@@ -3460,7 +3696,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance
     JSObject* extraProperties = receiver->ensureExtraProperties(vm);
     RELEASE_ASSERT(extraProperties);
     addPropertyByTransition(vm, extraProperties, compiledObjectStructureOrNull(newStructure)->extraPropertiesStructure(), Slot::offsetFor(slot.extraPropertyAddition.wordIndex), JSValue::decode(value));
-    receiver->JSCell::setStructure(vm, newStructure);
+    receiver->setVariantOfStructure(vm, newStructure);
 }
 
 } } // namespace JSC::AOT

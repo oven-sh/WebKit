@@ -8,11 +8,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
+#include "AOTBarrierEmitter.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTCompileUnit.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTOperationContext.h"
+#include "AOTStubsArrays.h"
 #include "AOTThrowEmitter.h"
 #include "AOTVectorOutput.h"
+#include "CompleteSubspace.h"
 #include <algorithm>
 #include <ranges>
 #include <wtf/Scope.h>
@@ -22,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 struct RowLoop {
     enum class Form : uint8_t { Sum, ColumnSum, Map, Gather, Nest };
     struct Step {
-        enum class Kind : uint8_t { Value, Name, OwnTest, Test, Row };
+        enum class Kind : uint8_t { Value, Name, OwnTest, Test, Row, Element };
         Kind kind { Kind::Value };
         BlockID block;
         ValueID value;
@@ -51,6 +57,23 @@ struct RowLoop {
         Vector<ValueID, 8> impliedTests;
         Vector<ValueID, 4> checkedReads;
         bool isVector { true };
+
+        ValueID numberOf(const Code& code, ValueID value) const
+        {
+            while (!code.isConstant(value) && blocks.contains(code.blockOf(value))) {
+                const Operation& operation = code.at(value);
+                if (operation.opcode == Opcode::Narrowed || (operation.opcode == Opcode::Unbox && code.at(operation.valueOperand()).representation == Representation::OptionalDouble))
+                    value = operation.valueOperand();
+                else if (operation.opcode == Opcode::Parameter) {
+                    size_t step = operations.findIf([&](const Step& named) { return named.kind == Step::Kind::Name && named.value == value; });
+                    if (step == notFound)
+                        return value;
+                    value = operations[step].source;
+                } else
+                    return value;
+            }
+            return value;
+        }
     };
     Form form { Form::Sum };
     BlockID head;
@@ -74,6 +97,8 @@ struct RowLoop {
     std::unique_ptr<RowLoop> nested;
     Vector<Step, 8> stepsAtEnd;
     Vector<Step, 24> stepsOfNest;
+    bool isTiled { false };
+    Vector<Step, 24> stepsOfStoredRow;
 };
 
 static constexpr int32_t longestInnerLoop = 1 << 20;
@@ -162,13 +187,16 @@ private:
     bool followInnerLoop(const Edge& entry);
     bool followNested(const Edge&);
     bool findOrderOfNest();
+    bool findTiledOrder();
     bool isColumnIndex(ValueID) const;
     bool isInvariant(ValueID, unsigned depth = 0) const;
     bool isImpliedInnerTest(const Body&, ValueID) const;
     bool hasImpliedTests(Body&) const;
     bool exploreBody(const Edge&, const Body& before);
-    bool isPartOf(ValueID access, ValueID term) const;
+    bool isPartOf(const Body&, ValueID access, ValueID term) const;
     bool addOperation(BlockID, ValueID);
+    bool isPointer(ValueID value) const { return at(value).representation == Representation::Cell || (at(value).representation == Representation::JSValue && m_generator.typeOf(value).isObject()); }
+    bool isPosition(ValueID value) const { return at(value).representation == Representation::Int32 || (at(value).representation == Representation::Int64 && m_generator.typeOf(value).integers.minimum >= 0); }
     bool addInnerOperation(Body&, BlockID, ValueID);
     bool addTest(BlockID, ValueID test, bool isOwnTest, bool expected);
     bool isTerm(const Body&, ValueID, unsigned depth = 0) const;
@@ -416,6 +444,28 @@ bool RowLoopFinder::addOperation(BlockID block, ValueID value)
         m_found.stepsAfter.append({ Step::Kind::Value, block, value, { }, true, 0 });
         return true;
     }
+    if (operation.opcode == Opcode::PutArrayElement) {
+        if (!m_found.innerHead || !m_found.sum || hasStored() || isBehindNested() || !operation.keyIsIntegral() || !isPointer(operation.arrayOperand()) || !isPosition(operation.positionOperand()) || at(operation.valueOperand()).representation != Representation::Double)
+            return false;
+        m_found.store = value;
+        m_found.stepsAfter.append({ Step::Kind::Value, block, value, { }, true, 0 });
+        return true;
+    }
+    if (operation.opcode == Opcode::CheckProof)
+        return true;
+    if (operation.opcode == Opcode::RequireObjectCoercible && !m_found.store) {
+        if (isBehindNested() || m_isNest || at(operation.valueOperand()).representation != Representation::JSValue || operation.representation != Representation::JSValue || !m_generator.typeOf(value).isObject())
+            return false;
+        steps().append({ Step::Kind::Element, block, value, { }, true, 0 });
+        return true;
+    }
+    if (operation.opcode == Opcode::GetArrayElement && !onlyReads(operation) && !m_found.store) {
+        bool mayHoldRows = operation.arrayStorage() == ArrayStorage::Contiguous || operation.arrayStorage() == ArrayStorage::Other;
+        if (isBehindNested() || m_isNest || !mayHoldRows || !operation.keyIsIntegral() || operation.representation != Representation::JSValue || !isPointer(operation.arrayOperand()) || !isPosition(operation.positionOperand()))
+            return false;
+        steps().append({ Step::Kind::Element, block, value, { }, true, 0 });
+        return true;
+    }
     if (operation.opcode == Opcode::ConvertToDoubleStorage && !m_found.innerHead) {
         m_converted.append(operation.arrayOperand());
         return true;
@@ -460,7 +510,7 @@ bool RowLoopFinder::addInnerOperation(Body& body, BlockID block, ValueID value)
             (isInvariant(value) ? body.decisions : body.operations).append({ Step::Kind::Value, block, value, { }, true, 0 });
         return true;
     }
-    bool isNumber = operation.representation == Representation::Double || (operation.representation == Representation::OptionalDouble && !m_found.sum);
+    bool isNumber = operation.representation == Representation::Double || operation.representation == Representation::OptionalDouble;
     if (operation.level() != KnowledgeLevel::Proven || operation.arrayStorage() != ArrayStorage::Double || !isNumber || body.reads.size() == mostReads || !body.stores.isEmpty())
         return false;
     ElementRead read { value, block, operation.arrayOperand(), false };
@@ -542,7 +592,7 @@ bool RowLoopFinder::exploreBody(const Edge& edge, const Body& before)
         if (edge.arguments().size() != 1 || !stepsByOne(edge.arguments()[0], m_found.innerCounter) || body.stores.isEmpty() || !hasImpliedTests(body))
             return false;
         body.isVector = std::ranges::all_of(body.stores, [&](const ElementStore& store) { return isTerm(body, store.number); })
-            && std::ranges::all_of(body.checkedReads, [&](ValueID read) { return std::ranges::any_of(body.stores, [&](const ElementStore& store) { return isPartOf(read, store.number); }); });
+            && std::ranges::all_of(body.checkedReads, [&](ValueID read) { return std::ranges::any_of(body.stores, [&](const ElementStore& store) { return isPartOf(body, read, store.number); }); });
         if (!body.isVector && body.stores.size() > 1)
             return false;
         m_found.bodies.insert(placeOfBody, WTF::move(body));
@@ -618,7 +668,9 @@ bool RowLoopFinder::followInnerLoop(const Edge& entry)
     m_found.bodies.last().blocks.append(head);
     m_found.innerCounter = comparison.leftOperand();
     m_found.innerBound = comparison.rightOperand();
-    if (!std::ranges::contains(block.parameters(), m_found.innerCounter) || at(m_found.innerCounter).representation != Representation::Int32 || at(m_found.innerBound).representation != Representation::Int32)
+    Representation counts = at(m_found.innerCounter).representation;
+    bool isWide = counts == Representation::Int64 && !m_isNest && !m_outer && m_generator.typeOf(m_found.innerCounter).integers.minimum >= 0;
+    if (!std::ranges::contains(block.parameters(), m_found.innerCounter) || (counts != Representation::Int32 && !isWide) || at(m_found.innerBound).representation != counts)
         return false;
     size_t placeOfCounter = block.parameters()[0] == m_found.innerCounter ? 0 : 1;
     ValueID first = entry.arguments()[placeOfCounter];
@@ -654,9 +706,15 @@ bool RowLoopFinder::followInnerLoop(const Edge& entry)
     for (const Edge* edge = &m_code.at(block.terminator.taken()); edge->to != head;) {
         BlockID id = edge->to;
         const Block& next = m_code.at(id);
-        if (body.blocks.size() >= mostBlocks || !isPlainBlock(id) || next.isLoopHead || !next.parameters().empty() || !edge->arguments().empty() || m_path.contains(id) || body.blocks.contains(id))
+        if (body.blocks.size() >= mostBlocks || !isPlainBlock(id) || next.isLoopHead || edge->arguments().size() != next.parameters().size() || m_path.contains(id) || body.blocks.contains(id))
             return false;
         body.blocks.append(id);
+        for (size_t index = 0; index < next.parameters().size(); ++index) {
+            ValueID parameter = next.parameters()[index];
+            if (m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(edge->arguments()[index]).representation)
+                return false;
+            body.operations.append({ Step::Kind::Name, id, parameter, edge->arguments()[index], true, 0 });
+        }
         unsigned place = 0;
         const RowGuard* guard = findGuard(id, place);
         ValueID condition = next.terminator.kind == TerminatorKind::Branch ? next.terminator.conditionOperand() : ValueID();
@@ -684,20 +742,20 @@ bool RowLoopFinder::followInnerLoop(const Edge& entry)
     return m_found.nextSum && isOfInnerLoop(m_found.nextSum) && isTerm(body, m_found.nextSum);
 }
 
-bool RowLoopFinder::isPartOf(ValueID access, ValueID term) const
+bool RowLoopFinder::isPartOf(const Body& body, ValueID access, ValueID term) const
 {
+    term = body.numberOf(m_code, term);
     if (access == term)
         return true;
     if (!isOfInnerLoop(term) || opcodeOf(term) == Opcode::Parameter || opcodeOf(term) == Opcode::GetArrayElement)
         return false;
-    if (opcodeOf(term) == Opcode::Narrowed)
-        return isPartOf(access, at(term).valueOperand());
-    return isPartOf(access, at(term).leftOperand()) || isPartOf(access, at(term).rightOperand());
+    return isPartOf(body, access, at(term).leftOperand()) || isPartOf(body, access, at(term).rightOperand());
 }
 
 bool RowLoopFinder::isTerm(const Body& body, ValueID value, unsigned depth) const
 {
     static constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
+    value = body.numberOf(m_code, value);
     const Operation& operation = at(value);
     if (std::ranges::contains(body.reads, value, &ElementRead::access))
         return true;
@@ -707,8 +765,6 @@ bool RowLoopFinder::isTerm(const Body& body, ValueID value, unsigned depth) cons
         return true;
     if (!isOfInnerLoop(value))
         return isAvailableBefore(value) || (m_found.form == RowLoop::Form::Map && std::ranges::contains(m_found.stepsBefore, value, &Step::value));
-    if (operation.opcode == Opcode::Narrowed)
-        return isTerm(body, operation.valueOperand(), depth + 1);
     return arithmetic.contains(operation.opcode) && operation.form() == OperatorForm::Numbers && isTerm(body, operation.leftOperand(), depth + 1) && isTerm(body, operation.rightOperand(), depth + 1);
 }
 
@@ -823,7 +879,7 @@ bool RowLoopFinder::dependsOnCounter(ValueID value, unsigned depth) const
     if (!isInLoop(value) || value == m_found.innerCounter || (m_found.nested && (value == m_found.nested->counter || value == m_found.nested->innerCounter)))
         return false;
     if (opcodeOf(value) == Opcode::Parameter) {
-        for (std::span<const Step> steps : { m_found.stepsBefore.span(), m_found.stepsAfter.span() }) {
+        for (std::span<const Step> steps : { m_found.stepsBefore.span(), m_found.stepsAfter.span(), m_found.stepsInFront.span(), m_found.stepsWithSum.span() }) {
             for (const Step& named : steps) {
                 if (named.kind == Step::Kind::Name && named.value == value)
                     return dependsOnCounter(named.source, depth + 1);
@@ -853,7 +909,7 @@ bool RowLoopFinder::readsStoredColumn()
     ValueID position = store.positionOperand();
     Representation representation = at(position).representation;
     if (passed(position) == m_found.counter) {
-        m_found.storesAtCounter = !dependsOnCounter(store.arrayOperand()) && at(store.arrayOperand()).representation == Representation::Cell;
+        m_found.storesAtCounter = !dependsOnCounter(store.arrayOperand()) && isPointer(store.arrayOperand());
         return !m_found.storesAtCounter;
     }
     if (!isAvailableBefore(position) || (representation != Representation::Int32 && representation != Representation::Int64))
@@ -991,7 +1047,76 @@ bool RowLoopFinder::findOrderOfNest()
     split(m_found.stepsBefore, m_found.stepsInFront);
     split(m_found.stepsAfter, m_found.stepsWithSum);
     split(nested.stepsInFront, m_found.stepsOfNest);
+    m_found.isTiled = findTiledOrder();
     return true;
+}
+
+bool RowLoopFinder::findTiledOrder()
+{
+    const RowLoop& nested = *m_found.nested;
+    const Body& gather = m_found.bodies[0];
+    const Body& sums = nested.bodies[0];
+    const Operation& store = at(nested.store);
+    auto isValue = [](const Step& step) { return step.kind == Step::Kind::Value || step.kind == Step::Kind::Name; };
+    auto isKnown = [&](const Step& step) { return step.kind == Step::Kind::Row || !dependsOnCounter(step.kind == Step::Kind::Name ? step.source : step.value); };
+    auto isKindOfRow = [&](const Step& step) {
+        bool asksKind = step.kind == Step::Kind::OwnTest && step.expected && opcodeOf(step.value) == Opcode::HasArrayStorage;
+        return isKnown(step) && (isValue(step) || step.kind == Step::Kind::Row || asksKind);
+    };
+    if (gather.reads.size() != 1 || passed(gather.stores[0].number) != gather.reads[0].access || sums.reads.size() != 2 || passed(store.valueOperand()) != nested.sum || passed(store.positionOperand()) != m_found.counter)
+        return false;
+    ValueID gathered = m_generator.withoutNames(gather.stores[0].list);
+    auto isGathered = [&](const ElementRead& read) { return !read.isColumn && m_generator.withoutNames(read.list) == gathered; };
+    if (isGathered(sums.reads[0]) == isGathered(sums.reads[1]))
+        return false;
+    auto includes = [&](auto& self, ValueID term, ValueID part) -> bool {
+        if (term == part)
+            return true;
+        if (isConstant(term) || !sums.blocks.contains(m_code.blockOf(term)) || opcodeOf(term) == Opcode::Parameter || opcodeOf(term) == Opcode::GetArrayElement)
+            return false;
+        if (opcodeOf(term) == Opcode::Narrowed)
+            return self(self, at(term).valueOperand(), part);
+        return self(self, at(term).leftOperand(), part) || self(self, at(term).rightOperand(), part);
+    };
+    for (ValueID part : { nested.sum, sums.reads[0].access, sums.reads[1].access }) {
+        if (!includes(includes, nested.nextSum, part))
+            return false;
+    }
+    if (!std::ranges::all_of(nested.stepsInFront, isValue) || !std::ranges::all_of(m_found.stepsAfter, isValue) || (gather.reads[0].isColumn && !std::ranges::all_of(m_found.stepsBefore, isValue)) || !std::ranges::all_of(nested.stepsBefore, isKindOfRow))
+        return false;
+
+    auto isOfStoredRow = [&](ValueID array) { return m_generator.withoutNames(array) == m_generator.withoutNames(store.arrayOperand()); };
+    auto isImplied = [&](const Step& step) {
+        if (isConstant(step.value) || !step.expected)
+            return false;
+        const Operation& test = at(step.value);
+        switch (test.opcode) {
+        case Opcode::Less: {
+            ValueID length = passed(test.rightOperand());
+            return test.form() == OperatorForm::Integers && passed(test.leftOperand()) == m_found.counter && !isConstant(length) && opcodeOf(length) == Opcode::GetArrayLength && isOfStoredRow(at(length).arrayOperand());
+        }
+        case Opcode::StrictEq:
+            return test.form() == OperatorForm::Numbers && passed(test.leftOperand()) == nested.sum && passed(test.rightOperand()) == nested.sum;
+        case Opcode::TypeTest:
+            return passed(test.valueOperand()) == nested.sum && m_generator.inputs().types.isSubset(TypeTable::number, test.testedType());
+        default:
+            return false;
+        }
+    };
+    bool holdsDoubles = false;
+    for (std::span<const Step> steps : { nested.stepsWithSum.span(), nested.stepsAfter.span() }) {
+        for (const Step& step : steps) {
+            if (step.value == nested.store)
+                continue;
+            bool dependsOnSum = step.kind != Step::Kind::Row && std::ranges::any_of(nested.stepsAfter, [&](const Step& after) { return after.value == step.value; });
+            if (isKindOfRow(step) && !dependsOnSum) {
+                m_found.stepsOfStoredRow.append(step);
+                holdsDoubles |= step.kind == Step::Kind::OwnTest && step.expected && opcodeOf(step.value) == Opcode::HasArrayStorage && at(step.value).arrayStorage() == ArrayStorage::Double && !at(step.value).admitsInt32Storage() && isOfStoredRow(at(step.value).arrayOperand());
+            } else if (!isValue(step) && !isImplied(step))
+                return false;
+        }
+    }
+    return holdsDoubles;
 }
 
 std::optional<RowLoop> RowLoopFinder::findNest(std::span<const std::pair<BlockID, BlockID>> headsTaken)
@@ -1109,6 +1234,11 @@ private:
     std::pair<LValue, LValue> emitRange(LValue holder, LValue count);
     void leaveUnlessDisjoint(std::pair<LValue, LValue>, std::pair<LValue, LValue>);
     void emitGatherOfNest(std::span<const Base> stores, std::pair<LValue, LValue> storedRows, const Exit&);
+    void emitTiles(RowLoopEmitter& sums, std::pair<LValue, LValue> storedRows);
+    LValue emitTermsOfRow(LValue place, LValue firstTerm, LValue numberOfTerms, const Exit&);
+    template<typename Functor> void emitLoop(LValue count, const Functor&);
+    template<typename Functor> void emitByWidth(LValue remaining, LBasicBlock done, const Functor&);
+    TypedPointer frameNumber(LValue base, LValue place) { return m_out.baseIndex(m_generator.heaps().frameSlots, base, place, ScaleEight); }
     void emitGather();
     void emitRowsByLength(ArrayStorage kind, LValue counter, const Exit& otherKind);
     void emitInnerMapKept(std::span<const Base> reads, std::span<const Base> stores, const Exit&);
@@ -1120,6 +1250,8 @@ private:
     void leave(const Exit&);
     void emitExits();
     void emitSteps(std::span<const Step>, const Exit&);
+    void emitRowElement(const Step&, const Exit&);
+    void emitElementStore(const Step&, const Exit&);
     void emitPoll();
     LValue emitRowCell(const RowGuard&, LValue storage, LValue position);
     LValue emitCountedRows(const RowGuard&, LValue needed, LValue array);
@@ -1139,6 +1271,7 @@ private:
     void emitNextIteration(LBasicBlock entry, LValue counter, LValue next);
     Exit exitTo(const Exit& exit, LValue counter) const { return m_columnEnd && exit.target == m_written.target ? m_written : Exit { exit.target, exit.phi, counter }; }
     bool admitsInt32s() const;
+    bool countsWide() const { return m_code.at(m_loop.innerCounter).representation == Representation::Int64; }
     bool isHoistedBase(size_t place) const { return !!m_bases[place].cell; }
     bool isInnerBlock(BlockID block) const
     {
@@ -1147,6 +1280,9 @@ private:
 
     static constexpr int32_t termsOfIteration = 4;
     static constexpr int32_t lanes = 2;
+    static constexpr int32_t widestBlock = 8;
+    static constexpr int32_t mostTerms = 32;
+    static constexpr int32_t numbersOfTile = 128;
     CodeGenerator& m_generator;
     const Code& m_code;
     Output& m_out;
@@ -1235,11 +1371,50 @@ LValue RowLoopEmitter::emitRowCell(const RowGuard& guard, LValue storage, LValue
     return row;
 }
 
+void RowLoopEmitter::emitRowElement(const Step& step, const Exit& exit)
+{
+    const Operation& operation = m_code.at(step.value);
+    if (operation.opcode == Opcode::RequireObjectCoercible) {
+        LValue object = valueOf(operation.valueOperand(), step.block);
+        leaveUnless(m_out.testIsZero64(object, m_generator.pinned().notCellMask), exit);
+        name(step.value, object);
+        return;
+    }
+    LValue cell = valueOf(operation.arrayOperand(), step.block);
+    LValue position = counterIn64Bits(valueOf(operation.positionOperand(), step.block));
+    leaveUnless(m_elements.hasArrayStorage(CellPointer(cell), ArrayStorage::Contiguous).value(), exit);
+    ArrayElements elements = m_elements.elementsOf(CellPointer(cell));
+    leaveUnless(m_out.below(position, m_elements.publicLength(elements).value()), exit);
+    LValue element = m_out.load64(m_elements.elementOfStorage(ArrayStorage::Contiguous, elements.butterfly.value(), position));
+    leaveUnless(m_out.notZero64(element), exit);
+    name(step.value, element);
+}
+
+void RowLoopEmitter::emitElementStore(const Step& step, const Exit& exit)
+{
+    const Operation& operation = m_code.at(step.value);
+    LValue cell = valueOf(operation.arrayOperand(), step.block);
+    LValue position = counterIn64Bits(valueOf(operation.positionOperand(), step.block));
+    LValue number = valueOf(operation.valueOperand(), step.block);
+    leaveUnless(m_elements.hasArrayStorage(CellPointer(cell), ArrayStorage::Double, true).value(), exit);
+    ArrayElements elements = m_elements.elementsOf(CellPointer(cell));
+    leaveUnless(m_out.below(position, m_elements.publicLength(elements).value()), exit);
+    leaveUnless(m_out.doubleEqual(number, number), exit);
+    m_out.storeDouble(number, m_elements.elementOfStorage(ArrayStorage::Double, elements.butterfly.value(), position));
+}
+
 void RowLoopEmitter::emitSteps(std::span<const Step> steps, const Exit& exit)
 {
     for (const Step& step : steps) {
         switch (step.kind) {
+        case Step::Kind::Element:
+            emitRowElement(step, exit);
+            break;
         case Step::Kind::Value:
+            if (step.value == m_loop.store && m_generator.opcodeOf(step.value) == Opcode::PutArrayElement) {
+                emitElementStore(step, exit);
+                break;
+            }
             name(step.value, nullptr);
             m_generator.generateValue(step.block, step.value, m_code.at(step.value), false, { });
             break;
@@ -1350,6 +1525,7 @@ LValue RowLoopEmitter::emitTerm(ValueID value, LValue sum, std::span<const LValu
 {
     if (value == m_loop.sum)
         return sum;
+    value = m_body->numberOf(m_code, value);
     VectorOutput vectors(m_out);
     for (size_t place = 0; place < m_body->reads.size(); ++place) {
         if (m_body->reads[place].access == value)
@@ -1366,8 +1542,6 @@ LValue RowLoopEmitter::emitTerm(ValueID value, LValue sum, std::span<const LValu
         LValue number = valueOf(value, m_loop.innerHead);
         return isVector ? vectors.splat(number) : number;
     }
-    if (operation.opcode == Opcode::Narrowed)
-        return emitTerm(operation.valueOperand(), sum, elements, isVector);
     LValue left = emitTerm(operation.leftOperand(), sum, elements, isVector);
     LValue right = emitTerm(operation.rightOperand(), sum, elements, isVector);
     m_out.setOrigin(machineOriginOf(value));
@@ -1576,14 +1750,13 @@ void RowLoopEmitter::emitStores(std::span<const LValue> numbers, std::span<const
 
 void RowLoopEmitter::addSplats(ValueID value)
 {
+    if (value == m_loop.sum)
+        return;
+    value = m_body->numberOf(m_code, value);
     BlockID home = m_code.isConstant(value) ? BlockID() : m_code.blockOf(value);
     if (home && isInnerBlock(home)) {
         if (std::ranges::contains(m_body->reads, value, &ElementRead::access))
             return;
-        if (m_generator.opcodeOf(value) == Opcode::Narrowed) {
-            addSplats(m_code.at(value).valueOperand());
-            return;
-        }
         addSplats(m_code.at(value).leftOperand());
         addSplats(m_code.at(value).rightOperand());
         return;
@@ -1732,7 +1905,7 @@ void RowLoopEmitter::emitInnerMapKept(std::span<const Base> reads, std::span<con
     m_out.jump(normalEdge(numbers));
 
     m_out.appendTo(numbers);
-    name(m_loop.innerCounter, m_out.castToInt32(index));
+    name(m_loop.innerCounter, countsWide() ? index : m_out.castToInt32(index));
     LValue added = sum;
     for (size_t place = 0; place < m_body->reads.size(); ++place) {
         const ElementRead& read = m_body->reads[place];
@@ -2047,6 +2220,12 @@ void RowLoopEmitter::emitColumnHolder()
     m_storagesOfHolders.append({ *m_loop.innerGuard, m_elements.elementsOf(CellPointer(array)).butterfly.value() });
     LType type = m_first->type();
     const Operation& store = m_code.at(m_loop.store);
+    name(m_loop.counter, m_first);
+    emitSteps(m_loop.stepsBefore.span(), m_front);
+    emitSteps(m_loop.stepsWithSum.span(), m_front);
+    if (m_generator.m_hasFailed)
+        return;
+    m_out.setOrigin(Machine::Origin());
     if (m_loop.storesAtCounter) {
         LValue stored = valueOf(store.arrayOperand(), m_loop.innerHead);
         for (const ElementRead& read : m_body->reads) {
@@ -2058,10 +2237,6 @@ void RowLoopEmitter::emitColumnHolder()
         m_column = column->type() == type ? column : type == Machine::Int32 ? m_out.castToInt32(column) : m_out.signExt32To64(column);
     }
     m_sums = m_generator.m_proc.addStackSlot(8 * sizeof(double));
-    name(m_loop.counter, m_first);
-    emitSteps(m_loop.stepsBefore.span(), m_front);
-    emitSteps(m_loop.stepsWithSum.span(), m_front);
-    m_out.setOrigin(Machine::Origin());
 }
 
 void RowLoopEmitter::emitSums()
@@ -2382,6 +2557,472 @@ void RowLoopEmitter::emitGatherOfNest(std::span<const Base> stores, std::pair<LV
     m_out.appendTo(done);
 }
 
+template<typename Functor>
+void RowLoopEmitter::emitLoop(LValue count, const Functor& emit)
+{
+    LBasicBlock iteration = m_out.newBlock();
+    LBasicBlock again = m_out.newBlock();
+    LBasicBlock done = m_out.newBlock();
+    LValue index = m_out.phiIn(iteration, count->type());
+    m_out.upsilon(m_out.constantOfTypeOf(count, 0), index);
+    m_out.jump(normalEdge(iteration));
+    m_out.appendTo(iteration);
+    emit(index);
+    m_out.setOrigin(Machine::Origin());
+    LValue next = m_out.add(index, 1);
+    m_out.branch(m_out.lessThan(next, count), normalEdge(again), normalEdge(done));
+    m_out.appendTo(again);
+    m_out.upsilon(next, index);
+    m_out.jump(normalEdge(iteration));
+    m_out.appendTo(done);
+}
+
+template<typename Functor>
+void RowLoopEmitter::emitByWidth(LValue remaining, LBasicBlock done, const Functor& emit)
+{
+    for (int32_t columns = widestBlock; columns; columns /= 2) {
+        LBasicBlock isNarrow = columns > 1 ? m_out.newBlock() : nullptr;
+        if (isNarrow) {
+            LBasicBlock isWide = m_out.newBlock();
+            m_out.branch(m_out.lessThan(remaining, m_out.constInt32(columns)), normalEdge(isNarrow), normalEdge(isWide));
+            m_out.appendTo(isWide);
+        }
+        emit(columns);
+        m_out.setOrigin(Machine::Origin());
+        m_out.jump(normalEdge(done));
+        if (isNarrow)
+            m_out.appendTo(isNarrow);
+    }
+}
+
+LValue RowLoopEmitter::emitTermsOfRow(LValue place, LValue firstTerm, LValue numberOfTerms, const Exit& exit)
+{
+    const ElementRead& read = m_body->reads[isHoistedBase(0)];
+    bool admitsInt32s = m_code.at(read.access).admitsInt32Storage();
+    auto branchOnKind = [&](LValue cell, LBasicBlock doubles, LBasicBlock int32s) {
+        ValueContext context = m_generator.contextOf(read.block, read.access);
+        SetForScope<const OperationContext*> whileAsking(m_generator.m_operation, &context);
+        m_out.branch(m_elements.numericListHoldsDoubles(CellPointer(cell)).value(), normalEdge(doubles), normalEdge(int32s));
+        m_out.appendTo(int32s);
+        leaveUnless(m_elements.numericListHoldsInt32s(CellPointer(cell)).value(), exit);
+    };
+    if (read.isColumn) {
+        const RowGuard& guard = m_generator.m_rows->guards[*m_loop.innerGuard];
+        LValue holder = std::ranges::find(m_storagesOfHolders, *m_loop.innerGuard, &std::pair<unsigned, LValue>::first)->second;
+        LValue column = counterIn64Bits(valueOf(m_loop.counter, m_loop.head));
+        LValue lengthNeeded = m_out.castToInt32(m_out.add(column, 1));
+        emitLoop(numberOfTerms, [&](LValue index) {
+            LValue cell = emitRowCell(guard, holder, m_out.add(firstTerm, index));
+            ArrayElements elements = m_elements.elementsOf(CellPointer(cell));
+            leaveUnless(m_out.aboveOrEqual(m_elements.publicLengthAsWord(elements).value(), lengthNeeded), exit);
+            Base base { elements.butterfly.value(), cell };
+            if (!admitsInt32s) {
+                m_out.storeDouble(emitElement(read, ArrayStorage::Double, base, column, 0, exit), frameNumber(place, index));
+                return;
+            }
+            LBasicBlock doubles = m_out.newBlock();
+            LBasicBlock int32s = m_out.newBlock();
+            LBasicBlock stored = m_out.newBlock();
+            branchOnKind(cell, doubles, int32s);
+            m_out.storeDouble(emitElement(read, ArrayStorage::Int32, base, column, 0, exit), frameNumber(place, index));
+            m_out.jump(normalEdge(stored));
+            m_out.appendTo(doubles);
+            m_out.storeDouble(emitElement(read, ArrayStorage::Double, base, column, 0, exit), frameNumber(place, index));
+            m_out.jump(normalEdge(stored));
+            m_out.appendTo(stored);
+        });
+        return place;
+    }
+    LValue cell = valueOf(read.list, m_loop.innerHead);
+    ArrayElements elements = m_elements.elementsOf(CellPointer(cell));
+    leaveUnless(m_out.aboveOrEqual(m_elements.publicLengthAsWord(elements).value(), m_lengthAsWord), exit);
+    Base base { elements.butterfly.value(), cell };
+    auto inPlace = [&] {
+        checkAccess(read.block, read.access, cell, ArrayStorage::Double, m_out.sub(m_length, 1), 1);
+        return m_out.valueOf(m_elements.elementOfStorage(ArrayStorage::Double, base.storage, firstTerm));
+    };
+    if (!admitsInt32s)
+        return inPlace();
+    LBasicBlock doubles = m_out.newBlock();
+    LBasicBlock int32s = m_out.newBlock();
+    LBasicBlock known = m_out.newBlock();
+    LValue result = m_out.phiIn(known, Machine::Int64);
+    branchOnKind(cell, doubles, int32s);
+    emitLoop(numberOfTerms, [&](LValue index) {
+        m_out.storeDouble(emitElement(read, ArrayStorage::Int32, base, m_out.add(firstTerm, index), 0, exit), frameNumber(place, index));
+    });
+    m_out.upsilon(place, result);
+    m_out.jump(normalEdge(known));
+    m_out.appendTo(doubles);
+    m_out.upsilon(inPlace(), result);
+    m_out.jump(normalEdge(known));
+    m_out.appendTo(known);
+    return result;
+}
+
+void RowLoopEmitter::emitTiles(RowLoopEmitter& sums, std::pair<LValue, LValue> storedRows)
+{
+    const RowLoop& nested = *m_loop.nested;
+    const ElementRead& gathered = m_body->reads[0];
+    const Operation& store = m_code.at(nested.store);
+    BlockID blockOfStore = m_code.blockOf(nested.store);
+    size_t placeOfTerm = sums.isHoistedBase(0);
+    VectorOutput vectors(m_out);
+    if (!m_generator.m_slotOfTiles)
+        m_generator.m_slotOfTiles = m_generator.m_proc.addStackSlot((numbersOfTile + mostTerms) * sizeof(double));
+    LValue tile = m_out.slotBase(m_generator.m_slotOfTiles);
+    LValue terms = m_out.add(tile, numbersOfTile * sizeof(double));
+    m_generator.build().statistics().count(StatisticID::TiledRowNests);
+    LValue columnsOfPanel = m_out.constInt32(numbersOfTile / mostTerms);
+    for (int32_t few = mostTerms / 2; few >= lanes && !gathered.isColumn; few /= 2)
+        columnsOfPanel = m_out.select(m_out.lessThanOrEqual(m_lengthAsWord, m_out.constInt32(few)), m_out.constInt32(numbersOfTile / few), columnsOfPanel);
+
+    LBasicBlock hasManyTerms = m_out.newBlock();
+    LBasicBlock areDistinct = m_out.newBlock();
+    m_out.branch(m_out.lessThanOrEqual(m_lengthAsWord, m_out.constInt32(mostTerms)), normalEdge(areDistinct), normalEdge(hasManyTerms));
+    m_out.appendTo(hasManyTerms);
+    auto emitStoredRow = [&](LValue row, const Exit& exit) {
+        sums.name(nested.counter, row);
+        sums.emitSteps(m_loop.stepsOfStoredRow.span(), exit);
+        m_out.setOrigin(Machine::Origin());
+        return m_generator.m_hasFailed ? nullptr : sums.valueOf(store.arrayOperand(), nested.head);
+    };
+    Exit written = exitTo(m_written, m_first);
+    auto emitGatheredRow = [&](LValue column, const Exit& exit) -> Base {
+        name(m_loop.counter, column);
+        emitSteps(m_loop.stepsBefore.span(), exit);
+        if (m_generator.m_hasFailed)
+            return { };
+        m_out.setOrigin(Machine::Origin());
+        LValue cell = valueOf(gathered.list, m_loop.innerHead);
+        Base base = requireKindAndLength(gathered, cell, ArrayStorage::Double, m_lengthAsWord, exit, exit);
+        leaveUnless(m_out.bitOr(m_out.below(cell, storedRows.first), m_out.below(storedRows.second, cell)), exit);
+        return base;
+    };
+    if (!gathered.isColumn) {
+        emitLoop(m_out.sub(m_limit, m_first), [&](LValue column) { emitGatheredRow(m_out.add(m_first, column), written); });
+        if (m_generator.m_hasFailed)
+            return;
+    }
+    for (bool isStoring : { true, false }) {
+        emitLoop(sums.m_limit, [&](LValue row) {
+            LValue cell = emitStoredRow(row, written);
+            if (m_generator.m_hasFailed)
+                return;
+            ArrayElements elements = m_elements.elementsOf(CellPointer(cell));
+            TypedPointer element = m_elements.elementOfStorage(ArrayStorage::Double, elements.butterfly.value(), counterIn64Bits(m_first));
+            LValue number = m_out.intToDouble(row);
+            if (!isStoring) {
+                leaveUnless(m_out.doubleEqual(m_out.loadDouble(element), number), written);
+                return;
+            }
+            leaveUnless(m_out.above(m_elements.publicLengthAsWord(elements).value(), m_first), written);
+            m_out.storeDouble(number, element);
+        });
+        if (m_generator.m_hasFailed)
+            return;
+    }
+    m_out.jump(normalEdge(areDistinct));
+    m_out.appendTo(areDistinct);
+
+    LBasicBlock panels = m_out.newBlock();
+    LValue first = m_out.phiIn(panels, Machine::Int32);
+    m_out.upsilon(m_first, first);
+    m_out.jump(normalEdge(panels));
+    m_out.appendTo(panels);
+    Exit exit = exitTo(m_written, first);
+    emitPoll();
+    m_out.setOrigin(Machine::Origin());
+    LValue end = m_limit;
+    if (!gathered.isColumn) {
+        LValue remainingColumns = m_out.sub(m_limit, first);
+        end = m_out.add(first, m_out.select(m_out.lessThan(remainingColumns, columnsOfPanel), remainingColumns, columnsOfPanel));
+    }
+
+    LBasicBlock tiles = m_out.newBlock();
+    LValue firstTerm = m_out.phiIn(tiles, Machine::Int64);
+    m_out.upsilon(m_out.int64Zero, firstTerm);
+    m_out.jump(normalEdge(tiles));
+    m_out.appendTo(tiles);
+    LValue remainingTerms = m_out.sub(m_length, firstTerm);
+    LValue most = m_out.constInt64(mostTerms);
+    LValue numberOfTerms = m_out.select(m_out.lessThan(remainingTerms, most), remainingTerms, most);
+
+    auto emitBlocks = [&](LValue firstChecked, const auto& emit) {
+        LBasicBlock blocks = m_out.newBlock();
+        LBasicBlock nextBlock = m_out.newBlock();
+        LBasicBlock again = m_out.newBlock();
+        LBasicBlock done = m_out.newBlock();
+        LValue column = m_out.phiIn(blocks, Machine::Int32);
+        LValue place = m_out.phiIn(blocks, Machine::Int64);
+        LValue checked = m_out.phiIn(blocks, Machine::Vector128);
+        LValue nextColumn = m_out.phiIn(nextBlock, Machine::Int32);
+        LValue nextPlace = m_out.phiIn(nextBlock, Machine::Int64);
+        LValue nextChecked = m_out.phiIn(nextBlock, Machine::Vector128);
+        m_out.upsilon(first, column);
+        m_out.upsilon(tile, place);
+        m_out.upsilon(firstChecked, checked);
+        m_out.jump(normalEdge(blocks));
+        m_out.appendTo(blocks);
+        emitByWidth(m_out.sub(end, column), nextBlock, [&](int32_t columns) {
+            m_out.upsilon(emit(column, place, columns, checked), nextChecked);
+            m_out.upsilon(m_out.add(column, columns), nextColumn);
+            m_out.upsilon(gathered.isColumn ? place : m_out.add(place, m_out.shl(numberOfTerms, WTF::fastLog2(static_cast<unsigned>(columns * sizeof(double))))), nextPlace);
+        });
+        m_out.appendTo(nextBlock);
+        m_out.branch(m_out.lessThan(nextColumn, end), normalEdge(again), normalEdge(done));
+        m_out.appendTo(again);
+        m_out.upsilon(nextColumn, column);
+        m_out.upsilon(nextPlace, place);
+        m_out.upsilon(nextChecked, checked);
+        m_out.jump(normalEdge(blocks));
+        m_out.appendTo(done);
+        return nextChecked;
+    };
+
+    if (gathered.isColumn) {
+        const RowGuard& guard = m_generator.m_rows->guards[*m_loop.innerGuard];
+        LValue holder = std::ranges::find(m_storagesOfHolders, *m_loop.innerGuard, &std::pair<unsigned, LValue>::first)->second;
+        LValue lastColumn = counterIn64Bits(m_out.sub(end, 1));
+        emitLoop(numberOfTerms, [&](LValue index) {
+            LValue cell = emitRowCell(guard, holder, m_out.add(firstTerm, index));
+            Base base = requireKindAndLength(gathered, cell, ArrayStorage::Double, end, exit, exit);
+            checkAccess(gathered.block, gathered.access, cell, ArrayStorage::Double, lastColumn, 1);
+            m_out.store64(base.storage, frameNumber(tile, index));
+        });
+    } else {
+        LBasicBlock blocks = m_out.newBlock();
+        LBasicBlock again = m_out.newBlock();
+        LBasicBlock done = m_out.newBlock();
+        LValue column = m_out.phiIn(blocks, Machine::Int32);
+        LValue place = m_out.phiIn(blocks, Machine::Int64);
+        m_out.upsilon(first, column);
+        m_out.upsilon(tile, place);
+        m_out.jump(normalEdge(blocks));
+        m_out.appendTo(blocks);
+        LValue remaining = m_out.sub(end, column);
+        LValue shift = m_out.int32Zero;
+        for (int32_t columns = 2; columns <= widestBlock; columns *= 2)
+            shift = m_out.select(m_out.lessThan(remaining, m_out.constInt32(columns)), shift, m_out.constInt32(WTF::fastLog2(static_cast<unsigned>(columns))));
+        LValue width = m_out.shl(m_out.int32One, shift);
+        emitLoop(width, [&](LValue offset) {
+            Base base = emitGatheredRow(m_out.add(column, offset), exit);
+            if (m_generator.m_hasFailed)
+                return;
+            LValue placeOfColumn = m_out.add(place, m_out.shl(m_out.zeroExt(offset, Machine::Int64), 3));
+            emitLoop(numberOfTerms, [&](LValue index) {
+                m_out.storeDouble(emitElement(gathered, ArrayStorage::Double, base, m_out.add(firstTerm, index), 0, exit), frameNumber(placeOfColumn, m_out.shl(index, shift)));
+            });
+        });
+        if (m_generator.m_hasFailed)
+            return;
+        LValue nextColumn = m_out.add(column, width);
+        m_out.branch(m_out.lessThan(nextColumn, end), normalEdge(again), normalEdge(done));
+        m_out.appendTo(again);
+        m_out.upsilon(nextColumn, column);
+        m_out.upsilon(m_out.add(place, m_out.shl(m_out.shl(numberOfTerms, shift), 3)), place);
+        m_out.jump(normalEdge(blocks));
+        m_out.appendTo(done);
+    }
+    name(m_loop.counter, first);
+
+    LBasicBlock isLast = m_out.newBlock();
+    LBasicBlock isGathered = m_out.newBlock();
+    m_out.branch(m_out.equal(end, m_limit), normalEdge(isLast), normalEdge(isGathered));
+    m_out.appendTo(isLast);
+    auto storeGathered = [&](LValue index, LValue number) {
+        emitStores(std::span(&number, 1), m_basesOfStores.span(), m_out.add(firstTerm, index), 0, false);
+    };
+    if (gathered.isColumn) {
+        LValue lastColumn = counterIn64Bits(m_out.sub(end, 1));
+        emitLoop(numberOfTerms, [&](LValue index) {
+            LValue storage = m_out.load64(frameNumber(tile, index));
+            storeGathered(index, m_out.loadDouble(m_elements.elementOfStorage(ArrayStorage::Double, storage, lastColumn)));
+        });
+    } else {
+        LValue numberOfColumns = m_out.sub(end, first);
+        LValue bits = m_out.bitOr(numberOfColumns, widestBlock);
+        LValue lastWidth = m_out.zeroExt(m_out.bitAnd(bits, m_out.neg(bits)), Machine::Int64);
+        LValue firstOfLastBlock = m_out.mul(numberOfTerms, m_out.sub(m_out.zeroExt(numberOfColumns, Machine::Int64), lastWidth));
+        LValue firstOfLastColumn = m_out.add(firstOfLastBlock, m_out.sub(lastWidth, 1));
+        emitLoop(numberOfTerms, [&](LValue index) {
+            storeGathered(index, m_out.loadDouble(frameNumber(tile, m_out.add(firstOfLastColumn, m_out.mul(index, lastWidth)))));
+        });
+    }
+    m_out.jump(normalEdge(isGathered));
+    m_out.appendTo(isGathered);
+
+    LBasicBlock rows = m_out.newBlock();
+    LValue row = m_out.phiIn(rows, Machine::Int32);
+    m_out.upsilon(sums.m_first, row);
+    m_out.jump(normalEdge(rows));
+    m_out.appendTo(rows);
+    sums.emitPoll();
+    sums.name(nested.counter, row);
+    sums.emitSteps(nested.stepsBefore.span(), exit);
+    LValue storedRow = emitStoredRow(row, exit);
+    if (m_generator.m_hasFailed)
+        return;
+    ArrayElements elements = m_elements.elementsOf(CellPointer(storedRow));
+    leaveUnless(m_out.aboveOrEqual(m_elements.publicLengthAsWord(elements).value(), end), exit);
+    LValue firstOfTerms = sums.emitTermsOfRow(terms, firstTerm, numberOfTerms, exit);
+    m_out.setOrigin(Machine::Origin());
+    LValue sizeOfPairs = m_out.shl(m_out.bitAnd(numberOfTerms, ~static_cast<int64_t>(1)), 3);
+    LValue endOfPairs = m_out.add(firstOfTerms, sizeOfPairs);
+
+    LValue checked = emitBlocks(vectors.splat(m_out.constDouble(0)), [&](LValue column, LValue firstPlace, int32_t columns, LValue checkedBefore) -> LValue {
+        bool isVector = columns > 1;
+        unsigned numberOfSums = isVector ? columns / lanes : 1;
+        LType type = isVector ? Machine::Vector128 : Machine::Double;
+        LValue columnIn64Bits = counterIn64Bits(column);
+        TypedPointer firstElement = m_elements.elementOfStorage(ArrayStorage::Double, elements.butterfly.value(), columnIn64Bits);
+        auto addressOfSum = [&](unsigned sum) {
+            return TypedPointer(*firstElement.heap(), firstElement.base(), firstElement.offset() + sum * lanes * sizeof(double));
+        };
+        sums.m_splats.shrink(0);
+        if (isVector)
+            sums.addSplats(nested.nextSum);
+        m_out.setOrigin(Machine::Origin());
+        LBasicBlock begins = m_out.newBlock();
+        LBasicBlock continues = m_out.newBlock();
+        LBasicBlock startsPairs = m_out.newBlock();
+        LBasicBlock pairs = m_out.newBlock();
+        LBasicBlock rest = m_out.newBlock();
+        LBasicBlock done = m_out.newBlock();
+        Vector<LValue, 4> started;
+        Vector<LValue, 4> added;
+        Vector<LValue, 4> addedByPairs;
+        Vector<LValue, 4> result;
+        for (unsigned sum = 0; sum < numberOfSums; ++sum) {
+            started.append(m_out.phiIn(startsPairs, type));
+            added.append(m_out.phiIn(pairs, type));
+            addedByPairs.append(m_out.phiIn(rest, type));
+            result.append(m_out.phiIn(done, type));
+        }
+        LValue term = m_out.phiIn(pairs, Machine::Int64);
+        LValue place = m_out.phiIn(pairs, Machine::Int64);
+        LValue termOfRest = m_out.phiIn(rest, Machine::Int64);
+        LValue placeOfRest = m_out.phiIn(rest, Machine::Int64);
+        auto passSums = [&](const Vector<LValue, 4>& from, const Vector<LValue, 4>& to) {
+            for (unsigned sum = 0; sum < numberOfSums; ++sum)
+                m_out.upsilon(from[sum], to[sum]);
+        };
+        auto emitTerms = [&](LValue pointer, LValue row, unsigned offset, const Vector<LValue, 4>& before) {
+            LValue number = m_out.loadDouble(m_out.address(m_generator.heaps().root, pointer, offset * sizeof(double)));
+            if (isVector)
+                number = vectors.splat(number);
+            unsigned width = gathered.isColumn ? 1 : columns;
+            TypedPointer firstGathered = m_out.address(m_generator.heaps().frameSlots, row, offset * width * sizeof(double));
+            if (gathered.isColumn)
+                firstGathered = m_elements.elementOfStorage(ArrayStorage::Double, m_out.load64(firstGathered), columnIn64Bits);
+            Vector<LValue, 4> after;
+            for (unsigned sum = 0; sum < numberOfSums; ++sum) {
+                std::array<LValue, 2> elementsOfTerm;
+                elementsOfTerm[placeOfTerm] = number;
+                elementsOfTerm[!placeOfTerm] = m_out.load(TypedPointer(*firstGathered.heap(), firstGathered.base(), firstGathered.offset() + sum * lanes * sizeof(double)), type);
+                after.append(sums.emitTerm(nested.nextSum, before[sum], elementsOfTerm, isVector));
+            }
+            m_out.setOrigin(Machine::Origin());
+            return after;
+        };
+        m_out.branch(m_out.isZero64(firstTerm), normalEdge(begins), normalEdge(continues));
+        m_out.appendTo(begins);
+        LValue firstSum = isVector ? vectors.splat(sums.m_firstSum) : sums.m_firstSum;
+        for (unsigned sum = 0; sum < numberOfSums; ++sum)
+            m_out.upsilon(firstSum, started[sum]);
+        m_out.jump(normalEdge(startsPairs));
+        m_out.appendTo(continues);
+        for (unsigned sum = 0; sum < numberOfSums; ++sum)
+            m_out.upsilon(m_out.load(addressOfSum(sum), type), started[sum]);
+        m_out.jump(normalEdge(startsPairs));
+
+        m_out.appendTo(startsPairs);
+        LBasicBlock hasPairs = m_out.newBlock();
+        LBasicBlock hasNone = m_out.newBlock();
+        m_out.branch(m_out.isZero64(sizeOfPairs), normalEdge(hasNone), normalEdge(hasPairs));
+        m_out.appendTo(hasNone);
+        passSums(started, addedByPairs);
+        m_out.upsilon(firstOfTerms, termOfRest);
+        m_out.upsilon(firstPlace, placeOfRest);
+        m_out.jump(normalEdge(rest));
+        m_out.appendTo(hasPairs);
+        passSums(started, added);
+        m_out.upsilon(firstOfTerms, term);
+        m_out.upsilon(firstPlace, place);
+        m_out.jump(normalEdge(pairs));
+
+        m_out.appendTo(pairs);
+        Vector<LValue, 4> afterPair = emitTerms(term, place, 1, emitTerms(term, place, 0, added));
+        LValue nextTerm = m_out.add(term, 2 * sizeof(double));
+        LValue nextPlace = m_out.add(place, 2 * (gathered.isColumn ? 1 : columns) * sizeof(double));
+        LBasicBlock again = m_out.newBlock();
+        LBasicBlock ended = m_out.newBlock();
+        m_out.branch(m_out.below(nextTerm, endOfPairs), normalEdge(again), normalEdge(ended));
+        m_out.appendTo(again);
+        passSums(afterPair, added);
+        m_out.upsilon(nextTerm, term);
+        m_out.upsilon(nextPlace, place);
+        m_out.jump(normalEdge(pairs));
+        m_out.appendTo(ended);
+        passSums(afterPair, addedByPairs);
+        m_out.upsilon(nextTerm, termOfRest);
+        m_out.upsilon(nextPlace, placeOfRest);
+        m_out.jump(normalEdge(rest));
+
+        m_out.appendTo(rest);
+        LBasicBlock single = m_out.newBlock();
+        LBasicBlock noSingle = m_out.newBlock();
+        m_out.branch(m_out.testNonZero64(numberOfTerms, m_out.constInt64(1)), normalEdge(single), normalEdge(noSingle));
+        m_out.appendTo(noSingle);
+        passSums(addedByPairs, result);
+        m_out.jump(normalEdge(done));
+        m_out.appendTo(single);
+        passSums(emitTerms(termOfRest, placeOfRest, 0, addedByPairs), result);
+        m_out.jump(normalEdge(done));
+
+        m_out.appendTo(done);
+        LValue total = checkedBefore;
+        for (LValue sum : result)
+            total = vectors.compute(VectorOutput::Arithmetic::Add, total, isVector ? sum : vectors.splat(sum));
+        ValueContext context = m_generator.contextOf(blockOfStore, nested.store);
+        SetForScope<const OperationContext*> whileStoring(m_generator.m_operation, &context);
+        m_out.setOrigin(machineOriginOf(nested.store));
+        checkAccess(blockOfStore, nested.store, storedRow, ArrayStorage::Double, columnIn64Bits, columns);
+        m_generator.declareAccessesOf(context);
+        for (unsigned sum = 0; sum < numberOfSums; ++sum)
+            m_out.store(result[sum], addressOfSum(sum));
+        m_out.clearDeclaredAccesses();
+        return total;
+    });
+    LValue total = m_out.doubleAdd(vectors.lane(checked, 0), vectors.lane(checked, 1));
+    leaveUnless(m_out.doubleEqual(total, total), exit);
+
+    LBasicBlock anotherRow = m_out.newBlock();
+    LBasicBlock noRow = m_out.newBlock();
+    LValue nextRow = m_out.add(row, m_out.int32One);
+    m_out.branch(m_out.lessThan(nextRow, sums.m_limit), normalEdge(anotherRow), normalEdge(noRow));
+    m_out.appendTo(anotherRow);
+    m_out.upsilon(nextRow, row);
+    m_out.jump(normalEdge(rows));
+    m_out.appendTo(noRow);
+    LValue nextTerms = m_out.add(firstTerm, numberOfTerms);
+    LBasicBlock anotherTile = m_out.newBlock();
+    LBasicBlock noTile = m_out.newBlock();
+    m_out.branch(m_out.lessThan(nextTerms, m_length), normalEdge(anotherTile), normalEdge(noTile));
+    m_out.appendTo(anotherTile);
+    m_out.upsilon(nextTerms, firstTerm);
+    m_out.jump(normalEdge(tiles));
+    m_out.appendTo(noTile);
+    LBasicBlock anotherPanel = m_out.newBlock();
+    LBasicBlock noPanel = m_out.newBlock();
+    m_out.branch(m_out.lessThan(end, m_limit), normalEdge(anotherPanel), normalEdge(noPanel));
+    m_out.appendTo(anotherPanel);
+    m_out.upsilon(end, first);
+    m_out.jump(normalEdge(panels));
+    m_out.appendTo(noPanel);
+    leave(exitTo(m_written, end));
+}
+
 void RowLoopEmitter::emitNest()
 {
     const RowLoop& nested = *m_loop.nested;
@@ -2412,6 +3053,28 @@ void RowLoopEmitter::emitNest()
         leaveUnlessDisjoint(storedRows, emitRange(holderOf(sums, *nested.innerGuard), sums.m_lengthAsWord));
     if (m_loop.innerGuard)
         leaveUnlessDisjoint(storedRows, emitRange(holderOf(*this, *m_loop.innerGuard), m_lengthAsWord));
+
+    auto finish = makeScopeExit([&] {
+        if (m_generator.m_hasFailed)
+            return;
+        sums.emitExits();
+        for (const auto& [value, lowered] : sums.m_saved)
+            m_generator.m_values[value.index()] = lowered;
+    });
+    if (m_loop.isTiled) {
+        bool readsColumns = nested.form == RowLoop::Form::ColumnSum;
+        LBasicBlock others = readsColumns ? m_out.newBlock() : nullptr;
+        if (readsColumns) {
+            LBasicBlock tiles = m_out.newBlock();
+            m_out.branch(m_out.greaterThanOrEqual(m_out.sub(m_limit, m_first), sums.m_limit), normalEdge(tiles), normalEdge(others));
+            m_out.appendTo(tiles);
+        }
+        emitTiles(sums, storedRows);
+        if (m_generator.m_hasFailed || !readsColumns)
+            return;
+        m_out.appendTo(others);
+        m_out.setOrigin(Machine::Origin());
+    }
 
     LBasicBlock columns = m_out.newBlock();
     LValue column = m_out.phiIn(columns, Machine::Int32);
@@ -2447,8 +3110,6 @@ void RowLoopEmitter::emitNest()
     m_out.appendTo(sums.m_columnEnd);
     m_out.setOrigin(Machine::Origin());
     emitNextIteration(columns, column, m_out.add(column, m_out.int32One));
-    for (const auto& [value, lowered] : sums.m_saved)
-        m_generator.m_values[value.index()] = lowered;
 }
 
 void RowLoopEmitter::emit(LValue first, const Exit& front, const Exit& written)
@@ -2506,10 +3167,16 @@ void RowLoopEmitter::emit(LValue first, const Exit& front, const Exit& written)
     emitHolders(m_loop.stepsWithSum.span());
     if (!m_storagesOfHolders.isEmpty())
         leaveUnless(m_out.lessThan(first, m_limit), m_front);
-    m_lengthAsWord = valueOf(m_loop.innerBound, m_loop.innerHead);
-    leaveUnless(m_out.below(m_out.sub(m_lengthAsWord, m_out.int32One), m_out.constInt32(longestInnerLoop)), m_front);
+    LValue innerBound = valueOf(m_loop.innerBound, m_loop.innerHead);
+    if (countsWide()) {
+        leaveUnless(m_out.below(m_out.sub(innerBound, m_out.constInt64(1)), m_out.constInt64(longestInnerLoop)), m_front);
+        m_lengthAsWord = m_out.castToInt32(innerBound);
+    } else {
+        m_lengthAsWord = innerBound;
+        leaveUnless(m_out.below(m_out.sub(m_lengthAsWord, m_out.int32One), m_out.constInt32(longestInnerLoop)), m_front);
+    }
     m_length = m_out.zeroExt(m_lengthAsWord, Machine::Int64);
-    name(m_loop.innerCounter, m_lengthAsWord);
+    name(m_loop.innerCounter, innerBound);
     if (m_loop.form == RowLoop::Form::Nest) {
         emitNest();
         return;
@@ -2533,7 +3200,7 @@ void RowLoopEmitter::emit(LValue first, const Exit& front, const Exit& written)
 
 void CodeGenerator::tryEmitRowLoop(BlockID head)
 {
-    if (m_keepsValuesInHeapFrame || m_followsNumbersOutOfBytes || m_interleaving || m_headOfTurnsLaidOut || code().at(head).parameters().size() != 1)
+    if (m_keepsValuesInHeapFrame || (m_followsNumbersOutOfBytes && !m_followsMarkers) || m_interleaving || m_headOfTurnsLaidOut || code().at(head).parameters().size() != 1)
         return;
     static constexpr size_t mostLoops = 6;
     Vector<RowLoop, 2> loops;
@@ -2583,6 +3250,326 @@ void CodeGenerator::tryEmitRowLoop(BlockID head)
     m_out.jump(normalEdge(writtenHead));
     m_blocks[head.index()] = writtenHead;
     m_values[counter.index()] = counterOfWrittenHead;
+}
+
+struct ArrayAllocationLoop {
+    ValueID counter;
+    ValueID bound;
+    ValueID allocation;
+    ValueID given;
+    ValueID store;
+    ValueID array;
+};
+
+class ArrayAllocationLoopFinder {
+public:
+    ArrayAllocationLoopFinder(const CodeGenerator& generator, BlockID head)
+        : m_generator(generator)
+        , m_code(generator.code())
+        , m_head(head)
+    {
+    }
+
+    std::optional<ArrayAllocationLoop> find();
+
+private:
+    const Operation& at(ValueID value) const { return m_code.at(value); }
+    bool isPlainBlock(BlockID id) const
+    {
+        const Block& block = m_code.at(id);
+        return m_code.isReached(id) && block.frequency == BlockFrequency::Normal && !m_code.handlerOf(id) && !block.subject && !block.isEntry && !block.isHandlerBlock();
+    }
+    bool isAvailableBefore(ValueID value) const { return m_code.isConstant(value) || (!m_blocks.contains(m_code.blockOf(value)) && m_generator.m_values[value.index()]); }
+    ValueID withoutNames(ValueID value) const
+    {
+        static constexpr OpcodeSet names { Opcode::Narrowed, Opcode::Unbox, Opcode::Box, Opcode::WidenInteger, Opcode::NarrowInteger };
+        while (!m_code.isConstant(value) && names.contains(at(value).opcode))
+            value = at(value).operand(0);
+        return value;
+    }
+    bool add(ValueID);
+
+    static constexpr unsigned mostBlocks = 8;
+    const CodeGenerator& m_generator;
+    const Code& m_code;
+    BlockID m_head;
+    Vector<BlockID, mostBlocks> m_blocks;
+    ArrayAllocationLoop m_found;
+};
+
+bool ArrayAllocationLoopFinder::add(ValueID value)
+{
+    static constexpr OpcodeSet names { Opcode::Narrowed, Opcode::Unbox, Opcode::Box, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::Increment };
+    const Operation& operation = at(value);
+    if (names.contains(operation.opcode))
+        return true;
+    if (operation.opcode == Opcode::NewArrayOfGiven) {
+        Representation given = at(operation.givenOperand()).representation;
+        if (m_found.allocation || (given != Representation::JSValue && given != Representation::Int32) || !isAvailableBefore(operation.givenOperand()))
+            return false;
+        m_found.allocation = value;
+        m_found.given = operation.givenOperand();
+        return true;
+    }
+    if (operation.opcode != Opcode::PutArrayElement || !m_found.allocation || m_found.store)
+        return false;
+    ValueID array = operation.arrayOperand();
+    Representation representation = at(array).representation;
+    bool isArray = (representation == Representation::Cell || representation == Representation::JSValue) && m_generator.typeOf(array).isObject() && isAvailableBefore(array);
+    if (!isArray || withoutNames(operation.positionOperand()) != m_found.counter || withoutNames(operation.valueOperand()) != m_found.allocation)
+        return false;
+    m_found.store = value;
+    m_found.array = array;
+    return true;
+}
+
+std::optional<ArrayAllocationLoop> ArrayAllocationLoopFinder::find()
+{
+    const Block& head = m_code.at(m_head);
+    if (!isPlainBlock(m_head) || !head.isLoopHead || head.parameters().size() != 1 || head.terminator.kind != TerminatorKind::Branch)
+        return std::nullopt;
+    m_found.counter = head.parameters()[0];
+    ValueID test = head.terminator.conditionOperand();
+    if (m_code.isConstant(test) || m_code.blockOf(test) != m_head || at(m_found.counter).representation != Representation::Int32 || m_generator.isCarriedBoxed(m_found.counter) || !m_generator.m_values[m_found.counter.index()] || m_generator.typeOf(m_found.counter).integers.minimum < 0)
+        return std::nullopt;
+    for (ValueID value : m_code.valuesOf(head)) {
+        if (value != test && (at(value).opcode != Opcode::LoopHint || at(value).throwsOwedError()))
+            return std::nullopt;
+    }
+    const Operation& comparison = at(test);
+    m_blocks.append(m_head);
+    if (comparison.opcode != Opcode::Less || comparison.form() != OperatorForm::Integers || withoutNames(comparison.leftOperand()) != m_found.counter || at(comparison.rightOperand()).representation != Representation::Int32 || !isAvailableBefore(comparison.rightOperand()))
+        return std::nullopt;
+    m_found.bound = comparison.rightOperand();
+    for (const Edge* edge = &m_code.at(head.terminator.taken()); edge->to != m_head;) {
+        BlockID id = edge->to;
+        const Block& block = m_code.at(id);
+        if (m_blocks.size() == mostBlocks || !isPlainBlock(id) || block.isLoopHead || m_blocks.contains(id) || !block.parameters().empty() || block.terminator.kind != TerminatorKind::Jump)
+            return std::nullopt;
+        m_blocks.append(id);
+        for (ValueID value : m_code.valuesOf(block)) {
+            if (!add(value))
+                return std::nullopt;
+        }
+        edge = &m_code.at(block.terminator.next());
+        if (edge->to != m_head)
+            continue;
+        ValueID stepped = edge->arguments().size() == 1 ? withoutNames(edge->arguments()[0]) : ValueID();
+        if (!stepped || m_code.isConstant(stepped) || at(stepped).opcode != Opcode::Increment || at(stepped).form() != OperatorForm::Integers || withoutNames(at(stepped).operand(0)) != m_found.counter)
+            return std::nullopt;
+    }
+    if (!m_found.store)
+        return std::nullopt;
+    return m_found;
+}
+
+class ArrayAllocationLoopEmitter {
+public:
+    ArrayAllocationLoopEmitter(CodeGenerator& generator, const ArrayAllocationLoop& loop, Pointer profile)
+        : m_generator(generator)
+        , m_code(generator.code())
+        , m_out(generator.m_out)
+        , m_elements(generator.emitter<ElementAccessEmitter>())
+        , m_loop(loop)
+        , m_profile(profile)
+    {
+    }
+
+    void emit(LValue first, LBasicBlock written, LValue counterOfWritten);
+
+private:
+    LValue loadInstanceWord(ptrdiff_t offset)
+    {
+        const PinnedValues& pinned = m_generator.pinned();
+        bool isInPrefix = offset < 0;
+        return m_out.load64(m_out.address(m_generator.heaps().entire(AbstractHeap::AllocatorState), isInPrefix ? pinned.instancePrefix : pinned.instance, isInPrefix ? offset + static_cast<ptrdiff_t>(sizeof(InstancePrefix)) : offset));
+    }
+    TypedPointer wordOfProfile() { return m_out.address(m_generator.heaps().AOTInstance_arrayProfiles, m_profile.value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word)); }
+    void leaveUnless(LValue condition);
+    LValue emitHeader(LValue shape);
+    void emitBarrier();
+    CellPointer emitCell(LValue allocator, LValue header, LValue lengthAndCapacity, LValue size, LValue hole, LBasicBlock slowPath);
+
+    CodeGenerator& m_generator;
+    const Code& m_code;
+    Output& m_out;
+    ElementAccessEmitter& m_elements;
+    const ArrayAllocationLoop& m_loop;
+    Pointer m_profile;
+    LValue m_array { nullptr };
+    LBasicBlock m_unchanged { nullptr };
+};
+
+void ArrayAllocationLoopEmitter::leaveUnless(LValue condition)
+{
+    LBasicBlock holds = m_out.newBlock();
+    m_out.branch(condition, normalEdge(holds), unlikelyEdge(m_unchanged));
+    ScopeFork fork = m_out.forkScope();
+    m_out.appendToSuccessor(holds, fork);
+}
+
+LValue ArrayAllocationLoopEmitter::emitHeader(LValue shape)
+{
+    LValue headerOfNumbers = m_out.select(m_out.belowOrEqual(shape, m_out.constInt32(Int32Shape)), loadInstanceWord(Instance::offsetOfNewArrayHeader(ArrayWithInt32)), loadInstanceWord(Instance::offsetOfNewArrayHeader(ArrayWithDouble)));
+    return m_out.select(m_out.belowOrEqual(shape, m_out.constInt32(DoubleShape)), headerOfNumbers, loadInstanceWord(Instance::offsetOfNewArrayHeader(ArrayWithContiguous)));
+}
+
+void ArrayAllocationLoopEmitter::emitBarrier()
+{
+    ValueContext context = m_generator.contextOf(m_code.blockOf(m_loop.store), m_loop.store);
+    SetForScope<const OperationContext*> whileStoring(m_generator.m_operation, &context);
+    m_generator.emitter<BarrierEmitter>().barrier(context, CellPointer(m_array));
+}
+
+CellPointer ArrayAllocationLoopEmitter::emitCell(LValue allocator, LValue header, LValue lengthAndCapacity, LValue size, LValue hole, LBasicBlock slowPath)
+{
+    constexpr ptrdiff_t offsetOfHeader = sizeof(JSArray);
+    constexpr ptrdiff_t offsetOfStorage = offsetOfHeader + sizeof(IndexingHeader);
+    constexpr ptrdiff_t sizeOfPair = 2 * sizeof(EncodedJSValue);
+    CellAllocationEmitter& cells = m_generator.emitter<CellAllocationEmitter>();
+    CellPointer cell = cells.allocateHeapCell(Pointer(allocator), std::nullopt, slowPath);
+    {
+        CodeGenerator::InitializationScope scope(m_generator);
+        const Machine::AbstractHeap& heap = m_generator.heaps().root;
+        m_out.store64(lengthAndCapacity, m_out.address(heap, cell.value(), offsetOfHeader));
+        m_out.store64(hole, m_out.address(heap, cell.value(), offsetOfStorage));
+        LBasicBlock pairs = m_out.newBlock();
+        LBasicBlock hasPairs = m_out.newBlock();
+        LBasicBlock again = m_out.newBlock();
+        LBasicBlock filled = m_out.newBlock();
+        LValue place = m_out.phiIn(pairs, Machine::Int64);
+        LValue first = m_out.add(cell.value(), offsetOfStorage + sizeof(EncodedJSValue));
+        LValue end = m_out.add(cell.value(), size);
+        m_out.branch(m_out.below(first, end), normalEdge(hasPairs), normalEdge(filled));
+        m_out.appendTo(hasPairs);
+        LValue pairOfHoles = VectorOutput(m_out).splat(m_out.bitCast(hole, Machine::Double));
+        m_out.upsilon(first, place);
+        m_out.jump(normalEdge(pairs));
+        m_out.appendTo(pairs);
+        m_out.store(pairOfHoles, m_out.address(heap, place, 0));
+        LValue next = m_out.add(place, sizeOfPair);
+        m_out.branch(m_out.below(next, end), normalEdge(again), normalEdge(filled));
+        m_out.appendTo(again);
+        m_out.upsilon(next, place);
+        m_out.jump(normalEdge(pairs));
+        m_out.appendTo(filled);
+        m_out.store64(m_out.add(cell.value(), offsetOfStorage), m_out.address(heap, cell.value(), JSObject::butterflyOffset()));
+        cells.storeHeader(cell, Integer(header));
+    }
+    m_generator.emitter<BarrierEmitter>().fenceAfterInitialization();
+    return cell;
+}
+
+void ArrayAllocationLoopEmitter::emit(LValue first, LBasicBlock written, LValue counterOfWritten)
+{
+    m_generator.build().statistics().count(StatisticID::ArrayAllocationLoops);
+    m_out.clearDeclaredAccesses();
+    m_out.setOrigin(Machine::Origin());
+    m_unchanged = m_out.newBlock();
+    auto leave = [&](LValue counter) {
+        m_out.upsilon(counter, counterOfWritten);
+        m_out.jump(normalEdge(written));
+    };
+    auto valueOf = [&](ValueID value) {
+        LValue lowered = m_generator.get(value).value;
+        m_out.clearDeclaredAccesses();
+        return lowered;
+    };
+    LValue given = valueOf(m_loop.given);
+    if (given->type() != Machine::Int32) {
+        leaveUnless(m_elements.areInt32Elements(given).value());
+        given = m_out.castToInt32(given);
+    }
+    leaveUnless(m_out.below(m_out.sub(given, 1), m_out.constInt32(maxHoleArrayCapacity)));
+    m_array = valueOf(m_loop.array);
+    leaveUnless(m_elements.hasArrayStorage(CellPointer(m_array), ArrayStorage::Contiguous, true).value());
+    ArrayElements elements = m_elements.elementsOf(CellPointer(m_array));
+    LValue bound = valueOf(m_loop.bound);
+    LValue length = m_elements.publicLengthAsWord(elements).value();
+    LValue limit = m_out.select(m_out.below(length, bound), length, bound);
+    leaveUnless(m_out.lessThan(first, limit));
+
+    LValue word = m_out.load32(wordOfProfile());
+    LValue counted = m_out.lShr(word, ArrayAllocationProfile::allocationCountShift);
+    LValue remaining = m_out.sub(limit, first);
+    LValue number = m_out.select(m_out.below(counted, remaining), counted, remaining);
+    LValue shape = m_out.bitAnd(m_out.lShr(word, ArrayAllocationProfile::shapeShift), ArrayAllocationProfile::shapeMask >> ArrayAllocationProfile::shapeShift);
+    leaveUnless(m_out.notZero32(number));
+    leaveUnless(m_out.notZero64(loadInstanceWord(Instance::offsetOfNewArrayHeader(ArrayWithContiguous))));
+    LValue capacity = m_out.zeroExt(m_out.bitOr(given, 1), Machine::Int64);
+    static_assert(sizeof(JSArray) == MarkedSpace::sizeStep);
+    constexpr ptrdiff_t offsetOfAllocators = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(Allocator);
+    LValue sizeStep = m_out.lShr(m_out.add(capacity, 1), 1);
+    const Machine::AbstractHeap& allocators = m_generator.heaps().entire(AbstractHeap::AllocatorState);
+    LValue allocator = m_out.load64(m_out.baseIndex(allocators, loadInstanceWord(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeStep, ScaleEight, offsetOfAllocators));
+    leaveUnless(m_out.notZero64(allocator));
+    if (m_generator.m_rows)
+        m_generator.zeroRowCounts();
+    m_out.store32(m_out.sub(word, m_out.shl(number, ArrayAllocationProfile::allocationCountShift)), wordOfProfile());
+    LValue header = emitHeader(shape);
+    LValue isDouble = m_out.bitAnd(m_out.above(shape, m_out.constInt32(Int32Shape)), m_out.belowOrEqual(shape, m_out.constInt32(DoubleShape)));
+    LValue hole = m_out.select(isDouble, m_out.constInt64(std::bit_cast<int64_t>(PNaN)), m_out.int64Zero);
+    LValue lengthAndCapacity = m_out.bitOr(m_out.shl(capacity, 32), m_out.zeroExt(given, Machine::Int64));
+    LValue size = m_out.add(m_out.shl(capacity, 3), sizeof(JSArray) + sizeof(IndexingHeader));
+    LValue end = m_out.add(first, number);
+
+    LBasicBlock iteration = m_out.newBlock();
+    LBasicBlock slowPath = m_out.newBlock();
+    LBasicBlock again = m_out.newBlock();
+    LBasicBlock done = m_out.newBlock();
+    LValue counter = m_out.phiIn(iteration, Machine::Int32);
+    m_out.upsilon(first, counter);
+    m_out.jump(normalEdge(iteration));
+    m_out.appendTo(iteration);
+    CellPointer cell = emitCell(allocator, header, lengthAndCapacity, size, hole, slowPath);
+    m_out.store64(cell.value(), m_elements.elementOfStorage(ArrayStorage::Contiguous, elements.butterfly.value(), m_out.zeroExt(counter, Machine::Int64)));
+    LValue next = m_out.add(counter, 1);
+    m_out.branch(m_out.lessThan(next, end), normalEdge(again), normalEdge(done));
+    m_out.appendTo(again);
+    m_out.upsilon(next, counter);
+    m_out.jump(normalEdge(iteration));
+
+    m_out.appendTo(done);
+    emitBarrier();
+    leave(next);
+
+    m_out.appendTo(slowPath);
+    LValue uncounted = m_out.sub(end, counter);
+    m_out.store32(m_out.add(m_out.load32(wordOfProfile()), m_out.shl(uncounted, ArrayAllocationProfile::allocationCountShift)), wordOfProfile());
+    emitBarrier();
+    leave(counter);
+
+    m_out.appendTo(m_unchanged);
+    leave(first);
+}
+
+void CodeGenerator::tryEmitArrayAllocationLoop(BlockID head)
+{
+    if (m_keepsValuesInHeapFrame || (m_followsNumbersOutOfBytes && !m_followsMarkers) || m_interleaving || m_headOfTurnsLaidOut || m_checksEffects)
+        return;
+    std::optional<ArrayAllocationLoop> loop = ArrayAllocationLoopFinder(*this, head).find();
+    if (!loop)
+        return;
+    LValue first = m_values[loop->counter.index()];
+    LBasicBlock writtenHead = m_out.newBlock();
+    LBasicBlock written = m_out.newBlock();
+    LValue counterOfWrittenHead = m_out.phiIn(writtenHead, first->type());
+    LValue counterOfWritten = m_out.phiIn(written, first->type());
+    m_out.appendTo(blockFor(head));
+    ValueContext allocation = contextOf(code().blockOf(loop->allocation), loop->allocation);
+    if (std::optional<Pointer> profile = ArrayAllocationEmitter(*this).profileOfListsOfLengthAtSite(allocation.origin(), arrayStorageFormOf(ArrayStorage::Int32)))
+        ArrayAllocationLoopEmitter(*this, *loop, *profile).emit(first, written, counterOfWritten);
+    else {
+        m_out.upsilon(first, counterOfWritten);
+        m_out.jump(normalEdge(written));
+    }
+    if (m_hasFailed)
+        return;
+    m_out.appendTo(written);
+    m_out.upsilon(counterOfWritten, counterOfWrittenHead);
+    m_out.jump(normalEdge(writtenHead));
+    m_blocks[head.index()] = writtenHead;
+    m_values[loop->counter.index()] = counterOfWrittenHead;
 }
 
 } } } // namespace JSC::AOT::Typed

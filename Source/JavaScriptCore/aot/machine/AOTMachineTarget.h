@@ -47,7 +47,7 @@ struct PinnedConstant {
 JS_EXPORT_PRIVATE std::optional<PinnedConstant> findPinnedConstant(uint64_t bits);
 
 inline constexpr unsigned numberOfHeldConstants = 2;
-inline constexpr unsigned fewestHeldConstantReads = 3;
+inline constexpr unsigned fewestHeldConstantReads = 2;
 
 inline std::optional<unsigned> heldConstantIndex(const Operation& constant)
 {
@@ -238,6 +238,11 @@ std::optional<ConstantComparison> findConstantComparison(Opcode relation, Width,
 #endif
 
 #if CPU(X86_64)
+ALWAYS_INLINE bool acceptsSpilledFirstOperand(const Operation& user)
+{
+    return (user.opcode() == Add || user.opcode() == Mul) && user.type().isFloat();
+}
+
 ALWAYS_INLINE bool acceptsMemoryOperand(const Operation& user, unsigned childIndex)
 {
     switch (user.opcode()) {
@@ -334,6 +339,7 @@ ALWAYS_INLINE bool acceptsMemoryOperand(const Operation& user, unsigned childInd
     RELEASE_ASSERT_NOT_REACHED();
 }
 #else
+constexpr bool acceptsSpilledFirstOperand(const Operation&) { return false; }
 JS_EXPORT_PRIVATE bool acceptsMemoryOperand(const Operation& user, unsigned childIndex);
 #endif
 

@@ -27,6 +27,7 @@
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTPropertyWalk.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
@@ -270,7 +271,8 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
             auto defined = asString(value)->tryGetValue();
             if (defined->isNull())
                 return false;
-            if (defined.data == initialNameProperty(closure->function()))
+            auto initial = initialNamePropertyString(vm, closure->state(), closure->function())->tryGetValue();
+            if (!initial->isNull() && defined.data == initial.data)
                 return true;
             closure->setNameProperty(vm, asString(value), attributesAtBirth);
         }
@@ -505,6 +507,89 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     } else
         callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
     OPERATION_RETURN(scope);
+}
+
+static ALWAYS_INLINE bool tryReadMembersOfDescriptor(JSGlobalObject* globalObject, JSValue description, PropertyWalk::DescriptorMembers& members)
+{
+    Object* described = description.isObject() ? compiledObjectOrNull(asObject(description)) : nullptr;
+    return described && described->getPrototypeDirect() == globalObject->objectPrototype() && descriptorObjectsInheritNoMembers(globalObject) && PropertyWalk::tryReadDescriptorMembers(described, members);
+}
+
+static bool tryReadDescriptor(const PropertyWalk::DescriptorMembers& members, JSValue& valueOrGetter, JSValue& setter, PropertyDescriptorBits& bits)
+{
+    auto [enumerable, configurable, value, writable, get, set] = members;
+    if ((enumerable && !enumerable.isBoolean()) || (configurable && !configurable.isBoolean()) || (writable && !writable.isBoolean()) || ((value || writable) && (get || set)))
+        return false;
+    valueOrGetter = value ? value : get ? get : jsUndefined();
+    setter = set ? set : jsUndefined();
+    bits = {
+        .hasValue = !!value, .hasWritable = !!writable, .isWritable = writable && writable.isTrue(),
+        .hasEnumerable = !!enumerable, .isEnumerable = enumerable && enumerable.isTrue(),
+        .hasConfigurable = !!configurable, .isConfigurable = configurable && configurable.isTrue(),
+        .hasGet = !!get, .hasSet = !!set, .isOfPropertyMap = 0, .unused = 0,
+    };
+    return true;
+}
+
+static ALWAYS_INLINE bool tryRepeatAccessorDefinition(JSGlobalObject* globalObject, JSObject* object, PropertyName name, const PropertyWalk::DescriptorMembers& members)
+{
+    auto [enumerable, configurable, value, writable, get, set] = members;
+    Object* compiled = get || set ? compiledObjectOrNull(object) : nullptr;
+    if (!compiled || value || writable || name.isSymbol() || !enumerable.isBoolean() || !configurable.isBoolean())
+        return false;
+    auto mayBeHalf = [](JSValue function) {
+        return !function || function.isUndefined() || (function.isCell() && isCompiledCalleeType(function.asCell()->type()));
+    };
+    if (!mayBeHalf(get) || !mayBeHalf(set))
+        return false;
+    auto halfOrNull = [](JSValue function) {
+        return function && function.isCell() ? uncheckedDowncast<JSObject>(function.asCell()) : nullptr;
+    };
+    unsigned attributes = PropertyAttribute::Accessor | (enumerable.isTrue() ? PropertyAttribute::None : PropertyAttribute::DontEnum) | (configurable.isTrue() ? PropertyAttribute::None : PropertyAttribute::DontDelete);
+    return compiled->tryRepeatAccessorDefinition(globalObject->vm(), globalObject, compiled->fieldNamed(compiled->state(), name), name, halfOrNull(get), halfOrNull(set), attributes);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTObjectDefineProperty, EncodedJSValue, (Instance* instance, EncodedJSValue encodedObject, EncodedJSValue encodedKey, EncodedJSValue encodedDescriptor))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectDefineProperty);
+    JSValue target = JSValue::decode(encodedObject);
+    JSValue key = JSValue::decode(encodedKey);
+    JSValue description = JSValue::decode(encodedDescriptor);
+    if (!target.isObject()) [[unlikely]] {
+        throwTypeError(globalObject, scope, DefinePropertyOnNonObjectError);
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    JSObject* object = asObject(target);
+    EnsureStillAliveScope keepsKey(key);
+    Identifier converted;
+    StringImpl* text = key.isString() ? asString(key)->tryGetValueImpl() : nullptr;
+    if (!text || !text->isAtom()) {
+        converted = key.toPropertyKey(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        text = converted.impl();
+    }
+    PropertyName name(static_cast<UniquedStringImpl*>(text));
+    PropertyWalk::DescriptorMembers members;
+    if (tryReadMembersOfDescriptor(globalObject, description, members)) [[likely]] {
+        if (tryRepeatAccessorDefinition(globalObject, object, name, members))
+            OPERATION_RETURN(scope, encodedObject);
+        JSValue valueOrGetter;
+        JSValue setter;
+        PropertyDescriptorBits bits;
+        if (tryReadDescriptor(members, valueOrGetter, setter, bits)) {
+            if (tryRepeatDefinition(globalObject, object, key, valueOrGetter, bits))
+                OPERATION_RETURN(scope, encodedObject);
+            bool isDefined = tryDefineOwnPropertyFromBits(globalObject, object, name, valueOrGetter, setter, bits);
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (isDefined)
+                OPERATION_RETURN(scope, encodedObject);
+        }
+    }
+    PropertyDescriptor descriptor;
+    toPropertyDescriptor(globalObject, description, descriptor);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    object->methodTable()->defineOwnProperty(object, globalObject, name, descriptor, true);
+    OPERATION_RETURN(scope, encodedObject);
 }
 
 static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, PropertyName property, JSValue function, bool isEnumerable, bool isGetter)

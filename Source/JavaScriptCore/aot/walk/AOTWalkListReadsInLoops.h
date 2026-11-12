@@ -37,6 +37,7 @@ struct HoistedArrayGuard {
     ArrayStorage expectedStorage { ArrayStorage::Other };
     bool isNextWalkedForBoxedNumbers { false };
     bool holdsIntegersByLink { false };
+    bool isComparedByCallee { false };
 };
 
 inline bool isConvertedInPreheader(const HoistedArrayGuard& list)
@@ -83,6 +84,7 @@ bool tryHoistInt32Guard(Walker&, const BodyValue& read, Reference list);
 void retestArrayForInt32s(Walker&, const BodyValue& read);
 std::optional<HoistedArrayGuard> tryHoistArrayGuardForAccess(Walker&, const BodyValue& read, Reference list, ArrayStorage kindStoredInto = ArrayStorage::Other, bool goesByKindOfStorage = false);
 std::optional<PassedTest> tryHoistElementPresenceCheck(Walker&, const BodyValue& read, const HoistedArrayGuard&, Reference list, Reference position);
+bool compareWithStoredArrays(Walker&, const BodyValue& read, Reference list);
 struct WhatReadsFromInFrontOfLoopFind {
     BitVector found;
     BitVector refused;
@@ -93,6 +95,8 @@ ValueID findIterableOfPosition(Walker&, const BodyIndex&, ValueID key);
 bool rowLeavesLists(Walker&, BlockID inputHead, std::span<const HoistedArrayGuard>, std::span<const HoistedSpeculation>, std::span<const Reference> entering);
 void hoistLeadingInitializationChecks(Walker&, BlockID inputHead);
 void readListsOfStableBindingsInFrontOfLoop(Walker&, BlockID inputHead);
+void appendCalleeDeferredArrays(Walker&, const BodyValue& call, Vector<VariableID, 4>&);
+void appendCalleeConstantObjects(Walker&, const BodyValue& call, Vector<VariableID, 4>&);
 Reference fieldValueInPreheader(Walker&, const BodyIndex&, ValueID read, uint32_t firstValueOfLoop);
 void readFieldArraysInPreheader(Walker&, BlockID inputHead);
 void readRowArraysInPreheader(Walker&, BlockID inputHead);
@@ -127,7 +131,12 @@ bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position)
 Reference storageOfListFromInFrontOfLoop(Walker&, const HoistedArrayGuard&, Origin);
 
 bool isUnbuiltListOfNumbers(Walker&, ValueID unbuiltList);
+ArrayStorage predictedStorageOfUnbuiltList(Walker&, ValueID unbuiltList);
+bool isReachedByLoops(const Walker&);
+bool copyWouldAskElementsApart(const BodyIndex&, bool isOnlyCallOfLoops);
+bool hasComputedRead(const BodyIndex&, ValueID object);
 bool holeLeavesTurnBehindRow(Walker&, const BodyValue& read, const HoistedArrayGuard&);
+bool isDefaultedElement(const Walker&, const BodyIndex&, ValueID read);
 bool guardElementPresenceInIteration(Walker&, Draft& read, Reference list, Reference position, const HoistedArrayGuard&, ValueID relationFailedByHole = { });
 bool turnTakesElementForKeyInListReadsInLoops(Walker&, ValueID element);
 bool hasOnlyOtherArrayReads(Walker&, BlockID inputHead, ValueID made);
@@ -224,7 +233,9 @@ bool callsArrayMethod(Walker&, const BodyValue& call, Reference list, BuiltinNam
 bool isUntouchedLiteral(const BodyIndex&, ValueID array, LoopID);
 bool storesUnderSteppedCounter(Walker&, const BodyIndex&, const BodyValue& store);
 bool storesFromInitialLength(Walker&, const BodyIndex&, const BodyValue& store);
-bool storesFromRowLength(Walker&, const BodyIndex&, const BodyValue& store);
+bool storesFromRowLength(Walker&, const BodyIndex&, const BodyValue& store, bool mayStartInside = true);
+ValueID findUpdatingStore(const BodyIndex&, ValueID read);
+ValueID findUpdatedRead(const BodyIndex&, const BodyValue& store);
 bool readsTruncatedElement(Walker&, const BodyValue& read);
 bool hasWideTruncatedReads(Walker&, BlockID inputHead, const LoopPreview&);
 ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses);

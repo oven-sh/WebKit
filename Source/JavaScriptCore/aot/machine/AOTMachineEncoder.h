@@ -360,7 +360,7 @@ public:
 
         if (step.operation->isUnconditionalJump()) {
             const Block* target = block->successor(0).block();
-            if (!fallsThroughTo(block, target))
+            if (!fallsThroughTo(block, target) && !tryEncodeTestOfEnteredLoop(block, target))
                 jumpTo(target);
             return;
         }
@@ -370,6 +370,13 @@ public:
         }
         encodeRareTerminator(block, step);
     }
+    ALWAYS_INLINE bool tryEncodeTestOfEnteredLoop(const Block* from, const Block* target)
+    {
+        if (placeOf(from).loop == noLoop || !placeOf(target).isLoopHead || placeOf(target).loop == placeOf(from).loop) [[likely]]
+            return false;
+        return tryEncodeTestOfEnteredLoopSlowCase(from, target);
+    }
+    bool tryEncodeTestOfEnteredLoopSlowCase(const Block* from, const Block* target);
     void encodeTerminator(Block*, const Step&);
     void encodeRareTerminator(Block*, const Step&);
     void encodeBranch(Block*, const Step&);

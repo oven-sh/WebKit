@@ -110,6 +110,8 @@ static bool mayGiveCountsInLinkOperators(const SummaryOperator& operation)
 static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOperator& operation, std::span<const LinkType::Counts, SummaryOperator::mostOperands> counts)
 {
     using Counts = LinkType::Counts;
+    if (operation.step < 0 && operation.stepsNonZero && LinkType::startsAtZero(counts[operation.steppedOperand]))
+        return counts[operation.steppedOperand];
     if (operation.opcode == Opcode::Sub && counts[0] == Counts::BelowTwoTo31 && counts[1] == Counts::BelowTwoTo31)
         return Counts::Int32;
     if (operation.step < 0 && counts[operation.steppedOperand] == Counts::BelowTwoTo31)
@@ -141,7 +143,7 @@ static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOper
         return Counts::Unknown;
     switch (operation.opcode) {
     case Opcode::Mul:
-        return std::max(counts[0], counts[1]) <= Counts::BelowTwoTo32 ? Counts::WholeFromZeroUp : Counts::Unknown;
+        return LinkType::startsAtZero(counts[1]) && LinkType::areExact(counts[0]) && LinkType::areExact(counts[1]) ? Counts::WholeFromZeroUp : Counts::Unknown;
     case Opcode::Mod:
         return operation.writtenDivisor == SummaryOperator::WrittenDivisor::FromOneBelowTwoTo31 ? Counts::BelowTwoTo31 : Counts::BelowTwoTo32;
     default:

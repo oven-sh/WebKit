@@ -132,6 +132,8 @@ public:
     bool entryParameterIsLeftOutOfCalls(FunctionID function, uint32_t entryParameterIndex) const final { return m_positionsOfWalk.entryParameterIsLeftOutOfCalls(function, entryParameterIndex); }
     TypeID capture(TypeLevel level, FunctionID function, uint32_t captureIndex) const final { return m_positionsOfWalk.capture(level, function, captureIndex); }
     TypeID captureOfObject(TypeLevel level, ObjectID object, uint32_t captureIndex) const final { return m_positionsOfWalk.captureOfObject(level, object, captureIndex); }
+    TypeID scalarOfResult(TypeLevel level, FunctionID function, uint32_t index) const final { return m_positionsOfWalk.scalarOfResult(level, function, index); }
+    TypeID scalarOfField(TypeLevel level, LayoutID layout, uint32_t field, Representation form) const final { return m_positionsOfWalk.scalarOfField(level, layout, field, form); }
     TypeID resultOfSelector(TypeLevel level, uint32_t selector) const final { return m_positionsOfWalk.resultOfSelector(level, selector); }
     TypeID resultOfTableRow(TypeLevel level, uint32_t selector, LayoutID receiver, bool& hasRow) const final { return m_positionsOfWalk.resultOfTableRow(level, selector, receiver, hasRow); }
     TypeID askedOfEachObject(QuestionOfEachObject question, TypeLevel level, ObjectSetID objects, uint32_t word, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const final { return m_positionsOfWalk.askedOfEachObject(question, level, objects, word, askEachObject); }
@@ -522,6 +524,10 @@ TypeID CodeTypeVerifier::typeOfResultAskedFor(const Operation& resultAt)
     const Operation& producer = m_code.at(resultAt.resultsOperand());
     if (!isTypedByResultRuleForTypeVerifier(producer.opcode))
         return { };
+    if (producer.opcode == Opcode::CallDirect && returnsResultOfFunction(producer.role())) {
+        if (TypeID scalar = m_positions.scalarOfResult(m_typing.level, producer.function(), resultAt.index()))
+            return scalar;
+    }
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, producer);
     if (numberOfResults && resultAt.index() >= *numberOfResults)
         return { };
@@ -566,8 +572,16 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
     case Opcode::GetStaticFieldOrAbsent: {
         const LinkedStaticField* linked = operation.findsProperty() ? m_arrivals.facts().linked().findStaticField(operation.variable()) : nullptr;
         TypeID held = linked ? linked->type : TypeID(TypeTable::anything);
-        if (!operation.isKnownInitialized() && !operation.findsProperty())
+        if (operation.isKnownInitialized() && !operation.findsProperty()) {
+            TypeID holder = m_types.withoutNullish(m_code.at(operation.classObjectOperand()).type);
+            const LinkedNameOnFunction* name = m_arrivals.facts().linked().findNameOnFunction(singleFunctionOf(m_types, m_types.at(holder)), operation.key());
+            held = name && name->isLaidByListedStores ? name->proven : held;
+        }
+        if (!operation.isKnownInitialized() && !operation.findsProperty()) {
+            if (uint16_t primitives = m_arrivals.facts().linked().primitivesOfStaticField(operation.variable()))
+                held = TypeArena::fromPrimitives(primitives);
             held = m_types.withPrimitives(held, Primitive::Absent);
+        }
         if (!m_types.isSubset(held, stated))
             fail(block, id, "the payload says more of a static field than what is stored into it"_s);
         return;

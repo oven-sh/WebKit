@@ -15,6 +15,7 @@
 #include "AOTPlan.h"
 #include "AOTTypeArena.h"
 #include "AOTWalkCountersOfLoops.h"
+#include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkStrings.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -229,6 +230,7 @@ bool mayUseKeyedAddress(Walker& walker, const BodyValue& access, TypeID holder, 
 
 static constexpr uint32_t variableHolder = 1u << 31;
 static constexpr uint32_t noLoop = UINT32_MAX;
+static constexpr uint32_t bodyWithoutLoops = noLoop - 1;
 
 static uint32_t holderOf(const BodyIndex& index, ValueID operand)
 {
@@ -318,11 +320,17 @@ static void addLoopsUpdatingFields(const BodyIndex& index, Vector<FieldStoredInL
         if (store.loop == loopLookedAt)
             continue;
         loopLookedAt = store.loop;
-        bool updates = std::ranges::any_of(index.membersOf(LoopID(store.loop)), [&](BlockID member) {
+        auto readsStoredField = [&](BlockID member) {
             return std::ranges::any_of(index.block(member).values(), [&](BodyValue read) {
                 return read.opcode() == Opcode::PropGet && !read.isFreeName() && std::ranges::binary_search(stored, FieldStoredInLoop { store.loop, updatedHolderOf(index, read.objectOperand()), read.key().index() });
             });
-        });
+        };
+        bool updates = false;
+        if (store.loop == bodyWithoutLoops) {
+            for (uint32_t block = 0; block < index.numberOfBlocks(); ++block)
+                updates |= index.isReachable(BlockID(block)) && readsStoredField(BlockID(block));
+        } else
+            updates = std::ranges::any_of(index.membersOf(LoopID(store.loop)), readsStoredField);
         if (updates)
             found.append(entryOfHolder(store.loop, updatesField));
     }
@@ -346,6 +354,8 @@ const Vector<uint64_t>& Walker::holdersStoredByName(const BodyIndex& index)
                 found.append(entryOfHolder(noLoop, holder));
                 if (loop && index.loop(loop).numberOfLoopsWithin == 1 && !operation.isFreeName())
                     stored.append({ loop.index(), updatedHolderOf(index, operation.objectOperand()), operation.key().index() });
+                else if (!loop && !index.numberOfLoops() && !operation.isFreeName())
+                    stored.append({ bodyWithoutLoops, updatedHolderOf(index, operation.objectOperand()), operation.key().index() });
                 if (loop && !operation.isFreeName() && operation.key() && isWordSumStore(*this, index, operation))
                     found.append(entryOfHolder(loop.index(), nameOfWords | operation.key().index()));
                 for (; loop; loop = index.loop(loop).parent)
@@ -375,7 +385,7 @@ bool Walker::storesSumOfWords(const BodyIndex& index, LoopID loop, PropertyKeyID
 
 bool Walker::updatesFieldInLoop(const BodyIndex& index, LoopID loop)
 {
-    return std::ranges::binary_search(holdersStoredByName(index), entryOfHolder(loop.index(), updatesField));
+    return std::ranges::binary_search(holdersStoredByName(index), entryOfHolder(loop ? loop.index() : bodyWithoutLoops, updatesField));
 }
 
 static bool anyOuterLoopStoresName(Walker& walker, const BodyIndex& index, const BodyValue& access, PropertyKeyID key)
@@ -403,24 +413,56 @@ static bool isFunctionOutsideClasses(Walker& walker, TypeID holder)
     return function && !classOfClassObject(walker.program(), function);
 }
 
+static bool mayMeetObjectOfFile(Walker& walker, PropertyKeyID key)
+{
+    ModuleID own = walker.program().at(walker.currentFunction()).module;
+    if (!walker.plan().slots().someLayoutWrittenInHasField(own, key))
+        return false;
+    const LayoutsByNames& layouts = walker.facts().layoutsByNames();
+    LayoutSetID staying = walker.facts().tables().layoutsThatStayWithCompiledCode;
+    uint32_t ownAlone[] = { own.index() };
+    return std::ranges::any_of(layouts.holdersOfRarestOf(singleElementSpan(key)), [&](uint32_t holder) {
+        return layouts.isWrittenInOneOf(ownAlone, holder) && layouts.hasAll(LayoutID(holder), singleElementSpan(key)) && !(staying && walker.types().layoutSets().contains(staying, LayoutID(holder)));
+    });
+}
+
 static bool storesIntoIterationObject(Walker& walker, const BodyIndex& index, const BodyValue& access, TypeID holder)
 {
     LoopID loop = index.loopOf(index.blockOf(access.id()));
-    if (!loop || index.loop(loop).numberOfLoopsWithin != 1 || !walker.types().isUninformative(holder) || !walker.updatesFieldInLoop(index, loop) || walker.plan().slots().someLayoutWrittenInHasField(walker.program().at(walker.currentFunction()).module, access.key()))
+    bool isInIteration = loop ? index.loop(loop).numberOfLoopsWithin == 1 : !index.numberOfLoops() && walker.currentFrameIndex() && walker.isInLoop();
+    if (!isInIteration || !walker.types().isUninformative(holder))
+        return false;
+    auto storesWhatItComputes = [&] {
+        static constexpr OpcodeSet operators = allNumericOperators | allRelations;
+        ValueID value = access.opcode() == Opcode::PropSet ? index.stripCasts(access.valueOperand()) : ValueID();
+        return (access.opcode() != Opcode::PropSet || (value && !index.isParameter(value) && operators.contains(index.opcodeOf(value)))) && hasComputedRead(index, access.objectOperand());
+    };
+    if (!walker.updatesFieldInLoop(index, loop) && !storesWhatItComputes())
+        return false;
+    if (!walker.ignoresNameGuesses() && mayMeetObjectOfFile(walker, access.key()))
         return false;
     if (access.opcode() == Opcode::PropSet)
         return true;
     uint32_t stored = holderOf(index, access.objectOperand());
-    return std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
+    auto storesField = [&](BlockID member) {
         return std::ranges::any_of(index.block(member).values(), [&](BodyValue store) {
             return store.opcode() == Opcode::PropSet && !store.isFreeName() && store.key() == access.key() && holderOf(index, store.objectOperand()) == stored;
         });
-    });
+    };
+    if (loop)
+        return std::ranges::any_of(index.membersOf(loop), storesField);
+    for (uint32_t block = 0; block < index.numberOfBlocks(); ++block) {
+        if (index.isReachable(BlockID(block)) && storesField(BlockID(block)))
+            return true;
+    }
+    return false;
 }
 
 bool mayUseNamedAddress(Walker& walker, const BodyValue& access, TypeID holder)
 {
     if (!namedAccesses.contains(access.opcode()) || !holder || access.isFreeName() || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Guesses))
+        return false;
+    if (readsExpectedGetter(walker, access) || storesThroughExpectedSetter(walker, access))
         return false;
     bool isInFunction = isFunctionOutsideClasses(walker, holder);
     if (!isInFunction && !walker.types().isUninformative(holder))
@@ -548,6 +590,7 @@ static Reference buildKeyedAddress(Walker& walker, Reference object, Reference k
         lookup.setFindsOnlyFields(findsOnlyFields(walker, walker.typeOf(object)));
         lookup.setFitsFieldTypes(fitsFields);
         lookup.setTakesFunctions(takesFunctions);
+        lookup.setSkipsCompiledObjects(!isInvariant);
         address = walker.build(WTF::move(lookup));
         if (!address || walker.hasFailed())
             return { };

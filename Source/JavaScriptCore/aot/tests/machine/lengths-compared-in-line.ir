@@ -1,0 +1,55 @@
+# function count(a, n) { let s = 0; for (let i = 0; i < n; i++) { if (i === a.length) s = s + 100 | 0; s = s + i | 0; } return s; }
+# Whether a number equals the length of an array says nothing of the usual side: neither side lies out of the line of the loop.
+# RUN(EMITTED): emit f1 mechanisms=all
+# EMITTED-NOT: Branch({{*}}) -> unlikely #
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 106 6
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Integer integer=4
+    v4 = NewArray v3, v3
+    v5 = Call v0, -, v4, v3 calleeName="count"
+    v6 = NewArray v3, v3, v3, v3
+    v7 = Call v0, -, v6, v3 calleeName="count"
+    v8 = Call v2, -, v5, v7 calleeName="sink"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="count" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: i32):
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b5()
+  b2():
+    v10 = PropGet v0 key="length"
+    v11 = StrictEq v7, v10
+    Branch v11 -> taken b3(), notTaken b4(v6)
+  b3():
+    v12 = Integer integer=100
+    v13 = Add v6, v12
+    v14 = Integer
+    v15 = BitOr v13, v14
+    Jump -> next b4(v15)
+  b4(v16):
+    v17 = Add v16, v7
+    v18 = Integer
+    v19 = BitOr v17, v18
+    v20 = Increment v7
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v19, v21)
+  b5():
+    Return v6
+}

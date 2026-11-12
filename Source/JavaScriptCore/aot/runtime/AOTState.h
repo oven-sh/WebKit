@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTPrefetchStep.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -214,6 +215,15 @@ struct State {
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;
     GrowingFlatText growingFlatText { };
+    static constexpr unsigned maxPrefetchingLoops = 4;
+    struct PrefetchingLoop {
+        const JSCell* array;
+        uint32_t request;
+        uint64_t nextPosition;
+    };
+    using PrefetchedRows = std::array<std::array<const JSCell*, PrefetchStep::maxSlots>, PrefetchStep::maxRows>;
+    std::array<PrefetchingLoop, maxPrefetchingLoops> prefetchingLoops { };
+    std::unique_ptr<std::array<PrefetchedRows, maxPrefetchingLoops>> prefetchedRows;
     WideCharacterStrings wideCharacterStrings { };
     std::array<JSString*, 64> textsOfFewStrings { };
     std::unique_ptr<ImmortalCells> immortalCells;
@@ -242,6 +252,7 @@ struct State {
     uint32_t keyOfPendingRead { 0 };
     uint32_t slowPathReadCountAtPendingRead { 0 };
     bool acceptsForeignBinaryData { false };
+    bool disallowsEvaluation { false };
     void countWriteForEffectsNet(Typed::CountInEffectsNet count) { ++writesCountedForEffectsNet[static_cast<size_t>(count)]; }
 
 private:

@@ -154,6 +154,8 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
 
 Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext& value, const ArrayElements& storage, const ArrayStorageForm& form, AccessVouchedFor access)
 {
+    if (LValue place = generator().placeInRow(value->positionOperand())) [[unlikely]]
+        return Integer(place);
     Operand position = get(value->positionOperand());
     Integer index = position.representation == Representation::Int32 ? Integer(m_out.extendWordThatIsNotNegative(position.as<Word32>().value())) : integerOperand(value->positionOperand());
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::MisplaceUncheckedAccesses) || (access == AccessVouchedFor::Reads && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::MisplaceUncheckedReads))) [[unlikely]] {

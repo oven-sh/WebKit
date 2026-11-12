@@ -1129,6 +1129,7 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
     const bool isPointer = m_code.at(ground).opcode == Opcode::GetArrayStorage;
     static_assert(!declaredBoundOf(Opcode::ConvertToDoubleStorage).writes.contains(AbstractHeap::ArrayLengths));
     const bool isLength = m_code.at(ground).opcode == Opcode::GetArrayLength;
+    const bool isCapacity = m_code.at(ground).opcode == Opcode::GetArrayCapacity;
     static constexpr OpcodeSet readsOfObjects { Opcode::GetObjectStorage, Opcode::GetObjectStorageLength };
     AbstractHeapSet heapsOfLists = isPointer ? heapsOfLengths | AbstractHeapSet { AbstractHeap::ArrayCapacity } : heapsOfLengths;
     if (readsOfObjects.contains(m_code.at(ground).opcode))
@@ -1147,7 +1148,7 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
         for (ValueID each : operationsOf(in)) {
             uint32_t place = m_places[each.index()];
             const Operation& operation = m_code.at(each);
-            if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || (isPointer && operation.opcode == Opcode::ShortenArray) || (isLength && operation.opcode == Opcode::ConvertToDoubleStorage) || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
+            if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || ((isPointer || isCapacity) && operation.opcode == Opcode::ShortenArray) || (isLength && operation.opcode == Opcode::ConvertToDoubleStorage) || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
                 continue;
             if (writesLists(operation) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
                 return each;
@@ -1424,7 +1425,8 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
         return;
     }
     if (narrowed.narrowsWithCounter()) {
-        ValueID counter = m_code.at(test).numberOfOperands() == 2 ? valueBeforeConversions(m_code.at(test).operand(narrowed.operandIndex() & 1)) : ValueID();
+        bool holdsCounter = m_code.at(test).numberOfOperands() == 2 || (m_code.at(test).opcode == Opcode::ToBoolean && !(narrowed.operandIndex() & 1));
+        ValueID counter = holdsCounter ? valueBeforeConversions(m_code.at(test).operand(narrowed.operandIndex() & 1)) : ValueID();
         if (!counter || m_code.at(counter).opcode != Opcode::Parameter || m_code.at(value).opcode != Opcode::Parameter || m_code.blockOf(counter) != m_code.blockOf(value))
             return fail(block, id, "a Narrowed is bounded beside what is no counter of its head"_s, test);
         return;
@@ -2145,7 +2147,11 @@ void CodeVerifier::verifyTestsPassed()
                     if (!named || !isDefinedBefore(named, header, 0))
                         return fail(block, id, "a limit of a second counter is not computed before its loop"_s, named);
                 }
-                if (!isAnsweredAt(grounds.counterTest, grounds.counterTestResult, block, place) || !secondCounterStaysWithin(m_code, m_types, grounds))
+                if (grounds.remainder && !isDefinedBefore(grounds.remainder, header, 0))
+                    return fail(block, id, "the remainder of a counter's distance is not computed before its loop"_s, grounds.remainder);
+                if (!isAnsweredAt(grounds.counterTest, grounds.counterTestResult, block, place) || !secondCounterStaysWithin(m_code, m_types, grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
+                    return isAnsweredAt(relation, testResult, block, place);
+                })))
                     return fail(block, id, "the second counter that an access counts on may lie outside its limits"_s, grounds.counter);
                 if (!groundsShowPositionInside(m_code, m_types, access.operand(1), grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
                     return isAnsweredAt(relation, testResult, block, place);

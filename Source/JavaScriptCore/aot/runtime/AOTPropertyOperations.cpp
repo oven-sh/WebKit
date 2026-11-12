@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTChainDependents.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
@@ -30,6 +31,7 @@
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include "StringObject.h"
 #include <array>
 #include <bit>
 #include <cmath>
@@ -65,6 +67,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
         throwException(globalObject, scope, createNotAnObjectError(globalObject, value, identifierAt(instance, name)));
         OPERATION_RETURN(scope, encodedJSValue());
     }
+    if (value.isCell() && value.asCell()->type() == StringObjectType && identifierAt(instance, name) == vm.propertyNames->length)
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(uncheckedDowncast<StringObject>(value.asCell())->internalValue()->length())));
     LookByName look(vm, value, identifierAt(instance, name).impl());
     OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, value, identifierAt(instance, name))));
 }
@@ -216,7 +220,7 @@ static uint64_t orderAndShapeWordsOf(const Object& object)
 static void recordOrderAfterRemoval(Instance& instance, Object& object, UniquedStringImpl* uid, StructureID structureBefore, uint64_t wordsBefore)
 {
     uint32_t orderWordBefore = static_cast<uint32_t>(wordsBefore);
-    if (object.structureID() != structureBefore || orderWordBefore & ~orderAndCountMask || object.orderWord() == orderWordBefore || object.compiledStructure().hasOutOfLineKeyOrder())
+    if (object.structureID() != structureBefore || orderWordBefore & orderWordIntegrityBits || object.orderWord() == orderWordBefore || object.compiledStructure().hasOutOfLineKeyOrder())
         return;
     const FieldData* field = object.fieldNamed(object.state(), uid);
     if (!field || field->isOutOfLine() || field->isPrivate() || !absentPatternOf(field->slot.representation()) || field->slot.offset > UINT16_MAX)
@@ -650,6 +654,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance* i
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreHeldFieldsFilled, size_t, (Instance*, JSCell* cell))
 {
     return cellArgument<Object>(cell, Entry::operationAOTAreHeldFieldsFilled)->holdsEveryFieldHeldFilled();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreStoresPassedAbove, size_t, (Instance* instance, JSCell* cell))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTAreStoresPassedAbove);
+    return instance->state->chainDependents->areStoresPassedAbove(*cellArgument<Object>(cell, Entry::operationAOTAreStoresPassedAbove));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance* instance, JSCell* cell, uint32_t offset))

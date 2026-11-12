@@ -110,6 +110,16 @@ static std::optional<uint32_t> targetOfReturnAtYield(const BodyIndex& body, Body
     return std::nullopt;
 }
 
+static bool returnsAtOnceAtYield(const BodyIndex& body, ValueID yield)
+{
+    BodyBlock block = body.block(body.blockOf(yield));
+    std::optional<uint32_t> target = block.hasHandler() ? std::nullopt : targetOfReturnAtYield(body, block, yield);
+    if (!target)
+        return false;
+    BodyBlock left = body.block(block.terminator().targets()[*target].block());
+    return !left.numberOfValues() && left.terminator().kind() == TerminatorKind::Return;
+}
+
 static bool yieldsFirst(BodyBlock block)
 {
     for (BodyValue operation : block.values()) {
@@ -924,7 +934,7 @@ bool Walker::walkOperationOfGeneratorInLoop(const BodyValue& value)
         ConsumerAfterCall consumer = consumerAfterCall(currentBodyIndex(), value.id());
         if (consumer == ConsumerAfterCall::IsNone || (consumer == ConsumerAfterCall::MayStepByHand && !holdsLoopsThatStepByHand(currentFunction())))
             return false;
-        return takeGeneratorForConsumer(value);
+        return takeGeneratorForConsumer(value) || walkGeneratorCallTwice(value);
     }
     case Opcode::IteratorOpen:
         return openGeneratorTaken(value) || takeGeneratorForConsumer(value);
@@ -1455,7 +1465,7 @@ bool Walker::isOnlyPassedToCopy(Reference generator)
     return false;
 }
 
-bool Walker::checkPassedGenerator(Reference generator, Origin origin)
+bool Walker::checkPassedGenerator(Reference generator, Origin origin, Reference* holderOfReturn)
 {
     origin.isTailCall = false;
     Reference function = isOnlyPassedToCopy(generator) ? functionOfGenerator(generator) : Reference();
@@ -1474,7 +1484,18 @@ bool Walker::checkPassedGenerator(Reference generator, Origin origin)
     BlockID passed = addBlock();
     branch(passes, passed, blockWhereCopyLeavesForCall());
     continueIn(passed);
+    if (holderOfReturn && !isUnreachable())
+        *holderOfReturn = function ? buildGeneratorPrototype(function, origin) : generator;
     return !isUnreachable();
+}
+
+Reference Walker::buildGeneratorPrototype(Reference function, Origin origin)
+{
+    origin.isTailCall = false;
+    Draft read(Opcode::GetGeneratorPrototype, origin);
+    chooseConservativeFields(read);
+    read.setFunctionOperand(function);
+    return build(WTF::move(read));
 }
 
 bool Walker::readGlobalInCopy(const BodyValue& read)
@@ -1716,8 +1737,9 @@ struct LoopOverMethodCall {
 static std::optional<LoopOverMethodCall> findLoopOverCall(const BodyIndex& index, const BodyValue& read)
 {
     BodyBlock block = index.block(index.blockOf(read.id()));
-    ValueID call = index.onlyUsingValue(read.id());
-    if (!call || !block.holds(call) || index.opcodeOf(call) != Opcode::Call || index.value(call).as<Opcode::Call>().calleeOperand() != read.id() || index.value(call).as<Opcode::Call>().thisValueOperand() != read.objectOperand())
+    bool isCall = read.opcode() == Opcode::Call;
+    ValueID call = isCall ? read.id() : index.onlyUsingValue(read.id());
+    if (!call || !block.holds(call) || index.opcodeOf(call) != Opcode::Call || (!isCall && (index.value(call).as<Opcode::Call>().calleeOperand() != read.id() || index.value(call).as<Opcode::Call>().thisValueOperand() != read.objectOperand())))
         return std::nullopt;
     ValueID open = index.onlyUsingValue(call);
     if (!open || open.index() != call.index() + 1 || !block.holds(open) || index.opcodeOf(open) != Opcode::IteratorOpen)
@@ -1877,6 +1899,44 @@ void Walker::walkIterationAsWritten(BlockID start, const BodyValue& read)
     m_state = WTF::move(stateAfterTests);
 }
 
+bool Walker::walkGeneratorCallTwice(const BodyValue& call)
+{
+    if (isInLoop() || isNestedTooDeeply() || isUnreachable() || m_hasFailed || !has(Mechanism::TypedOperations) || !has(Mechanism::DirectCalls) || !has(Mechanism::Guesses) || call.isDoneInPlace())
+        return false;
+    Reference closure = referenceOf(call.as<Opcode::Call>().calleeOperand());
+    FunctionID function = closure && closure.isRecord() ? findOnlyCallee(*this, call, closure) : FunctionID();
+    if (!function || m_generatorMethodsTested.contains(std::pair { m_frames.last().inlineFrame, call.id() }))
+        return false;
+    auto& kept = keptByGeneratorsInLoops(m_keptByGeneratorsInLoops);
+    auto described = kept.functions.find(function.index());
+    if (described == kept.functions.end() || !described->value.nobodyLooksAbove || *described->value.nobodyLooksAbove || !mayWalkMethodGenerator(call, function))
+        return false;
+
+    Origin origin = originOf(call);
+    origin.isTailCall = false;
+    BlockID asWritten = addBlock(BlockFrequency::Rare);
+    auto continueIfPassed = [&](Reference passes) {
+        BlockID passed = addBlock();
+        branch(passes, passed, asWritten);
+        continueIn(passed);
+    };
+    recordSpeculation();
+    count(StatisticID::GeneratorCallsTestedBeforeLoops);
+    if (Reference fails = drawWhetherGuessFails(origin)) {
+        BlockID passed = addBlock();
+        branch(fails, asWritten, passed);
+        continueIn(passed);
+    }
+    Draft test(Opcode::MakesPlainGenerators, origin);
+    chooseConservativeFields(test);
+    test.setFunctionOperand(closure);
+    if (Reference passes = build(WTF::move(test)); passes && !isUnreachable())
+        continueIfPassed(passes);
+    if (!m_hasFailed)
+        walkIterationAsWritten(asWritten, call);
+    return m_hasFailed || isUnreachable() || takeGeneratorForConsumer(call);
+}
+
 bool Walker::takeGeneratorForConsumer(const BodyValue& call)
 {
     size_t frameIndex = m_frames.size() - 1;
@@ -1961,7 +2021,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
     const GeneratorFunctionDescribed& described = keptByGeneratorsInLoops(m_keptByGeneratorsInLoops).functions.find(callee.index())->value;
     if (!engineAnswersForGenerators(*this))
         return false;
-    Reference functionTested = !takerCallsMethodItself && m_generatorMethodsTested.contains(std::pair { m_frames[frameIndex].inlineFrame, index.stripCasts(call.as<Opcode::Call>().calleeOperand()) }) ? referenceOf(call.as<Opcode::Call>().calleeOperand()) : Reference();
+    Reference functionTested = !takerCallsMethodItself && (m_generatorMethodsTested.contains(std::pair { m_frames[frameIndex].inlineFrame, call.id() }) || m_generatorMethodsTested.contains(std::pair { m_frames[frameIndex].inlineFrame, index.stripCasts(call.as<Opcode::Call>().calleeOperand()) })) ? referenceOf(call.as<Opcode::Call>().calleeOperand()) : Reference();
     bool needsModificationGuard = !*described.nobodyLooksAbove && !functionTested;
     if (needsModificationGuard && (!passedGenerator || stepsPassed || call.opcode() != Opcode::IteratorOpen || !has(Mechanism::Guesses) || !mayLeaveCopyForCall()))
         return false;
@@ -1983,7 +2043,6 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
     taken.frameOfCall = frameOfCall;
     taken.takerCallsMethodItself = takerCallsMethodItself && !passedGenerator;
     taken.numberOfYields = described.numberOfYields;
-    taken.functionTested = functionTested;
     uint64_t numberOfOperations = facts().summaries().at(callee).numberOfOperations;
     bool consumerCalls = row || byHand || copiesIntoArray;
 
@@ -2150,8 +2209,13 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         site.setCalleeOperand(method);
         site.setThisValueOperand(iterable);
     }
-    if (needsModificationGuard && !checkPassedGenerator(passedGenerator, originOf(call)))
+    if (needsModificationGuard && !checkPassedGenerator(passedGenerator, originOf(call), &taken.holderOfReturn))
         return true;
+    if (functionTested) {
+        taken.holderOfReturn = buildGeneratorPrototype(functionTested, originOf(call));
+        if (!taken.holderOfReturn)
+            return true;
+    }
     if (passedGenerator) {
         m_environmentCellsOfUnit.mayNameSome |= isHandedEnvironmentWithByte(*this, callee);
         for (ValueID operand : m_code.at(passedGenerator.id()).variadicOperands())
@@ -3522,7 +3586,7 @@ bool Walker::walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeI
     walked.blocksBeforeStep = WTF::move(taken.blocksBeforeStep);
     walked.state = taken.state;
     walked.numberOfYields = taken.numberOfYields;
-    walked.functionTested = taken.functionTested;
+    walked.holderOfReturn = taken.holderOfReturn;
     walked.numberOfOperationsOfRegion = taken.numberOfOperationsOfRegion;
     walked.regionHoldsIterations = taken.regionHoldsIterations;
     walked.region = WTF::move(taken.region);
@@ -3732,18 +3796,55 @@ bool Walker::closeGeneratorTaken(const BodyValue& close)
     origin.isTailCall = false;
     m_callIsAccountedFor = true;
     m_calleeAccountedFor = facts().linked().calleeAt(currentFunction(), close.id());
-    if (Reference function = m_generatorsWalkedInConsumers[place].functionTested) {
-        Draft test(Opcode::MakesPlainGenerators, origin);
-        chooseConservativeFields(test);
-        test.setFunctionOperand(function);
-        Reference isPlain = build(WTF::move(test));
-        if (isPlain && !isUnreachable())
-            buildCheckOfProof(isPlain, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::RememberedFact, origin, true);
+    IteratorCompletion completion = close.as<Opcode::IteratorClose>().completion();
+    BlockID after;
+    if (const GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[place]; Reference holder = walked.holderOfReturn) {
+        bool leavesAtOnce = returnsAtOnceAtYield(*m_frames[walked.frameOfGenerator].index, walked.yieldStoodAt);
+        BlockID inPlace = addBlock();
+        after = addBlock();
+        closeByChangedReturn(holder, completion, leavesAtOnce, inPlace, after, origin);
+        continueIn(inPlace);
     }
     buildFirstReadThatCloseOfGeneratorLeavesOut(*this, origin);
     if (!isUnreachable())
-        resumeGeneratorToLeave(place, ResumeMode::Return, close.as<Opcode::IteratorClose>().completion() == IteratorCompletion::Throw, origin);
+        resumeGeneratorToLeave(place, ResumeMode::Return, completion == IteratorCompletion::Throw, origin);
+    if (after && !m_hasFailed)
+        jumpTo(after);
     return true;
+}
+
+void Walker::closeByChangedReturn(Reference holder, IteratorCompletion completion, bool leavesAtOnce, BlockID inPlace, BlockID after, Origin origin)
+{
+    BuilderForGenerators builder(*this, origin);
+    Draft test(m_code.at(holder.id()).opcode == Opcode::GetGeneratorPrototype ? Opcode::IsPlainGeneratorPrototype : Opcode::IsUnmodifiedGenerator, builder.origin());
+    test.setOperand(0, holder);
+    Reference isPlain = builder.build(WTF::move(test));
+    BlockID changed = addBlock(BlockFrequency::Rare);
+    builder.branch(isPlain, inPlace, changed);
+    builder.continueIn(changed);
+    Draft take(Opcode::TakeGeneratorLeftInPlace, builder.origin());
+    take.setHolderOperand(holder);
+    take.setLeavesAtOnce(leavesAtOnce);
+    Reference generator = builder.build(WTF::move(take));
+    BlockID called = addBlock(BlockFrequency::Rare);
+    builder.branch(builder.testType(generator, TypeTable::undefined), inPlace, called);
+    builder.continueIn(called);
+    if (completion == IteratorCompletion::Throw)
+        builder.beginToDropWhatIsThrown();
+    Reference method = builder.read(generator, BuiltinNames::returnKeyword);
+    BlockID isOther = addBlock(BlockFrequency::Rare);
+    builder.branch(builder.testType(method, m_types.forBuiltin(program().builtins().canonicalID(Builtins::GeneratorPrototypeReturn))), inPlace, isOther);
+    builder.continueIn(isOther);
+    BlockID isPresent = addBlock(BlockFrequency::Rare);
+    builder.branch(builder.testType(method, TypeTable::nullish), after, isPresent);
+    builder.continueIn(isPresent);
+    Reference result = builder.call(method, generator);
+    if (completion == IteratorCompletion::Throw) {
+        builder.dropWhatWasThrown(after);
+        return;
+    }
+    builder.requireObject(result, RuntimeErrorKind::IteratorResultNotObject);
+    builder.jumpTo(after);
 }
 
 void Walker::resumeGeneratorToLeave(size_t place, ResumeMode mode, bool dropsWhatIsThrown, Origin origin)

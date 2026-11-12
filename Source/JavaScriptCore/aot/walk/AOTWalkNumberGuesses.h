@@ -47,8 +47,12 @@ struct NumberReadBeforeArms {
 };
 bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm, EndOfNumberArms = EndOfNumberArms::Meet, std::span<const NumberReadBeforeArms> = { });
 uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
+bool isConvertedToNumber(Walker&, const BodyValue& read);
+bool bindNumberOfNullish(Walker&, const BodyValue& read, Reference found, Origin);
+bool isTakenByBitOperator(Walker&, ValueID);
+bool bindBitsOfPrimitive(Walker&, const BodyValue& read, Reference found, std::optional<Draft>&& readAgain, Origin);
 bool walkNumberPathAfterRead(Walker&, NumberReadBeforeArms&&);
-NumberReadBeforeArms readAtSite(Walker&, const BodyValue& read);
+NumberReadBeforeArms readAtSite(Walker&, const BodyValue& read, bool asksNewestAnswer = false);
 void noteCheckedRead(Walker&, Reference found, Reference checked);
 std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker&, const BodyValue& read);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);

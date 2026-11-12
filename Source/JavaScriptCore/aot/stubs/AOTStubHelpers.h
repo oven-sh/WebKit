@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTInstance.h"
 #include "AOTOperationData.h"
 #include "AOTStubAssembler.h"
@@ -106,6 +107,7 @@ inline Jump branchTestBitAt(CCallHelpers& jit, CCallHelpers::ResultCondition con
 #endif
 }
 
+Jump branchUnlessIndexIsOfWideAnswers(StubAssembler&, GPRReg index, GPRReg scratch);
 void loadShapeWordAsIndex(StubAssembler&, GPRReg cell, GPRReg result);
 int32_t offsetOfRowsByShapeIndex(StubAssembler&);
 bool loadsShapeAsHalfword(StubAssembler&);
@@ -129,6 +131,7 @@ void branchUnlessAccessorPair(CCallHelpers&, GPRReg word, JumpList& isNoPair);
 void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath);
 [[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt);
 void emitLateRefill(StubAssembler&, const AssemblyHelpers::FreeListRefill&, JumpList& slowPath);
+void storeHeaderAndButterfly(StubAssembler&, GPRReg header, GPRReg butterfly, GPRReg array);
 void fenceAfterAllocation(StubAssembler&);
 
 constexpr unsigned maxGranulesOfExtensionFromStub = 13;
@@ -164,6 +167,8 @@ struct VectorGrowth {
     GPRReg allocator;
     GPRReg scratch;
     bool isOfExtraProperties { false };
+    bool mayBeOrdinaryObject { false };
+    unsigned maxNeededLength { maxLengthForElementwiseCopy };
 };
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
 void widenStorageOfIntegersForAnyValue(StubAssembler&, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers);
@@ -173,6 +178,7 @@ void loadTextOfIndexForTrap(StubAssembler&, GPRReg base, GPRReg key, GPRReg stor
 void loadKeptTextOfIndex(StubAssembler&, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
 
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);
+void returnAfterAddingExtraProperty(StubAssembler&, GPRReg object, std::optional<GPRReg> extraProperties, GPRReg scratch);
 Label returnAfterStoring(StubAssembler&, GPRReg owner, GPRReg value);
 
 struct HostCallFrame {

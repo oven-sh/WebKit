@@ -78,7 +78,7 @@ static String findQuotedSource(ModuleID module, LineColumn place)
         column = row.isOnSameLine ? column + row.columnChange : row.column;
         start += row.startChange;
         if (line == place.line && column == place.column)
-            return quotedSourceBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String(text); }).value_or(String());
+            return quotedSourceBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String::fromUTF8ReplacingInvalidSequences(text); }).value_or(String());
     }
     return { };
 }

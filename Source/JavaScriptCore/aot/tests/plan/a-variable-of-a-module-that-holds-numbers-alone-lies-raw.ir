@@ -1,8 +1,8 @@
 # A variable of a module that the run time is not told of, whose every writer is known and which is proven to hold numbers alone lies in the form of its numbers.
-# `count++` is a load, an add and a store: no tag is asked and no box is made. Link says int|whole of a counter, so it is a double, as `ratio` is.
+# `count++` is a load, an add and a store: no tag is asked and no box is made. A counter that only steps by one is an exact integer, `ratio` is a double.
 # let count = 0;  let ratio = 0.5;  function bump() { count++; }  function read() { return count + ratio; }  bump();  read();
 # RUN: plan variables mechanisms=all
-# CHECK: variable g2 {{*}}OptionalDouble
+# CHECK: variable g2 {{*}}OptionalInt64
 # CHECK-NEXT: variable g3 {{*}}OptionalDouble
 # RUN(WITHHELD): plan variables mechanisms=-TypedSlots
 # WITHHELD: variable g2 {{*}}JSValue

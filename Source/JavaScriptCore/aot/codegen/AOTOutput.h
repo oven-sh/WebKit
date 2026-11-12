@@ -156,6 +156,14 @@ public:
     LValue mul(LValue left, LValue right) { return binary(Machine::Mul, left, right); }
     LValue mulHigh(LValue left, LValue right) { return binary(Machine::MulHigh, left, right); }
     LValue uMulHigh(LValue left, LValue right) { return binary(Machine::UMulHigh, left, right); }
+    LValue foldedProduct(LValue left, LValue right)
+    {
+#if CPU(X86_64)
+        return Machine::appendFoldedProduct(*this, left, right);
+#else
+        return castToInt32(bitXor(mul(left, right), uMulHigh(left, right)));
+#endif
+    }
     LValue div(LValue left, LValue right) { return binary(Machine::Div, left, right); }
     LValue uDiv(LValue left, LValue right) { return binary(Machine::UDiv, left, right); }
     LValue mod(LValue left, LValue right) { return binary(Machine::Mod, left, right); }

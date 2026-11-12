@@ -252,7 +252,8 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
             if (place == notFound)
                 return;
             ++mentions[place];
-            bool fills = (opcode == Opcode::PropDefine && operandIndex == OperandIndex::PropDefine::object) || (opcode == Opcode::CopyDataProperties && operandIndex == OperandIndex::CopyDataProperties::target);
+            bool fills = (opcode == Opcode::PropDefine && operandIndex == OperandIndex::PropDefine::object) || (opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::object)
+                || (opcode == Opcode::CopyDataProperties && operandIndex == OperandIndex::CopyDataProperties::target);
             bool handsOn = !operandIndex && literal.names.contains(between.id());
             onlyFillsOrHandsOn &= fills || handsOn;
         });

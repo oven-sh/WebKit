@@ -11,13 +11,45 @@
 #include "AOTOpcodeSets.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
+#include "AOTStaticsEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTStringSwitchTable.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
+#include "Identifier.h"
 #include <algorithm>
+#include "MarkedBlock.h"
+#include "Symbol.h"
+#include <bit>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+static bool blockRunsSeldom(const CodeGenerator& generator, BlockID id)
+{
+    return generator.code().at(id).frequency != BlockFrequency::Normal || generator.facts().runsAtMostOnce(generator.unit().function);
+}
+
+static bool canBeName(std::span<const Latin1Character> characters)
+{
+    return !characters.empty() && !parseIndex(characters);
+}
+
+static ValueID valueUnderNames(const Code& code, ValueID value)
+{
+    while (opcodesThatNameTheirOperand.contains(code.at(value).opcode) && code.at(code.at(value).operand(0)).representation == code.at(value).representation)
+        value = code.at(value).operand(0);
+    return value;
+}
+
+static bool isLikelyName(const Code& code, ValueID subject)
+{
+    static constexpr OpcodeSet propertyReads { Opcode::PropGet, Opcode::PrivateGet, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetValueAtSiteOrAbsent };
+    subject = valueUnderNames(code, subject);
+    if (code.at(subject).opcode == Opcode::Box)
+        subject = valueUnderNames(code, code.at(subject).operand(0));
+    return propertyReads.contains(code.at(subject).opcode);
+}
 
 namespace {
 
@@ -39,7 +71,11 @@ public:
         for (uint32_t index = 0; index < literals.size(); ++index)
             cases.append(SwitchCase { literals[index], m_strings.textOf(literals[index]), generator().edgeTo(terminator, index) });
         m_otherwise = generator().edgeTo(terminator, static_cast<uint32_t>(literals.size()));
-        generate(terminator->subjectOperand(), cases);
+        ValueID subject = terminator->subjectOperand();
+        const bool runsSeldom = terminator.block() && blockRunsSeldom(generator(), terminator.block());
+        m_comparesNamesFirst = !runsSeldom && canCompareNamesFirst(subject, cases);
+        m_goesByTable = isOutsideLoops(terminator.block()) && (runsSeldom || m_comparesNamesFirst) && canSwitchByTable(cases);
+        generate(subject, cases);
     }
 
     void generate(const ValueContext& first, const CodeGenerator::LiteralChain& chain)
@@ -51,7 +87,10 @@ public:
                 cases.append(SwitchCase { comparison.literal, m_strings.textOf(comparison.literal), cases.isEmpty() ? first.branchTargets().taken : generator().edgeOutOf(comparison.block, 0) });
         }
         m_otherwise = generator().edgeOutOf(chain.comparisons.last().block, 1);
-        generate(chain.comparisons.first().subject, cases);
+        m_goesByTable = chain.goesByTable;
+        ValueID subject = chain.comparisons.first().subject;
+        m_comparesNamesFirst = m_goesByTable && !blockRunsSeldom(generator(), first.block()) && canCompareNamesFirst(subject, cases);
+        generate(subject, cases);
     }
 
 private:
@@ -207,6 +246,9 @@ private:
             return;
         }
 
+        if (m_goesByTable && trySwitchByTable(subject, type, cases))
+            return;
+
         CaseGroup narrowCases;
         for (const SwitchCase* switchCase : cases) {
             m_strings.makeCellsHoldAtomOf(switchCase->string, switchCase->text);
@@ -219,21 +261,68 @@ private:
         bool mayHoldName = cases.size() <= maxHeadersComparedOneByOne && std::ranges::all_of(cases, [&](const SwitchCase* switchCase) {
             return m_strings.mayBeNameInLoop(m_context, switchCase->text);
         });
-        if (mayHoldName) {
-            LBasicBlock holdsName = newBlock();
-            LBasicBlock holdsOtherText = newBlock();
-            ScopeFork fork = m_out.forkScope();
-            branch(m_strings.holdsName(string), { normalEdge(holdsName), normalEdge(holdsOtherText) });
-            m_out.appendToArm(holdsName, fork);
-            for (const SwitchCase* switchCase : cases)
-                m_strings.branchOnHeaderOf(string, switchCase->string, switchCase->target);
-            m_out.jump(m_otherwise);
-            m_out.appendToArm(holdsOtherText, fork);
-        }
+        if (mayHoldName)
+            switchOnName(string, cases);
         if (hasWideText)
             switchByLengthThenWord(string, narrowCases, cases);
         else
             switchByCharactersOfNarrowString(string, cases);
+    }
+
+    void switchOnName(CellPointer string, const CaseGroup& cases)
+    {
+        LBasicBlock holdsName = newBlock();
+        LBasicBlock holdsOtherText = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        branch(m_strings.holdsName(string), { normalEdge(holdsName), normalEdge(holdsOtherText) });
+        m_out.appendToArm(holdsName, fork);
+        for (const SwitchCase* switchCase : cases)
+            m_strings.branchOnHeaderOf(string, switchCase->string, switchCase->target);
+        m_out.jump(m_otherwise);
+        m_out.appendToArm(holdsOtherText, fork);
+    }
+
+    bool isOutsideLoops(BlockID block) { return block && !generator().isInLoop(block) && !generator().usesLoopForms(block) && !generator().isInRecursion(block); }
+
+    bool canCompareNamesFirst(ValueID subject, const Vector<SwitchCase, 8>& cases)
+    {
+        return cases.size() <= maxHeadersComparedOneByOne && isLikelyName(generator().code(), subject) && std::ranges::all_of(cases, [](const SwitchCase& switchCase) {
+            return switchCase.text.is8Bit() && canBeName(switchCase.text.span8());
+        });
+    }
+
+    static bool canSwitchByTable(const Vector<SwitchCase, 8>& cases)
+    {
+        return cases.size() <= StringSwitchTable::maxCases && std::ranges::all_of(cases, [](const SwitchCase& switchCase) {
+            return switchCase.text.is8Bit() && switchCase.text.length() <= StringSwitchTable::maxLength;
+        });
+    }
+
+    bool trySwitchByTable(Boxed subject, const Type& type, const CaseGroup& cases)
+    {
+        auto table = StringSwitchTable::build(cases.map<StringSwitchTable::Strings>([](const SwitchCase* switchCase) {
+            return asBytes(switchCase->text.span8());
+        }));
+        if (!table)
+            return false;
+        Vector<SwitchTarget, 8> targets;
+        for (const SwitchCase* switchCase : cases) {
+            m_strings.recordInlined(switchCase->string);
+            targets.append(SwitchTarget { static_cast<int64_t>(targets.size()), switchCase->target });
+        }
+        bool isString = m_comparesNamesFirst || (!(type.primitives & ~Primitive::AnyString) && !type.hasObjects());
+        LValue operand = subject.value();
+        if (m_comparesNamesFirst) {
+            CellPointer string = requireString(subject, type);
+            switchOnName(string, cases);
+            operand = string.value();
+        } else if (isString)
+            operand = unboxCell(subject).value();
+        LValue address = m_out.relocatable(SymbolSpace::Constant, m_out.addConstantData(table->span(), ConstantKind::Unlabeled));
+        StubCallResult index = callStub(m_context, stringSwitchCase(isString ? ComparedOperand::String : ComparedOperand::Value), { operand, address });
+        m_out.switchOn(low32(Integer(index.first)).value(), targets.span(), m_otherwise);
+        build().statistics().count(StatisticID::StringSwitchesByTable);
+        return true;
     }
 
     CellPointer requireString(Boxed subject, const Type& type)
@@ -431,6 +520,8 @@ private:
     StringEmitter& m_strings;
     const OperationContext& m_context;
     BlockEdge m_otherwise;
+    bool m_goesByTable { false };
+    bool m_comparesNamesFirst { false };
 };
 
 } // anonymous namespace
@@ -449,16 +540,11 @@ bool ControlEmitter::tryGenerateLiteralChain(const ValueContext& comparison)
         return false;
     for (auto [block, name] : chain->names)
         generator().generateName(block, name);
+    if (m_proc.traits().notesRangesOfOrigins)
+        m_out.setOrigin(machineOriginOf(TerminatorKind::SwitchString));
     StringSwitchEmitter(generator(), comparison).generate(comparison, *chain);
     build().statistics().count(StatisticID::LiteralChainsSwitched);
     return true;
-}
-
-static ValueID valueUnderNames(const Code& code, ValueID value)
-{
-    while (opcodesThatNameTheirOperand.contains(code.at(value).opcode) && code.at(code.at(value).operand(0)).representation == code.at(value).representation)
-        value = code.at(value).operand(0);
-    return value;
 }
 
 static std::optional<CodeGenerator::ComparisonWithLiteral> findComparisonWithLiteral(const Code& code, const TypeArena& types, BlockID block, ValueID test)
@@ -490,15 +576,27 @@ static std::optional<CodeGenerator::ComparisonWithLiteral> findComparisonWithLit
     }
 }
 
+static bool isASCIIOfStringSwitchTable(std::span<const uint8_t> programString)
+{
+    return programString.size() <= StringSwitchTable::maxLength && std::ranges::all_of(programString, [](uint8_t byte) {
+        return isASCII(byte);
+    });
+}
+
 std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(BlockID id) const
 {
     static constexpr size_t minComparisons = 3;
+    static constexpr size_t minComparisonsForTable = 6;
     const bool isInLoop = code().at(id).isInLoop;
-    if ((!isInLoop && !usesLoopForms(id)) || isLayingOutTurns() || m_keepsValuesInHeapFrame || m_notesForms)
+    const bool goesByTable = !isInLoop && !usesLoopForms(id);
+    if ((goesByTable && isInRecursion(id)) || isLayingOutTurns() || m_keepsValuesInHeapFrame)
         return std::nullopt;
     const TypeArena& types = inputs().types;
+    auto canSwitchOn = [&](const ComparisonWithLiteral& comparison) {
+        return !goesByTable || isASCIIOfStringSwitchTable(types.bytesOf(comparison.literal));
+    };
     std::optional<ComparisonWithLiteral> first = findComparisonWithLiteral(code(), types, id, testOfBranch(id));
-    if (!first)
+    if (!first || !canSwitchOn(*first))
         return std::nullopt;
     ValueID subject = valueUnderNames(code(), first->subject);
     Representation representation = code().at(subject).representation;
@@ -525,7 +623,7 @@ std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(Block
     while (BlockID behind = blockBehind(chain.comparisons.last().block)) {
         ValueID test = testOfBranch(behind);
         std::optional<ComparisonWithLiteral> next = findComparisonWithLiteral(code(), types, behind, test);
-        if (!next || valueUnderNames(code(), next->subject) != subject)
+        if (!next || valueUnderNames(code(), next->subject) != subject || !canSwitchOn(*next) || chain.comparisons.size() == StringSwitchTable::maxCases)
             break;
         size_t numberOfNames = chain.names.size();
         bool onlyCompares = std::ranges::all_of(code().valuesOf(behind), [&](ValueID value) {
@@ -540,9 +638,127 @@ std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(Block
         }
         chain.comparisons.append(*next);
     }
-    if (chain.comparisons.size() < minComparisons)
+    bool comparesNamesFirst = goesByTable && !blockRunsSeldom(*this, id) && isLikelyName(code(), subject) && std::ranges::all_of(chain.comparisons, [&](const ComparisonWithLiteral& comparison) {
+        return canBeName(byteCast<Latin1Character>(types.bytesOf(comparison.literal)));
+    });
+    if (chain.comparisons.size() < (goesByTable && !comparesNamesFirst ? minComparisonsForTable : minComparisons))
         return std::nullopt;
+    chain.goesByTable = goesByTable;
     return chain;
+}
+
+std::optional<CodeGenerator::SymbolChain> CodeGenerator::findSymbolChain(BlockID id) const
+{
+    static constexpr size_t minComparisons = 8;
+    if (isLayingOutTurns() || m_keepsValuesInHeapFrame || m_notesForms)
+        return std::nullopt;
+    struct ComparisonWithSymbol {
+        ValueID subject;
+        ValueID read;
+        ValueID test;
+    };
+    auto holdsOneSymbol = [&](ValueID read, BlockID block) {
+        if (code().isConstant(read))
+            return false;
+        const Operation& operation = code().at(read);
+        if (operation.opcode != Opcode::GetModuleVariable || operation.returnsRawSlot() || operation.representation != Representation::JSValue || code().blockOf(read) != block || code().useCountOf(read) != 1)
+            return false;
+        Type held = inputs().types.at(operation.type);
+        PlannedVariable planned = plan().variable(operation.variable());
+        return held.primitives == Primitive::LiteralSymbol && !held.hasObjects() && program().at(operation.variable()).flags.contains(VariableFlags::IsImmutable)
+            && planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && planned.representation == SlotRepresentation::JSValue && !planned.hasViewMirror;
+    };
+    auto comparisonAt = [&](BlockID block) -> std::optional<ComparisonWithSymbol> {
+        ValueID test = testOfBranch(block);
+        if (!test || opcodeOf(test) != Opcode::StrictEq || code().at(test).form() != OperatorForm::Bits)
+            return std::nullopt;
+        const Operation& comparison = code().at(test);
+        for (auto [read, subject] : { std::pair { comparison.rightOperand(), comparison.leftOperand() }, std::pair { comparison.leftOperand(), comparison.rightOperand() } }) {
+            if (holdsOneSymbol(read, block) && !code().isConstant(subject) && code().at(subject).representation == Representation::JSValue)
+                return ComparisonWithSymbol { subject, read, test };
+        }
+        return std::nullopt;
+    };
+    std::optional<ComparisonWithSymbol> comparison = comparisonAt(id);
+    if (!comparison)
+        return std::nullopt;
+    SymbolChain chain { comparison->subject, code().at(comparison->read).variable(), { id } };
+    const uint64_t initialWord = plan().variable(chain.first).initialWord;
+    const bool isInLoop = code().at(id).isInLoop;
+    while (true) {
+        const Edge& edge = code().at(code().at(chain.blocks.last()).terminator.notTaken());
+        const Block& block = code().at(edge.to);
+        if (!edge.arguments().empty() || !block.parameters().empty() || block.isLoopHead || block.isInLoop != isInLoop || code().valuesOf(edge.to).size() != 2)
+            break;
+        if (m_singlePredecessors[edge.to.index()] != chain.blocks.last() || m_blocksWithOtherJumps.get(edge.to.index()) || code().handlerOf(edge.to) != code().handlerOf(id))
+            break;
+        std::optional<ComparisonWithSymbol> next = comparisonAt(edge.to);
+        if (!next || next->subject != chain.subject)
+            break;
+        VariableID variable = code().at(next->read).variable();
+        if (variable.index() != chain.first.index() + chain.blocks.size() || plan().variable(variable).initialWord != initialWord)
+            break;
+        chain.blocks.append(edge.to);
+    }
+    return chain.blocks.size() < minComparisons ? std::nullopt : std::optional(WTF::move(chain));
+}
+
+bool ControlEmitter::tryGenerateSymbolChain(const ValueContext& comparison)
+{
+    if (!comparison.isBranchCondition())
+        return false;
+    std::optional<CodeGenerator::SymbolChain> chain = generator().findSymbolChain(comparison.block());
+    if (!chain)
+        return false;
+    static constexpr size_t sizeOfCell = WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(sizeof(Symbol));
+    static_assert(std::has_single_bit(sizeOfCell));
+    const int64_t size = chain->blocks.size();
+    for (int64_t place = 1; place < size; ++place)
+        m_mentions.add(NumberSpace::Variable, VariableID(static_cast<uint32_t>(chain->first.index() + place)));
+
+    Machine::DeclaredAccessesSuspension readsVariables(m_out);
+    const Machine::AbstractHeap& heap = m_heaps.entire(AbstractHeap::ModuleVariables);
+    TypedPointer firstWord = emitter<StaticsEmitter>().addressOf(chain->first);
+    LValue words = m_out.valueOf(firstWord);
+    auto wordAt = [&](Integer place) {
+        return Boxed(m_out.load64(m_out.baseIndex(heap, words, place.value(), ScaleEight)));
+    };
+    Boxed subject = in<Boxed>(chain->subject);
+    BlockEdge otherwise = generator().edgeOutOf(chain->blocks.last(), 1);
+    LBasicBlock liesAmongThem = newBlock();
+    LBasicBlock isSearched = newBlock();
+    LBasicBlock isCompared = newBlock();
+    LBasicBlock differs = newBlock();
+    LBasicBlock isKnown = newBlock();
+    Integer guess(m_out.lShr(m_out.sub(subject.value(), m_out.load64(firstWord)), std::countr_zero(sizeOfCell)));
+    branch(below(guess, integer(size)), { normalEdge(liesAmongThem), normalEdge(isSearched) });
+
+    m_out.appendTo(liesAmongThem);
+    ValueFromBlock guessed = m_out.anchor(guess.value());
+    branch(equal(wordAt(guess), subject), { normalEdge(isKnown), rareEdge(isSearched) });
+
+    m_out.appendTo(isSearched);
+    ValueFromBlock start = m_out.anchor(integer(0).value());
+    m_out.jump(isCompared);
+
+    m_out.appendTo(isCompared);
+    Integer place(m_out.phi(Machine::Int64, start));
+    ValueFromBlock found = m_out.anchor(place.value());
+    branch(equal(wordAt(place), subject), { normalEdge(isKnown), normalEdge(differs) });
+
+    m_out.appendTo(differs);
+    Integer next = add(place, integer(1));
+    m_out.addIncomingToPhi(place.value(), m_out.anchor(next.value()));
+    branch(below(next, integer(size)), { normalEdge(isCompared), otherwise });
+
+    m_out.appendTo(isKnown);
+    LValue which = m_out.phi(Machine::Int64, guessed, found);
+    Vector<SwitchTarget, 16> targets;
+    for (int64_t place = 0; place < size; ++place)
+        targets.append(SwitchTarget { place, place ? generator().edgeOutOf(chain->blocks[place], 0) : comparison.branchTargets().taken });
+    m_out.switchOn(which, targets.span(), otherwise);
+    build().statistics().count(StatisticID::SymbolChainsSwitched);
+    return true;
 }
 
 BlockEdge CodeGenerator::edgeOutOf(BlockID id, uint32_t targetIndex)

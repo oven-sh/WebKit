@@ -1,0 +1,177 @@
+# const A0 = Symbol("A0"), .., A7 = Symbol("A7");  globalThis.code = function (x) { switch (x) { case A0: return 0; .. case A7: return 7; default: return -1; } };
+# The place of the symbol's cell among the cells of the constants tells the case. Seven cases are compared one after the other.
+# RUN: compile SymbolChainsSwitched mechanisms=all
+# CHECK: statistic SymbolChainsSwitched 1
+
+variable g0 name="A0" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="A1" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="A2" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g3 name="A3" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g4 name="A4" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g5 name="A5" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g6 name="A6" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g7 name="A7" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="A0"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = String string="A1"
+    v5 = Call v0, -, v4 calleeName="Symbol" callNumber=1
+    PutModuleVariable v5 variable=g1
+    v7 = String string="A2"
+    v8 = Call v0, -, v7 calleeName="Symbol" callNumber=2
+    PutModuleVariable v8 variable=g2
+    v10 = String string="A3"
+    v11 = Call v0, -, v10 calleeName="Symbol" callNumber=3
+    PutModuleVariable v11 variable=g3
+    v13 = String string="A4"
+    v14 = Call v0, -, v13 calleeName="Symbol" callNumber=4
+    PutModuleVariable v14 variable=g4
+    v16 = String string="A5"
+    v17 = Call v0, -, v16 calleeName="Symbol" callNumber=5
+    PutModuleVariable v17 variable=g5
+    v19 = String string="A6"
+    v20 = Call v0, -, v19 calleeName="Symbol" callNumber=6
+    PutModuleVariable v20 variable=g6
+    v22 = String string="A7"
+    v23 = Call v0, -, v22 calleeName="Symbol" callNumber=7
+    PutModuleVariable v23 variable=g7
+    v25 = Builtin builtin=GlobalThis
+    v26 = NewClosure function=f1
+    PropSet v25, v26 key="code"
+    v28 = NewClosure function=f2
+    PropSet v25, v28 key="seven"
+    v30 = Undefined
+    Return v30
+}
+function f1 name="code" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Integer
+    Return v4
+  b2(v5):
+    v6 = GetModuleVariable variable=g1
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    v9 = Integer integer=1
+    Return v9
+  b4(v10):
+    v11 = GetModuleVariable variable=g2
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v13):
+    v14 = Integer integer=2
+    Return v14
+  b6(v15):
+    v16 = GetModuleVariable variable=g3
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v18):
+    v19 = Integer integer=3
+    Return v19
+  b8(v20):
+    v21 = GetModuleVariable variable=g4
+    v22 = StrictEq v20, v21
+    Branch v22 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v23):
+    v24 = Integer integer=4
+    Return v24
+  b10(v25):
+    v26 = GetModuleVariable variable=g5
+    v27 = StrictEq v25, v26
+    Branch v27 -> taken b11(| 0), notTaken b12(| 0)
+  b11(v28):
+    v29 = Integer integer=5
+    Return v29
+  b12(v30):
+    v31 = GetModuleVariable variable=g6
+    v32 = StrictEq v30, v31
+    Branch v32 -> taken b13(| 0), notTaken b14(| 0)
+  b13(v33):
+    v34 = Integer integer=6
+    Return v34
+  b14(v35):
+    v36 = GetModuleVariable variable=g7
+    v37 = StrictEq v35, v36
+    Branch v37 -> taken b15(| 0), notTaken b16(| 0)
+  b15(v38):
+    v39 = Integer integer=7
+    Return v39
+  b16(v40):
+    v41 = Integer integer=-1
+    Return v41
+}
+function f2 name="seven" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Integer
+    Return v4
+  b2(v5):
+    v6 = GetModuleVariable variable=g1
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    v9 = Integer integer=1
+    Return v9
+  b4(v10):
+    v11 = GetModuleVariable variable=g2
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v13):
+    v14 = Integer integer=2
+    Return v14
+  b6(v15):
+    v16 = GetModuleVariable variable=g3
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v18):
+    v19 = Integer integer=3
+    Return v19
+  b8(v20):
+    v21 = GetModuleVariable variable=g4
+    v22 = StrictEq v20, v21
+    Branch v22 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v23):
+    v24 = Integer integer=4
+    Return v24
+  b10(v25):
+    v26 = GetModuleVariable variable=g5
+    v27 = StrictEq v25, v26
+    Branch v27 -> taken b11(| 0), notTaken b12(| 0)
+  b11(v28):
+    v29 = Integer integer=5
+    Return v29
+  b12(v30):
+    v31 = GetModuleVariable variable=g6
+    v32 = StrictEq v30, v31
+    Branch v32 -> taken b13(| 0), notTaken b14(| 0)
+  b13(v33):
+    v34 = Integer integer=6
+    Return v34
+  b14(v35):
+    v36 = Integer integer=-1
+    Return v36
+}
+function f3 name="mentions" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key=symbol("A0")@m0:0
+    v2 = PropGet v0 key=symbol("A1")@m0:1
+    v3 = PropGet v0 key=symbol("A2")@m0:2
+    v4 = PropGet v0 key=symbol("A3")@m0:3
+    v5 = PropGet v0 key=symbol("A4")@m0:4
+    v6 = PropGet v0 key=symbol("A5")@m0:5
+    v7 = PropGet v0 key=symbol("A6")@m0:6
+    v8 = PropGet v0 key=symbol("A7")@m0:7
+    Return v8
+}

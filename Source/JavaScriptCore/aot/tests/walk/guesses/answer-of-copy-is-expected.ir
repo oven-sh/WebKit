@@ -1,0 +1,181 @@
+# class Bag { constructor(n) { this.limit = n; this.extent = n; } [Symbol.iterator]() { .. } }
+# function prepare(bag) { bag.extent = bag.limit; return bag; }
+# function total(bag) { var n = 0; for (const x of prepare(bag)) n += x; return n; }
+# total() holds a copy of prepare(), which is expected to be handed a Bag. Where it is not, a call answers anything: what the copy returns says that a Bag is iterated, no array.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: CallDirect {{*}} function=f1 role=SlowBody [isNeverInlined]
+# CHECK-NOT: testedType=Array
+# CHECK: Return
+
+layout L0 kind=Instance name="Bag" module=m0 position=55 constructor=f3 fields=[{key="limit" declared={type=anything} flags=[IsRequired]}, {key="extent" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=199 fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 position=165 fields=[{key="next" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L3 fields=[{key="extent" declared={type=anything}}, {key="limit" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=2
+layout L4 module=m0
+layout L5 module=m0
+layout L6 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|number flags=[IsExpected]} flags=[IsRequired] variableName="i"}, {key=@"1" declared={type=anything} flags=[IsRequired, IsImmutable] variableName="bag"}] ownFieldCount=2
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="prepare" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g2 module=m0 declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L4 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = Undefined @0
+    v4 = NewClosure function=f2 @0
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=Process @25
+    v7 = PropGet v6 key="argv" @25
+    v8 = Convert v7 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @25
+    v9 = Integer integer=5 @25
+    v10 = ElemGet v8, v9 @33
+    v11 = ToBoolean v10 @25
+    Branch v11 -> taken b1(| 0), notTaken b2(| 0) @25
+  b1(v12):
+    Jump -> next b3(v12) @25
+  b2(v13):
+    v14 = String string="X" @44
+    Jump -> next b3(v14) @44
+  b3(v15):
+    v16 = NewClosure function=f3 @49
+    v17 = NewClass v16 layout=L0 @49
+    PutModuleVariable v17 variable=g2 @49
+    v19 = NewClosure function=f4 @113
+    DefineMethod v17, v19 layout=L0 key=@@iterator @113
+    v21 = FinishClass v17 layout=L0 @49
+    v22 = Convert v21 declared={type=f3 flags=[IsFromCompiler]} @49
+    v23 = Convert v21 declared={type=f3 flags=[IsFromCompiler]} @49
+    v24 = Builtin builtin=GlobalThis @334
+    v25 = PropGet v24 key="globalThis" [isFreeName] @334
+    v26 = Convert v25 declared={type=builtin(GlobalThis) flags=[IsExpected]} @334
+    v27 = String string="B" @345
+    v28 = Add v27, v15 @345
+    ElemSet v26, v28, v23 @334
+    v30 = Builtin builtin=GlobalThis @373
+    v31 = PropGet v30 key="globalThis" [isFreeName] @373
+    v32 = Convert v31 declared={type=builtin(GlobalThis) flags=[IsExpected]} @373
+    v33 = String string="B" @384
+    v34 = Add v33, v15 @384
+    v35 = ElemGet v32, v34 @373
+    v36 = Builtin builtin=GlobalThis @480
+    v37 = PropGet v36 key="globalThis" [isFreeName] @480
+    v38 = Convert v37 declared={type=builtin(GlobalThis) flags=[IsExpected]} @480
+    v39 = String string="t" @491
+    v40 = Add v39, v15 @491
+    ElemSet v38, v40, v5 @480
+    v42 = Integer integer=3 @529
+    v43 = Construct v35, -, v42 calleeName="BB" @526 @522
+    v44 = Integer @539
+    v45 = Convert v44 declared={type=undefined|number flags=[IsExpected]} @539
+    v46 = Integer @555
+    v47 = Convert v46 declared={type=undefined|number flags=[IsExpected]} @555
+    Jump -> next b4(v45, v47) @551
+  b4(v48, v49):
+    LoopHint @551
+    v51 = Integer integer=100 @562
+    v52 = Less v49, v51 @558
+    Branch v52 -> taken b5(), notTaken b6() @558
+  b5():
+    v53 = Call v5, -, v43 calleeName="total" @579
+    v54 = Add v48, v53 @579
+    v55 = Convert v54 declared={type=undefined|number flags=[IsExpected]} @572
+    v56 = Increment v49 @567
+    v57 = Convert v56 declared={type=undefined|number flags=[IsExpected]} @567
+    Jump -> next b4(v55, v57) @567
+  b6():
+    v58 = Builtin builtin=GlobalThis @591
+    v59 = PropGet v58 key="globalThis" [isFreeName] @591
+    v60 = Convert v59 declared={type=builtin(GlobalThis) flags=[IsExpected]} @591
+    v61 = String string="s" @602
+    v62 = Add v61, v15 @602
+    ElemSet v60, v62, v48 @591
+    v64 = Undefined @591
+    Return v64 @591
+}
+function f1 name="prepare" module=m0 position=272 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="limit" @309
+    PropSet v0, v1 key="extent" @296
+    Return v0 @327
+}
+function f2 name="total" module=m0 position=397 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Undefined @412
+    v2 = Integer @427
+    v3 = Convert v2 declared={type=undefined|number flags=[IsExpected]} @427
+    v4 = GetModuleVariable variable=g1 @446
+    v5 = Call v4, -, v0 calleeName="prepare" @446
+    v6 = IteratorOpen v5 @441
+    Jump -> next b1(v3) @441
+  b1(v7):
+    LoopHint @441
+    v9 = IteratorResume v6 @441
+    v10 = ResultAt v9 @441
+    v11 = ResultAt v9 index=1 @441
+    Branch v10 -> taken b2(), notTaken b3() @441
+  b2():
+    Return v7 @475
+  b3():
+    Jump -> next b4() @441
+  b4() handler=b5():
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @441
+    v13 = Add v7, v12 @465
+    v14 = Convert v13 declared={type=undefined|number flags=[IsExpected]} @460
+    Jump -> next b1(v14) @460
+  b5() role=IterationCleanup subject=v6:
+    v15 = CatchException @441
+    IteratorClose v6 completion=Throw @441
+    Rethrow v15 @441
+}
+function f3 name="Bag" module=m0 position=72 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @72
+    v3 = NewObject v2 layout=L0 @72
+    v4 = Convert v3 declared={type=L0} @72
+    PropSet v4, v1 key="limit" @78
+    PropSet v4, v1 key="extent" @94
+    v7 = Undefined @94
+    Return v4 @94
+}
+function f4 name="[Symbol.iterator]" module=m0 position=113 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Undefined @113
+    v2 = NewObject -, v1, v1 layout=L6 fields=[0, 1] @113
+    v3 = Integer @143
+    v4 = Convert v3 declared={type=undefined|number flags=[IsExpected]} @143
+    PutEnvironmentField v2, v4 layout=L6 @139
+    PutEnvironmentField v2, v0 layout=L6 field=1 @146
+    v7 = NewClosure v2 function=f5 @167
+    v8 = NewObject -, v7 layout=L2 fields=[0] @165
+    v9 = FinishObject v8 @165
+    Return v9 @165
+}
+function f5 name="next" module=m0 position=167 kind=Method flags=[HasExplicitName] captures=[{type=env L6 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L6):
+    v1 = GetEnvironmentField v0 layout=L6 @183
+    v2 = GetEnvironmentField v0 layout=L6 field=1 @187
+    v3 = PropGet v2 key="limit" @187
+    v4 = Less v1, v3 @183
+    Branch v4 -> taken b1(), notTaken b2() @183
+  b1():
+    v5 = Boolean @207
+    v6 = GetEnvironmentField v0 layout=L6 @221
+    v7 = ToNumeric v6 @221
+    v8 = Increment v7 @221
+    v9 = Convert v8 declared={type=undefined|number flags=[IsExpected]} @221
+    PutEnvironmentField v0, v9 layout=L6 @221
+    v11 = NewObject -, v5, v7 layout=L1 fields=[0, 1] @199
+    v12 = FinishObject v11 @199
+    Jump -> next b3(v12) @199
+  b2():
+    v13 = Boolean boolean=true @229
+    v14 = Undefined @229
+    v15 = NewObject -, v13, v14 layout=L1 fields=[0, 1] @229
+    v16 = FinishObject v15 @229
+    Jump -> next b3(v16) @229
+  b3(v17):
+    Return v17 @229
+}

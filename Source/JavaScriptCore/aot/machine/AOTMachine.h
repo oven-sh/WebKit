@@ -1086,6 +1086,9 @@ public:
     std::span<Operation* const> namesOfWords() const { return m_namesOfWords.span(); }
     void noteOwnShiftOfSum(Operation* sum, Operation* shift) { m_ownShiftsOfSums.append(m_arena, { sum, shift }); }
     void separateShiftsOfSums();
+    void noteComparisonOfSum(Operation* comparison, Operation* constant) { m_comparisonsOfSums.append(m_arena, { comparison, constant }); }
+    void noteBranchOnSum(Operation* branch, Operation* comparison) { m_branchesOnSums.append(m_arena, { branch, comparison }); }
+    void compareTermsOfSums();
     ALWAYS_INLINE void noteUpperHalfHandedOn(Operation* upsilon);
     void settleUpperHalvesOfPhis();
 
@@ -1151,11 +1154,13 @@ public:
     uint32_t numberOfOperationsEncoded() const { return m_numberOfOperationsEncoded; }
     uint32_t switchBitTestCount() const { return m_switchBitTestCount; }
     uint32_t numberOfInnerPointersAcrossSafepoints() const { return m_numberOfInnerPointersAcrossSafepoints; }
+    uint32_t numberOfNumbersChosen() const { return m_numberOfNumbersChosen; }
     void noteInnerPointerAcrossSafepoint() { ++m_numberOfInnerPointersAcrossSafepoints; }
     uint32_t numberOfTrapsTakenOver() const { return m_numberOfTrapsTakenOver; }
     MacroAssembler::Label rareCodeStart() const { return m_rareCodeStart; }
     std::span<const RangeOfRareCode> rangesOfRareCodeAmongOtherCode() const { return m_rangesOfRareCodeAmongOtherCode.span(); }
     std::span<const ShortLoop> shortLoops() const { return m_shortLoops.span(); }
+    unsigned numberOfLoopsEnteredByTest() const { return m_numberOfLoopsEnteredByTest; }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -1222,6 +1227,8 @@ private:
     ArenaVector<Operation*> m_upsilonsOfWordsBetweenPhis;
     ArenaVector<Operation*> m_namesOfWords;
     ArenaVector<std::pair<Operation*, Operation*>> m_ownShiftsOfSums;
+    ArenaVector<std::pair<Operation*, Operation*>> m_comparisonsOfSums;
+    ArenaVector<std::pair<Operation*, Operation*>> m_branchesOnSums;
     ArenaVector<Entrypoint> m_entrypoints;
     ArenaVector<std::span<const Type>> m_tuples;
     ArenaVector<StackSlot*> m_stackSlots;
@@ -1248,10 +1255,12 @@ private:
     uint32_t m_numberOfOperationsEncoded { 0 };
     uint32_t m_switchBitTestCount { 0 };
     uint32_t m_numberOfInnerPointersAcrossSafepoints { 0 };
+    uint32_t m_numberOfNumbersChosen { 0 };
     uint32_t m_numberOfTrapsTakenOver { 0 };
     MacroAssembler::Label m_rareCodeStart;
     ArenaVector<RangeOfRareCode> m_rangesOfRareCodeAmongOtherCode;
     ArenaVector<ShortLoop> m_shortLoops;
+    unsigned m_numberOfLoopsEnteredByTest { 0 };
     std::optional<Failure> m_failure;
 };
 

@@ -241,6 +241,12 @@ bool Encoder::startsNumberChain(const Step& step) const
     auto holdsWord = [](const Location& source) { return source.isRegister() && source.reg().isGPR(); };
     if (std::ranges::any_of(step.sources, holdsNumber))
         return false;
+    if (step.kind == StepKind::Execute && step.patchAssignment != UINT32_MAX && step.operation->opcode() == Patch) {
+        const PatchOperation* patch = step.operation->as<PatchOperation>();
+        std::span<const Location> operands = m_allocation.patchAssignment(step.patchAssignment).locations.subspan(patch->resultConstraints.size());
+        if (std::ranges::any_of(operands, holdsNumber))
+            return false;
+    }
     if (step.kind != StepKind::Execute || !keepsUpperX86Destination(step.operation->opcode()))
         return true;
     return std::ranges::count_if(step.sources, holdsWord) > 1;

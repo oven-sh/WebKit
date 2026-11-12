@@ -68,6 +68,7 @@ public:
     void generateTypeOf(const ValueContext&);
     void generateToString(const ValueContext&);
     bool leavesConversionToConcatenation(BlockID, ValueID, const Operation&, std::span<const ValueID> operationsBehind);
+    ValueID valueAddedToEmptyString(const Operation& sum);
     bool leavesProductToRemainder(BlockID, ValueID, const Operation& product, Vector<BlockID, 2>& rareBlocksWithProduct);
     void generateStrcat(const ValueContext& value) { define(value, concatenationOfParts(value)); }
     void generateToPropertyKey(const ValueContext&);
@@ -76,6 +77,9 @@ public:
 
     Number pow(Number base, Number exponent, bool usesLoopForms);
     Boxed boxedSum(ValueID sum);
+    Number checkedSum(const ValueContext&, ArithmeticOperator);
+    Integer integerAddedToSum(const ValueContext& sum, ValueID added);
+    Number remainderOfBox(const ValueContext&);
     const BigIntValues& bigIntValues();
     Operand copyToHeap(const ValueContext&, Operand);
     std::span<const ValueID> valuesWithZerosAhead(BlockID, std::span<const ValueID>, Vector<ValueID>& storage);

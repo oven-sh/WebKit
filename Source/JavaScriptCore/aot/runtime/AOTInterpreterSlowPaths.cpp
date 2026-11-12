@@ -231,7 +231,7 @@ static bool tryAddExtraProperty(Instance& instance, const Slot& slot, Object& ob
     }
     extraProperties->putDirectOffset(vm, offset, value);
     extraProperties->setStructure(vm, newStructure->extraPropertiesStructure());
-    object.JSCell::setStructure(vm, newStructure);
+    object.setVariantOfStructure(vm, newStructure);
     return true;
 }
 

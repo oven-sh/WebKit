@@ -12,6 +12,7 @@
 #include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTJSONTextWriter.h"
+#include "AOTNarrowCopy.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeReporter.h"
@@ -279,6 +280,65 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
     return addSegment(globalObject, jsString(globalObject->vm(), String { impl.releaseNonNull() }));
 }
 
+static ALWAYS_INLINE std::span<const char16_t> unitsOfShortWideString(const JSString& string)
+{
+    uint32_t length = string.length();
+    if (length > maxLengthCopiedAsLatin1)
+        return { };
+    if (const StringImpl* impl = string.tryGetValueImpl())
+        return impl->is8Bit() ? std::span<const char16_t> { } : impl->span16();
+    if (!string.isSubstring())
+        return { };
+    auto& part = static_cast<const JSRopeString&>(string);
+    const StringImpl& base = *part.substringBase()->tryGetValueImpl();
+    return base.is8Bit() ? std::span<const char16_t> { } : base.span16().subspan(part.substringOffset(), length);
+}
+
+bool StringBuilderStorage::tryAppendAsLatin1(const JSString* string)
+{
+    if (holdsWideText())
+        return false;
+    std::span<const char16_t> units = unitsOfShortWideString(*string);
+    if (units.empty() || !tryEnsureRoom(units.size()) || !tryCopyAsLatin1(units, m_characters + m_position))
+        return false;
+    m_position += static_cast<uint32_t>(units.size());
+    return true;
+}
+
+bool StringBuilderStorage::tryExtendWideText(std::span<const char16_t> units, uint32_t position)
+{
+    Segment& last = m_segments.last();
+    size_t numberOfUnits = m_units.size() + units.size();
+    if (last.string || last.offsetInBuffer != position || numberOfUnits > std::min<size_t>(m_units.capacity(), maxUnits))
+        return false;
+    m_position = position;
+    if (!canGrowBy(units.size()))
+        return false;
+    m_units.append(units);
+    last.length += static_cast<uint32_t>(units.size());
+    m_lengthOutsideBuffer += static_cast<uint32_t>(units.size());
+    updateLimit();
+    return true;
+}
+
+Latin1Character* StackStringBuilder::tryAppendWide(const JSString& string, Latin1Character* cursor)
+{
+    if (holdsStrings() || (isOnStack() && cursor == buffer))
+        return nullptr;
+    std::span<const char16_t> units = unitsOfShortWideString(string);
+    if (units.empty())
+        return nullptr;
+    if (!isOnStack() && storage->holdsWideText()) {
+        if (!storage->tryExtendWideText(units, static_cast<uint32_t>(cursor - storage->m_characters)))
+            return nullptr;
+        didChangeLengthOutsideBuffer();
+        return cursor;
+    }
+    if (units.size() > static_cast<size_t>(limit - cursor) || !tryCopyAsLatin1(units, cursor))
+        return nullptr;
+    return cursor + units.size();
+}
+
 auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string) -> AppendResult
 {
     VM& vm = globalObject->vm();
@@ -291,6 +351,8 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
     AppendResult result;
     if (is8Bit && length < minLengthByReference)
         result = appendCharactersOf(globalObject, string);
+    else if (!is8Bit && tryAppendAsLatin1(string))
+        result = AppendResult::Appended;
     else if (!is8Bit && hasRoomForUnits(length)) {
         result = addUnits(globalObject, length, [&](std::span<char16_t> units) {
             string->resolveToBuffer(units);
@@ -319,13 +381,47 @@ auto StringBuilderStorage::appendCharactersOf(JSGlobalObject* globalObject, JSSt
     return AppendResult::Appended;
 }
 
+void StringBuilderStorage::widenShortLatin1Text()
+{
+    if (m_sharedLength || m_positionJoinedIntoFirstSegment || (!m_segments.isEmpty() && m_segments.last().string))
+        return;
+    uint32_t start = m_segments.isEmpty() ? 0 : m_segments.last().offsetInBuffer;
+    uint32_t length = m_position - start;
+    if (!length || !hasRoomForUnits(length))
+        return;
+    uint32_t startOfUnits = static_cast<uint32_t>(m_units.size());
+    m_units.grow(startOfUnits + length);
+    StringImpl::copyCharacters(m_units.mutableSpan().subspan(startOfUnits), std::span<const Latin1Character> { m_characters + start, length });
+    if (m_segments.isEmpty()) {
+        Locker locker { cellLock() };
+        m_segments.append(Segment { start, length, startOfUnits, { } });
+    } else
+        m_segments.last().length += length;
+    m_position = start;
+    m_lengthOutsideBuffer += length;
+}
+
+JSString* StringBuilderStorage::createStringFromUnits(JSGlobalObject* globalObject)
+{
+    ASSERT(holdsOnlyUnits());
+    std::span<char16_t> output;
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(m_units.size(), output);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemory(globalObject);
+        return nullptr;
+    }
+    StringImpl::copyCharacters(output, m_units.span());
+    return jsString(globalObject->vm(), String { impl.releaseNonNull() });
+}
+
 template<typename CopyUnits>
-auto StringBuilderStorage::addUnits(JSGlobalObject* globalObject, uint32_t length, const CopyUnits& copyUnits) -> AppendResult
+ALWAYS_INLINE auto StringBuilderStorage::addUnits(JSGlobalObject* globalObject, uint32_t length, const CopyUnits& copyUnits) -> AppendResult
 {
     if (!canGrowBy(length)) {
         throwOutOfMemory(globalObject);
         return AppendResult::Failed;
     }
+    widenShortLatin1Text();
     bool extendsLastSegment = !m_segments.isEmpty() && !m_segments.last().string && m_segments.last().offsetInBuffer == m_position;
     if (!extendsLastSegment && m_segments.size() >= maxSegments) {
         if (!collapseSegments(globalObject))
@@ -754,18 +850,25 @@ JSString* StringBuilderStorage::finish(JSGlobalObject* globalObject, Instance& i
         return string;
     }
     JSString* string = validLastString();
-    if (!string)
-        string = createString(globalObject, instance, use, true);
+    if (!string) {
+        if (!m_segments.isEmpty())
+            widenShortLatin1Text();
+        string = holdsOnlyUnits() ? createStringFromUnits(globalObject) : createString(globalObject, instance, use, true);
+    }
     release(instance);
     return string;
 }
 
 StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor)
 {
-    if (isOnStack() || holdsOneString()) {
-        JSString* first = holdsOneString() ? oneString : nullptr;
+    if (isOnStack() || holdsStrings()) {
         StringBuilderStorage* acquired = StringBuilderStorage::acquire(instance);
-        bool failed = first && acquired->append(globalObject, first) == StringBuilderStorage::AppendResult::Failed;
+        bool failed = false;
+        if (holdsStrings()) {
+            failed = acquired->append(globalObject, oneString) == StringBuilderStorage::AppendResult::Failed;
+            for (JSString* string : furtherStrings())
+                failed = failed || acquired->append(globalObject, string) == StringBuilderStorage::AppendResult::Failed;
+        }
         if (failed || acquired->append(globalObject, charactersOnStack(cursor)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]] {
             acquired->release(instance);
             return nullptr;
@@ -784,12 +887,64 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
 
 Latin1Character* StackStringBuilder::holdOneString(JSString* string)
 {
-    ASSERT(isOnStack());
+    ASSERT(isOnStack() || holdsStrings());
     oneString = string;
+    numberOfFurtherStrings = 0;
     limit = buffer;
     lengthOrigin = std::bit_cast<Latin1Character*>(std::bit_cast<uintptr_t>(&buffer[0]) - string->length());
     savedCursor = buffer;
     return buffer;
+}
+
+Latin1Character* StackStringBuilder::tryHoldFurtherString(JSString* string, const Latin1Character* cursor)
+{
+    if (!holdsStrings() || cursor != buffer || numberOfFurtherStrings == maxFurtherStrings || lengthOfHeldStrings() + string->length() >= maxLengthOfHeldStrings)
+        return nullptr;
+    lengthOrigin = std::bit_cast<Latin1Character*>(std::bit_cast<uintptr_t>(lengthOrigin) - string->length());
+    ++numberOfFurtherStrings;
+    furtherStrings().back() = string;
+    return buffer;
+}
+
+JSString* StackStringBuilder::joinHeldStrings(JSGlobalObject* globalObject)
+{
+    ASSERT(holdsStrings());
+    if (!numberOfFurtherStrings)
+        return oneString;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool is8Bit = oneString->is8Bit();
+    for (JSString* string : furtherStrings())
+        is8Bit &= string->is8Bit();
+    auto copyStrings = [&]<typename CharacterType>(std::span<CharacterType> output) {
+        size_t at = oneString->length();
+        oneString->resolveToBuffer(output.first(at));
+        for (JSString* string : furtherStrings()) {
+            size_t length = string->length();
+            string->resolveToBuffer(output.subspan(at, length));
+            at += length;
+        }
+    };
+    std::span<Latin1Character> output8;
+    std::span<char16_t> output16;
+    RefPtr<StringImpl> impl = is8Bit ? StringImpl::tryCreateUninitialized(lengthOfHeldStrings(), output8) : StringImpl::tryCreateUninitialized(lengthOfHeldStrings(), output16);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    if (is8Bit)
+        copyStrings(output8);
+    else
+        copyStrings(output16);
+    return jsNontrivialString(vm, String { impl.releaseNonNull() });
+}
+
+void StackStringBuilder::didChangeLengthOutsideBuffer()
+{
+    uintptr_t characters = std::bit_cast<uintptr_t>(storage->m_characters);
+    limit = std::bit_cast<Latin1Character*>(characters + std::min<size_t>(storage->capacity() - maxBytesWrittenPastLimit, JSString::MaxLength - storage->m_lengthOutsideBuffer));
+    lengthOrigin = std::bit_cast<Latin1Character*>(characters - storage->m_lengthOutsideBuffer);
+    savedCursor = storage->m_characters + storage->m_position;
 }
 
 Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObject, StringBuilderStorage& changed)
@@ -799,25 +954,24 @@ Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObje
         return nullptr;
     }
     ASSERT(!changed.wouldOverwriteSharedCharacters() && changed.capacity() >= changed.m_position + maxBytesWrittenPastLimit);
-    uintptr_t characters = std::bit_cast<uintptr_t>(changed.m_characters);
     storage = &changed;
-    limit = std::bit_cast<Latin1Character*>(characters + std::min<size_t>(changed.capacity() - maxBytesWrittenPastLimit, JSString::MaxLength - changed.m_lengthOutsideBuffer));
-    lengthOrigin = std::bit_cast<Latin1Character*>(characters - changed.m_lengthOutsideBuffer);
-    savedCursor = changed.m_characters + changed.m_position;
+    didChangeLengthOutsideBuffer();
     return savedCursor;
 }
 
 void StackStringBuilder::abandonChangeOfStorage(Instance& instance, StringBuilderStorage& changed)
 {
-    if (isOnStack() || holdsOneString())
+    if (isOnStack() || holdsStrings())
         changed.release(instance);
 }
 
 JSString* StackStringBuilder::toString(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor)
 {
     VM& vm = globalObject->vm();
-    if (holdsOneString() && cursor == buffer)
-        return oneString;
+    if (holdsStrings() && cursor == buffer) {
+        JSString* joined = joinHeldStrings(globalObject);
+        return joined ? (holdOneString(joined), joined) : nullptr;
+    }
     if (isOnStack()) {
         std::span<const Latin1Character> characters = charactersOnStack(cursor);
         if (characters.size() <= 1)
@@ -841,8 +995,8 @@ JSString* StackStringBuilder::toString(JSGlobalObject* globalObject, Instance& i
 JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor, StringBuilderStorage::StringUse use)
 {
     VM& vm = globalObject->vm();
-    if (holdsOneString() && cursor == buffer)
-        return oneString;
+    if (holdsStrings() && cursor == buffer)
+        return joinHeldStrings(globalObject);
     if (!isOnStack()) {
         if (!moveToStorage(globalObject, instance, cursor)) [[unlikely]]
             return nullptr;
@@ -1045,6 +1199,11 @@ static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appen
     OPERATION_RETURN(scope, byteCast<uint8_t>(next));
 }
 
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStackStringBuilderAppendWide(void*, uint8_t* builder, uint8_t* cursor, JSCell* string)
+{
+    return std::bit_cast<size_t>(reinterpret_cast<StackStringBuilder*>(builder)->tryAppendWide(*uncheckedDowncast<JSString>(string), byteCast<Latin1Character>(cursor)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppend, uint8_t*, (Instance* instance, uint8_t* builder, uint8_t* cursor, EncodedJSValue primitive))
 {
     constexpr size_t maxLengthOfInt32 = 11;
@@ -1057,6 +1216,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppend, uint8_t*, (Instan
             string->resolveToBuffer(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length });
             return { cursor + length, nullptr };
         }
+        auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+        if (length && stackBuilder.isOnStack() && byteCast<Latin1Character>(cursor) == stackBuilder.buffer)
+            return { byteCast<uint8_t>(stackBuilder.holdOneString(string)), nullptr };
+        if (Latin1Character* next = stackBuilder.tryHoldFurtherString(string, byteCast<Latin1Character>(cursor)))
+            return { byteCast<uint8_t>(next), nullptr };
     } else if (value.isInt32() && room >= maxLengthOfInt32)
         return { byteCast<uint8_t>(appendJSONInteger(byteCast<Latin1Character>(cursor), value.asInt32())), nullptr };
     AOT_MUST_TAIL_CALL return appendToStorageOfStackStringBuilder(instance, builder, cursor, primitive);
@@ -1074,6 +1238,12 @@ static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appen
         JSString* range = jsSubstring(globalObject, base, start, end - start);
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.holdOneString(range)));
+    }
+    if (stackBuilder.holdsStrings() && start < end) {
+        JSString* range = jsSubstring(globalObject, base, start, end - start);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        if (Latin1Character* next = stackBuilder.tryHoldFurtherString(range, byteCast<Latin1Character>(cursor)))
+            OPERATION_RETURN(scope, byteCast<uint8_t>(next));
     }
     StringBuilderStorage* storage = stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor));
     if (!storage) [[unlikely]]
@@ -1181,7 +1351,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instanc
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStackStringBuilderDiscard, void, (Instance* instance, uint8_t* builder))
 {
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
-    if (!stackBuilder.isOnStack() && !stackBuilder.holdsOneString())
+    if (!stackBuilder.isOnStack() && !stackBuilder.holdsStrings())
         stackBuilder.storage->release(*instance);
 }
 

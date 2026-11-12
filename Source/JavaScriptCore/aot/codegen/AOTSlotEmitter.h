@@ -49,6 +49,13 @@ public:
     bool holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, PropertyKeyID) const;
     void markCellIfMarkerIsStored(CellPointer, ValueID stored, LayoutSetID possible = { });
 
+    struct FieldInExtension {
+        PlacedSlot slot;
+        MemoryLocation location;
+    };
+    bool readsExtensionInLine(const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord) const;
+    LValue findFieldInExtension(CellPointer, const FieldInExtension&);
+    void loadFieldsInExtension(CellPointer, const PlacedSlot& extensionWord, std::span<const FieldInExtension>);
     Pointer extensionOf(CellPointer, const PlacedSlot& extensionWord);
     CellPointer extraPropertiesOf(CellPointer, const PlacedSlot& extraPropertiesWord, LBasicBlock hasNone);
     void storeInExtension(Pointer extension, const PlacedSlot&, const MemoryLocation&, Operand);
@@ -67,6 +74,8 @@ private:
 
     Operand loadOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord, bool absentReadsAsUndefined = false);
     Operand wordOutOfLine(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord);
+    Operand loadFromExtension(CellPointer, const FieldInExtension&, const PlacedSlot& extensionWord);
+    Machine::PureFunction readInLineOf(const FieldInExtension&);
     bool readsExtensionByCall(const PlacedSlot&, const MemoryLocation&, const PlacedSlot& extensionWord) const;
     LValue readFieldInExtension(CellPointer, const PlacedSlot&, const MemoryLocation&);
     Operand operandOfBits(LValue bits, SlotRepresentation);

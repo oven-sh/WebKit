@@ -22,6 +22,7 @@ struct RegExpMatch {
     CellPointer regExpObject { };
     bool isHeld { false };
     bool isPrivate { false };
+    bool isExpected { false };
     bool isArgument { false };
     bool resetsLastIndex { false };
     ValueID subject { };
@@ -84,7 +85,8 @@ private:
     RegExpMatchEmitter::Begin beginOfMatch(const RegExpMatch&, RegExpMatchEmitter&, const CharacterView&, LBasicBlock calls, LValue& first);
     void storeBounds(RegExpMatchEmitter&, const RegExpMatchEmitter::Bounds&, LValue output, ptrdiff_t offset = 0);
     Boxed createMatchArray(const OperationContext&, const RegExpMatch&);
-    void clearAbsentGroupBounds(CellPointer regExpObject, unsigned count);
+    Condition isMadeByLiteral(const RegExpMatch&);
+    void clearAbsentGroupBounds(const RegExpMatch&, unsigned count);
     template<typename T> T matchByFirstCharacter(const ValueContext&, const RegExpMatch&, T miss, NOESCAPE const Invocable<T()> auto& call);
 
     Vector<ValueID, 2> m_stringsAskedFirstCharacter;

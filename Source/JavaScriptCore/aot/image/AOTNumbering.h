@@ -175,6 +175,7 @@ enum class RequestKind : uint32_t {
     CollectionData,
     FormatPattern,
     ImportChecks,
+    Prefetch,
 };
 
 struct Mention {

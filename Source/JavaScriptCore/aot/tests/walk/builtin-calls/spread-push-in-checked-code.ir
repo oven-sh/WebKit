@@ -15,11 +15,13 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v3 = NewArray v2 contents=number
     v4 = NewArray v2, v2 contents=number
     v5 = Call v0, -, v3, v4, v2 calleeName="appendInLoop" [isNeverInlined]
-    v6 = Call v1, -, v3, v4 calleeName="append" [isNeverInlined]
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="sink" [isFreeName]
-    v9 = Call v8, -, v5, v6
-    Return v9
+    v6 = Integer integer=2
+    v7 = Call v0, -, v3, v4, v6 calleeName="appendInLoop" [isNeverInlined]
+    v8 = Call v1, -, v3, v4 calleeName="append" [isNeverInlined]
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -, v5, v8
+    Return v11
 }
 function f1 name="appendInLoop" module=m0 position=10 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number>}, {type=undefined|null|Array<number>}, {type=number}] results=[{type=undefined|null|Array<number>}] {
   b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>, v2: number):

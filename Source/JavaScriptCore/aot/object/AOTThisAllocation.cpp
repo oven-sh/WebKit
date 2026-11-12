@@ -68,11 +68,43 @@ static bool inheritsFrom(JSObject* object, const JSObject* prototype)
 static bool takesLayoutOfConstructor(const ClassTable& classes, const LayoutData& subclass, const LayoutData& constructed)
 {
     constexpr OptionSet<ObjectMutation> mutationsOfInstancesOfSubclasses { ObjectMutation::ConstructDirectly, ObjectMutation::ChangePrototype, ObjectMutation::AddProperty };
-    for (const LayoutData* current = &subclass; current; current = classes.assumedBaseOf(*current)) {
-        if (current->index == constructed.index)
-            return false;
+    if (subclass.index == constructed.index)
+        return false;
+    return ancestryOf(classes, subclass, constructed) == Ancestry::Unknown && constructed.shape && constructed.isPreferredToLayoutBelow(subclass) && !constructed.impossibleMutations().containsAny(mutationsOfInstancesOfSubclasses);
+}
+
+const LayoutData* ClassTable::constructorFunctionWithPrototype(VM& vm, JSObject* prototype) const
+{
+    ClassSide side;
+    const LayoutData* held = classHeldBy(prototype, side);
+    if (!held && prototype->type() == FinalObjectType) {
+        JSValue constructor = prototype->getDirect(vm, vm.propertyNames->constructor);
+        auto* function = constructor && constructor.isObject() ? dynamicDowncast<Closure>(asObject(constructor)) : nullptr;
+        if (!function || Instance::owning(function) != &m_state.instance || function->prototypeProperty(vm) != JSValue(prototype))
+            return nullptr;
+        held = classConstructedBy(functionOfOwnClosure(*function));
+        side = ClassSide::Prototype;
     }
-    return ancestryOf(classes, subclass, constructed) == Ancestry::Unknown && constructed.shape && constructed.numberOfFields > subclass.numberOfFields && !constructed.impossibleMutations().containsAny(mutationsOfInstancesOfSubclasses);
+    return held && side == ClassSide::Prototype && !isDefinedByClass(*held) && !isClassOfCreatedObjects(*held) ? held : nullptr;
+}
+
+const LayoutData* ClassTable::constructorFunctionWithMostFields(VM& vm, const LayoutData* own, JSObject* prototype) const
+{
+    constexpr OptionSet<ObjectMutation> mutationsOfInstancesOfSubclasses { ObjectMutation::ConstructDirectly, ObjectMutation::ChangePrototype, ObjectMutation::AddProperty };
+    if (own ? !own->hasUntypedBase || isDefinedByClass(*own) : prototype->type() != FinalObjectType)
+        return nullptr;
+    const LayoutData* found = nullptr;
+    for (JSObject* object = prototype->getPrototypeDirect().getObject(); object && object->type() != ProxyObjectType; object = object->getPrototypeDirect().getObject()) {
+        const LayoutData* above = constructorFunctionWithPrototype(vm, object);
+        const LayoutData* below = found ? found : own;
+        for (const LayoutData* expected = own ? assumedBaseOf(*own) : nullptr; above && expected; expected = assumedBaseOf(*expected)) {
+            if (expected->index == above->index)
+                above = nullptr;
+        }
+        if (above && above->shape && (below ? above->isPreferredToLayoutBelow(*below) : above->numberOfFields) && !above->impossibleMutations().containsAny(mutationsOfInstancesOfSubclasses))
+            found = above;
+    }
+    return found;
 }
 
 static unsigned inlineCapacityFor(unsigned numberOfProperties)
@@ -179,16 +211,22 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
 
     std::optional<FunctionID> function = functionInInstance(m_state.instance, constructor);
     const LayoutData* constructorLayout = function ? classConstructedBy(*function) : nullptr;
-    RELEASE_ASSERT(!constructorLayout || !constructorLayout->hasUntypedBase);
+    RELEASE_ASSERT(!constructorLayout || !constructorLayout->hasUntypedBase || !isDefinedByClass(*constructorLayout));
 
     std::optional<ThisPrototype> resolved = resolveThisPrototype(globalObject, *this, m_state.instance, constructorLayout, newTarget);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSObject* prototype = resolved->prototype;
     const LayoutData* layout = resolved->layout;
-    if (layout && constructorLayout && takesLayoutOfConstructor(*this, *layout, *constructorLayout) && inheritsFrom(prototype, prototypeForInstancesOf(vm, constructor))) {
+    bool takesConstructorLayout = layout && constructorLayout && takesLayoutOfConstructor(*this, *layout, *constructorLayout) && inheritsFrom(prototype, prototypeForInstancesOf(vm, constructor))
+        && !(layout->shape && m_state.objects->structures.objectStructure(vm, constructorLayout->shape, prototype)->hasOtherPrototype());
+    if (takesConstructorLayout) {
         layout = constructorLayout;
         countEvent(vm, RuntimeCounterID::DynamicSubclassInstances);
-    }
+    } else if (const LayoutData* above = function && constructor == newTarget ? constructorFunctionWithMostFields(vm, layout, prototype) : nullptr) {
+        layout = above;
+        countEvent(vm, RuntimeCounterID::DynamicSubclassInstances);
+    } else if (!layout && constructorLayout && constructor != newTarget)
+        layout = constructorFunctionBelow(vm, *constructorLayout, prototype);
     bool canRemember = resolved->wasReadWithoutSideEffects && target && function;
 
     JSObject* object = layout && layout->shape
@@ -200,6 +238,11 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         if (constructor == newTarget) {
             bool isWholeConstruction = !compiledLayoutOrNull(structure) && structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity && m_tables.closureNumberOnlyReturns(number);
             number = isWholeConstruction ? trivialConstructorIsNewTarget : constructorIsNewTarget;
+        }
+        if (remembered && isConstructorThatIsNewTarget(rareData->compiledAllocationConstructor()) != (constructor == newTarget)) {
+            rememberThisBesideCallee(vm, newTarget, constructor == newTarget ? structure : remembered);
+            if (constructor == newTarget)
+                return object;
         }
         target->ensureRareData(vm)->setCompiledAllocation(vm, structure, number);
     } else if (resolved->wasReadWithoutSideEffects && function && constructor == newTarget)
@@ -246,6 +289,8 @@ JSObject* ClassTable::tryCreateInstanceBelowObject(VM& vm, JSObject* objectConst
 
 void ClassTable::rememberThisBesideCallee(VM& vm, JSObject* callee, Structure* structureOfThis)
 {
+    if (!flattenOnce(vm, callee))
+        return;
     Structure* structure = callee->structure();
     unsigned attributes = 0;
     PropertyOffset offset = structure->isDictionary() ? invalidOffset : structure->get(vm, vm.propertyNames->prototype, attributes);
@@ -437,12 +482,30 @@ void ClassTable::rememberInstanceBelow(VM& vm, uint32_t allocationOfSite, JSObje
     m_state.instance.classes.instancesBelowPrototypes = { m_instancesBelowPrototypes.span().data(), (m_instancesBelowPrototypes.size() - 1) << shiftOfInstanceBelowPrototype };
 }
 
+const LayoutData* ClassTable::constructorFunctionBelow(VM& vm, const LayoutData& above, JSObject* prototype) const
+{
+    const LayoutData* held = constructorFunctionWithPrototype(vm, prototype);
+    if (!held || !held->shape || held->impossibleMutations().containsAny({ ObjectMutation::ConstructDirectly, ObjectMutation::AddProperty }))
+        return nullptr;
+    for (const LayoutData* current = assumedBaseOf(*held); current; current = assumedBaseOf(*current)) {
+        if (current->index == above.index)
+            return held;
+    }
+    return nullptr;
+}
+
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField)
 {
     const LayoutData& allocatedLayout = allocated->layout();
     bool listsNoField = holdsNoField || allocated->orderWord() == orderWordOf(0, 0);
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
+    const LayoutData* constructorFunction = requested || !isDefinedByClass(allocatedClass) ? nullptr : constructorFunctionBelow(vm, allocatedClass, prototype);
+    if (constructorFunction) {
+        countEvent(vm, RuntimeCounterID::DynamicSubclassInstances);
+        if (listsNoField)
+            return createClassInstance(vm, *constructorFunction, prototype);
+    }
     Ancestry ancestry = requested ? ancestryOf(*this, *requested, allocatedClass) : Ancestry::Unknown;
 
     constexpr OptionSet<ObjectMutation> mutationsOfInstancesOfSubclasses { ObjectMutation::ConstructDirectly, ObjectMutation::ChangePrototype, ObjectMutation::AddProperty };
@@ -459,8 +522,7 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
         Ancestry ancestryOfAbove = above ? ancestryOf(*this, *above, allocatedClass) : Ancestry::Unknown;
         if (ancestryOfAbove == Ancestry::NotBelow)
             break;
-        size_t numberOfFields = (requested ? *requested : allocatedLayout).numberOfFields;
-        if (above && above->shape && above->numberOfFields > numberOfFields && !inheritsByRecord(*above) && !above->impossibleMutations().containsAny(mutationsOfInstancesOfSubclasses)) {
+        if (above && above->shape && above->isPreferredToLayoutBelow(requested ? *requested : allocatedLayout) && !inheritsByRecord(*above) && !above->impossibleMutations().containsAny(mutationsOfInstancesOfSubclasses)) {
             requested = above;
             ancestry = ancestryOfAbove;
             countEvent(vm, RuntimeCounterID::DynamicSubclassInstances);

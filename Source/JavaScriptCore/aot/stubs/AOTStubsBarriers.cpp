@@ -25,8 +25,13 @@ using Saves = OperationCall::Saves;
 
 Jump branchIfBarrierIsNeeded(StubAssembler& jit, GPRReg owner, GPRReg scratch)
 {
+#if CPU(ARM64)
+    jit.load64(Address(owner), scratch);
+    return jit.branch64(CCallHelpers::Below, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(barrierHeaderThreshold)));
+#else
     jit.load8(Address(owner, JSCell::cellStateOffset()), scratch);
     return jit.branch32(CCallHelpers::BelowOrEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(barrierThreshold)));
+#endif
 }
 
 // Does what Heap::addToRememberedSet() does for a black owner while no collector runs concurrently. Falls through when the segment is full, which the operation handles.
@@ -114,6 +119,31 @@ void generateWriteBarrier(StubAssembler& jit)
     isWithinThreshold.link(&jit);
     returnUnlessOperationRemembers(jit, owner, state);
     rememberOwnerAndReturn(jit, owner);
+}
+
+void returnAfterAddingExtraProperty(StubAssembler& jit, GPRReg object, std::optional<GPRReg> extraProperties, GPRReg scratch)
+{
+    static_assert(!static_cast<unsigned>(CellState::PossiblyBlack));
+    RELEASE_ASSERT(signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(object));
+    jit.load8(Address(object, JSCell::cellStateOffset()), scratch);
+    Jump isWithinThreshold = jit.branch32(CCallHelpers::BelowOrEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(barrierThreshold)));
+    jit.returnToCaller();
+
+    isWithinThreshold.link(&jit);
+    if (extraProperties) {
+        Jump isNotFenced = jit.branchTest8(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
+        jit.memoryFence();
+        JumpList isBlack;
+        isBlack.append(jit.branchTest8(CCallHelpers::Zero, Address(*extraProperties, JSCell::cellStateOffset())));
+        isBlack.append(jit.branchTest8(CCallHelpers::Zero, Address(object, JSCell::cellStateOffset())));
+        jit.returnToCaller();
+
+        isBlack.link(&jit);
+        jit.callOperationAndReturn(Entry::operationAOTRememberObjects,
+            { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = *extraProperties, .thirdArgumentIn = object });
+        isNotFenced.link(&jit);
+    }
+    jit.jumpToStub(writeBarrier());
 }
 
 StubSignature signatureOfRememberElement(StubKey)

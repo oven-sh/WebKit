@@ -16,6 +16,7 @@
 #include "JSCell.h"
 #include "JSObject.h"
 #include "MarkedSpace.h"
+#include <limits>
 
 namespace JSC { namespace AOT {
 
@@ -95,6 +96,7 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     const GPRReg length = jit.allocateScratch(StubRegister::T11);
     const GPRReg storage = jit.allocateScratch(StubRegister::T12);
     const GPRReg allocator = jit.allocateScratch(firstStubOperandRegister);
+    const GPRReg neededLength = jit.allocateScratch(StubRegister::T13);
     JumpList isBeyondVector;
     JumpList callsOperation;
 
@@ -103,9 +105,10 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     emitElementBarrierAndReturn(jit, jit.operand(0), jit.operand(1));
 
     isBeyondVector.link(&jit);
+    callsOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, jit.operand(2), TrustedImm32(std::numeric_limits<int32_t>::max())));
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
-    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, jit.operand(2), length));
-    growFullVector(jit, { jit.operand(0), butterfly, length, storage, allocator, kind }, callsOperation);
+    jit.add32(TrustedImm32(1), jit.operand(2), neededLength);
+    growVectorFor(jit, { .array = jit.operand(0), .butterfly = butterfly, .length = length, .storage = storage, .allocator = allocator, .scratch = kind, .maxNeededLength = maxLengthForElementwiseCopy + 1 }, neededLength, callsOperation);
     jit.jump().linkTo(start, &jit);
 
     callsOperation.link(&jit);

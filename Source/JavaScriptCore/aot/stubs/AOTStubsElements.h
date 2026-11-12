@@ -24,7 +24,7 @@ constexpr bool isKnownIndex(int64_t index) { return index >= 0 && index <= stati
 constexpr StubKey getByValAtKnownIndex(unsigned index) { return StubKey(StubFamily::GetByValAtKnownIndex).withCount(index); }
 constexpr StubKey putByValAtKnownIndex(unsigned index, ECMAMode mode) { return StubKey(StubFamily::PutByValAtKnownIndex).withForm(static_cast<uint8_t>(mode.isStrict() ? ElementStoreMode::Strict : ElementStoreMode::Sloppy)).withCount(index); }
 
-enum class ExpectedElements : uint8_t { Int32Array, Uint8Array, Float64Array };
+enum class ExpectedElements : uint8_t { Int32Array, Uint8Array, Float64Array, Characters };
 inline constexpr uint8_t numberOfExpectedElements = 3;
 
 constexpr StubKey getByValExpecting(bool indexIsInteger, ExpectedElements expected) { return StubKey(indexIsInteger ? StubFamily::GetByValAtIndexExpecting : StubFamily::GetByValExpecting).withForm(static_cast<uint8_t>(expected)); }
@@ -40,7 +40,7 @@ constexpr StubKey shiftFewElements(bool holdsDoubles) { return StubKey(StubFamil
 
 static_assert(exists(getByVal(false)) && exists(getByVal(true)) && exists(getByValAtConstantIndex()) && exists(moveFewBytes()) && exists(shiftArrayStart()));
 static_assert(exists(getByValAtKnownIndex(0)) && exists(getByValAtKnownIndex(StubKey::maxCount)) && exists(StubKey(StubFamily::PutByValAtKnownIndex).withForm(static_cast<uint8_t>(ElementStoreMode::Sloppy)).withCount(StubKey::maxCount)));
-static_assert(exists(getByValExpecting(true, ExpectedElements::Float64Array)) && !exists(StubKey(StubFamily::GetByValExpecting).withForm(numberOfExpectedElements)));
+static_assert(exists(getByValExpecting(true, ExpectedElements::Characters)) && !exists(StubKey(StubFamily::GetByValExpecting).withForm(numberOfExpectedElements + 1)));
 static_assert(exists(StubKey(StubFamily::PutByValAtIndexExpecting).withForm(2 * numberOfExpectedElements - 1)) && !exists(StubKey(StubFamily::PutByValExpecting).withForm(2 * numberOfExpectedElements)));
 static_assert(exists(StubKey(StubFamily::PutByVal).withForm(static_cast<uint8_t>(ElementStoreMode::Sloppy))) && !exists(StubKey(StubFamily::PutByVal).withForm(2)));
 static_assert(exists(StubKey(StubFamily::PutByValAtIndex).withForm(static_cast<uint8_t>(ElementStoreMode::Sloppy))) && !exists(StubKey(StubFamily::PutByValAtIndex).withForm(2)));

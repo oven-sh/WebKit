@@ -93,6 +93,7 @@ public:
     static constexpr uint8_t stateWithImageCode() { return ImageCode; }
     static constexpr uint8_t stateWithBytecode() { return ByteCode; }
     static constexpr ptrdiff_t offsetOfRegExpBytecode() { return OBJECT_OFFSETOF(RegExp, m_regExpBytecode); }
+    static constexpr ptrdiff_t offsetOfImageRecordNumber() { return OBJECT_OFFSETOF(RegExp, m_imageRecordNumber); }
 #endif
     static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
     static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }

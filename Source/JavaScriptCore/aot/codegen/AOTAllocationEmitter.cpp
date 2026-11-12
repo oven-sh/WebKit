@@ -110,7 +110,14 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, cons
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.placed.orderWord)));
     uint32_t shapeWord = shapeWordOf(allocation.placed.shape);
-    m_out.store32(m_out.constInt32(static_cast<int32_t>(allocation.placed.isBornUnfinished ? shapeWord & ~shapeWordIsUnmarked : shapeWord)), m_out.address(m_heaps.entire(AbstractHeap::ShapeWords), cell.value(), offsetOfShapeWord));
+    Word32 shapeWordAtBirth = word32(static_cast<int32_t>(allocation.placed.isBornUnfinished ? shapeWord & ~shapeWordIsUnmarked : shapeWord));
+    if (m_plan.layout(allocation.placed.layout).marksOtherPrototypes && !allocation.placed.isBornUnfinished) {
+        static_assert(hasOneBitSet(static_cast<unsigned>(JSC::IsPristine)) && hasOneBitSet(shapeWordIsUnmarked));
+        constexpr unsigned pristineBitInHeader = 8 * JSCell::typeInfoFlagsOffset() + getLSBSet(static_cast<unsigned>(JSC::IsPristine));
+        Word32 hasOtherPrototype = bitAnd(Word32(m_out.castToInt32(m_out.lShr(header.value(), m_out.constInt32(pristineBitInHeader)))), 1);
+        shapeWordAtBirth = Word32(m_out.sub(shapeWordAtBirth.value(), m_out.shl(hasOtherPrototype.value(), m_out.constInt32(getLSBSet(shapeWordIsUnmarked)))));
+    }
+    m_out.store32(shapeWordAtBirth.value(), m_out.address(m_heaps.entire(AbstractHeap::ShapeWords), cell.value(), offsetOfShapeWord));
     return cell;
 }
 
@@ -299,7 +306,8 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
     bool typeClosesLayouts = type.hasOnlyLayouts() && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow);
     LayoutSetID provenLayouts = typeClosesLayouts ? type.layouts : layoutsListedByPassedShapeTest(generator().code(), value->objectOperand());
     BirthFieldsToCheck fields;
-    LayoutID layout = layoutForInlineBirthCheck(types(), m_program, m_plan, provenLayouts, fields);
+    bool isRare = m_code.at(value.block()).frequency == BlockFrequency::Rare;
+    LayoutID layout = isRare ? LayoutID() : layoutForInlineBirthCheck(types(), m_program, m_plan, provenLayouts, fields);
     m_out.noteForm(layout ? Form::Open : Form::Runtime, layout ? StateOfKnowledge::BirthFieldsInCell : StateOfKnowledge::Always);
     if (!layout) {
         branch(bearsMark, { normalEdge(isUnfinished), normalEdge(done) });
@@ -318,6 +326,8 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
         branch(holds, { normalEdge(next), normalEdge(done) });
         m_out.appendToContinuation(next);
     };
+    if (std::ranges::any_of(membersOf(types(), provenLayouts), [&](LayoutID member) { return m_plan.layout(member).marksOtherPrototypes; }))
+        continueIf(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine));
     SlotEmitter& slots = emitter<SlotEmitter>();
     constexpr unsigned maxInstructionsBeforeCall = 2;
     auto finishBehindLooks = [&](bool everyFieldIsListed, bool mayCall) {
@@ -354,8 +364,12 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
         finishBehindLooks(true, false);
         m_out.appendToArm(listsOtherwise, byOrderWord);
     }
-    continueIf(hasNoBits(orderWord, orderWordHasFieldOutsideSlot));
-    finishBehindLooks(false, orderWordOfFinishedObject && !generator().isInLoop(value.block()));
+    bool mayMarkFrozenObjects = std::ranges::any_of(membersOf(types(), provenLayouts), [&](LayoutID member) { return m_plan.layout(member).marksFrozenObjects; });
+    continueIf(hasNoBits(orderWord, mayMarkFrozenObjects ? orderWordHasFieldOutsideSlot | orderWordIsFrozen : orderWordHasFieldOutsideSlot));
+    bool mayLackFields = std::ranges::any_of(m_program.at(layout).fields, [](const Field& field) {
+        return field.flags.contains(FieldFlags::MayBeDefinedAbove);
+    });
+    finishBehindLooks(false, orderWordOfFinishedObject && !generator().isInLoop(value.block()) && !mayLackFields);
     m_out.appendToJoin(done, fork);
 }
 
@@ -687,7 +701,7 @@ bool AllocationEmitter::looksAtPrototypeBeforeAllocating(const ValueContext& val
 {
     if (!value->prototypeOperand() || !value->fields().empty() || value->storage() != AllocationStorage::Heap || !m_plan.layout(value->layout()).hasSlots())
         return false;
-    return newObjectMayHaveOtherLayout(m_program, value.value()) || (!generator().isInLoop(value.block()) && !m_plan.layout(value->layout()).cellsAreHandedBack);
+    return newObjectMayHaveOtherLayout(m_program, value.value()) || ((!generator().isInLoop(value.block()) || m_plan.layout(value->layout()).marksOtherPrototypes) && !m_plan.layout(value->layout()).cellsAreHandedBack);
 }
 
 CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, const MentionedAllocation& allocation, ValueID prototype)

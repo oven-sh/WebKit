@@ -329,6 +329,24 @@ ValueID Walker::parameterOfHeaderAllocation(BlockID head, ValueID name) const
     return name;
 }
 
+bool Walker::readsUnknownElements(const MergedHeaderObject& merged) const
+{
+    if (!merged.object.length || !merged.allocated)
+        return false;
+    for (uint32_t index = merged.allocated.index() + 1; index < m_code.numberOfValues(); ++index) {
+        ValueID value(index);
+        if (m_code.isConstant(value) || m_code.at(value).opcode != Opcode::GetArrayElement || m_code.at(value).blockIndex == Operation::noBlock)
+            continue;
+        ValueID array = m_code.at(value).operand(OperandIndex::GetArrayElement::array);
+        ValueID position = m_code.at(value).operand(OperandIndex::GetArrayElement::position);
+        if (m_code.isConstant(array) || underlyingCellOf(m_code, array) != merged.allocated || m_code.isConstant(m_code.valueBehindNames<conversionsOfForm>(position)))
+            continue;
+        if (m_code.at(m_code.blockOf(value)).frequency == BlockFrequency::Normal)
+            return true;
+    }
+    return false;
+}
+
 void Walker::checkMergedHeaderObjects(BlockID head, std::span<const Reference> arguments)
 {
     auto found = m_mergedHeaderObjects.find(head.index());
@@ -346,10 +364,12 @@ void Walker::checkMergedHeaderObjects(BlockID head, std::span<const Reference> a
                 isMerged &= cellOf(value) != cell;
             });
         }
-        if (isMerged)
+        if (isMerged && (cell != merged.allocated || !readsUnknownElements(merged)))
             continue;
         TrialVisit* visit = findTryOfBlockAheadOfEdges(head);
         if (!visit) {
+            if (isMerged)
+                continue;
             fail("an object that something else may name comes round to a merged header object"_s);
             return;
         }

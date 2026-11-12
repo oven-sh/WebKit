@@ -249,6 +249,9 @@ static uint64_t sizeInBytesOfRequestKey(const Typed::Program& program, std::span
     case RequestKind::ImportChecks:
         RELEASE_ASSERT(!(words.size() % 2));
         return sizeof(ImportChecksRequest) + sizeof(ImportChecksRequest::Check) * (words.size() / 2);
+    case RequestKind::Prefetch:
+        RELEASE_ASSERT(!(words.size() % 2));
+        return sizeof(PrefetchRequest) + sizeof(PrefetchRequest::Step) * (words.size() / 2);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

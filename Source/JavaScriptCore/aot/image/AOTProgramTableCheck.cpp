@@ -443,6 +443,24 @@ static void checkModuleTables(const JoinedTables& check)
     check.expect(everyModuleIsFound, "TableNotSorted"_s, { }, "modulesByHashOfPath"_s);
 }
 
+static void checkReturnedCaptures(const JoinedTables& check)
+{
+    std::span<const ReturnedCaptureData> rows = check.tables.returnedCaptures();
+    if (rows.empty())
+        return;
+    if (!check.expect(rows.size() > ReturnedCaptureData::numberOfRowsBehind && !rows.back().closureNumberPlusOne(), "TableOutOfBounds"_s, { }, "returnedCaptures"_s))
+        return;
+    uint32_t capacity = static_cast<uint32_t>(rows.size() - ReturnedCaptureData::numberOfRowsBehind);
+    bool isProbed = true;
+    for (size_t place = 0; place < rows.size(); ++place) {
+        if (!rows[place].closureNumberPlusOne())
+            continue;
+        size_t first = ReturnedCaptureData::placeOf(rows[place].closureNumberPlusOne(), capacity);
+        isProbed = isProbed && first <= place && std::ranges::all_of(rows.subspan(first, place - first), [](const ReturnedCaptureData& row) { return !!row.closureNumberPlusOne(); });
+    }
+    check.expect(isProbed, "TableNotSorted"_s, { }, "returnedCaptures"_s);
+}
+
 static void checkOrderOfProgramTables(const JoinedTables& check)
 {
     const ProgramTables& tables = check.tables;
@@ -451,12 +469,14 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
         check.expect(ascendsStrictlyInTable(entries, keyOf), "TableNotSorted"_s, { }, table);
     };
     checkAscending(tables.constructors(), &ConstructorData::function, "constructors"_s);
+    checkAscending(tables.keyedLookups(), [](const ReturnedCaptureData& row) { return row.closureNumberPlusOne(); }, "keyedLookups"_s);
     checkAscending(tables.constructEntrypoints(), &ConstructEntrypointData::function, "constructEntrypoints"_s);
     checkAscending(tables.implementedBuiltins(), &ImplementedBuiltinData::function, "implementedBuiltins"_s);
     checkAscending(tables.functionsWithLargeCounts(), [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; }, "functionsWithLargeCounts"_s);
     checkAscending(tables.unsharedFunctionRecords(), &UnsharedFunctionRecordData::function, "unsharedFunctionRecords"_s);
     checkAscending(tables.closurePropertyNames(), std::identity { }, "closurePropertyNames"_s);
     checkAscending(tables.fieldGetters(), &FieldGetterData::function, "fieldGetters"_s);
+    checkReturnedCaptures(check);
     auto checkSorted = [&](auto entries, const auto& keyOf, ASCIILiteral table) {
         check.expect(std::ranges::is_sorted(entries, { }, keyOf), "TableNotSorted"_s, { }, table);
     };

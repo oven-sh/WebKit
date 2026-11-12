@@ -20,7 +20,7 @@
 # RUN(SEENNOT): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # SEENNOT-NOT: OwnerIsYoung
 # the second allocation may collect: the first cell is old, the second is young
-# function two(v) { const o = { x: v }; const p = { x: v }; o.y = v; p.y = v; kept = o; kept = p; }
+# function two(v) { const o = { x: v }; const p = { x: v }; o.y = v; p.y = v; kept = o; keptToo = p; }
 # RUN(TWO): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # TWO-LABEL: code f4:Body
 # TWO: = PutSlotOrAdd {{*}}key="y"
@@ -37,6 +37,7 @@
 
 layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
 variable g0 name="kept" module=m0 declared={type=anything}
+variable g1 name="keptToo" module=m0 declared={type=anything}
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -90,7 +91,7 @@ function f4 name="two" module=m0 length=1 thisType={type=anything} parameters=[{
     PropSet v2, v0 key="y" mode=Strict
     PropSet v4, v0 key="y" mode=Strict
     PutModuleVariable v2 variable=g0
-    PutModuleVariable v4 variable=g0
+    PutModuleVariable v4 variable=g1
     Return v0
 }
 function f5 name="held" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {

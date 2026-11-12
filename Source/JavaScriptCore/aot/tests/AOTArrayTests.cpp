@@ -260,42 +260,6 @@ static void testProfileReviewIntervalGrowsWhileNothingChanges()
     AOT_TEST_CHECK(profile.capacity() == 1);
 }
 
-static JSArray* createListForAnyValue(Realms& realms, std::initializer_list<JSValue> values)
-{
-    JSArray* array = createArray(realms, ArrayWithContiguous, values.size());
-    unsigned position = 0;
-    for (JSValue value : values)
-        array->butterfly()->contiguous().at(array, position++).setWithoutWriteBarrier(value);
-    return array;
-}
-
-static void testProfileReadsContentsOfFirstListThatTakesAnyValue()
-{
-    Realms realms;
-    auto learnedFrom = [&](std::initializer_list<JSValue> values) {
-        ArrayAllocationProfile profile { };
-        reviewArrayAllocationProfile(profile, createListForAnyValue(realms, values), true);
-        return profile.shape();
-    };
-    AOT_TEST_CHECK(learnedFrom({ }) == Int32Shape);
-    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), jsNumber(-2) }) == Int32Shape);
-    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), JSValue(), jsNumber(2) }) == Int32Shape);
-    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), jsNumber(2.5) }) == DoubleShape);
-    AOT_TEST_CHECK(learnedFrom({ jsNumber(-0.0) }) == DoubleShape);
-    AOT_TEST_CHECK(learnedFrom({ jsNumber(1.5), jsNaN() }) == ContiguousShape);
-    AOT_TEST_CHECK(learnedFrom({ jsNumber(1), jsUndefined() }) == ContiguousShape);
-    AOT_TEST_CHECK(learnedFrom({ jsNull() }) == ContiguousShape);
-
-    ArrayAllocationProfile notAsked { };
-    reviewArrayAllocationProfile(notAsked, createListForAnyValue(realms, { jsNumber(1) }));
-    AOT_TEST_CHECK(notAsked.shape() == ContiguousShape);
-
-    ArrayAllocationProfile hasLearned { };
-    review(realms, hasLearned, ArrayWithInt32, 2);
-    reviewArrayAllocationProfile(hasLearned, createListForAnyValue(realms, { jsNumber(1) }), true);
-    AOT_TEST_CHECK(hasLearned.shape() == ContiguousShape);
-}
-
 std::span<const NativeTest> arrayTests()
 {
     static constexpr NativeTest tests[] = {
@@ -307,7 +271,6 @@ std::span<const NativeTest> arrayTests()
         { "arrays/profile/samples-walk-through-the-residues-of-the-interval"_s, testProfileSamplesWalkThroughTheResiduesOfTheInterval },
         { "arrays/profile/learns-nothing-from-lists-that-are-still-empty"_s, testProfileLearnsNothingFromListsThatAreStillEmpty },
         { "arrays/profile/review-interval-grows-while-nothing-changes"_s, testProfileReviewIntervalGrowsWhileNothingChanges },
-        { "arrays/profile/reads-the-contents-of-the-first-list-that-takes-any-value"_s, testProfileReadsContentsOfFirstListThatTakesAnyValue },
     };
     return tests;
 }

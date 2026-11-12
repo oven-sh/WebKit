@@ -18,6 +18,7 @@
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
 #include "AOTOpcodeSets.h"
+#include "AOTFieldGetters.h"
 #include "AOTPromotedEnvironments.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
@@ -213,7 +214,7 @@ static unsigned numberOfParametersInConventionOf(const CallingConventions& conve
     case CodeRole::ModuleStart:
     case CodeRole::SlowBody:
     case CodeRole::ParameterGuard:
-        return conventions.of(unit.function).numberOfEntryParameters;
+        return conventions.of(unit.function).numberOfEntryParameters + conventions.numberOfScalarsTaken(unit);
     case CodeRole::CoroutineBody:
         return conventions.of(unit.function).numberOfEntryParameters + 1;
     case CodeRole::GenericCallEntry:
@@ -402,7 +403,9 @@ ArgumentLocations CallingConventions::locationsOf(const Program& program, CodeUn
         size_t numberOfEntryParameters = numberOfCapturesBehind ? of(unit.function).numberOfEntryParameters : 0;
         if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty()) {
             const FunctionConvention& ofFunction = of(unit.function);
-            return locationsOfDirectConvention(ofFunction.numberOfEntryParameters, [&](size_t index) {
+            return locationsOfDirectConvention(ofFunction.numberOfEntryParameters + numberOfScalarsTaken(unit), [&](size_t index) {
+                if (index >= ofFunction.numberOfEntryParameters)
+                    return formOfScalar(unit, static_cast<unsigned>(index));
                 return formOfEntryParameterAsListed(program, ofFunction, unit.role, static_cast<unsigned>(index));
             }, numberOfResults(unit), formOfResult, numberOfCapturesBehind, numberOfEntryParameters);
         }
@@ -427,7 +430,7 @@ uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& progra
         return stackWordsTakenInConventionOf(*this, program, callee);
 
     const FunctionConvention& convention = of(callee.function);
-    if (std::max<unsigned>(convention.numberOfEntryParameters + 1, convention.numberOfResults) <= numberOfValuesThatNeverNeedStackWords)
+    if (std::max<unsigned>(convention.numberOfEntryParameters + 1 + numberOfScalarsTaken({ callee.function, CodeRole::Body }), convention.numberOfResults) <= numberOfValuesThatNeverNeedStackWords)
         return 0;
 
     uint32_t words = stackWordsTakenInConventionOf(*this, program, callee);
@@ -498,6 +501,51 @@ void CallingConventions::setParameterGuards(std::span<const ParameterGuardPlan> 
     }
 }
 
+void CallingConventions::setScalarizedResults(ScalarizedResults&& results)
+{
+    m_functionsWithScalarizedResult = BitVector(numberOfFunctions());
+    for (const ScalarizedResult& result : results) {
+        FunctionConvention& convention = m_parts.conventions[result.function.index()];
+        RELEASE_ASSERT(convention.numberOfResults == 1 && result.forms.size() > 1 && result.forms.size() == result.fields.size());
+        convention.numberOfResults = safeCast<uint16_t>(result.forms.size());
+        convention.firstResult = safeCast<uint32_t>(m_parts.formsOfResults.size());
+        m_parts.formsOfResults.append(result.forms.span());
+        m_functionsWithScalarizedResult.quickSet(result.function.index());
+    }
+    m_scalarizedResults = WTF::move(results);
+}
+
+void CallingConventions::setScalarizedParameters(const Program& program, ScalarizedParameters&& parameters)
+{
+    m_functionsWithScalarizedParameters = BitVector(numberOfFunctions());
+    if (parameters.isEmpty())
+        return;
+    if (m_parts.formsOfEntryParameters.isEmpty()) {
+        for (uint32_t index = 0; index < numberOfFunctions(); ++index) {
+            FunctionConvention& convention = m_parts.conventions[index];
+            convention.firstEntryParameter = safeCast<uint32_t>(m_parts.formsOfEntryParameters.size());
+            for (unsigned entryParameter = 0; entryParameter < convention.numberOfEntryParameters; ++entryParameter)
+                m_parts.formsOfEntryParameters.append(boxedFormOfEntryParameter(program, program.functions[index], entryParameter));
+        }
+    }
+    for (const ScalarizedParameter& parameter : parameters) {
+        const FunctionConvention& convention = m_parts.conventions[parameter.function.index()];
+        RELEASE_ASSERT(parameter.entryParameter < convention.numberOfEntryParameters && parameter.firstScalar >= convention.numberOfEntryParameters);
+        m_parts.formsOfEntryParameters[convention.firstEntryParameter + parameter.entryParameter] = Representation::Void;
+        m_functionsWithScalarizedParameters.quickSet(parameter.function.index());
+    }
+    m_scalarizedParameters = WTF::move(parameters);
+}
+
+Representation CallingConventions::formOfScalar(CodeUnit unit, unsigned parameterIndex) const
+{
+    for (const ScalarizedParameter& parameter : scalarizedParametersOf(unit.function)) {
+        if (parameterIndex >= parameter.firstScalar && parameterIndex - parameter.firstScalar < parameter.forms.size())
+            return parameter.forms[parameterIndex - parameter.firstScalar];
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program& program, const CallingConventions& conventions, FunctionID id)
 {
     const Function& function = program.at(id);
@@ -510,7 +558,7 @@ std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program& progra
         return std::nullopt;
     if (target.role == CodeRole::ModuleStart)
         return std::nullopt;
-    if (conventions.numberOfResults(target) != 1 || !haveSameRegisterRepresentation(conventions.resultRepresentation(target), conventions.resultRepresentation(entry)))
+    if (conventions.takesScalars(target) || conventions.numberOfResults(target) != 1 || !haveSameRegisterRepresentation(conventions.resultRepresentation(target), conventions.resultRepresentation(entry)))
         return std::nullopt;
     if (conventions.stackWordsReservedByCallersOf(program, target))
         return std::nullopt;
@@ -610,7 +658,7 @@ static bool constructEntryAllocatesThisOf(const Program& program, const Function
     if (function.kind != FunctionKind::Plain || function.isCoroutine() || !function.has(FunctionFlags::HasThis) || function.results.size() != 1 || !function.constructedClass)
         return false;
     LayoutID declared = declaredLayoutOf(program, function.constructedClass);
-    return declared && program.at(declared).has(LayoutFlags::IsConstructorFunction) && layoutsMadeAsCompiledObjects.get(function.constructedClass.index());
+    return declared && program.at(declared).has(LayoutFlags::IsConstructorFunction) && !isConstructorFunctionBelowValue(program.at(declared)) && layoutsMadeAsCompiledObjects.get(function.constructedClass.index());
 }
 
 static ConstructionThroughConvention constructionThroughConventionOf(const Program& program, const Function& function, const BitVector& layoutsMadeAsCompiledObjects)
@@ -968,6 +1016,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
             FunctionConvention& convention = parts.conventions[index];
             chooseRolesOfConvention(program, facts, id, layoutsMadeAsCompiledObjects, convention);
             convention.borrowedArguments = argumentsThatEntryOnlyCalls(program, facts, id, convention);
+            convention.returnsCapture = convention.has(CodeRole::Body) && convention.has(CodeRole::GenericCallEntry) && !facts.everyCallerIsKnown(id) && !!findReturnedCapture(program, function);
 
             std::span<Representation> formsOfResults = parts.formsOfResults.mutableSpan().subspan(convention.firstResult, convention.numberOfResults);
             for (size_t result = 0; result < formsOfResults.size(); ++result)

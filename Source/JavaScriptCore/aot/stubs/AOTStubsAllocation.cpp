@@ -18,6 +18,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsField.h"
 #include "AOTStubsObjectCreation.h"
@@ -219,6 +220,45 @@ StubSignature signatureOfAllocateCell(StubKey key)
     return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) }).withResultIn(key.operandRegister()).fillingOperandInFront(0);
 }
 
+#if CPU(X86_64)
+static void generateAllocateCellOfKnownAllocator(StubAssembler& jit, const AllocationSiteRegisters& registers, unsigned steps)
+{
+    const auto [cell, allocation, record, allocator, scratch] = registers;
+    const GPRReg distance = cell;
+    const unsigned cellSize = steps * cellSizeStep;
+    RELEASE_ASSERT(steps < ObjectWords::numberOfCellAllocators && noOverlap(cell, allocation, record, allocator, scratch, instanceGPR));
+    const BaseIndex allocatorOfRecord(record, distance, CCallHelpers::TimesOne, distanceToEmptyRecord + static_cast<int32_t>(AllocationSiteRecord::offsetOfAllocator()));
+    auto loadHeaderAndWords = [&] {
+        loadChunk(jit, record, distanceToEmptyRecord + static_cast<int32_t>(AllocationSiteRecord::offsetOfHeader()), distance);
+    };
+    JumpList slowPath;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.cellAllocators) + steps * sizeof(void*)), allocator);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.distancesToAllocationSites)), record);
+    jit.load32SignedExtendTo64(BaseIndex(record, allocation, CCallHelpers::TimesFour), distance);
+    Jump hasOtherAllocator = jit.branch64(CCallHelpers::NotEqual, allocatorOfRecord, allocator);
+    loadHeaderAndWords();
+    Label allocate = jit.label();
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize);
+    storeChunk(jit, cell, 0);
+    jit.returnToCaller();
+
+    hasOtherAllocator.link(&jit);
+    jit.loadPtr(allocatorOfRecord, allocator);
+    loadHeaderAndWords();
+    jit.jump().linkTo(allocate, &jit);
+
+    Label initializeGrownCell = jit.label();
+    copyHeaderAndWords(jit, inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), cell, allocator, scratch);
+    jit.returnToCaller();
+
+    emitLateRefill(jit, refill, slowPath);
+    slowPath.link(&jit);
+    loadAllocationSiteRecordForOffsets(jit, allocation, record, allocator);
+    allocateGrownCell(jit, registers, distanceLeftToOffsets, cellSize, initializeGrownCell);
+    jit.callOperationAndReturn(Entry::operationAOTAllocateSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation });
+}
+#endif
+
 void generateAllocateCell(StubAssembler& jit)
 {
     const AllocationSiteRegisters registers = allocateSiteRegisters(jit);
@@ -227,9 +267,15 @@ void generateAllocateCell(StubAssembler& jit)
     static_assert(cellSizeStep == MarkedSpace::sizeStep && maxCellSizeInKey == MarkedSpace::preciseCutoff);
     const unsigned steps = jit.key().count();
     const std::optional<unsigned> cellSize = steps ? std::optional<unsigned>(steps * cellSizeStep) : std::nullopt;
+    const auto initialization = static_cast<CellInitialization>(jit.key().form());
+#if CPU(X86_64)
+    if (steps && initialization == CellInitialization::HeaderAndWords) {
+        generateAllocateCellOfKnownAllocator(jit, registers, steps);
+        return;
+    }
+#endif
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
     Label initialize = jit.label();
-    const auto initialization = static_cast<CellInitialization>(jit.key().form());
     if (zeroesBody(initialization))
         zeroBehindFirstChunk(jit, registers, cellSize);
     if (!storesWords(initialization)) {
@@ -868,6 +914,107 @@ void generateNewTypedArray(StubAssembler& jit)
     if (isWholeNumber)
         jit.convertInt32ToDouble(length, lengthAsDouble);
     jit.callOperationAndReturn(Entry::operationAOTNewTypedArray, { });
+}
+
+StubSignature signatureOfNewTypedArrayOfArray(StubKey)
+{
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+}
+
+void generateNewTypedArrayOfArray(StubAssembler& jit)
+{
+    const GPRReg result = jit.result();
+    const GPRReg source = jit.operand(0);
+    const GPRReg type = jit.operand(1);
+    const GPRReg length = jit.allocateScratch(StubRegister::A3);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T9);
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg record = jit.allocateScratch(StubRegister::T12);
+    const FPRReg number = jit.allocateScratch(FPRInfo::argumentFPR0);
+    const GPRReg size = result;
+    const GPRReg elements = allocator;
+    const GPRReg element = scratch;
+    const GPRReg truncated = record;
+    constexpr unsigned recordSizeShift = getLSBSet(sizeof(TypedArrayAllocation));
+    constexpr unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
+    constexpr unsigned elementSize = sizeof(uint32_t);
+    constexpr unsigned maxLength = 1024 / elementSize;
+    static_assert(noOverlap(GPRInfo::returnValueGPR, gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::T9), gprOf(StubRegister::T10), gprOf(StubRegister::T11), gprOf(StubRegister::T12)));
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
+    static_assert(hasOneBitSet(MarkedSpace::sizeStep) && maxLength <= JSArrayBufferView::fastSizeLimit && maxLength * elementSize <= MarkedSpace::largeCutoff);
+    auto inRecord = [&](ptrdiff_t offset) { return Address(record, AOT_INSTANCE_OFFSET(allocation.typedArrayAllocations) + offset); };
+
+    JumpList slowCases;
+    slowCases.append(jit.branchIfNotCell(source));
+    slowCases.append(jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
+    slowCases.append(branchIfNotPristine(jit, source));
+    if (!jit.options().hasOneInstance) {
+        loadStructure(jit, source, scratch);
+        slowCases.append(branchIfNotOfThisRealm(jit, scratch));
+    }
+    slowCases.append(branchIfHavingABadTime(jit));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), allocator);
+    slowCases.append(branchIfWatchpointSetIsNotWatched(jit, Address(allocator, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet()), scratch));
+    slowCases.append(branchIfWatchpointSetIsNotWatched(jit, Address(allocator, OBJECT_OFFSETOF(JSGlobalObject, m_arrayPrototypeChainIsSaneWatchpointSet)), scratch));
+    jit.load8(Address(source, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+    Jump holdsInt32s = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(Int32Shape));
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ContiguousShape)));
+    holdsInt32s.link(&jit);
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), scratch);
+    jit.load32(Address(scratch, Butterfly::offsetOfPublicLength()), length);
+    jit.sub32(length, TrustedImm32(1), scratch);
+    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(maxLength)));
+    jit.zeroExtend32ToWord(type, record);
+    jit.lshift64(TrustedImm32(recordSizeShift), record);
+    jit.addPtr(instanceGPR, record);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, allocator))));
+    jit.lshift32(length, TrustedImm32(getLSBSet(elementSize)), size);
+    jit.add32(TrustedImm32(MarkedSpace::sizeStep - 1), size);
+    jit.urshift32(TrustedImm32(stepShift), size);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.primitiveAuxiliarySpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, size, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, storage, allocator, scratch, slowCases);
+    jit.loadPtr(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, allocator)), allocator);
+    allocateCell(jit, result, allocator, scratch, slowCases);
+    jit.load64(inRecord(OBJECT_OFFSETOF(TypedArrayAllocation, header)), scratch);
+    jit.store64(scratch, Address(result));
+    jit.store64(TrustedImm32(0), Address(result, JSObject::butterflyOffset()));
+    jit.storePtr(storage, Address(result, JSArrayBufferView::offsetOfVector()));
+    jit.store64(length, Address(result, JSArrayBufferView::offsetOfLength()));
+    jit.store64(TrustedImm32(0), Address(result, JSArrayBufferView::offsetOfByteOffset()));
+    jit.store8(TrustedImm32(FastTypedArray), Address(result, JSArrayBufferView::offsetOfMode()));
+
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), elements);
+    Label copy = jit.label();
+    jit.sub32(TrustedImm32(1), length);
+    jit.load64(BaseIndex(elements, length, CCallHelpers::TimesEight), element);
+    Jump isNotInt32 = jit.branchIfNotInt32(element);
+    Label hasWord = jit.label();
+    jit.store32(element, BaseIndex(storage, length, CCallHelpers::TimesFour));
+    jit.branchTest32(CCallHelpers::NonZero, length).linkTo(copy, &jit);
+    fenceAfterAllocation(jit);
+    jit.returnToCaller();
+
+    isNotInt32.link(&jit);
+    Jump isNotNumber = jit.branchIfNotNumber(element);
+    unboxDouble(jit, element, truncated, number);
+    jit.truncateDoubleToInt64(number, element);
+    jit.move(element, truncated);
+    slowCases.append(jit.branchAdd64(CCallHelpers::Overflow, element, truncated));
+    jit.jump().linkTo(hasWord, &jit);
+
+    isNotNumber.link(&jit);
+    Jump isHole = jit.branchTest64(CCallHelpers::Zero, element);
+    slowCases.append(jit.branch64(CCallHelpers::NotEqual, element, TrustedImm32(JSValue::ValueUndefined)));
+    jit.move(TrustedImm32(0), element);
+    isHole.link(&jit);
+    jit.jump().linkTo(hasWord, &jit);
+
+    slowCases.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTTypedArrayOfPlainArray, { });
 }
 
 StubSignature signatureOfNewDictionary(StubKey)

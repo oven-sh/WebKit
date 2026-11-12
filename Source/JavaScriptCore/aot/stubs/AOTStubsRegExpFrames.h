@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTRegExpRecord.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTVMState.h"
@@ -18,6 +19,8 @@
 #include "YarrFlags.h"
 #include "YarrJIT.h"
 #include "YarrMatchingContextHolder.h"
+#include <array>
+#include <bit>
 #include <memory>
 #include <optional>
 #include <span>
@@ -42,6 +45,37 @@ inline constexpr int32_t globalFlag = static_cast<int32_t>(Yarr::Flags::Global);
 inline constexpr int32_t stickyFlag = static_cast<int32_t>(Yarr::Flags::Sticky);
 inline constexpr int32_t hasIndicesFlag = static_cast<int32_t>(Yarr::Flags::HasIndices);
 inline constexpr int32_t unicodeFlags = static_cast<int32_t>(Yarr::Flags::Unicode) | static_cast<int32_t>(Yarr::Flags::UnicodeSets);
+
+inline constexpr ptrdiff_t offsetOfRegExpRecordBitFields = OBJECT_OFFSETOF(ImageRegExp, rawFlags) + sizeof(ImageRegExp::rawFlags);
+static_assert(offsetOfRegExpRecordBitFields + 1 == OBJECT_OFFSETOF(ImageRegExp, rawSpecificPattern));
+
+inline uint8_t regExpRecordBitFields(const ImageRegExp& record)
+{
+    return std::bit_cast<std::array<uint8_t, sizeof(ImageRegExp)>>(record)[offsetOfRegExpRecordBitFields];
+}
+
+[[nodiscard]] inline Jump branchIfHasNoFirstCharacters(StubAssembler& jit, GPRReg record)
+{
+    ImageRegExp recordWithBit { };
+    recordWithBit.hasFirstCharacters = 1;
+    return jit.branchTest8(CCallHelpers::Zero, Address(record, offsetOfRegExpRecordBitFields), TrustedImm32(regExpRecordBitFields(recordWithBit)));
+}
+
+inline void branchUnlessMatchCanBegin(StubAssembler& jit, GPRReg record, GPRReg characters, GPRReg distance, GPRReg span, MacroAssembler::JumpList& cannotMatch)
+{
+    RELEASE_ASSERT(noOverlap(record, characters, distance, span));
+    auto loadDistanceAndSpan = [&](ptrdiff_t offset) {
+        jit.load8(Address(characters), distance);
+        jit.load8(Address(record, OBJECT_OFFSETOF(ImageRegExp, details) + offset), span);
+        jit.sub32(span, distance);
+        jit.load8(Address(record, OBJECT_OFFSETOF(ImageRegExp, details) + offset + 1), span);
+    };
+    loadDistanceAndSpan(0);
+    Jump canBegin = jit.branch32(CCallHelpers::BelowOrEqual, distance, span);
+    loadDistanceAndSpan(2);
+    cannotMatch.append(jit.branch32(CCallHelpers::Above, distance, span));
+    canBegin.link(&jit);
+}
 
 inline Address savedOperandOfMatch(size_t index)
 {

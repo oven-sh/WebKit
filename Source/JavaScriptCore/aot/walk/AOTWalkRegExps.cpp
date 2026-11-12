@@ -160,6 +160,11 @@ static std::optional<HeldRegExp> findRegExpInBody(const Walker& walker, Function
         const HeldRegExp* held = walker.plan().heldRegExps().find(FieldReference { read.layout(), read.field() });
         return held ? std::optional<HeldRegExp>(*held) : std::nullopt;
     }
+    if (index.opcodeOf(operand) == Opcode::PropGet) {
+        auto read = index.value(operand).as<Opcode::PropGet>();
+        const HeldRegExp* expected = read.isFreeName() ? nullptr : walker.plan().heldRegExps().findExpected(read.key());
+        return expected ? std::optional<HeldRegExp>(*expected) : std::nullopt;
+    }
     if (index.opcodeOf(operand) != Opcode::GetModuleVariable)
         return std::nullopt;
     const VariableID variable = index.value(operand).as<Opcode::GetModuleVariable>().variable();
@@ -185,8 +190,10 @@ std::optional<HeldRegExp> findRegExpPassed(const Walker& walker, ValueID operand
         return std::nullopt;
     const BodyIndex& index = walker.currentBodyIndex();
     const ValueID written = index.stripCasts(operand);
-    if (index.isParameter(written) || index.opcodeOf(written) != Opcode::NewRegExp)
-        return findHeldRegExp(walker, operand);
+    if (index.isParameter(written) || index.opcodeOf(written) != Opcode::NewRegExp) {
+        std::optional<HeldRegExp> held = findHeldRegExp(walker, operand);
+        return held && !held->isExpected ? held : std::nullopt;
+    }
     auto made = index.value(written).as<Opcode::NewRegExp>();
     return HeldRegExp { made.pattern(), made.regExpFlags() };
 }

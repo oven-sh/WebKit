@@ -2,22 +2,26 @@
 # What is written behind `extends` is the guess, as for `super(a)`: super-call-enters-what-is-written-above-the-class.ir. Without it the call was the closed construction, its list written out or not.
 # class Above { constructor(a) { note(a); } }  class Meter extends Above { }  sink(Above, Meter)  function many(n) { let x; while (n()) x = new Meter(7); return x; }
 # In a copy the state knows what the list holds: the constructor above is copied behind the test and takes the element.
+# Nothing has been done in front of super(), so the failing side is the construction as written, over a list that is made there.
 # OPTIONS: check=Validate
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
-# CHECK: [[seven]]: 7 {{*}} = Integer integer=7
+# CHECK: [[element]]: 7 @Int32 = Integer integer=7
+# CHECK: [[seven]]: 7 @JSValue = Integer integer=7
 # CHECK: [[parent]]: {{*}} = GetSuperBase
 # CHECK-NEXT: [[test]]: {{*}} = TypeTest [[parent]] testedType=f1
 # CHECK-NEXT: Branch [[test]] -> taken {{*}}, notTaken [[closed]]()
+# CHECK: [[closed]]() frequency=Rare isInLoop=true:
+# CHECK-NEXT: [[list]]: {{*}} = NewArray [[element]]
+# CHECK-NEXT: [[boxed]]: {{*}} = Box [[list]]
+# CHECK-NEXT: = CallDirect {{*}}, {{*}}, [[boxed]] function=f2 [isNeverInlined, isConstruction]
 # CHECK: : L1 {{*}} = NewObject layout=L1
 # CHECK: = Call {{*}}, -, [[seven]]
-# CHECK: [[closed]]() frequency=Rare isInLoop=true:
-# CHECK-NEXT: = SuperConstruct [[parent]]
 # RUN(ONE): walk f3 mechanisms=all
-# ONE-COUNT-1: = SuperConstruct
 # ONE-NOT: = SuperConstruct
 # RUN(LIST): walk f3 mechanisms=all
-# LIST-NOT: NewArray
+# LIST-COUNT-1: = NewArray
+# LIST-NOT: = NewArray
 # LIST-NOT: SuperConstructList
 # RUN(WITHHELD): walk f3 mechanisms=-Guesses
 # WITHHELD-NOT: TypeTest {{*}}testedType=f1

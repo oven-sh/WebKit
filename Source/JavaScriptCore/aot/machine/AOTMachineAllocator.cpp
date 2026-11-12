@@ -862,7 +862,7 @@ struct PlacesTakenByAllocatedLeaves {
     const Operation* operationNotSearchedForFusedLoads;
 };
 
-static ALWAYS_INLINE bool takeMemoryOperandForAllocatedLeaf(const Allocator& allocator, const Operation* user, unsigned childIndex, PlacesTakenByAllocatedLeaves& taken)
+static ALWAYS_INLINE bool takeMemoryOperandForAllocatedLeaf(const Allocator& allocator, const Operation* user, unsigned childIndex, PlacesTakenByAllocatedLeaves& taken, bool takesSpilledFirstOperand = false)
 {
     if (taken.hasMemoryOperand)
         return false;
@@ -870,7 +870,7 @@ static ALWAYS_INLINE bool takeMemoryOperandForAllocatedLeaf(const Allocator& all
     if ((traitsOfAllocatedOpcodes.of[user->opcode()] & (AllocatedOpcodeIsMemoryAccess | AllocatedOpcodeIsFusedIntoAddresses)) && isLeafOfAddress(liveness, user, childIndex))
         return false;
     ASSERT(!isLeafOfAddress(liveness, user, childIndex));
-    if (!acceptsMemoryOperand(*user, childIndex))
+    if (!acceptsMemoryOperand(*user, childIndex) && !takesSpilledFirstOperand)
         return false;
     if (!taken.userHasNoFusedChild) {
         const ValueFacts* facts = allocator.m_valueFacts;
@@ -907,6 +907,13 @@ static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& all
             allocator.noteFrameUse();
             if ((allocator.m_valueFacts[leaf->index()].lastUse <= allocator.m_position || !allocator.hasFreeRegister(bank, candidates)) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
                 return allocator.memoryLocationOf(leaf);
+            if (!childIndex && bank == Bank::FP && acceptsSpilledFirstOperand(*user)) {
+                RegisterMask unbound = allocator.registersThatMayBeTaken(bank, candidates) & ~allocator.m_bound;
+                if (!(unbound & (unbound - 1)) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken, true)) {
+                    allocator.countSpilledFirstOperand();
+                    return allocator.memoryLocationOf(leaf);
+                }
+            }
         } else if (readsConstantInMemory(*user, childIndex, *leaf) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
             return Location::immediate();
         reg = allocator.bringIntoRegister(leaf, candidates, hintIfAmong(allocator.hintOf(leaf), candidates));
@@ -1198,6 +1205,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
     RegisterMask bound;
     RegisterMask avoided;
     RegisterMask preferred = 0;
+    const bool setsTruth = isX86_64() && isComparison(operation->opcode());
     if (!(traits & (AllocatedOpcodeOverwritesFirstChild | AllocatedOpcodeChangesWidthOfInteger))) {
         bound = m_bound;
         avoided = operandRegisters & bound;
@@ -1213,7 +1221,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
                 }
             }
         }
-        if (!preferred && firstSource.isRegister())
+        if (!preferred && firstSource.isRegister() && !setsTruth)
             preferred = maskOf(firstSource.reg()) & ~bound;
     } else {
         const bool firstSourceIsRegister = firstSource.isRegister();
@@ -1256,6 +1264,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
         RegisterMask addingNothingToFrame = freeRegisters & (~m_file.calleeSaved | m_allocation.usedCalleeSaves());
         if (RegisterMask savedByNoCallee = addingNothingToFrame & ~m_file.calleeSaved)
             addingNothingToFrame = savedByNoCallee;
+        if (RegisterMask others = addingNothingToFrame & ~operandRegisters; setsTruth && others)
+            addingNothingToFrame = others;
         chosen = addingNothingToFrame & (~addingNothingToFrame + 1);
     }
     if (!chosen || (facts.flags & flagsOfAllocatedValueThatAsksForMoreThanRegister)) {

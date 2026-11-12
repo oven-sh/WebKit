@@ -59,6 +59,8 @@ ALWAYS_INLINE Latin1Character* appendUpToFourJSONDigits(Latin1Character* cursor,
     return appendFourJSONDigits(cursor, value);
 }
 
+Latin1Character* appendLongJSONInteger(Latin1Character* cursor, int64_t);
+
 ALWAYS_INLINE Latin1Character* appendJSONInteger(Latin1Character* cursor, int64_t integer)
 {
     if (static_cast<uint64_t>(integer) < 10000) [[likely]]
@@ -67,8 +69,7 @@ ALWAYS_INLINE Latin1Character* appendJSONInteger(Latin1Character* cursor, int64_
         uint32_t value = static_cast<uint32_t>(integer);
         return appendFourJSONDigits(appendUpToFourJSONDigits(cursor, value / 10000), value % 10000);
     }
-    char* to = std::bit_cast<char*>(cursor);
-    return std::bit_cast<Latin1Character*>(std::to_chars(to, to + maxJSONIntegerLength, integer).ptr);
+    return appendLongJSONInteger(cursor, integer);
 }
 
 ALWAYS_INLINE Latin1Character* appendJSONLiteral(Latin1Character* cursor, ASCIILiteral text)

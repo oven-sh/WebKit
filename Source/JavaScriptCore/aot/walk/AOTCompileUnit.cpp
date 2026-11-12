@@ -464,31 +464,54 @@ public:
     }
 
 private:
-    TypeID leftByThisUnitAt(FunctionID callee, uint32_t place, bool isPositional) const
+    struct LeftAtCallee {
+        bool isAnything { false };
+        Vector<TypeID> atPlaces;
+    };
+
+    static bool isPositionalPlace(const Function& function, uint32_t place)
     {
-        TypeID left;
+        return place >= function.firstParameterIndex() && place < function.firstParameterIndex() + function.numberOfPositionalParameters();
+    }
+
+    void listWhatThisUnitLeaves()
+    {
         for (const Walker::ArrivalHeld& held : m_held) {
-            if (held.callee != callee)
+            if (held.kind == Walker::ArrivalHeld::Kind::MayBeEnteredByValue)
                 continue;
-            TypeID here;
-            switch (held.kind) {
-            case Walker::ArrivalHeld::Kind::Anything:
-                return TypeTable::anything;
-            case Walker::ArrivalHeld::Kind::MayBeEnteredByValue:
-                break;
-            case Walker::ArrivalHeld::Kind::Proven:
-                if (held.entryParameter == place)
-                    here = held.proven;
-                break;
-            case Walker::ArrivalHeld::Kind::UndefinedFrom:
-                if (held.entryParameter <= place)
-                    here = isPositional ? TypeID(TypeTable::undefined) : TypeID(TypeTable::anything);
-                break;
+            LeftAtCallee& left = m_left.add(held.callee.index(), LeftAtCallee()).iterator->value;
+            left.isAnything |= held.kind == Walker::ArrivalHeld::Kind::Anything;
+            if (left.isAnything)
+                continue;
+            const Function& function = m_inputs.program.at(held.callee);
+            if (left.atPlaces.isEmpty())
+                left.atPlaces.fill(TypeID(), function.numberOfEntryParameters());
+            auto add = [&](uint32_t place, TypeID here) {
+                TypeID& known = left.atPlaces[place];
+                if (here && known != here)
+                    known = known ? m_types.unionOf(known, here) : here;
+            };
+            if (held.kind == Walker::ArrivalHeld::Kind::Proven) {
+                if (held.entryParameter < left.atPlaces.size())
+                    add(held.entryParameter, held.proven);
+                continue;
             }
-            if (here)
-                left = left ? m_types.unionOf(left, here) : here;
+            for (uint32_t place = held.entryParameter; place < left.atPlaces.size(); ++place)
+                add(place, isPositionalPlace(function, place) ? TypeID(TypeTable::undefined) : TypeID(TypeTable::anything));
         }
-        return left;
+        m_hasListedWhatIsLeft = true;
+    }
+
+    TypeID leftByThisUnitAt(FunctionID callee, uint32_t place)
+    {
+        if (!m_hasListedWhatIsLeft)
+            listWhatThisUnitLeaves();
+        auto found = m_left.find(callee.index());
+        if (found == m_left.end())
+            return { };
+        if (found->value.isAnything)
+            return TypeTable::anything;
+        return place < found->value.atPlaces.size() ? found->value.atPlaces[place] : TypeID();
     }
 
     TypeID typeAfterPrecedingChecks(ValueID value, ValueID call) const
@@ -593,10 +616,10 @@ private:
         uint32_t firstPositional = function.firstParameterIndex();
         uint32_t endOfPositional = firstPositional + function.numberOfPositionalParameters();
         for (uint32_t place = 0; place < function.numberOfEntryParameters(); ++place) {
-            if (m_inputs.plan.promotedEnvironments().isRemoved(callee, place))
+            if (m_inputs.plan.promotedEnvironments().isRemoved(callee, place) || (call.role() == CodeRole::Body && m_inputs.plan.conventions().isScalarizedParameter(callee, place)))
                 continue;
             bool isPositional = place >= firstPositional && place < endOfPositional;
-            TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place, isPositional);
+            TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place);
             if (left == TypeTable::anything || (isUnitOfCallee && !left))
                 continue;
             ValueID operand = place < passedOperands.size() ? passedOperands[place] : ValueID();
@@ -656,6 +679,8 @@ private:
     std::span<const Walker::ArrivalHeld> m_held;
     const PositionTypes* m_whatFunctionsHandBack;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersBeingAsked;
+    HashMap<uint32_t, LeftAtCallee, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_left;
+    bool m_hasListedWhatIsLeft { false };
 };
 
 } // anonymous namespace
@@ -993,6 +1018,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         counters.count(StatisticID::SecondCountersWithdrawn);
     counters.count(StatisticID::BranchesFoldedToJumps, swept.branchesThatDecideNothing);
     counters.count(StatisticID::DeadValueProofChecksRemoved, swept.doorsDroppedWithTheirValues);
+    counters.count(StatisticID::OverwrittenSlotStoresDropped, swept.overwrittenSlotStoresDropped);
     if (swept.allocationsSunk)
         counters.count(StatisticID::AllocationsSunk, swept.allocationsSunk);
     counters.count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());

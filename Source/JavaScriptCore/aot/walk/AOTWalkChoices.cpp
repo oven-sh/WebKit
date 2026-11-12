@@ -662,6 +662,14 @@ static bool elementsMayBeInt32(const Walker& walker, const Draft& list)
     });
 }
 
+static bool elementsAreNumbersOrUndefined(const Walker& walker, const Draft& list)
+{
+    return std::ranges::all_of(list.variadicOperands(), [&](Reference element) {
+        TypeID type = walker.typeOf(element);
+        return type && (walker.types().at(type).primitives & Primitive::Number) && walker.types().at(type).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
+    });
+}
+
 TypeID Walker::literalElementTypeInLoops(ValueID literal)
 {
     const BodyIndex& index = currentBodyIndex();
@@ -743,8 +751,12 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
     for (Reference element : list.variadicOperands()) {
         TypeID proven = walker.typeOf(element);
         if (!proven || !walker.types().at(proven).isNumber()) {
-            if (numbersAreWritten && elementsMayBeInt32(walker, list))
+            bool mayBeNumbers = numbersAreWritten || (isOnlyHandedOn && elementsAreNumbersOrUndefined(walker, list));
+            if (mayBeNumbers && elementsMayBeInt32(walker, list)) {
                 list.setLiteralStorage(ArrayLiteralStorage::ByElements);
+                if (!numbersAreWritten)
+                    walker.count(StatisticID::LiteralsOfOptionalNumbers);
+            }
             return;
         }
         areInt32 &= walker.types().at(proven).isInt32();

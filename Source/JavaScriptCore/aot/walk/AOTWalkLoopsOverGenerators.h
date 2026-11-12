@@ -28,6 +28,7 @@ std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex&, ValueID o
 ValueID findSoleLoopHeaderStep(const BodyIndex&, ValueID open);
 void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker&, Origin, bool asksGeneratorForIterator = true);
 void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker&, Origin);
+bool mustReadGeneratorNext(const Walker&);
 bool buildLoopOverGenerator(Walker&, const BodyValue&);
 bool engineAnswersForGenerators(Walker&);
 bool engineOpensAsyncGenerators(const Walker&);

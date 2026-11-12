@@ -1,0 +1,31 @@
+# the unit has left 7 alone: the call that hands over 255 is refused
+# RUN: verify-code mechanisms=all f2:0:7
+# CHECK: {{*}}hands 255 to entry parameter 0 of f2, which goes by what its callers leave, by what was left there the callee believes 7
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: 7 @JSValue = Integer integer=7
+#     v2: 255 @JSValue = Integer integer=255
+#     v3: undefined @JSValue = CallDirect v1 function=f2 role=Body traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: undefined @JSValue = CallDirect v2 function=f2 role=Body traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v4
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+function f1 name="outer" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+function f2 name="inner" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+entry module=m0

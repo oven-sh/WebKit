@@ -232,7 +232,7 @@ export default b.declarations(
         reads: ownProperties,
         writes: memberGuards,
         privateAlias: true,
-        implementation: b.hostCall,
+        implementation: b.inline("ObjectDefineProperty", { otherwise: b.hostCall }),
       },
       entries: {
         args: { object: b.object.loose.refusing(b.null) },

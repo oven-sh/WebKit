@@ -175,6 +175,8 @@ InlineForm PrimitiveFormChooser::mathForm() const
     case InlineBuiltin::CallNumberConstructor:
         return numberConstructorForm();
     case InlineBuiltin::ParseInt:
+        if (numberOfArguments() == 1 && isNumber(argument(0)))
+            return InlineForm::Whole;
         return twoWayIf(isString(argument(0)) && (!argument(1) || isInt32(argument(1))));
     case InlineBuiltin::NumberToString:
         return numberToStringForm();

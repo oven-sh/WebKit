@@ -26,6 +26,8 @@ enum class PureOperation : uint16_t {
     ResolveCallTarget,
     ReadFieldInExtension,
     ReadFieldInExtensionInLine,
+    LengthOfFixedView,
+    VectorOfFixedView,
     ModuleNamespace,
     ModuleBuiltinCell,
     SingletonClosure,

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTCallingConventions.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
@@ -178,6 +179,16 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     if (value.returnCall() && generator().bodyEnteredAfterNewPromise(m_code.at(value.block())) == value.id()) {
         enterBodyAfterNewPromise(value, callee, locations);
         return;
+    }
+    bool returnsOneValue = locations.results.size() == 1 && locations.results[0].representation == Representation::JSValue;
+    if (returnsOneValue && !value->isConstruction() && calledFunction.role == FunctionRole::Library && (!value.returnCall() || emitter<AccessEmitter>().returnsOneBoxedValue())) {
+        if (std::optional<Boxed> result = emitter<AccessEmitter>().tryStubOfDirectCall(value, callee.function)) {
+            if (!value.returnCall()) {
+                define(value, *result);
+                return;
+            }
+            emitter<AccessEmitter>().returnUnlessEmpty(*result);
+        }
     }
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
     if (value.returnCall()) {

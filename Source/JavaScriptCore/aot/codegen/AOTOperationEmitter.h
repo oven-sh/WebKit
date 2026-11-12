@@ -29,6 +29,8 @@ namespace Typed {
 class InlineCall;
 struct TypeTestPlan;
 
+using EmitterOfStubCall = void (*)(CCallHelpers&, StubCalls&, StubKey, OptionalIndex site);
+
 struct CallOptions {
     std::optional<uint32_t> immediate { };
     std::optional<NumberedImmediate> numberedImmediate { };
@@ -51,6 +53,7 @@ struct CallOptions {
     bool callerDelegates { false };
     bool rejectsOnThrow { false };
     bool returnsWord32 { false };
+    EmitterOfStubCall emitterOfStubCall { nullptr };
 };
 
 struct StubCallResult {

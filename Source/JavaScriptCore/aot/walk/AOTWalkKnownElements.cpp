@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
 #include "AOTSumOverRecords.h"
@@ -39,9 +40,13 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
     }
     if (!position || !has(Mechanism::TypedOperations) || m_state.answers().isEmpty())
         return std::nullopt;
-    if (std::optional<PassedTest> found = showElementPresentBehindTest(list, position, findPassedTest(recordNotedInKnownElements(findKnown(*this, KnownNote::PositionFoundInsideList, list, position)))))
+    auto isView = [&] {
+        TypeID type = typeOf(list);
+        return typedArrayTypeOf({ program(), m_types }, type) != NotTypedArray || kindsOfViewsOfNumbersIn(program(), m_types, type);
+    };
+    if (std::optional<PassedTest> found = showElementPresentBehindTest(list, position, findPassedTest(recordNotedInKnownElements(findKnown(*this, KnownNote::PositionFoundInsideList, list, position)))); found && !isView())
         return found;
-    if (std::optional<PassedTest> behind = findElementFoundAfter(list, position))
+    if (std::optional<PassedTest> behind = findElementFoundAfter(list, position); behind && !isView())
         return behind;
     Reference length = recordNotedInKnownElements(findKnown(*this, KnownNote::LengthOfList, list));
     std::optional<PassedTest> fromZeroUp = length ? findNonNegativeProof(position) : std::nullopt;
@@ -445,10 +450,59 @@ static Reference buildSearchAmong(Walker& walker, std::span<const Reference> ele
     return met;
 }
 
+Reference buildSearchAmongWords(Walker& walker, const DataNode::Array& list, Reference sought, AnswerOfSearch answer, Origin origin)
+{
+    Vector<StringID, 16> words;
+    Vector<uint32_t, 16> places;
+    for (size_t place = 0; place < list.elements.size(); ++place) {
+        const auto* word = list.elements[place].tryAs<DataNode::String>();
+        if (!word)
+            return { };
+        if (words.contains(word->value))
+            continue;
+        words.append(word->value);
+        places.append(place);
+    }
+    if (words.isEmpty() || walker.isUnreachable())
+        return { };
+
+    auto answerAt = [&](std::optional<uint32_t> place) -> Reference {
+        if (answer == AnswerOfSearch::Membership)
+            return walker.constant(PrimitiveKnownToFolding::boolean(place.has_value()));
+        return integerForStrings(walker, place ? static_cast<int64_t>(*place) : -1);
+    };
+    Vector<BlockID, 16> foundAt;
+    for (size_t place = 0; place < words.size(); ++place)
+        foundAt.append(walker.addBlock());
+    BlockID missing = walker.addBlock();
+    origin.isTailCall = false;
+    walker.switchOnString(sought, words.span(), foundAt.span(), missing, origin);
+    Vector<Walker::JoinArm, 16> arms;
+    auto addArm = [&](BlockID block, std::optional<uint32_t> place) {
+        walker.continueIn(block);
+        if (!walker.isUnreachable() && !walker.hasFailed())
+            arms.append({ walker.currentBlock(), { answerAt(place) } });
+    };
+    for (size_t place = 0; place < words.size(); ++place)
+        addArm(foundAt[place], places[place]);
+    addArm(missing, std::nullopt);
+    if (walker.hasFailed() || arms.isEmpty())
+        return { };
+    Reference met;
+    if (!walker.joinArms(arms.span(), walker.addBlock(), std::span<Reference>(&met, 1)))
+        return { };
+    walker.count(StatisticID::SearchesOfWordsSwitched);
+    return met;
+}
+
 Reference buildSearchInWrittenList(Walker& walker, DataID data, Reference sought, AnswerOfSearch answer, Origin origin)
 {
     const auto* list = walker.program().at(data).root.tryAs<DataNode::Array>();
-    if (!list || !sought || walker.isUnreachable() || list->elements.size() > mostElementsComparedInLoop)
+    if (!list || !sought || walker.isUnreachable())
+        return { };
+    if (isShortStringList(*list))
+        return buildSearchAmongWords(walker, *list, sought, answer, origin);
+    if (list->elements.size() > mostElementsComparedInLoop)
         return { };
     Vector<Reference, mostElementsComparedInLoop> elements;
     for (const DataNode& node : list->elements) {

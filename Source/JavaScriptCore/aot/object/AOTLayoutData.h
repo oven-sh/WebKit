@@ -104,7 +104,10 @@ struct alignas(64) FieldExit {
     static constexpr unsigned sizeShift = 6;
 
     const FieldData* field;
-    uint64_t absentBits;
+    union {
+        uint64_t absentBits;
+        GetterSetter* accessorOfDefinition;
+    };
     StructureID structureBefore;
     StructureID structureAfter;
     StructureID extraPropertiesBefore;
@@ -153,6 +156,7 @@ struct AddedExtraProperty {
     uint32_t orderWordBefore;
     PropertyOffset offset;
     unsigned attributes;
+    GetterSetter* lastAccessor;
 };
 static_assert(std::is_trivially_copyable_v<AddedExtraProperty>);
 
@@ -248,6 +252,15 @@ struct PropertiesOfHeirsData {
 };
 static_assert(sizeof(PropertiesOfHeirsData) == 8 && isImageRecord<PropertiesOfHeirsData>);
 
+inline constexpr unsigned maxLogOfAccesses = 31;
+
+constexpr bool prefersLayoutAbove(unsigned logOfAccessesAbove, size_t fieldsAbove, unsigned logOfAccessesBelow, size_t fieldsBelow)
+{
+    if (!fieldsAbove || logOfAccessesAbove + 1 < logOfAccessesBelow)
+        return false;
+    return logOfAccessesAbove > logOfAccessesBelow + 1 || fieldsAbove > fieldsBelow;
+}
+
 struct ClassData {
     uint32_t base;
     uint32_t expectedBase;
@@ -270,7 +283,7 @@ struct ClassData {
     uint32_t privateNamesAreKnownToTexts : 1;
     uint32_t numberOfFieldsThroughLastAllocated : 16;
     uint32_t hasComputedMemberNames : 1;
-    uint32_t unusedClassBits : 9 - 2 * numberOfClassSides { 0 };
+    uint32_t logOfAccesses : 9 - 2 * numberOfClassSides;
 
     bool bitsAreClearWhileGuardsHold(ClassSide side) const { return side == ClassSide::Prototype ? guardsOfPrototypeSideHoldWhileClear : guardsHoldWhileClear; }
     bool hasGuardsHereOrBelow(ClassSide side) const { return sidesWithGuardsHereOrBelow >> static_cast<unsigned>(side) & 1; }
@@ -290,11 +303,13 @@ static_assert(offsetof(ExtensionLayoutData, granulesOfFirstExtensionHigh) == off
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
 
-    static constexpr unsigned impossibleMutationBits = 13;
+    static constexpr unsigned impossibleMutationBits = 11;
 
     uint32_t kindBits : 4;
     uint32_t isDerived : 1;
     uint32_t impossibleMutationsRaw : impossibleMutationBits;
+    uint32_t marksFrozenObjects : 1;
+    uint32_t marksOtherPrototypes : 1;
     uint32_t isSaidNeverToReachUnseenCode : 1;
     uint32_t evaluationBits : 2;
     uint32_t hasFieldsWithSymbolKeys : 1;
@@ -358,6 +373,8 @@ struct LayoutData {
     uint32_t extensionSize() const { return hasExtensionData ? extensionData().extensionSize : 0; }
     uint64_t granulesOfFirstExtension() const { return hasExtensionData ? static_cast<uint64_t>(extensionData().granulesOfFirstExtensionHigh) << 32 | extensionData().granulesOfFirstExtensionLow : 0; }
     uint32_t base() const { return isClass() ? classData().base : noBase; }
+    unsigned logOfAccesses() const { return isClass() ? classData().logOfAccesses : 0; }
+    bool isPreferredToLayoutBelow(const LayoutData& below) const { return prefersLayoutAbove(logOfAccesses(), numberOfFields, below.logOfAccesses(), below.numberOfFields); }
     uint32_t assumedBase() const
     {
         if (!isClass())

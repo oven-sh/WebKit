@@ -23,6 +23,7 @@ public:
     void generateToLength(const ValueContext&);
     void generateThrowNewError(const ValueContext&);
     void generateResumeGenerator(const ValueContext&);
+    void generateStepMatchIterator(const ValueContext&);
     void generateStepGenerator(const ValueContext&);
     void generateIsGeneratorSuspendedAtStart(const ValueContext&);
     void generateIsUnmodifiedGenerator(const ValueContext&);

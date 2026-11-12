@@ -109,6 +109,11 @@ static bool markAnswersForSomeFieldInBirths(const Plan& plan, LayoutID layout)
     return false;
 }
 
+static bool waitsForInitializerInBirths(const Plan& plan, LayoutID layout)
+{
+    return plan.isInUse(layout) && plan.layout(layout).isFilledByInitializer;
+}
+
 bool lookMayFinishBirthOf(Walker& walker, Reference object)
 {
     if (object && walker.state().cellFacts(object).contains(CellFact::BearsNoMark))
@@ -120,8 +125,34 @@ bool lookMayFinishBirthOf(Walker& walker, Reference object)
     if (type.primitives || !type.hasOnlyLayouts() || type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return true;
     return std::ranges::any_of(membersOf(walker.types(), type.layouts), [&](LayoutID member) {
-        return markAnswersForSomeFieldInBirths(walker.plan(), member);
+        return markAnswersForSomeFieldInBirths(walker.plan(), member) && !waitsForInitializerInBirths(walker.plan(), member);
     });
+}
+
+void finishBirthAtReturnOfInitializer(Walker& walker, Origin origin)
+{
+    if (walker.isUnreachable() || !walker.has(Mechanism::TypedOperations) || !walker.facts().linked().initializerMethods.get(walker.currentFunction().index()))
+        return;
+    std::optional<unsigned> thisParameter = walker.program().at(walker.currentFunction()).thisParameterIndex();
+    if (!thisParameter)
+        return;
+    Reference object = walker.referenceOf(walker.currentBodyIndex().block(entryBlock).parameter(*thisParameter));
+    while (Reference checked = object ? walker.state().checkedNameOf(object) : Reference())
+        object = checked;
+    TypeID proven = object && object.isValue() ? walker.typeOf(object) : TypeID();
+    if (!proven || walker.state().cellFacts(object).contains(CellFact::BearsNoMark))
+        return;
+    Type type = walker.types().at(proven);
+    if (type.primitives || !type.layouts || !type.hasOnlyLayouts() || type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
+        return;
+    if (std::ranges::none_of(membersOf(walker.types(), type.layouts), [&](LayoutID member) { return waitsForInitializerInBirths(walker.plan(), member); }))
+        return;
+    origin.isTailCall = false;
+    Draft finish(Opcode::TryFinishBirth, origin);
+    finish.setObjectOperand(object);
+    walker.chooseConservativeFields(finish);
+    walker.build(WTF::move(finish));
+    walker.count(StatisticID::InitializersFinishingBirths);
 }
 
 static void showWhatIsHeldFilledOfLayoutInBirths(Walker& walker, Reference object, LayoutID layout, Origin origin)
@@ -189,9 +220,25 @@ void showWhatIsHeldFilledAtReturnOfClassConstructor(Walker& walker, Reference re
         showWhatIsHeldFilledOfLayoutInBirths(walker, returned, function.constructedClass, origin);
 }
 
+bool Walker::isInlinedAtSuperCall() const
+{
+    ValueID call = m_frames.size() >= 2 ? m_frames.last().callCopied : ValueID();
+    if (!call)
+        return false;
+    const BodyIndex& caller = *m_frames[m_frames.size() - 2].index;
+    static constexpr OpcodeSet superCalls { Opcode::SuperConstruct, Opcode::SuperConstructList };
+    return call.index() < caller.numberOfValues() && !caller.isParameter(call) && superCalls.contains(caller.opcodeOf(call));
+}
+
+static bool isConstructedInLoops(const Walker& walker)
+{
+    const LinkTables& linked = walker.facts().linked();
+    return walker.isDoneInIterations() || linked.constructorsCalledInLoops.get(walker.currentFunction().index()) || linked.functionsReachedByRecursion.get(walker.currentFunction().index());
+}
+
 void finishBirthAtReturnOfClassConstructor(Walker& walker, Reference returned, Origin origin)
 {
-    if (!returned || !returned.isValue() || walker.isUnreachable() || !walker.has(Mechanism::TypedOperations))
+    if (!returned || !returned.isValue() || walker.isUnreachable() || !walker.has(Mechanism::TypedOperations) || walker.isInlinedAtSuperCall())
         return;
     const Plan& plan = walker.plan();
     TypeArena& types = walker.types();
@@ -224,7 +271,10 @@ void finishBirthAtReturnOfClassConstructor(Walker& walker, Reference returned, O
     Reference test = buildTestInFrontOfLoop(walker, isOfOwnClass, origin);
     if (!test)
         return;
-    BlockID finishes = walker.addBlock();
+    bool isHot = isConstructedInLoops(walker);
+    if (isHot)
+        walker.count(StatisticID::BirthsFinishedInline);
+    BlockID finishes = walker.addBlock(isHot ? BlockFrequency::Normal : BlockFrequency::Rare);
     BlockID leavesToClassBelow = walker.addBlock();
     BlockID behind = walker.addBlock();
     walker.branch(test, finishes, leavesToClassBelow);
@@ -680,7 +730,7 @@ bool isPrototypeAtConstructionProven(const Walker& walker, FunctionID constructo
     const Program& program = walker.program();
     LayoutID classLayout = declaredLayoutOf(program, program.at(constructor).constructedClass);
     const auto& layouts = walker.facts().linked().layouts;
-    if (program.at(classLayout).constructor != constructor || classLayout.index() >= layouts.size() || !layouts[classLayout.index()].prototypeObjectIsSettledAheadOfEveryObject)
+    if (program.at(classLayout).constructor != constructor || classLayout.index() >= layouts.size() || !(layouts[classLayout.index()].prototypeObjectIsSettledAheadOfEveryObject || layouts[classLayout.index()].prototypeLiteralIsSettled))
         return false;
     AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
     return isConstructorPrototypeGuarded(context, classLayout);
@@ -713,7 +763,8 @@ std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction
     const Program& program = walker.program();
     LayoutID classLayout = declaredLayoutOf(program, program.at(constructor).constructedClass);
     AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.isInRepeatedCode() || program.at(classLayout).constructor != constructor || !isConstructorPrototypeGuarded(context, classLayout))
+    bool replacesLook = newCellIsLookedAt && guardsAreAskedAtBirth;
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !(walker.isInRepeatedCode() || replacesLook) || program.at(classLayout).constructor != constructor || !isConstructorPrototypeGuarded(context, classLayout))
         return std::nullopt;
 
     GuardOfPrototypeAtConstruction guard { { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) } };

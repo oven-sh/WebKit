@@ -96,6 +96,7 @@ public:
     void initializeClosure(FakeClosure& closure, StructureOf structure, uint64_t word)
     {
         closure.setHeader(idOf(structure), CompiledClosureType);
+        closure.at<uint64_t>(JSCallee::offsetOfScopeChain()) = structure == StructureOf::ClosureOfOtherRealm ? m_otherRealm.address() : m_realm.address();
         closure.at<uint64_t>(offsetOfClosureEntry) = word;
     }
 

@@ -72,6 +72,37 @@ function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
 entry module=m0
 )IR"_s;
 
+static constexpr ASCIILiteral functionExpressionWithoutMethods = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Construct v0
+    v4 = PropGet v3 key="px"
+    v5 = Call v2, -, v4
+    v6 = Construct v0
+    v7 = InstanceOf v6, v0
+    v8 = Call v2, -, v7
+    v9 = PropGet v1 key="Object" [isFreeName]
+    v10 = PropGet v9 key="getPrototypeOf"
+    v11 = Construct v0
+    v12 = Call v10, v9, v11
+    v13 = PropGet v0 key="prototype"
+    v14 = StrictEq v12, v13
+    v15 = Call v2, -, v14
+    v16 = Undefined
+    Return v16
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="px"
+    v3 = Undefined
+    Return v3
+}
+entry module=m0
+)IR"_s;
+
 static constexpr ASCIILiteral bodiesWithoutThis = R"IR(layout L0 kind=Instance name="Declared" constructor=f1 flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -2718,7 +2749,7 @@ function f2 name="one" module=m0 flags=[HasExplicitName] length=1 thisType={type
 }
 )IR"_s;
 
-static void checkWordOfWholeSideAndTwoNamesFailsUntilGuardsBegin(LoadedProgram& program)
+static void checkGuardsOfTwoNamesAreCounted(LoadedProgram& program)
 {
     VM& vm = program.vm();
     State& state = program.state();
@@ -2737,14 +2768,14 @@ static void checkWordOfWholeSideAndTwoNamesFailsUntilGuardsBegin(LoadedProgram& 
     };
     std::optional<uint32_t> count;
     for (const ClassGuardCountData& row : state.tables.classGuardCounts()) {
-        if (numberOfGuardsOfPointIn(row.offsetOfCount, true) == 2 && numberOfGuardsOfPointIn(row.offsetOfCount, false) == 1)
+        if (numberOfGuardsOfPointIn(row.offsetOfCount, true) == 2 && !numberOfGuardsOfPointIn(row.offsetOfCount, false))
             count = row.offsetOfCount;
     }
     AOT_TEST_CHECK(count);
 
     counted.checkEveryCountIsExact();
-    AOT_TEST_CHECK(counted.valueOf(*count) == 1);
     counted.beginGuardsOf(vm, *point);
+    counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(!counted.valueOf(*count));
 }
 
@@ -2775,7 +2806,7 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/name-set-at-run-time"_s, testNameSetAtRunTime },
         { "constructor-functions/commonjs-module"_s, testCommonJSModule },
         { "constructor-functions/site-predicts-the-first-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, factoryWithoutCaptures, checkSitePredictsTheFirstPrototype> },
-        { "constructor-functions/site-of-a-function-evaluated-once-keeps-its-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype> },
+        { "constructor-functions/site-of-a-function-evaluated-once-keeps-its-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpressionWithoutMethods, checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype> },
         { "constructor-functions/holder-of-a-class-that-no-code-asks-about-is-not-looked-at"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkHolderOfClassThatNoCodeAsksAboutIsNotLookedAt> },
         { "constructor-functions/compiled-prototype-object-is-assigned-a-name-found-above-it"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsNameFoundAboveIt<WayToGetName::Assign>> },
         { "constructor-functions/one-word-counts-guards-of-several-classes"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkOneWordCountsGuardsOfSeveralClasses> },
@@ -2783,7 +2814,7 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/guards-of-a-class-above-begin-with-those-of-the-class-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkGuardsOfClassWrittenAboveBeginWithThoseOfClassBelow> },
         { "constructor-functions/every-report-drops-a-checked-holder"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowConstructorFunctionAskedInOneTest, checkEveryReportDropsCheckedHolder> },
         { "constructor-functions/names-of-a-constructor-function-above-are-counted-from-the-first-object-of-the-class-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowConstructorFunctionAskedInOneTest, checkNamesOfConstructorFunctionAboveAreCountedFromFirstObjectOfClassBelow> },
-        { "constructor-functions/word-of-the-whole-side-and-two-names-fails-until-the-guards-begin"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, birthBehindLookAtTwoNames, checkWordOfWholeSideAndTwoNamesFailsUntilGuardsBegin> },
+        { "constructor-functions/guards-of-two-names-are-counted-in-one-row"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, birthBehindLookAtTwoNames, checkGuardsOfTwoNamesAreCounted> },
         { "constructor-functions/compiled-prototype-object-gets-the-name-of-a-field-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow> },
     };
     return tests;

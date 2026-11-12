@@ -396,6 +396,17 @@ public:
     void note(std::span<const uint32_t> wordsOfKey, AnswersOfWalk::PlaceOfKey, const KnownAnswer&, const LocationMasks& restsOn, bool mayBeNumbered, bool holderIsFresh);
     void end(std::span<const uint32_t> wordsOfKey);
 
+    void forEachNoteAbout(Reference holder, uint8_t kind, NOESCAPE const Invocable<void(uint64_t noted)> auto& functor) const
+    {
+        if (!m_held)
+            return;
+        m_held->untilEnded.forEach([&](uint32_t number) {
+            const KnownAnswer& answer = m_table->at(number);
+            if (answer.family == KnownAnswer::Family::Note && answer.note == kind && answer.holder == holder)
+                functor(answer.noted);
+        });
+    }
+
     void noteOutcome(Reference condition, bool isTrue)
     {
         if (!m_table)

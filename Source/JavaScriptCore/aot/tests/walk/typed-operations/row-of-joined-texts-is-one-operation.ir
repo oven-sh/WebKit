@@ -10,16 +10,18 @@
 # RIGHT-LABEL: code f2:Body
 # RIGHT-NOT: = Add
 # RIGHT: string @Cell = Strcat [[text]], [[name]], [[id]], [[comma]]
-# function seen(a, b, f) { if (typeof a === "string" && typeof b === "string") return a + b + f() + b; }   A text that is too long is refused in front of the call: the first join stays where it is written.
+# function seen(a, b, f) { if (typeof a === "string" && typeof b === "string") return a + b + f() + b; }   A text that is too long is refused in front of the call: the first join stays where it is written. What the call gives is converted behind it, and joined with the two texts around it.
 # RUN(CALL): walk f3:Body mechanisms=none+TypedOperations
 # CALL-LABEL: code f3:Body
 # CALL: string @Cell = Add {{*}}form=Strings
 # CALL: = Call
-# CALL-NOT: = Strcat
-# function anything(a, x) { if (typeof a === "string") return a + x + a; }   `x` may run code where the first join stands.
+# CALL: = Add {{*}}form=MayBeString
+# CALL: = Strcat
+# function anything(a, x) { if (typeof a === "string") return a + x + a; }   `x` may run code where the first join stands: it is converted there.
 # RUN(CODE): walk f4:Body mechanisms=none+TypedOperations
 # CODE-LABEL: code f4:Body
-# CODE-NOT: = Strcat
+# CODE: = Add {{*}}form=MayBeString
+# CODE: = Strcat
 # function twice(a, b) { if (typeof a === "string" && typeof b === "string") { const both = a + b; return [both + a, both]; } }   The text has a second reader, so it is made.
 # RUN(TWICE): walk f5:Body mechanisms=none+TypedOperations
 # TWICE-LABEL: code f5:Body

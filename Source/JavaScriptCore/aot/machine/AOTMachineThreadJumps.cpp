@@ -27,6 +27,132 @@ namespace JSC { namespace AOT { namespace Machine {
 
 namespace {
 
+class NumbersCarriedByLoops {
+    WTF_MAKE_NONCOPYABLE(NumbersCarriedByLoops);
+public:
+    enum class Kind : bool { Doubles, Integers };
+
+    NumbersCarriedByLoops(Procedure& procedure, Kind kind)
+        : m_proc(procedure)
+        , m_arena(procedure.arena())
+        , m_kind(kind)
+    {
+    }
+
+    bool contains(const Operation* number)
+    {
+        if (m_firstIncoming.isEmpty())
+            listIncomingNumbers();
+        if (!m_order[number->index()])
+            visitFrom(number);
+        return m_isCarried[number->index()];
+    }
+
+private:
+    static constexpr uint32_t none = UINT32_MAX;
+
+    struct Incoming {
+        const Operation* number;
+        uint32_t next;
+    };
+    struct Visit {
+        const Operation* number;
+        uint32_t place;
+    };
+
+    bool isOfKind(const Operation* number) const { return m_kind == Kind::Doubles ? number->type() == Double : number->type().isInt(); }
+    void listIncomingNumbers();
+    void begin(const Operation* number);
+    const Operation* nextOperand(Visit&) const;
+    void visitFrom(const Operation* number);
+
+    Procedure& m_proc;
+    Arena& m_arena;
+    Kind m_kind;
+    ArenaVector<uint32_t> m_firstIncoming;
+    ArenaVector<Incoming> m_incoming;
+    ArenaVector<uint32_t> m_order;
+    ArenaVector<uint32_t> m_least;
+    ArenaVector<uint8_t> m_isOpen;
+    ArenaVector<uint8_t> m_isCarried;
+    ArenaVector<const Operation*> m_open;
+    ArenaVector<Visit> m_visits;
+    uint32_t m_numberVisited { 0 };
+};
+
+void NumbersCarriedByLoops::listIncomingNumbers()
+{
+    const uint32_t numberOfOperations = m_proc.numberOfOperations();
+    m_firstIncoming.fill(m_arena, numberOfOperations, none);
+    m_order.fill(m_arena, numberOfOperations, 0);
+    m_least.fill(m_arena, numberOfOperations, 0);
+    m_isOpen.fill(m_arena, numberOfOperations, 0);
+    m_isCarried.fill(m_arena, numberOfOperations, 0);
+    for (const Block* block : m_proc.blocks()) {
+        for (const Operation* upsilon : block->upsilons()) {
+            const Operation* phi = upsilon->phi();
+            if (!phi || !isOfKind(phi))
+                continue;
+            m_incoming.append(m_arena, Incoming { upsilon->valueHandedOn(), m_firstIncoming[phi->index()] });
+            m_firstIncoming[phi->index()] = m_incoming.size() - 1;
+        }
+    }
+}
+
+void NumbersCarriedByLoops::begin(const Operation* number)
+{
+    m_order[number->index()] = m_least[number->index()] = ++m_numberVisited;
+    m_isOpen[number->index()] = true;
+    m_open.append(m_arena, number);
+    m_visits.append(m_arena, Visit { number, number->opcode() == Phi ? m_firstIncoming[number->index()] : 0 });
+}
+
+const Operation* NumbersCarriedByLoops::nextOperand(Visit& visit) const
+{
+    if (visit.number->opcode() == Phi) {
+        if (visit.place == none)
+            return nullptr;
+        const Incoming& incoming = m_incoming[visit.place];
+        visit.place = incoming.next;
+        return incoming.number;
+    }
+    if (isLoad(visit.number->opcode()) || PatchOperation::accepts(visit.number->opcode()) || visit.place == visit.number->numChildren())
+        return nullptr;
+    return visit.number->child(visit.place++);
+}
+
+void NumbersCarriedByLoops::visitFrom(const Operation* first)
+{
+    begin(first);
+    while (!m_visits.isEmpty()) {
+        const Operation* number = m_visits.last().number;
+        if (const Operation* operand = nextOperand(m_visits.last())) {
+            if (!isOfKind(operand) || operand->hasNoPosition())
+                continue;
+            if (!m_order[operand->index()])
+                begin(operand);
+            else if (m_isOpen[operand->index()])
+                m_least[number->index()] = std::min(m_least[number->index()], m_order[operand->index()]);
+            continue;
+        }
+        m_visits.takeLast();
+        if (!m_visits.isEmpty()) {
+            uint32_t& least = m_least[m_visits.last().number->index()];
+            least = std::min(least, m_least[number->index()]);
+        }
+        if (m_least[number->index()] != m_order[number->index()])
+            continue;
+        bool isAlone = m_open.last() == number;
+        while (true) {
+            const Operation* member = m_open.takeLast();
+            m_isOpen[member->index()] = false;
+            m_isCarried[member->index()] = !isAlone;
+            if (member == number)
+                break;
+        }
+    }
+}
+
 class JumpThreader {
     WTF_MAKE_NONCOPYABLE(JumpThreader);
 public:
@@ -118,7 +244,13 @@ private:
         uint32_t testAnswered;
         uint32_t formerDepthOfAnswer;
         uint32_t formerDepthOfLastWrite;
+        uint32_t formerNumberOfStores;
         Answer formerAnswer;
+    };
+
+    struct StoreOnWay {
+        uint32_t depth;
+        HeapIndex heap;
     };
 
     bool has(const Block* block, uint8_t flags) const { return m_flags[block->index()] & flags; }
@@ -146,6 +278,7 @@ private:
     ALWAYS_INLINE bool isLoopHead(const Block*);
     static ALWAYS_INLINE bool hasFormOfThreadableJoin(const Block* join);
     static bool isSecondTest(const Block*, const Block* join, const Operation* phi);
+    static bool handsPhiOn(const Block*, const Operation* phi);
     MatchOfJoin lookAtJoin(Block* join);
     std::optional<ThreadableJoin> matchThreadableJoin(Block* join);
 
@@ -171,7 +304,9 @@ private:
     ALWAYS_INLINE void listTestOfBranch(uint32_t indexOfBlock, const Operation* branch);
     NEVER_INLINE bool numberTestsAskedTwice();
     static bool holdsNothingButItsTest(const Block*);
-    ALWAYS_INLINE Answer answerOnWay(TestOfBlock) const;
+    ALWAYS_INLINE Answer answerOnWay(TestOfBlock, const Block* asked) const;
+    NEVER_INLINE bool storesMayWriteWordReadBy(const Block* asked, uint32_t depth) const;
+    NEVER_INLINE void noteWritesOnWay(const Block*, uint32_t depth);
     NEVER_INLINE void findBlocksThatMayBypassTests(BitSpan isWalked, uint32_t* firstBlocksBelow);
     void passTestsThatWayHasDecided(Block* from);
     NEVER_INLINE void threadEdgesPastDecidedTests();
@@ -227,6 +362,10 @@ private:
     };
     static bool passesNumberOfTest(const Block* way);
     void passTestToJoin(Block* from);
+    static bool choosesNumber(const Operation* branch);
+    static ALWAYS_INLINE bool mayChooseDifference(const Block*);
+    void passDifferenceToJoin(Block* from, NumbersCarriedByLoops&);
+    void passChosenNumberToJoin(Block* from, NumbersCarriedByLoops&);
     struct WayToLoop {
         Block* from;
         const Block* to;
@@ -235,6 +374,7 @@ private:
     static Operation* pollingLoopTest(const Block* header);
     static std::optional<bool> answerAbove(const Block* from, const Block* to, const Operation* value, const Operation* test, const Operation* phi);
     static bool onlyPassesValue(const Block*);
+    static ALWAYS_INLINE bool onlyPassesPhi(const Block*);
     bool isReachedPastBlock(const Block*, const Block* passed);
     void enterLoopPastTest(Block* latch);
     bool isLoopBodyWithoutOtherReads(const Block* header, const Block* body, const Block* latch, const Block* entering);
@@ -258,10 +398,13 @@ private:
     ArenaVector<TestOfBranch> m_testsOfBranches;
     bool m_testsOfBranchesAreInOrder { true };
     ArenaVector<Block*> m_blocksMaybePassingTests;
+    ArenaVector<Block*> m_blocksComparingNumbers;
+    ArenaVector<Block*> m_blocksChoosingDifferences;
     ArenaVector<TestOfBlock> m_testsOfBlocks;
     ArenaVector<Answer> m_answersOnWay;
     ArenaVector<uint32_t> m_depthsOfAnswers;
     uint32_t m_depthOfLastWrite { 0 };
+    ArenaVector<StoreOnWay> m_storesOnWay;
 };
 
 ALWAYS_INLINE bool JumpThreader::canRetargetSuccessors(const Block* block)
@@ -367,8 +510,11 @@ ALWAYS_INLINE bool JumpThreader::hasFormOfThreadableJoin(const Block* join)
         return false;
     Opcode opcode = join->last()->opcode();
     const Operation* phi = join->phis().data()[0];
-    if (phi->useCount() == 2 && opcode == Branch && join->numSuccessors() == 2) [[unlikely]]
-        return isSecondTest(join->successor(0).block(), join, phi) || isSecondTest(join->successor(1).block(), join, phi);
+    if (phi->useCount() == 2 && opcode == Branch && join->numSuccessors() == 2) [[unlikely]] {
+        const Block* taken = join->successor(0).block();
+        const Block* notTaken = join->successor(1).block();
+        return isSecondTest(taken, join, phi) || isSecondTest(notTaken, join, phi) || handsPhiOn(taken, phi) || handsPhiOn(notTaken, phi);
+    }
     return (opcode == Branch || opcode == Switch) && phi->useCount() == 1;
 }
 
@@ -376,7 +522,19 @@ bool JumpThreader::isSecondTest(const Block* block, const Block* join, const Ope
 {
     if (block == join || block->numberOfIncomingEdges() != 1 || block->isEntry() || block->isLandingPad() || !block->phis().empty() || !block->upsilons().empty())
         return false;
-    return !block->isEmpty() && block->last()->opcode() == Branch && block->numSuccessors() == 2 && testsOnlyPhi(block, phi);
+    if (block->isEmpty() || block->last()->opcode() != Branch || block->numSuccessors() != 2)
+        return false;
+    if (block->last()->child(0) != phi)
+        return testsOnlyPhi(block, phi);
+    return std::ranges::all_of(block->operations(), [&](const Operation* operation) {
+        return operation == block->last() || (!operation->useCount() && !operation->mustStay());
+    });
+}
+
+bool JumpThreader::handsPhiOn(const Block* block, const Operation* phi)
+{
+    return onlyPassesValue(block) && block->numberOfIncomingEdges() == 1 && block->upsilons().data()[0]->valueHandedOn() == phi && block->successor(0).block() != block
+        && block->upsilons().data()[0]->phi() && block->upsilons().data()[0]->phi()->owner() == block->successor(0).block() && block->successor(0).block()->phis().size() == 1;
 }
 
 JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
@@ -386,7 +544,7 @@ JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
     ASSERT(branch->opcode() == Switch || join->numSuccessors() == 2);
 
     SimplifiedPredicate simplified = branch->opcode() == Branch ? simplifyPredicateOfBranch(branch->child(0)) : SimplifiedPredicate { branch->child(0), false };
-    if (simplified.predicate == phi && phi->useCount() != 1)
+    if (simplified.predicate == phi && phi->useCount() > 2)
         return MatchOfJoin::IsNotThreadable;
     if (simplified.predicate != phi) {
         if (branch->opcode() != Branch)
@@ -551,12 +709,18 @@ void JumpThreader::threadJumpsOfJoinsFrom(Block* join)
     }
 }
 
+ALWAYS_INLINE bool JumpThreader::onlyPassesPhi(const Block* block)
+{
+    return block->size() == 1 && block->last()->opcode() == Jump && block->phis().size() == 1 && block->upsilons().size() == 1 && !block->isEntry() && !block->isLandingPad()
+        && block->phis().data()[0]->useCount() == 1 && block->upsilons().data()[0]->valueHandedOn() == block->phis().data()[0] && block->successor(0).block() != block;
+}
+
 ALWAYS_INLINE bool JumpThreader::wouldThreadThrough(const Block* join) const
 {
     if (join->phis().size() != 1 || join->isEmpty())
         return false;
     if (join->last()->opcode() == Jump)
-        return !has(join, HasThreadedOwnJump);
+        return !has(join, HasThreadedOwnJump) || onlyPassesPhi(join);
     if (!hasFormOfThreadableJoin(join))
         return false;
     return m_matchesOfJoins.isEmpty() || m_matchesOfJoins[join->index()] != MatchOfJoin::IsNotThreadable;
@@ -575,15 +739,27 @@ ALWAYS_INLINE bool JumpThreader::mayThreadThrough(const Block* join)
 void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
 {
     threadJumpsOfJoinsFrom(from->successor(successorIndex).block());
-    Block* join = from->successor(successorIndex).block();
+    Block* const entered = from->successor(successorIndex).block();
+    Block* join = entered;
+    static constexpr unsigned mostJoinsPassed = 3;
+    for (unsigned passed = 0; passed < mostJoinsPassed && join != from && onlyPassesPhi(join); ++passed) {
+        Block* next = join->successor(0).block();
+        if (next->phis().size() != 1 || join->upsilons().data()[0]->phi() != next->phis().data()[0])
+            return;
+        join = next;
+    }
     std::optional<ThreadableJoin> threadable = matchThreadableJoin(join);
     if (!threadable || !has(from, IsVisited))
         return;
-    const Operation* value = incomingValue(threadable->phi, from);
-    if (!value)
+    const Operation* value = incomingValue(entered == join ? threadable->phi : entered->phis().data()[0], from);
+    if (!value || (entered != join && !value->hasInt()))
         return;
+    for (Block* passed = entered; passed != join; passed = passed->successor(0).block()) {
+        if (isLoopHead(passed))
+            return;
+    }
     if (!value->hasInt()) {
-        if (!threadable->comparesPhi)
+        if (!threadable->comparesPhi && threadable->phi->useCount() == 1)
             duplicateBranchIntoPredecessor(from, join, *threadable);
         return;
     }
@@ -607,6 +783,23 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
         if (!tested)
             return;
         passing = passing.block()->successor(*tested ? 0 : 1);
+    } else if (threadable->phi->useCount() == 2 && handsPhiOn(passing.block(), threadable->phi)) {
+        if (from->last()->opcode() != Jump || from->numSuccessors() != 1)
+            return;
+        Block* next = passing.block()->successor(0).block();
+        Operation* number = passing.block()->upsilons().data()[0]->phi();
+        Operation* handed = nullptr;
+        for (Operation* upsilon : from->upsilons()) {
+            if (upsilon->phi() && upsilon->phi()->owner() == entered)
+                handed = upsilon->child(0);
+        }
+        if (!handed || handed != value || number->type() != handed->type() || next == entered || isLoopHead(next))
+            return;
+        Order::passJoinBy(from, next, number, handed);
+        letGoUnlessSomethingLeadsTo(entered);
+        if (mayThreadThrough(next))
+            threadThroughJoin(from, 0);
+        return;
     }
     Block* target = passing.block();
     ASSERT(target->phis().empty());
@@ -811,7 +1004,7 @@ ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const O
             simplified.isInverted = !simplified.isInverted;
         }
         const Operation* first = children[0];
-        if (isLoad(first->opcode()) && first->useCount() == 1 && test->useCount() == 1) {
+        if (isLoad(first->opcode()) && test->useCount() == 1) {
             static_assert(Load - Load8Z < 7);
             constexpr int32_t endOfOffsets = 1 << 12;
             bool mayBeWritten = !first->has(OperationFlag::ReadsImmutableHeap);
@@ -930,7 +1123,7 @@ void JumpThreader::passTestsThatWayHasDecided(Block* from)
             TestOfBlock test = m_testsOfBlocks[passed->index()];
             if (!test.number() || !has(passed, HoldsNothingButItsTest))
                 break;
-            Answer answer = answerOnWay(test);
+            Answer answer = answerOnWay(test, passed);
             if (answer == Answer::Unknown && own.number() == test.number())
                 answer = !index != own.isInverted() ? Answer::IsTrue : Answer::IsFalse;
             if (answer == Answer::Unknown)
@@ -943,11 +1136,45 @@ void JumpThreader::passTestsThatWayHasDecided(Block* from)
     }
 }
 
-ALWAYS_INLINE JumpThreader::Answer JumpThreader::answerOnWay(TestOfBlock test) const
+ALWAYS_INLINE JumpThreader::Answer JumpThreader::answerOnWay(TestOfBlock test, const Block* asked) const
 {
-    if (test.readsWordThatMayBeWritten() && m_depthsOfAnswers[test.number()] <= m_depthOfLastWrite)
-        return Answer::Unknown;
-    return m_answersOnWay[test.number()];
+    Answer answer = m_answersOnWay[test.number()];
+    if (answer == Answer::Unknown || !test.readsWordThatMayBeWritten())
+        return answer;
+    uint32_t depth = m_depthsOfAnswers[test.number()];
+    return depth <= m_depthOfLastWrite || storesMayWriteWordReadBy(asked, depth) ? Answer::Unknown : answer;
+}
+
+bool JumpThreader::storesMayWriteWordReadBy(const Block* asked, uint32_t depth) const
+{
+    constexpr unsigned mostStoresLookedAt = 32;
+    if (m_storesOnWay.isEmpty() || m_storesOnWay.last().depth < depth)
+        return false;
+    const Operation* word = simplifyPredicateOfBranch(asked->last()->child(0)).predicate->child(0);
+    RELEASE_ASSERT(isLoad(word->opcode()));
+    const HeapTree& heapTree = m_proc.heapTree();
+    unsigned lookedAt = 0;
+    for (uint32_t place = m_storesOnWay.size(); place-- && m_storesOnWay[place].depth >= depth;) {
+        if (++lookedAt > mostStoresLookedAt || heapTree.overlap(m_storesOnWay[place].heap, word->heap()))
+            return true;
+    }
+    return false;
+}
+
+void JumpThreader::noteWritesOnWay(const Block* block, uint32_t depth)
+{
+    auto mayWriteAnyWord = [](const Operation* operation) {
+        if (!PatchOperation::accepts(operation->opcode()))
+            return operation->opcode() == Fence;
+        const PatchOperation* patch = operation->as<PatchOperation>();
+        return patch->isSuspension() || !patch->effects.writes.isEmpty() || (patch->opcode() == Patch && !patch->onlyKeepsChildrenAlive);
+    };
+    for (const Operation* operation : block->operations()) {
+        if (isStore(operation->opcode()))
+            m_storesOnWay.append(m_arena, StoreOnWay { depth, operation->heap() });
+        else if (mayWriteAnyWord(operation))
+            m_depthOfLastWrite = depth;
+    }
 }
 
 void JumpThreader::findBlocksThatMayBypassTests(BitSpan isWalked, uint32_t* firstBlocksBelow)
@@ -1002,8 +1229,8 @@ void JumpThreader::threadEdgesPastDecidedTests()
     ArenaVector<BlockOnWay> way;
     auto enter = [&](Block* block, const Block* above) {
         uint32_t depth = way.size() + 1;
-        BlockOnWay entered { block, firstBlocksBelow[block->index()], 0, 0, m_depthOfLastWrite, Answer::Unknown };
-        if (TestOfBlock test = above ? m_testsOfBlocks[above->index()] : TestOfBlock(); test.number() && answerOnWay(test) == Answer::Unknown) {
+        BlockOnWay entered { block, firstBlocksBelow[block->index()], 0, 0, m_depthOfLastWrite, static_cast<uint32_t>(m_storesOnWay.size()), Answer::Unknown };
+        if (TestOfBlock test = above ? m_testsOfBlocks[above->index()] : TestOfBlock(); test.number() && answerOnWay(test, above) == Answer::Unknown) {
             entered.testAnswered = test.number();
             entered.formerAnswer = m_answersOnWay[test.number()];
             entered.formerDepthOfAnswer = m_depthsOfAnswers[test.number()];
@@ -1011,7 +1238,7 @@ void JumpThreader::threadEdgesPastDecidedTests()
             m_depthsOfAnswers[test.number()] = depth;
         }
         if (block->writesMemory())
-            m_depthOfLastWrite = depth;
+            noteWritesOnWay(block, depth);
         way.append(m_arena, entered);
     };
     for (uint32_t place = tops.size(); place--;) {
@@ -1030,10 +1257,12 @@ void JumpThreader::threadEdgesPastDecidedTests()
                 m_depthsOfAnswers[last.testAnswered] = last.formerDepthOfAnswer;
             }
             m_depthOfLastWrite = last.formerDepthOfLastWrite;
+            m_storesOnWay.shrink(last.formerNumberOfStores);
             way.takeLast();
         }
     }
     way.letGo(m_arena);
+    m_storesOnWay.letGo(m_arena);
     tops.letGo(m_arena);
     m_arena.letGoOfArray(nextBlocksBeside, numberOfBlocks);
     m_arena.letGoOfArray(firstBlocksBelow, numberOfBlocks);
@@ -1745,6 +1974,157 @@ void JumpThreader::passTestToJoin(Block* from)
         Order::passTestToJoin(from, join, number, isInverted);
 }
 
+bool JumpThreader::choosesNumber(const Operation* branch)
+{
+    const Operation* test = branch->child(0);
+    return (test->opcode() == LessThan || test->opcode() == GreaterThan) && test->child(0)->type() == Double;
+}
+
+void JumpThreader::passChosenNumberToJoin(Block* from, NumbersCarriedByLoops& carried)
+{
+    if (from->isEmpty() || from->last()->opcode() != Branch || from->numSuccessors() != 2 || !choosesNumber(from->last()))
+        return;
+    const Edge& taken = from->successor(0);
+    const Edge& notTaken = from->successor(1);
+    if (taken.block() == notTaken.block() || taken.edgeClass() != EdgeClass::Normal || notTaken.edgeClass() != EdgeClass::Normal)
+        return;
+    auto isWay = [](const Block* way) {
+        return (way->size() == 1 || (way->size() == 2 && way->at(0)->opcode() == Neg && way->at(0)->type() == Double)) && way->last()->opcode() == Jump && way->numberOfIncomingEdges() == 1
+            && way->phis().empty() && !way->isLandingPad() && !way->isEntry();
+    };
+    Block* join = nullptr;
+    if (isWay(taken.block()) && (taken.block()->successor(0).block() == notTaken.block() || (isWay(notTaken.block()) && taken.block()->successor(0).block() == notTaken.block()->successor(0).block())))
+        join = taken.block()->successor(0).block();
+    else if (isWay(notTaken.block()) && notTaken.block()->successor(0).block() == taken.block())
+        join = taken.block();
+    if (!join || join == from || join->phis().empty() || join->isLandingPad())
+        return;
+    const Block* targetIfTaken = taken.block() == join ? from : taken.block();
+    const Block* targetIfNotTaken = notTaken.block() == join ? from : notTaken.block();
+    const Operation* chosen = nullptr;
+    const Operation* whenTrue = nullptr;
+    const Operation* whenFalse = nullptr;
+    for (const Operation* phi : join->phis()) {
+        const Operation* passedWhenTrue = incomingValue(phi, targetIfTaken);
+        const Operation* passedWhenFalse = incomingValue(phi, targetIfNotTaken);
+        if (!passedWhenTrue || !passedWhenFalse)
+            return;
+        if (passedWhenTrue == passedWhenFalse)
+            continue;
+        if (chosen || phi->type() != Double)
+            return;
+        chosen = phi;
+        whenTrue = passedWhenTrue;
+        whenFalse = passedWhenFalse;
+    }
+    if (!chosen)
+        return;
+    const Operation* test = from->last()->child(0);
+    const Operation* left = test->child(0);
+    const Operation* right = test->child(1);
+    bool isLess = test->opcode() == LessThan;
+    bool choosesLesser;
+    if (whenTrue == left && whenFalse == right)
+        choosesLesser = isLess;
+    else if (whenTrue == right && whenFalse == left)
+        choosesLesser = !isLess;
+    else {
+        auto isZero = [](const Operation* number) {
+            return number->hasDouble() && !number->asDouble();
+        };
+        auto isOppositeOf = [](const Operation* opposite, const Operation* number) {
+            return opposite->opcode() == Neg && opposite->child(0) == number;
+        };
+        if (!isZero(left) && !isZero(right))
+            return;
+        const Operation* number = isZero(right) ? left : right;
+        bool isBelowZero = isLess == (number == left);
+        if (isOppositeOf(whenTrue, number) && whenFalse == number)
+            choosesLesser = !isBelowZero;
+        else if (whenTrue == number && isOppositeOf(whenFalse, number))
+            choosesLesser = isBelowZero;
+        else
+            return;
+    }
+    if (carried.contains(chosen))
+        return;
+    Order::passChosenNumberToJoin(from, join, chosen, choosesLesser ? LessThan : GreaterThan, const_cast<Operation*>(whenTrue), const_cast<Operation*>(whenFalse));
+}
+
+ALWAYS_INLINE bool JumpThreader::mayChooseDifference(const Block* block)
+{
+    static constexpr uint32_t mostOperations = 5;
+    const Operation* test = block->last()->child(0);
+    Opcode opcode = test->opcode();
+    if ((opcode != Below && opcode != Above && opcode != BelowEqual && opcode != AboveEqual) || test->child(0)->type() != Int32)
+        return false;
+    const Edge& taken = block->successor(0);
+    const Edge& notTaken = block->successor(1);
+    if (taken.edgeClass() != EdgeClass::Normal || notTaken.edgeClass() != EdgeClass::Normal)
+        return false;
+    auto mayCompute = [](const Block* way) {
+        return way->size() > 1 && way->size() <= mostOperations && way->last()->opcode() == Jump && way->numberOfIncomingEdges() == 1 && !way->upsilons().empty();
+    };
+    return mayCompute(taken.block()) || mayCompute(notTaken.block());
+}
+
+void JumpThreader::passDifferenceToJoin(Block* from, NumbersCarriedByLoops& carried)
+{
+    if (from->isEmpty() || from->last()->opcode() != Branch || from->numSuccessors() != 2 || !mayChooseDifference(from))
+        return;
+    Block* taken = from->successor(0).block();
+    Block* notTaken = from->successor(1).block();
+    auto isWay = [](const Block* way) {
+        if (way->isEmpty() || way->last()->opcode() != Jump || way->numberOfIncomingEdges() != 1 || !way->phis().empty() || way->isLandingPad() || way->isEntry())
+            return false;
+        return std::ranges::all_of(way->operations(), [&](const Operation* operation) {
+            bool isKept = operation->useCount() || operation->mustStay();
+            return operation == way->last() || !isKept || ((operation->opcode() == Sub || operation->opcode() == BitAnd) && operation->type() == Int32 && operation->useCount() == 1);
+        });
+    };
+    Block* join = nullptr;
+    if (taken != notTaken && isWay(taken) && (taken->successor(0).block() == notTaken || (isWay(notTaken) && taken->successor(0).block() == notTaken->successor(0).block())))
+        join = taken->successor(0).block();
+    else if (taken != notTaken && isWay(notTaken) && notTaken->successor(0).block() == taken)
+        join = taken;
+    if (!join || join == from || join->phis().empty() || join->isLandingPad())
+        return;
+    const Block* targetIfTaken = taken == join ? from : taken;
+    const Block* targetIfNotTaken = notTaken == join ? from : notTaken;
+    const Operation* chosen = nullptr;
+    const Operation* whenTrue = nullptr;
+    const Operation* whenFalse = nullptr;
+    for (const Operation* phi : join->phis()) {
+        const Operation* passedWhenTrue = incomingValue(phi, targetIfTaken);
+        const Operation* passedWhenFalse = incomingValue(phi, targetIfNotTaken);
+        if (!passedWhenTrue || !passedWhenFalse)
+            return;
+        if (passedWhenTrue == passedWhenFalse)
+            continue;
+        if (chosen || phi->type() != Int32)
+            return;
+        chosen = phi;
+        whenTrue = passedWhenTrue;
+        whenFalse = passedWhenFalse;
+    }
+    if (!chosen || whenTrue->isInt32(0) == whenFalse->isInt32(0))
+        return;
+    bool isZeroWhenTrue = whenTrue->isInt32(0);
+    const Operation* difference = isZeroWhenTrue ? whenFalse : whenTrue;
+    const Block* whereSubtracted = isZeroWhenTrue ? targetIfNotTaken : targetIfTaken;
+    const Operation* subtraction = difference->opcode() == BitAnd && difference->child(1)->hasInt() ? difference->child(0) : difference;
+    if (subtraction->opcode() != Sub || subtraction->type() != Int32 || whereSubtracted == from || difference->owner() != whereSubtracted || subtraction->owner() != whereSubtracted)
+        return;
+    const Operation* test = from->last()->child(0);
+    bool isBelow = test->opcode() == Below || test->opcode() == BelowEqual;
+    unsigned minuend = isBelow == isZeroWhenTrue ? 0 : 1;
+    if (subtraction->child(0) != test->child(minuend) || subtraction->child(1) != test->child(1 - minuend))
+        return;
+    if (carried.contains(chosen))
+        return;
+    Order::passDifferenceToJoin(from, join, chosen, difference, const_cast<Operation*>(isZeroWhenTrue ? whenTrue : whenFalse), isZeroWhenTrue);
+}
+
 void JumpThreader::run()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
@@ -1780,8 +2160,13 @@ void JumpThreader::run()
             if (block->upsilons().size() == 1 && block->upsilons().data()[0]->valueHandedOn()->opcode() == Add) [[unlikely]]
                 passTestOfUpperHalfBy(block);
         } else if (opcode == Branch) {
-            if (block->numSuccessors() == 2)
+            if (block->numSuccessors() == 2) {
                 listTestOfBranch(indexOfBlock, last);
+                if (choosesNumber(last)) [[unlikely]]
+                    m_blocksComparingNumbers.append(m_arena, block);
+                else if (mayChooseDifference(block)) [[unlikely]]
+                    m_blocksChoosingDifferences.append(m_arena, block);
+            }
         } else if (opcode != Switch)
             continue;
         ASSERT(canRetargetSuccessors(block) && !isEmptyJumpBlock(block));
@@ -1825,6 +2210,16 @@ void JumpThreader::run()
     }
     for (Block* block : m_blocksMaybePassingTests)
         passTestToJoin(block);
+    if (!m_blocksComparingNumbers.isEmpty()) [[unlikely]] {
+        NumbersCarriedByLoops carried(m_proc, NumbersCarriedByLoops::Kind::Doubles);
+        for (Block* block : m_blocksComparingNumbers)
+            passChosenNumberToJoin(block, carried);
+    }
+    if (!m_blocksChoosingDifferences.isEmpty()) [[unlikely]] {
+        NumbersCarriedByLoops carried(m_proc, NumbersCarriedByLoops::Kind::Integers);
+        for (Block* block : m_blocksChoosingDifferences)
+            passDifferenceToJoin(block, carried);
+    }
     enterLoopsPastDecidedTests();
 }
 
@@ -2035,6 +2430,7 @@ void JumpThreader::letGoOfLists()
     m_matchesOfJoins.letGo(m_arena);
     m_testsOfBranches.letGo(m_arena);
     m_blocksMaybePassingTests.letGo(m_arena);
+    m_blocksComparingNumbers.letGo(m_arena);
     m_flags.letGo(m_arena);
 }
 

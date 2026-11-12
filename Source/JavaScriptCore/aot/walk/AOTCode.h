@@ -700,6 +700,7 @@ struct Block {
     bool isEntry { false };
     bool meetsStepWrittenByHand { false };
     bool keepsSitesThoughRare { false };
+    bool isInRareLoop { false };
     bool isSealed { false };
     BeliefAheadOfEdges beliefAheadOfEdges { BeliefAheadOfEdges::NoEdgeIsAwaited };
 
@@ -917,6 +918,7 @@ struct GroundsOfPosition {
     SteppedWithCounter steppedBeside { };
     ValueID counterTest;
     bool counterTestResult { true };
+    ValueID remainder;
 };
 
 class PassedTest {
@@ -1075,6 +1077,7 @@ public:
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
     bool callsOfFunctionNeverCollect() const { return m_callsOfFunctionNeverCollect; }
     bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes || m_opcodesOfValues.contains(Opcode::GetDataViewElement); }
+    bool hasOptionalNumberArithmetic() const { return m_hasOptionalNumberArithmetic; }
     bool callsItself() const { return m_callsItself; }
     bool isEntryThatWalksBody() const { return m_isEntryThatWalksBody; }
     bool mayHoldReturnedCalls() const { return m_mayHoldReturnedCalls; }
@@ -1159,6 +1162,7 @@ public:
     BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
     void markRareBlockThatKeepsSites(BlockID);
+    void markBlockInRareLoop(BlockID);
     void noteBeliefAheadOfEdges(BlockID, BeliefAheadOfEdges);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
@@ -1291,6 +1295,7 @@ public:
         bool holdsCallThatPlanHasNotCounted { false };
         bool callsOfFunctionNeverCollect { false };
         bool readsNumbersOutOfBytes { false };
+        bool hasOptionalNumberArithmetic { false };
         bool callsItself { false };
     };
     Mark mark() const;
@@ -1394,6 +1399,7 @@ private:
     bool m_holdsCallThatPlanHasNotCounted { false };
     bool m_callsOfFunctionNeverCollect { false };
     bool m_readsNumbersOutOfBytes { false };
+    bool m_hasOptionalNumberArithmetic { false };
     bool m_callsItself { false };
     bool m_isEntryThatWalksBody { false };
     bool m_mayHoldReturnedCalls { false };

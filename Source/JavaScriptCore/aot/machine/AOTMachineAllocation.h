@@ -196,6 +196,7 @@ public:
     bool isWrittenByEdges(const Operation* phi) const { return m_phisWrittenByEdges.size() && m_phisWrittenByEdges.get(phi->index()); }
 
     std::span<const SpillFacts> spills() const { return m_spills.span(); }
+    uint32_t numberOfSpilledFirstOperands() const { return m_numberOfSpilledFirstOperands; }
     std::span<SpillFacts> spillsForTesting() { return m_spills.span(); }
     std::span<PatchOperation* const> suspensions() const { return m_suspensions.span(); }
     const BitSpan& liveSpillsAt(uint32_t suspension) const { return m_liveSpillsAtSuspension[suspension]; }
@@ -255,6 +256,7 @@ private:
     ArenaVector<SpillIndex> m_spillOfValue;
     ArenaVector<Reg> m_registerAtDefinition;
     ArenaVector<SpillFacts> m_spills;
+    uint32_t m_numberOfSpilledFirstOperands { 0 };
     ArenaVector<PatchOperation*> m_suspensions;
     ArenaVector<BitSpan> m_liveSpillsAtSuspension;
     RegisterMask m_usedCalleeSaves { 0 };

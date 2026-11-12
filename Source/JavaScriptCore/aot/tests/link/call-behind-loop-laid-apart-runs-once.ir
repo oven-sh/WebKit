@@ -1,0 +1,57 @@
+# the body of a loop may follow the blocks behind the loop: a call there is none in the loop, and the function that it alone enters runs at most once
+# for (;again();) inLoop(); (function behind() {})(); while (again()) (function inOtherLoop() {})(); [1].forEach(function each() {})
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}runs-once
+# CHECK: function f2 {{*}}runs-once
+# RUN(AGAIN): link functions mechanisms=all
+# AGAIN-NOT: function f1 {{*}}runs-once
+# AGAIN-NOT: function f3 {{*}}runs-once
+
+variable g0 name="inLoop" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="again" [isFreeName]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v1
+    v4 = ToBoolean v3
+    Branch v4 -> taken b5(), notTaken b2()
+  b2():
+    v5 = NewClosure function=f2
+    v6 = Call v5
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v8 = Call v1
+    v9 = ToBoolean v8
+    Branch v9 -> taken b6(), notTaken b4()
+  b4():
+    Return v6
+  b5():
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10 calleeName="inLoop"
+    Jump -> next b1()
+  b6():
+    v12 = NewClosure function=f3
+    v13 = Call v12
+    Jump -> next b3()
+}
+function f1 name="inLoop" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="behind" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="inOtherLoop" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

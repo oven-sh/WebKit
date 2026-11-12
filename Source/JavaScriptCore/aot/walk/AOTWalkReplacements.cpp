@@ -1074,14 +1074,16 @@ AccessUnderProvenKey::AccessUnderProvenKey(const BodyValue& written, PropertyKey
 
     uint32_t firstField = place;
     uint32_t numberOfFields = numberOfFieldWords(opcode, m_words.data() + firstField);
-    RELEASE_ASSERT(numberOfFields <= numberOfFieldWords(written.opcode(), written.fieldWords().words()) && firstField + numberOfFields < m_words.size());
+    uint32_t numberOfWrittenFields = numberOfFieldWords(written.opcode(), written.fieldWords().words());
+    RELEASE_ASSERT(firstField + numberOfFields < m_words.size());
     for (uint32_t field = 0; field < numberOfFields; ++field)
-        m_words[place++] = field == placeOfKey ? 0 : written.fieldWords().word(field);
+        m_words[place++] = field == placeOfKey ? 0 : field >= numberOfWrittenFields ? encodePayloadWord(BuiltinID()) : written.fieldWords().word(field);
     if (words[0] & Wire::WrittenPositionFollows)
         m_words[place++] = words[written.sizeInWords() - 1];
 
     BodyValue made = value();
     RELEASE_ASSERT(made.sizeInWords() == place && made.key() == key && made.objectOperand() == written.objectOperand() && made.position() == written.position());
+    RELEASE_ASSERT(opcode != Opcode::PropSet || !made.as<Opcode::PropSet>().calledBuiltin());
 }
 
 BodyValue Walker::accessAsWalked(const BodyValue& written, PropertyKeyID* chosenAndNotDerived)
@@ -1123,9 +1125,9 @@ Walker::KeyOfAccess Walker::compareKeyOfAccessWithSymbol(const BodyValue& writte
     return KeyOfAccess::IsSymbol;
 }
 
-bool Walker::armHoldsKeyOf(ValueID access) const
+bool Walker::armHoldsKeyOfSlow(ValueID access) const
 {
-    if (!m_accessWhoseKeyArmHolds || m_depthOfCopiesAroundKeyHeldByArm != depthOfCopies())
+    if (m_depthOfCopiesAroundKeyHeldByArm != depthOfCopies())
         return false;
     if (m_accessWhoseKeyArmHolds == access)
         return true;
@@ -1165,10 +1167,107 @@ static TypeID namesOfComputedLiteral(Walker& walker, const BodyValue& definition
     return texts;
 }
 
+bool Walker::isInCopyOfAccessor() const
+{
+    if (m_frames.size() < 2 || !m_frames.last().callCopied)
+        return false;
+    static constexpr OpcodeSet accesses { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
+    const BodyIndex& caller = *m_frames[m_frames.size() - 2].index;
+    ValueID copied = m_frames.last().callCopied;
+    return copied.index() < caller.numberOfValues() && !caller.isParameter(copied) && accesses.contains(caller.opcodeOf(copied));
+}
+
+static const LinkedCell* findHeldCellUnderName(const Walker& walker, LayoutID layout, PropertyKeyID key)
+{
+    const LinkTables& held = walker.facts().held();
+    if (std::optional<FieldReference> field = findField(walker.program(), layout, key))
+        return held.findCellOfField(*field);
+    std::span<const PropertyKeyID> appended = held.appendedKeysOf(layout);
+    auto place = std::ranges::find(appended, key);
+    return place != appended.end() ? held.findCellOfField(FieldReference { layout, static_cast<uint32_t>(walker.program().at(layout).fields.size() + (place - appended.begin())) }) : nullptr;
+}
+
+static bool layoutAnswersName(const Walker& walker, LayoutID layout, PropertyKeyID key)
+{
+    const LinkTables& held = walker.facts().held();
+    if (findField(walker.program(), layout, key) || std::ranges::contains(held.appendedKeysOf(layout), key))
+        return true;
+    return std::ranges::any_of(std::ranges::equal_range(held.accessorsOfLayouts, layout, { }, &LinkedAccessorOfLayout::layout), [&](const LinkedAccessorOfLayout& accessor) {
+        return accessor.key == key;
+    });
+}
+
+TypeID Walker::nameOfAccessorInKey(const BodyValue& access) const
+{
+    const Vector<LinkedKeyOfAccessor>& keys = facts().held().keysOfAccessors;
+    const Vector<LinkedTextOfCapture>& texts = facts().held().textsOfCaptures;
+    if ((keys.isEmpty() && texts.isEmpty()) || m_frames.size() < 2 || !m_frames.last().callCopied || (access.opcode() != Opcode::ElemGet && access.opcode() != Opcode::ElemSet))
+        return { };
+    const BodyIndex& index = currentBodyIndex();
+    ValueID key = index.stripCasts(access.propertyOperand());
+    if (!key || !index.isParameter(key) || index.blockOf(key) != entryBlock)
+        return { };
+    LinkedKeyOfAccessor captured { currentFunction(), key.index() - index.block(entryBlock).firstParameter().index() };
+    if (captured.capture >= program().at(captured.accessor).captures.size())
+        return { };
+    const BodyIndex& caller = *m_frames[m_frames.size() - 2].index;
+    ValueID copied = m_frames.last().callCopied;
+    if (copied.index() >= caller.numberOfValues() || caller.isParameter(copied))
+        return { };
+    BodyValue named = caller.value(copied);
+    if ((named.opcode() != Opcode::PropGet && named.opcode() != Opcode::PropSet) || named.isFreeName() || !named.key() || liesInThread(named.key()) || program().at(named.key()).kind != PropertyKeyKind::Text)
+        return { };
+    auto written = std::ranges::equal_range(texts, std::pair { captured.accessor, captured.capture }, { }, [](const LinkedTextOfCapture& text) { return std::pair { text.accessor, text.capture }; });
+    if (written.size() == 1)
+        return m_types.stringLiteral(program().at(written.front().key).text);
+    if (!written.empty()) {
+        Reference holder = referenceOf(access.objectOperand());
+        TypeID typeOfHolder = holder ? m_types.withoutNullish(typeOf(holder)) : TypeID();
+        LayoutID layout = typeOfHolder && !isNeverType(typeOfHolder) ? singleLayoutOf(m_types, m_types.at(typeOfHolder)) : LayoutID();
+        PropertyKeyID only;
+        for (const LinkedTextOfCapture& text : written) {
+            const LinkedCell* cell = layout ? findHeldCellUnderName(*this, layout, text.key) : nullptr;
+            LayoutID held = cell && cell->proven && !holdsOnlyPrimitives(cell->proven) ? singleLayoutOf(m_types, m_types.at(m_types.withOnlyObjects(cell->proven))) : LayoutID();
+            if (!held || !layoutAnswersName(*this, held, named.key()))
+                continue;
+            if (only)
+                return { };
+            only = text.key;
+        }
+        return only ? m_types.stringLiteral(program().at(only).text) : TypeID();
+    }
+    if (!std::ranges::binary_search(keys, captured))
+        return { };
+    return m_types.stringLiteral(program().at(named.key()).text);
+}
+
+TypeID Walker::objectsHeldInField(ValueID read) const
+{
+    const BodyIndex& index = currentBodyIndex();
+    ValueID source = index.stripCasts(read);
+    Reference held = source && !index.isParameter(source) && (index.opcodeOf(source) == Opcode::PropGet || index.opcodeOf(source) == Opcode::ElemGet) ? referenceBoundTo(source) : Reference();
+    if (!held || !held.isValue() || m_code.isConstant(held.id()) || m_code.at(held.id()).opcode != Opcode::GetSlot)
+        return { };
+    LayoutSetID receivers = m_code.at(held.id()).receivers();
+    LayoutID layout = receivers && holdsOneMember(receivers) ? LayoutID(positionOf(receivers)) : LayoutID();
+    const LinkedCell* cell = layout ? findHeldCellUnderName(*this, layout, m_code.at(held.id()).key()) : nullptr;
+    if (!cell || !cell->proven || holdsOnlyPrimitives(cell->proven))
+        return { };
+    TypeID objects = m_types.withOnlyObjects(cell->proven);
+    return singleLayoutOf(m_types, m_types.at(objects)) ? objects : TypeID();
+}
+
+static bool isCalleeOfItsOnlyUser(const BodyIndex& index, const BodyValue& read)
+{
+    ValueID user = read.opcode() == Opcode::ElemGet ? index.onlyUsingValue(read.id()) : ValueID();
+    return user && index.opcodeOf(user) == Opcode::Call && index.value(user).as<Opcode::Call>().calleeOperand() == read.id();
+}
+
 Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& written)
 {
     if (!has(Mechanism::TypedOperations) || isUnreachable() || armHoldsKeyOf(written.id()))
         return KeyOfAccess::IsAnyValue;
+    bool runsRepeatedly = isInRepeatedCode() || (isCalleeOfItsOnlyUser(currentBodyIndex(), written) && currentFunction() && facts().linked().functionsCalledInLoops.get(currentFunction().index()));
     TypeID namesOfLiteral = written.opcode() == Opcode::ElemDefine && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses) ? namesOfComputedLiteral(*this, written) : TypeID();
     if (written.opcode() == Opcode::ElemDefine && !namesOfLiteral)
         return KeyOfAccess::IsAnyValue;
@@ -1182,11 +1281,6 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     Type type = m_types.at(proven);
     if (!(type.primitives & Primitive::AnyString))
         return KeyOfAccess::IsAnyValue;
-    if (!namesOfLiteral && !m_versionedLoops.isEmpty() && canAccessAtKeyedAddress(*this, written))
-        return KeyOfAccess::IsAnyValue;
-    bool looksUpCallee = !namesOfLiteral && canRestartIteration() && canBuildIterationGuard() && canLookUpCallee(*this, written);
-    if (looksUpCallee && !holdsWrittenTextsAlone(type) && !isStaticMethodCallee(*this, written) && isInvariantInSpecializedVersion(key, IterationPurity::KnownEffectsOnly) && canHoistKeyedLookup(Opcode::GetValueUnderKeyOrAbsent))
-        return KeyOfAccess::IsAnyValue;
     auto isHolderOfLayouts = [&] {
         auto saysLayouts = [&](TypeID said) {
             TypeID objects = said ? m_types.withoutNullish(said) : TypeID();
@@ -1195,6 +1289,18 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         Reference holder = referenceOf(written.objectOperand());
         return holder && (saysLayouts(typeOf(holder)) || saysLayouts(findExpectation(*this, written.objectOperand()).type));
     };
+    TypeID nameOfAccessor = isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses) ? nameOfAccessorInKey(written) : TypeID();
+    TypeID heldHolder;
+    if (nameOfAccessor && !isHolderOfLayouts()) {
+        heldHolder = canRestartIteration() && canBuildIterationGuardAfterStores() ? objectsHeldInField(written.objectOperand()) : TypeID();
+        if (!heldHolder)
+            nameOfAccessor = { };
+    }
+    if (!namesOfLiteral && !nameOfAccessor && !m_versionedLoops.isEmpty() && canAccessAtKeyedAddress(*this, written))
+        return KeyOfAccess::IsAnyValue;
+    bool looksUpCallee = !namesOfLiteral && !nameOfAccessor && canRestartIteration() && canBuildIterationGuard() && canLookUpCallee(*this, written);
+    if (looksUpCallee && !holdsWrittenTextsAlone(type) && !isStaticMethodCallee(*this, written) && isInvariantInSpecializedVersion(key, IterationPurity::KnownEffectsOnly) && canHoistKeyedLookup(Opcode::GetValueUnderKeyOrAbsent))
+        return KeyOfAccess::IsAnyValue;
     bool textsAreOnlyExpected = false;
     bool holderIsOfLayouts = false;
     if (namesOfLiteral && !holdsWrittenTextsAlone(type)) {
@@ -1204,7 +1310,11 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         textsAreOnlyExpected = true;
         holderIsOfLayouts = true;
     }
-    if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses)) {
+    if (nameOfAccessor && m_types.isSubset(nameOfAccessor, proven)) {
+        type = m_types.at(nameOfAccessor);
+        textsAreOnlyExpected = true;
+        holderIsOfLayouts = !heldHolder;
+    } else if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && runsRepeatedly && m_opensGuesses && has(Mechanism::Guesses)) {
         TypeID expected = findExpectation(*this, written.propertyOperand()).type;
         auto withoutNothing = [&](TypeID type) {
             return canRestartIteration() ? m_types.withoutPrimitives(type, Primitive::UndefinedOrNull | Primitive::Absent) : m_types.withoutNullish(type);
@@ -1274,7 +1384,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
                 end = place + 1;
         }
     }
-    if (!key.isValue() || !has(Mechanism::Guesses) || !m_opensGuesses || !isInRepeatedCode() || end > endOfStretchBeingWalked())
+    if (!key.isValue() || !has(Mechanism::Guesses) || !m_opensGuesses || !runsRepeatedly || end > endOfStretchBeingWalked())
         return KeyOfAccess::IsAnyValue;
 
     auto typeOfInput = [&](ValueID input) {
@@ -1287,7 +1397,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
 
     Origin origin = originOf(written);
     if (textsAreOnlyExpected && !holderIsOfLayouts) {
-        guardExpectedType(*this, written.objectOperand(), expectedReceiverType(*this, written), origin);
+        guardExpectedType(*this, written.objectOperand(), heldHolder ? heldHolder : expectedReceiverType(*this, written), origin);
         if (isUnreachable() || hasFailed())
             return KeyOfAccess::ArmsHaveWalkedAccess;
     }
@@ -1325,7 +1435,8 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
     Reference left = key;
     static_assert(OperandIndex::StringEqualsLiteral::string == OperandIndex::ValueEqualsLiteral::value);
     size_t numberOfTests = textsAreOnlyExpected ? texts.size() : texts.size() - 1;
-    bool comparesInFront = isInvariantInSpecializedVersion(key) && tryHoistEntryTest();
+    IterationPurity purity = nameOfAccessor ? IterationPurity::KnownEffectsOnly : IterationPurity::EffectFree;
+    bool comparesInFront = isInvariantInSpecializedVersion(key, purity) && tryHoistEntryTest(purity);
     if (textsAreOnlyExpected && !comparesInFront && texts.size() >= 2) {
         Vector<BlockID, mostTextsToldApart> underNames;
         for (size_t place = 0; place < texts.size(); ++place)
@@ -1357,6 +1468,12 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         }
         if (!passes)
             return KeyOfAccess::ArmsHaveWalkedAccess;
+        if (nameOfAccessor && texts.size() == 1 && comparesInFront && tryBranchInPreheader(passes, true, purity)) {
+            walkArmWith(constant(PrimitiveKnownToFolding::text(texts[place])));
+            if (!hasFailed())
+                joinArms(stretch, built, meeting);
+            return KeyOfAccess::ArmsHaveWalkedAccess;
+        }
         BlockID passed = addBlock();
         BlockID failed = addBlock(textsAreOnlyExpected && place + 1 == numberOfTests ? BlockFrequency::Rare : BlockFrequency::Normal);
         branch(passes, passed, failed);

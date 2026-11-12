@@ -208,7 +208,7 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     }
     }
     jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(indexingType)), scratch);
-    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, storage, array);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -325,7 +325,7 @@ void generateNewArrayFrontEnd(StubAssembler& jit)
     jit.add32(TrustedImm32(1), position);
     jit.branch32(CCallHelpers::Below, position, count).linkTo(copy, &jit);
     jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
-    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, storage, array);
     fenceAfterAllocation(jit);
     jit.move(TrustedImm32(0), jit.secondResult());
     jit.returnToCaller();
@@ -370,7 +370,7 @@ void generateNewArrayFromBuffer(StubAssembler& jit)
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), count).linkTo(copy, &jit);
     isEmpty.link(&jit);
     jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
-    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, storage, array);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -481,7 +481,7 @@ void generateNewArrayOfList(StubAssembler& jit)
     Label isFilledHere = jit.label();
     isFilled.link(&jit);
     jit.load64(BaseIndex(instanceGPR, relativeShape, CCallHelpers::TimesFour, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header)), element);
-    jit.storePair64(element, storage, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, element, storage, array);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -678,9 +678,25 @@ static void emitReleasedArrayReuse(StubAssembler& jit, ArrayElementKind kind, GP
         jit.store32(TrustedImm32(0), Address(butterfly, Butterfly::offsetOfPublicLength()));
         if (kind == ArrayElementKind::Double)
             jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), scratch);
-        Label clear = jit.label();
-        jit.store64(scratch, BaseIndex(butterfly, capacity, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(EncodedJSValue))));
-        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), capacity).linkTo(clear, &jit);
+        constexpr int32_t sizeOfElement = sizeof(EncodedJSValue);
+        Jump hasPairsAlone = jit.branchTest32(CCallHelpers::Zero, capacity, TrustedImm32(1));
+        jit.store64(scratch, BaseIndex(butterfly, capacity, CCallHelpers::TimesEight, -sizeOfElement));
+        jit.sub32(TrustedImm32(1), capacity);
+        Jump hadOneElement = jit.branchTest32(CCallHelpers::Zero, capacity);
+        hasPairsAlone.link(&jit);
+#if CPU(ARM64)
+        const GPRReg end = capacity;
+        jit.getEffectiveAddress(BaseIndex(butterfly, capacity, CCallHelpers::TimesEight), end);
+        Label clearPair = jit.label();
+        jit.storePair64(scratch, scratch, CCallHelpers::PreIndexAddress(end, -2 * sizeOfElement));
+        jit.branchPtr(CCallHelpers::Above, end, butterfly).linkTo(clearPair, &jit);
+#else
+        Label clearPair = jit.label();
+        jit.store64(scratch, BaseIndex(butterfly, capacity, CCallHelpers::TimesEight, -sizeOfElement));
+        jit.store64(scratch, BaseIndex(butterfly, capacity, CCallHelpers::TimesEight, -2 * sizeOfElement));
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), capacity).linkTo(clearPair, &jit);
+#endif
+        hadOneElement.link(&jit);
         isEmpty.link(&jit);
         fenceAfterAllocation(jit);
         jit.returnToCaller();
@@ -736,6 +752,20 @@ static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, 
     jit.jumpToStub(newArrayWithLength(kind));
 }
 
+static Jump branchIfReviewDue(StubAssembler& jit, Address wordInProfile)
+{
+    const TrustedImm32 negatedAllocation(-static_cast<int32_t>(ArrayAllocationProfile::oneAllocation));
+#if CPU(X86_64)
+    jit.add32(negatedAllocation, wordInProfile);
+    return Jump(jit.m_assembler.jCC(X86Assembler::ConditionAE));
+#else
+    Jump isNotDueForReview = jit.branchAdd32(CCallHelpers::Carry, negatedAllocation, wordInProfile);
+    Jump isDueForReview = jit.jump();
+    isNotDueForReview.link(&jit);
+    return isDueForReview;
+#endif
+}
+
 void generateNewEmptyArrayAtSite(StubAssembler& jit)
 {
     static_assert((ArrayAllocationProfile::shapeMask | ArrayAllocationProfile::capacityMask) == 0xffff && ArrayAllocationProfile::shapeShift == 8);
@@ -746,9 +776,7 @@ void generateNewEmptyArrayAtSite(StubAssembler& jit)
     const GPRReg capacity = profile;
     const Address wordInProfile(profile, OBJECT_OFFSETOF(ArrayAllocationProfile, word));
 
-    Jump isNotDueForReview = jit.branchAdd32(CCallHelpers::Carry, TrustedImm32(-static_cast<int32_t>(ArrayAllocationProfile::oneAllocation)), wordInProfile);
-    Jump isDueForReview = jit.jump();
-    isNotDueForReview.link(&jit);
+    Jump isDueForReview = branchIfReviewDue(jit, wordInProfile);
 
     bool kindIsWritten = seed == ArrayElementKind::Contiguous;
     if (kindIsWritten)
@@ -791,9 +819,7 @@ void generateNewArrayWithLengthAtSite(StubAssembler& jit)
     const Address wordInProfile(profile, OBJECT_OFFSETOF(ArrayAllocationProfile, word));
     RELEASE_ASSERT(lengthAndCapacity == gprOf(StubRegister::T9) && noOverlap(lengthAndCapacity, profile, shape));
 
-    Jump isNotDueForReview = jit.branchAdd32(CCallHelpers::Carry, TrustedImm32(-static_cast<int32_t>(ArrayAllocationProfile::oneAllocation)), wordInProfile);
-    Jump isDueForReview = jit.jump();
-    isNotDueForReview.link(&jit);
+    Jump isDueForReview = branchIfReviewDue(jit, wordInProfile);
 
     jit.load16(wordInProfile, shape);
     jit.urshift32(TrustedImm32(ArrayAllocationProfile::shapeShift), shape);

@@ -79,6 +79,35 @@ struct FieldGetterData {
 };
 static_assert(sizeof(FieldGetterData) == 8 && isImageRecord<FieldGetterData>);
 
+struct ReturnedCaptureData {
+    static constexpr uint32_t multiplier = 0x9e3779b1;
+    static constexpr uint32_t placeOf(uint32_t closureNumberPlusOne, uint32_t capacity) { return static_cast<uint32_t>(static_cast<uint64_t>(closureNumberPlusOne * multiplier) * capacity >> 32); }
+    static constexpr uint32_t numberOfRowsBehind = 16;
+
+    static constexpr unsigned numberOfClosureNumberBits = 22;
+    static constexpr uint32_t closureNumberMask = (1u << numberOfClosureNumberBits) - 1;
+    static constexpr uint32_t baseOfStatics = 0;
+    static constexpr uint32_t baseOfClosure = 1;
+    static constexpr unsigned baseShift = 3;
+    static constexpr uint32_t maxBase = (1u << (32 - numberOfClosureNumberBits)) - 1;
+
+    static constexpr unsigned formShift = 56;
+    static constexpr uint8_t isElement = 0x7b;
+    static constexpr uint8_t isClosureCell = 0x7c;
+    static constexpr uint8_t undefinedIsNotMade = 0x7d;
+    static constexpr uint8_t nullIsNotMade = 0x7e;
+    static constexpr int64_t returnsNoCapture = -1;
+
+    static constexpr ReturnedCaptureData create(uint32_t closureNumber, uint32_t base, uint32_t offset, uint8_t form) { return { (closureNumber + 1) | base << numberOfClosureNumberBits, offset | static_cast<uint32_t>(form) << 24 }; }
+    constexpr uint32_t closureNumberPlusOne() const { return closureNumberAndBase & closureNumberMask; }
+
+    uint32_t closureNumberAndBase;
+    uint32_t slot;
+
+    friend auto operator<=>(const ReturnedCaptureData&, const ReturnedCaptureData&) = default;
+};
+static_assert(sizeof(ReturnedCaptureData) == 8 && isImageRecord<ReturnedCaptureData>);
+
 struct AddedPrototypeNameData {
     uint32_t classLayout;
     uint32_t name;
@@ -113,6 +142,8 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(closurePropertyNames, ClosurePropertyNameData) \
     v(addedPrototypeNames, AddedPrototypeNameData) \
     v(fieldGetters, FieldGetterData) \
+    v(returnedCaptures, ReturnedCaptureData) \
+    v(keyedLookups, ReturnedCaptureData) \
     v(parsedRecordNames, uint32_t) \
     v(parsedRecordStarts, uint32_t) \
     v(parsedRecordShapes, Number24)
@@ -188,6 +219,8 @@ struct ProgramTables {
             number = (number ^ byte) * 16777619u;
         return number;
     }
+
+    static constexpr uint64_t encodeAbsentName(uint32_t holder, uint32_t numberOfName) { return static_cast<uint64_t>(holder) << 32 | numberOfName; }
 
     template<typename Row>
     static const Row& findRequiredEntry(std::span<const Row> rows, uint32_t number, const auto& numberOf)

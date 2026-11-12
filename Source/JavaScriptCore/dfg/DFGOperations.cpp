@@ -4568,7 +4568,7 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceAllGeneric, JSCell*, (JS
 
     JSValue decodedSearchValue = JSValue::decode(searchValue);
     if (decodedSearchValue.inherits<RegExpObject>()) [[unlikely]] {
-        if (!uncheckedDowncast<RegExpObject>(decodedSearchValue)->regExp()->global()) {
+        if (!uncheckedDowncast<RegExpObject>(decodedSearchValue)->regExp()->global() && checkObjectCoercible(JSValue::decode(thisValue))) {
             throwTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
             OPERATION_RETURN(scope, nullptr);
         }

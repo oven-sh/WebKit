@@ -193,7 +193,8 @@ void Walker::settleFateOfPoll(const OpenLoop& loop)
     if (around)
         around->likelyTurnMayCollect |= loop.likelyTurnMayCollect;
 
-    bool isEnteredAgain = m_loopsWithSideExits.contains(std::pair { loop.frame, m_frames[loop.frame].index->loop(loop.loop).head });
+    BlockID inputHead = m_frames[loop.frame].index->loop(loop.loop).head;
+    bool isEnteredAgain = findReentry(loop.frame, inputHead) || m_loopsWithSideExits.contains(std::pair { loop.frame, inputHead });
     if (!loop.numberOfEdgesThatCameRound && !isEnteredAgain && has(Mechanism::Folding)) {
         drop(loop.poll);
         drop(loop.pollInFront);

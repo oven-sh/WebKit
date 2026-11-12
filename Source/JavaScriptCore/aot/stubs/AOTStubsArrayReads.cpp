@@ -300,31 +300,7 @@ void generateArrayIndexOfString(StubAssembler& jit)
     jit.load32(Address(searchCharacters, StringImpl::flagsOffset()), flags);
     Jump searchStringIsNoAtom = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(StringImpl::flagIsAtom()));
 
-    static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
-    constexpr int32_t flagInTypeAndFlags = ConstantCellWords::flagOfStringConstant << 8;
-    constexpr int32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8 | flagInTypeAndFlags;
-    const GPRReg typeAndFlags = byteSize;
-    JumpList isNoCell;
-    Label seekAtom = jit.label();
-    jit.load64(Address(cursor), element);
-    isNoCell.append(jit.branchIfNotCell(element));
-    isNoCell.append(jit.branchTest64(CCallHelpers::Zero, element));
-    jit.load16(Address(element, JSCell::typeInfoTypeOffset()), typeAndFlags);
-    jit.or32(TrustedImm32(flagInTypeAndFlags), typeAndFlags);
-    Jump cellDoesNotSay = jit.branch32(CCallHelpers::NotEqual, typeAndFlags, TrustedImm32(typeAndFlagsOfAtom));
-    found.append(jit.branchPtr(CCallHelpers::Equal, Address(element, JSString::offsetOfValue()), searchCharacters));
-    isNoCell.link(&jit);
-    Label passOver = jit.label();
-    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
-    jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(seekAtom, &jit);
-    returnResult(jit, TrustedImm64(-1));
-
-    cellDoesNotSay.link(&jit);
-    jit.branchIfNotType(element, StringType).linkTo(passOver, &jit);
-    jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
-    found.append(jit.branchPtr(CCallHelpers::Equal, characters, searchCharacters));
-    Jump elementSoughtIsRope = jit.branchIfRopeStringImpl(characters);
-    jit.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())).linkTo(passOver, &jit);
+    searchForAtom(jit, { searchCharacters, cursor, end, element, byteSize }, found, notFound);
     JumpList seeksByLength;
     seeksByLength.append(jit.jump());
 
@@ -345,7 +321,6 @@ void generateArrayIndexOfString(StubAssembler& jit)
     jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(seekTextOfImage, &jit);
     returnResult(jit, TrustedImm64(-1));
 
-    elementSoughtIsRope.link(&jit);
     seeksByLength.link(&jit);
     jit.load32(Address(searchCharacters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
     slowPath.append(jit.branchTest32(CCallHelpers::Zero, lengthAndByteSize));
@@ -581,6 +556,98 @@ void generateArrayIndexOfString(StubAssembler& jit)
     slowPath.link(&jit);
     convertCursorToIndex();
     jit.callOperationAndReturn(Entry::operationAOTArrayIndexOfString, { });
+}
+
+StubSignature signatureOfArrayIndexOfValue(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+
+void generateArrayIndexOfValue(StubAssembler& jit)
+{
+    static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4, StubRegister::A5));
+    static_assert(Int32Shape < DoubleShape && DoubleShape < ContiguousShape);
+    constexpr int32_t mostScannedElements = 16;
+    const bool holesAreUndefined = jit.key().form();
+    const GPRReg array = jit.operand(0);
+    const GPRReg searched = jit.clobberOperand(1);
+    const GPRReg storage = jit.allocateScratch(StubRegister::A3);
+    const GPRReg length = jit.allocateScratch(StubRegister::A4);
+    const GPRReg shape = jit.allocateScratch(StubRegister::A5);
+    const GPRReg index = jit.result();
+    const FPRReg number = jit.allocateScratch(FPRInfo::argumentFPR0);
+    const FPRReg element = jit.allocateScratch(FPRInfo::argumentFPR1);
+    JumpList isLeft;
+    JumpList isAbsent;
+    JumpList isFound;
+
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), shape);
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), storage);
+    jit.and32(TrustedImm32(IndexingShapeMask), shape);
+    Jump isNoCell = jit.branchIfNotCell(searched);
+    jit.load8(Address(searched, JSCell::typeInfoTypeOffset()), length);
+    Jump isNoString = jit.branch32(CCallHelpers::NotEqual, length, TrustedImm32(StringType));
+    checkStubOperands(arrayIndexOfString(SearchedElements::Values), { array, searched });
+    jit.jumpToStub(arrayIndexOfString(SearchedElements::Values));
+
+    isNoString.link(&jit);
+    isLeft.append(jit.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(LastValueCompareCellType)));
+    Jump isOtherCell = jit.jump();
+
+    isNoCell.link(&jit);
+    Jump isNoNumber = jit.branchIfNotNumber(searched);
+    Jump isInt32 = jit.branchIfInt32(searched);
+    unboxDouble(jit, searched, index, number);
+    JumpList searchesDoubles;
+    searchesDoubles.append(jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape)));
+    isLeft.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape)));
+    jit.truncateDoubleToInt32(number, index);
+    jit.convertInt32ToDouble(index, element);
+    isAbsent.append(jit.branchDouble(CCallHelpers::DoubleNotEqualOrUnordered, number, element));
+    boxInt32(jit, index, searched);
+    Jump searchesConvertedInt32 = jit.jump();
+
+    isInt32.link(&jit);
+    Jump searchesInt32 = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape));
+    isLeft.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(DoubleShape)));
+    jit.convertInt32ToDouble(searched, number);
+    searchesDoubles.link(&jit);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), length);
+    Jump hasManyDoubles = jit.branch32(CCallHelpers::Above, length, TrustedImm32(mostScannedElements));
+    isAbsent.append(jit.branchTest32(CCallHelpers::Zero, length));
+    jit.move(TrustedImm32(0), index);
+    Label compareDouble = jit.label();
+    jit.loadDouble(BaseIndex(storage, index, CCallHelpers::TimesEight), element);
+    isFound.append(jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, element, number));
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::Below, index, length).linkTo(compareDouble, &jit);
+    returnResult(jit, TrustedImm64(-1));
+
+    isNoNumber.link(&jit);
+    if (holesAreUndefined)
+        isLeft.append(jit.branch64(CCallHelpers::Equal, searched, TrustedImm64(JSValue::encode(jsUndefined()))));
+    isOtherCell.link(&jit);
+    isLeft.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ContiguousShape)));
+    searchesInt32.link(&jit);
+    searchesConvertedInt32.link(&jit);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), length);
+    Jump hasManyValues = jit.branch32(CCallHelpers::Above, length, TrustedImm32(mostScannedElements));
+    isAbsent.append(jit.branchTest32(CCallHelpers::Zero, length));
+    jit.move(TrustedImm32(0), index);
+    Label compareValue = jit.label();
+    isFound.append(jit.branch64(CCallHelpers::Equal, BaseIndex(storage, index, CCallHelpers::TimesEight), searched));
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::Below, index, length).linkTo(compareValue, &jit);
+    isAbsent.link(&jit);
+    jit.move(TrustedImm64(-1), index);
+    isFound.link(&jit);
+    jit.returnToCaller();
+
+    hasManyDoubles.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTArrayIndexOfDouble, { .checksException = false });
+
+    hasManyValues.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTArrayIndexOfInt32, { .checksException = false });
+
+    isLeft.link(&jit);
+    returnResult(jit, TrustedImm64(arrayIndexNotSearched));
 }
 
 } } // namespace JSC::AOT

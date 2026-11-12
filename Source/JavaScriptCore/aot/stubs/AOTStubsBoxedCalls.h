@@ -64,6 +64,7 @@ constexpr std::optional<BoxedCallForm> formAskedBehind(BoxedCallForm form)
     case BoxedCallForm::SetHas: return BoxedCallForm::WeakMapHas;
     case BoxedCallForm::WeakMapHas: return BoxedCallForm::WeakSetHas;
     case BoxedCallForm::MapSet: return BoxedCallForm::WeakMapSet;
+    case BoxedCallForm::SetAdd: return BoxedCallForm::WeakSetAdd;
     default: return std::nullopt;
     }
 }
@@ -108,6 +109,7 @@ bool servesCallsByName(BoxedCallForm, unsigned count);
 bool fetchesFunctionOnlyToLeave(BoxedCallForm, unsigned count);
 StubKey hostCallLeftTo(BoxedCallForm, unsigned count);
 constexpr StubKey weakMapSet() { return StubKey(StubFamily::WeakMapSet); }
+constexpr StubKey weakSetAdd() { return StubKey(StubFamily::WeakSetAdd); }
 constexpr StubKey stringStartsWith() { return StubKey(StubFamily::StringStartsWith); }
 constexpr StubKey stringIndexOf() { return StubKey(StubFamily::StringIndexOf); }
 constexpr StubKey findBoxedCall() { return StubKey(StubFamily::FindBoxedCall); }

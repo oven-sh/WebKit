@@ -316,6 +316,124 @@ static Reference buildSumOfOptionalIntegers(Walker& walker, Origin origin, Value
     return meetInNumberForms(walker, meeting, ways.span());
 }
 
+OperatorForm operatorFormFor(Walker&, const Draft&);
+
+namespace {
+
+struct TruncatedSumNode {
+    Reference value;
+    Opcode opcode { Opcode::Add };
+    uint32_t left { UINT32_MAX };
+    uint32_t right { UINT32_MAX };
+
+    bool isTerm() const { return left == UINT32_MAX; }
+};
+
+using TruncatedSumTree = Vector<TruncatedSumNode, 7>;
+
+} // anonymous namespace
+
+static std::optional<uint32_t> collectTruncatedSum(Walker& walker, Reference sum, unsigned depth, TruncatedSumTree& tree)
+{
+    static constexpr size_t mostNodes = 7;
+    const Code& code = walker.code();
+    auto nameOf = [&](ValueID operand) {
+        return code.isConstant(operand) ? Reference::constant(operand) : Reference::value(operand);
+    };
+    while (sum && sum.isValue() && !code.isConstant(sum.id()) && conversionsOfForm.contains(code.at(sum.id()).opcode))
+        sum = nameOf(code.at(sum.id()).operand(0));
+    if (!sum || !sum.isRecord() || tree.size() == mostNodes)
+        return std::nullopt;
+    Type type = walker.types().at(walker.typeOf(sum));
+    Representation representation = walker.representationOf(sum);
+    bool isInteger = type.isInteger() || representation == Representation::Int32 || representation == Representation::Int64 || representation == Representation::OptionalInt64;
+    if (isInteger) {
+        if (!(type.primitives & Primitive::Integer) || !type.hasOnlyPrimitives(Primitive::Integer | Primitive::Undefined))
+            return std::nullopt;
+        tree.append(TruncatedSumNode { sum });
+        return static_cast<uint32_t>(tree.size() - 1);
+    }
+    if (!depth || !sum.isValue() || code.isConstant(sum.id()) || representation != Representation::Double)
+        return std::nullopt;
+    const Operation& record = code.at(sum.id());
+    if ((record.opcode != Opcode::Add && record.opcode != Opcode::Sub) || record.form() != OperatorForm::Numbers)
+        return std::nullopt;
+    Opcode opcode = record.opcode;
+    std::array<Reference, 2> operands { nameOf(record.operand(0)), nameOf(record.operand(1)) };
+    std::optional<uint32_t> left = collectTruncatedSum(walker, operands[0], depth - 1, tree);
+    std::optional<uint32_t> right = left ? collectTruncatedSum(walker, operands[1], depth - 1, tree) : std::nullopt;
+    if (!right || tree.size() == mostNodes)
+        return std::nullopt;
+    tree.append(TruncatedSumNode { { }, opcode, *left, *right });
+    return static_cast<uint32_t>(tree.size() - 1);
+}
+
+static Reference buildTruncatedSumTree(Walker& walker, Origin origin, Opcode opcode, std::array<Reference, 2> operands)
+{
+    static constexpr unsigned mostNestedSums = 2;
+    TypeArena& types = walker.types();
+    TruncatedSumTree tree;
+    std::optional<uint32_t> left = collectTruncatedSum(walker, operands[0], mostNestedSums, tree);
+    std::optional<uint32_t> right = left ? collectTruncatedSum(walker, operands[1], mostNestedSums, tree) : std::nullopt;
+    if (!right)
+        return { };
+    tree.append(TruncatedSumNode { { }, opcode, *left, *right });
+    auto mayBeUndefined = [&](Reference term) {
+        return types.at(walker.typeOf(term)).primitives & Primitive::Undefined;
+    };
+    bool hasOptionalTerm = std::ranges::any_of(tree, [&](const TruncatedSumNode& node) { return node.isTerm() && mayBeUndefined(node.value); });
+    if (!hasOptionalTerm)
+        return { };
+
+    Vector<BlockID, 4> undefinedBlocks;
+    for (uint32_t place = 0; place < tree.size(); ++place) {
+        Reference before = tree[place].value;
+        if (!tree[place].isTerm() || !mayBeUndefined(before))
+            continue;
+        Draft test(Opcode::TypeTest, origin);
+        test.setValueOperand(before);
+        test.setTestedType(TypeArena::fromPrimitives(Primitive::Undefined));
+        Reference isUndefined = walker.build(WTF::move(test));
+        if (!isUndefined || walker.isUnreachable() || !isUndefined.isValue() || walker.code().isConstant(isUndefined.id()))
+            return { };
+        BlockID integerBlock = walker.addBlock();
+        undefinedBlocks.append(walker.addBlock(BlockFrequency::Unlikely));
+        walker.branch(isUndefined, undefinedBlocks.last(), integerBlock);
+        walker.continueIn(integerBlock);
+        Reference integer = buildNarrowedInNumberForms(walker, before, isUndefined, OperandIndex::TypeTest::value, false, origin);
+        if (!integer)
+            return { };
+        for (TruncatedSumNode& node : tree) {
+            if (node.isTerm() && node.value == before)
+                node.value = integer;
+        }
+    }
+    walker.count(StatisticID::SumsWithUndefinedTruncated);
+    BlockID meeting = walker.addBlock();
+    for (TruncatedSumNode& node : tree) {
+        if (node.isTerm())
+            continue;
+        Draft draft(node.opcode, origin);
+        draft.setOperand(0, tree[node.left].value);
+        draft.setOperand(1, tree[node.right].value);
+        walker.chooseConservativeFields(draft);
+        draft.setForm(operatorFormFor(walker, draft));
+        node.value = walker.buildAgain(WTF::move(draft));
+        if (!node.value)
+            return { };
+    }
+    Reference bits = buildConversionInNumberOperators(walker, Opcode::ToInt32, tree.last().value, origin);
+    if (!bits)
+        return { };
+    Vector<WayInNumberForms, 5> ways;
+    ways.append(WayInNumberForms { walker.currentBlock(), bits, { } });
+    for (BlockID undefinedBlock : undefinedBlocks) {
+        walker.continueIn(undefinedBlock);
+        ways.append(WayInNumberForms { walker.currentBlock(), integerInNumberForms(walker, 0), { } });
+    }
+    return meetInNumberForms(walker, meeting, ways.span());
+}
+
 static Reference buildSumWithUndefined(Walker& walker, Origin origin, ValueID written)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -329,9 +447,12 @@ static Reference buildSumWithUndefined(Walker& walker, Origin origin, ValueID wr
     };
     if (Reference bits = buildSumOfOptionalIntegers(walker, origin, sum); bits || walker.hasFailed() || walker.isUnreachable())
         return bits;
-    if (mayBeUndefined(terms[0]) && mayBeUndefined(terms[1]))
-        return { };
-    return buildOptionalIntegerSum(walker, index.opcodeOf(sum), terms, origin);
+    Reference bits;
+    if (!mayBeUndefined(terms[0]) || !mayBeUndefined(terms[1]))
+        bits = buildOptionalIntegerSum(walker, index.opcodeOf(sum), terms, origin);
+    if (bits || walker.hasFailed() || walker.isUnreachable())
+        return bits;
+    return buildTruncatedSumTree(walker, origin, index.opcodeOf(sum), terms);
 }
 
 Reference buildTruncatedSum(Walker& walker, Reference sum, Origin origin)
@@ -478,6 +599,8 @@ static bool isRawIterationNumber(Walker& walker, Reference number)
     return (form == Representation::Double || form == Representation::OptionalDouble) && !walker.isInvariantInInnermostLoop(number);
 }
 
+bool takesBitsOfBoxedPrimitive(Walker&, Opcode, Reference operand);
+
 static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Origin origin, std::span<Reference> operands, const std::array<bool, 2>& areTakenByOperatorAlone)
 {
     TypeArena& types = walker.types();
@@ -495,9 +618,13 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Orig
         bool isMasked = opcode == Opcode::BitAnd && isMaskOfLowestBitsOfInt32(types.at(walker.typeOf(operands[1 - operandIndex])));
         if (isMasked && (!walker.isInLoop() || (areTakenByOperatorAlone[operandIndex] && isRawIterationNumber(walker, number))))
             continue;
-        if (opcode != Opcode::BitNot && !type.isNumber() && walker.representationOf(number) == Representation::JSValue && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+        if (opcode != Opcode::BitNot && !type.isNumber() && walker.representationOf(number) == Representation::JSValue && type.hasOnlyPrimitives(Primitive::NumberLike))
             continue;
         hasConverted = true;
+        if (takesBitsOfBoxedPrimitive(walker, Opcode::BitOr, number)) {
+            operands[operandIndex] = buildOperatorInNumberForms(walker, Opcode::BitOr, number, integerInNumberForms(walker, 0), origin);
+            continue;
+        }
         if (walker.isInLoop() && walker.opensGuesses() && isBoxedNumberOrNullish(walker, number)) {
             operands[operandIndex] = buildBitsOfNumberOrNullish(walker, number, origin);
             continue;
@@ -513,15 +640,108 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Orig
     return hasConverted;
 }
 
+static Reference buildSumOfHalves(Walker& walker, Origin origin, const OperandsInNumberOperators& operands)
+{
+    static constexpr OpcodeSet shifts { Opcode::RShift, Opcode::URShift };
+    static constexpr int64_t lowHalf = 0xffff;
+    static constexpr int64_t halfWidth = 16;
+    const Code& code = walker.code();
+    auto strip = [&](ValueID id) {
+        return code.isConstant(id) ? id : code.valueBehindNames<valuePreservingOpcodes>(id);
+    };
+    auto integerOf = [&](ValueID id) -> std::optional<int64_t> {
+        return code.isConstant(id) && code.at(id).opcode == Opcode::Integer ? std::optional(code.at(id).integer()) : std::nullopt;
+    };
+    auto isInt32 = [&](ValueID id) {
+        return !code.isConstant(id) && walker.types().isSubset(code.at(id).type, TypeTable::int32);
+    };
+    auto operandBeside = [&](ValueID id, OpcodeSet opcodes, int64_t integer) -> ValueID {
+        id = strip(id);
+        if (code.isConstant(id) || !opcodes.contains(code.at(id).opcode))
+            return { };
+        const Operation& operation = code.at(id);
+        if (integerOf(operation.operand(1)) == integer)
+            return operation.operand(0);
+        return operation.opcode == Opcode::BitAnd && integerOf(operation.operand(0)) == integer ? operation.operand(1) : ValueID();
+    };
+    for (uint32_t place : { 0u, 1u }) {
+        Reference low = operands[place].reference;
+        Reference high = operands[1 - place].reference;
+        if (!low || !low.isValue() || !high || !high.isValue())
+            continue;
+        ValueID sumOfLows = operandBeside(low.id(), { Opcode::BitAnd }, lowHalf);
+        ValueID sumOfHighs = sumOfLows ? operandBeside(high.id(), { Opcode::LShift }, halfWidth) : ValueID();
+        if (!sumOfHighs)
+            continue;
+        ValueID lows = strip(sumOfLows);
+        if (code.isConstant(lows) || code.at(lows).opcode != Opcode::Add || !isInt32(lows))
+            continue;
+        Vector<ValueID, 4> highs { strip(sumOfHighs) };
+        for (size_t term = 0; term < highs.size() && highs.size() < 4; ++term) {
+            while (!code.isConstant(highs[term]) && code.at(highs[term]).opcode == Opcode::Add && isInt32(highs[term]) && highs.size() < 4) {
+                highs.append(strip(code.at(highs[term]).operand(1)));
+                highs[term] = strip(code.at(highs[term]).operand(0));
+            }
+        }
+        size_t carry = highs.findIf([&](ValueID term) {
+            ValueID shifted = operandBeside(term, shifts, halfWidth);
+            return shifted && strip(shifted) == lows;
+        });
+        if (highs.size() != 3 || carry == notFound)
+            continue;
+        highs.removeAt(carry);
+        auto wordOf = [&](ValueID lowTerm, size_t place) -> Reference {
+            if (std::optional<int64_t> bits = integerOf(strip(lowTerm)); bits && *bits >= 0 && *bits <= lowHalf) {
+                std::optional<int64_t> above = integerOf(highs[place]);
+                if (!above || *above < -(lowHalf + 1) || *above > lowHalf)
+                    return { };
+                Draft word(Opcode::Integer, origin);
+                word.setInteger(static_cast<int32_t>(static_cast<uint32_t>(*above) << halfWidth | static_cast<uint32_t>(*bits)));
+                return walker.constant(WTF::move(word));
+            }
+            ValueID word = operandBeside(lowTerm, { Opcode::BitAnd }, lowHalf);
+            ValueID shifted = word ? operandBeside(highs[place], shifts, halfWidth) : ValueID();
+            return shifted && strip(shifted) == strip(word) && isInt32(word) ? Reference::value(word) : Reference();
+        };
+        std::array<ValueID, 2> lowTerms { code.at(lows).operand(0), code.at(lows).operand(1) };
+        for (size_t first : { 0u, 1u }) {
+            Reference left = wordOf(lowTerms[0], first);
+            Reference right = left ? wordOf(lowTerms[1], 1 - first) : Reference();
+            if (!right || (left.isConstant() && right.isConstant()))
+                continue;
+            Reference sum = buildIntegerOperator(walker, Opcode::Add, left, right, origin);
+            if (!sum)
+                return { };
+            walker.count(StatisticID::HalvesAddedAsWords);
+            return buildConversionInNumberOperators(walker, Opcode::ToInt32, sum, origin);
+        }
+    }
+    return { };
+}
+
 static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInNumberOperators& operands)
 {
     Opcode opcode = value.opcode();
     uint32_t numberOfOperands = numberOfNamedOperandsOf(opcode);
     Origin origin = originInFrontOfNumberOperator(walker, value);
+    if (opcode == Opcode::BitOr && walker.has(Mechanism::Folding)) {
+        if (Reference sum = buildSumOfHalves(walker, origin, operands))
+            return bindInNumberOperators(walker, value, sum);
+    }
 
     bool takesOtherOperands = false;
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
         OperandInNumberOperators& operand = operands[operandIndex];
+        if (operand.known.kind() == PrimitiveKnownToFolding::Kind::Number && numberOfOperands == 2 && !walker.types().isSubset(walker.typeOf(operand.reference), TypeTable::int32)) {
+            Draft word(Opcode::Integer, origin);
+            word.setInteger(toInt32(operand.known.asNumber()));
+            takesOtherOperands = true;
+            operand.reference = walker.constant(WTF::move(word));
+            operand.type = walker.types().at(walker.typeOf(operand.reference));
+            operand.known = primitiveKnownInNumberForms(walker, operand.reference);
+            walker.count(StatisticID::ConstantsCutToInt32);
+            continue;
+        }
         Reference simpler = buildSimplerOperandOfBitOperator(walker, origin, operand.written);
         if (!simpler)
             simpler = integerThatCharCodeIsKnownToBe(walker, value, operand.written);

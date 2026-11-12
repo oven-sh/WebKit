@@ -7,6 +7,7 @@ v(ArrayLiteral, CalledByCode, (), CountAxis | SlowPathRecurs, 0, maxArrayElement
 v(ArrayLiteralWithInt32, CalledByCode, (), CountAxis | SlowPathRecurs, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithInt32)
 v(ArrayLiteralOfNumbers, CalledByCode, (), CountAxis | SlowPathRecurs, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralOfNumbers)
 v(ArrayLiteralWithRoom, CalledByCode, (Values, Int32), FormAxis | CountAxis | SlowPathRecurs, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithRoom)
+v(ArrayLiteralToGrow, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralToGrow)
 v(ArrayLiteralWithDouble, CalledByCode, (), CountAxis, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDouble)
 v(ArrayLiteralWithDoubleSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDoubleSlow)
 v(NewCopyOnWriteArray, CalledByCode, (Int32InImage, DoubleInImage, ContiguousInImage, Int32InStorageOfSite, DoubleInStorageOfSite, ContiguousInStorageOfSite), FormAxis | OperandRegisterAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, AlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewCopyOnWriteArray)
@@ -34,6 +35,7 @@ v(ArrayPushOfKnownKind, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoic
 v(AppendElements, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendElements)
 v(AppendMembers, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendMembers)
 v(AppendValuesOfMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendValuesOfMap)
+v(ListOfIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ListOfIterable)
 v(AppendIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendIterable)
 v(DestructureIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, DestructureIterable)
 
@@ -46,3 +48,4 @@ v(SetArrayLength, CalledByCode, (InStrictCode, InSloppyCode), FormAxis, 0, 0, Al
 v(ArrayGetAtIndex, CalledByCode, (OfListAsMade, OfAnyList, OfPlainList), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtIndex)
 v(ArrayGetAtNumber, CalledByCode, (OfListAsMade, OfAnyList, OfPlainList), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtNumber)
 v(ArrayIndexOfString, CalledByCode, (Values, ValuesFromStart), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayIndexOfString)
+v(ArrayIndexOfValue, CalledByCode, (Values, ValuesAndHoles), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayIndexOfValue)

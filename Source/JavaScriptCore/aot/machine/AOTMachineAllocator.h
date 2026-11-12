@@ -183,6 +183,7 @@ public:
         if (!patch->findsOperandsInFrameWithoutRecord())
             m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
     }
+    void countSpilledFirstOperand() { ++m_allocation.m_numberOfSpilledFirstOperands; }
     ALWAYS_INLINE void noteFrameUse()
     {
         if (isInRareRegion()) {
@@ -544,6 +545,8 @@ public:
     ArenaVector<PhisInSpill*> m_phisInSpills;
     PhisInSpill& phisInSpill(SpillIndex);
     SpillIndex findSpillOfDeadSource(const Operation* phi);
+    std::span<const SpillIndex> findSpillsThatPhisAreOnlyHandedOnTo(const Block*);
+    std::span<uint32_t> m_placesHandedOn;
     void letEdgesWritePhi(Operation* phi, SpillIndex, const BlockPlace& placeOfHead);
     ArenaVector<Reg> m_hints;
     ArenaVector<Position> m_knownReadsOutsideRareRegions;

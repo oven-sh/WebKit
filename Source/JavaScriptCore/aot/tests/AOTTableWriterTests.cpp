@@ -163,10 +163,63 @@ static void testShapeSetHoldsItsMembers()
     checkShapeSet(neighbors);
 }
 
+static void checkTypeRecords(uint32_t numberOfTypes, uint32_t wordsOfRecord, size_t sizeInFront, uint32_t expectedShift)
+{
+    BuildContext build(wireOptions());
+    TablePart part(TablePartID::Types, build);
+    if (sizeInFront)
+        part.allocate(sizeInFront, 4);
+    Vector<uint32_t> firstWords(numberOfTypes + 1, [&](size_t place) {
+        return static_cast<uint32_t>(place * wordsOfRecord);
+    });
+    Vector<uint32_t> words(numberOfTypes * wordsOfRecord, [](size_t place) {
+        return static_cast<uint32_t>(place + 1);
+    });
+    auto recordAt = [&](uint32_t place) {
+        return asBytes(words.span().subspan(firstWords[place], wordsOfRecord));
+    };
+    std::optional<uint32_t> shift = findShiftOfTypeNumbers(part, firstWords.span());
+    AOT_TEST_CHECK(shift == expectedShift);
+    Vector<uint32_t> numbers;
+    for (uint32_t place = 0; place < numberOfTypes; ++place)
+        numbers.append((FirstTableParts::startOfTypes + placeTypeRecord(part, recordAt(place), size_t { 1 } << *shift)) >> *shift);
+    bool everyTypeIsReadBack = true;
+    for (uint32_t place = 0; place < numberOfTypes; ++place) {
+        everyTypeIsReadBack &= numbers[place] && numbers[place] <= UINT16_MAX
+            && equalSpans(std::span<const uint8_t>(part.bytesAt((numbers[place] << *shift) - FirstTableParts::startOfTypes, recordAt(place).size())), recordAt(place));
+    }
+    AOT_TEST_CHECK(everyTypeIsReadBack);
+    AOT_TEST_CHECK(!build.diagnostics().hasErrors());
+}
+
+static void testEveryTypeIsReadBackByItsNumber()
+{
+    for (size_t sizeInFront : { 0, 4, 8, 12, 20, 44 }) {
+        checkTypeRecords(1000, 5, sizeInFront, 2);
+        checkTypeRecords(20'000, 5, sizeInFront, 3);
+        checkTypeRecords(40'000, 4, sizeInFront, 4);
+        checkTypeRecords(40'000, 5, sizeInFront, 5);
+        checkTypeRecords(65'000, 5, sizeInFront, 5);
+        checkTypeRecords(65'000, 12, sizeInFront, 6);
+    }
+}
+
+static void testMoreTypesThanNumbersHaveNoShift()
+{
+    BuildContext build(wireOptions());
+    TablePart part(TablePartID::Types, build);
+    Vector<uint32_t> firstWords(65'537, [](size_t place) {
+        return static_cast<uint32_t>(4 * place);
+    });
+    AOT_TEST_CHECK(!findShiftOfTypeNumbers(part, firstWords.span()));
+}
+
 std::span<const NativeTest> tableWriterTests()
 {
     static constexpr NativeTest tests[] = {
         { "plan/shape-sets/holds-its-members"_s, testShapeSetHoldsItsMembers },
+        { "image/type-records/every-type-is-read-back-by-its-number"_s, testEveryTypeIsReadBackByItsNumber },
+        { "image/type-records/more-types-than-numbers-have-no-shift"_s, testMoreTypesThanNumbersHaveNoShift },
         { "image/table-part/vector-bytes-overflow"_s, testVectorBytesOverflow },
         { "image/table-part/unfilled-room-over-vector-bytes"_s, testUnfilledRoomOverVectorBytes },
         { "image/table-part/join-refuses-words-linked-by-one-of-two-owners"_s, testJoinRefusesWordsLinkedByOneOfTwoOwners },

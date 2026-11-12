@@ -46,11 +46,11 @@ export function groupBy(items, callback)
             var item = items[k];
             var key = callback.$call($undefined, item, k);
             var group = groups.$get(key);
-            if (!group) {
+            if (!$isJSArray(group)) {
                 group = [];
                 groups.$set(key, group);
             }
-            $putByValDirect(group, group.length, item);
+            $appendElement(group, item);
         }
         return groups;
     }
@@ -69,11 +69,11 @@ export function groupBy(items, callback)
             $ifAbruptCloseIterator(iterator, $throwTypeError("The number of iterations exceeds 2**53 - 1"));
         $ifAbruptCloseIterator(iterator, (key = callback.$call($undefined, item, k)));
         group = groups.$get(key);
-        if (!group) {
+        if (!$isJSArray(group)) {
             group = [];
             groups.$set(key, group);
         }
-        $putByValDirect(group, group.length, item);
+        $appendElement(group, item);
         ++k;
     }
     return groups;

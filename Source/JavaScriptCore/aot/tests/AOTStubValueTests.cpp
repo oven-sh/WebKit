@@ -437,6 +437,41 @@ static void testTypesInTablesThatPassTheCheckOfAProof()
     });
 }
 
+static void testLooseEqualityOfPrimitives()
+{
+    StubRunner runner;
+    auto bitsOf = [](JSValue value) {
+        return static_cast<uint64_t>(JSValue::encode(value));
+    };
+    const uint64_t primitives[] = {
+        bitsOf(jsNumber(0)), bitsOf(jsNumber(1)), bitsOf(jsNumber(-1)), bitsOfDouble(0.0), bitsOfDouble(-0.0), bitsOfDouble(1.0), bitsOfDouble(1.5), bitsOfDouble(PNaN), bitsOfDouble(-PNaN),
+        bitsOf(jsUndefined()), bitsOf(jsNull()), bitsOf(jsBoolean(true)), bitsOf(jsBoolean(false)),
+    };
+    auto numberOf = [](JSValue value) {
+        return value.isNumber() ? value.asNumber() : value.isTrue() ? 1 : 0;
+    };
+    for (uint64_t left : primitives) {
+        for (uint64_t right : primitives) {
+            JSValue leftValue = JSValue::decode(static_cast<EncodedJSValue>(left));
+            JSValue rightValue = JSValue::decode(static_cast<EncodedJSValue>(right));
+            const bool areEqual = leftValue.isUndefinedOrNull() || rightValue.isUndefinedOrNull() ? leftValue.isUndefinedOrNull() && rightValue.isUndefinedOrNull() : numberOf(leftValue) == numberOf(rightValue);
+            StubRun run = runner.run(equal(false), { left, right });
+            AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(areEqual));
+        }
+    }
+
+    Ref<StringImpl> text = StringImpl::create("ab"_span);
+    FakeFlatString cell(text.get());
+    FakeFlatString object(text.get());
+    object.type = FinalObjectType;
+    for (uint64_t nullish : { bitsOf(jsUndefined()), bitsOf(jsNull()) }) {
+        AOT_TEST_CHECK(!runner.run(equal(false), { cell.address(), nullish }).calledOperation && !runner.run(equal(false), { nullish, cell.address() }).result);
+        AOT_TEST_CHECK(runner.run(equal(false), { object.address(), nullish }).calledOperation && runner.run(equal(false), { nullish, object.address() }).calledOperation);
+    }
+    for (uint64_t number : { bitsOf(jsNumber(1)), bitsOfDouble(1.5), bitsOf(jsBoolean(true)) })
+        AOT_TEST_CHECK(runner.run(equal(false), { cell.address(), number }).calledOperation && runner.run(equal(false), { number, cell.address() }).calledOperation);
+}
+
 static void testStrictEqualityInBothForms()
 {
     StubRunner runner;
@@ -581,6 +616,7 @@ std::span<const NativeTest> stubValueTests()
         { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },
         { "stubs/check-proof-of-closure/the-closure-asked-for-passes-and-no-other-object"_s, ImageTests::whenExecutable<testClosuresThatPassTheCheckOfAProof> },
         { "stubs/check-proof-of-type/what-the-record-accepts-passes-and-the-rest-is-left-to-the-run-time"_s, ImageTests::whenExecutable<testTypesInTablesThatPassTheCheckOfAProof> },
+        { "stubs/loose-equality-of-primitives"_s, ImageTests::whenExecutable<testLooseEqualityOfPrimitives> },
         { "stubs/equal/strict-in-the-register-and-in-the-flags"_s, ImageTests::whenExecutable<testStrictEqualityInBothForms> },
     };
     return tests;

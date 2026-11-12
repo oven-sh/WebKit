@@ -8,12 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTFacts.h"
+#include "AOTFieldGetters.h"
+#include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
 #include "AOTNameClass.h"
 #include "AOTObjectVisiting.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
+#include "AOTPromotedEnvironments.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeRelations.h"
@@ -720,6 +724,8 @@ static uint32_t appendObjectLayoutRecord(TableEncoder& encoder, LayoutID id, con
     if (encoder.facts.linked().layout(id).reachesUnseenCode && !shape.impossibleMutations.isEmpty())
         encoder.fail("RecordRulesOutWhatUnseenCodeMayDo"_s, id);
     record.impossibleMutationsRaw = shape.impossibleMutations.toRaw();
+    record.marksFrozenObjects = encoder.plan.layout(id).marksFrozenObjects;
+    record.marksOtherPrototypes = encoder.plan.layout(id).marksOtherPrototypes;
     record.isSaidNeverToReachUnseenCode = AOT::hasFlag(encoder.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) && !encoder.facts.linked().layout(id).reachesUnseenCode;
     record.shape = shapeNumber;
     record.numberOfOrders = parts.numberOfKeyOrders;
@@ -947,6 +953,140 @@ static Vector<FieldGetterData> collectFieldGetters(const TableEncoder& encoder)
     return getters;
 }
 
+namespace {
+
+struct LocationOfCapture {
+    uint32_t base { ReturnedCaptureData::baseOfClosure };
+    uint8_t form { 0 };
+    uint32_t offset { 0 };
+};
+
+} // anonymous namespace
+
+static uint8_t formOfReturnedCapture(SlotRepresentation representation)
+{
+    static_assert(!static_cast<unsigned>(SlotRepresentation::JSValue) && numberOfEnumerators<SlotRepresentation> <= ReturnedCaptureData::isElement && SlotData::offsetBits == 24);
+    return representation == SlotRepresentation::Cell ? 0 : static_cast<uint8_t>(representation);
+}
+
+static std::optional<LocationOfCapture> locateVariableOfReturnedCapture(const TableEncoder& encoder, VariableID id)
+{
+    const Vector<PlacedVariable>& variables = encoder.numbers.statics().variables;
+    if (!id || id.index() >= variables.size())
+        return std::nullopt;
+    const PlacedVariable& placed = variables[id.index()];
+    switch (placed.plan.storage) {
+    case Typed::VariableStorage::Statics: {
+        if (!placed.hasWord || placed.offset > SlotData::maxOffset)
+            return std::nullopt;
+        LocationOfCapture location { ReturnedCaptureData::baseOfStatics, formOfReturnedCapture(placed.plan.representation), placed.offset };
+        if (const Typed::DeferredVariable* deferred = encoder.plan.deferredDefinitions().findDeferred(id); deferred && deferred->mark != Typed::Primitive::Absent) {
+            if (placed.plan.representation != SlotRepresentation::JSValue || (deferred->mark != Typed::Primitive::Undefined && deferred->mark != Typed::Primitive::Null))
+                return std::nullopt;
+            location.form = deferred->mark == Typed::Primitive::Undefined ? ReturnedCaptureData::undefinedIsNotMade : ReturnedCaptureData::nullIsNotMade;
+        }
+        return location;
+    }
+    case Typed::VariableStorage::ClosureTable: {
+        FunctionID function = placed.function;
+        if (!function && id.index() < encoder.program.variables.size())
+            function = encoder.program.at(id).function;
+        uint32_t cell = function ? encoder.numbers.closureCellNumber(function) : 0;
+        if (!cell || cell > SlotData::maxOffset / sizeof(uint32_t))
+            return std::nullopt;
+        return LocationOfCapture { ReturnedCaptureData::baseOfClosure, ReturnedCaptureData::isClosureCell, static_cast<uint32_t>(cell * sizeof(uint32_t)) };
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<LocationOfCapture> locateReturnedCapture(const TableEncoder& encoder, FunctionID function, const Typed::CapturedVariable& captured)
+{
+    using Storage = Typed::CapturedVariable::Storage;
+    const Typed::CallingConventions& conventions = encoder.plan.conventions();
+    const Typed::PromotedEnvironments& promoted = encoder.plan.promotedEnvironments();
+    if (captured.storage == Storage::ModuleVariable)
+        return locateVariableOfReturnedCapture(encoder, captured.variable);
+    if (captured.storage == Storage::EnvironmentField) {
+        if (VariableID variable = promoted.variableOf(captured.layout, captured.field))
+            return locateVariableOfReturnedCapture(encoder, variable);
+    } else if (const Typed::RemovedCapture* removed = promoted.findRemoved(function, captured.capture))
+        return locateVariableOfReturnedCapture(encoder, removed->variable);
+
+    if (promoted.isRemoved(function, captured.capture))
+        return std::nullopt;
+    Typed::Representation held = Typed::closureCaptureRepresentationOf(encoder.program, conventions, function, captured.capture);
+    if (held != Typed::Representation::JSValue && held != Typed::Representation::Cell)
+        return std::nullopt;
+    ptrdiff_t offsetOfCaptures = encoder.plan.functionKind(encoder.program, conventions.closureEntryOf(function)).isSlim ? offsetOfSlimClosureCaptures : offsetOfClosureCaptures;
+    uint32_t offset = static_cast<uint32_t>(offsetOfCaptures + static_cast<ptrdiff_t>(Typed::closureCaptureSlotOf(encoder.program, conventions, function, captured.capture) * sizeof(uint64_t)));
+    if (captured.storage == Storage::Capture)
+        return LocationOfCapture { ReturnedCaptureData::baseOfClosure, 0, offset };
+    const Typed::PlacedSlot& slot = encoder.plan.slot(captured.layout, captured.field);
+    if (held != Typed::Representation::Cell || !encoder.plan.isInUse(captured.layout) || !slot.hasStorage() || slot.needsExtension() || offset >> ReturnedCaptureData::baseShift > ReturnedCaptureData::maxBase || slot.offset > SlotData::maxOffset)
+        return std::nullopt;
+    static_assert(!(offsetOfSlimClosureCaptures % (1 << ReturnedCaptureData::baseShift)) && offsetOfSlimClosureCaptures >> ReturnedCaptureData::baseShift > ReturnedCaptureData::baseOfClosure);
+    return LocationOfCapture { offset >> ReturnedCaptureData::baseShift, formOfReturnedCapture(slot.representation), slot.offset };
+}
+
+static Vector<ReturnedCaptureData> collectReturnedCaptures(const TableEncoder& encoder)
+{
+    const FunctionNumbers& functions = encoder.numbers.functions();
+    Vector<ReturnedCaptureData> rows;
+    for (const auto& [function, returned] : encoder.inputs.bodyFacts.capturesReturnedByFunctions) {
+        std::optional<FunctionID> entrypoint = encoder.findEntrypoint(function);
+        if (!entrypoint || entrypoint->index() < functions.firstClosureFunction().index() || entrypoint->index() >= functions.endOfClosureFunctions().index())
+            continue;
+        std::optional<LocationOfCapture> variable = locateReturnedCapture(encoder, function, returned.variable);
+        if (!variable)
+            continue;
+        if (returned.key) {
+            std::optional<LocationOfCapture> key = locateReturnedCapture(encoder, function, returned.key);
+            bool isPair = key && variable->base == ReturnedCaptureData::baseOfClosure && !variable->form && key->base == variable->base && !key->form && key->offset == variable->offset + sizeof(EncodedJSValue);
+            if (!isPair)
+                continue;
+            variable->form = ReturnedCaptureData::isElement;
+        }
+        rows.append(ReturnedCaptureData::create(functions.closureNumberOf(*entrypoint), variable->base, variable->offset, variable->form));
+    }
+    encoder.build.statistics().count(StatisticID::FunctionsReturningCaptures, rows.size());
+    if (rows.isEmpty())
+        return { };
+
+    AOT::sort(rows);
+    for (uint32_t capacity = static_cast<uint32_t>(rows.size() + rows.size() / 4 + 1);; capacity += capacity / 8 + 1) {
+        Vector<ReturnedCaptureData> table(FillWith { }, capacity + ReturnedCaptureData::numberOfRowsBehind, ReturnedCaptureData { });
+        bool fits = std::ranges::all_of(rows, [&](const ReturnedCaptureData& row) {
+            size_t place = ReturnedCaptureData::placeOf(row.closureNumberPlusOne(), capacity);
+            while (place < table.size() && table[place].closureNumberPlusOne())
+                ++place;
+            if (place + 1 >= table.size())
+                return false;
+            table[place] = row;
+            return true;
+        });
+        if (fits)
+            return table;
+    }
+}
+
+static Vector<ReturnedCaptureData> collectKeyedLookups(const TableEncoder& encoder)
+{
+    const FunctionNumbers& functions = encoder.numbers.functions();
+    Vector<ReturnedCaptureData> rows;
+    for (const auto& [function, object] : encoder.inputs.bodyFacts.objectsOfKeyedLookups) {
+        std::optional<FunctionID> entrypoint = encoder.findEntrypoint(function);
+        if (!entrypoint || entrypoint->index() < functions.firstClosureFunction().index() || entrypoint->index() >= functions.endOfClosureFunctions().index())
+            continue;
+        std::optional<LocationOfCapture> variable = locateReturnedCapture(encoder, function, object);
+        if (variable && variable->form < ReturnedCaptureData::isElement)
+            rows.append(ReturnedCaptureData::create(functions.closureNumberOf(*entrypoint), variable->base, variable->offset, variable->form));
+    }
+    encoder.build.statistics().count(StatisticID::KeyedLookupFunctions, rows.size());
+    AOT::sort(rows, [](const ReturnedCaptureData& a, const ReturnedCaptureData& b) { return a.closureNumberPlusOne() < b.closureNumberPlusOne(); });
+    return rows;
+}
+
 void encodeLayoutTables(TableEncoder& encoder)
 {
     static constexpr ASCIILiteral nameOfSteps = "image: layout tables"_s;
@@ -987,6 +1127,8 @@ void encodeLayoutTables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::closurePropertyNames, collectClosurePropertyNames(encoder));
     encoder.part.setTable(ProgramTableIndex::addedPrototypeNames, collectAddedPrototypeNames(encoder));
     encoder.part.setTable(ProgramTableIndex::fieldGetters, collectFieldGetters(encoder));
+    encoder.part.setTable(ProgramTableIndex::returnedCaptures, collectReturnedCaptures(encoder));
+    encoder.part.setTable(ProgramTableIndex::keyedLookups, collectKeyedLookups(encoder));
     times.didFinish("append the tables behind the records"_s);
 }
 

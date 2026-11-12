@@ -86,8 +86,9 @@ void OperatorEmitter::defineHeldToItsType(const ValueContext& value, Operand res
     bool walkHasAsked = (m_code.role() == CodeRole::Body || m_code.role() == CodeRole::CoroutineBody) && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime);
     if (!walkHasAsked && emittersCheckProofs() && numberRepresentations.contains(result.representation)) {
         const TypeTestPlan& plan = typeTestPlanFor(widestTypeOf(result.representation), result.representation, typeIDOf(value.id()));
+        Operand tested = generator().isCheckedSum(value.id()) ? Operand(Number(generator().numberOfCheckedWord(generator().wordOfNumberInCheckedSum(result.value)))) : result;
         if (plan.verdict != TypeTestVerdict::AlwaysPasses)
-            emitter<ThrowEmitter>().requireOrCrash(value, hasType(result, plan), std::nullopt, ProofSource::OtherOperation);
+            emitter<ThrowEmitter>().requireOrCrash(value, hasType(tested, plan), std::nullopt, ProofSource::OtherOperation);
     }
     define(value, result);
 }
@@ -114,6 +115,10 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
         Boxed y = in<Boxed>(right);
         if (sumsInt32sInPlace(value, op))
             return sumOfAnyValues(value, op, x, y);
+        if (op == ArithmeticOperator::Add && typeOf(left).isAnyString() && types().isSubset(typeIDOf(right), types().builtinClass(BuiltinClasses::Array)) && generator().isInLoop(value.block()) && !standsInRareBlock(value)) {
+            build().statistics().count(StatisticID::ArraysAddedToStrings);
+            return callOperation<Boxed>(value, RuntimeOperation::ValueAdd, { x, y });
+        }
         return arithmeticOnBoxedOperands(value, op, x, y);
     }
     case OperatorForm::Integers:
@@ -133,18 +138,19 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
             Operand y = termOfBoxedSum(right);
             return sumOfBoxedNumbers(op, x, typeOf(left), y, typeOf(right), emitter<CastEmitter>().takeNumberChecksOf(value.id()).span());
         }
+        if (generator().isCheckedSum(value.id())) [[unlikely]]
+            return checkedSum(value, op);
         if (generator().isCarriedSum(value.id())) [[unlikely]] {
-            auto integerOf = [&](ValueID term) {
-                return Integer(generator().integerOfCarriedSum(asNumericOperand(term, &value).value(), typeOf(term).integers.minimum >= 0));
-            };
-            Integer x = integerOf(left);
-            Integer y = integerOf(right);
+            Integer x = integerAddedToSum(value, left);
+            Integer y = integerAddedToSum(value, right);
             Integer sum = op == ArithmeticOperator::Add ? add(x, y) : sub(x, y);
             if (emittersCheckProofs())
                 emitter<ThrowEmitter>().requireOrCrash(value, belowOrEqual(add(sum, integer(maxExactInteger)), integer(2 * maxExactInteger)), std::nullopt, ProofSource::RememberedFact);
             return toNumber(sum);
         }
-        if (handsOnBitsOfNaN(value.value()) && (generator().holdsAnyNaN(left) || generator().holdsAnyNaN(right))) {
+        if (handsOnBitsOfNaN(value.value()) && (generator().holdsAnyNaN(left) || generator().holdsAnyNaN(right) || generator().takesUndefinedForNaN(left) || generator().takesUndefinedForNaN(right))) {
+            if (generator().takesUndefinedForNaN(left) && generator().takesUndefinedForNaN(right))
+                build().statistics().count(StatisticID::ArithmeticOnMarkers);
             Number x = asNumericOperandWithAnyNaN(left);
             Number y = asNumericOperandWithAnyNaN(right);
             return generator().settleNaNOf(value, arithmeticOnNumbers(op, x, y, &value));
@@ -154,6 +160,8 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
             build().statistics().count(StatisticID::ArithmeticOnMarkers);
             return emitter<ConversionEmitter>().withoutPayload(arithmeticOnNumbers(op, Number(get(left).value), Number(get(right).value)));
         }
+        if (op == ArithmeticOperator::Mod && generator().isRemainderOfBox(value.id())) [[unlikely]]
+            return remainderOfBox(value);
         Number x = asNumericOperand(left, &value);
         Number y = asNumericOperand(right, &value);
         return arithmeticOnNumbers(op, x, y, &value);
@@ -558,7 +566,7 @@ bool OperatorEmitter::speaksForNumber(ValueID operand, unsigned depth)
 
 bool OperatorEmitter::sumsInt32sInPlace(const ValueContext& value, ArithmeticOperator op)
 {
-    if ((op != ArithmeticOperator::Add && op != ArithmeticOperator::Sub) || !generator().isInLoop(value.block()) || standsInRareBlock(value))
+    if ((op != ArithmeticOperator::Add && op != ArithmeticOperator::Sub) || (!generator().isInLoop(value.block()) && !m_facts.linked().functionsReachedByRecursion.get(m_unit.function.index())) || standsInRareBlock(value))
         return false;
     if (op == ArithmeticOperator::Add && !speaksForNumber(value->leftOperand()) && !speaksForNumber(value->rightOperand()))
         return false;
@@ -712,6 +720,8 @@ Operand OperatorEmitter::unaryResult(const ValueContext& value, UnaryOperator op
             Boxed stepped = in<Boxed>(operand);
             return sumOfBoxedNumbers(sum, stepped, typeOf(operand), word32(1), typeOf(operand));
         }
+        if (handsOnBitsOfNaN(value.value()) && generator().holdsAnyNaN(operand))
+            return generator().settleNaNOf(value, neg(generator().getWithAnyNaN(operand).as<Number>()));
         return unaryOnNumbers(op, operand);
     case OperatorForm::BigInts:
         m_out.noteForm(Form::Runtime, StateOfKnowledge::BigInts);
@@ -852,8 +862,9 @@ bool OperatorEmitter::isOnlyTruncatedToInt32(ValueID number)
 
 void OperatorEmitter::generateToNumber(const ValueContext& value)
 {
-    if (ValueID operand = value->valueOperand(); handsOnBitsOfNaN(value.value()) && generator().holdsAnyNaN(operand)) {
-        define(value, generator().settleNaNOf(value, generator().getWithAnyNaN(operand).as<Number>()));
+    if (ValueID operand = value->valueOperand(); handsOnBitsOfNaN(value.value()) && (generator().holdsAnyNaN(operand) || generator().takesUndefinedForNaN(operand))) {
+        m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
+        define(value, generator().settleNaNOf(value, asNumericOperandWithAnyNaN(operand)));
         return;
     }
     if (ValueID operand = value->valueOperand(); representationOf(operand) == Representation::OptionalDouble && value->form() == OperatorForm::Numbers && isOnlyTruncatedToInt32(value.id())) {
@@ -952,8 +963,8 @@ void OperatorEmitter::generateToThis(const ValueContext& value)
         defineNarrowed(value, operand);
         return;
     }
-    define(value, passingOrConverted<CellPointer>(operand, plan, Form::Runtime, [&](const CallOptions& options) {
-        return unboxCell(callOperation<Boxed>(value, RuntimeOperation::ToThis, { operand }, options));
+    define(value, passingOrConverted<CellPointer>(operand, plan, Form::Runtime, [&](const CallOptions&) {
+        return unboxCell(Boxed(callStub(value, AOT::toThis(), { operand.value() }).first));
     }));
 }
 

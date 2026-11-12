@@ -284,20 +284,46 @@ CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const Ne
     LValue word = isSlim ? m_out.wideNumber(mention) : bitOr(zeroExtended(numberOf(mention)), Integer(m_out.shl(zeroExtended(numberOf(request.allocation.mention)).value(), ClosureRequest::allocationShift))).value();
 
     Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
-    size_t numberInRegisters = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
-    Vector<LValue, 6> operands;
-    operands.append(word);
-    operands.append(captureWords.span().first(numberInRegisters));
-    CellPointer cell(callStub(value, isSlim ? AOT::newSlimClosure(request.kind.slimClosureKind(), count) : newClosure(count), operands.span()).first);
-    if (numberInRegisters == count)
-        return cell;
+    auto callOfStub = [&] {
+        size_t numberInRegisters = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
+        Vector<LValue, 6> operands;
+        operands.append(word);
+        operands.append(captureWords.span().first(numberInRegisters));
+        CellPointer cell(callStub(value, isSlim ? AOT::newSlimClosure(request.kind.slimClosureKind(), count) : newClosure(count), operands.span()).first);
+        if (numberInRegisters == count)
+            return cell;
 
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures, numberInRegisters);
+        }
+        emitter<BarrierEmitter>().fenceAfterInitialization(value);
+        return cell;
+    };
+    if (!isSlim || !emitter<CellAllocationEmitter>().allocatesInline(value))
+        return callOfStub();
+
+    CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
+    build().statistics().count(StatisticID::CellsAllocatedInline);
+    const unsigned allocatorIndex = (count + 1) / 2;
+    const ptrdiff_t offsetOfAllocator = AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + static_cast<ptrdiff_t>(allocatorIndex * sizeof(void*));
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    Integer closureWord = closureWordOf(request);
+    Integer header = loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t));
+    Pointer allocator(m_out.loadPtr(instanceField(m_heaps.entire(AbstractHeap::AllocatorState), offsetOfAllocator)));
+    CellPointer cell = cellAllocation.allocateHeapCell(allocator, MarkedSpace::sizeStep * (allocatorIndex + 1), slowPath, false);
     {
         CodeGenerator::InitializationScope scope(generator());
-        storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures, numberInRegisters);
+        cellAllocation.storeHeader(cell, header);
+        storeField(cell, m_heaps.AOTSlimClosure_word, closureWord);
+        storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures);
     }
     emitter<BarrierEmitter>().fenceAfterInitialization(value);
-    return cell;
+    join.add(cell);
+    m_out.appendTo(slowPath);
+    join.add(callOfStub());
+    return join.finish();
 }
 
 CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const NewClosureRequest& request)

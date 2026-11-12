@@ -128,6 +128,135 @@ Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Or
     return walker.build(WTF::move(narrowed));
 }
 
+static void appendNullishArms(Walker& walker, Reference value, Origin origin, Vector<Walker::JoinArm, 4>& arms)
+{
+    struct NumberOfNullish {
+        TypeID type;
+        double number;
+    };
+    for (const NumberOfNullish& nullish : { NumberOfNullish { TypeTable::null, 0 }, NumberOfNullish { TypeTable::undefined, PNaN } }) {
+        if (walker.isUnreachable() || walker.hasFailed())
+            return;
+        Reference test = buildTestOfNumber(walker, value, nullish.type, origin);
+        if (!test || walker.hasFailed())
+            return;
+        BlockID isNullish = walker.addBlock(BlockFrequency::Rare);
+        BlockID isOther = walker.addBlock(BlockFrequency::Rare);
+        walker.branch(test, isNullish, isOther);
+        walker.continueIn(isNullish);
+        if (!walker.isUnreachable())
+            arms.append({ walker.currentBlock(), { walker.constant(PrimitiveKnownToFolding::number(nullish.number)) } });
+        walker.continueIn(isOther);
+    }
+    if (!walker.isUnreachable() && !walker.hasFailed())
+        walker.restartIteration();
+}
+
+bool isConvertedToNumber(Walker& walker, const BodyValue& read)
+{
+    static constexpr OpcodeSet products { Opcode::Mul, Opcode::Div, Opcode::Sub };
+    const BodyIndex& index = walker.currentBodyIndex();
+    bool isReadAgain = std::ranges::any_of(index.block(index.blockOf(read.id())).values(), [&](BodyValue other) {
+        return other.opcode() == Opcode::PropGet && other.id() != read.id() && !other.isFreeName() && other.key() == read.key();
+    });
+    if (isReadAgain)
+        return false;
+    ValueID value = read.id();
+    ValueID user = index.onlyUsingValue(value);
+    while (user && opcodesThatStateTypes.contains(index.opcodeOf(user))) {
+        value = user;
+        user = index.onlyUsingValue(user);
+    }
+    if (!user || products.contains(index.opcodeOf(user)))
+        return !!user;
+    if (index.opcodeOf(user) != Opcode::Add)
+        return false;
+    ValueID beside = index.value(user).operand(index.value(user).operand(0) == value ? 1 : 0);
+    if (Reference built = walker.referenceOf(beside); built && built.isRecord())
+        return walker.types().at(walker.typeOf(built)).isNumber();
+    ValueID other = index.stripCasts(beside);
+    if (!other || index.isParameter(other) || index.opcodeOf(other) != Opcode::PropGet || index.blockOf(other) != index.blockOf(read.id()))
+        return false;
+    BodyValue otherRead = index.value(other);
+    return !otherRead.isFreeName() && otherRead.key() != read.key() && index.stripCasts(otherRead.objectOperand()) == index.stripCasts(read.objectOperand()) && siteMayAnswerReadWithoutOtherCode(walker, otherRead) && index.onlyUsingValue(other);
+}
+
+bool bindNumberOfNullish(Walker& walker, const BodyValue& read, Reference found, Origin origin)
+{
+    if (!found.isValue() || walker.representationOf(found) != Representation::JSValue || !walker.types().overlap(walker.typeOf(found), TypeTable::number) || walker.types().isSubset(walker.typeOf(found), TypeTable::number))
+        return false;
+    walker.recordSpeculation();
+    Reference isNumber = buildTestOfNumber(walker, found, TypeTable::number, origin);
+    if (!isNumber || walker.hasFailed() || walker.isUnreachable())
+        return true;
+    BlockID holdsNumber = walker.addBlock();
+    BlockID holdsOther = walker.addBlock(BlockFrequency::Rare);
+    Vector<Walker::JoinArm, 4> arms;
+    walker.branch(isNumber, holdsNumber, holdsOther);
+    walker.continueIn(holdsNumber);
+    if (!walker.isUnreachable()) {
+        Reference number = buildProofOfNumber(walker, found, isNumber, origin);
+        if (!number || walker.hasFailed())
+            return true;
+        Draft unboxed(Opcode::Unbox, origin);
+        unboxed.setOperand(0, number);
+        unboxed.representation = Representation::Double;
+        Reference unboxedNumber = walker.build(WTF::move(unboxed));
+        if (!unboxedNumber || walker.hasFailed())
+            return true;
+        arms.append({ walker.currentBlock(), { unboxedNumber } });
+    }
+    walker.continueIn(holdsOther);
+    appendNullishArms(walker, found, origin, arms);
+    std::array<Reference, 1> met;
+    if (walker.hasFailed() || !walker.joinArms(arms.span(), walker.addBlock(), met))
+        return true;
+    walker.bind(read.id(), met[0]);
+    walker.count(StatisticID::SiteReadsOfNullishNumbers);
+    return true;
+}
+
+bool isTakenByBitOperator(Walker& walker, ValueID value)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID user = index.onlyUsingValue(value);
+    while (user && opcodesThatStateTypes.contains(index.opcodeOf(user)))
+        user = index.onlyUsingValue(user);
+    return user && allBitwiseOperators.contains(index.opcodeOf(user));
+}
+
+bool bindBitsOfPrimitive(Walker& walker, const BodyValue& read, Reference found, std::optional<Draft>&& readAgain, Origin origin)
+{
+    TypeArena& types = walker.types();
+    TypeID typeFound = found.isValue() ? walker.typeOf(found) : TypeID();
+    if (!typeFound || walker.representationOf(found) != Representation::JSValue || !(types.at(typeFound).primitives & Primitive::Integer) || types.isSubset(typeFound, TypeTable::number))
+        return false;
+    walker.recordSpeculation();
+    Reference test = buildTestOfNumber(walker, found, TypeArena::fromPrimitives(Primitive::NumberLike), origin);
+    if (!test || walker.hasFailed() || walker.isUnreachable())
+        return true;
+    BlockID leaves = walker.addBlock(BlockFrequency::Rare);
+    BlockID holdsBits = walker.addBlock();
+    walker.branch(test, holdsBits, leaves);
+    walker.continueIn(leaves);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(holdsBits);
+    if (walker.isUnreachable() || walker.hasFailed())
+        return true;
+    Reference primitive = buildProofOfNumber(walker, found, test, origin);
+    if (!primitive || walker.hasFailed())
+        return true;
+    Reference bits = buildOperatorInNumberForms(walker, Opcode::BitOr, primitive, integerInNumberForms(walker, 0), origin);
+    if (!bits || walker.hasFailed())
+        return true;
+    walker.bind(read.id(), bits);
+    walker.count(StatisticID::SiteReadsOfBits);
+    if (readAgain)
+        walker.holdValueRememberedAgainstValueAtSite(primitive, WTF::move(*readAgain));
+    return true;
+}
+
 bool tryGuardNumericOperand(Walker& walker, Draft& draft, ValueID written)
 {
     if (effectRuleOf(draft.opcode) != EffectRule::Operator || draft.numberOfNamedOperands() != 2)
@@ -252,6 +381,14 @@ bool tryGuardAddendOfIndex(Walker& walker, Draft& sum, ValueID written)
         return true;
     }
     return false;
+}
+
+static bool isConvertedOnPath(const BodyIndex& index, ValueID value, uint32_t begin, uint32_t end)
+{
+    ValueID user = index.onlyUsingValue(value);
+    while (user && opcodesThatStateTypes.contains(index.opcodeOf(user)))
+        user = index.onlyUsingValue(user);
+    return user && user.index() >= begin && user.index() < end && !allEqualities.contains(index.opcodeOf(user));
 }
 
 static bool isReturnedAtOnceInNumberArms(const BodyIndex& index, BlockID block, ValueID value)
@@ -421,15 +558,28 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
                 break;
             BlockID leaves = walker.addBlock(BlockFrequency::Rare);
             BlockID goesOn = walker.addBlock(ofOtherArm);
+            bool takesNullish = std::ranges::all_of(number.reads, [&](const NumberReadBeforeArms* read) { return isConvertedOnPath(index, read->read, first, first + size); });
+            Vector<Walker::JoinArm, 4> armsOfNumber;
             walker.branch(isNumber, goesOn, leaves);
             walker.continueIn(leaves);
-            if (!walker.isUnreachable())
+            if (takesNullish)
+                appendNullishArms(walker, number.value, origin, armsOfNumber);
+            else if (!walker.isUnreachable())
                 walker.restartIteration();
             walker.continueIn(goesOn);
             Reference proven = walker.isUnreachable() || walker.hasFailed() ? Reference() : buildProofOfNumber(walker, number.value, isNumber, origin);
             if (!proven)
                 break;
-            holdAgainstSites(number, proven);
+            if (!takesNullish)
+                holdAgainstSites(number, proven);
+            else {
+                armsOfNumber.append({ walker.currentBlock(), { proven } });
+                std::array<Reference, 1> met;
+                if (!walker.joinArms(armsOfNumber.span(), walker.addBlock(ofOtherArm), met))
+                    break;
+                proven = met[0];
+                walker.count(StatisticID::SiteReadsOfNullishNumbers);
+            }
             bindNumber(number, proven);
         }
         walker.walkStretch(inputBlock, begin, end);

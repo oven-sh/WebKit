@@ -324,6 +324,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     const std::optional<GPRReg> valueDestination = operationCall.valueDestination;
     const unsigned numberOfSpillSlots = operationCall.spilledArguments ? std::max(operationCall.spilledArguments->count, 1u) : 0;
     const bool valueGoesThroughFrame = valueDestination && std::ranges::find(saved, *valueDestination) != std::end(saved);
+    const bool sharesSavesOfFPRs = operationCall.saves == OperationCall::Saves::CallerSavedRegisters && !returnsDouble && !numberOfSpillSlots && m_key.family() != StubFamily::CallOperationPreservingRegisters;
     RegisterSet restored;
     for (GPRReg reg : saved) {
         if (returnsValue && reg == GPRInfo::returnValueGPR && !valueDestination)
@@ -360,10 +361,14 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     };
     auto slotOfGPR = [&](unsigned i) { return slot(indexOfGPR[i]); };
     auto slotOfFPR = [&](unsigned i) { return slot(indexOfFPR[i]); };
-    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
-        if (restored.contains(fpr, IgnoreVectors))
-            storeDouble(fpr, slotOfFPR(i));
-    });
+    if (sharesSavesOfFPRs)
+        callStub(StubKey(StubFamily::SaveFPRs));
+    else {
+        forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+            if (restored.contains(fpr, IgnoreVectors))
+                storeDouble(fpr, slotOfFPR(i));
+        });
+    }
     withSavedRegisters(restored, [&] {
         if (operationCall.spilledArguments) {
             for (unsigned i = 0; i < operationCall.spilledArguments->count; ++i)
@@ -394,10 +399,14 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     }
     if (valueDestination && !valueGoesThroughFrame)
         move(GPRInfo::returnValueGPR, *valueDestination);
-    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
-        if (restored.contains(fpr, IgnoreVectors))
-            loadDouble(slotOfFPR(i), fpr);
-    });
+    if (sharesSavesOfFPRs)
+        callStub(StubKey(StubFamily::RestoreFPRs));
+    else {
+        forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+            if (restored.contains(fpr, IgnoreVectors))
+                loadDouble(slotOfFPR(i), fpr);
+        });
+    }
     if (valueDestination)
         recordClobber(*valueDestination);
     if (sizeOfFrame != sizeOfPushedRegisters)

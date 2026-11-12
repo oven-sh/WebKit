@@ -108,9 +108,6 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
             position = next;
         }
     };
-    auto endsAlways = [](const Place&) {
-        return true;
-    };
 
     bool reachesPlaces = (writtenUnderPlacesReachedByEffects(writes) & m_maskOfPlacesReachedByEffects) || ((m_kindsOfPlacesReachedByEffects & ~kindsThatRestOnWhatIsKnown) && writesIntoObjects);
     bool reachesSomething = (endsShapes && m_numberOfShapesReachedByEffects)
@@ -180,7 +177,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
             changed.maskOfPlaces = remainingMask;
         }
         if (endsElements && m_holders[holder].firstElement != none && isWritten())
-            endPlacesWhere(holder, true, endsAlways);
+            endElementsOf(program, holder);
 
         const Holder& record = m_holders[holder];
         if (record.shape || !record.cellFacts.isEmpty() || record.firstPlace != none || record.firstElement != none) {
@@ -464,7 +461,7 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
     return { };
 }
 
-static NEVER_INLINE bool writesFreshObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
+static NEVER_INLINE bool writesFreshObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects, bool restartsIteration)
 {
     Effects beside = effects;
     beside.writes.remove(perObjectHeaps);
@@ -473,15 +470,20 @@ static NEVER_INLINE bool writesFreshObjectsOfTurnAloneInKnownWriters(Walker& wal
     std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, findElementStoreWithoutOtherCodeInKnownWriters(draft, effects));
     return written && std::ranges::all_of(*written, [&](Reference object) {
         Reference root = rootInKnownWriters(walker.code(), object);
-        return walker.state().isFresh(root) && walker.isBuiltInRestartableIteration(root);
+        if (!walker.state().isFresh(root))
+            return false;
+        return restartsIteration ? walker.isBuiltInRestartableIteration(root) : (walker.code().at(root.id()).opcode == Opcode::NewArray || walker.code().at(root.id()).opcode == Opcode::NewObject) && walker.wasBuiltInCurrentFrame(root.id());
     });
 }
 
 static ALWAYS_INLINE bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.canRestartIteration())
+    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps))
         return false;
-    return writesFreshObjectsOfTurnAloneInKnownWriters(walker, draft, effects);
+    bool restartsIteration = walker.canRestartIteration();
+    if (!restartsIteration && !walker.mayLeaveCopyForCall())
+        return false;
+    return writesFreshObjectsOfTurnAloneInKnownWriters(walker, draft, effects, restartsIteration);
 }
 
 static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& walker, const ObjectsWrittenAloneInKnownWriters& written)

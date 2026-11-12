@@ -15,9 +15,13 @@
 
 namespace JSC { namespace AOT {
 
+enum class CallbackSource : uint8_t;
+enum class CompiledMethodOfArray : uint8_t;
 enum class PresenceQuestion : uint8_t;
 
 namespace Typed {
+
+class BodyIndex;
 
 struct MentionedAllocation;
 
@@ -31,6 +35,8 @@ public:
     {
     }
 
+    bool storesElementInto(ValueID made);
+
     void generatePropGet(const ValueContext&);
     void generatePropSet(const ValueContext&);
     void generatePropDefine(const ValueContext&);
@@ -39,6 +45,8 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateGetCachedSetter(const ValueContext&);
+    Boxed accessorAfterMiss(const ValueContext&, CellPointer object, Boxed found, RuntimeOperation);
     void generateElemGetOrOwnAccessor(const ValueContext&);
     void generateGetGetterOfAccessorOrUndefined(const ValueContext&);
     void generateGetValueAtSiteOrAbsent(const ValueContext&);
@@ -83,6 +91,7 @@ public:
     void generateSuperSet(const ValueContext&);
 
     Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID = { });
+    std::optional<StubKey> findStubForOwnSlot(ValueID receiver, PropertyKeyID);
     Boxed getByIdThroughStub(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID);
     bool isErrorMessageRead(const OperationContext&) const;
     Boxed loadErrorMessage(Boxed receiver, ValueID receiverID, LBasicBlock whenNotKept);
@@ -94,6 +103,19 @@ public:
     std::optional<Pointer> siteOf(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<Pointer> siteOfStore(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersOf(const OperationContext&, PropertyKeyID, SiteUse);
+    bool canUseCallbackStubs(const ValueContext& call) const;
+    const Operation* findClosurePassed(ValueID argument) const;
+    std::optional<uint32_t> siteOfCallback(FunctionID callback, const BodyIndex&, ValueID readByCallback);
+    LValue distanceOfCallbackSite(FunctionID callback, const BodyIndex&, ValueID readByCallback, CallbackSource&);
+    LValue valueUsedByCallback(const ValueContext& call, const Operation& closure, const Function& callback, const BodyIndex&, ValueID value);
+    std::optional<StubKey> chooseCallbackStub(const ValueContext& call, const Operation& closure, CompiledMethodOfArray, uint32_t flags, Vector<LValue, 8>& arguments);
+    std::optional<StubKey> tryCallbackStub(const ValueContext& call, CompiledMethodOfArray, uint8_t lentArguments, Vector<LValue, 8>& arguments);
+    std::optional<CompiledMethodOfArray> methodOfArrayNamed(PropertyKeyID) const;
+    std::optional<StubKey> tryCallbackStubOfAnyReceiver(const ValueContext& call, PropertyKeyID, uint8_t lentArguments, Vector<LValue, 8>& arguments);
+    std::optional<Boxed> tryStubOfDirectCall(const ValueContext& call, FunctionID callee);
+    void returnStubResultInTail(const ValueContext& read);
+    void returnUnlessEmpty(Boxed answer);
+    bool returnsOneBoxedValue() const;
     struct ReadOfGroup {
         ValueID id;
         PropertyKeyID key;
@@ -103,10 +125,13 @@ public:
     void readGroupOffOneValue(const ValueContext&, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst);
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
     ValueID readAfterStore(const ValueContext& store);
+    LValue newestAnswerByStructure(NumberedImmediate answers);
     LValue newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub, LBasicBlock hasOtherKey = nullptr);
+    bool isInRepeatedCallback(const ValueContext&) const;
     std::optional<NumberedImmediate> inlineReadAnswers(const ValueContext&);
     Boxed readWithInlineSiteCheck(const ValueContext&, Boxed receiver, ValueID receiverID, NumberedImmediate answers);
     StubKey stubOfEffectFreeRead(const Operation&);
+    Boxed readOffNewestAnswer(const ValueContext&, Boxed receiver, NumberedImmediate answers);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Condition findsName(const OperationContext&, Boxed receiver, PropertyKeyID, PresenceQuestion);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
@@ -123,9 +148,12 @@ public:
     std::optional<unsigned> integerThatLengthIsAskedFor(BlockID, ValueID read, ValueID test);
     bool isPatternLeftToCall(ValueID pattern) const { return m_readLeftToCall && m_readLeftToCall->pattern == pattern; }
     bool methodMayBeUnread(ValueID read) const { return m_methodsThatMayBeUnread.get(read.index()); }
+    bool wasMethodTried(ValueID read) const { return m_methodsTried.get(read.index()); }
     static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
 
 private:
+    void findObjectsWithElementsStored();
+    std::optional<BitVector> m_objectsWithElementsStored;
     HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesReadInFront;
     HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesStoredBeforeLoop;
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
@@ -140,7 +168,9 @@ private:
     }
 
     bool comesAgain(const OperationContext&) const;
-    bool keepsSite(const OperationContext&) const;
+    bool keepsSite(const OperationContext&);
+    bool mayReachAccessors(const OperationContext&);
+    bool mayBeDefinedAbove(PropertyKeyID) const;
     std::optional<NumberedImmediate> answersOfKeyThatIsNoSymbolOfRealm(const OperationContext&, PropertyKeyID, SiteUse);
     struct StoreOfKnownField {
         StubKey stub;
@@ -152,9 +182,11 @@ private:
     void branchOnTruthAtSite(const ValueContext& read);
     void branchOnWhetherLengthIs(const ValueContext& read, unsigned integer);
     std::optional<Boxed> lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext&);
+    Boxed splitWithOwnStorage(const ValueContext& call, LBasicBlock closed);
     bool isReadOfMethodCalledNext(const ValueContext& read);
     ValueID findPatternLeftToCall(const ValueContext& read);
     void returnWhatMethodOfBuiltinClassGives(const ValueContext& read);
+    bool isNameOfWrittenMethod(PropertyKeyID) const;
     Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
     Boxed getMemberAboveLayouts(const ValueContext&, Boxed receiver, Pointer site);
     Boxed getMemberInSlotOrByName(const ValueContext&, Boxed receiver, const PlacedSlot&);
@@ -169,6 +201,7 @@ private:
     template<typename UsePlace> void checkStoreSiteInline(Boxed receiver, Pointer site, const ShapesOfStoreAtSite&, const UsePlace&);
     bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);
     std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
+    std::optional<PlacedSlot> findSlotOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);
     void putFreeName(const ValueContext&);
     CellPointer globalObject();
@@ -186,6 +219,9 @@ private:
     bool readsElementsRepeatedly(const ValueContext&, ValueID object);
     Boxed presentElementOrElse(const ValueContext&, ValueID objectOperand, const ElementKey&, LBasicBlock outOfLine);
     void overwriteElementOrElse(const ValueContext&, StubKey, Boxed object, const ElementKey&, Boxed stored);
+    void storeAtKeyedPlaceOrElse(const ValueContext&, StubKey, Boxed object, Boxed key, Boxed stored);
+    Boxed readAtKeyedPlaceOrElse(const ValueContext&, StubKey, Boxed object, Boxed key);
+    bool mayAskKeyedPlaceInLine(const ValueContext&, ValueID object, ValueID property) const;
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
     struct ExcludedKeys {
         Word32 run;
@@ -212,6 +248,7 @@ private:
     std::optional<ReadLeftToCall> m_readLeftToCall;
     ValueID m_baseOfSuperLeftToRead;
     BitVector m_methodsThatMayBeUnread;
+    BitVector m_methodsTried;
     const bool m_functionComesAgain;
 };
 

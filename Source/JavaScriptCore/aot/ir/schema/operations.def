@@ -5,7 +5,7 @@ enum ArrayLiteralStorage { | engine Fresh Profiled ByElements }
 enum TailCallRequirement { | engine Required Allowed }
 enum CodeRole { | engine Body GenericCallEntry GenericConstructEntry AllocatingConstructEntry CoroutineBody ModuleStart SlowBody ParameterGuard TableEntry TableLookup }
 enum DataEncoding { | engine Unselected ReadOnlyTree CopyOnWriteArray TreeWithOwnStorage SharedObject }
-enum ExpectedElements { | engine Anything Int32Array Uint8Array Float64Array }
+enum ExpectedElements { | engine Anything Int32Array Uint8Array Float64Array Characters }
 enum OperatorForm (state: StateOfKnowledge) {
     | engine Unselected(Always) Generic(Generic) Integers(Integers) CheckedIntegers(CheckedIntegers) Numbers(Numbers) NumberAndValue(NumberAndValue)
     Bits(Bits) Booleans(Booleans) BigInts(BigInts) Strings(Strings) StringAndValue(StringAndValue) Int32AndValue(Int32AndValue)
@@ -67,7 +67,7 @@ operation SetMappedArgument (arguments: Object/inspects+writesContents, index: U
 
 family Access AsRead..Placed
 operation PropGet (object: Any/inspects, key: PropertyKey, with AccessStamp) [isFreeName isForTypeOf | engine receiverIsAskedForNameOfNoBuiltin receiverIsExpectedToBeArguments receiverIsNoObjectOfCompiledCode isErrorMessageExpected] -> unknown => declared(key) ; unknownCode by Access ; access = Read ; receiver = object ; interpreted = Read ; accessClass = ByName ; runtime = GetByIdAndCache ; flow = Copies ; runsBeforeCallee = true ; flowRule = Heap ; formDependsOnLoop = true ; closedUnder = Always ; runtimeUnder = FreeName ; openIn = Loop
-operation PropSet (object: Any/inspects, key: PropertyKey, mode: ECMAMode, value: Any/retains(object), with AccessStamp) [isFreeName] -> none ; unknownCode by Access ; access = Store ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = PutByIdAndCache ; flow = Copies ; flowRule = Heap ; formDependsOnLoop = true ; form = Closed ; openIn = Loop ; runtimeIn = CodeThatRunsOnce
+operation PropSet (object: Any/inspects, key: PropertyKey, mode: ECMAMode, value: Any/retains(object), calledBuiltin?: Builtin, with AccessStamp) [isFreeName] -> none ; unknownCode by Access ; access = Store ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = PutByIdAndCache ; flow = Copies ; flowRule = Heap ; formDependsOnLoop = true ; form = Closed ; openIn = Loop ; runtimeIn = CodeThatRunsOnce
 operation PropDefine (object: Object/inspects, key: PropertyKey, value: Any/retains(object), with AccessStamp) -> none ; unknownCode by Access ; access = Define ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = DefineById ; flow = Copies ; flowRule = Heap ; formDependsOnLoop = true ; form = Closed ; runtimeIn = CodeThatRunsOnce
 operation PropHas (object: Any/inspects, key: PropertyKey, with AccessStamp) -> natural(boolean) ; unknownCode by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; runtime = InByIdAndCache ; branches = May ; flow = TableProves ; flowRule = Heap ; form = Closed
 operation PropDelete (object: Any/inspects+deletesByKey, key: PropertyKey, mode: ECMAMode, with AccessStamp) [isFreeName] -> natural(boolean) ; unknownCode by Access ; interpreted = Store ; accessClass = ByName ; runtime = DeleteById ; flow = TableProves ; flowRule = Heap ; form = Closed

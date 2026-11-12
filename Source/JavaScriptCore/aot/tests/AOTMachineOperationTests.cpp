@@ -1981,6 +1981,43 @@ static void testFloatConversionsInLoops()
     AOT_TEST_CHECK(operationTestNumberOfRegistersZeroed(test) >= 2);
 }
 
+static void testMachineConversionsBesidePatchesInLoops()
+{
+    if (!isX86_64())
+        return;
+    TestProcedure test;
+    Output& out = test.out();
+    LBasicBlock head = out.newBlock();
+    LBasicBlock done = out.newBlock();
+    LValue end = test.argumentGPR(1);
+    ValueFromBlock firstPlace = out.anchor(test.argumentGPR(0));
+    ValueFromBlock firstSum = out.anchor(out.constDouble(0));
+    out.jump(head);
+
+    out.appendTo(head);
+    LValue place = out.phi(Int64, firstPlace);
+    LValue sum = out.phi(Double, firstSum);
+    LValue number = out.floatToDouble(out.loadFloat(out.address(test.heaps().argumentBuffer, place, 0)));
+    PatchOperation* square = out.patchpoint(Double);
+    square->appendSomeRegister(number);
+    square->effects = Effects::none();
+    square->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
+        jit.mulDouble(params[1].fpr(), params[1].fpr(), params[0].fpr());
+    });
+    LValue nextSum = out.doubleAdd(sum, square);
+    LValue nextPlace = out.add(place, out.constInt64(sizeof(float)));
+    out.addIncomingToPhi(place, out.anchor(nextPlace));
+    out.addIncomingToPhi(sum, out.anchor(nextSum));
+    out.branch(out.below(nextPlace, end), normalEdge(head), normalEdge(done));
+
+    out.appendTo(done);
+    out.ret(nextSum);
+    compileOrFail(test);
+    std::array<float, 4> numbers { 1.5f, -2, 0.25f, 4 };
+    AOT_TEST_CHECK(test.call<double>(numbers.data(), numbers.data() + numbers.size()) == 22.3125);
+    AOT_TEST_CHECK(operationTestNumberOfRegistersZeroed(test) >= 2);
+}
+
 static std::span<const NativeTest> listOfMachineOperationTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1993,6 +2030,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
         { "machine/operations/numbers/floats-widened-in-loops"_s, runOperationTestWhereCodeRuns<testFloatConversionsInLoops> },
+        { "machine/operations/numbers/floats-widened-beside-patches"_s, runOperationTestWhereCodeRuns<testMachineConversionsBesidePatchesInLoops> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
         { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testConstantComparisonOperations> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },

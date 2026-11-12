@@ -547,6 +547,7 @@ JSObject* Modules::absentModuleNamespace(ModuleID external)
     if (!record || !record->hasLiveExports())
         return nullptr;
     ensureLoaded(external).uncompiledRecord.set(*this, record);
+    m_modulesWithUncompiledRecord.set(external.index());
     return uncompiledNamespace(external, ModulePhase::Evaluation, data(external).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
 }
 
@@ -3025,7 +3026,11 @@ void Modules::dropPatch(ModuleID module)
 
 bool Modules::takeReleaseUnderPendingPatch(ModuleID module)
 {
-    return m_modulesReloadedUnderPatch.remove(module.index());
+    bool isOwed = m_modulesReloadedUnderPatch.remove(module.index());
+    isOwed |= m_modulesReloadedUnderPatch.remove(fileOf(module).index());
+    if (isOwed)
+        m_loadsInFlight.removeSettledIf([&](const LoadInFlight& load) { return m_rootAwaitingLoader != load.root; });
+    return isOwed;
 }
 
 bool Modules::isReloadedByPendingImport(ModuleID module)
@@ -3054,6 +3059,14 @@ bool Modules::tryReleasePatchedModule(ModuleID module)
     if (!host().deferPatchToNextLoad(m_instance.globalObject, module, false))
         tellThatFileDidNotRunAgain(module);
     return true;
+}
+
+void Modules::releasePatchedFileAtMockEnd(ModuleID file)
+{
+    ModuleID facade = moduleWithExportsOf(file);
+    if (data(file).kind != ModuleKind::CommonJs || !data(file).isReloadable() || status(file) != ModuleStatus::Evaluated || !isPatchedByMock(file) || isEvicted(file) || activeMock(file) || hasIntactOriginal(file) || m_filesThatRanInPreload.get(file.index()) || m_loadedInPreload.get(file.index()) || m_loadedInPreload.get(facade.index()))
+        return;
+    m_modulesReloadedUnderPatch.add(file.index());
 }
 
 void Modules::releasePatchedModuleOfCycle(ModuleID module, bool isFactoryPending)

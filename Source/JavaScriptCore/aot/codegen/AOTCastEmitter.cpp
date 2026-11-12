@@ -274,6 +274,73 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnNumberAndHandItOn(co
     return true;
 }
 
+ValueID CastEmitter::primitiveTakenForBits(const ValueContext& test)
+{
+    const Terminator& end = m_code.at(test.block()).terminator;
+    if (test->testedType() != TypeArena::fromPrimitives(Primitive::NumberLike) || end.kind != TerminatorKind::Branch || end.conditionOperand() != test.id() || generator().keepsValuesInHeapFrame())
+        return { };
+    const Edge& taken = m_code.at(end.taken());
+    if (!taken.arguments().empty() || generator().singlePredecessorOf(taken.to) != test.block() || generator().leavesTurnLaidOut(taken.to))
+        return { };
+    for (ValueID id : m_code.valuesOf(taken.to)) {
+        const Operation& narrowed = m_code.at(id);
+        if (narrowed.opcode != Opcode::Narrowed || !narrowed.isOnTakenEdge() || narrowed.testOperand() != test.id() || narrowed.valueOperand() != test->valueOperand() || narrowed.representation != Representation::JSValue)
+            continue;
+        ValueID user = m_code.useCountOf(id) == 1 ? m_code.onlyUserOf(id) : ValueID();
+        bool takesBits = user && allBitwiseOperators.contains(m_code.at(user).opcode) && m_code.at(user).opcode != Opcode::BitNot && m_code.at(user).form() == OperatorForm::Numbers && m_code.blockOf(user) == taken.to;
+        return takesBits ? id : ValueID();
+    }
+    return { };
+}
+
+bool CastEmitter::tryBranchOnBitsOfPrimitive(const ValueContext& test, Operand operand)
+{
+    const Type& known = typeOf(test->valueOperand());
+    if (!operand.is<Boxed>() || emittersCheckProofs() || !(known.primitives & Primitive::Integer) || (known.primitives & Primitive::Unspecified))
+        return false;
+    ValueID primitive = primitiveTakenForBits(test);
+    if (!primitive)
+        return false;
+
+    Boxed value = operand.as<Boxed>();
+    BranchTargets targets = test.branchTargets();
+    LBasicBlock isTagged = newBlock();
+    LBasicBlock isNotTagged = newBlock();
+    LBasicBlock isNoCell = newBlock();
+    LBasicBlock isDouble = newBlock();
+    LBasicBlock isOther = newBlock();
+    LValue bits = m_out.phiIn(targets.taken.block(), Machine::Int32);
+    m_out.branch(isInt32(value).value(), normalEdge(isTagged), normalEdge(isNotTagged));
+
+    m_out.appendTo(isTagged);
+    m_out.upsilon(unboxInt32(value).value(), bits);
+    m_out.jump(targets.taken);
+
+    m_out.appendTo(isNotTagged);
+    m_out.branch(isCell(value).value(), targets.notTaken, normalEdge(isNoCell));
+
+    m_out.appendTo(isNoCell);
+    m_out.branch(belowOrEqual(value, undefined()).value(), normalEdge(isOther), normalEdge(isDouble));
+
+    m_out.appendTo(isOther);
+    m_out.upsilon(emitter<ConversionEmitter>().bitsOfTag(value).value(), bits);
+    m_out.jump(targets.taken);
+
+    m_out.appendTo(isDouble);
+    m_out.upsilon(emitter<ConversionEmitter>().toInt32(unboxDouble(value)).value(), bits);
+    m_out.jump(targets.taken);
+
+    m_bitsHandedOn.set(primitive.index(), bits);
+    build().statistics().count(StatisticID::UnboxingsFusedIntoTypeChecks);
+    return true;
+}
+
+std::optional<Word32> CastEmitter::takeBitsHandedOnTo(ValueID primitive)
+{
+    LValue bits = m_bitsHandedOn.isEmpty() ? nullptr : m_bitsHandedOn.take(primitive.index());
+    return bits ? std::optional(Word32(bits)) : std::nullopt;
+}
+
 ValueID CastEmitter::conversionAfterInt32Test(const ValueContext& test)
 {
     ValueID truncation = test->valueOperand();
@@ -641,9 +708,19 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
         define(value, hasType(operand, plan));
         return;
     }
-    if (!passesWhateverComes && !value->asksInFull() && (tryBranchOnInt32AndHandItOn(value, operand) || tryBranchOnNumberAndHandItOn(value, operand) || tryBranchOnTruncatedInt32(value, operand) || tryBranchOnWholeDouble(value, operand) || tryDeferTestToSum(value, operand)))
+    if (!passesWhateverComes && !value->asksInFull() && (tryBranchOnInt32AndHandItOn(value, operand) || tryBranchOnNumberAndHandItOn(value, operand) || tryBranchOnBitsOfPrimitive(value, operand) || tryBranchOnTruncatedInt32(value, operand) || tryBranchOnWholeDouble(value, operand) || tryDeferTestToSum(value, operand)))
         return;
     SetForScope testsNumbersFirst(emitter<TypeTestEmitter>().testsNumbersFirst(), operand.is<Boxed>() && (plan.passingPrimitives & Primitive::Number) && plan.someCellPasses() && isUsuallyComputed(m_code, definitionOf(source)));
+    bool testsForArrayAlone = !passesWhateverComes && plan.verdict == TypeTestVerdict::NeedsTest && !plan.passingPrimitives && plan.objects == ObjectsVerdict::NeedTest && plan.cellTests.size() == 1 && plan.cellTests[0].kind == CellTestKind::CellTypeIs && plan.cellTests[0].cellTypes.first == ArrayType && plan.cellTests[0].cellTypes.last == ArrayType;
+    std::optional<ArrayHeaderTest> headerTest;
+    if (ValueID pristineTest = testsForArrayAlone ? generator().findPristineTestAfter(value.id()) : ValueID(); pristineTest && (isX86_64() || !generator().leadsToInnerLoop(value.block()))) {
+        headerTest = ArrayHeaderTest { };
+        ValueID storageTest = generator().findStorageTestAfter(pristineTest, true);
+        if (storageTest)
+            headerTest->addStorage(operationAt(storageTest).arrayStorage(), operationAt(storageTest).isWritable());
+        generator().noteHeaderTested(pristineTest, value.branchTargets().taken.block(), !!storageTest);
+    }
+    SetForScope headerTested(emitter<TypeTestEmitter>().arrayHeaderTest(), headerTest);
     branchOnType(operand, plan, value.branchTargets());
 }
 
@@ -779,7 +856,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
         return;
     }
     bool asksForType = value->checkedType() != value->typeWithoutProof();
-    bool looksAtCell = sourcesOfProofsCheckedUnder(build().options().testing);
+    bool looksAtCell = sourcesOfProofsCheckedUnder(build().options().testing) && types().at(value->checkedType()).isJavaScriptValue();
     if (!asksForType && !looksAtCell)
         return;
     if (!looksAtCell && generator().deferCheckToTruthTest(value))
@@ -799,6 +876,8 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
         TypeID typeWithoutProof = value->typeWithoutProof();
         if (TypeID cells = looksAtCell ? TypeID() : typeOfCellsToCheck(value); cells && emitter<ThrowEmitter>().trapUnlessCell(value, found, value->source(), expectedType))
             typeWithoutProof = cells;
+        else
+            generator().noteWordAskedByMask(found.value());
         emitter<TypeTestEmitter>().emitPerFunctionBranch(found, typeTestPlanFor(typeWithoutProof, Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
         if (looksAtCell)
             m_out.appendToJoin(hasCheckedType, fork);

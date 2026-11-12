@@ -1,0 +1,67 @@
+# class Kind { constructor(kind) { this.kind = kind; }  static code(kind) { switch (kind) { case Kind.Leaf: return 1; default: return Kind.checked ? 3 : 4; } } }  Kind.Leaf = Symbol("Leaf"); Kind.checked = false; globalThis.Kind = Kind;
+# The class gets out of sight, but its fields hold a symbol and a boolean as long as they are in their variables: bits decide both comparisons, and each arm goes its own way behind them.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: code f2:Body
+# CHECK: symbol|absent @JSValue = GetStaticFieldOrAbsent
+# CHECK: = StrictEq {{*}}form=Bits
+
+layout L0 kind=Instance name="Kind" module=m0 constructor=f1 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] staticFields=[{key="Leaf" variable=g2}, {key="checked" variable=g3}] ownFieldCount=1
+variable g0 name="Kind" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="Leaf" module=m0 declared={type=anything} owner=L0
+variable g3 name="checked" module=m0 declared={type=anything} owner=L0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g1
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 side=Static key="code"
+    v5 = FinishClass v1 layout=L0
+    v6 = Convert v5 declared={type=f1 flags=[IsFromCompiler]}
+    PutModuleVariable v6 variable=g0
+    v8 = Convert v5 declared={type=f1 flags=[IsFromCompiler]}
+    v9 = Builtin builtin=Symbol
+    v10 = String string="Leaf"
+    v11 = Call v9, -, v10 calleeName="Symbol"
+    PropSet v8, v11 key="Leaf"
+    v13 = Boolean
+    PropSet v8, v13 key="checked"
+    v15 = Builtin builtin=GlobalThis
+    PropSet v15, v8 key="Kind"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="Kind" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0}
+    PropSet v4, v1 key="kind"
+    Return v4
+}
+function f2 name="code" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Kind"
+    v3 = PropGet v2 key="Leaf"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = Integer integer=1
+    Return v6
+  b2(v7):
+    v8 = GetModuleVariable variable=g0
+    v9 = CheckInitialized v8 name="Kind"
+    v10 = PropGet v9 key="checked"
+    v11 = ToBoolean v10
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12):
+    v13 = Integer integer=3
+    Return v13
+  b4(v14):
+    v15 = Integer integer=4
+    Return v15
+}

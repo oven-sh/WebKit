@@ -322,6 +322,35 @@ void Procedure::separateShiftsOfSums()
     }
 }
 
+void Procedure::compareTermsOfSums()
+{
+    auto isOnlyReader = [](const Operation* reader, const Operation* sum) {
+        return sum->opcode() == Add && sum->useCount() == 1 && sum->owner() == reader->owner();
+    };
+    for (auto [branch, comparison] : m_branchesOnSums.span()) {
+        Operation* sum = branch->m_children[0];
+        if (!isOnlyReader(branch, sum))
+            continue;
+        branch->m_children[0] = comparison;
+        comparison->gainUse();
+        sum->loseUse();
+    }
+    for (auto [comparison, constant] : m_comparisonsOfSums.span()) {
+        Operation* sum = comparison->m_children[0];
+        if (!comparison->useCount() || !isOnlyReader(comparison, sum))
+            continue;
+        Operation* term = sum->m_children[0];
+        Operation* bound = comparison->m_children[1];
+        uint16_t flagsOfRead = machineCoreChildFlags[comparison->opcode()];
+        comparison->m_children[0] = term;
+        comparison->m_children[1] = constant;
+        term->gainUse(flagsOfRead);
+        constant->gainUse(flagsOfRead);
+        sum->loseUse();
+        bound->loseUse();
+    }
+}
+
 void Procedure::settleUpperHalvesOfPhis()
 {
     for (bool someChanged = !m_upsilonsOfWordsBetweenPhis.isEmpty(); someChanged;) {
