@@ -243,10 +243,10 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     const bool takesTableReadHere = takesTableReadBeforeStep(value, collection);
     const std::optional<BlockEdge> end = generator().edgeAfterLastStep(value, static_cast<uint32_t>(MapNextResult::HasEntry), CodeGenerator::StepTest::HasEntry);
     const LValue carriedKeys = generator().keysOfCarriedTable(value->tableOperand());
-    Vector<ValueFromBlock, 4> keysOfTableBehindStep;
+    Vector<ValueFromBlock, 4> tableKeysAfterStep;
     auto addKeysOfTable = [&](LValue keys) {
         if (carriedKeys)
-            keysOfTableBehindStep.append(m_out.anchor(keys));
+            tableKeysAfterStep.append(m_out.anchor(keys));
     };
     const bool readsValue = kind == Collection::Map && mayReadValue(value);
     auto addStepByOperation = [&](CollectionStepJoin& join) {
@@ -430,7 +430,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         m_forwardedTableRead = { };
     m_forwardedTable = results[numberOfEnumerators<MapNextResult>].value;
     if (carriedKeys) {
-        LValue keys = m_out.phi(Machine::Int64, keysOfTableBehindStep);
+        LValue keys = m_out.phi(Machine::Int64, tableKeysAfterStep);
         if (m_forwardedTableRead)
             generator().noteKeysOfCheckedTable(m_forwardedTableRead, keys);
     }
@@ -622,9 +622,9 @@ bool CollectionIntrinsicEmitter::isCounterOrSmallNumber(ValueID key) const
     return isStepped;
 }
 
-Operand CollectionIntrinsicEmitter::lookUpNumberAtItsPlace(CellPointer owner, Boxed key, EntryAnswer answer, const ScopedLambda<Operand()>& lookUpByHash)
+Operand CollectionIntrinsicEmitter::findNumberAtHomeSlot(CellPointer owner, Boxed key, EntryAnswer answer, const ScopedLambda<Operand()>& lookUpByHash)
 {
-    build().statistics().count(StatisticID::NumbersSoughtAtTheirPlaces);
+    build().statistics().count(StatisticID::NumbersFoundAtHomeSlots);
     TableReader reader(generator());
     LBasicBlock hasTable = newBlock();
     LBasicBlock liesInside = newBlock();

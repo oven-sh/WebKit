@@ -19,6 +19,7 @@
 #include "JSMicrotask.h"
 #include "Microtask.h"
 #include "MicrotaskQueueInlines.h"
+#include <wtf/Atomics.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -85,7 +86,7 @@ JSObject* ReactionChain::createHandler(VM& vm) const
 
 JSPromise* ReactionChain::createLink(VM& vm)
 {
-    JSPromise* link = JSPromise::create(vm, promise()->realm()->promiseStructure());
+    JSPromise* link = JSPromise::create(vm, WTF::opaque(promise()->realm()->promiseStructure()));
     link->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledReactionChainStep, this, jsUndefined());
     return link;
 }

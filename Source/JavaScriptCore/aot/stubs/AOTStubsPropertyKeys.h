@@ -152,9 +152,9 @@ constexpr StubKey putByIdAtSite(PutMode mode, NameAtSite name = NameAtSite::IsAn
 constexpr StubKey putByIdAtSiteAskingNoTableOfFields(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(2); }
 constexpr StubKey putByIdAtSiteOfOtherStructure(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(3); }
 constexpr StubKey findReplaceableValue() { return StubKey(StubFamily::FindReplaceableValue); }
-constexpr StubKey putMemberOfPrototypeAtSite(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(4); }
+constexpr StubKey putPrototypeMemberAtSite(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)).withCount(4); }
 constexpr bool storeAtSiteAsksTableOfFields(StubKey key) { return key.count() < 2; }
-constexpr bool storeAtSiteAsksReplacedMembers(StubKey key) { return key.count() == 4; }
+constexpr bool siteStoreChecksReplacedMembers(StubKey key) { return key.count() == 4; }
 constexpr bool storeAtSiteComesBehindComparedStructure(StubKey key) { return key.count() == 3; }
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }

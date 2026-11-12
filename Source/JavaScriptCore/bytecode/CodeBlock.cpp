@@ -890,7 +890,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
 #if ENABLE(AOT)
     if (!variableResolutions.isEmpty())
-        AOT::Interpreter::fuseReadsOfVariables(*this, variableResolutions.span());
+        AOT::Interpreter::fuseVariableReads(*this, variableResolutions.span());
 #endif
 
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())

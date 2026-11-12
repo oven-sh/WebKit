@@ -26,7 +26,7 @@ bool isAsyncFunctionInWhichNothingSuspends(const Program& program, const Facts& 
     return !facts.summaries().at(id).has(SummaryTrait::Suspends);
 }
 
-bool isGeneratorThatNeverYields(const Program& program, const Facts& facts, FunctionID id)
+bool isNonYieldingGenerator(const Program& program, const Facts& facts, FunctionID id)
 {
     const Function& function = program.at(id);
     if (!facts.mechanisms().contains(Mechanism::TypedOperations) || !facts.mechanisms().contains(Mechanism::Guesses))

@@ -218,7 +218,7 @@ JSObject* ClassTable::tryCreateInstanceBelowObject(VM& vm, JSObject* objectConst
             size_t numberOfWords = instanceLayout.size / sizeof(uint64_t);
             LocalAllocator* allocator = vm.cellSpace().allocatorFor(instanceLayout.size, AllocatorForMode::AllocatorIfExists).localAllocator();
             if (remembered.newTarget == newTarget && allocator && numberOfWords <= HeirTemplate::maxWords && instanceLayout.size == numberOfWords * sizeof(uint64_t) && isDefinedByClass(instanceLayout)) {
-                HeirTemplate& made = m_heirTemplates[indexOfHeirTemplate(newTarget)];
+                HeirTemplate& made = m_heirTemplates[subclassTemplateIndex(newTarget)];
                 made = { newTarget, objectConstructor, std::bit_cast<const uint8_t*>(allocator), 0, 0, 0, static_cast<uint32_t>(numberOfWords), { } };
                 std::ranges::copy(std::span { reinterpret_cast<const uint64_t*>(instance), numberOfWords }, made.words.begin());
                 made.words[0] = cellHeaderFor(remembered.structure);

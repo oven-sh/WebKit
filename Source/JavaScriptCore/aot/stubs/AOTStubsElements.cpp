@@ -604,7 +604,7 @@ void loadKeptTextOfIndex(StubAssembler& jit, GPRReg key, GPRReg storage, GPRReg 
     hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
 }
 
-static void replaceImmediateKeyByString(StubAssembler& jit, GPRReg key, GPRReg string, JumpList& isNoImmediate)
+static void replaceImmediateKeyWithString(StubAssembler& jit, GPRReg key, GPRReg string, JumpList& isNoImmediate)
 {
     isNoImmediate.append(jit.branch64(CCallHelpers::AboveOrEqual, key, TrustedImm32(RealmWords::numberOfImmediates)));
     jit.loadPtr(BaseIndex(instanceGPR, key, CCallHelpers::TimesEight, AOT_INSTANCE_OFFSET(realm.stringsOfImmediates)), string);
@@ -768,7 +768,7 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     notNumber.link(&jit);
     slow.append(jit.branchIfNotCell(base));
     Jump keyIsCell = jit.branchIfCell(key);
-    replaceImmediateKeyByString(jit, key, storage, slow);
+    replaceImmediateKeyWithString(jit, key, storage, slow);
     keyIsCell.link(&jit);
     checkStubOperands(getByValCachedCells(registersOfCaller), { base, key });
     jit.jumpToStub(getByValCachedCells(registersOfCaller));
@@ -1273,7 +1273,7 @@ void generatePutByVal(StubAssembler& jit)
     JumpList keyIsNoImmediate;
     const StubKey storeUnderName = putByValCached(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy);
     keyIsNoImmediate.append(jit.branchIfNotCell(base));
-    replaceImmediateKeyByString(jit, key, shape, keyIsNoImmediate);
+    replaceImmediateKeyWithString(jit, key, shape, keyIsNoImmediate);
     checkStubOperands(storeUnderName, { base, key, value });
     jit.jumpToStub(storeUnderName);
     keyIsNoImmediate.link(&jit);

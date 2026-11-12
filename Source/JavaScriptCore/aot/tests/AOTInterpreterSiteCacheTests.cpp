@@ -191,7 +191,7 @@ static void testReadOfTextFillsItsSite(LoadedProgram& program)
         AOT_TEST_CHECK(callWith(program, readsAny, object) == jsNumber(7));
     const GetByIdModeMetadata& cache = cacheOfOnlyRead(readsAny);
     std::optional<PropertyOffset> place = Interpreter::fieldOffsetForSiteCache(program.realm(), object->structure(), any);
-    AOT_TEST_CHECK(place && isInlineOffset(*place));
+    AOT_TEST_CHECK(place && *place >= Interpreter::fieldInSiteCache && isInlineOffset(*place - Interpreter::fieldInSiteCache));
     AOT_TEST_CHECK(cache.mode == GetByIdMode::Default && cache.defaultMode.structureID == object->structureID() && cache.defaultMode.cachedOffset == *place);
 
     putByName(program, object, any, jsNumber(8));
@@ -223,6 +223,10 @@ static void testSiteGoesOverToWhatKeepsComingBy(LoadedProgram& program)
     AOT_TEST_CHECK(holds(object));
     AOT_TEST_CHECK(callWith(program, readsAny, object) == jsNumber(7));
 
+    for (unsigned turn = 1; turn < 2 * shortestWait; ++turn) {
+        AOT_TEST_CHECK(callWith(program, readsAny, ordinary) == jsNumber(3));
+        AOT_TEST_CHECK(holds(object));
+    }
     AOT_TEST_CHECK(callWith(program, readsAny, ordinary) == jsNumber(3));
     AOT_TEST_CHECK(holds(ordinary.asCell()));
     for (unsigned turn = 1; turn < 4 * shortestWait; ++turn) {

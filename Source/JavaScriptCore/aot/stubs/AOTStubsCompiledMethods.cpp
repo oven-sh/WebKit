@@ -106,12 +106,12 @@ static void emitReturnElementAt(StubAssembler& jit, const CallRegisters& registe
 
 enum class EmptyArrayResult : uint8_t { CallsMethod, Constant, InitialValue, NewArray };
 
-struct ResultOfMethodOfEmptyArray {
+struct EmptyArrayMethodResult {
     EmptyArrayResult kind { EmptyArrayResult::CallsMethod };
     EncodedJSValue constant { 0 };
 };
 
-static ResultOfMethodOfEmptyArray resultOfMethodOfEmptyArray(CompiledMethodOfArray method, unsigned count)
+static EmptyArrayMethodResult emptyArrayMethodResult(CompiledMethodOfArray method, unsigned count)
 {
     if (!count)
         return { };
@@ -140,7 +140,7 @@ static ResultOfMethodOfEmptyArray resultOfMethodOfEmptyArray(CompiledMethodOfArr
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void emitReturnForEmptyArray(StubAssembler& jit, const CallRegisters& registers, ResultOfMethodOfEmptyArray result)
+static void emitReturnForEmptyArray(StubAssembler& jit, const CallRegisters& registers, EmptyArrayMethodResult result)
 {
     const GPRReg callback = argumentGPR(0);
     const GPRReg butterfly = registers.scratch;
@@ -190,7 +190,7 @@ static void emitCallCompiledMethodOfArray(StubAssembler& jit, unsigned lentArgum
     }
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs.wordsOfCompiledMethodsOfArray) + static_cast<ptrdiff_t>(jit.key().form() * sizeof(uint64_t))), registers.word);
     looksUp.append(lentArguments ? branchUnlessWordBorrows(jit, registers.word, registers.scratch, lentArguments) : jit.branchTest64(CCallHelpers::Zero, registers.word));
-    if (ResultOfMethodOfEmptyArray result = resultOfMethodOfEmptyArray(static_cast<CompiledMethodOfArray>(jit.key().form()), count); result.kind != EmptyArrayResult::CallsMethod)
+    if (EmptyArrayMethodResult result = emptyArrayMethodResult(static_cast<CompiledMethodOfArray>(jit.key().form()), count); result.kind != EmptyArrayResult::CallsMethod)
         emitReturnForEmptyArray(jit, registers, result);
     emitFillMissingArgumentRegisters(jit, count);
     jit.move(TrustedImm32(count), countGPR);

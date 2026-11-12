@@ -129,7 +129,7 @@ Structure* ClassTable::structureWithBrandOfHeirs(VM& vm, JSCell* parent, JSCell*
     bool isOfClass = classObject && classObject->classData() && isDefinedByClass(*classObject->classData());
     last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure, nullptr, nullptr, 0, holdsProperties, isOfClass };
     if (isOfClass && (structure->typeInfo().type() == JSMapType || structure->typeInfo().type() == JSSetType))
-        rememberTemplateOfEmptyCollection(vm, parent, newTarget, structure, last.withBrand);
+        cacheEmptyCollectionTemplate(vm, parent, newTarget, structure, last.withBrand);
     if (brand && isTypedArrayType(structure->typeInfo().type()) && !isResizableOrGrowableSharedTypedArrayIncludingDataView(structure->classInfoForCells()))
         rememberTemplateOfViews(parent, newTarget, structure, last.withBrand);
     return last.withBrand;
@@ -139,20 +139,20 @@ void ClassTable::rememberTemplateOfViews(JSCell* parent, JSCell* newTarget, Stru
 {
     TypedArrayType type = typedArrayType(structure->typeInfo().type());
     prepareTypedArrayAllocation(&m_state.instance, type);
-    HeirTemplate& made = m_heirTemplates[indexOfHeirTemplate(newTarget)];
+    HeirTemplate& made = m_heirTemplates[subclassTemplateIndex(newTarget)];
     made = { newTarget, parent, nullptr, 0, 0, withoutBrand->id().bits(), HeirTemplate::isOfViews, { } };
     made.headerOfViews = cellHeaderFor(structure);
     made.typedArrayType = type;
 }
 
-void ClassTable::rememberTemplateOfEmptyCollection(VM& vm, JSCell* parent, JSCell* newTarget, Structure* withoutBrand, Structure* structure)
+void ClassTable::cacheEmptyCollectionTemplate(VM& vm, JSCell* parent, JSCell* newTarget, Structure* withoutBrand, Structure* structure)
 {
     static_assert(sizeof(JSMap) == sizeof(JSSet) && !(sizeof(JSMap) % sizeof(uint64_t)) && sizeof(JSMap) <= HeirTemplate::maxWords * sizeof(uint64_t));
     bool isMap = structure->typeInfo().type() == JSMapType;
     Allocator allocator = isMap ? allocatorForConcurrently<JSMap>(vm, sizeof(JSMap), AllocatorForMode::EnsureAllocator) : allocatorForConcurrently<JSSet>(vm, sizeof(JSSet), AllocatorForMode::EnsureAllocator);
     if (!allocator)
         return;
-    HeirTemplate& made = m_heirTemplates[indexOfHeirTemplate(newTarget)];
+    HeirTemplate& made = m_heirTemplates[subclassTemplateIndex(newTarget)];
     made = { newTarget, parent, std::bit_cast<const uint8_t*>(allocator.localAllocator()), 0, 0, withoutBrand->id().bits(), static_cast<uint32_t>(sizeof(JSMap) / sizeof(uint64_t)) | HeirTemplate::takesNoArguments, { } };
     std::ranges::fill(made.words, 0);
     made.words[0] = cellHeaderFor(structure);
@@ -196,7 +196,7 @@ JSArray* ClassTable::tryCreateArrayOfHeir(VM& vm, JSCell* newTarget, Structure* 
         static_assert(!(propertyRoomOfArray % MarkedSpace::sizeStep) && sizeof(JSArray) == MarkedSpace::sizeStep);
         uint64_t hole = last.learnedShape == DoubleShape ? std::bit_cast<uint64_t>(PNaN) : JSValue::encode(JSValue());
         const uint8_t* allocators = std::bit_cast<const uint8_t*>(&vm.cellSpace()) + CompleteSubspace::offsetOfAllocatorForSizeStep() + (2 + propertyRoom / MarkedSpace::sizeStep) * sizeof(Allocator);
-        m_heirTemplates[indexOfHeirTemplate(newTarget)] = { newTarget, last.parent, allocators, propertyRoom, allocationsBetweenReviews, last.withoutBrand->id().bits(), 0, { { cellHeaderFor(last.ofNewArrays), hole } } };
+        m_heirTemplates[subclassTemplateIndex(newTarget)] = { newTarget, last.parent, allocators, propertyRoom, allocationsBetweenReviews, last.withoutBrand->id().bits(), 0, { { cellHeaderFor(last.ofNewArrays), hole } } };
     }
     return array;
 }
@@ -340,20 +340,20 @@ uint32_t& ClassTable::createdStaticFieldsEnd(const LayoutData& classLayout)
 
 void ClassTable::didEmptyStaticFields(const LayoutData& classLayout)
 {
-    m_classesWithStaticFieldsLeft.clear(m_tables.rankOfClass(classLayout.index));
+    m_classesWithKeptStaticFields.clear(m_tables.rankOfClass(classLayout.index));
     if (!m_createdStaticFieldsEnds.isEmpty())
         m_createdStaticFieldsEnds[m_tables.rankOfClass(classLayout.index)] = 0;
 }
 
-void ClassTable::leaveStaticFieldsInVariables(const LayoutData& classLayout)
+void ClassTable::keepStaticFieldsInVariables(const LayoutData& classLayout)
 {
-    m_classesWithStaticFieldsLeft.set(m_tables.rankOfClass(classLayout.index));
+    m_classesWithKeptStaticFields.set(m_tables.rankOfClass(classLayout.index));
     m_leavesSomeStaticFields = true;
 }
 
 bool ClassTable::hasStaticFieldsLeft(const LayoutData& classLayout) const
 {
-    return m_classesWithStaticFieldsLeft.get(m_tables.rankOfClass(classLayout.index));
+    return m_classesWithKeptStaticFields.get(m_tables.rankOfClass(classLayout.index));
 }
 
 JSValue ClassTable::readStaticField(const FieldData& field) const
@@ -1130,7 +1130,7 @@ void ClassDefinition::run(JSValue heritage, JSValue prototypeParent)
         defineMembers(m_classObject, m_classLayout.staticMethods());
     if (!scope.exception() && m_requestedPart == ClassPart::ClassObject) {
         if (m_staticFields == StaticFieldsOfPart::StayInVariables && m_earlyStores.keysAndAttributes.isEmpty() && StaticFields::areReadInVariables(*m_classObject))
-            m_classes.leaveStaticFieldsInVariables(m_classLayout);
+            m_classes.keepStaticFieldsInVariables(m_classLayout);
         else
             StaticFields::moveToProperties(m_vm, *m_classObject);
     }
@@ -1602,7 +1602,7 @@ void ClassTable::forgetEvaluationOf(const LayoutData& classLayout)
     if (!classLayout.staticFields().empty() && constructor && m_state.objects->closures.hasCellFor(constructor)) {
         if (auto* classObject = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(constructor)))
             classObject->ensureClassObject(*m_state.instance.vm);
-        m_classesEvaluatedAnew.set(m_tables.rankOfClass(classLayout.index));
+        m_reevaluatedClasses.set(m_tables.rankOfClass(classLayout.index));
     }
     disarmMemberGuards(classLayout);
     {
@@ -1845,7 +1845,7 @@ static const FieldData* findFieldInVariable(const Closure& classObject, UniquedS
     return classObject.state().objects->classes.staticField(*classObject.classData(), uid);
 }
 
-static const FieldData* findFieldToCreateInVariable(const Closure& classObject, UniquedStringImpl* uid)
+static const FieldData* findFieldCreatedInVariable(const Closure& classObject, UniquedStringImpl* uid)
 {
     if (classObject.butterfly() && (!classObject.hasStaticFieldsLeft() || isValidOffset(classObject.structure()->get(classObject.vm(), PropertyName(uid)))))
         return nullptr;
@@ -1858,7 +1858,7 @@ JSValue tryRead(const Closure& classObject, UniquedStringImpl* uid)
     return field ? classObject.state().objects->classes.readStaticField(*field) : JSValue();
 }
 
-const FieldData* findFieldLeftInVariable(const Closure& classObject, UniquedStringImpl* uid)
+const FieldData* findFieldKeptInVariable(const Closure& classObject, UniquedStringImpl* uid)
 {
     if (!classObject.hasStaticFieldsLeft())
         return nullptr;
@@ -1868,7 +1868,7 @@ const FieldData* findFieldLeftInVariable(const Closure& classObject, UniquedStri
 
 bool tryRedefine(Closure& classObject, UniquedStringImpl* uid, JSValue valueOrEmpty)
 {
-    const FieldData* field = findFieldToCreateInVariable(classObject, uid);
+    const FieldData* field = findFieldCreatedInVariable(classObject, uid);
     ClassTable& classes = classObject.state().objects->classes;
     if (!field || !classes.readStaticField(*field))
         return false;
@@ -1886,7 +1886,7 @@ bool tryStore(Closure& classObject, UniquedStringImpl* uid, JSValue value)
 bool tryCreate(Closure& classObject, UniquedStringImpl* uid, JSValue value)
 {
     ASSERT(value);
-    const FieldData* field = findFieldToCreateInVariable(classObject, uid);
+    const FieldData* field = findFieldCreatedInVariable(classObject, uid);
     if (!field)
         return false;
     ClassTable& classes = classObject.state().objects->classes;
@@ -1905,7 +1905,7 @@ bool tryCreate(Closure& classObject, UniquedStringImpl* uid, JSValue value)
 bool tryCreateByStore(VM& vm, Closure& classObject, PropertyName name, JSValue value)
 {
     const CommonIdentifiers& names = *vm.propertyNames;
-    if (name == names.name || name == names.length || name == names.prototype || !findFieldToCreateInVariable(classObject, name.uid()))
+    if (name == names.name || name == names.length || name == names.prototype || !findFieldCreatedInVariable(classObject, name.uid()))
         return false;
     JSGlobalObject* globalObject = classObject.globalObject();
     JSObject* above = classObject.getPrototypeDirect().getObject();

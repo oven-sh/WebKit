@@ -277,6 +277,7 @@ static void testBinaryOperationBigIntOrder()
     const FakeBigInt otherSeven({ 7 });
     const FakeBigInt negativeEight({ 8 }, true);
     const FakeBigInt otherHighDigit({ 1, 3 });
+    const uint64_t seven = static_cast<uint64_t>(JSValue::encode(jsNumber(7)));
     for (const OrderOperator& orderOperator : orderOperators) {
         for (bool isAfterInt32Check : { false, true }) {
             StubKey key = binaryOperation(orderOperator.operation, isAfterInt32Check);
@@ -292,10 +293,21 @@ static void testBinaryOperationBigIntOrder()
             }
             check(ascending[1], otherZero, std::strong_ordering::equal);
             check(ascending[3], otherSeven, std::strong_ordering::equal);
+            auto checkBesideSeven = [&](const FakeBigInt& bigInt, std::strong_ordering order) {
+                StubRun run = runner.run(key, { bigInt.address(), seven });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(orderOperator.holds(order)));
+                run = runner.run(key, { seven, bigInt.address() });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(orderOperator.holds(order == std::strong_ordering::less ? std::strong_ordering::greater : order)));
+            };
+            checkBesideSeven(ascending[0], std::strong_ordering::less);
+            checkBesideSeven(ascending[1], std::strong_ordering::less);
+            checkBesideSeven(ascending[2], std::strong_ordering::less);
+            checkBesideSeven(ascending[3], std::strong_ordering::equal);
             runner.recordCallsOf(orderOperator.entry);
             checkOrderLeftToOperation(runner, key, ascending[0].address(), negativeEight.address());
             checkOrderLeftToOperation(runner, key, ascending[6].address(), otherHighDigit.address());
-            checkOrderLeftToOperation(runner, key, ascending[2].address(), static_cast<uint64_t>(JSValue::encode(jsNumber(7))));
+            checkOrderLeftToOperation(runner, key, ascending[4].address(), seven);
+            checkOrderLeftToOperation(runner, key, ascending[5].address(), seven);
             runner.countCallsOf(orderOperator.entry);
         }
     }
@@ -942,7 +954,7 @@ static void testTypedArraysWithLength()
         StubRun run = runner.run(newTypedArray(LengthOfTypedArray::Number), { requestedType, std::bit_cast<uint64_t>(length) });
         return run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == requestedType && run.recordedArguments[1] == std::bit_cast<uint64_t>(length) && run.result == fromOperation.address() && fromOperation.isUntouched();
     };
-    auto wholeNumberIsLeftToOperation = [&](uint32_t requestedType, int32_t length) {
+    auto leavesIntegerToOperation = [&](uint32_t requestedType, int32_t length) {
         FakeCell fromOperation;
         runner.setResultOfRecordedOperation(fromOperation.address());
         StubRun run = runner.run(newTypedArray(LengthOfTypedArray::WholeNumber), { requestedType, static_cast<uint32_t>(length) });
@@ -954,7 +966,7 @@ static void testTypedArraysWithLength()
 
     constexpr double infinity = std::numeric_limits<double>::infinity();
     for (int32_t length : { 0, -1, 257, 1001, 1 << 30, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() })
-        AOT_TEST_CHECK(wholeNumberIsLeftToOperation(type, length) && tookNothing());
+        AOT_TEST_CHECK(leavesIntegerToOperation(type, length) && tookNothing());
     for (double length : { 0.0, -0.0, -1.0, 0.5, 1.5, 257.0, 1001.0, 4294967297.0, -4294967295.0, 1e300, infinity, -infinity, PNaN, -PNaN })
         AOT_TEST_CHECK(isLeftToOperation(type, length) && tookNothing());
     AOT_TEST_CHECK(isLeftToOperation(typeWithoutRecord, 1) && tookNothing());
@@ -1812,7 +1824,7 @@ static void testCopiesOfPropertiesByChunks()
         }
         orderWordOfSource = outOfLineOrderWord;
         AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderOfOneObject)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderBesideExtraProperties)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(furtherFlags, static_cast<uint8_t>(FurtherFlag::HasKeyOrderWithExtraProperties)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(Flag::HasOnlyPlainSlots)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasExtraProperties))));
         AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasOtherPrototype))));

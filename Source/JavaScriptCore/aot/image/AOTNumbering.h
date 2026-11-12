@@ -442,7 +442,7 @@ struct PlacedStatics {
     Vector<PlacedClassGuardCount> classGuardCounts;
     Vector<PlacedGuardOfClassGuardCount> guardsOfClassGuardCounts;
     Vector<uint32_t> environmentHandedBackOffsets;
-    Vector<uint32_t> structuresOfHeirOffsets;
+    Vector<uint32_t> subclassStructuresOffsets;
     Vector<uint32_t> roots;
     Vector<StaticsRange> clearedEachCollection;
     Vector<StaticsRange> variablesWithViewMirror;

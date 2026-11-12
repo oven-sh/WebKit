@@ -152,7 +152,7 @@ Operand HashTableBuiltinEmitter::search(const OperationContext& context, ValueID
     if (!isSoughtAtItsPlace(context, keyOfSearch))
         return lookUpByHash();
     using EntryAnswer = CollectionIntrinsicEmitter::EntryAnswer;
-    return emitter<CollectionIntrinsicEmitter>().lookUpNumberAtItsPlace(table, key, answer == LookupAnswer::Value ? EntryAnswer::Value : EntryAnswer::IsPresent, scopedLambda<Operand()>(lookUpByHash));
+    return emitter<CollectionIntrinsicEmitter>().findNumberAtHomeSlot(table, key, answer == LookupAnswer::Value ? EntryAnswer::Value : EntryAnswer::IsPresent, scopedLambda<Operand()>(lookUpByHash));
 }
 
 Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, ValueID map, ValueID keyOfSearch)
@@ -163,7 +163,7 @@ Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, Valu
     auto lookUpByHash = [&]() -> Operand { return Integer(callStub(context, findKeyInMap(comparison), { table.value(), key.value() }).first); };
     if (!isSoughtAtItsPlace(context, keyOfSearch))
         return lookUpByHash().as<Integer>();
-    return emitter<CollectionIntrinsicEmitter>().lookUpNumberAtItsPlace(table, key, CollectionIntrinsicEmitter::EntryAnswer::Place, scopedLambda<Operand()>(lookUpByHash)).as<Integer>();
+    return emitter<CollectionIntrinsicEmitter>().findNumberAtHomeSlot(table, key, CollectionIntrinsicEmitter::EntryAnswer::Place, scopedLambda<Operand()>(lookUpByHash)).as<Integer>();
 }
 
 void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, LookupAnswer answer)

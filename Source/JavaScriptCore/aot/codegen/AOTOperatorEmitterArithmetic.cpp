@@ -1239,7 +1239,7 @@ void OperatorEmitter::generateMod(const ValueContext& value)
         define(value, number(0));
         return;
     }
-    if (isTestedForTruthAtOnce(value)) {
+    if (isImmediatelyTestedForTruth(value)) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         m_truthOfRemainder = Condition(m_out.castToInt32(callStub(value, remainderTruth(), { in<Boxed>(value->leftOperand()).value(), in<Boxed>(value->rightOperand()).value() }).first));
         m_remainderKnownByTruth = value.id();
@@ -1249,7 +1249,7 @@ void OperatorEmitter::generateMod(const ValueContext& value)
     defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Mod));
 }
 
-bool OperatorEmitter::isTestedForTruthAtOnce(const ValueContext& remainder)
+bool OperatorEmitter::isImmediatelyTestedForTruth(const ValueContext& remainder)
 {
     if (remainder->form() != OperatorForm::Generic || remainder.representation() != Representation::JSValue || m_code.useCountOf(remainder.id()) != 1 || !mayBothBeInt32(remainder) || isArithmeticOnLikelyBigInts(remainder) || generator().isProductLeftToRemainder(remainder->leftOperand()))
         return false;

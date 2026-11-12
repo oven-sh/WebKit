@@ -219,7 +219,7 @@ static ALWAYS_INLINE bool isJoinOfFewStrings(const JSString& text, StringImpl* c
 template<bool hasSeparator>
 static NEVER_INLINE JSString* tryJoinFewStrings(JSGlobalObject* globalObject, JSArray* array, Latin1Character separator)
 {
-    static constexpr unsigned mostUnitsOfKeptText = 64;
+    static constexpr unsigned maxKeptStringUnits = 64;
     VM& vm = globalObject->vm();
     static constexpr unsigned mostStrings = 16;
     static constexpr unsigned mostUnits = 512;
@@ -253,7 +253,7 @@ static NEVER_INLINE JSString* tryJoinFewStrings(JSGlobalObject* globalObject, JS
     if (units < 2 || units > mostUnits)
         return nullptr;
     if constexpr (hasSeparator) {
-        if (sharedFlags && units <= mostUnitsOfKeptText) {
+        if (sharedFlags && units <= maxKeptStringUnits) {
             auto& texts = State::of(globalObject).textsOfFewStrings;
             uintptr_t mixed = std::bit_cast<uintptr_t>(strings[0]) >> 4 ^ std::bit_cast<uintptr_t>(endOfStrings[-1]) >> 5;
             JSString*& kept = texts[(mixed ^ mixed >> 6) % texts.size()];
@@ -296,7 +296,7 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
     static constexpr unsigned mostElements = 32;
     static constexpr unsigned mostUnits = 256;
     static constexpr unsigned mostUnitsOfNumber = 32;
-    static constexpr unsigned mostUnitsOfKeptText = 64;
+    static constexpr unsigned maxKeptStringUnits = 64;
     VM& vm = globalObject->vm();
     Butterfly& butterfly = *array->butterfly();
     unsigned length = butterfly.publicLength();
@@ -376,7 +376,7 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
     if (text.size() < 2)
         return text.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, text.front());
     JSString** kept = nullptr;
-    if (text.size() <= mostUnitsOfKeptText) {
+    if (text.size() <= maxKeptStringUnits) {
         auto& texts = State::of(globalObject).textsOfFewStrings;
         unsigned mixed = text.front() ^ text[text.size() / 2] << 2 ^ text.back() << 4 ^ text.size();
         kept = &texts[(mixed ^ mixed >> 6) % texts.size()];
@@ -576,7 +576,7 @@ static ALWAYS_INLINE std::span<const WriteBarrier<Unknown>> boxedElementsOf(JSAr
     return { array->butterfly()->contiguous().data(), array->butterfly()->publicLength() };
 }
 
-static NEVER_INLINE bool textsOfElementsRunNoCode(JSArray* array)
+static NEVER_INLINE bool elementConversionsRunNoCode(JSArray* array)
 {
     return std::ranges::all_of(boxedElementsOf(array), [&](const WriteBarrier<Unknown>& element) {
         JSValue value = element.get();
@@ -589,15 +589,15 @@ static NEVER_INLINE JSString* tryJoinList(JSGlobalObject* globalObject, JSArray*
     return tryJoinAtOnce(globalObject, list, nullptr);
 }
 
-static constexpr unsigned mostTextsHeldAtOnce = 16;
+static constexpr unsigned maxStringsHeldAtOnce = 16;
 
 template<bool hasSeparator>
 static NEVER_INLINE JSString* tryJoinFewTexts(JSGlobalObject* globalObject, JSArray* array, Latin1Character separator)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    std::array<String, mostTextsHeldAtOnce> texts;
-    std::array<StringImpl*, mostTextsHeldAtOnce> strings;
+    std::array<String, maxStringsHeldAtOnce> texts;
+    std::array<StringImpl*, maxStringsHeldAtOnce> strings;
     unsigned length = array->butterfly()->publicLength();
     uint64_t units = hasSeparator ? length - 1 : 0;
     bool areAll8Bit = true;
@@ -664,14 +664,14 @@ static NEVER_INLINE JSString* tryJoinOneByOne(JSGlobalObject* globalObject, JSAr
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasContiguous(array->indexingType()) || vm.stringRecursionCheckFirstObject || !textsOfElementsRunNoCode(array))
+    if (!hasContiguous(array->indexingType()) || vm.stringRecursionCheckFirstObject || !elementConversionsRunNoCode(array))
         return nullptr;
     EnsureStillAliveScope arrayScope(array);
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     unsigned length = array->butterfly()->publicLength();
-    if (length >= 2 && length <= mostTextsHeldAtOnce && view->length() <= 1 && view->is8Bit()) {
+    if (length >= 2 && length <= maxStringsHeldAtOnce && view->length() <= 1 && view->is8Bit()) {
         JSString* joined = view->length() ? tryJoinFewTexts<true>(globalObject, array, view->span8()[0]) : tryJoinFewTexts<false>(globalObject, array, 0);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (joined) [[likely]]
@@ -744,8 +744,8 @@ static NEVER_INLINE JSString* joinConvertedElements(Instance* instance, JSGlobal
         return asString(texts.at(0));
 
     constexpr Latin1Character separator = ',';
-    if (length <= mostTextsHeldAtOnce) {
-        std::array<StringImpl*, mostTextsHeldAtOnce> strings;
+    if (length <= maxStringsHeldAtOnce) {
+        std::array<StringImpl*, maxStringsHeldAtOnce> strings;
         uint64_t units = length - 1;
         bool areAll8Bit = true;
         for (unsigned index = 0; index < length; ++index) {

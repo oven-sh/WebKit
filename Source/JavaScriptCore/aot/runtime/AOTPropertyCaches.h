@@ -119,7 +119,7 @@ using SiteCache = RememberedSlot<Slot>*;
 class SiteCaches final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(SiteCaches);
 public:
-    bool readsValuesWhereTheyAre() const final { return true; }
+    bool readsValuesInPlace() const final { return true; }
     static constexpr unsigned regionShift = 8;
     static constexpr uint32_t numberOfMissBits = 1u << 17;
 
@@ -202,7 +202,7 @@ private:
 class AnswersAtSites final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(AnswersAtSites);
 public:
-    bool readsValuesWhereTheyAre() const final { return true; }
+    bool readsValuesInPlace() const final { return true; }
     AnswersAtSites(State&, SiteCaches&);
 
     uint32_t placeAtDistanceFromInstance(uint32_t) const;
@@ -280,7 +280,7 @@ private:
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
     struct TrialOfFurtherAnswers {
         static constexpr unsigned numberOfSamples = 48;
-        static constexpr uint8_t timesWithoutRoomBeforeTrial = 8;
+        static constexpr uint8_t overflowsBeforeTrial = 8;
         bool serves(StructureID id) const { return std::ranges::contains(hidden.structuresOfFurtherAnswers, id.bits()) || std::ranges::contains(hidden.structuresThatLackName, id.bits()); }
 
         WideSiteAnswers hidden;
@@ -400,7 +400,7 @@ class VMPropertyCaches final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(VMPropertyCaches);
     WTF_MAKE_TZONE_ALLOCATED(VMPropertyCaches);
 public:
-    bool readsValuesWhereTheyAre() const final { return true; }
+    bool readsValuesInPlace() const final { return true; }
     explicit VMPropertyCaches(VM&);
     ~VMPropertyCaches();
 
@@ -508,10 +508,10 @@ public:
         m_fieldExitsBesideTable.clear();
         m_fieldReturns.fill({ });
     }
-    void remember(const FunctionBirth& birth)
+    void remember(const FunctionAllocationEntry& birth)
     {
-        m_functionBirthsMayBeFilled = true;
-        m_functionBirths[FunctionBirth::placeOf(birth.executable)] = birth;
+        m_functionAllocationsMayBeFilled = true;
+        m_functionAllocationEntries[FunctionAllocationEntry::placeOf(birth.executable)] = birth;
     }
     void remember(const StringSwitchTarget& target)
     {
@@ -554,9 +554,9 @@ public:
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
-    void fillSiteCacheOfStore(SiteCache, Structure*, UniquedStringImpl*, PropertyOffset);
+    void fillStoreSiteCache(SiteCache, Structure*, UniquedStringImpl*, PropertyOffset);
     bool fillFromHeldValue(uint32_t place, SiteUse, Object&, UniquedStringImpl*, bool stubFollowsFurtherAnswers);
-    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false, bool asksForPresence = false);
+    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false, bool testsForPresence = false);
     void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
     bool mayReadDictionary(Structure*);
     static ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&, bool usesWideReferences);
@@ -644,9 +644,9 @@ private:
     std::array<FieldReturn, FieldReturn::numberOfPlaces> m_fieldReturns { };
     std::span<PrototypeChainFilter, PrototypeChainFilter::numberOfFilters> m_prototypeChainFilters;
     std::span<StringSwitchTarget, StringSwitchTarget::numberOfTargets> m_switchTargets;
-    std::span<FunctionBirth, FunctionBirth::numberOfBirths> m_functionBirths;
+    std::span<FunctionAllocationEntry, FunctionAllocationEntry::numberOfBirths> m_functionAllocationEntries;
     uint8_t m_switchTargetsMayBeFilled { false };
-    uint8_t m_functionBirthsMayBeFilled { false };
+    uint8_t m_functionAllocationsMayBeFilled { false };
     AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
     std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
     AddedExtraPropertiesBesideTable m_addedExtraPropertiesBesideTable;

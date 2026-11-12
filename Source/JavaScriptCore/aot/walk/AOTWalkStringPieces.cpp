@@ -351,7 +351,7 @@ bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const Inp
     return true;
 }
 
-bool buildTruthinessOfPieceInSight(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+bool buildKnownPieceTruthiness(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (inputs.areOnlyTypes() || walker.isUnreachable())
         return false;
@@ -610,7 +610,7 @@ static bool someLaterCallGetsUnderKeyForStringPieces(Walker& walker, const BodyI
     return read && someCallStandsBehind((*read)[0], (*read)[1]);
 }
 
-static bool buildArmsOfTestForKeyForStringPieces(Walker& walker, const CallByOneRow& call, Reference place, Reference isFound)
+static bool buildKeyTestArmsForStringPieces(Walker& walker, const CallByOneRow& call, Reference place, Reference isFound)
 {
     if (!isFound)
         return false;
@@ -625,12 +625,12 @@ static bool buildArmsOfTestForKeyForStringPieces(Walker& walker, const CallByOne
     BlockID absent = walker.addBlock();
     BlockID calling = walker.addBlock(BlockFrequency::Rare);
     walker.branch(isFound, found, notFound);
-    auto endArm = [&](bool isAbsent) {
+    auto endArm = [&](bool isPlaceNegative) {
         if (walker.hasFailed() || walker.isUnreachable())
             return;
         noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), place.bits(), true);
-        if (isAbsent)
-            noteKnown(walker, KnownNote::KeyIsAbsentFromMap, call.receiver, call.arguments[0], 0, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), 1, true);
+        if (isPlaceNegative)
+            noteKnown(walker, KnownNote::PlaceOfKeyIsNegative, call.receiver, call.arguments[0], 0, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), 1, true);
         if (!walker.threadBranchAfter(call.call))
             walker.fail("an answer of a map does not walk the end of its block"_s);
     };
@@ -650,7 +650,7 @@ static bool buildArmsOfTestForKeyForStringPieces(Walker& walker, const CallByOne
     {
         Walker::ClosedArm closedArm(walker);
         walker.walkStretch(block, placeInBlock, placeInBlock + 1);
-        endArm(false);
+        endArm(true);
     }
     if (walker.hasFailed())
         return true;
@@ -681,7 +681,7 @@ bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
         return buildOperatorForStrings(walker, Opcode::Greater, place, integerForStrings(walker, placeOfAbsentKeyInMap), call.origin);
     };
     if (place && walker.canThreadBranchAfter(call.call))
-        return buildArmsOfTestForKeyForStringPieces(walker, call, place, isFound());
+        return buildKeyTestArmsForStringPieces(walker, call, place, isFound());
     Reference isTold = place ? buildOperatorForStrings(walker, Opcode::GreaterEq, place, integerForStrings(walker, placeOfAbsentKeyInMap), call.origin) : Reference();
     if (!isTold)
         return false;
@@ -770,8 +770,8 @@ static bool buildStoreWhereTestFoundNoKeyForStringPieces(Walker& walker, const C
         return false;
     std::optional<uint64_t> kept = findKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten);
     Reference answerOfTest = kept && *kept >> 32 ? Reference::fromBits(static_cast<uint32_t>(*kept >> 32)) : Reference();
-    bool isAbsent = kept && (answerOfTest ? outcomeKnownOf(walker, answerOfTest) == std::optional<bool>(false) : !!findKnown(walker, KnownNote::KeyIsAbsentFromMap, call.receiver, call.arguments[0]));
-    if (!isAbsent)
+    bool isPlaceNegative = kept && (answerOfTest ? outcomeKnownOf(walker, answerOfTest) == std::optional<bool>(false) : !!findKnown(walker, KnownNote::PlaceOfKeyIsNegative, call.receiver, call.arguments[0]));
+    if (!isPlaceNegative)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID written = call.call.id();

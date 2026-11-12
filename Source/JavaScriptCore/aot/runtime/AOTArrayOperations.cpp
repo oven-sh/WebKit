@@ -326,14 +326,14 @@ static ALWAYS_INLINE typename Adaptor::Type nativeFromNumber(double number)
     }
 }
 
-static constexpr size_t wordsAskedAtOnce = 8;
+static constexpr size_t wordsTestedTogether = 8;
 
 static size_t countPresentWords(const EncodedJSValue* words, size_t count)
 {
     size_t present = 0;
-    for (; present + wordsAskedAtOnce <= count; present += wordsAskedAtOnce) {
+    for (; present + wordsTestedTogether <= count; present += wordsTestedTogether) {
         bool someIsHole = false;
-        for (size_t place = 0; place < wordsAskedAtOnce; ++place)
+        for (size_t place = 0; place < wordsTestedTogether; ++place)
             someIsHole |= !words[present + place];
         if (someIsHole)
             break;
@@ -346,9 +346,9 @@ static size_t countPresentWords(const EncodedJSValue* words, size_t count)
 static size_t countPresentDoubles(const double* numbers, size_t count)
 {
     size_t present = 0;
-    for (; present + wordsAskedAtOnce <= count; present += wordsAskedAtOnce) {
+    for (; present + wordsTestedTogether <= count; present += wordsTestedTogether) {
         bool someIsHole = false;
-        for (size_t place = 0; place < wordsAskedAtOnce; ++place)
+        for (size_t place = 0; place < wordsTestedTogether; ++place)
             someIsHole |= numbers[present + place] != numbers[present + place];
         if (someIsHole)
             break;
@@ -370,8 +370,8 @@ static size_t copyIntoView(JSArrayBufferView* target, size_t targetIndex, JSObje
             using Element = typename Adaptor::Type;
             auto* to = static_cast<Element*>(target->vector()) + targetIndex;
             const auto* from = static_cast<const Element*>(sourceView->vector()) + sourceIndex;
-            bool readsWhatIsStored = from < to && to < from + count;
-            if (!Adaptor::isFloat && !readsWhatIsStored) {
+            bool readsStoredElements = from < to && to < from + count;
+            if (!Adaptor::isFloat && !readsStoredElements) {
                 memmove(to, from, count * sizeof(Element));
                 return;
             }

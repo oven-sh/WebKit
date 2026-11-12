@@ -24,7 +24,7 @@ namespace StaticFields {
 
 bool areReadInVariables(const Closure& classObject);
 JSValue tryRead(const Closure& classObject, UniquedStringImpl*);
-const FieldData* findFieldLeftInVariable(const Closure& classObject, UniquedStringImpl*);
+const FieldData* findFieldKeptInVariable(const Closure& classObject, UniquedStringImpl*);
 bool tryStore(Closure& classObject, UniquedStringImpl*, JSValue);
 bool tryRedefine(Closure& classObject, UniquedStringImpl*, JSValue valueOrEmpty);
 bool tryCreate(Closure& classObject, UniquedStringImpl*, JSValue);

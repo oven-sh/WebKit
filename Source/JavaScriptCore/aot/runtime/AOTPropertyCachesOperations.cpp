@@ -35,7 +35,7 @@ namespace JSC { namespace AOT {
 static void fileRead(Instance* instance, JSValue base, Structure* structureBefore, const CachedName& name, const PropertySlot& slot)
 {
     PropertyAnswer answer = classifyRead({ instance->globalObject, base, structureBefore, name.uid, slot });
-    answerByFieldOfGetter(base, structureBefore, answer);
+    answerByGetterField(base, structureBefore, answer);
     if (answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && base.isObject()) {
         VM& vm = *instance->vm;
         DeferTerminationForAWhile deferTermination(vm);
@@ -97,7 +97,7 @@ static void createStaticsOnChain(VM& vm, JSCell* receiver, UniquedStringImpl* ui
             closure->ensureStaticMethods(vm);
             return;
         }
-        if (closure->mayHoldStaticFieldInVariable(uid))
+        if (closure->canHoldStaticFieldInVariable(uid))
             closure->ensureClassObject(vm);
         else
             closure->ensureStaticMethods(vm);
@@ -145,7 +145,7 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver, S
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     if (lazy.result == LazyPrototypeReadResult::Answered) {
         PropertyAnswer filed = lazy.answer;
-        answerByFieldOfGetter(base, structureBefore, filed);
+        answerByGetterField(base, structureBefore, filed);
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, filed);
         RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, receiver, lazy.answer));
     }
@@ -173,7 +173,7 @@ void fileReadWithoutCode(Instance* instance, JSObject* base, const Identifier& i
     }
     Structure* structureBefore = base->structure();
     if (lazy.result == LazyPrototypeReadResult::Answered) {
-        answerByFieldOfGetter(base, structureBefore, lazy.answer);
+        answerByGetterField(base, structureBefore, lazy.answer);
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, lazy.answer);
         return;
     }
@@ -1004,7 +1004,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnNamedPropertyAddress, uint64_t,
         if (filed && filed->kind == Slot::Kind::Value && filed->has(Slot::isOwn)) {
             PropertyOffset offset = filed->offsetInStorage();
             if (cache && caches.siteCaches().mayBeFilledAfterMiss(cache))
-                caches.fillSiteCacheOfStore(cache, structure, name, offset);
+                caches.fillStoreSiteCache(cache, structure, name, offset);
             if (cache && !caches.findByKey(structure, name, SlotAccess::Store) && caches.shouldFile(structure->id(), name, SlotAccess::Store)) {
                 structure->didCachePropertyReplacement(*instance->vm, offset);
                 caches.cache({ structure, caches.nameOf(key), SlotAccess::Store }, PropertyAnswer::own(PropertyAnswerKind::Value, SlotAccess::Store, offset));

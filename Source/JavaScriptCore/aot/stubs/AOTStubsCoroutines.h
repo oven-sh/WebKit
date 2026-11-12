@@ -41,8 +41,8 @@ constexpr StubKey awaitWithSavedFrame() { return StubKey(StubFamily::AwaitWithSa
 constexpr StubKey suspendGenerator(GeneratorSuspension suspension) { return StubKey(StubFamily::SuspendGenerator).withForm(static_cast<uint8_t>(suspension)); }
 constexpr StubKey stepGenerator(GeneratorStepCheck check) { return StubKey(StubFamily::StepGenerator).withForm(static_cast<uint8_t>(check)); }
 constexpr StubKey resumeSteppedGenerator() { return StubKey(StubFamily::ResumeSteppedGenerator); }
-inline constexpr StubRegister frameRegisterOfLeafStep = StubRegister::T10;
-inline constexpr StubRegister generatorRegisterOfLeafStep = StubRegister::T12;
+inline constexpr StubRegister leafStepFrameRegister = StubRegister::T10;
+inline constexpr StubRegister leafStepGeneratorRegister = StubRegister::T12;
 constexpr StubKey enterSavedFrame() { return StubKey(StubFamily::EnterSavedFrame); }
 constexpr StubKey resumeNextJob() { return StubKey(StubFamily::ResumeNextJob); }
 #if CPU(X86_64)
@@ -162,7 +162,7 @@ void emitRunResolveThenableJob(StubAssembler&, GPRReg head, const ResolveThenabl
 [[nodiscard]] Label emitRunResolveWithoutHandlerJob(StubAssembler&, GPRReg head, GPRReg promise, GPRReg value, const JobRegisters&, JumpList& isNoPromise, JumpList& isLeftToJobLoop);
 void emitQueueResolutionWithPromise(StubAssembler&, GPRReg promise, GPRReg resolution, GPRReg other, const JobRegisters&, JumpList& needsEngine);
 void emitTakeReactionChainStepJob(StubAssembler&, const HeadJobRegisters&, const ReactionChainRegisters&, JumpList& isForOtherStatus, JumpList& isLeftToJobLoop);
-void emitBranchIfReactionChainGoesOn(StubAssembler&, GPRReg chain, GPRReg index, GPRReg scratch, JumpList& goesOn);
+void emitBranchIfReactionChainContinues(StubAssembler&, GPRReg chain, GPRReg index, GPRReg scratch, JumpList& goesOn);
 void emitAdvanceReactionChain(StubAssembler&, GPRReg chain);
 void emitResolveReactionChain(StubAssembler&, GPRReg chain, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
 void emitRunSettleReactionChainJob(StubAssembler&, GPRReg head, GPRReg chain, GPRReg value, GPRReg structureID, const JobRegisters&, JumpList& isLeftToJobLoop);

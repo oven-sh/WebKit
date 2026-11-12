@@ -235,7 +235,7 @@ private:
     };
     Vector<StoreThatAwaitsBirth, 8>& m_storesThatAwaitBirth;
     SweepBits& m_birthsAwaited;
-    BlockID m_blockWhereBirthsAreAwaited;
+    BlockID m_blockAwaitingAllocations;
     bool m_laterFenceCovers { false };
     bool m_laterFenceCoversAtSomeHead { false };
     SweepBits& m_laterFenceCoversAtHeads;

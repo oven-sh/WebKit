@@ -1546,7 +1546,7 @@ void CachedSlot::loadVariableBase(StubAssembler& jit, GPRReg receiver, GPRReg re
     hasBase.link(&jit);
 }
 
-void loadKeyOfProxySlot(StubAssembler& jit, SlotForm form, GPRReg header, GPRReg key, JumpList& isForNoProxies)
+void loadProxySlotKey(StubAssembler& jit, SlotForm form, GPRReg header, GPRReg key, JumpList& isForNoProxies)
 {
     RELEASE_ASSERT(noOverlap(header, key));
     if (form == SlotForm::PackedSlot)
@@ -1566,7 +1566,7 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     switch (Slot::payloadOf(m_kind)) {
     case SlotPayload::Key: {
         JumpList hasNoKey;
-        loadKeyOfProxySlot(jit, m_form, m_header, result, hasNoKey);
+        loadProxySlotKey(jit, m_form, m_header, result, hasNoKey);
         hasNoKey.link(&jit);
         return;
     }

@@ -999,9 +999,9 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
             metadata.setProtoLoadMode(structure, offset, slot.slotBase());
         }
 #if ENABLE(AOT)
-        // llint_aot_op_get_by_id compares the Structure before it asks for the mode. Every VM of the process runs it.
+        // llint_aot_op_get_by_id compares the Structure before it checks the mode. Every VM of the process executes it.
         if (Options::runsCompiledImage() && codeBlock->instructionAt(bytecodeIndex)->is<OpGetById>())
-            metadata.defaultMode.cachedOffset |= AOT::Interpreter::otherModeInSiteCache;
+            metadata.defaultMode.cachedOffset |= AOT::Interpreter::siteCacheHasOtherMode;
 #endif
     }
     vm.writeBarrier(codeBlock);
@@ -1036,15 +1036,15 @@ static bool cacheServesOtherStructures(const GetByIdModeMetadata& metadata)
 #endif
 
 template<bool hasCompiledCode>
-static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata, [[maybe_unused]] bool handlerAsksTable = false, [[maybe_unused]] bool isUnfiled = false)
+static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata, [[maybe_unused]] bool handlerReadsTable = false, [[maybe_unused]] bool isAbsentFromTable = false)
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    // The handler of a proxy answers anew each time.
+    // The result of a proxy's handler cannot be cached.
     bool mayBeFiled = baseValue.isObject() ? baseValue.asCell()->type() != ProxyObjectType : baseValue.isString();
     Structure* structureBefore = hasCompiledCode && mayBeFiled ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
-    if (structureBefore && !isUnfiled) {
+    if (structureBefore && !isAbsentFromTable) {
         if (std::optional<JSValue> result = AOT::Interpreter::tryGetById(globalObject, baseValue.asCell(), ident))
             RELEASE_AND_RETURN(throwScope, *result);
         EXCEPTION_ASSERT(!throwScope.exception());
@@ -1056,9 +1056,9 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
     RETURN_IF_EXCEPTION(throwScope, { });
 #if ENABLE(AOT)
     if (structureBefore) {
-        bool isFiledBesideCache = handlerAsksTable && cacheServesOtherStructures(metadata) && !(structureBefore->isDictionary() && structureBefore->hasBeenFlattenedBefore());
-        AOT::Interpreter::didGetById(globalObject, baseValue.asCell(), structureBefore, ident, slot, isFiledBesideCache);
-        if (isFiledBesideCache)
+        bool isStoredInTable = handlerReadsTable && cacheServesOtherStructures(metadata) && !(structureBefore->isDictionary() && structureBefore->hasBeenFlattenedBefore());
+        AOT::Interpreter::didGetById(globalObject, baseValue.asCell(), structureBefore, ident, slot, isStoredInTable);
+        if (isStoredInTable)
             return result;
     }
 #endif
@@ -1128,9 +1128,9 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
 }
 
 #if ENABLE(AOT)
-static NEVER_INLINE JSValue performLLIntGetByIDWithCompiledCode(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata, bool handlerAsksTable = false, bool isUnfiled = false)
+static NEVER_INLINE JSValue performLLIntGetByIDWithCompiledCode(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata, bool handlerReadsTable = false, bool isAbsentFromTable = false)
 {
-    return performLLIntGetByIDImpl<true>(bytecodeIndex, codeBlock, globalObject, baseValue, ident, metadata, handlerAsksTable, isUnfiled);
+    return performLLIntGetByIDImpl<true>(bytecodeIndex, codeBlock, globalObject, baseValue, ident, metadata, handlerReadsTable, isAbsentFromTable);
 }
 #endif
 
@@ -1198,8 +1198,8 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 }
 
 #if ENABLE(AOT)
-// The base is no compiled object, and the table of properties holds nothing under its Structure and the name.
-LLINT_SLOW_PATH_DECL(slow_path_aot_get_unfiled)
+// The base is not a compiled object, and the property table has no entry for its Structure and the name.
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_uncached)
 {
     LLINT_BEGIN();
     auto bytecode = pc->as<OpGetById>();
@@ -1432,7 +1432,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                             metadata.m_structureChain.set(vm, codeBlock, chain);
 #if ENABLE(AOT)
                         if (Options::runsCompiledImage())
-                            metadata.m_offset = AOT::Interpreter::offsetOfStoreSite(slot.cachedOffset(), chain ? AOT::Interpreter::StoreSiteKind::AddsWithChain : AOT::Interpreter::StoreSiteKind::Adds);
+                            metadata.m_offset = AOT::Interpreter::storeSiteOffset(slot.cachedOffset(), chain ? AOT::Interpreter::StoreSiteKind::AddsWithChain : AOT::Interpreter::StoreSiteKind::Adds);
 #endif
                         vm.writeBarrier(codeBlock);
                     }
@@ -1452,7 +1452,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                     metadata.m_offset = slot.cachedOffset();
 #if ENABLE(AOT)
                     if (Options::runsCompiledImage())
-                        metadata.m_offset = AOT::Interpreter::offsetOfStoreSite(slot.cachedOffset(), AOT::Interpreter::StoreSiteKind::Replaces);
+                        metadata.m_offset = AOT::Interpreter::storeSiteOffset(slot.cachedOffset(), AOT::Interpreter::StoreSiteKind::Replaces);
 #endif
                 }
                 vm.writeBarrier(codeBlock);
@@ -2332,7 +2332,7 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_get_by_id_with_this)
     LLINT_RETURN(result);
 }
 
-static JSString* stringOfInteger(VM& vm, int32_t value)
+static JSString* stringFromInteger(VM& vm, int32_t value)
 {
     RELEASE_ASSERT(static_cast<const void*>(vm.numericStrings.smallIntCache()) == &vm.numericStrings);
     return vm.numericStrings.addJSString(vm, value);
@@ -2344,11 +2344,11 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_add_number_to_string)
     auto bytecode = pc->as<OpAdd>();
     JSValue left = getOperand(callFrame, bytecode.m_lhs);
     JSValue right = getOperand(callFrame, bytecode.m_rhs);
-    // The cache has the string from then on.
+    // This also caches the string.
     if (right.isInt32() && left.isString())
-        LLINT_RETURN(jsString(globalObject, asString(left), stringOfInteger(vm, right.asInt32())));
+        LLINT_RETURN(jsString(globalObject, asString(left), stringFromInteger(vm, right.asInt32())));
     if (left.isInt32() && right.isString())
-        LLINT_RETURN(jsString(globalObject, stringOfInteger(vm, left.asInt32()), asString(right)));
+        LLINT_RETURN(jsString(globalObject, stringFromInteger(vm, left.asInt32()), asString(right)));
     LLINT_RETURN(jsAdd(globalObject, left, right));
 }
 
@@ -2358,7 +2358,7 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_to_string)
     auto bytecode = pc->as<OpToString>();
     JSValue operand = getOperand(callFrame, bytecode.m_operand);
     if (operand.isInt32())
-        LLINT_RETURN(stringOfInteger(vm, operand.asInt32()));
+        LLINT_RETURN(stringFromInteger(vm, operand.asInt32()));
     LLINT_RETURN(operand.toString(globalObject));
 }
 
@@ -2380,7 +2380,7 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_put_by_val)
     auto ident = name->toIdentifier(globalObject);
     LLINT_CHECK_EXCEPTION();
     JSObject* base = asObject(baseValue);
-    Structure* structureBefore = base->structure();
+    Structure* structureBefore = WTF::opaque(base->structure());
     PutPropertySlot slot(base, bytecode.m_ecmaMode.isStrict());
     base->methodTable()->put(base, globalObject, ident, value, slot);
     LLINT_CHECK_EXCEPTION();

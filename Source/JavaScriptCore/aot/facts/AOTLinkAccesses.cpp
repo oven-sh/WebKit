@@ -190,10 +190,10 @@ private:
     bool isTakenByLoader() const { return isRead() && m_function && isLibraryCode(m_program, m_program.at(m_function)) && std::ranges::contains(m_flow.summaries.at(m_function).namesThatLoaderTakes, m_access.value, &ThinSummary::NameThatLoaderTakes::read); }
     bool readKey();
     bool bodyConvertsKey() const;
-    bool isNothingLaidFrom(BuiltinID start, PropertyKeyID);
+    bool isNothingDefinedFrom(BuiltinID start, PropertyKeyID);
     bool isTextOfFunctions(const LinkType& key);
     bool readsOrStoresUnderTextsThatBodyWrites();
-    bool readsOrStoresUnderNamesThatLoopGives();
+    bool accessesNamesFromLoop();
     bool appendNamesOfRecords(FlowNodeID, Vector<PropertyKeyID, 16>& names);
     void resolveUnderNames(std::span<const PropertyKeyID>);
     bool storesUnderCallbackKeys(const LinkType& subject);
@@ -202,7 +202,7 @@ private:
     void readGatheredArguments();
     bool holdsValueUnderKey(const BodyIndex&, const BodyOperation<Opcode::ElemSet>&, const LinkFlow::ListedObject&) const;
     bool resolveUnderTexts(std::span<const StringID>);
-    bool storesNamesOfCopyOnPrototype(const LinkType& subject, const LinkType& source);
+    bool storesCopiedNamesOnPrototype(const LinkType& subject, const LinkType& source);
     bool isFinalListRead();
 
     void give(const LinkType&);
@@ -289,7 +289,7 @@ private:
     void layOnReceiverUnlessAccessorAnswers(const LinkFlow::FoundMembers&);
 
     void resolveOnPrimitives(uint16_t);
-    bool storeOnPrimitivesRunsNothing(uint16_t primitives);
+    bool primitiveStoresRunNoCode(uint16_t primitives);
     void resolveOnClasses(const LinkType& instances);
     void resolveUnderNameOnClass(const LinkType& instances);
     template<typename Functor> void forEachListOfElements(const LinkType& instances, const Functor&);
@@ -1010,7 +1010,7 @@ bool AccessInLinkAccesses::bodyConvertsKey() const
     }
 }
 
-bool AccessInLinkAccesses::isNothingLaidFrom(BuiltinID start, PropertyKeyID key)
+bool AccessInLinkAccesses::isNothingDefinedFrom(BuiltinID start, PropertyKeyID key)
 {
     MembersUnderKey members(m_program, key);
     for (BuiltinID holder = m_table.canonicalID(start);; holder = m_table.canonicalID(m_table.at(holder).inheritsFrom)) {
@@ -1037,7 +1037,7 @@ bool AccessInLinkAccesses::isTextOfFunctions(const LinkType& key)
     BuiltinID member;
     if (toString && (lookUpInTableFrom(Builtins::FunctionPrototype, toString, member) != LookupInLinkAccesses::Found || !holdsWhatTableLists(member)))
         return false;
-    if (toPrimitive && !isNothingLaidFrom(Builtins::FunctionPrototype, toPrimitive))
+    if (toPrimitive && !isNothingDefinedFrom(Builtins::FunctionPrototype, toPrimitive))
         return false;
     auto holdsNothing = [&](FlowNodeID laid) {
         tellAgainOnceClimbsWhoeverTells(laid);
@@ -1089,7 +1089,7 @@ bool AccessInLinkAccesses::readKey()
     return true;
 }
 
-static bool mayComeOutOfLoopForLinkAccesses(const BodyIndex& index, ValueID key)
+static bool mayLeaveLoopForLinkAccesses(const BodyIndex& index, ValueID key)
 {
     key = index.stripCasts(key);
     if (index.isParameter(key))
@@ -1142,7 +1142,7 @@ static bool appendFirstTextsOfWrittenPairsForLinkAccesses(const BodyIndex& index
     return !texts.isEmpty();
 }
 
-static bool appendStringsOfRowsForLinkAccesses(const Program& program, const BodyIndex& index, ValueID list, uint32_t position, uint32_t length, Vector<StringID, 8>& strings)
+static bool appendRowStringsForLinkAccesses(const Program& program, const BodyIndex& index, ValueID list, uint32_t position, uint32_t length, Vector<StringID, 8>& strings)
 {
     auto appendStringOfData = [&](const DataNode& row) {
         const auto* elements = row.tryAs<DataNode::Array>();
@@ -1277,8 +1277,8 @@ bool LinkFlow::appendCallbackKeys(FunctionID callback, const BodyIndex& index, V
     if (!made)
         return false;
     if (made->isParameter(list))
-        return !position && made->blockOf(list) == entryBlock && appendTextsOfListParameter(maker, *made, list, keys);
-    return position ? appendStringsOfRowsForLinkAccesses(program, *made, list, *position, length, keys) : appendTextsOfWrittenListForLinkAccesses(program, *made, list, keys);
+        return !position && made->blockOf(list) == entryBlock && appendArrayParameterStrings(maker, *made, list, keys);
+    return position ? appendRowStringsForLinkAccesses(program, *made, list, *position, length, keys) : appendTextsOfWrittenListForLinkAccesses(program, *made, list, keys);
 }
 
 static FunctionID findCalledFunctionForLinkAccesses(const Program& program, const BodyIndex& index, ValueID callee)
@@ -1322,7 +1322,7 @@ ValueID LinkFlow::findCallbackList(FunctionID callback, FunctionID& maker) const
     std::span<const ValueID> arguments = call.argumentsOperands();
     ValueID list;
     if (FunctionID called = findCalledFunctionForLinkAccesses(program, *made, callee)) {
-        std::optional<uint32_t> place = findListOfCallbackParameter(called, static_cast<uint32_t>(std::ranges::find(arguments, closure) - arguments.begin()));
+        std::optional<uint32_t> place = findCallbackParameterArray(called, static_cast<uint32_t>(std::ranges::find(arguments, closure) - arguments.begin()));
         list = place && *place < arguments.size() ? arguments[*place] : ValueID();
         if (!list || !made->hasOneUse(list))
             return { };
@@ -1434,7 +1434,7 @@ LinkFlow::ComputedStoreNames LinkFlow::findComputedStoreNames(FunctionID id, Val
     iterated = iterated ? index->stripCasts(iterated) : ValueID();
     Vector<StringID, 8> texts;
     if (iterated && index->isParameter(iterated) && index->blockOf(iterated) == entryBlock) {
-        if (!index->hasOneUse(iterated) || !appendTextsOfListParameter(id, *index, iterated, texts))
+        if (!index->hasOneUse(iterated) || !appendArrayParameterStrings(id, *index, iterated, texts))
             return found;
     } else if (!iterated || index->isParameter(iterated)) {
         if (!appendCallbackKeys(id, *index, index->value(site).as<Opcode::ElemSet>().propertyOperand(), texts))
@@ -1454,7 +1454,7 @@ LinkFlow::ComputedStoreNames LinkFlow::findComputedStoreNames(FunctionID id, Val
     return found;
 }
 
-bool AccessInLinkAccesses::storesNamesOfCopyOnPrototype(const LinkType& subject, const LinkType& source)
+bool AccessInLinkAccesses::storesCopiedNamesOnPrototype(const LinkType& subject, const LinkType& source)
 {
     if (m_access.kind != Kind::Store || subject.objects != LinkType::Objects::Prototype || !(subject == prototypeForLinkAccesses(subject.layout)) || !m_flow.followsNamesOnPrototypeOf(subject.layout))
         return false;
@@ -1511,7 +1511,7 @@ bool AccessInLinkAccesses::readsOrStoresUnderTextsThatBodyWrites()
     return m_flow.appendTextsOfKey(m_function, *index, key, texts) && resolveUnderTexts(texts.span());
 }
 
-bool LinkFlow::appendTextsOfListParameter(FunctionID id, const BodyIndex& index, ValueID list, Vector<StringID, 8>& texts) const
+bool LinkFlow::appendArrayParameterStrings(FunctionID id, const BodyIndex& index, ValueID list, Vector<StringID, 8>& texts) const
 {
     const Function& record = program.at(id);
     bool isPlain = (record.kind == FunctionKind::Plain || record.kind == FunctionKind::Arrow) && !record.isCoroutine() && !record.calleeParameterIndex() && !record.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest });
@@ -1588,7 +1588,7 @@ bool LinkFlow::appendTextsOfElement(FunctionID id, const BodyIndex& index, BodyV
             return false;
     }
     if (index.isParameter(list))
-        return index.blockOf(list) == entryBlock && appendTextsOfListParameter(id, index, list, texts);
+        return index.blockOf(list) == entryBlock && appendArrayParameterStrings(id, index, list, texts);
     return appendTextsOfWrittenListForLinkAccesses(program, index, list, texts);
 }
 
@@ -1613,7 +1613,7 @@ bool LinkFlow::appendTextsOfKey(FunctionID id, const BodyIndex& index, ValueID k
     while (!index.isParameter(list) && index.hasOneUse(list) && opcodesThatStateTypes.contains(index.opcodeOf(list)))
         list = index.value(list).operand(0);
     if (!keyIsFirstOfPair && index.isParameter(list) && index.blockOf(list) == entryBlock)
-        return index.hasOneUse(list) && appendTextsOfListParameter(id, index, list, texts);
+        return index.hasOneUse(list) && appendArrayParameterStrings(id, index, list, texts);
     if (index.isParameter(list) || !index.hasOneUse(list) || opcodesThatStateTypes.contains(index.opcodeOf(list)))
         return false;
     return keyIsFirstOfPair ? appendFirstTextsOfWrittenPairsForLinkAccesses(index, list, texts) : appendTextsOfWrittenListForLinkAccesses(program, index, list, texts);
@@ -1628,7 +1628,7 @@ Vector<PropertyKeyID, 8> LinkFlow::findNamesOfStore(FunctionID id, const Summary
     if (!index || index->isParameter(access.site) || index->opcodeOf(access.site) != Opcode::ElemSet)
         return names;
     ValueID key = index->value(access.site).as<Opcode::ElemSet>().propertyOperand();
-    if (!mayComeOutOfLoopForLinkAccesses(*index, key))
+    if (!mayLeaveLoopForLinkAccesses(*index, key))
         return names;
     for (BuiltinID row : { Builtins::ArrayPrototypeValues, Builtins::ArrayIteratorPrototypeNext, Builtins::ArrayPrototypeForEach }) {
         if (program.isUnlocked(row) || program.isUnlocked(program.builtins().canonicalID(row)))
@@ -1662,7 +1662,7 @@ bool AccessInLinkAccesses::storesUnderCallbackKeys(const LinkType& subject)
     if (m_access.kind != Kind::Store || m_shared || subject.objects == LinkType::Objects::None || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
         return false;
     const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
-    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemSet || !mayComeOutOfLoopForLinkAccesses(*index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand()))
+    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemSet || !mayLeaveLoopForLinkAccesses(*index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand()))
         return false;
     BuiltinID forEach = Builtins::ArrayPrototypeForEach;
     if (m_program.isUnlocked(forEach) || m_program.isUnlocked(m_table.canonicalID(forEach)))
@@ -1676,7 +1676,7 @@ bool AccessInLinkAccesses::storesUnderListedNames(const LinkType& subject)
     if (m_access.kind != Kind::Store || m_shared || subject.objects == LinkType::Objects::None || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
         return false;
     const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
-    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemSet || !mayComeOutOfLoopForLinkAccesses(*index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand()))
+    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemSet || !mayLeaveLoopForLinkAccesses(*index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand()))
         return false;
     for (BuiltinID row : { Builtins::ArrayPrototypeValues, Builtins::ArrayIteratorPrototypeNext, Builtins::ArrayPrototypeForEach }) {
         if (m_program.isUnlocked(row) || m_program.isUnlocked(m_table.canonicalID(row)))
@@ -1796,12 +1796,12 @@ void AccessInLinkAccesses::resolveUnderNames(std::span<const PropertyKeyID> name
 bool AccessInLinkAccesses::appendNamesOfRecords(FlowNodeID node, Vector<PropertyKeyID, 16>& names)
 {
     const LinkType records = m_flow.typeAt(node);
-    m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), node);
     if (records.hasUnknownObjects || records.holdsLostBuiltins || records.builtin || records.functions != LinkType::Functions::None || records.classes != LinkType::Classes::None || records.primitives & LinkType::closed(Primitive::AnyString))
         return false;
     if (records.objects != LinkType::Objects::None && records.objects != LinkType::Objects::Layout && records.objects != LinkType::Objects::Set)
         return false;
     bool areListed = true;
+    size_t numberOfAppendedNames = 0;
     auto append = [&](PropertyKeyID key) {
         if (!key) {
             areListed = false;
@@ -1828,13 +1828,16 @@ bool AccessInLinkAccesses::appendNamesOfRecords(FlowNodeID node, Vector<Property
         areListed &= m_flow.typeAt(unnamed).isNever();
         Vector<LinkFlow::OwnValue, 16> appended;
         m_flow.appendAppendedFields(id, appended);
+        numberOfAppendedNames += appended.size();
         for (const LinkFlow::OwnValue& value : appended)
             append(value.key);
     });
+    if (areListed)
+        m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), node, numberOfAppendedNames);
     return areListed;
 }
 
-bool AccessInLinkAccesses::readsOrStoresUnderNamesThatLoopGives()
+bool AccessInLinkAccesses::accessesNamesFromLoop()
 {
     bool stores = m_access.kind == Kind::Store;
     if ((!isRead() && !stores) || m_shared || m_flow.testRuns().isTestRun() || m_program.isSomeNameOpenedOn(m_table.canonicalID(Builtins::ObjectPrototype)))
@@ -2090,7 +2093,7 @@ static bool readsElementInBoundsForLinkAccesses(const Program& program, const Bo
     return false;
 }
 
-std::optional<uint32_t> LinkFlow::findListOfCallbackParameter(FunctionID id, uint32_t callbackParameter) const
+std::optional<uint32_t> LinkFlow::findCallbackParameterArray(FunctionID id, uint32_t callbackParameter) const
 {
     const Function& record = program.at(id);
     const BodyIndex* index = bodiesLookedAt(looks).find(id);
@@ -2216,12 +2219,12 @@ void AccessInLinkAccesses::resolve()
             mayThrow();
             return;
         }
-        if (storesNamesOfCopyOnPrototype(subject, m_flow.typeAt(source)))
+        if (storesCopiedNamesOnPrototype(subject, m_flow.typeAt(source)))
             return;
     }
     if (!isNamed() && !readKey())
         return;
-    if (!isNamed() && (readsOrStoresUnderTextsThatBodyWrites() || storesUnderCallbackKeys(subject) || readsOrStoresUnderNamesThatLoopGives() || storesUnderListedNames(subject)))
+    if (!isNamed() && (readsOrStoresUnderTextsThatBodyWrites() || storesUnderCallbackKeys(subject) || accessesNamesFromLoop() || storesUnderListedNames(subject)))
         return;
     if (subject.builtin && m_flow.lightFormOf(subject.builtin) && !isServedByLightFormOf(subject.builtin))
         m_flow.noteLossOf(subject.builtin);
@@ -3021,7 +3024,7 @@ void AccessInLinkAccesses::resolveOnClosure(FunctionID function)
         }
         if (m_access.kind == Kind::Store && m_receiver == m_subject && !m_shared && !classLayout && record.takesThisFromConstruction() && !record.isCoroutine())
             return;
-        if (!isRead() && m_access.kind == Kind::Store && m_value && m_flow.mayHoldPrototypeOfOtherClass(function)) {
+        if (!isRead() && m_access.kind == Kind::Store && m_value && m_flow.mayHoldOtherClassPrototype(function)) {
             mayThrow();
             storeInto(m_flow.laidOnClosuresOf(function, m_access.key));
             return;
@@ -3464,14 +3467,14 @@ void AccessInLinkAccesses::enterAccessor(FunctionID id)
         giveFrom(m_flow.resultToFollow(id, 0));
 }
 
-static constexpr uint16_t kindsOfPrimitivesForLinkAccesses[] { Primitive::AnyString, Primitive::AnySymbol, Primitive::BigInt, Primitive::Number, Primitive::Boolean };
+static constexpr uint16_t primitiveKindsForLinkAccesses[] { Primitive::AnyString, Primitive::AnySymbol, Primitive::BigInt, Primitive::Number, Primitive::Boolean };
 
-bool AccessInLinkAccesses::storeOnPrimitivesRunsNothing(uint16_t primitives)
+bool AccessInLinkAccesses::primitiveStoresRunNoCode(uint16_t primitives)
 {
     if (m_access.kind != Kind::Store || !isNamed() || m_nameClass == NameClass::Proto || mayBeElementKey(m_nameClass))
         return false;
     BuiltinName name = m_program.builtinNameOf(m_access.key);
-    return std::ranges::all_of(kindsOfPrimitivesForLinkAccesses, [&](uint16_t kind) {
+    return std::ranges::all_of(primitiveKindsForLinkAccesses, [&](uint16_t kind) {
         if (!(primitives & LinkType::closed(kind)))
             return true;
         BuiltinClassID builtinClass = primitiveClassOf(kind);
@@ -3486,14 +3489,14 @@ void AccessInLinkAccesses::resolveOnPrimitives(uint16_t primitives)
     if (!primitives)
         return;
     if (!isRead()) {
-        if (storeOnPrimitivesRunsNothing(primitives))
+        if (primitiveStoresRunNoCode(primitives))
             mayThrow();
         else
             cannotTell();
         return;
     }
 
-    for (uint16_t kind : kindsOfPrimitivesForLinkAccesses) {
+    for (uint16_t kind : primitiveKindsForLinkAccesses) {
         if (!(primitives & LinkType::closed(kind)))
             continue;
         BuiltinClassID builtinClass = primitiveClassOf(kind);
@@ -4380,13 +4383,13 @@ bool AccessInLinkAccesses::isFollowedOnGlobalObject(BuiltinID builtin)
     BuiltinID canonical = m_table.canonicalID(builtin);
     if (!m_flow.isGlobalObject(canonical) || !isNamed() || m_flow.testRuns().isTestRun() || !hasFlag(m_program.excludedCode, Wire::ExcludedCode::UnlistedGlobals))
         return false;
-    static constexpr std::array namesLaidByOptions { "$vm"_s, "Loader"_s, "gc"_s };
+    static constexpr std::array namesDefinedByOptions { "$vm"_s, "Loader"_s, "gc"_s };
     const PropertyKey& key = m_program.at(m_access.key);
     if (key.kind != PropertyKeyKind::Text)
         return false;
     Vector<char16_t> buffer;
     StringView name = m_program.strings.viewOf(key.text, buffer);
-    if (name.startsWith("__"_s) || std::ranges::any_of(namesLaidByOptions, [&](ASCIILiteral laid) { return name == laid; }))
+    if (name.startsWith("__"_s) || std::ranges::any_of(namesDefinedByOptions, [&](ASCIILiteral laid) { return name == laid; }))
         return false;
     return isNameUndefinedFrom(canonical);
 }

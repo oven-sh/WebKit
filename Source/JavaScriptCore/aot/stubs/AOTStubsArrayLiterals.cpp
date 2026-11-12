@@ -277,7 +277,7 @@ void generateListOwnKeys(StubAssembler& jit)
     findList(isNotListedByShape);
     isNotListedByShape.link(&jit);
     slowPath.append(jit.branchTest32(CCallHelpers::Zero, order, TrustedImm32(static_cast<int32_t>(orderWordHasExtraProperties))));
-    static_assert(enumerableKeyListWordOfStructure(16) == (16 >> 1 | 1));
+    static_assert(structureEnumerableKeysWord(16) == (16 >> 1 | 1));
     jit.load32(Address(value, JSCell::structureIDOffset()), word);
     jit.urshift32(TrustedImm32(1), word);
     jit.or32(TrustedImm32(1), word);

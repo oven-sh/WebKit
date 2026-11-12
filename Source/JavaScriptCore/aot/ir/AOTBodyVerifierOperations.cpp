@@ -348,7 +348,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::NewFormatterWithPattern: case Opcode::SetUpFormatterWithOptions: case Opcode::FormatDateWithPattern: case Opcode::FormatNumberWithPattern: case Opcode::NewArgumentList: case Opcode::NewArrayOfGiven:
     case Opcode::SharedRegExpLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::GetWatchedBuiltinValueOrAbsent: case Opcode::InitializeBuiltin:
     case Opcode::DestructureIterable: case Opcode::AppendIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::CreateAsyncFromSyncIterator:
-    case Opcode::NextSetElement: case Opcode::ReserveTableCapacity: case Opcode::GetRawOfTemplateObject: case Opcode::FinishAccessThroughProxy: case Opcode::ThrowNotIterable:
+    case Opcode::NextSetElement: case Opcode::ReserveTableCapacity: case Opcode::GetTemplateObjectRaw: case Opcode::FinishAccessThroughProxy: case Opcode::ThrowNotIterable:
     case Opcode::NewGenerator: case Opcode::NewGeneratorOfLibrary: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
     case Opcode::IsCallDelegated: case Opcode::GiveDelegatedResult: case Opcode::CallDelegate:
     case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
@@ -373,9 +373,9 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StackStringBuilderAppendConstant: case Opcode::StackStringBuilderAppendInteger: case Opcode::StackStringBuilderAppendNumber: case Opcode::StackStringBuilderAppendString:
     case Opcode::StackStringBuilderAppendStringRange: case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendCodeUnit: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
-    case Opcode::RegExpMatchLiteralInParts: case Opcode::MatchHeldRegExpInParts: case Opcode::GetLastIndexOfRegExp: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
+    case Opcode::RegExpMatchLiteralInParts: case Opcode::MatchHeldRegExpParts: case Opcode::GetRegExpLastIndex: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
     case Opcode::StringLengthWithoutMatches:
-    case Opcode::MatchRegExpIntoFrame: case Opcode::IsMatchInFrame: case Opcode::LengthOfMatchInFrame: case Opcode::GetMatchArrayGroups: case Opcode::BoundsOfMatchInFrame: case Opcode::NewArrayOfRegExpMatch:
+    case Opcode::MatchRegExpIntoFrame: case Opcode::IsMatchInFrame: case Opcode::FrameMatchLength: case Opcode::GetMatchArrayGroups: case Opcode::FrameMatchBounds: case Opcode::NewArrayOfRegExpMatch:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
     case Opcode::Narrowed: case Opcode::EndCellLifetime: case Opcode::ReleaseArray: case Opcode::ReleaseList: case Opcode::CheckProof: case Opcode::GuessFailsUnasked: case Opcode::AskObjectAgain: case Opcode::BeginEffectsCheck: case Opcode::CheckIterationRestart: case Opcode::CheckInlineeFallback: case Opcode::CheckReloadBypass:

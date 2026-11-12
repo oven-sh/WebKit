@@ -153,7 +153,7 @@ ALWAYS_INLINE bool isKnownByStructureOfClass(const Layout& layout)
     });
 }
 
-inline bool isToldByStructureOfClass(const Field& field)
+inline bool isDecidedByClassStructure(const Field& field)
 {
     return field.flags.contains(FieldFlags::IsRequired) && !field.flags.containsAny({ FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden });
 }

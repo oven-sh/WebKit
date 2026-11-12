@@ -106,14 +106,14 @@ void didCreateClonedArguments(JSGlobalObject*);
 inline constexpr ptrdiff_t offsetOfExecutablesInStorage = FixedVector<WriteBarrier<FunctionExecutable>>::Storage::offsetOfData();
 void rememberSwitchTarget(JSGlobalObject*, const JSInstruction*, const StringImpl& atom, int32_t offset);
 
-void didGetById(JSGlobalObject*, JSCell* base, Structure* structureBefore, const Identifier&, const PropertySlot&, bool isFiledBesideCache);
+void didGetById(JSGlobalObject*, JSCell* base, Structure* structureBefore, const Identifier&, const PropertySlot&, bool isStoredInTable);
 void didPutById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PutPropertySlot&);
 
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
 inline constexpr PropertyOffset fieldInSiteCache = 1 << 28;
-inline constexpr PropertyOffset otherModeInSiteCache = std::numeric_limits<PropertyOffset>::min();
-inline constexpr PropertyOffset offsetMaskOfOtherMode = std::numeric_limits<PropertyOffset>::max();
+inline constexpr PropertyOffset siteCacheHasOtherMode = std::numeric_limits<PropertyOffset>::min();
+inline constexpr PropertyOffset otherModeOffsetMask = std::numeric_limits<PropertyOffset>::max();
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
 enum class StoreSiteKind : uint8_t {
     Other,
@@ -123,7 +123,7 @@ enum class StoreSiteKind : uint8_t {
 };
 inline constexpr unsigned storeSiteKindShift = 24;
 inline constexpr unsigned storeSiteOffsetMask = (1u << storeSiteKindShift) - 1;
-inline unsigned offsetOfStoreSite(PropertyOffset offset, StoreSiteKind kind)
+inline unsigned storeSiteOffset(PropertyOffset offset, StoreSiteKind kind)
 {
     return isInlineOffset(offset) ? offset | static_cast<unsigned>(kind) << storeSiteKindShift : offset;
 }
@@ -153,7 +153,7 @@ struct FusedClosureVariableRead {
     static constexpr unsigned typeAndKind(Kind kind) { return ClosureVar | kind << typeBits; }
     static constexpr unsigned kindOnly(Kind kind) { return kind << typeBits; }
 };
-void fuseReadsOfVariables(CodeBlock&, std::span<const JSInstruction* const> resolutions);
+void fuseVariableReads(CodeBlock&, std::span<const JSInstruction* const> resolutions);
 
 struct ObjectLiteralPlan {
     static constexpr uintptr_t allocatorTag = 1;

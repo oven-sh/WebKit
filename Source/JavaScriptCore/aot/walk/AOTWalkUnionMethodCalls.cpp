@@ -264,7 +264,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     return true;
 }
 
-GuessOpened askNameBehindTestsOfShape(Walker& walker, const BodyValue& question)
+GuessOpened testNameAfterShapeTests(Walker& walker, const BodyValue& question)
 {
     if (walker.standsInArmOfRowOfShapeTests() || walker.isNestedTooDeeply() || (!walker.isInLoop() && walker.program().at(walker.unit().function).isModuleBody()))
         return GuessOpened::None;
@@ -318,7 +318,7 @@ GuessOpened askNameBehindTestsOfShape(Walker& walker, const BodyValue& question)
         narrowed.setIsOnTakenEdge(isOnTakenEdge);
         return walker.build(WTF::move(narrowed));
     };
-    bool shapeDecides = !someLayoutIsLeft && !haveName.isEmpty() && !lackName.isEmpty() && everyReceiverIsFilledAtEveryRead(walker, types.forLayouts(haveName.span()), asked.key()) && isAnsweredBy(types.forLayouts(lackName.span()));
+    bool shapeDecides = !someLayoutIsLeft && !haveName.isEmpty() && !lackName.isEmpty() && areReceiversFilledAtAllReads(walker, types.forLayouts(haveName.span()), asked.key()) && isAnsweredBy(types.forLayouts(lackName.span()));
     if (shapeDecides) {
         walker.count(StatisticID::PropertyReadsDispatchedByShape);
         Reference object = receiver;

@@ -268,7 +268,7 @@ struct ClassData {
     uint32_t namesAreLaidUnderWrittenKeysAlone : 1;
     uint32_t classObjectLacksHasInstance : 1;
     uint32_t privateNamesAreKnownToTexts : 1;
-    uint32_t numberOfFieldsToLastOfBirth : 16;
+    uint32_t numberOfFieldsThroughLastAllocated : 16;
     uint32_t hasComputedMemberNames : 1;
     uint32_t unusedClassBits : 9 - 2 * numberOfClassSides { 0 };
 
@@ -366,7 +366,7 @@ struct LayoutData {
     }
 
     std::span<const FieldData> fields() const { return { reinterpret_cast<const FieldData*>(this + 1), numberOfFields }; }
-    std::span<const FieldData> fieldsToLastOfBirth() const { return fields().first(isClass() ? classData().numberOfFieldsToLastOfBirth : numberOfFields); }
+    std::span<const FieldData> fieldsThroughLastAllocated() const { return fields().first(isClass() ? classData().numberOfFieldsThroughLastAllocated : numberOfFields); }
     std::span<const uint32_t> fieldOperands() const { return { reinterpret_cast<const uint32_t*>(fields().data() + numberOfFields), numberOfFieldOperands }; }
     std::span<const MethodData> methods() const { return { reinterpret_cast<const MethodData*>(fieldOperands().data() + numberOfFieldOperands), isClass() ? classData().numberOfMethods : 0 }; }
     std::span<const MethodData> staticMethods() const { return { methods().data() + methods().size(), isClass() ? classData().numberOfStaticMethods : 0 }; }

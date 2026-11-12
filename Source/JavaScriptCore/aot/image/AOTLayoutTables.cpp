@@ -581,7 +581,7 @@ static LayoutRecordParts collectPartsOfObjectLayoutRecord(const TableEncoder& en
         size_t endOfBirth = fields.size();
         while (endOfBirth && !fields[endOfBirth - 1].isFilledAtBirth && !fields[endOfBirth - 1].holdsRawValueFromBirth)
             --endOfBirth;
-        classParts.data.numberOfFieldsToLastOfBirth = static_cast<uint32_t>(endOfBirth);
+        classParts.data.numberOfFieldsThroughLastAllocated = static_cast<uint32_t>(endOfBirth);
         parentThatListsClass = classParts.parentThatListsClass;
         parts.namedGuards = WTF::move(classParts.namedGuards);
         LayoutID classLayout = Typed::declaredLayoutOf(program, id);

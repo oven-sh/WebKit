@@ -552,7 +552,7 @@ static uint32_t throwingOperations(const BodyIndex& body)
     return number;
 }
 
-static uint32_t operationsOfFailingChecksOfPrivateNames(const BodyIndex& body)
+static uint32_t failingPrivateNameCheckOperations(const BodyIndex& body)
 {
     if (!body.holdsAnyOf(OpcodeSet { Opcode::NewRuntimeError }))
         return 0;
@@ -891,21 +891,21 @@ static bool constructsForOtherClasses(const Walker& walker, FunctionID construct
 
 static bool isCalledByEveryNestedIteration(const Walker& walker, const PlaceOfCall& place)
 {
-    return place.body && place.call && place.caller == walker.unit().function && walker.facts().linked().functionsDoneInNestedIterations.get(place.caller.index())
+    return place.body && place.call && place.caller == walker.unit().function && walker.facts().linked().functionsFinishedInNestedIterations.get(place.caller.index())
         && place.body->dominates(place.body->blockOf(place.call), walker.lastReturnDominator(*place.body));
 }
 
 static bool copyPaysInIterations(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const std::span<const Reference>* passedOperands)
 {
-    bool isInLoopsOfOwnFile = walker.facts().linked().functionsCalledInLoopsOfOwnFile.get(walker.unit().function.index());
-    if (!isInLoopsOfOwnFile && !walker.facts().linked().functionsDoneInNestedIterations.get(walker.unit().function.index()))
+    bool isInOwnFileLoops = walker.facts().linked().functionsCalledInLoopsOfOwnFile.get(walker.unit().function.index());
+    if (!isInOwnFileLoops && !walker.facts().linked().functionsFinishedInNestedIterations.get(walker.unit().function.index()))
         return false;
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     if (summary.has(SummaryTrait::HasLoops))
         return false;
     if (summary.numberOfOperations <= inlineLimitInNestedIterations && isCalledByEveryNestedIteration(walker, place) && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations))
         return true;
-    if (!isInLoopsOfOwnFile)
+    if (!isInOwnFileLoops)
         return false;
     const BodyIndex* body = walker.facts().bodies().find(callee);
     bool makesObject = body && body->holdsAnyOf(OpcodeSet { Opcode::Construct, Opcode::NewObject });
@@ -1177,7 +1177,7 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
     if (place.caller != walker.unit().function && (place.caller != walker.currentFunction() || (!walker.isInLoopOfBodyAtWork() && !walker.program().at(callee).has(FunctionFlags::HasRestParameter)) || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > window))
         return false;
     if (summary.numberOfOperations > inlineLimitInLoopsWithoutObjects && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects + maxThrowingOperations) {
-        if (const BodyIndex* body = walker.facts().bodies().find(callee); body && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects + operationsOfFailingChecksOfPrivateNames(*body))
+        if (const BodyIndex* body = walker.facts().bodies().find(callee); body && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects + failingPrivateNameCheckOperations(*body))
             return true;
     }
     return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects || (fitsLoopWithoutRestArray(walker, callee, summary.numberOfOperations) && (copyMayLetObjectFallAwayAtInlining(walker, callee, passedOperands) || calleeAsksForClassOfWhatItIsHandedAtInlining(walker, callee)));
@@ -1765,7 +1765,7 @@ static bool copyRemovesObjects(const Walker& walker, const Draft& site, Function
         return place.isInLoop || unitIsCalledInLoops(walker);
     };
     ValueID call = place.call ? place.call : site.inputValueGiven;
-    auto resultIsOnlyTakenApart = [&] {
+    auto isResultOnlyDestructured = [&] {
         FateOfValue fate = call ? fateOfCallResult(walker, walker.currentFunction(), walker.currentBodyIndex(), call) : FateOfValue::Escapes;
         if (fate == FateOfValue::Returned) {
             std::optional<Walker::CallOfCopy> copy = walker.callOfCopy();
@@ -1783,11 +1783,11 @@ static bool copyRemovesObjects(const Walker& walker, const Draft& site, Function
         if (!holdsNumbersAlone(walker, walker.code().at(cell).layout()) || !isCalledInLoops())
             continue;
         FateOfValue fate = fateOfParameter(walker, callee, index);
-        if (fate == FateOfValue::OnlyTakenApart || (fate == FateOfValue::Returned && resultIsOnlyTakenApart()))
+        if (fate == FateOfValue::OnlyTakenApart || (fate == FateOfValue::Returned && isResultOnlyDestructured()))
             return true;
     }
     TypeID result = walker.facts().linked().function(callee).result;
-    return result && holdsNumbersAlone(walker, singleLayoutOf(walker.types(), walker.types().at(result))) && isCalledInLoops() && returnsNewObject(walker, callee) && resultIsOnlyTakenApart();
+    return result && holdsNumbersAlone(walker, singleLayoutOf(walker.types(), walker.types().at(result))) && isCalledInLoops() && returnsNewObject(walker, callee) && isResultOnlyDestructured();
 }
 
 static bool unrollsWhenInlined(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
@@ -2475,7 +2475,7 @@ private:
     struct Value {
         ValueID name;
         bool isArgument { false };
-        uint32_t kindsWhereTrue { 0 };
+        uint32_t kindsIfTrue { 0 };
     };
     using Values = Vector<Value, 16>;
 
@@ -2545,8 +2545,8 @@ uint32_t PredicateEvaluator::kindsPassing(TypeID tested, uint32_t& kinds)
 bool PredicateEvaluator::evaluateOperation(FunctionID function, const BodyIndex& body, const BodyValue& operation, uint32_t& kinds, Values& values)
 {
     TypeArena& types = m_walker.types();
-    auto bind = [&](uint32_t kindsWhereTrue) {
-        values.append({ operation.id(), false, kindsWhereTrue & everyKind });
+    auto bind = [&](uint32_t kindsIfTrue) {
+        values.append({ operation.id(), false, kindsIfTrue & everyKind });
         return true;
     };
     switch (operation.opcode()) {
@@ -2561,7 +2561,7 @@ bool PredicateEvaluator::evaluateOperation(FunctionID function, const BodyIndex&
             return false;
         bool isNegated = operation.opcode() == Opcode::LogicalNot;
         if (!operand->isArgument)
-            return bind(isNegated ? ~operand->kindsWhereTrue : operand->kindsWhereTrue);
+            return bind(isNegated ? ~operand->kindsIfTrue : operand->kindsIfTrue);
         uint32_t truthy = kindsIn(types.at(truthyPartOf(types, TypeTable::anything)));
         uint32_t falsy = kindsIn(types.at(falsyPartOf(types, TypeTable::anything)));
         kinds &= truthy ^ falsy;
@@ -2648,8 +2648,8 @@ void PredicateEvaluator::evaluateFrom(FunctionID function, const BodyIndex& body
         case TerminatorKind::Return: {
             const Value* returned = end.operand(0) ? find(values, end.operand(0)) : nullptr;
             if (returned && !returned->isArgument) {
-                results.whereTrue |= kinds & returned->kindsWhereTrue;
-                results.whereFalse |= kinds & ~returned->kindsWhereTrue;
+                results.whereTrue |= kinds & returned->kindsIfTrue;
+                results.whereFalse |= kinds & ~returned->kindsIfTrue;
             }
             return;
         }
@@ -2663,8 +2663,8 @@ void PredicateEvaluator::evaluateFrom(FunctionID function, const BodyIndex& body
             const Value* asked = find(values, condition);
             if (!asked || asked->isArgument)
                 return;
-            uint32_t taken = kinds & asked->kindsWhereTrue;
-            uint32_t notTaken = kinds & ~asked->kindsWhereTrue;
+            uint32_t taken = kinds & asked->kindsIfTrue;
+            uint32_t notTaken = kinds & ~asked->kindsIfTrue;
             auto targets = end.targets();
             if (taken) {
                 Values entered = values;
@@ -2701,7 +2701,7 @@ PredicateResults PredicateEvaluator::evaluate(FunctionID id, uint32_t entryParam
     return results;
 }
 
-static TypeID typeThatTestsKinds(TypeArena& types, uint32_t kinds, uint32_t kindsOfArgument)
+static TypeID typeTestingKinds(TypeArena& types, uint32_t kinds, uint32_t kindsOfArgument)
 {
     TypeID tested = TypeArena::fromPrimitives(kinds & Primitive::All);
     uint32_t objects = kinds & objectKinds;
@@ -2739,7 +2739,7 @@ static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue&
             continue;
 
         bool isEveryKindKnown = !(kinds & ~(results.whereFalse | results.whereTrue));
-        TypeID testedForResult = isEveryKindKnown && results.whereFalse && results.whereTrue ? typeThatTestsKinds(types, results.whereTrue, kinds) : TypeID();
+        TypeID testedForResult = isEveryKindKnown && results.whereFalse && results.whereTrue ? typeTestingKinds(types, results.whereTrue, kinds) : TypeID();
         bool constantResult = std::popcount(results.whereTrue) > std::popcount(results.whereFalse);
         TypeID leftToCall;
         if (!testedForResult) {
@@ -2747,7 +2747,7 @@ static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue&
             if (kindsLeft & otherObjectKind)
                 kindsLeft |= kinds & callableKind;
             bool sparesCalls = !(kindsLeft & (Primitive::Number | Primitive::String));
-            leftToCall = kindsLeft && kindsLeft != kinds && sparesCalls ? typeThatTestsKinds(types, kindsLeft, kinds) : TypeID();
+            leftToCall = kindsLeft && kindsLeft != kinds && sparesCalls ? typeTestingKinds(types, kindsLeft, kinds) : TypeID();
             if (kindsLeft && !leftToCall)
                 return false;
         }
@@ -2760,13 +2760,13 @@ static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue&
             test.setTestedType(tested);
             return walker.build(WTF::move(test));
         };
-        BlockID whereCalled;
+        BlockID blockAtCall;
         auto leaveForCall = [&](Reference isLeft) {
-            if (!whereCalled)
-                whereCalled = walker.addBlock();
-            BlockID whereKnown = walker.addBlock();
-            walker.branch(isLeft, whereCalled, whereKnown);
-            walker.continueIn(whereKnown);
+            if (!blockAtCall)
+                blockAtCall = walker.addBlock();
+            BlockID blockIfKnown = walker.addBlock();
+            walker.branch(isLeft, blockAtCall, blockIfKnown);
+            walker.continueIn(blockIfKnown);
         };
         walker.count(StatisticID::PredicatesTestedAtCalls);
         for (VariableID variable : evaluator.checkedVariables()) {
@@ -2798,7 +2798,7 @@ static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue&
             constant.setBoolean(constantResult);
             known = walker.constant(WTF::move(constant));
         }
-        if (!whereCalled || !known) {
+        if (!blockAtCall || !known) {
             if (known)
                 walker.bind(call.id(), known);
             return true;
@@ -2807,10 +2807,10 @@ static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue&
         const BodyIndex& index = walker.currentBodyIndex();
         BodyBlock block = index.block(index.blockOf(call.id()));
         uint32_t place = call.id().index() - block.firstValue().index();
-        BlockID whereKnown = walker.currentBlock();
+        BlockID blockIfKnown = walker.currentBlock();
         BlockID continuationBlock = walker.addBlock();
         Reference result;
-        walker.continueIn(whereCalled);
+        walker.continueIn(blockAtCall);
         {
             Walker::ClosedArm calls(walker);
             walker.walkStretch(block.id(), place, place + 1);
@@ -2822,7 +2822,7 @@ static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue&
             if (called)
                 walker.jumpTo(continuationBlock, singleElementSpan(called));
         }
-        walker.continueIn(whereKnown);
+        walker.continueIn(blockIfKnown);
         walker.jumpTo(continuationBlock, singleElementSpan(known));
         walker.continueIn(continuationBlock);
         walker.bind(call.id(), result);
@@ -2841,7 +2841,7 @@ struct NumberVersion {
 };
 
 constexpr uint32_t maxOperationsOfComparator = 64;
-constexpr uint32_t maxOperationsLeftForNumbers = 10;
+constexpr uint32_t maxRemainingNumberOperations = 10;
 constexpr uint32_t minOperationsDecidedByNumbers = 4;
 
 class NumberVersionEvaluator {
@@ -2946,7 +2946,7 @@ bool NumberVersionEvaluator::evaluateOperation(FunctionID function, const BodyVa
         }
         if ((left == Kind::Variable && isNumber(right)) || (right == Kind::Variable && isNumber(left))) {
             kind = Kind::Boolean;
-            return ++m_version.operationsLeft <= maxOperationsLeftForNumbers;
+            return ++m_version.operationsLeft <= maxRemainingNumberOperations;
         }
     }
     bool takesNumbers = true;
@@ -2960,7 +2960,7 @@ bool NumberVersionEvaluator::evaluateOperation(FunctionID function, const BodyVa
     kind = isRelation || isEquality ? Kind::Boolean : Kind::Number;
     m_version.operationsDecided += takesArguments;
     m_version.comparesArguments |= isRelation && takesArguments;
-    return ++m_version.operationsLeft <= maxOperationsLeftForNumbers;
+    return ++m_version.operationsLeft <= maxRemainingNumberOperations;
 }
 
 std::optional<NumberVersion> NumberVersionEvaluator::evaluate(FunctionID id, std::span<const uint32_t> entryParameters)
@@ -3044,7 +3044,7 @@ static NEVER_INLINE bool inlineComparatorForNumbers(Walker& walker, const BodyVa
         }
         entryParameters.append(entryParameter);
     }
-    if (entryParameters.size() != 2 || !operationsFitWindowOfCallWrittenInLoop(walker, maxOperationsLeftForNumbers))
+    if (entryParameters.size() != 2 || !operationsFitWindowOfCallWrittenInLoop(walker, maxRemainingNumberOperations))
         return false;
     std::optional<NumberVersion> version = NumberVersionEvaluator(walker).evaluate(callee, entryParameters.span());
     if (!version || !version->comparesArguments || version->operationsDecided < minOperationsDecidedByNumbers)
@@ -3338,13 +3338,13 @@ bool Walker::canGuardRecursion()
 {
     if (!isInRecursiveCopy() || m_frames.last().inlinedHeadBlocks || !mayLeaveCopyForCall())
         return false;
-    const Frame& leaving = frameWhoseCopyLeavesForCall();
+    const Frame& leaving = frameLeftForCall();
     return leaving.isSpecializedBody || leaving.canCallInstead;
 }
 
 BlockID Walker::elementGuardFallback()
 {
-    Frame& frame = frameWhoseCopyLeavesForCall();
+    Frame& frame = frameLeftForCall();
     if (frame.isSpecializedBody)
         return blockWhereCopyLeavesForCall();
     if (!frame.whereHeadEnds)
@@ -3419,10 +3419,10 @@ BlockID Walker::blockWhereFusedChainIsLeft()
 
 bool Walker::leaveFusedChain(const Draft& draft, const Effects& effects)
 {
-    return !fillsListOfFusedChain(draft, effects) && leaveFusedChainUnlessUnseen(effects);
+    return !fillsListOfFusedChain(draft, effects) && exitFusedChainUnlessHidden(effects);
 }
 
-bool Walker::leaveFusedChainUnlessUnseen(const Effects& effects)
+bool Walker::exitFusedChainUnlessHidden(const Effects& effects)
 {
     if (effects.mayBeRunAgainUnseen() && !effects.mayThrowByRule())
         return false;
@@ -3492,7 +3492,7 @@ bool Walker::tryLeaveInlinedHeadSlow()
     return true;
 }
 
-Walker::Frame& Walker::frameWhoseCopyLeavesForCall()
+Walker::Frame& Walker::frameLeftForCall()
 {
     if (m_frames.last().inlinedHeadBlocks)
         return m_frames.last();
@@ -3509,7 +3509,7 @@ Walker::Frame& Walker::frameWhoseCopyLeavesForCall()
 
 BlockID Walker::blockWhereCopyLeavesForCall()
 {
-    Frame& frame = frameWhoseCopyLeavesForCall();
+    Frame& frame = frameLeftForCall();
     if (frame.inlinedHeadBlocks) {
         if (!frame.whereHeadEnds)
             frame.whereHeadEnds = addBlock();

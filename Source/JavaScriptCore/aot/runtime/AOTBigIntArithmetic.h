@@ -304,7 +304,7 @@ public:
             JSBigInt* result = place.tryMake(length, dividend->sign());
             if (!result) [[unlikely]]
                 return nullptr;
-            foldDigitsOfAnyLength(dividend->dataStorage(), dividendLength, divisor->dataStorage(), result->dataStorage());
+            foldDigitSequence(dividend->dataStorage(), dividendLength, divisor->dataStorage(), result->dataStorage());
             return place.finishTrimmed(result, length);
         }
         if (vm.m_cachedBigIntDivisor.get() != divisor) {
@@ -668,7 +668,7 @@ private:
         return !~(divisor[1] & divisor[2]) && !(high & (high + 1)) && high >> (JSBigInt::digitBits - 3) && !((-divisor[0] - 1) >> maxBits);
     }
 
-    static ALWAYS_INLINE void foldDigitsOfAnyLength(const Digit* dividend, unsigned dividendLength, const Digit* divisor, Digit* result)
+    static ALWAYS_INLINE void foldDigitSequence(const Digit* dividend, unsigned dividendLength, const Digit* divisor, Digit* result)
     {
         std::array<Digit, 2 * usualLength> part { };
         Digit* high = part.data() + usualLength;

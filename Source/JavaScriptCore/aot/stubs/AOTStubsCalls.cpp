@@ -911,7 +911,7 @@ static void emitConstructByOperation(StubAssembler& jit, ConstructSyntax syntax)
     emitReturnFromOperationBelowSpilledArguments(jit);
 }
 
-static void emitConstructViewOfTemplate(StubAssembler& jit, const CallRegisters& registers, JumpList& hasNoTemplate)
+static void emitConstructTemplateView(StubAssembler& jit, const CallRegisters& registers, JumpList& hasNoTemplate)
 {
     const GPRReg newTarget = argumentGPR(0);
     const GPRReg given = argumentGPR(1);
@@ -981,7 +981,7 @@ static void emitConstructViewOfTemplate(StubAssembler& jit, const CallRegisters&
     hasNoTemplate.append(jit.jump());
 }
 
-static void emitConstructHeirOfTemplate(StubAssembler& jit, const CallRegisters& registers)
+static void emitConstructTemplateSubclass(StubAssembler& jit, const CallRegisters& registers)
 {
     static_assert(numberOfArgumentGPRs >= 4);
     const GPRReg newTarget = argumentGPR(0);
@@ -994,9 +994,9 @@ static void emitConstructHeirOfTemplate(StubAssembler& jit, const CallRegisters&
     RELEASE_ASSERT(noOverlap(newTarget, given, entry, capacity, array, allocator, scratch, countGPR, calleeGPR, instanceGPR));
 
     JumpList hasNoTemplate;
-    constexpr uint32_t indexMask = (numberOfHeirTemplates - 1) << shiftOfHeirTemplate;
-    static_assert(shiftOfHeirTemplate > shiftOfHeirForTemplate);
-    jit.lshift32(newTarget, TrustedImm32(shiftOfHeirTemplate - shiftOfHeirForTemplate), entry);
+    constexpr uint32_t indexMask = (numberOfSubclassTemplates - 1) << subclassTemplateShift;
+    static_assert(subclassTemplateShift > templateSubclassShift);
+    jit.lshift32(newTarget, TrustedImm32(subclassTemplateShift - templateSubclassShift), entry);
     jit.and32(TrustedImm32(indexMask), entry);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.heirTemplates)), entry);
     hasNoTemplate.append(jit.branchPtr(CCallHelpers::NotEqual, newTarget, Address(entry, OBJECT_OFFSETOF(HeirTemplate, newTarget))));
@@ -1094,7 +1094,7 @@ static void emitConstructHeirOfTemplate(StubAssembler& jit, const CallRegisters&
     hasNoTemplate.append(jit.jump());
 
     isOfViews.link(&jit);
-    emitConstructViewOfTemplate(jit, registers, hasNoTemplate);
+    emitConstructTemplateView(jit, registers, hasNoTemplate);
 
     emitLateRefill(jit, refill, hasNoTemplate);
     hasNoTemplate.link(&jit);
@@ -1155,7 +1155,7 @@ void generateConstructValue(StubAssembler& jit)
         }
         isNotNativeClass.link(&jit);
     } else
-        emitConstructHeirOfTemplate(jit, registers);
+        emitConstructTemplateSubclass(jit, registers);
     isNotCell.link(&jit);
     emitSpillArgumentsAndPushFrame(jit);
     isNotPlainFunction.link(&jit);

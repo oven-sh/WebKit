@@ -50,7 +50,7 @@ public:
     void generateGetKeyedProperty(const ValueContext&);
     void generatePutKeyedProperty(const ValueContext&);
     void generateGetKeyedValueOrAbsent(const ValueContext&);
-    void generateGetRawOfTemplateObject(const ValueContext&);
+    void generateGetTemplateObjectRaw(const ValueContext&);
     void generateFinishAccessThroughProxy(const ValueContext&);
     std::array<const Machine::AbstractHeap*, 2> heapsOfKeyedProperty() const;
     void generateGetGlobalProperty(const ValueContext&);
@@ -102,11 +102,11 @@ public:
     std::optional<NumberedImmediate> answersOfReadOutOfRow(BlockID, const Operation&);
     void readGroupOffOneValue(const ValueContext&, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst);
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
-    ValueID readBehindStore(const ValueContext& store);
+    ValueID readAfterStore(const ValueContext& store);
     LValue newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub, LBasicBlock hasOtherKey = nullptr);
-    std::optional<NumberedImmediate> answersOfReadInLine(const ValueContext&);
-    Boxed readAskingSiteInLine(const ValueContext&, Boxed receiver, ValueID receiverID, NumberedImmediate answers);
-    StubKey stubOfReadRunningNoCode(const Operation&);
+    std::optional<NumberedImmediate> inlineReadAnswers(const ValueContext&);
+    Boxed readWithInlineSiteCheck(const ValueContext&, Boxed receiver, ValueID receiverID, NumberedImmediate answers);
+    StubKey stubOfEffectFreeRead(const Operation&);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Condition findsName(const OperationContext&, Boxed receiver, PropertyKeyID, PresenceQuestion);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
@@ -127,7 +127,7 @@ public:
 
 private:
     HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesReadInFront;
-    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesStoredInFront;
+    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesStoredBeforeLoop;
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
     {
         switch (mode) {
@@ -165,7 +165,7 @@ private:
         LBasicBlock hasOtherStructure { nullptr };
         LBasicBlock asksStub { nullptr };
     };
-    template<typename UsePlace> void askSiteOfStoreInLine(Boxed receiver, Pointer site, const ShapesOfStoreAtSite&, const UsePlace&);
+    template<typename UsePlace> void checkStoreSiteInline(Boxed receiver, Pointer site, const ShapesOfStoreAtSite&, const UsePlace&);
     bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);
     std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);

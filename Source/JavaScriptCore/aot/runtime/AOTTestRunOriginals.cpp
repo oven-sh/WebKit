@@ -116,7 +116,7 @@ bool Modules::isExternalizedPackage(ModuleID module) const
 
 bool Modules::isOfPackage(ModuleID module) const
 {
-    if (!m_modulesAskedAboutPackage.set(module.index())) {
+    if (!m_modulesRequestedAboutPackage.set(module.index())) {
         String path = m_table.fullPath(module);
         if (path.contains("/node_modules/"_s) || path.contains("\\node_modules\\"_s))
             m_modulesOfPackages.set(module.index());
@@ -512,9 +512,9 @@ bool Modules::isRequestedDuringOwnPatch(ModuleID module)
     return host().isRequestedByPendingFactory && host().isRequestedByPendingFactory(m_instance.globalObject, module);
 }
 
-void Modules::showOriginalUntilMockIsSet(ModuleID file)
+void Modules::exposeOriginalUntilMocked(ModuleID file)
 {
-    m_filesShownToOwnFactories.set(file.index());
+    m_filesVisibleToOwnFactories.set(file.index());
     if (LoadedModule* held = loadedIfExists(m_table.moduleBehindFacade(file).value_or(file)); held && held->pendingMockWord)
         uncheckedDowncast<ModuleNamespace>(held->pendingMockWord.get())->setUninitializedMock(false);
 }
@@ -538,7 +538,7 @@ void Modules::noteLoadBegunByFactories(ModuleID root)
             if (!cyclesOfImports().find(mocked)) [[likely]]
                 continue;
             if (isRequestedByOwnFactory(mocked))
-                showOriginalUntilMockIsSet(mocked);
+                exposeOriginalUntilMocked(mocked);
             bool wasFactoryCalledByLoad = m_modulesWithRunningFactory.get(index) || pendingFactoryCallID(mocked);
             bool isOriginalAwaited = std::ranges::any_of(m_hostImportCalls, [](const auto& call) { return call.second->status() == JSPromise::Status::Pending; });
             if (!wasFactoryCalledByLoad || isOriginalAwaited || !isRequestedByOwnFactory(mocked) || isOnCycleWithOtherMock(mocked))
@@ -547,7 +547,7 @@ void Modules::noteLoadBegunByFactories(ModuleID root)
             collectImportersBetween(root, mocked, m_factoryLoadedImporters);
             m_factoryLoadedImporters.removeAllMatching([&](const auto& pair) { return hasInstances(pair.first) && status(pair.first) == ModuleStatus::Evaluated; }, first);
             for (size_t place = first; place < m_factoryLoadedImporters.size(); ++place)
-                m_originalsThatLoadedImporters.set(m_factoryLoadedImporters[place].first, mocked);
+                m_importerLoadingOriginals.set(m_factoryLoadedImporters[place].first, mocked);
             continue;
         }
         if (isRequestedDuringOwnPatch(mocked) && !pendingFactoryCallID(mocked)) [[unlikely]] {
@@ -564,7 +564,7 @@ void Modules::noteLoadBegunByFactories(ModuleID root)
         size_t first = m_factoryLoadedImporters.size();
         collectImportersBetween(root, mocked, m_factoryLoadedImporters);
         if (m_factoryLoadedImporters.size() > first)
-            showOriginalUntilMockIsSet(mocked);
+            exposeOriginalUntilMocked(mocked);
         m_factoryLoadedImporters.removeAllMatching([&](const auto& pair) { return hasInstances(pair.first) && status(pair.first) == ModuleStatus::Evaluated && !isMocked(pair.first); }, first);
         for (size_t place = first; place < m_factoryLoadedImporters.size(); ++place)
             notePrivateCopy(m_factoryLoadedImporters[place].first, mocked);
@@ -572,7 +572,7 @@ void Modules::noteLoadBegunByFactories(ModuleID root)
             return load.wait->status() == JSPromise::Status::Pending && !load.isForOriginal && staticImportClosure(load.required, MockTraversal::Stop).get(root.index());
         });
         if (isLoadedByRefusedRequire)
-            m_importsBesideRefusedRequires.append({ root, mocked });
+            m_importsWithRefusedRequires.append({ root, mocked });
     }
 }
 

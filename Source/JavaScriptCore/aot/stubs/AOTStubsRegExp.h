@@ -21,7 +21,7 @@ constexpr uint32_t noSharedRegExpOffset = UINT32_MAX;
 constexpr uint32_t noRegExpRecord = UINT32_MAX;
 
 constexpr int64_t matchIsInFrame = 1;
-constexpr unsigned maxPartsOfMatchInFrame = 16;
+constexpr unsigned maxFrameMatchParts = 16;
 
 constexpr StubKey regExpMatch(RegExpMatchResult result) { return StubKey(StubFamily::RegExpMatch).withForm(static_cast<uint8_t>(result)); }
 constexpr bool takesStringInFrontOfRegExp(RegExpMatchResult result) { return result == RegExpMatchResult::ArrayForStringMatch || result == RegExpMatchResult::IndexForStringSearch; }
@@ -37,7 +37,7 @@ constexpr StubKey regExpMatchLiteral(Typed::RegExpMatchForm form, bool isGlobal,
 
 constexpr uint16_t entryOfMatcher = 2;
 constexpr int32_t sizeOfMatcherHeader = 2 * sizeof(uint32_t);
-constexpr int32_t offsetOfMaxLengthOfMatcher = -sizeOfMatcherHeader;
+constexpr int32_t matcherMaxLengthOffset = -sizeOfMatcherHeader;
 constexpr int32_t offsetOfRecordOfMatcher = -static_cast<int32_t>(sizeof(uint32_t));
 constexpr StubRegister registerOfMatcherCharacters = StubRegister::A0;
 constexpr StubRegister registerOfMatcherEnd = StubRegister::A2;

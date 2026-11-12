@@ -48,7 +48,7 @@ inline constexpr OpcodeSet opcodesThatMayNameIterationsInBodyIndex {
     Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield
 };
 
-inline constexpr OpcodeSet opcodesFiledInBodyIndex = opcodesThatMayNameIterationsInBodyIndex | OpcodeSet { Opcode::NewClass };
+inline constexpr OpcodeSet opcodesInBodyIndex = opcodesThatMayNameIterationsInBodyIndex | OpcodeSet { Opcode::NewClass };
 
 class BodyIndexBuilder {
     WTF_MAKE_NONCOPYABLE(BodyIndexBuilder);

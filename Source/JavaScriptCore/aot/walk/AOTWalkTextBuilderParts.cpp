@@ -112,7 +112,7 @@ static void buildPartInTextBuilderParts(Walker& walker, StringInBuilder& text, R
 
 using CodeUnitsOfText = Vector<Reference, Limits::maxPackedCodeUnits>;
 
-static CodeUnitsOfText codeUnitsThatTextIsMadeOfInTextBuilderParts(Walker& walker, Reference part, Origin origin)
+static CodeUnitsOfText stringCodeUnitsInTextBuilderParts(Walker& walker, Reference part, Origin origin)
 {
     Reference root = rootForStrings(walker, part);
     if (!root.isValue())
@@ -141,7 +141,7 @@ static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, Strin
         return false;
     Reference codeUnit = codePointOfCharacterInSight(walker, part);
     if (!codeUnit) {
-        CodeUnitsOfText codeUnits = codeUnitsThatTextIsMadeOfInTextBuilderParts(walker, part, origin);
+        CodeUnitsOfText codeUnits = stringCodeUnitsInTextBuilderParts(walker, part, origin);
         if (codeUnits.size() > 1) {
             if (handlerReadsStringInBuilder(walker, text))
                 return false;
@@ -172,7 +172,7 @@ static bool appendCharacterByItsCodeUnitInTextBuilderParts(Walker& walker, Strin
     }, { });
 }
 
-static Reference buildHexadecimalDigitInTextBuilderParts(Walker& walker, Reference digit, Origin origin)
+static Reference hexadecimalDigitInTextBuilderParts(Walker& walker, Reference digit, Origin origin)
 {
     static constexpr int64_t distanceOfLetters = 'a' - '0' - 10;
     Reference ofNine = buildOperatorForStrings(walker, Opcode::Sub, integerForStrings(walker, 9), digit, origin);
@@ -185,12 +185,12 @@ static Reference buildHexadecimalDigitInTextBuilderParts(Walker& walker, Referen
 
 static void appendHexadecimalDigitInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference digit, Origin origin)
 {
-    Reference codeUnit = digit ? buildHexadecimalDigitInTextBuilderParts(walker, digit, origin) : Reference();
+    Reference codeUnit = digit ? hexadecimalDigitInTextBuilderParts(walker, digit, origin) : Reference();
     if (codeUnit && !walker.isUnreachable() && !walker.hasFailed())
         buildPartInTextBuilderParts(walker, text, name, Opcode::StringBuilderAppendCodeUnit, codeUnit, { }, origin);
 }
 
-static void appendDigitsOfByteInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference byte, bool hasTwoDigits, Origin origin)
+static void appendByteDigitsInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference byte, bool hasTwoDigits, Origin origin)
 {
     auto appendFirst = [&] {
         appendHexadecimalDigitInTextBuilderParts(walker, text, name, buildOperatorForStrings(walker, Opcode::RShift, byte, integerForStrings(walker, 4), origin), origin);
@@ -210,7 +210,7 @@ static void appendDigitsOfByteInTextBuilderParts(Walker& walker, StringInBuilder
     appendHexadecimalDigitInTextBuilderParts(walker, text, name, buildOperatorForStrings(walker, Opcode::BitAnd, byte, integerForStrings(walker, 15), origin), origin);
 }
 
-static bool appendByteInHexadecimalInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference part, Origin origin)
+static bool appendHexadecimalByteInTextBuilderParts(Walker& walker, StringInBuilder& text, Reference name, Reference part, Origin origin)
 {
     if (!walker.isInLoop() || handlerReadsStringInBuilder(walker, text))
         return false;
@@ -221,7 +221,7 @@ static bool appendByteInHexadecimalInTextBuilderParts(Walker& walker, StringInBu
     Type type = types.at(walker.typeOf(made->number));
     if (type.isInteger() && type.integers.isSubsetOf(Range { 0, UINT8_MAX })) {
         walker.count(StatisticID::BytesAppendedInHexadecimal);
-        appendDigitsOfByteInTextBuilderParts(walker, text, name, made->number, !!made->padding, origin);
+        appendByteDigitsInTextBuilderParts(walker, text, name, made->number, !!made->padding, origin);
         return true;
     }
     bool isWhole = type.isInteger();
@@ -250,7 +250,7 @@ static bool appendByteInHexadecimalInTextBuilderParts(Walker& walker, StringInBu
     walker.branch(isByte, inDigits, asMade);
     walker.continueIn(inDigits);
     if (Reference byte = buildOperatorForStrings(walker, Opcode::BitAnd, integer, integerForStrings(walker, UINT8_MAX), origin))
-        appendDigitsOfByteInTextBuilderParts(walker, text, name, byte, !!made->padding, origin);
+        appendByteDigitsInTextBuilderParts(walker, text, name, byte, !!made->padding, origin);
     if (!walker.isUnreachable() && !walker.hasFailed())
         arms.append({ walker.currentBlock(), { } });
     if (walker.hasFailed())
@@ -296,7 +296,7 @@ static void appendPartInTextBuilderParts(Walker& walker, StringInBuilder& text, 
         if (walker.representationOf(boxed) == Representation::JSValue && walker.types().at(walker.typeOf(boxed)).isNumber())
             part = boxed;
     }
-    if (form == Opcode::StringBuilderAppendString && (appendPieceWithoutCutting(walker, text, name, part, origin) || appendByteInHexadecimalInTextBuilderParts(walker, text, name, part, origin) || appendResultOfBuiltinStraight(walker, text, name, part, origin))) {
+    if (form == Opcode::StringBuilderAppendString && (appendPieceWithoutCutting(walker, text, name, part, origin) || appendHexadecimalByteInTextBuilderParts(walker, text, name, part, origin) || appendResultOfBuiltinStraight(walker, text, name, part, origin))) {
         text.stringOfState = { };
         text.lengthOfState = { };
         return;

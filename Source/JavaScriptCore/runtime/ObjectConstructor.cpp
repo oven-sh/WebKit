@@ -1493,7 +1493,7 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
     }
 
 #if ENABLE(AOT)
-    // An object that is still being filled is a dictionary, whose keys nobody keeps.
+    // An object that is still being filled is a dictionary, and the keys of a dictionary are not cached.
     if (vm.aotState().hasObjectsBeingFilled && object->type() == FinalObjectType && object->structure()->isDictionary()) [[unlikely]]
         AOT::flattenOnce(vm, object);
 #endif

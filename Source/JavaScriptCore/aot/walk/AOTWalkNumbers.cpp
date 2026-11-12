@@ -329,7 +329,7 @@ static Reference buildStepOfExactInteger(Walker& walker, const BodyValue& value,
     if (walker.hasFailed() || walker.isUnreachable())
         return { };
     if (shown && types.isSubset(shown, types.integer(Range::exact())))
-        walker.noteTypeShownOfJoin(met, shown);
+        walker.noteProvenJoinType(met, shown);
     return met;
 }
 

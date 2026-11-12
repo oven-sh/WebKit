@@ -490,7 +490,7 @@ void generateReadSlot(StubAssembler& jit)
             if (origin == SlotOrigin::ByIdInStubFrame)
                 uncached.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
             const GPRReg key = slot.form() == SlotForm::Slot ? operands.payload : jit.allocateScratch(slotPayloadRegister);
-            loadKeyOfProxySlot(jit, slot.form(), operands.header, key, uncached);
+            loadProxySlotKey(jit, slot.form(), operands.header, key, uncached);
             jit.jumpToStub(throughProxy(TrapOfProxy::Get).withCallerFrame(callerFrameOf(origin)));
             return;
         }

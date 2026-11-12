@@ -264,14 +264,9 @@ static void checkSingleReturnSites(const StubBlob& blob)
 
 static void checkGeneratorBodySites(const StubCatalog& catalog, const StubBlob& blob)
 {
-    Vector<StubKey> bodiesEnteringGenerators;
-    for (GeneratorStepCheck check : stepChecks)
-        bodiesEnteringGenerators.append(stepGenerator(check));
-    std::ranges::sort(bodiesEnteringGenerators);
-
     for (StubKey body : allStubBodies()) {
         auto& returnLabels = catalog.recordingOf(body).returnLabels;
-        if (bodiesEnteringGenerators.contains(body))
+        if (body == resumeSteppedGenerator())
             AOT_TEST_CHECK(returnLabels.size() == 1 && returnLabels[0] == StubFrameKind::GeneratorBody);
         else
             AOT_TEST_CHECK(!returnLabels.contains(StubFrameKind::GeneratorBody));
@@ -282,8 +277,7 @@ static void checkGeneratorBodySites(const StubCatalog& catalog, const StubBlob& 
     }
 
     Vector<StubKey> siteBodies = bodiesContainingSites(blob, StubFrameKind::GeneratorBody);
-    std::ranges::sort(siteBodies);
-    AOT_TEST_CHECK(siteBodies.size() == stepChecks.size() && siteBodies == bodiesEnteringGenerators);
+    AOT_TEST_CHECK(siteBodies.size() == 1 && siteBodies[0] == resumeSteppedGenerator());
 }
 
 static void testReturnSites()
@@ -376,7 +370,8 @@ static void checkResumptionReferences(const StubCatalog& catalog)
 {
     AOT_TEST_CHECK(refersOnceBy(catalog, enterSavedFrame(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (GeneratorStepCheck check : stepChecks)
-        AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), enterGeneratorFrame(), StubReference::Kind::Call));
+        AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), resumeSteppedGenerator(), StubReference::Kind::Jump));
+    AOT_TEST_CHECK(refersOnceBy(catalog, resumeSteppedGenerator(), enterGeneratorFrame(), StubReference::Kind::Call));
     AOT_TEST_CHECK(refersOnceBy(catalog, runAsyncGeneratorStep(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (StepConsumer consumer : stepConsumers) {
         AOT_TEST_CHECK(refersOnceBy(catalog, stepAsyncGenerator(consumer), runAsyncGeneratorStep(), StubReference::Kind::Jump));
@@ -693,7 +688,7 @@ static void checkCollectionOperations(const StubCatalog& catalog)
 
 static void checkAdapterOperations(const StubCatalog& catalog)
 {
-    AOT_TEST_CHECK(operationsCalledBy(catalog, enterClosureForConstruct()) == entrySetOf({ Entry::operationAOTCreateThis }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, enterClosureForConstruct()) == entrySetOf({ Entry::operationAOTCreateThis, Entry::operationAOTTryFinishBirth }));
     const EntrySet& calledForNewExpression = operationsCalledBy(catalog, constructValue(ConstructSyntax::NewExpression));
     const EntrySet& calledForSuperCall = operationsCalledBy(catalog, constructValue(ConstructSyntax::SuperCall));
     AOT_TEST_CHECK(calledForNewExpression.get(indexOf(Entry::operationAOTCreateThis)) && calledForNewExpression.get(indexOf(Entry::operationAOTConstruct)) && !calledForNewExpression.get(indexOf(Entry::operationAOTSuperConstruct)));
@@ -709,7 +704,7 @@ static void testOperationsCalled()
     checkAdapterOperations(catalog);
 }
 
-static void testTagsOfSmallTablesAreStoredWhole()
+static void testSmallTableTagsAreStoredWhole()
 {
 #if CPU(X86_64)
     constexpr std::array<uint8_t, 4> orWordOfTags { 0x49, 0x09, 0x42, CompactTable::offsetOfIndex() };
@@ -912,7 +907,7 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/missing-keys"_s, testMissingKeys },
         { "stub-blob/summaries"_s, testSummaries },
         { "stub-blob/operations-called"_s, testOperationsCalled },
-        { "stub-blob/tags-of-small-tables-are-stored-whole"_s, testTagsOfSmallTablesAreStoredWhole },
+        { "stub-blob/tags-of-small-tables-are-stored-whole"_s, testSmallTableTagsAreStoredWhole },
         { "stub-blob/wide-references"_s, testWideReferences },
         { "stub-blob/int32-literals-store-whole-words"_s, testInt32LiteralsStoreWholeWords },
         { "stub-blob/immediates-in-keys"_s, testImmediatesInKeys },

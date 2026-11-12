@@ -633,13 +633,13 @@ bool Walker::isQuietOnceUnswitched(LoopID loop, std::span<const ValueID> ranOthe
     const BodyIndex& index = currentBodyIndex();
     FunctionID function = m_frames.last().function;
     auto hasCandidateInCopyOf = [&](FunctionID callee) {
-        return std::ranges::any_of(candidates, [&](const UnswitchCandidate& candidate) { return candidate.asksForInt32s || candidate.asksForOtherClass || (callee ? candidate.function == callee : candidate.function != function); });
+        return std::ranges::any_of(candidates, [&](const UnswitchCandidate& candidate) { return candidate.asksForInt32s || candidate.testsForOtherClass || (callee ? candidate.function == callee : candidate.function != function); });
     };
     for (ValueID ran : ranOtherCode) {
         if (!ran || ran.index() >= index.numberOfValues() || !index.isInLoop(index.blockOf(ran), loop))
             return false;
         bool isBehindCandidate = std::ranges::any_of(candidates, [&](const UnswitchCandidate& candidate) {
-            return !candidate.asksForInt32s && !candidate.asksForOtherClass && candidate.function == function && index.dominates(index.terminator(candidate.block).targets()[1 - candidate.quietTarget].block(), index.blockOf(ran));
+            return !candidate.asksForInt32s && !candidate.testsForOtherClass && candidate.function == function && index.dominates(index.terminator(candidate.block).targets()[1 - candidate.quietTarget].block(), index.blockOf(ran));
         });
         if (isBehindCandidate)
             continue;
@@ -956,7 +956,7 @@ void Walker::cutUnswitchedWalkShort()
 bool Walker::tryUnswitchBranch(const BodyTerminator& branch)
 {
     for (const UnswitchCandidate& candidate : m_versionedLoops.last().unswitchCandidates) {
-        if (candidate.asksForInt32s || candidate.asksForOtherClass || candidate.function != m_frames.last().function || candidate.block != branch.block())
+        if (candidate.asksForInt32s || candidate.testsForOtherClass || candidate.function != m_frames.last().function || candidate.block != branch.block())
             continue;
         uint32_t quietTarget = candidate.quietTarget;
         std::optional<uint32_t> openLoop = specializedOpenLoop(IterationPurity::KnownEffectsOnly);

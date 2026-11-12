@@ -1108,7 +1108,7 @@ Number ConversionEmitter::quietNaN(Number value)
     return Number(m_out.bitCast(quietNaNWithSignOf(bitsOf(value)).value(), Machine::Double));
 }
 
-static LValue wordReadAsUndefinedIfEmpty(NarrowReference word)
+static LValue wordOrUndefinedIfEmpty(NarrowReference word)
 {
     LValue select = word.value();
     if (select->opcode() != Machine::Select)
@@ -1116,8 +1116,8 @@ static LValue wordReadAsUndefinedIfEmpty(NarrowReference word)
     LValue predicate = select->child(0);
     for (unsigned index : { 1u, 2u }) {
         LValue loaded = select->child(index);
-        bool isAskedForZero = index == 1 ? predicate == loaded : predicate->opcode() == Machine::Equal && predicate->child(0) == loaded && predicate->child(1)->isInt(0);
-        if (isAskedForZero && select->child(3 - index)->isInt(undefinedCell32))
+        bool isTestedForZero = index == 1 ? predicate == loaded : predicate->opcode() == Machine::Equal && predicate->child(0) == loaded && predicate->child(1)->isInt(0);
+        if (isTestedForZero && select->child(3 - index)->isInt(undefinedCell32))
             return loaded;
     }
     return nullptr;
@@ -1160,7 +1160,7 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
         Boxed marker(m_out.zeroExt(word.value(), Machine::Int64));
         if (!type.hasCells())
             return marker;
-        if (LValue loaded = emittersCheckProofs() ? nullptr : wordReadAsUndefinedIfEmpty(word))
+        if (LValue loaded = emittersCheckProofs() ? nullptr : wordOrUndefinedIfEmpty(word))
             return decodeEmptyAsUndefined(NarrowReference(loaded));
         Condition isCell = isCellReference(word);
         return select(isCell, boxCell(decode(word)), marker);

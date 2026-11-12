@@ -206,7 +206,7 @@ static constexpr bool callsCode(Opcode opcode)
 
 static constexpr uint32_t maxStepsInRow = 4;
 static constexpr uint64_t mostOperationsOfUnrolledSteps = 128;
-static constexpr uint64_t mostOperationsOfLargeGenerator = 1024;
+static constexpr uint64_t maxLargeGeneratorOperations = 1024;
 static bool loopHoldsYield(const BodyIndex&, LoopID);
 
 static bool isDecidedBranch(const BodyIndex& body, BodyBlock block)
@@ -826,21 +826,21 @@ bool Walker::loopStepsGeneratorTaken(BlockID inputHead) const
     });
 }
 
-enum class ConsumerBehindCall : uint8_t { IsNone, IsNamedOnce, MayStepByHand };
+enum class ConsumerAfterCall : uint8_t { IsNone, IsNamedOnce, MayStepByHand };
 
-static ConsumerBehindCall consumerBehindCall(const BodyIndex& index, ValueID call)
+static ConsumerAfterCall consumerAfterCall(const BodyIndex& index, ValueID call)
 {
     uint32_t uses = index.useCount(call);
     if (!uses)
-        return ConsumerBehindCall::IsNone;
+        return ConsumerAfterCall::IsNone;
     ValueID next(call.index() + 1);
     if (next.index() < index.numberOfValues() && !index.isParameter(next) && index.opcodeOf(next) == Opcode::IsPristineArray)
-        return ConsumerBehindCall::IsNamedOnce;
+        return ConsumerAfterCall::IsNamedOnce;
     ValueID taker = index.onlyUsingValue(call);
     if (taker && (index.opcodeOf(taker) == Opcode::IteratorOpen || index.opcodeOf(taker) == Opcode::AppendSpread))
-        return ConsumerBehindCall::IsNamedOnce;
+        return ConsumerAfterCall::IsNamedOnce;
     bool mayBeStepped = taker ? opcodesThatStateTypes.contains(index.opcodeOf(taker)) : !(uses % 2);
-    return mayBeStepped ? ConsumerBehindCall::MayStepByHand : ConsumerBehindCall::IsNone;
+    return mayBeStepped ? ConsumerAfterCall::MayStepByHand : ConsumerAfterCall::IsNone;
 }
 
 bool Walker::holdsLoopsThatStepByHand(FunctionID id)
@@ -921,8 +921,8 @@ bool Walker::walkOperationOfGeneratorInLoop(const BodyValue& value)
 {
     switch (value.opcode()) {
     case Opcode::Call: {
-        ConsumerBehindCall consumer = consumerBehindCall(currentBodyIndex(), value.id());
-        if (consumer == ConsumerBehindCall::IsNone || (consumer == ConsumerBehindCall::MayStepByHand && !holdsLoopsThatStepByHand(currentFunction())))
+        ConsumerAfterCall consumer = consumerAfterCall(currentBodyIndex(), value.id());
+        if (consumer == ConsumerAfterCall::IsNone || (consumer == ConsumerAfterCall::MayStepByHand && !holdsLoopsThatStepByHand(currentFunction())))
             return false;
         return takeGeneratorForConsumer(value);
     }
@@ -1402,7 +1402,7 @@ bool Walker::runsNothingSinceCall(Reference generator) const
     return true;
 }
 
-Reference Walker::functionThatMakesGenerator(Reference generator) const
+Reference Walker::functionOfGenerator(Reference generator) const
 {
     const Operation& made = m_code.at(generator.id());
     std::optional<unsigned> place = program().at(made.function()).calleeParameterIndex();
@@ -1435,7 +1435,7 @@ Reference Walker::makeGeneratorAgain(Reference generator)
 bool Walker::checkPassedGenerator(Reference generator, Origin origin)
 {
     origin.isTailCall = false;
-    Reference function = functionThatMakesGenerator(generator);
+    Reference function = functionOfGenerator(generator);
     Draft test(function ? Opcode::MakesPlainGenerators : Opcode::IsUnmodifiedGenerator, origin);
     chooseConservativeFields(test);
     if (function)
@@ -1447,7 +1447,7 @@ bool Walker::checkPassedGenerator(Reference generator, Origin origin)
         return false;
     recordSpeculation();
     if (function)
-        frameWhoseCopyLeavesForCall().generatorMadeAgain = generator;
+        frameLeftForCall().generatorMadeAgain = generator;
     BlockID passed = addBlock();
     branch(passes, passed, blockWhereCopyLeavesForCall());
     continueIn(passed);
@@ -1717,7 +1717,7 @@ static std::optional<LoopOverMethodCall> findLoopOverCall(const BodyIndex& index
     return LoopOverMethodCall { index.loopOf(found->blockOfStep), open };
 }
 
-bool Walker::findReadsBehindRegion(std::span<const BlockID> region, ValueID firstValue, Vector<ValueID, 4>& readBehindRegion)
+bool Walker::findReadsAfterRegion(std::span<const BlockID> region, ValueID firstValue, Vector<ValueID, 4>& readAfterRegion)
 {
     Frame& frame = m_frames.last();
     const BodyIndex& index = *frame.index;
@@ -1732,8 +1732,8 @@ bool Walker::findReadsBehindRegion(std::span<const BlockID> region, ValueID firs
             if (isInRegion(target.block()))
                 continue;
             m_liveness.forEachLiveAtHead(target.block(), firstValue, endOfValues, [&](ValueID live) {
-                if (live.index() >= firstValue.index() && isInRegion(index.blockOf(live)) && !readBehindRegion.contains(live))
-                    readBehindRegion.append(live);
+                if (live.index() >= firstValue.index() && isInRegion(index.blockOf(live)) && !readAfterRegion.contains(live))
+                    readAfterRegion.append(live);
             });
         }
     }
@@ -1781,8 +1781,8 @@ bool Walker::mayWalkMethodGenerator(const BodyValue& read, FunctionID method)
         if (m_restArrayAllocator && frame.isOfUnit && member == m_restArrayAllocationBlock)
             return false;
     }
-    Vector<ValueID, 4> readBehindRegion;
-    return operationsFitWindowOfCallWrittenInLoop(*this, numberOfOperations) && findReadsBehindRegion(region.span(), index.block(head).firstParameter(), readBehindRegion);
+    Vector<ValueID, 4> readAfterRegion;
+    return operationsFitWindowOfCallWrittenInLoop(*this, numberOfOperations) && findReadsAfterRegion(region.span(), index.block(head).firstParameter(), readAfterRegion);
 }
 
 void Walker::walkIterationAsWritten(BlockID start, const BodyValue& read)
@@ -1793,12 +1793,12 @@ void Walker::walkIterationAsWritten(BlockID start, const BodyValue& read)
     LoopOverMethodCall found = *findLoopOverCall(index, read);
     BlockID head = index.loop(found.loop).head;
     Vector<BlockID, 8> region = collectRegionOfIteration(index, m_liveness, head, found.loop, found.open);
-    Vector<ValueID, 4> readBehindRegion;
-    findReadsBehindRegion(region.span(), index.block(head).firstParameter(), readBehindRegion);
+    Vector<ValueID, 4> readAfterRegion;
+    findReadsAfterRegion(region.span(), index.block(head).firstParameter(), readAfterRegion);
     uint32_t namesAtHead = inputBlock(frameIndex, head).firstNarrowerName;
     uint32_t walkedUpTo = m_frames[frameIndex].walkedUpTo;
     m_generatorMethodsTested.append({ m_frames[frameIndex].inlineFrame, read.id() });
-    for (ValueID value : readBehindRegion)
+    for (ValueID value : readAfterRegion)
         m_frames[frameIndex].addDuplicatedValue(value);
     m_frames[frameIndex].loopsBeingVersioned.append(found.loop);
 
@@ -1813,7 +1813,7 @@ void Walker::walkIterationAsWritten(BlockID start, const BodyValue& read)
     }
     Origin originInFront = m_origin;
     BlockID behindTests = m_block;
-    WalkState stateBehindTests = m_state;
+    WalkState stateAfterTests = m_state;
     m_block = { };
     m_state.clear();
     continueIn(start);
@@ -1851,7 +1851,7 @@ void Walker::walkIterationAsWritten(BlockID start, const BodyValue& read)
     }
     m_origin = originInFront;
     m_block = behindTests;
-    m_state = WTF::move(stateBehindTests);
+    m_state = WTF::move(stateAfterTests);
 }
 
 bool Walker::takeGeneratorForConsumer(const BodyValue& call)
@@ -2104,7 +2104,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         }
     }
     const bool isLarge = !operationsFitWindowOfCallWrittenInLoop(*this, numberOfOperations);
-    if (isLarge && (depthOfCopies() || consumerCalls || !facts().bodies().at(callee).hasLoops() || numberOfOperations > mostOperationsOfLargeGenerator))
+    if (isLarge && (depthOfCopies() || consumerCalls || !facts().bodies().at(callee).hasLoops() || numberOfOperations > maxLargeGeneratorOperations))
         return false;
 
     Draft site = takerCallsMethodItself ? Draft(Opcode::Call, originOf(call)) : draftOf(call);

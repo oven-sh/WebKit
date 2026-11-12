@@ -850,7 +850,7 @@ static const Operation* findTemplateObjectWithRaw(const Walker& walker, Referenc
     if (!object || !object.isValue())
         return nullptr;
     const Operation& read = walker.code().at(underlyingCellOf(walker.code(), object.id()));
-    return read.opcode == Opcode::GetRawOfTemplateObject ? findTemplateObject(walker, Reference::value(read.templateObjectOperand())) : nullptr;
+    return read.opcode == Opcode::GetTemplateObjectRaw ? findTemplateObject(walker, Reference::value(read.templateObjectOperand())) : nullptr;
 }
 
 static Reference partOfTemplateObject(Walker& walker, Reference object, Reference index)
@@ -957,7 +957,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
         if (Reference earlier = walker.currentBodyIndex().opcodes().contains(Opcode::NarrowByField) ? walker.tagReadInFrontOfTest(value) : Reference())
             return earlier;
         if (Reference object = !value.isFreeName() && value.key() == walker.program().keyOf(BuiltinNames::raw) ? walker.referenceOf(value.objectOperand()) : Reference(); findTemplateObject(walker, object)) {
-            Draft raw(Opcode::GetRawOfTemplateObject, walker.originOf(value));
+            Draft raw(Opcode::GetTemplateObjectRaw, walker.originOf(value));
             raw.setTemplateObjectOperand(object);
             return walker.build(WTF::move(raw));
         }

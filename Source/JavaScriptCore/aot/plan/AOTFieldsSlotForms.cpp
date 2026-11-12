@@ -26,7 +26,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr TypeID typeOfIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
 static constexpr TypeID typeOfNumberSlotInSlotForms = typeOfPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
-static constexpr TypeID typeOfFilledIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer);
+static constexpr TypeID filledIntegerSlotTypeInSlotForms = typeOfPrimitives(Primitive::Integer);
 static constexpr Range integersOfNarrowSlotInSlotForms { minInlineInt32, INT32_MAX };
 
 #if USE(BIGINT32)
@@ -131,7 +131,7 @@ static TypeID widestTypeOfRepresentationForSlotForms(TypeArena& types, SlotRepre
 {
     switch (representation) {
     case SlotRepresentation::Int32:
-        return types.withIntegers(typeOfFilledIntegerSlotInSlotForms, Range::int32());
+        return types.withIntegers(filledIntegerSlotTypeInSlotForms, Range::int32());
     case SlotRepresentation::OptionalBoolean:
         return typeOfPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull);
     case SlotRepresentation::OptionalInt32:
@@ -491,13 +491,13 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     });
     BitVector unitsNarrowWithOthers(numberOfUnits);
     if (!unitsUnitedWithOthers.isEmpty()) {
-        BitVector holdUnitOfOtherIntegers(numberOfUnits);
+        BitVector holdOtherIntegerUnit(numberOfUnits);
         for (size_t unit : unitsUnitedWithOthers) {
             if (!unitsOfFilledInt32s.quickGet(unit))
-                holdUnitOfOtherIntegers.quickSet(lowestUnitedWith(static_cast<uint32_t>(unit)));
+                holdOtherIntegerUnit.quickSet(lowestUnitedWith(static_cast<uint32_t>(unit)));
         }
         for (size_t unit : unitsUnitedWithOthers) {
-            if (holdUnitOfOtherIntegers.quickGet(lowestUnitedWith(static_cast<uint32_t>(unit))))
+            if (holdOtherIntegerUnit.quickGet(lowestUnitedWith(static_cast<uint32_t>(unit))))
                 unitsOfFilledInt32s.clear(unit);
         }
         Vector<std::optional<SlotRepresentation>> narrowForms(numberOfUnits);

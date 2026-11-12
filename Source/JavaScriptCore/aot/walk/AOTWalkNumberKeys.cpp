@@ -291,7 +291,7 @@ static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, 
     return true;
 }
 
-static bool buildAccessUnderIndexTextInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+static bool buildIndexStringAccessInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     static constexpr unsigned mostDigits = 9;
     Reference key = walker.referenceOf(value.propertyOperand());
@@ -309,7 +309,7 @@ static bool buildAccessUnderIndexTextInNumberKeys(Walker& walker, const BodyValu
     }
     if (!hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, walker.types().integer(Range { index, index })))
         return false;
-    walker.count(StatisticID::IndexTextsTakenAsIntegers);
+    walker.count(StatisticID::IndexStringsConvertedToIntegers);
     buildAccessUnderKeyInNumberKeys(walker, value, walker.constant(PrimitiveKnownToFolding::number(index)));
     return true;
 }
@@ -329,7 +329,7 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
     if (!key || !inputs.typeOf(value.objectOperand()))
         return false;
     if (!walker.types().at(key).isNumber())
-        return buildAccessUnderIndexTextInNumberKeys(walker, value, inputs) || buildListAccessUnderNumberAskedForInt32InNumberKeys(walker, value, inputs);
+        return buildIndexStringAccessInNumberKeys(walker, value, inputs) || buildListAccessUnderNumberAskedForInt32InNumberKeys(walker, value, inputs);
     if (buildAccessUnderWholeRemainderInNumberKeys(walker, value, inputs))
         return true;
     if (buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs))

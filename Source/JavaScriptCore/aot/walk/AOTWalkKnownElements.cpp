@@ -52,7 +52,7 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
         return lowered;
     if (std::optional<PassedTest> stepped = fromZeroUp ? findSteppedKeyProof(list, position, length) : std::nullopt)
         return stepped;
-    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : showPositionInsideBehindStartOfCounter(list, position, length);
+    return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : provePositionAfterCounterStart(list, position, length);
 }
 
 std::optional<PassedTest> Walker::findElementFoundAfter(Reference list, Reference position)
@@ -461,7 +461,7 @@ Reference buildSearchInWrittenList(Walker& walker, DataID data, Reference sought
     return buildSearchAmong(walker, elements.span(), sought, answer, origin);
 }
 
-Reference buildSearchInListMadeInSight(Walker& walker, Reference list, Reference sought, AnswerOfSearch answer, Origin origin)
+Reference buildSearchInKnownArray(Walker& walker, Reference list, Reference sought, AnswerOfSearch answer, Origin origin)
 {
     if (!list || !list.isValue() || !sought || walker.isUnreachable())
         return { };

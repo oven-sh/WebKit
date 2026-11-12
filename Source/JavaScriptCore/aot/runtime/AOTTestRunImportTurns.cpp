@@ -224,7 +224,7 @@ bool Modules::tryFulfillFirstBatchedFetch()
         return false;
     bool isFollowedInBatch = isTestRun() && !text.hasImportsToFetch && firstBatchNumber() == text.batchNumber;
     m_batchBeingFulfilled = isFollowedInBatch ? std::optional(text.batchNumber) : std::nullopt;
-    m_isInJobsBehindArrival = !isFollowedInBatch;
+    m_isInJobsAfterArrival = !isFollowedInBatch;
     m_fulfillsBatchTogether = !isTestRun() || text.hasImportsToFetch;
     if ((isTestRun() && !text.hasImportsToFetch) || !text.jobsBehindFirstCall) {
         makeCallAgain(text);

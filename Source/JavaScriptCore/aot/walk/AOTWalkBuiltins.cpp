@@ -27,6 +27,7 @@
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkLoopsOverGeneratorsBuilder.h"
 #include "AOTWalkTextBuilderRows.h"
 #include "AOTWalkNumberForms.h"
@@ -543,7 +544,7 @@ static void buildFirstReadInWalkBuiltins(Walker& walker, BuiltinID location, Ori
     Draft initialization(opcodeOfFirstReadOffHolder(walker.program().builtins(), location), origin);
     walker.chooseConservativeFields(initialization);
     initialization.setBuiltin(location);
-    if (std::optional<uint32_t> loop = initialization.opcode == Opcode::InitializeBuiltin ? walker.outermostLoopToReadBuiltinInFrontOf() : std::nullopt)
+    if (std::optional<uint32_t> loop = initialization.opcode == Opcode::InitializeBuiltin ? walker.outermostLoopForBuiltinPreheaderRead() : std::nullopt)
         walker.buildInFrontOfOpenLoop(*loop, WTF::move(initialization));
     else
         walker.build(WTF::move(initialization));
@@ -1380,9 +1381,9 @@ private:
 
     bool settle(Operand&, Origin);
     bool buildWithRegExpWrittenForCall(std::span<Reference> arguments);
-    bool buildMatchOfHeldRegExp(std::span<const Reference> arguments);
+    bool buildHeldRegExpMatch(std::span<const Reference> arguments);
     void noteLastIndexOfReceiver();
-    bool buildMatchOfAnyRegExpIntoFrame(std::span<const Reference> arguments);
+    bool buildAnyRegExpMatchIntoFrame(std::span<const Reference> arguments);
     bool buildReplaceForLength(std::span<const Reference> arguments);
     std::optional<HeldRegExp> findRegExpMatchedByCall() const;
     template<typename CallDraft> void fillCodeInLine(CallDraft&, std::span<const Reference> arguments) const;
@@ -1393,7 +1394,7 @@ private:
     std::optional<Reference> tryBuildDataViewAccess(std::span<const Reference> arguments);
     Reference buildElementAt(Reference index, Origin);
     Reference buildElementInside(Reference position, Origin);
-    Reference buildSearchInListOfFile(std::span<const Reference> arguments, AnswerOfSearch, Origin);
+    Reference buildSearchInModuleArray(std::span<const Reference> arguments, AnswerOfSearch, Origin);
     Reference buildComparisonByContents(std::span<const Reference> arguments);
     DataID findDataThatConstructionAloneSees(bool entriesArePairs) const;
     bool buildCollectionFromData();
@@ -1762,7 +1763,7 @@ TypeID CallInWalkBuiltins::typeConvertedWithoutCode(TypeID operand, BuiltinConve
     return takesObjects ? converted : m_types.withoutObjects(converted);
 }
 
-static bool rowComputesWithNumbersAlone(const BuiltinTable& table, const BuiltinOverload& row)
+static bool versionUsesOnlyNumbers(const BuiltinTable& table, const BuiltinOverload& row)
 {
     return !row.receiver && row.effects.capability == BuiltinCapability::None && table.at(row.builtin).holder == Builtins::Math
         && std::ranges::all_of(row.parameters, [](const BuiltinParameter& parameter) {
@@ -1774,7 +1775,7 @@ bool CallInWalkBuiltins::conversionsMayRunCode() const
 {
     if (m_inputs.areOnlyTypes() || m_forwarded || m_call.opcode() != Opcode::Call || m_overload->flags.contains(BuiltinOverloadFlag::ReadsStateBeforeConversions))
         return false;
-    if (rowComputesWithNumbersAlone(m_table, *m_overload))
+    if (versionUsesOnlyNumbers(m_table, *m_overload))
         return true;
     if (!m_overload->receiver || m_overload->parameters.size() != 1)
         return false;
@@ -2749,7 +2750,7 @@ void CallInWalkBuiltins::build()
     if (m_overload->code.implementation.inlineBuiltin == InlineBuiltin::ObjectHasOwn && m_mode == BuiltinCallMode::Call && !m_inputs.areOnlyTypes()) {
         bool asksReceiver = !!m_overload->receiver;
         size_t placeOfKey = asksReceiver ? 0 : 1;
-        if (placeOfKey < arguments.size() && (!asksReceiver || m_receiver) && dispatchOwnPropertyTestOverNames(m_walker, m_call, asksReceiver ? m_receiver->value : arguments[0], arguments[placeOfKey]))
+        if (placeOfKey < arguments.size() && (!asksReceiver || m_receiver) && dispatchOwnPropertyTest(m_walker, m_call, asksReceiver ? m_receiver->value : arguments[0], arguments[placeOfKey]))
             return;
     }
 
@@ -2782,7 +2783,7 @@ void CallInWalkBuiltins::build()
             return;
     }
 
-    if (!m_forwarded && (buildWithRegExpWrittenForCall(arguments.mutableSpan()) || buildMatchOfHeldRegExp(arguments.span()) || buildMatchOfAnyRegExpIntoFrame(arguments.span()) || buildReplaceForLength(arguments.span())))
+    if (!m_forwarded && (buildWithRegExpWrittenForCall(arguments.mutableSpan()) || buildHeldRegExpMatch(arguments.span()) || buildAnyRegExpMatchIntoFrame(arguments.span()) || buildReplaceForLength(arguments.span())))
         return;
 
     if (!m_forwarded && (m_form == BuiltinCallForm::Whole || (m_form == BuiltinCallForm::AnyReceiver && m_mode == BuiltinCallMode::Construct))) {
@@ -2811,13 +2812,13 @@ void CallInWalkBuiltins::build()
     bool asksForPlace = m_walker.isInLoop() && m_builtin == m_table.canonicalID(Builtins::ArrayPrototypeIndexOf);
     if (!m_forwarded && m_mode == BuiltinCallMode::Call && m_receiver && arguments.size() == 1 && (asksForPlace || m_builtin == m_table.canonicalID(Builtins::ArrayPrototypeIncludes))) {
         AnswerOfSearch asked = asksForPlace ? AnswerOfSearch::Place : AnswerOfSearch::Membership;
-        if (Reference answer = buildSearchInListMadeInSight(m_walker, m_receiver->value, arguments[0], asked, originInFrontOfCall)) {
+        if (Reference answer = buildSearchInKnownArray(m_walker, m_receiver->value, arguments[0], asked, originInFrontOfCall)) {
             m_walker.bind(m_call.id(), answer);
             return;
         }
         if (m_walker.isUnreachable() || m_walker.hasFailed())
             return;
-        if (Reference answer = buildSearchInListOfFile(arguments.span(), asked, originInFrontOfCall)) {
+        if (Reference answer = buildSearchInModuleArray(arguments.span(), asked, originInFrontOfCall)) {
             m_walker.bind(m_call.id(), answer);
             return;
         }
@@ -2884,14 +2885,14 @@ bool CallInWalkBuiltins::buildWithRegExpWrittenForCall(std::span<Reference> argu
     return !arguments.empty() && !written.empty() && m_arguments[0].written && take(BuiltinOperand::argument(0), written[0], arguments[0], m_receiver ? m_receiver->value : Reference());
 }
 
-bool CallInWalkBuiltins::buildMatchOfHeldRegExp(std::span<const Reference> arguments)
+bool CallInWalkBuiltins::buildHeldRegExpMatch(std::span<const Reference> arguments)
 {
     if (m_call.opcode() != Opcode::Call || m_form != BuiltinCallForm::Whole || m_inlineForm != InlineForm::Whole || m_inlineBuiltin != InlineBuiltin::RegExpExec || !m_receiver || !m_receiver->written || arguments.size() != 1)
         return false;
     std::optional<HeldRegExp> regExp = findHeldRegExp(m_walker, m_call.thisValueOperand());
     Origin origin = m_origin;
     origin.isTailCall = false;
-    return regExp && buildMatchOfHeldRegExpInParts(m_walker, m_call, m_overloadID, *regExp, m_receiver->value, arguments[0], origin);
+    return regExp && buildHeldRegExpMatchInParts(m_walker, m_call, m_overloadID, *regExp, m_receiver->value, arguments[0], origin);
 }
 
 void CallInWalkBuiltins::noteLastIndexOfReceiver()
@@ -2902,7 +2903,7 @@ void CallInWalkBuiltins::noteLastIndexOfReceiver()
         noteMatchStoresLastIndex(m_walker, *regExp, m_receiver->value);
 }
 
-bool CallInWalkBuiltins::buildMatchOfAnyRegExpIntoFrame(std::span<const Reference> arguments)
+bool CallInWalkBuiltins::buildAnyRegExpMatchIntoFrame(std::span<const Reference> arguments)
 {
     if (m_call.opcode() != Opcode::Call || m_form != BuiltinCallForm::Whole || m_inlineForm != InlineForm::Whole || !m_receiver || arguments.size() != 1)
         return false;
@@ -3079,7 +3080,7 @@ Reference CallInWalkBuiltins::buildCall(std::span<const Reference> arguments)
         bool holdsWholeNumbersAlone = holding == ArrayStorage::Double && !(m_types.at(stored->value).primitives & Primitive::FractionalNumber);
         bool mayHoldNumbersAlone = holding == ArrayStorage::Contiguous && !m_types.at(stored->value).hasObjects() && (m_types.at(stored->value).primitives & Primitive::Number);
         if (mayHoldNumbersAlone)
-            m_walker.count(StatisticID::SizedArraysOfSumsGivenProfiles);
+            m_walker.count(StatisticID::SizedSumArraysWithProfiles);
         if (holdsWholeNumbersAlone)
             m_walker.count(StatisticID::SizedArraysOfWholeNumbers);
         list.setArrayStorage(holdsWholeNumbersAlone ? ArrayStorage::Int32 : mayHoldNumbersAlone ? ArrayStorage::Other : holding);
@@ -3202,7 +3203,7 @@ Reference CallInWalkBuiltins::buildComparisonByContents(std::span<const Referenc
     return m_walker.build(WTF::move(comparison));
 }
 
-Reference CallInWalkBuiltins::buildSearchInListOfFile(std::span<const Reference> arguments, AnswerOfSearch answer, Origin origin)
+Reference CallInWalkBuiltins::buildSearchInModuleArray(std::span<const Reference> arguments, AnswerOfSearch answer, Origin origin)
 {
     Reference list = m_receiver->value;
     if (!m_walker.isInRepeatedCode() || m_call.opcode() != Opcode::Call || !list || !list.isValue() || !m_types.isSubset(m_walker.typeOf(list), m_types.builtinClass(BuiltinClasses::Array)))
@@ -3330,7 +3331,7 @@ Reference CallInWalkBuiltins::buildElementAt(Reference index, Origin origin)
     return m_walker.joinArms(arms.span(), m_walker.addBlock(), std::span<Reference>(&met, 1)) ? met : Reference();
 }
 
-static Reference vectorOfViewInWalkBuiltins(Walker& walker, Reference view, Origin origin)
+static Reference viewVectorInWalkBuiltins(Walker& walker, Reference view, Origin origin)
 {
     if (std::optional<uint64_t> noted = walker.state().answers().isEmpty() ? std::nullopt : findKnown(walker, KnownNote::VectorOfView, view))
         return Reference::fromBits(static_cast<uint32_t>(*noted));
@@ -3386,7 +3387,7 @@ std::optional<Reference> CallInWalkBuiltins::tryBuildDataViewAccess(std::span<co
     bool isReadBefore = limit.id().index() < numberOfValuesBefore || (loop && m_walker.standsInFrontOfOpenLoop(*loop, limit));
     if (!isReadBefore && (!receiver || index.useCount(receiver) < 3))
         return std::nullopt;
-    Reference vector = vectorOfViewInWalkBuiltins(m_walker, view, origin);
+    Reference vector = viewVectorInWalkBuiltins(m_walker, view, origin);
     if (!vector)
         return std::nullopt;
     BlockID outside;
@@ -3417,10 +3418,10 @@ std::optional<Reference> CallInWalkBuiltins::tryBuildDataViewAccess(std::span<co
         tested = m_walker.constant(WTF::move(lastByte));
     }
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
-    bool mayTestInFront = isWritten && m_walker.has(Mechanism::Guesses) && m_walker.isInvariantInSpecializedVersion(limit, purity);
+    bool canTestInPreheader = isWritten && m_walker.has(Mechanism::Guesses) && m_walker.isInvariantInSpecializedVersion(limit, purity);
     Reference isInside;
     if (position && !m_walker.isUnreachable()) {
-        Walker::SpecializedPreheaderScope preheaderScope(m_walker, mayTestInFront, purity);
+        Walker::SpecializedPreheaderScope preheaderScope(m_walker, canTestInPreheader, purity);
         Draft test(Opcode::IsBelowLength, origin);
         m_walker.chooseConservativeFields(test);
         test.setPositionOperand(tested);
@@ -3452,7 +3453,7 @@ std::optional<Reference> CallInWalkBuiltins::tryBuildDataViewAccess(std::span<co
         Reference accessed = m_walker.build(WTF::move(access));
         return isStore ? m_walker.constant(Draft(Opcode::Undefined, origin)) : accessed;
     };
-    if (mayTestInFront && m_walker.tryBranchInPreheader(isInside, true, purity)) {
+    if (canTestInPreheader && m_walker.tryBranchInPreheader(isInside, true, purity)) {
         m_walker.recordSpeculation();
         bool isReadInFront = !isStore && (isLittleEndian || isBigEndian) && m_walker.isInvariantInSpecializedVersion(vector, purity) && m_walker.iterationsPreserveViewElements();
         Walker::SpecializedPreheaderScope preheaderScope(m_walker, isReadInFront, purity);
@@ -3906,7 +3907,7 @@ bool computesWithNumbersAlone(const Program& program, BuiltinID builtin)
     const BuiltinTable& table = program.builtins();
     const auto& rows = table.overloadsOf(table.canonicalID(builtin));
     return std::ranges::begin(rows) != std::ranges::end(rows) && std::ranges::all_of(rows, [&](const BuiltinOverload& row) {
-        return row.mode == BuiltinCallMode::Call && !row.flags.contains(BuiltinOverloadFlag::ReadsStateBeforeConversions) && rowComputesWithNumbersAlone(table, row);
+        return row.mode == BuiltinCallMode::Call && !row.flags.contains(BuiltinOverloadFlag::ReadsStateBeforeConversions) && versionUsesOnlyNumbers(table, row);
     });
 }
 
@@ -4293,7 +4294,7 @@ bool guardSpliceCallOfItsOpcodes(Walker& walker, const BodyValue& value)
     return true;
 }
 
-static bool passCodeUnitToFromCharCode(Walker& walker, const BodyValue& value, BuiltinID called)
+static bool passCodeUnitToStringFromCharCode(Walker& walker, const BodyValue& value, BuiltinID called)
 {
     if (value.opcode() != Opcode::Call || !walker.isInLoop() || walker.isUnreachable() || walker.canRestartIteration() || walker.code().at(walker.currentBlock()).frequency == BlockFrequency::Rare)
         return false;
@@ -4331,7 +4332,7 @@ static bool passCodeUnitToFromCharCode(Walker& walker, const BodyValue& value, B
     walker.bind(argument, codeUnit[0]);
     CallInWalkBuiltins call(walker, value);
     if (call.plan()) {
-        walker.count(StatisticID::CodeUnitsPassedToFromCharCode);
+        walker.count(StatisticID::CodeUnitsPassedToStringFromCharCode);
         call.build();
     } else
         walker.fail("String.fromCharCode() of a code unit goes by no row"_s);
@@ -4372,7 +4373,7 @@ bool callBuiltinOfItsOpcodes(Walker& walker, const BodyValue& value)
             countBuiltinCallOfProgram(walker, StatisticID::BuiltinCallsLeftGeneric);
         return false;
     }
-    if (!call.goesByOneRow() && passCodeUnitToFromCharCode(walker, value, call.builtin()))
+    if (!call.goesByOneRow() && passCodeUnitToStringFromCharCode(walker, value, call.builtin()))
         return true;
     if (!call.goesByOneRow() && openGuessAtOperandOfBuiltinCall(walker, value))
         return true;

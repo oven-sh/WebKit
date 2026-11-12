@@ -266,7 +266,7 @@ void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& cal
     finish(call, cachedToStringTag(object, [&](Condition mustHold) { missUnless(call, mustHold); }));
 }
 
-Boxed ObjectBuiltinEmitter::cachedToStringTagInFrontOfClosedCall(Boxed receiver, LBasicBlock closed)
+Boxed ObjectBuiltinEmitter::cachedToStringTagBeforeClosedCall(Boxed receiver, LBasicBlock closed)
 {
     branchUnless(isCell(receiver), closed);
     CellPointer cell = unboxCell(receiver);

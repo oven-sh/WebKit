@@ -540,7 +540,7 @@ static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instanc
     JSObject* read = nullptr;
     if (Object* from = !count && isCompiledObject(object) ? compiledObjectOrNull(JSValue::decode(source)) : nullptr) {
         ExcludedRun run = excludedRunAt(instance, excludedRun);
-        read = PropertyWalk::tryCopyCallingGettersAsBefore(globalObject, from, run.numberPlusOne, run.numberPlusOne ? instance->state->objects->caches->assignmentPlans.excludedNames(run).names() : std::span<UniquedStringImpl* const> { });
+        read = PropertyWalk::tryCopyWithGetters(globalObject, from, run.numberPlusOne, run.numberPlusOne ? instance->state->objects->caches->assignmentPlans.excludedNames(run).names() : std::span<UniquedStringImpl* const> { });
         RETURN_IF_EXCEPTION(scope, void());
         if (read && (!hasOwnPropertiesToCopy(read) || tryRepeatAssignment(vm, *instance->state, object, read, 0) != RepeatedCopy::IsNotDone))
             return;
@@ -607,7 +607,7 @@ static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObje
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source))) {
-        JSObject* rest = PropertyWalk::tryCopyCallingGettersAsBefore(globalObject, asObject(source), run.numberPlusOne, instance->state->objects->caches->assignmentPlans.excludedNames(run).names());
+        JSObject* rest = PropertyWalk::tryCopyWithGetters(globalObject, asObject(source), run.numberPlusOne, instance->state->objects->caches->assignmentPlans.excludedNames(run).names());
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (rest)
             return rest;

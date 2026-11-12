@@ -50,8 +50,8 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
     bool readsArgumentsOfEntry = walker.walksBodyBehindEntry() && !code.at(object).origin().inlineFrame;
     if (!behind->firstPosition && !readsArgumentsOfEntry)
         return false;
-    bool readsListBehindParameters = isMapped && !readsArgumentsOfEntry && listBehindParametersOfFreshArguments(walker, arguments);
-    uint32_t mostPassedOnByCount = readsArgumentsOfEntry || readsListBehindParameters ? mostArgumentsPassedOnByCount : behind->firstPosition;
+    bool readsArrayThroughParameters = isMapped && !readsArgumentsOfEntry && listBehindParametersOfFreshArguments(walker, arguments);
+    uint32_t mostPassedOnByCount = readsArgumentsOfEntry || readsArrayThroughParameters ? mostArgumentsPassedOnByCount : behind->firstPosition;
     if (rootOfOperandOfForwardedTailCall(code, callee) == object || rootOfOperandOfForwardedTailCall(code, thisValueOrNull) == object)
         return false;
     if (walker.program().at(walker.currentFunction()).isModuleBody())

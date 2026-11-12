@@ -1153,7 +1153,7 @@ bool CodeGenerator::findLoopOfRows(RowGuard& guard)
     return representationOf(guard.bound) == representationOf(counter) && standsInFront(guard.bound) && standsInFront(guard.array);
 }
 
-bool CodeGenerator::isReadBehindFailure(const KindTried& tried)
+bool CodeGenerator::isReadAfterFailure(const KindTried& tried)
 {
     BlockID passed = code().at(code().at(tried.start).terminator.taken()).to;
     std::span<const ValueID> tests = code().valuesOf(tried.start);
@@ -1198,7 +1198,7 @@ std::optional<CodeGenerator::KindTried> CodeGenerator::findKindTriedAt(BlockID t
         before = m_singlePredecessors[before.index()];
     }
     const Block& other = code().at(tried.other);
-    if (tried.start == test || !other.parameters().empty() || other.isLoopHead || other.isEntry || other.isHandlerBlock() || m_singlePredecessors[tried.other.index()] || isReadBehindFailure(tried))
+    if (tried.start == test || !other.parameters().empty() || other.isLoopHead || other.isEntry || other.isHandlerBlock() || m_singlePredecessors[tried.other.index()] || isReadAfterFailure(tried))
         return std::nullopt;
 
     BlockID headAround;
@@ -1263,7 +1263,7 @@ void CodeGenerator::findKindsTried()
             m_kindsTried = std::make_unique<KindsTried>();
         tried->tests.append(id);
         expectOtherJumps(tried->other);
-        build().statistics().count(StatisticID::KindsTriedFirstByTurns);
+        build().statistics().count(StatisticID::KindsTriedFirstByIterations);
         m_kindsTried->kinds.append(WTF::move(*tried));
     }
     if (m_kindsTried)
@@ -1535,9 +1535,9 @@ bool CodeGenerator::mayChangeRows(const OperationContext& context) const
 
 bool CodeGenerator::mayChangeRows(BlockID id)
 {
-    static constexpr std::array endsThatRunNothing { TerminatorKind::Jump, TerminatorKind::Branch, TerminatorKind::Switch, TerminatorKind::Unreachable };
+    static constexpr std::array terminatorsWithoutEffects { TerminatorKind::Jump, TerminatorKind::Branch, TerminatorKind::Switch, TerminatorKind::Unreachable };
     const Terminator& terminator = code().at(id).terminator;
-    if (!std::ranges::contains(endsThatRunNothing, terminator.kind) && mayChangeRows(TerminatorContext(id, terminator, handlerOf(id))))
+    if (!std::ranges::contains(terminatorsWithoutEffects, terminator.kind) && mayChangeRows(TerminatorContext(id, terminator, handlerOf(id))))
         return true;
     return std::ranges::any_of(code().valuesOf(id), [&](ValueID value) { return mayChangeRows(id, value, code().at(value)); });
 }
@@ -1871,7 +1871,7 @@ void CodeGenerator::findLoopCarriedTables()
                 return static_cast<size_t>(std::ranges::find(parameters, parameter) - parameters.begin());
             };
             Vector<ValueID, 4> tables { table };
-            bool isReadBehindStep = false;
+            bool isReadAfterStep = false;
             for (size_t next = 0; next < tables.size(); ++next) {
                 const size_t place = placeOf(tables[next]);
                 code().forEachIncomingEdgeUnsealed(code().at(tables[next]).block(), [&](const Edge& edge) {
@@ -1881,15 +1881,15 @@ void CodeGenerator::findLoopCarriedTables()
                     if (!passed || code().isConstant(passed))
                         return;
                     const Operation& operation = code().at(passed);
-                    isReadBehindStep |= operation.opcode == Opcode::CollectionTable;
+                    isReadAfterStep |= operation.opcode == Opcode::CollectionTable;
                     if (operation.opcode == Opcode::Parameter && m_values[passed.index()] && !code().at(operation.block()).isLoopHead && !code().at(operation.block()).isHandlerBlock() && !tables.contains(passed))
                         tables.append(passed);
                 });
             }
             const size_t position = std::ranges::find(m_order, head) - m_order.begin();
-            if (!isReadBehindStep || findCountedLoopAt(position))
+            if (!isReadAfterStep || findCountedLoopAt(position))
                 continue;
-            build().statistics().count(StatisticID::CollectionTablesCheckedOncePerLoop);
+            build().statistics().count(StatisticID::CollectionTablesCheckedPerLoop);
             for (ValueID parameter : tables) {
                 if (!keysOfCarriedTable(parameter))
                     m_loopCarriedTables.append({ parameter, code().at(parameter).block(), placeOf(parameter), m_out.phiIn(blockFor(code().at(parameter).block()), Machine::Int64) });
@@ -2602,10 +2602,10 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& 
     RELEASE_ASSERT(hasResults(index));
 }
 
-static constexpr OpcodeSet opcodesThatOtherValuesMayMake = sumsThatMayStayBoxed | OpcodeSet {
+static constexpr OpcodeSet opcodesOfOtherValues = sumsThatMayStayBoxed | OpcodeSet {
     Opcode::HasArrayStorage, Opcode::NewClosure, Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::GetDeferredClosureSlot, Opcode::NewArray,
 };
-static constexpr OpcodeSet opcodesMadeElsewhere = opcodesThatOtherValuesMayMake | OpcodeSet { Opcode::ToString, Opcode::Mul };
+static constexpr OpcodeSet opcodesMadeElsewhere = opcodesOfOtherValues | OpcodeSet { Opcode::ToString, Opcode::Mul };
 
 ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
 {
@@ -3217,10 +3217,10 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
             forgetRemadeValues(id, numberOfBigIntsInFrame);
     });
 
-    static constexpr OpcodeSet resultsThatStubsReturn { Opcode::ReturnAsyncResult, Opcode::NewPromise };
+    static constexpr OpcodeSet resultsReturnedByStubs { Opcode::ReturnAsyncResult, Opcode::NewPromise };
     ValueID owned = valueOwnedByTerminator(block.terminator);
     size_t numberOwned = 1;
-    if (!owned && block.terminator.kind == TerminatorKind::Return && code().opcodesOfValues().intersects(resultsThatStubsReturn)) {
+    if (!owned && block.terminator.kind == TerminatorKind::Return && code().opcodesOfValues().intersects(resultsReturnedByStubs)) {
         owned = asyncResultReturnedByStub(block);
         if (!owned) {
             owned = bodyEnteredAfterNewPromise(block);
@@ -3330,7 +3330,7 @@ static constexpr unsigned mostBlocksInTurnLaidOut = 4;
 static constexpr unsigned placesLookedAtBehindHead = 32;
 static constexpr unsigned placesLookedAtFirst = 8;
 static constexpr unsigned mostBlocksInTurnFoundWide = 8;
-static constexpr unsigned mostBlocksThatStoreAheadOfTests = 16;
+static constexpr unsigned maxBlocksStoringBeforeTests = 16;
 static constexpr int64_t fewestTurnsOfLoopComeBackTo = 64;
 static constexpr int64_t turnsThatPayForComingBack = 12;
 static constexpr int64_t turnsWrittenForEachTurnOwed = 2;
@@ -3657,7 +3657,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 continue;
             const bool checksRow = findCheckingGuard(blockAt(place));
             numberOfBlocksThatHoldOperations += !code().valuesOf(blockAt(place)).empty() && !checksRow;
-            if (numberOfBlocksThatHoldOperations > (loop.storesAheadOfTests ? mostBlocksThatStoreAheadOfTests : switches ? mostBlocksInTurnFoundWide : mostBlocksInTurnLaidOut))
+            if (numberOfBlocksThatHoldOperations > (loop.storesAheadOfTests ? maxBlocksStoringBeforeTests : switches ? mostBlocksInTurnFoundWide : mostBlocksInTurnLaidOut))
                 return false;
             loop.turn.append(blockAt(place));
             loop.positionsOfTurn.append(positionOfAsking + 1 + place);
@@ -4749,7 +4749,7 @@ uint32_t CodeGenerator::findLoopExitThatRenames(std::span<const ValueID> values)
     return noLoopExit;
 }
 
-static LValue constantHandedOnTo(LValue phi)
+static LValue constantForwardedTo(LValue phi)
 {
     Machine::Block* entering = phi->opcode() == Machine::Phi ? phi->owner()->singlePredecessor() : nullptr;
     if (!entering)
@@ -4766,7 +4766,7 @@ void CodeGenerator::startFromConstant(const CountedLoop& loop)
     if (!loop.bound || code().isConstant(loop.bound))
         return;
     LValue& counter = m_values[loop.counter.index()];
-    LValue start = constantHandedOnTo(counter);
+    LValue start = constantForwardedTo(counter);
     if (start == counter)
         return;
     build().statistics().count(StatisticID::UnrolledLoopsFromConstants);
@@ -4843,7 +4843,7 @@ void CodeGenerator::emitFirstConditions(CountedLoop& loop)
         BlockEdge exit = edgeTo(context, 1);
         LValue counter = get(loop.counter).value;
         LValue bound = get(loop.bound).value;
-        m_out.branch(askCounter(loop.relation, bound->isConstant() ? counter : constantHandedOnTo(counter), bound), normalEdge(begins), exit);
+        m_out.branch(askCounter(loop.relation, bound->isConstant() ? counter : constantForwardedTo(counter), bound), normalEdge(begins), exit);
         if (!blocks.empty())
             m_out.appendTo(begins);
         loop.conditionIsTestedOnEntry = true;
@@ -4876,7 +4876,7 @@ void CodeGenerator::emitFirstConditions(CountedLoop& loop)
             return restart;
         };
         if (LValue& counter = m_values[loop.counter.index()]; peelsIteration && !code().isConstant(loop.bound))
-            counter = constantHandedOnTo(counter);
+            counter = constantForwardedTo(counter);
         m_blockLeavingLoop = [&](const Edge& edge) {
             LBasicBlock here = m_out.m_block;
             LBasicBlock blockOnEdge = m_out.newBlock();
@@ -5049,7 +5049,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             indexesOfWide.append(index);
         phisOfTurns[index] = m_out.phiIn(turns, isWide ? Machine::Int64 : phisOfEntry[index]->type());
     }
-    auto asItComesRound = [&](size_t index, LValue value) -> LValue {
+    auto asCarriedByLoop = [&](size_t index, LValue value) -> LValue {
         if (!indexesOfWide.contains(index) || value->type() != Machine::Int32)
             return value;
         return value->opcode() == Machine::Trunc && value->child(0)->type() == Machine::Int64 ? value->child(0) : m_out.zeroExt(value, Machine::Int64);
@@ -5193,7 +5193,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                     m_out.upsilon(endOfStretchFrom(counter, lastStart), endOfStretch);
                 if (const SumOfIntegers* sum = sumAt(index); sum && loop.sumsAreTakenOverBehindStretches)
                     m_out.upsilon(phisOfEntry[index], sum->base);
-                return sumAt(index) ? m_out.constInt64(0) : asItComesRound(index, phisOfEntry[index]);
+                return sumAt(index) ? m_out.constInt64(0) : asCarriedByLoop(index, phisOfEntry[index]);
             });
         };
         LBasicBlock written = comesBack ? nullptr : handToWritten(phisOfHead);
@@ -5320,7 +5320,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             if (known != loop.kindsToldToReads.end()) {
                 m_out.branch(answerTo(get(known->holdsDoubles).value), normalEdge(holds), normalEdge(otherKind ? otherKind : written));
                 m_out.appendTo(holds);
-                build().statistics().count(StatisticID::KnownKindsAskedAtLoopEntry);
+                build().statistics().count(StatisticID::KnownKindsCheckedAtLoopEntry);
                 continue;
             }
             Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
@@ -5417,7 +5417,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         bool isStepped = ahead && ahead->opcode() == Machine::Add && ahead->child(0) == phisOfTurns[index] && ahead->child(1)->hasInt();
         return isStepped ? m_out.add(ahead->child(0), ahead->child(1)) : ahead ? wordCutAtExit(ahead) : nullptr;
     };
-    auto recomputedBehindIterations = [&](LValue behind, LValue first) -> LValue {
+    auto recomputedAfterIterations = [&](LValue behind, LValue first) -> LValue {
         bool isStepped = behind->opcode() == Machine::Add && behind->child(0) == first && behind->child(1)->hasInt();
         return isStepped ? m_out.add(behind->child(0), behind->child(1)) : wordCutAtExit(behind);
     };
@@ -5591,7 +5591,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     Values valuesBehindTurns;
     for (size_t index = 0; index < parameters.size(); ++index) {
         LValue behind = m_values[parameters[index].index()];
-        valuesBehindTurns.append(behind && phisOfTurns[index] && !sumAt(index) ? recomputedBehindIterations(behind, phisOfTurns[index]) : behind);
+        valuesBehindTurns.append(behind && phisOfTurns[index] && !sumAt(index) ? recomputedAfterIterations(behind, phisOfTurns[index]) : behind);
     }
     if (single) {
         LBasicBlock endOfTurns = m_out.m_block;
@@ -5621,7 +5621,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         if (!emitIterations(1))
             return;
         m_out.jump(normalEdge(blockHandingOver(phisOfSingle, single, [&](size_t index) {
-            return recomputedBehindIterations(m_values[parameters[index].index()], phisOfSingle[index]);
+            return recomputedAfterIterations(m_values[parameters[index].index()], phisOfSingle[index]);
         })));
         m_sumsOfIntegers = WTF::move(sumsOfTurns);
         m_out.appendTo(endOfTurns);
@@ -5658,7 +5658,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 if (!nextEndOfStretch)
                     return m_out.constInt64(0);
             }
-            return sum ? sum->added : asItComesRound(index, valuesBehindTurns[index]);
+            return sum ? sum->added : asCarriedByLoop(index, valuesBehindTurns[index]);
         });
     };
     if (pollsBetweenStretches) {
@@ -6018,14 +6018,14 @@ void CodeGenerator::findStepsReadElsewhere()
 {
     BitVector& found = m_stepsReadElsewhere.emplace(code().numberOfBlocks());
     BitVector branchesOnStep(code().numberOfBlocks());
-    BitVector stepsThatTestForEntry(code().numberOfBlocks());
+    BitVector stepsTestingForEntry(code().numberOfBlocks());
     for (BlockID id : order()) {
         const Terminator& terminator = code().at(id).terminator;
         if (terminator.kind != TerminatorKind::Branch || opcodeOf(terminator.conditionOperand()) != Opcode::ResultAt)
             continue;
         branchesOnStep.quickSet(id.index());
         if (stepsOverTables.contains(opcodeOf(code().at(terminator.conditionOperand()).resultsOperand())))
-            stepsThatTestForEntry.quickSet(id.index());
+            stepsTestingForEntry.quickSet(id.index());
     }
     for (BlockID user : order()) {
         auto noteRead = [&](ValueID value) {
@@ -6036,7 +6036,7 @@ void CodeGenerator::findStepsReadElsewhere()
             if (!home || !branchesOnStep.quickGet(home.index()) || found.quickGet(home.index()) || home == user)
                 return;
             const Terminator& branch = code().at(home).terminator;
-            if ((opcodesBehindStep.contains(read.opcode) || read.opcode == Opcode::ForInStep || stepsOverTables.contains(read.opcode)) && !dominates(code().at(stepsThatTestForEntry.quickGet(home.index()) ? branch.taken() : branch.notTaken()).to, user))
+            if ((opcodesBehindStep.contains(read.opcode) || read.opcode == Opcode::ForInStep || stepsOverTables.contains(read.opcode)) && !dominates(code().at(stepsTestingForEntry.quickGet(home.index()) ? branch.taken() : branch.notTaken()).to, user))
                 found.quickSet(home.index());
         };
         const Block& block = code().at(user);

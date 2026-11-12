@@ -284,7 +284,7 @@ private:
     bool isOnlyDriven(const BodyIndex&, ValueID);
     bool isUseOfDriven(const BodyIndex&, ValueID driven, const BodyValue& user);
     bool isResultOfApply(const BodyIndex&, ValueID) const;
-    bool accessesScopeOnlyToDrive(FunctionID);
+    bool accessesScopeOnlyForDriving(FunctionID);
     void addFunction(FunctionID function)
     {
         if (!m_functions.contains(function))
@@ -327,11 +327,11 @@ template<typename Functor> static bool everyUseIs(const BodyIndex& index, ValueI
 
 const BodyIndex* GeneratorDriver::findBody(FunctionID function) const
 {
-    static constexpr OpcodeSet seesMoreThanItNames { Opcode::ScopeHasBinding, Opcode::DirectEval, Opcode::NewClass };
+    static constexpr OpcodeSet readsMoreThanNamedVariables { Opcode::ScopeHasBinding, Opcode::DirectEval, Opcode::NewClass };
     if (m_walker.facts().summaries().at(function).has(SummaryTrait::HasDirectEval))
         return nullptr;
     const BodyIndex* body = m_walker.facts().bodies().find(function);
-    return body && !body->holdsAnyOf(seesMoreThanItNames) && !body->holdsAnyOf(opcodesOfMappedArguments) ? body : nullptr;
+    return body && !body->holdsAnyOf(readsMoreThanNamedVariables) && !body->holdsAnyOf(opcodesOfMappedArguments) ? body : nullptr;
 }
 
 bool GeneratorDriver::isUseOfDriven(const BodyIndex& index, ValueID driven, const BodyValue& user)
@@ -402,7 +402,7 @@ bool GeneratorDriver::isOnlyDriven(const BodyIndex& index, ValueID value)
     });
 }
 
-bool GeneratorDriver::accessesScopeOnlyToDrive(FunctionID function)
+bool GeneratorDriver::accessesScopeOnlyForDriving(FunctionID function)
 {
     const Program& program = m_walker.program();
     const BodyIndex* index = findBody(function);
@@ -446,7 +446,7 @@ bool GeneratorDriver::onlyDrives(unsigned entryParameter)
         addFunction(function);
     }
     for (size_t place = 0; place < m_functions.size(); ++place) {
-        if (!accessesScopeOnlyToDrive(m_functions[place]))
+        if (!accessesScopeOnlyForDriving(m_functions[place]))
             return false;
     }
     return true;
@@ -469,7 +469,7 @@ static bool helpersDriveGeneratorsOf(const Walker& walker, FunctionID generatorF
         const BodyIndex* index = linked.isGroup(referrer) || referrer == generatorFunction ? nullptr : walker.facts().bodies().find(referrer);
         if (!index)
             continue;
-        auto isHandedToDriver = [&](const BodyValue& user, ValueID closure) {
+        auto isPassedToDriver = [&](const BodyValue& user, ValueID closure) {
             if (user.opcode() != Opcode::Call || user.calleeOperand() == closure || user.thisValueOperand() == closure)
                 return false;
             uint32_t first = linked.firstCallOfCaller[referrer.index()];
@@ -497,10 +497,10 @@ static bool helpersDriveGeneratorsOf(const Walker& walker, FunctionID generatorF
                 if (operation.opcode() != Opcode::NewClosure || operation.as<Opcode::NewClosure>().function() != generatorFunction)
                     continue;
                 isMade = true;
-                bool isOnlyHandedOver = everyUseIs(*index, operation.id(), [&](const BodyValue& user) {
-                    return isHandedToDriver(user, operation.id());
+                bool isOnlyPassedOn = everyUseIs(*index, operation.id(), [&](const BodyValue& user) {
+                    return isPassedToDriver(user, operation.id());
                 });
-                if (!isOnlyHandedOver)
+                if (!isOnlyPassedOn)
                     return false;
             }
         }
@@ -840,7 +840,7 @@ bool buildRampUnlessDelegated(Walker& walker, std::span<const Reference> paramet
     return true;
 }
 
-bool runsBodyWhereCallIsDelegated(const Walker& walker, CodeUnit unit)
+bool runsBodyAtDelegatedCall(const Walker& walker, CodeUnit unit)
 {
     if (unit.role != CodeRole::Body || !walker.plan().conventions().of(unit.function).generatorNeverYields || !walker.has(Mechanism::TypedOperations))
         return false;

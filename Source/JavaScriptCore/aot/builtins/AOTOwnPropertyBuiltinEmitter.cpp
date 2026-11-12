@@ -42,7 +42,7 @@ public:
         static_assert(sizeof(KeyListCacheEntry) == 16);
         static_assert(hasOneBitSet(numberOfKeyLists));
         static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
-        static_assert(keyListWordOfStructure(UINT32_MAX) == UINT32_MAX >> 1 && enumerableKeyListWordOfStructure(16) == (16 >> 1 | 1));
+        static_assert(keyListWordOfStructure(UINT32_MAX) == UINT32_MAX >> 1 && structureEnumerableKeysWord(16) == (16 >> 1 | 1));
         if (key == KeyListKey::Shape && kind != KeyListKind::Strings && !hasOneInstance())
             leaveUnless(emitter<GuardEmitter>().belongsToInstance(object), otherwise);
         ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();

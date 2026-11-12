@@ -449,7 +449,7 @@ void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
     std::optional<Pointer> profile;
     if (isEmpty && value->capacityOperand()) {
         roomOfEmptyList = integerOperand(value->capacityOperand());
-        profile = allocation.profileOfEmptyListsAtSite(value.origin());
+        profile = allocation.emptyArraySiteProfile(value.origin());
     }
     allocation.allocateListLike(value, source, count, roomOfEmptyList, profile, isMadeOfNoList, scopedLambda<void(CellPointer)>([&](CellPointer list) {
         join.add(list);
@@ -462,7 +462,7 @@ void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { source, count, word32(contiguous.indexingType), word32(0) }, { .isOnRarePath = true }));
     CellPointer list = join.finish();
     if (profile)
-        allocation.countEmptyListAtSite(value, *profile, list);
+        allocation.countEmptyArrayAtSite(value, *profile, list);
     define(value, list);
 }
 

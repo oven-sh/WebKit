@@ -925,17 +925,17 @@ void CollectorOfKeyOrders::addOrdersOfComputedLiterals(const LinkTables& link)
 {
     for (size_t index : link.computedLiterals) {
         LayoutID id(static_cast<uint32_t>(index));
-        if (!hasOrders(id) || m_slots.layout(id).numberOfFields() > mostNamesOfComputedLiteral)
+        if (!hasOrders(id) || m_slots.layout(id).numberOfFields() > maxComputedLiteralNames)
             continue;
         const PlannedLayout& planned = m_slots.layout(id);
         size_t firstField = m_fields.size();
         listFieldsThatLayoutLists(id);
-        Vector<FieldIndex, mostNamesOfComputedLiteral> written(m_fields.span().subspan(firstField));
+        Vector<FieldIndex, maxComputedLiteralNames> written(m_fields.span().subspan(firstField));
         m_fields.shrink(firstField);
         for (FieldIndex name = 0; name < planned.numberOfFields(); ++name) {
             if (!isListedInOrders(planned, name))
                 continue;
-            Vector<FieldIndex, mostNamesOfComputedLiteral> others(written);
+            Vector<FieldIndex, maxComputedLiteralNames> others(written);
             others.removeFirst(name);
             for (size_t place = 0; place <= others.size() && m_numbersOfCandidates[index] < maxKeyOrdersPerLayout; ++place) {
                 firstField = m_fields.size();

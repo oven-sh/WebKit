@@ -198,7 +198,7 @@ void didCreateRealm(JSGlobalObject* realm)
     if (!instance) {
         for (Instance* other : realm->vm().aotState().instances) {
             if (other->state) {
-                realm->setAOTInstanceOfTables(other);
+                realm->setAOTTableInstance(other);
                 break;
             }
         }

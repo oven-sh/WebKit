@@ -372,7 +372,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
                 return answerOrCallFunction(RuntimeOperation::ObjectToStringOfAnyValue, { *boxedReceiver });
             LBasicBlock closed = newBlock();
             OperandJoin answersMeet(m_out, Representation::JSValue);
-            answersMeet.add(emitter<ObjectBuiltinEmitter>().cachedToStringTagInFrontOfClosedCall(*boxedReceiver, closed));
+            answersMeet.add(emitter<ObjectBuiltinEmitter>().cachedToStringTagBeforeClosedCall(*boxedReceiver, closed));
             m_out.appendTo(closed);
             Boxed answer = callOperation<Boxed>(value, RuntimeOperation::ObjectToStringOfAnyValue, { *boxedReceiver }, { .calledBuiltin = builtin });
             answersMeet.add(either<Boxed>(isNotEmpty(answer), [&] {

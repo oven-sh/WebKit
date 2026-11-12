@@ -350,7 +350,7 @@ void branchOnFieldPresence(StubAssembler& jit, const FieldAddressRegisters& r, G
     for (SlotRepresentation representation : representationsInTestOrder) {
         if (!mayBeCreatedByStore(representation))
             continue;
-        const AbsenceTest wanted { static_cast<uint8_t>(widthOf(representation)), bitsBeforeCreation(representation), isListedByKeyOrderAlone(representation), { } };
+        const AbsenceTest wanted { static_cast<uint8_t>(widthOf(representation)), bitsBeforeCreation(representation), isListedOnlyByKeyOrder(representation), { } };
         size_t index = tests.findIf([&](const AbsenceTest& test) {
             return test.width == wanted.width && test.absentBits == wanted.absentBits && test.keyOrderDecides == wanted.keyOrderDecides;
         });
@@ -865,7 +865,7 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         growsStorage.link(&jit);
         const GPRReg newCapacity = place;
         jit.urshift32(TrustedImm32(1), newCapacity);
-        Jump liesBesideElements = jit.branchTest32(CCallHelpers::Zero, newCapacity);
+        Jump isStoredWithElements = jit.branchTest32(CCallHelpers::Zero, newCapacity);
         jit.move(TrustedImm32(0), oldCapacity);
         Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
         jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
@@ -881,7 +881,7 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         }, cannot);
         Jump isGrown = jit.jump();
 
-        liesBesideElements.link(&jit);
+        isStoredWithElements.link(&jit);
         static_assert(propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
         cannot.append(jit.branchTest8(CCallHelpers::NonZero, Address(owner, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine)));
         jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);

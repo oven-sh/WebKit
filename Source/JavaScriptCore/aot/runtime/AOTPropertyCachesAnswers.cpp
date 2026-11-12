@@ -622,7 +622,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     if (isModuleNamespace(receiver))
         return classifyNamespaceRead(query);
     if (isOwn && isCompiledClosure(receiver)) {
-        if (const FieldData* field = StaticFields::findFieldLeftInVariable(*uncheckedDowncast<Closure>(receiver), uid)) {
+        if (const FieldData* field = StaticFields::findFieldKeptInVariable(*uncheckedDowncast<Closure>(receiver), uid)) {
             if (traitsOf(field->slot.representation()).valueKind == SlotValueKind::DeferredClosure)
                 return PropertyAnswer::uncacheable(access);
             return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = field->slot };
@@ -675,7 +675,7 @@ LazyPrototypeRead classifyReadThroughLazyPrototypes(JSGlobalObject* globalObject
     return read;
 }
 
-void answerByFieldOfGetter(JSValue base, Structure* structureBefore, PropertyAnswer& answer)
+void answerByGetterField(JSValue base, Structure* structureBefore, PropertyAnswer& answer)
 {
     if (answer.kind != PropertyAnswerKind::Accessor || answer.isOwn || !answer.holder || !answer.dependsOnChain() || !base.isCell())
         return;

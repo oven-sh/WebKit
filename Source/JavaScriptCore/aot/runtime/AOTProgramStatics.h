@@ -46,7 +46,7 @@ public:
         uint64_t length;
         uint64_t lengthOfBuffer;
     };
-    std::span<VariableWithViewMirror> variablesWithViewMirrorIn(const StaticsRange&);
+    std::span<VariableWithViewMirror> viewMirrorVariables(const StaticsRange&);
     void refreshViewMirrors();
     void didWriteVariable(uint32_t offset);
     void didMoveStorageOf(JSCell* view);

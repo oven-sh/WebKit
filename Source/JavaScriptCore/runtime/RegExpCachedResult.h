@@ -71,14 +71,14 @@ public:
     enum class State : uint8_t {
         Lazy,
         Reified,
-        // The input is a part of m_lastInput, and m_result holds bounds in m_lastInput. Code compiled ahead of time records this.
-        LazyWithPartOfInput,
+        // The input is a substring of m_lastInput, and m_result has offsets in m_lastInput. Code compiled ahead of time records this.
+        LazyWithSubstringInput,
     };
 
     MatchResult result() const { return m_result; }
 
 private:
-    void takePartOfInput(JSGlobalObject*, JSObject* owner);
+    void resolveSubstringInput(JSGlobalObject*, JSObject* owner);
 
     MatchResult m_result { 0, 0 };
     State m_state { State::Lazy };

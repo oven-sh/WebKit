@@ -21,7 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr int64_t mostIterationsOfRow = 160;
 static constexpr unsigned rowsInStep = 4;
-static constexpr unsigned rowsOneBehindAnother = 6;
+static constexpr unsigned consecutiveRows = 6;
 static constexpr unsigned mostRows = 6;
 static constexpr int64_t mostStepsOfRows = mostIterationsOfRow + mostRows;
 static constexpr unsigned mostBlocksBeforeRow = 32;
@@ -71,7 +71,7 @@ private:
     bool findEndOfRow();
     bool findDependentOperations();
     bool isRepeatable(ValueID) const;
-    std::optional<size_t> streamOfReadBeforeRow(ValueID) const;
+    std::optional<size_t> streamReadBeforeRow(ValueID) const;
     bool findStreams();
     bool findStream(ValueID access, ValueID list, ValueID storage, ValueID position, bool isStore);
     bool carriesChain() const;
@@ -152,7 +152,7 @@ bool InterleavingFinder::findEndOfRow()
             if (readsRow || !at(value).traits().isPure())
                 return false;
         }
-        m_found.blocksBehindRow.append(block);
+        m_found.blocksAfterVersion.append(block);
         const Edge& edge = m_code.at(behind.terminator.next());
         if (edge.to == m_found.outerHead) {
             m_found.steppedParameters.append(edge.arguments());
@@ -173,7 +173,7 @@ bool InterleavingFinder::isRepeatable(ValueID value) const
     return reads.contains(operation.opcode) && !operation.traits().mayWriteObservableState();
 }
 
-std::optional<size_t> InterleavingFinder::streamOfReadBeforeRow(ValueID value) const
+std::optional<size_t> InterleavingFinder::streamReadBeforeRow(ValueID value) const
 {
     const Operation& read = at(value);
     if (read.opcode != Opcode::GetArrayElement || dependsOnRow(read.arrayOperand()) || representationOf(read.positionOperand()) != Representation::Double || representationOf(value) != Representation::JSValue)
@@ -207,7 +207,7 @@ bool InterleavingFinder::findDependentOperations()
                 continue;
             }
             m_dependent.append(value);
-            if (std::optional<size_t> stream = streamOfReadBeforeRow(value)) {
+            if (std::optional<size_t> stream = streamReadBeforeRow(value)) {
                 m_found.readsBeforeRow.append({ value, *stream });
                 continue;
             }
@@ -421,7 +421,7 @@ void InterleavingFinder::findNeighbors()
             continue;
         int64_t distance = indexes[place]->added - ofStore->added;
         stream.isStoredByPreviousRow = distance == -next->added;
-        m_found.rowsAreOneBehindAnother |= stream.isStoredByPreviousRow;
+        m_found.rowsAreConsecutive |= stream.isStoredByPreviousRow;
     }
 }
 
@@ -455,7 +455,7 @@ std::optional<CodeGenerator::Interleaving> InterleavingFinder::find()
             return std::nullopt;
     }
     findNeighbors();
-    m_found.rows = m_found.rowsAreOneBehindAnother ? rowsOneBehindAnother : rowsInStep;
+    m_found.rows = m_found.rowsAreConsecutive ? consecutiveRows : rowsInStep;
     return WTF::move(m_found);
 }
 
@@ -473,7 +473,7 @@ std::optional<CodeGenerator::Interleaving> CodeGenerator::findInterleaving(const
 void CodeGenerator::generateEndOfRow(const Interleaving& nest)
 {
     SetForScope<BlockID> whileLayingOut(m_headOfTurnsLaidOut, nest.outerHead);
-    for (BlockID block : nest.blocksBehindRow) {
+    for (BlockID block : nest.blocksAfterVersion) {
         for (ValueID value : code().valuesOf(block)) {
             m_values[value.index()] = nullptr;
             generateValue(block, value, code().at(value), false, { });
@@ -655,7 +655,7 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
     };
     for (ValueID parameter : outerParameters)
         save(parameter);
-    for (BlockID block : nest.blocksBehindRow) {
+    for (BlockID block : nest.blocksAfterVersion) {
         for (ValueID value : code().valuesOf(block))
             save(value);
     }
@@ -683,13 +683,13 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
         entries.append(WTF::move(entry));
     }
     generateEndOfRow(nest);
-    Vector<LValue, 4> outerParametersBehindRows;
+    Vector<LValue, 4> outerParametersAfterVersions;
     {
-        BlockID last = nest.blocksBehindRow.last();
+        BlockID last = nest.blocksAfterVersion.last();
         TerminatorContext contextOfEnd(last, code().at(last).terminator, nullptr);
         SetForScope<const OperationContext*> whileStepping(m_operation, &contextOfEnd);
         for (size_t index = 0; index < outerParameters.size(); ++index)
-            outerParametersBehindRows.append(getIn(nest.steppedParameters[index], representationOf(outerParameters[index])).value);
+            outerParametersAfterVersions.append(getIn(nest.steppedParameters[index], representationOf(outerParameters[index])).value);
     }
     for (auto [value, lowered] : saved)
         m_values[value.index()] = lowered;
@@ -706,9 +706,9 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
             return m_out.lessThan(greatest, m_out.zeroExt(get(held.length).value, Machine::Int64));
         };
         for (const Values& entry : entries) {
-            bool isAskedByLastRow = nest.rowsAreEvenlySpaced && &entry != &entries.last();
+            bool isTestedByLastVersion = nest.rowsAreEvenlySpaced && &entry != &entries.last();
             for (const SteppedIndex& held : loop.steppedIndexes) {
-                if (!isAskedByLastRow || !isStreamed(held.indexOfParameter))
+                if (!isTestedByLastVersion || !isStreamed(held.indexOfParameter))
                     require(greatestIndexIsInside(held, entry));
             }
             Vector<LValue, 8> bases;
@@ -781,8 +781,8 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
         }
     }
 
-    auto lagOf = [&](unsigned row) -> int64_t { return nest.rowsAreOneBehindAnother ? row : 0; };
-    if (nest.rowsAreOneBehindAnother) {
+    auto lagOf = [&](unsigned row) -> int64_t { return nest.rowsAreConsecutive ? row : 0; };
+    if (nest.rowsAreConsecutive) {
         SetForScope<const OperationContext*> whileAddressing(m_operation, &context);
         for (unsigned row = 1; row < nest.rows; ++row) {
             LValue lag = m_out.constInt64(-lagOf(row) * static_cast<int64_t>(sizeof(double)));
@@ -833,7 +833,7 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
         Values carriedByFirstRow = carried[0];
         for (unsigned row = firstRow; row < endOfRows; ++row) {
             nest.row = row;
-            nest.numberPassedOn = row && nest.rowsAreOneBehindAnother ? numbersStoredBefore[row - 1] : nullptr;
+            nest.numberPassedOn = row && nest.rowsAreConsecutive ? numbersStoredBefore[row - 1] : nullptr;
             LValue iteration = lagOf(row) ? m_out.sub(step, m_out.constInt64(lagOf(row))) : step;
             for (BlockID block : turn) {
                 for (ValueID value : code().valuesOf(block))
@@ -900,8 +900,8 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
         return true;
     };
 
-    unsigned firstStepOfAllRows = nest.rowsAreOneBehindAnother ? nest.rows - 1 : 0;
-    for (unsigned step = 0; step < firstStepOfAllRows; ++step) {
+    unsigned firstStepAcrossRows = nest.rowsAreConsecutive ? nest.rows - 1 : 0;
+    for (unsigned step = 0; step < firstStepAcrossRows; ++step) {
         if (!emitStep(m_out.constInt64(step), 0, step + 1))
             return;
     }
@@ -930,11 +930,11 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
             phis.append(isCarried(index) ? m_out.phiIn(rows, phisOfHead[index]->type()) : nullptr);
         phisOfRows.append(WTF::move(phis));
     }
-    size_t indexOfNumberStored = firstStepOfAllRows ? indexOfCarriedNumber(0) : parameters.size();
+    size_t indexOfNumberStored = firstStepAcrossRows ? indexOfCarriedNumber(0) : parameters.size();
     bool numberStoredIsCarried = indexOfNumberStored < parameters.size();
-    for (unsigned row = 0; row + 1 < nest.rows && firstStepOfAllRows && !numberStoredIsCarried; ++row)
+    for (unsigned row = 0; row + 1 < nest.rows && firstStepAcrossRows && !numberStoredIsCarried; ++row)
         phisOfNumbersStored[row] = m_out.phiIn(rows, Machine::Double);
-    passToRows(m_out.constInt64(firstStepOfAllRows));
+    passToRows(m_out.constInt64(firstStepAcrossRows));
 
     m_out.appendTo(rows);
     for (unsigned row = 0; row < nest.rows; ++row) {
@@ -950,7 +950,7 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
     m_out.appendTo(again);
     passToRows(nextStep);
     m_out.appendTo(ended);
-    for (unsigned behind = 0; behind < firstStepOfAllRows; ++behind) {
+    for (unsigned behind = 0; behind < firstStepAcrossRows; ++behind) {
         if (!emitStep(m_out.add(numberOfIterations, m_out.constInt64(behind)), behind + 1, nest.rows))
             return;
     }
@@ -967,7 +967,7 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
     for (auto [value, lowered] : storages)
         m_values[value.index()] = lowered;
     for (size_t index = 0; index < outerParameters.size(); ++index)
-        m_out.upsilon(outerParametersBehindRows[index], m_values[outerParameters[index].index()]);
+        m_out.upsilon(outerParametersAfterVersions[index], m_values[outerParameters[index].index()]);
     m_out.jump(normalEdge(blockFor(nest.outerHead)));
 
     m_out.appendTo(undo);

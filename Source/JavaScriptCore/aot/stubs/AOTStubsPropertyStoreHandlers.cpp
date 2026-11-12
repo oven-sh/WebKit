@@ -576,7 +576,7 @@ void generateStoreSlot(StubAssembler& jit)
         if (traits.operation != SlotOperation::Define) {
             static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
             if (slot.form() == SlotForm::PackedSlot)
-                loadKeyOfProxySlot(jit, slot.form(), operands.header, jit.allocateScratch(slotPayloadRegister), uncached);
+                loadProxySlotKey(jit, slot.form(), operands.header, jit.allocateScratch(slotPayloadRegister), uncached);
             else {
                 const GPRReg storage = T14;
                 const GPRReg held = T10;

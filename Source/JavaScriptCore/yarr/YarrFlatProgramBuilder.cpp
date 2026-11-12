@@ -1296,7 +1296,7 @@ private:
         return units;
     }
 
-    // The last unit of what a lookbehind reads.
+    // The last code unit that a lookbehind reads.
     PrecedingUnits lastUnits(Alternatives alternatives, unsigned& termsLeftToVisit) const
     {
         PrecedingUnits units;
@@ -1408,7 +1408,7 @@ private:
 
     void findPrecedingUnits(Alternatives alternatives)
     {
-        // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
+        // A search that skips starts assumes that an attempt was made one position before the one it begins at.
         if (m_program->triesOnlyOnce || m_program->skipsStartsBehindFailedRuns)
             return;
         unsigned termsLeftToVisit = maxTermsVisitedForStartTable;
@@ -1417,7 +1417,7 @@ private:
             return;
         m_program->precedingUnits = units;
         if (m_program->startScan == FlatStartScan::None)
-            m_program->startScan = FlatStartScan::PrecedingUnitAlone;
+            m_program->startScan = FlatStartScan::PrecedingUnitOnly;
     }
 
     void computeStartScan(Alternatives alternatives)
@@ -1442,7 +1442,7 @@ private:
                 addAll(first, *known);
         }
         if (knowsFirst && !start.depth) {
-            // A match that may take nothing begins in front of a unit that its lookaheads let through.
+            // A match that may be empty begins before a code unit that its lookaheads accept.
             start.depth = 1;
             start.at[0] = first;
             start.mayBeWide[0] = firstMayBeWide;

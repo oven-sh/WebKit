@@ -435,7 +435,7 @@ void appendListsOfClassRecord(TableEncoder& encoder, LayoutID classLayout, const
         list.append(Typed::builtinClassOfInstances(layout).index() | (layout.mixedBuiltinBase ? PropertiesOfHeirsData::extendsMixin : 0));
         list.append(static_cast<uint32_t>(layout.fields.size()));
         for (const Typed::Field& field : layout.fields)
-            list.append(nameInClassRecord(encoder, field.key, "a property of the instances of"_s, classLayout) | (Typed::isToldByStructureOfClass(field) ? 0 : PropertiesOfHeirsData::mayBeStoredLate));
+            list.append(nameInClassRecord(encoder, field.key, "a property of the instances of"_s, classLayout) | (Typed::isDecidedByClassStructure(field) ? 0 : PropertiesOfHeirsData::mayBeStoredLate));
         data.propertiesOfHeirsOffset = encoder.part.append(list);
     }
 }

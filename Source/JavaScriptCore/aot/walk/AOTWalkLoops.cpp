@@ -140,7 +140,7 @@ static Effects effectsOfMembersAsWrittenInLoops(const TypingContext& context, co
     return effects;
 }
 
-static std::optional<Effects> effectsOfLibraryLoopOverLeaves(Walker& walker, BlockID inputHead, bool isFusedChain)
+static std::optional<Effects> effectsOfLibraryLeafLoop(Walker& walker, BlockID inputHead, bool isFusedChain)
 {
     static constexpr OpcodeSet storesIntoResult { Opcode::AppendElement, Opcode::TryPutByValDirect, Opcode::TryPutIndex };
     const Program& program = walker.program();
@@ -199,51 +199,36 @@ static TypeID widenedInLoops(TypeArena& types, TypeID assumed, TypeID united, Wi
     return types.withIntegers(united, widened);
 }
 
-namespace {
-
-class LoopEdges {
+class BodyEdges {
 public:
-    LoopEdges(const BodyIndex& index, LoopID loop)
-        : m_index(index)
-        , m_loop(loop)
+    explicit BodyEdges(const BodyIndex& index)
     {
-    }
-
-    LoopID loop() const { return m_loop; }
-
-    auto edgesInto(BlockID block)
-    {
-        if (!std::exchange(m_isCollected, true))
-            collect();
-        return std::ranges::equal_range(m_edges, block.index(), { }, &Edge::block);
-    }
-
-    struct Edge {
-        uint32_t block;
-        BodyTarget target;
-    };
-
-private:
-    void collect()
-    {
-        for (BlockID member : m_index.membersOf(m_loop)) {
-            for (BodyTarget target : m_index.terminator(member).targets())
-                m_edges.append(Edge { target.block().index(), target });
+        for (BlockID block : index.blocksInDominatorOrder()) {
+            if (!index.loopOf(block))
+                continue;
+            for (BodyTarget target : index.terminator(block).targets())
+                m_edges.append(Edge { target.block().index(), block, target });
         }
         std::ranges::sort(m_edges, { }, &Edge::block);
     }
 
-    const BodyIndex& m_index;
-    LoopID m_loop;
-    Vector<Edge, 16> m_edges;
-    bool m_isCollected { false };
+    auto edgesInto(BlockID block) const { return std::ranges::equal_range(m_edges, block.index(), { }, &Edge::block); }
+
+    struct Edge {
+        uint32_t block;
+        BlockID source;
+        BodyTarget target;
+    };
+
+    HashMap<uint32_t, std::optional<Range>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> writtenRanges;
+
+private:
+    Vector<Edge> m_edges;
 };
 
-} // anonymous namespace
+static std::optional<Range> rangeOfArgumentsInLoops(const BodyIndex&, const BodyEdges&, LoopID, BlockID target, uint32_t position, ValueID headParameter, unsigned depth);
 
-static std::optional<Range> rangeOfArgumentsInLoops(const BodyIndex&, LoopEdges&, BlockID target, uint32_t position, ValueID headParameter, unsigned depth);
-
-static std::optional<Range> rangeLeftByOperatorsInLoops(const BodyIndex& index, LoopEdges& edges, ValueID written, ValueID headParameter, unsigned depth)
+static std::optional<Range> operatorResultRangeInLoops(const BodyIndex& index, const BodyEdges& edges, LoopID loop, ValueID written, ValueID headParameter, unsigned depth)
 {
     constexpr unsigned deepestOperator = 4;
     ValueID value = valueHandedOnInLoops(index, written);
@@ -253,9 +238,9 @@ static std::optional<Range> rangeLeftByOperatorsInLoops(const BodyIndex& index, 
         return std::nullopt;
     if (index.isParameter(value)) {
         BlockID block = index.blockOf(value);
-        if (!index.isInLoop(block, edges.loop()) || index.isLoopHead(block) || index.isEnteredByHandlerEdge(block))
+        if (!index.isInLoop(block, loop) || index.isLoopHead(block) || index.isEnteredByHandlerEdge(block))
             return std::nullopt;
-        return rangeOfArgumentsInLoops(index, edges, block, value.index() - index.block(block).firstParameter().index(), headParameter, depth + 1);
+        return rangeOfArgumentsInLoops(index, edges, loop, block, value.index() - index.block(block).firstParameter().index(), headParameter, depth + 1);
     }
 
     BodyValue operation = index.value(value);
@@ -293,8 +278,8 @@ static std::optional<Range> rangeLeftByOperatorsInLoops(const BodyIndex& index, 
     }
     case Opcode::BitOr:
     case Opcode::BitXor: {
-        std::optional<Range> left = rangeLeftByOperatorsInLoops(index, edges, operation.operand(0), { }, depth + 1);
-        std::optional<Range> right = left && left->minimum >= 0 ? rangeLeftByOperatorsInLoops(index, edges, operation.operand(1), { }, depth + 1) : std::nullopt;
+        std::optional<Range> left = operatorResultRangeInLoops(index, edges, loop, operation.operand(0), { }, depth + 1);
+        std::optional<Range> right = left && left->minimum >= 0 ? operatorResultRangeInLoops(index, edges, loop, operation.operand(1), { }, depth + 1) : std::nullopt;
         if (!right || right->minimum < 0)
             return std::nullopt;
         return Range { 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(left->maximum, right->maximum)))) - 1 };
@@ -304,12 +289,14 @@ static std::optional<Range> rangeLeftByOperatorsInLoops(const BodyIndex& index, 
     }
 }
 
-static std::optional<Range> rangeOfArgumentsInLoops(const BodyIndex& index, LoopEdges& edges, BlockID to, uint32_t position, ValueID headParameter, unsigned depth)
+static std::optional<Range> rangeOfArgumentsInLoops(const BodyIndex& index, const BodyEdges& edges, LoopID loop, BlockID to, uint32_t position, ValueID headParameter, unsigned depth)
 {
     Range left = Range::empty();
-    for (const LoopEdges::Edge& edge : edges.edgesInto(to)) {
+    for (const BodyEdges::Edge& edge : edges.edgesInto(to)) {
+        if (!index.isInLoop(edge.source, loop))
+            continue;
         std::span<const ValueID> arguments = edge.target.arguments();
-        std::optional<Range> range = position < arguments.size() ? rangeLeftByOperatorsInLoops(index, edges, arguments[position], headParameter, depth) : std::nullopt;
+        std::optional<Range> range = position < arguments.size() ? operatorResultRangeInLoops(index, edges, loop, arguments[position], headParameter, depth) : std::nullopt;
         if (!range)
             return std::nullopt;
         left = left.unionWith(*range);
@@ -317,12 +304,17 @@ static std::optional<Range> rangeOfArgumentsInLoops(const BodyIndex& index, Loop
     return left;
 }
 
-static std::optional<Range> writtenRangeOfParameterInLoops(const BodyIndex& index, LoopEdges& edges, BlockID inputHead, uint32_t parameter)
+static std::optional<Range> parameterLiteralRangeInLoops(const BodyIndex& index, std::shared_ptr<BodyEdges>& edges, BlockID inputHead, uint32_t parameter)
 {
     if (!index.isLoopHead(inputHead) || index.isEnteredByHandlerEdge(inputHead) || parameter >= index.block(inputHead).numberOfParameters())
         return std::nullopt;
-    std::optional<Range> written = rangeOfArgumentsInLoops(index, edges, inputHead, parameter, index.block(inputHead).parameter(parameter), 0);
-    return written && !written->isEmpty() && written->isSubsetOf(Range::int32()) ? written : std::nullopt;
+    if (!edges)
+        edges = std::make_shared<BodyEdges>(index);
+    ValueID headParameter = index.block(inputHead).parameter(parameter);
+    return edges->writtenRanges.ensure(headParameter.index(), [&]() -> std::optional<Range> {
+        std::optional<Range> written = rangeOfArgumentsInLoops(index, *edges, index.loopOf(inputHead), inputHead, parameter, headParameter, 0);
+        return written && !written->isEmpty() && written->isSubsetOf(Range::int32()) ? written : std::nullopt;
+    }).iterator->value;
 }
 
 static std::optional<Range> carriedDigitRange(const BodyIndex& index, BlockID inputHead, uint32_t parameter)
@@ -347,13 +339,12 @@ static std::optional<Range> carriedDigitRange(const BodyIndex& index, BlockID in
     return width ? std::optional(Range { 0, (int64_t { 1 } << width) - 1 }) : std::nullopt;
 }
 
-static TypeID widenedToWrittenRangeInLoops(TypeArena& types, const BodyIndex& index, BlockID inputHead, uint32_t parameter, TypeID united, TypeID widened)
+static TypeID widenedToLiteralRangeInLoops(TypeArena& types, const BodyIndex& index, std::shared_ptr<BodyEdges>& edges, BlockID inputHead, uint32_t parameter, TypeID united, TypeID widened)
 {
     Range found = types.at(united).integers;
     if (found.isEmpty() || !found.isSubsetOf(Range::int32()) || types.at(widened).integers.isSubsetOf(Range::int32()) || types.at(widened).primitives & Primitive::WholeNumber)
         return widened;
-    LoopEdges edges(index, index.loopOf(inputHead));
-    std::optional<Range> written = writtenRangeOfParameterInLoops(index, edges, inputHead, parameter);
+    std::optional<Range> written = parameterLiteralRangeInLoops(index, edges, inputHead, parameter);
     return written ? types.withIntegers(widened, found.unionWith(*written)) : widened;
 }
 
@@ -598,9 +589,9 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
     macro(returnsInPlaceOfUnit) macro(isOfUnit) macro(countAmongFramesOfFunction) macro(loopsInTrialVisits)
 
 #define FOR_EACH_FIELD_OF_FRAME_THAT_HANGS_ON_NO_STATE(macro) \
-    macro(isRecursive) macro(keepsFields) macro(summaryListsEscapes) macro(functionWithBlocksNeverEntered) macro(blocksNeverEntered) \
+    macro(isRecursive) macro(keepsFields) macro(summaryListsEscapes) macro(functionWithUnenteredBlocks) macro(blocksNeverEntered) \
     macro(blockOfLoopDepth) macro(loopDepth) macro(valueHandedBack) macro(hasLookedForValueHandedBack) macro(handlerBlocks) macro(numberOfHandlersThatRead) macro(parametersHandedRoundUnchangedByLoop) \
-    macro(outermostLoopsLookedThrough) macro(accessesUnderProvenKeys) macro(usesInLoops) macro(loopsWithBlocksTouched) macro(arithmeticInLoops) macro(operatorsFoundBehindValuesForGuesses) macro(numbersOfLongListsOfNamesOfRoots) macro(endsOfUsesOfTexts)
+    macro(outermostLoopsLookedThrough) macro(bodyEdges) macro(accessesUnderProvenKeys) macro(usesInLoops) macro(loopsWithBlocksTouched) macro(arithmeticInLoops) macro(operatorsFoundBehindValuesForGuesses) macro(numbersOfLongListsOfNamesOfRoots) macro(endsOfUsesOfTexts)
 
 #define FOR_EACH_FIELD_OF_FRAME_WRITTEN_OUTSIDE_LOOPS_AND_HANDLERS_ALONE(macro) \
     macro(environmentsMade)
@@ -622,9 +613,9 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
     macro(m_numberOfIterationsInFrontOfTheirLoops) macro(m_isLeadingHandlerEdge) \
     macro(m_numberOfLoopsThatMayBeLeft) macro(m_numberOfScopesWhereProofsHoldEverywhere) \
     macro(m_loopsOverGenerators) macro(m_environmentCellsOfUnit) macro(m_operationsCopiedAtWrittenCall) macro(m_closuresThatAllocationAloneTakes) macro(m_valuesDefinedBehindBirth) macro(m_valuesWrittenBehindBirth) macro(m_layoutOfBirthThatListsWhatIsBehind) macro(m_coldCopyDepth) macro(m_checksBitsOfUnknownValues) macro(m_walksCopyWhereHolderIsNoBuiltin) macro(m_walksCopyForWhatIsNoBuiltin) macro(m_holderThatIsNoBuiltin) macro(m_genericVersionsInsideSpecialized) \
-    macro(m_isWalkingAccess) macro(m_isBesideInlineLookup) macro(m_pollInFrontOfLoopBeingEntered) macro(m_edgeOfCodeBeingLed) macro(m_negatedTest) macro(m_callCopiedByLinkOfChain) \
+    macro(m_isWalkingAccess) macro(m_hasInlineLookup) macro(m_pollInFrontOfLoopBeingEntered) macro(m_edgeOfCodeBeingLed) macro(m_negatedTest) macro(m_callCopiedByLinkOfChain) \
     macro(m_numberOfFramesAtCallCopiedByLinkOfChain) macro(m_callIsAccountedFor) macro(m_calleeAccountedFor) \
-    macro(m_holdsReadsOfVariablesAsConstants) macro(m_countsOfUnit) macro(m_speculationCount) macro(m_hoistedArrayGuardCount) macro(m_hoistedElementCheckCount) macro(m_hoistedNumberReadCount) macro(m_numberReadBesideStoresCount) macro(m_mechanisms) \
+    macro(m_holdsReadsOfVariablesAsConstants) macro(m_countsOfUnit) macro(m_speculationCount) macro(m_hoistedArrayGuardCount) macro(m_hoistedElementCheckCount) macro(m_hoistedNumberReadCount) macro(m_numberReadNearStoresCount) macro(m_mechanisms) \
     macro(m_versionedLoops) macro(m_loopsLeftAtCaughtThrows) macro(m_loopsWithSideExits) macro(m_loopsWithoutQuietIterations) macro(m_takesSideExit) macro(m_sharedGenericVersions) macro(m_listAskedForStorageOfNumbersInVain) macro(m_receiverOfLargerMethod) macro(m_walksCleanupBesideCopyOfLoop) macro(m_copyThatMakesNewList) macro(m_runOverBoxedValuesTakesNewListOfCopyFirst) macro(m_listThatRunOverBoxedValuesTakesFirst) macro(m_receiverOfCopyThatMakesNewList) macro(m_depthOfCopyThatMakesNewList) \
     macro(m_hasURLsThatAreNeverMade) \
     macro(m_requestedLiteralStorage) \
@@ -654,7 +645,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
     macro(m_trialVisitDepth) macro(m_nestingDepth) macro(m_serialOfNewestMark) macro(m_loopsInFinalBuild) macro(m_loopReentries) macro(m_constantTripLoops) macro(m_reversionableLoops) macro(m_frameLogSizes) macro(m_buysTwoBuilds) \
     macro(m_numberOfFormsHeardAsArms) macro(m_operationsThatRanOtherCodeOfRow) macro(m_guardsOfStoresAskedOfRow) macro(m_previewOutOfRow) macro(m_listsAreStruckInRow) macro(m_isInt32VersionRejected) macro(m_hasInt32Version) macro(m_otherCodeStaysInTypedBuildOfRow) macro(m_otherCodeIsKeptOutOfFirstCopyInVainOfRow) macro(m_otherCodeStayedInVainOfRow) macro(m_readsAskSitesThoughCallStaysOfRow) macro(m_sumsAreNotAskedInRow) macro(m_keysAreReadOffLookInRow) macro(m_keyWasTakenForCounterAskedInFront) macro(m_walksCopyThatAsksCountersAlone) macro(m_hoistsConditionalArrays) macro(m_headOfTypedBuildOverListsTestedInFront) \
     macro(m_frameOfTypedBuildOverListsTestedInFront) macro(m_listsMadeHereOfTypedBuildOverListsTestedInFront) macro(m_distinctAllocations) macro(m_inheritedSummaryHeader) macro(m_inheritedSummaryFrame) macro(m_inheritedEntryTypes) macro(m_inheritedParameterTypes) \
-    macro(m_inheritedWideningRungs) macro(m_inheritedRarelyWidenedParameters) macro(m_inheritedOverreadWidenedParameters) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_summaryHasUninlinedCall) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_turnsOfRowTakeApartListsFromInFront) macro(m_turnsOfRowLookAtStaticFields) macro(m_handlersRunOtherCode) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
+    macro(m_inheritedWideningRungs) macro(m_inheritedRarelyWidenedParameters) macro(m_inheritedOverreadWidenedParameters) macro(m_firstOtherCodeRanInCopyOfRow) macro(m_summaryHasUninlinedCall) macro(m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces) macro(m_turnsOfRowTakeApartListsFromInFront) macro(m_versionIterationsCheckStaticFields) macro(m_handlersRunOtherCode) macro(m_rowSaysTurnsAreQuietOutsideArms) macro(m_effectsOutsideArmsOfRow) \
     macro(m_testsSeenOfRow) macro(m_missingTestFinder) macro(m_isVersioningDryRun) macro(m_unswitchCandidates) macro(m_otherClassBelowMixin) macro(m_unswitchCollectors) macro(m_operatorsMadeInFrontOfLoops) macro(m_hoistedRows) macro(m_fieldArrayReads) macro(m_ordinalOfCopyOfLoop) macro(m_loopRestartingOuterIteration) macro(m_walksCopyWithoutSomeIterationGuesses) macro(m_walksCopyWithoutQuestionsOfEveryTurn) macro(m_walksCopyForAnotherKindOfStorage) macro(m_walksLoopOverBoxedNumbers) macro(m_walksNumericListCopy) macro(m_loopOfOtherKind) macro(m_frontsSharedWithTypedBuilds) macro(m_restartablePreviewHeader) \
     macro(m_numberOfStretchesBehindBytesOfMembers) macro(m_numbersOfFramesOfFunctions) macro(m_resultOfReadBeingTyped) macro(m_resultOfReadIsRemembered) macro(m_contentsBeingTyped) macro(m_handlerMadeOverCopies) \
     macro(m_numberOfFramesBelowHandlerMade) macro(m_isBuildingInPlace) macro(m_rowOfCopyFoundUnderKey) macro(m_hasHoistedFields) macro(m_readArm) macro(m_inBoundsPath) macro(m_blockCheckedForArithmetic) macro(m_loopCheckedForStores) macro(m_numberOfLoopsAroundEdgeBeingLed) macro(m_readWhoseGuessIsOpen) macro(m_guardedReadArray) macro(m_isInArrayArms) macro(m_frameOfFusedChain) macro(m_fusesNoChain) macro(m_exitsChainAtGenericLoop) macro(m_storageOfFusedChain) macro(m_currentMethodChain) macro(m_weighsWhatIsWritten) macro(m_makesLetterOfStep)
@@ -671,7 +662,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
 #define FOR_EACH_FIELD_OF_WALKER_THAT_HANGS_ON_NO_STATE(macro) \
     macro(m_typesHeldOfSlots) macro(m_namesSteppedInLoops) \
     macro(m_listsThatCallsAloneTake) macro(m_elementRecurrences) macro(m_unsignedZeroValues) \
-    macro(methodsGivenUnderKeys) macro(m_storesIntoRowsOfBlocks) macro(m_usersWithinBlocks) macro(m_usersOfValuesOfLoops) macro(m_mentionsFromInFrontOfLoops) macro(m_listAccessesOfLoops) macro(m_valuesTakenForKeys) macro(m_loopsThatReckonWithElements) macro(m_loopsToUnswitch) macro(m_lastReturnDominators) macro(m_holdersStoredByName) macro(m_elementReadsOfLoops) macro(m_elementAccesses) macro(m_computedComparisons) macro(m_numbersInListsOfWrittenObjects) macro(m_lastStoresByKeyOfLoops) macro(m_pushesOntoLiterals) macro(m_outermostLoopsOfPushAndPop) macro(m_bodiesThatPushOntoFields) macro(m_steppedCounters) macro(m_storesByKeyOfBlocks) macro(m_namesStoredInOutermostLoops) macro(m_whetherElementsOfLoopsMeetWhatGoesRound) macro(m_literalElementTypes) macro(m_literalsThatLoopsPushOnto) macro(receiversMadeInBodies) macro(gettersExpectedInFunction) macro(m_placesSeenToStandInStretches) macro(m_keptByGeneratorsInLoops) \
+    macro(methodsGivenUnderKeys) macro(m_storesIntoRowsOfBlocks) macro(m_usersWithinBlocks) macro(m_usersOfValuesOfLoops) macro(m_mentionsBeforeLoops) macro(m_listAccessesOfLoops) macro(m_valuesTakenForKeys) macro(m_loopsThatReckonWithElements) macro(m_loopsToUnswitch) macro(m_lastReturnDominators) macro(m_holdersStoredByName) macro(m_elementReadsOfLoops) macro(m_elementAccesses) macro(m_computedComparisons) macro(m_numbersInListsOfWrittenObjects) macro(m_lastStoresByKeyOfLoops) macro(m_pushesOntoLiterals) macro(m_outermostPushPopLoops) macro(m_bodiesPushingOntoFields) macro(m_steppedCounters) macro(m_storesByKeyOfBlocks) macro(m_namesStoredInOutermostLoops) macro(m_whetherElementsOfLoopsMeetWhatGoesRound) macro(m_literalElementTypes) macro(m_literalsPushedOntoByLoops) macro(receiversMadeInBodies) macro(gettersExpectedInFunction) macro(m_placesSeenToStandInStretches) macro(m_keptByGeneratorsInLoops) \
     macro(m_listsOfMembersByTag) macro(m_membersByTagOfSets) macro(m_types) macro(m_roundsKept) macro(m_listsOfNames) macro(m_numbersOfListsOfNames) \
     macro(m_functionsInReachOfUnit) macro(m_surveysOfConstants) macro(m_constantsThatListFieldsHeldFilled) macro(m_positionsOfSlowBody) macro(m_noTextWasEvaluated) macro(m_positionsKnowingNothing) \
     macro(m_heldPositions) macro(m_valuesReadBehindLoopFoundLast) macro(m_accessesOfSlotsInLoopListedLast) macro(m_accessesOfScopesByFunctions) macro(m_isArrayIteratorProtocolIntact) macro(m_objectPrototypeMayGainName) macro(m_keptByTypedAccesses) \
@@ -694,7 +685,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
 #define FOR_EACH_FIELD_OF_WALKER_THAT_TRIES_LEARN(macro) \
     macro(m_comparesElementsOfViews) macro(m_hasInBoundsPaths) macro(m_summariesRevisitedForCheck) macro(m_summariesAtLastBuildVisit) macro(m_loopSummaries) macro(m_loopSummaryIndices) macro(m_carriedResultRequests) macro(m_trialVisits) macro(m_numberOfTryWhoseWalkIsCutShort) \
     macro(m_typedBuildEndedListsTestedInFront) macro(m_effectsOfLoopKeptLast) macro(m_guardsOfStoresAskedInLoopKeptLast) macro(m_typedBuildAsksGuardsThatItWasBoughtFor) macro(m_inheritedEscapingUses) macro(m_inheritedScopeStores) macro(m_everyTurnOfTypedBuildLeaves) macro(m_readWasKeptFromItsSiteBecauseCallStays) \
-    macro(m_turnOfTypedBuildLeavesWithoutTest) macro(m_innerLoopExitsOnLikelyPath) macro(m_typedBuildTestsNothing) macro(m_typedBuildAsksFieldBound) macro(m_fieldBoundsAreNotAskedInRow) macro(m_fieldBoundsAreNotAsked) macro(m_loopsWithoutFieldBounds) macro(m_typedBuildIsLeftAtOtherCodeOnUsualWay) macro(m_sumOfTypedBuildComesRoundUnproven) macro(m_unguardedSumLoops) macro(m_rowsWhoseKeysAreReadOffLook) macro(m_effectsSeededForNextRow) macro(m_loopsWhoseTextsStayOutOfBuilders) macro(m_walkOfLoopBeganTexts) \
+    macro(m_turnOfTypedBuildLeavesWithoutTest) macro(m_innerLoopExitsOnLikelyPath) macro(m_typedBuildTestsNothing) macro(m_typedVersionChecksFieldBound) macro(m_skipsFieldBoundsInVersion) macro(m_skipsFieldBounds) macro(m_loopsWithoutFieldBounds) macro(m_typedBuildIsLeftAtOtherCodeOnUsualWay) macro(m_sumOfTypedBuildComesRoundUnproven) macro(m_unguardedSumLoops) macro(m_rowsWhoseKeysAreReadOffLook) macro(m_effectsSeededForNextRow) macro(m_loopsWhoseTextsStayOutOfBuilders) macro(m_walkOfLoopBeganTexts) \
     macro(m_frontOfLoopLeftOpen) macro(m_leavesFrontOfLoopOpenBehindWalk) macro(m_genericVersionWouldSpeculate) macro(m_reportOfTypedBuildMadeLast) macro(m_walkOfLoopWasKept) \
     macro(m_headOfLoopKeptLast) macro(m_frameOfLoopKeptLast) macro(m_rejectedUnswitchLoops) macro(m_readerLoopSummaries) macro(m_innerLoopHasEffects) macro(m_unswitchFallbackStart) macro(m_isUnswitchedVersionQuiet) macro(m_hasUnswitchFailed) macro(m_typedBuildAskedNoListThatItWasBoughtFor)
 
@@ -1047,10 +1038,10 @@ struct Walker::SnapshotForTry {
     }
 };
 
-std::span<const Walker::MentionInLoop> Walker::mentionsFromInFrontOfLoop(LoopID loop)
+std::span<const Walker::MentionInLoop> Walker::mentionsBeforeLoop(LoopID loop)
 {
     const BodyIndex& index = currentBodyIndex();
-    Vector<std::optional<Vector<MentionInLoop>>>& ofLoops = m_mentionsFromInFrontOfLoops.ensure(&index, [&] {
+    Vector<std::optional<Vector<MentionInLoop>>>& ofLoops = m_mentionsBeforeLoops.ensure(&index, [&] {
         Vector<std::optional<Vector<MentionInLoop>>> none;
         none.grow(index.numberOfLoops());
         return none;
@@ -1115,7 +1106,7 @@ void Walker::letMentionsOfLoopLeave(BlockID inputHead, std::span<const ValueID> 
     Vector<ValueID, 4> onlyRead;
     Vector<ValueID, 4> mayOnlyBorrowScopes;
     ValueID left;
-    for (const MentionInLoop& mentioned : mentionsFromInFrontOfLoop(currentBodyIndex().loopOf(inputHead))) {
+    for (const MentionInLoop& mentioned : mentionsBeforeLoop(currentBodyIndex().loopOf(inputHead))) {
         if (kept && mentioned.isReadAlone && !std::ranges::contains(mentionsThatLeave, mentioned.value)) {
             if (onlyRead.isEmpty() || onlyRead.last() != mentioned.value)
                 onlyRead.append(mentioned.value);
@@ -1285,7 +1276,8 @@ TypeID Walker::climbLadderOfLoop(LoopSummary& summary, size_t parameter, TypeID 
         case 0: {
             TypeID threshold = widenedInLoops(m_types, assumed, united, WideningStep::ToThreshold);
             isThreshold = threshold != widenedInLoops(m_types, assumed, united);
-            wider = widenedToWrittenRangeInLoops(m_types, *m_frames[trialVisit.frameIndex].index, trialVisit.inputHead, static_cast<uint32_t>(parameter), united, threshold);
+            Frame& frame = m_frames[trialVisit.frameIndex];
+            wider = widenedToLiteralRangeInLoops(m_types, *frame.index, frame.bodyEdges, trialVisit.inputHead, static_cast<uint32_t>(parameter), united, threshold);
             break;
         }
         case 1: {
@@ -1424,7 +1416,6 @@ LoopPreview Walker::makePreviewFromSummary(BlockID inputHead, std::span<const Ty
     if (summary.isPessimistic)
         return makePessimisticPreview(*this, inputHead, entryTypes, { });
     const BodyIndex& index = currentBodyIndex();
-    LoopEdges edges(index, index.loopOf(inputHead));
     Vector<bool, 8> isUnchanged;
     if (LoopID loop = index.loopOf(inputHead); summary.types.isEmpty() && !index.loop(loop).parent && index.loop(loop).numberOfLoopsWithin == 1)
         isUnchanged = parametersHandedRoundUnchangedInLoops(index, loop);
@@ -1459,7 +1450,7 @@ LoopPreview Walker::makePreviewFromSummary(BlockID inputHead, std::span<const Ty
         }
     }
     if (!summary.knowsEffects && preview.effects.mayRunOtherCode() && !preview.effects.maySuspend) {
-        if (std::optional<Effects> effects = effectsOfLibraryLoopOverLeaves(*this, inputHead, m_frames.size() == m_frameOfFusedChain))
+        if (std::optional<Effects> effects = effectsOfLibraryLeafLoop(*this, inputHead, m_frames.size() == m_frameOfFusedChain))
             preview.effects = *effects;
     }
     if (!summary.knowsEffects && preview.effects.mayRunOtherCode() && !preview.effects.maySuspend) {
@@ -1506,7 +1497,7 @@ LoopPreview Walker::makePreviewFromSummary(BlockID inputHead, std::span<const Ty
                         summary.types[parameter] = m_types.unionOf(m_types.integer(*meeting), entering);
                         isMeetingBound = isTypedBuildOfPurchase;
                     } else if (operatorsOnBitsAloneBringRound(*this, inputHead, parameter, entryTypes))
-                        summary.types[parameter] = m_types.unionOf(m_types.integer(writtenRangeOfParameterInLoops(index, edges, inputHead, parameter).value_or(Range::int32())), entering);
+                        summary.types[parameter] = m_types.unionOf(m_types.integer(parameterLiteralRangeInLoops(index, m_frames.last().bodyEdges, inputHead, parameter).value_or(Range::int32())), entering);
                     else if (std::optional<Range> counted = record.integers.minimum == record.integers.maximum ? findCounterRange(*this, inputHead, parameter, record.integers.minimum) : std::nullopt)
                         summary.types[parameter] = m_types.unionOf(m_types.withIntegers(entering, *counted), entering);
                     else if (isMultipliedBelowLength(*this, inputHead, parameter)) {
@@ -1517,7 +1508,7 @@ LoopPreview Walker::makePreviewFromSummary(BlockID inputHead, std::span<const Ty
                         Range stepped { record.integers.minimum - falls, record.integers.maximum + !falls };
                         summary.types[parameter] = m_types.unionOf(widenedInLoops(m_types, entering, m_types.withIntegers(entering, stepped)), entering);
                     } else if (record.integers.minimum >= 0 && record.integers.maximum < Range::length().maximum && !counterOnlyFalls(*this, inputHead, parameter)) {
-                        std::optional<Range> written = writtenRangeOfParameterInLoops(index, edges, inputHead, parameter);
+                        std::optional<Range> written = parameterLiteralRangeInLoops(index, m_frames.last().bodyEdges, inputHead, parameter);
                         bool isOfInput = parameter < index.block(inputHead).numberOfParameters();
                         std::optional<Range> digit = written ? std::nullopt : carriedDigitRange(index, inputHead, parameter);
                         Range start = written ? written->unionWith(record.integers) : digit && record.integers.isSubsetOf(*digit) ? *digit : isOfInput ? Range { record.integers.minimum, Range::length().maximum } : record.integers;
@@ -1552,9 +1543,9 @@ LoopPreview Walker::makePreviewFromSummary(BlockID inputHead, std::span<const Ty
                     startAtCarriedType(summary, inputHead, parameter, entryTypes);
             }
         }
-        TypeID heldWhereItComesRound = isNew && isTypedBuildOfPurchase && hasInheritedSummary && entering && parameter < m_inheritedParameterTypes.size() && m_inheritedParameterTypes[parameter] && !m_types.at(m_inheritedParameterTypes[parameter]).isInteger() ? backEdgeCheckType(inputHead, parameter) : TypeID();
-        if (heldWhereItComesRound && m_types.at(heldWhereItComesRound).isInt32() && m_types.isSubset(entering, heldWhereItComesRound)) {
-            summary.types[parameter] = heldWhereItComesRound;
+        TypeID typeHeldAcrossBackEdge = isNew && isTypedBuildOfPurchase && hasInheritedSummary && entering && parameter < m_inheritedParameterTypes.size() && m_inheritedParameterTypes[parameter] && !m_types.at(m_inheritedParameterTypes[parameter]).isInteger() ? backEdgeCheckType(inputHead, parameter) : TypeID();
+        if (typeHeldAcrossBackEdge && m_types.at(typeHeldAcrossBackEdge).isInt32() && m_types.isSubset(entering, typeHeldAcrossBackEdge)) {
+            summary.types[parameter] = typeHeldAcrossBackEdge;
             integerIsKeptInTypedBuild = true;
         }
         integerIsKeptInTypedBuild |= isTypedBuildOfPurchase && hasInheritedEntryTypes && !m_refusesSecondCounters && entering && m_types.at(entering).isInteger() && stepsOfHeadParameter(inputHead, parameter).has_value();
@@ -1654,7 +1645,7 @@ void Walker::narrowSummaryToObservedTypes(LoopSummary& summary, const TrialVisit
     }
 }
 
-bool Walker::someElementWasFoundInsideSince(const LoopSummary& summary, const TrialVisit& trialVisit) const
+bool Walker::anyElementProvenInBoundsSince(const LoopSummary& summary, const TrialVisit& trialVisit) const
 {
     for (size_t parameter = 0; parameter < summary.types.size() && parameter < trialVisit.cameRound.size() && parameter < trialVisit.entered.size(); ++parameter) {
         TypeID assumed = summary.types[parameter];
@@ -1747,7 +1738,7 @@ bool Walker::narrowSumsToNumbers(BlockID inputHead, LoopSummary& summary, const 
         TypeID type = typeByRow(value);
         return type && m_types.at(type).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Null | Primitive::Boolean);
     };
-    auto typeBroughtRoundBesideItself = [&](uint32_t position) -> TypeID {
+    auto typeCarriedWithItself = [&](uint32_t position) -> TypeID {
         BlockID head = inputBlock(trialVisit.frameIndex, inputHead).head;
         if (!head || position >= m_code.at(head).parameters().size() || position >= trialVisit.valuesThatCameRound.size())
             return { };
@@ -1795,7 +1786,7 @@ bool Walker::narrowSumsToNumbers(BlockID inputHead, LoopSummary& summary, const 
         TypeID entered = trialVisit.entered[position];
         if (!assumed || !entered || !m_types.at(assumed).isJavaScriptValue() || !m_types.at(entered).isJavaScriptValue() || m_types.at(assumed).isNumber() || !m_types.at(entered).isNumber() || !m_types.at(assumed).hasOnlyPrimitives(Primitive::Number | Primitive::AnyString | Primitive::Undefined | Primitive::Null))
             continue;
-        if (TypeID besideItself = typeBroughtRoundBesideItself(position); besideItself && m_types.at(besideItself).isJavaScriptValue() && m_types.at(besideItself).isNumber() && !isSum(position)) {
+        if (TypeID besideItself = typeCarriedWithItself(position); besideItself && m_types.at(besideItself).isJavaScriptValue() && m_types.at(besideItself).isNumber() && !isSum(position)) {
             summary.types[position] = m_types.unionOf(entered, besideItself);
             narrows = true;
             continue;
@@ -2747,7 +2738,7 @@ Walker::LoopSummaryKey Walker::keyOfCopyOfLoop(size_t frameIndex, BlockID inputH
     return { static_cast<uint64_t>(m_frames[frameIndex].function.index()) << 32 | inputHead.index(), chainOfCalls };
 }
 
-Walker::LoopSummaryKey Walker::keyOfLoopInEveryCopy(size_t frameIndex, BlockID inputHead)
+Walker::LoopSummaryKey Walker::loopKeyAcrossCopies(size_t frameIndex, BlockID inputHead)
 {
     SetForScope ordinalOfCopy(m_ordinalOfCopyOfLoop, decltype(m_ordinalOfCopyOfLoop) { });
     return keyOfCopyOfLoop(frameIndex, inputHead);
@@ -2811,7 +2802,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
     bool hasAskedForTwoBuilds = false;
     SetForScope sumsAreNotAsked(m_sumsAreNotAskedInRow, m_unguardedSumLoops.contains(key));
     SetForScope keysAreReadOffLook(m_keysAreReadOffLookInRow, m_rowsWhoseKeysAreReadOffLook.contains(key));
-    SetForScope fieldBoundsAreNotAsked(m_fieldBoundsAreNotAskedInRow, m_loopsWithoutFieldBounds.contains(key));
+    SetForScope skipsFieldBounds(m_skipsFieldBoundsInVersion, m_loopsWithoutFieldBounds.contains(key));
     SetForScope keyWasTakenForCounter(m_keyWasTakenForCounterAskedInFront, false);
 
     size_t numberOfRowsBefore = m_hoistedRows.size();
@@ -2864,7 +2855,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         if (!m_numberOfClosedArms)
             m_bindings.shrink(0);
     });
-    auto putRowOfPurchaseAroundBack = makeScopeExit([this, isQuiet = m_rowSaysTurnsAreQuietOutsideArms, effects = m_effectsOutsideArmsOfRow, tests = m_testsSeenOfRow, firstRanInCopy = m_firstOtherCodeRanInCopyOfRow, callStays = m_summaryHasUninlinedCall, asksLengths = m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces, takesApart = m_turnsOfRowTakeApartListsFromInFront, looksAtStatics = m_turnsOfRowLookAtStaticFields, handlersRunOtherCode = m_handlersRunOtherCode, ran = m_operationsThatRanOtherCodeOfRow, guards = m_guardsOfStoresAskedOfRow]() mutable {
+    auto putRowOfPurchaseAroundBack = makeScopeExit([this, isQuiet = m_rowSaysTurnsAreQuietOutsideArms, effects = m_effectsOutsideArmsOfRow, tests = m_testsSeenOfRow, firstRanInCopy = m_firstOtherCodeRanInCopyOfRow, callStays = m_summaryHasUninlinedCall, asksLengths = m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces, takesApart = m_turnsOfRowTakeApartListsFromInFront, looksAtStatics = m_versionIterationsCheckStaticFields, handlersRunOtherCode = m_handlersRunOtherCode, ran = m_operationsThatRanOtherCodeOfRow, guards = m_guardsOfStoresAskedOfRow]() mutable {
         m_rowSaysTurnsAreQuietOutsideArms = isQuiet;
         m_effectsOutsideArmsOfRow = effects;
         m_testsSeenOfRow = WTF::move(tests);
@@ -2872,7 +2863,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         m_summaryHasUninlinedCall = callStays;
         m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = asksLengths;
         m_turnsOfRowTakeApartListsFromInFront = takesApart;
-        m_turnsOfRowLookAtStaticFields = looksAtStatics;
+        m_versionIterationsCheckStaticFields = looksAtStatics;
         m_handlersRunOtherCode = handlersRunOtherCode;
         m_operationsThatRanOtherCodeOfRow = WTF::move(ran);
         m_guardsOfStoresAskedOfRow = WTF::move(guards);
@@ -2972,7 +2963,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             m_typedBuildEndedListsTestedInFront = false;
             m_typedBuildAskedNoListThatItWasBoughtFor = false;
             m_typedBuildAsksGuardsThatItWasBoughtFor = false;
-            auto prepareFrontOfBuildsAgain = [&] {
+            auto prepareRebuildPreheaders = [&] {
                 standInFrontAgain();
                 prepareFrontOfBuilds();
                 m_inheritedScopeStores.mergedObjects = m_loopSummaries[place].storesIntoScopes.mergedObjects;
@@ -2981,7 +2972,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             if (isBuilt && std::exchange(m_typedBuildEndedListsTestedInFront, false)) {
                 m_turnOfTypedBuildLeavesWithoutTest = false;
                 m_everyTurnOfTypedBuildLeaves = false;
-                prepareFrontOfBuildsAgain();
+                prepareRebuildPreheaders();
                 m_loopSummaries[place].listsAreStruck = true;
                 m_listsAreStruckInRow = true;
                 isBuilt = buildSeveralTimes(learned);
@@ -3000,7 +2991,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             };
             isBuilt = isKept(isBuilt);
             if (!isBuilt && m_hasInt32Version && !m_hasUnswitchFailed && !m_hasFailed && !m_numberOfTryWhoseWalkIsCutShort) {
-                prepareFrontOfBuildsAgain();
+                prepareRebuildPreheaders();
                 m_isInt32VersionRejected = true;
                 m_loopSummaries[place].isInt32VersionRejected = true;
                 m_typedBuildIsLeftAtOtherCodeOnUsualWay = false;
@@ -3009,7 +3000,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
                 isBuilt = isKept(!std::exchange(m_typedBuildEndedListsTestedInFront, false) && isBuilt);
             }
             if (!isBuilt && m_readWasKeptFromItsSiteBecauseCallStays && !m_hasUnswitchFailed && !m_hasFailed && !m_numberOfTryWhoseWalkIsCutShort) {
-                prepareFrontOfBuildsAgain();
+                prepareRebuildPreheaders();
                 m_readsAskSitesThoughCallStaysOfRow = true;
                 m_typedBuildIsLeftAtOtherCodeOnUsualWay = false;
                 m_turnOfTypedBuildLeavesWithoutTest = false;
@@ -3022,7 +3013,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
                 for (bool otherCodeStays : { true, false }) {
                     if (m_hasFailed || m_numberOfTryWhoseWalkIsCutShort)
                         break;
-                    prepareFrontOfBuildsAgain();
+                    prepareRebuildPreheaders();
                     m_loopSummaries[place].otherCodeStaysInTypedBuild = otherCodeStays;
                     m_otherCodeStaysInTypedBuildOfRow = otherCodeStays;
                     m_loopSummaries[place].otherCodeIsKeptOutOfFirstCopyInVain = m_otherCodeIsKeptOutOfFirstCopyInVainOfRow;
@@ -3059,13 +3050,13 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         bool otherCodeIsKeptOutInVain = m_loopSummaries[place].otherCodeIsKeptOutOfFirstCopyInVain;
         bool comesRoundUnprovenAround = m_sumOfTypedBuildComesRoundUnproven;
         m_keyWasTakenForCounterAskedInFront = false;
-        bool asksFieldBoundAround = std::exchange(m_typedBuildAsksFieldBound, false);
-        SetForScope fieldBoundsAreNotAsked(m_fieldBoundsAreNotAsked, m_fieldBoundsAreNotAskedInRow);
+        bool enclosingChecksFieldBound = std::exchange(m_typedVersionChecksFieldBound, false);
+        SetForScope skipsFieldBounds(m_skipsFieldBounds, m_skipsFieldBoundsInVersion);
         bool isBuilt = makeBuildsAsRowSays(learned, entered, numberOfEdgesThatCameRound, standInFrontAgain);
         bool sumWasAskedInVain = std::exchange(m_sumOfTypedBuildComesRoundUnproven, comesRoundUnprovenAround) && isBuilt && !m_sumsAreNotAskedInRow;
         bool keyWasTakenInVain = m_keyWasTakenForCounterAskedInFront && !isBuilt && !m_keysAreReadOffLookInRow;
-        bool fieldBoundWasAskedInVain = std::exchange(m_typedBuildAsksFieldBound, asksFieldBoundAround) && !m_fieldBoundsAreNotAskedInRow && (!isBuilt || m_effectsOfLoopKeptLast.mayRunOtherCode());
-        if ((!sumWasAskedInVain && !keyWasTakenInVain && !fieldBoundWasAskedInVain) || m_hasFailed || m_numberOfTryWhoseWalkIsCutShort)
+        bool fieldBoundCheckWasUseless = std::exchange(m_typedVersionChecksFieldBound, enclosingChecksFieldBound) && !m_skipsFieldBoundsInVersion && (!isBuilt || m_effectsOfLoopKeptLast.mayRunOtherCode());
+        if ((!sumWasAskedInVain && !keyWasTakenInVain && !fieldBoundCheckWasUseless) || m_hasFailed || m_numberOfTryWhoseWalkIsCutShort)
             return isBuilt;
         m_loopSummaries.shrink(numberOfRowsInFront);
         m_loopSummaryIndices.removeIf([&](const auto& row) {
@@ -3075,13 +3066,13 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         m_loopSummaries[place].isInt32VersionRejected = isInt32VersionRejected;
         m_loopSummaries[place].otherCodeStaysInTypedBuild = otherCodeStays;
         m_loopSummaries[place].readsAskSitesThoughCallStays = readsAskSites;
-        if (keyWasTakenInVain || fieldBoundWasAskedInVain) {
+        if (keyWasTakenInVain || fieldBoundCheckWasUseless) {
             m_loopSummaries[place].otherCodeStayedInVain = otherCodeStayedInVain;
             m_loopSummaries[place].otherCodeIsKeptOutOfFirstCopyInVain = otherCodeIsKeptOutInVain;
         }
-        if (fieldBoundWasAskedInVain) {
+        if (fieldBoundCheckWasUseless) {
             m_loopsWithoutFieldBounds.add(key, 0);
-            m_fieldBoundsAreNotAskedInRow = true;
+            m_skipsFieldBoundsInVersion = true;
         }
         if (keyWasTakenInVain) {
             m_rowsWhoseKeysAreReadOffLook.add(key, 0);
@@ -3348,7 +3339,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         Vector<UnswitchCandidate, 2> candidates = unswitchPreheader && purpose != UnswitchedFor::OtherClass ? m_unswitchCollectors.last().candidates : Vector<UnswitchCandidate, 2>();
         if (purpose == UnswitchedFor::OtherClass) {
             UnswitchCandidate candidate;
-            candidate.asksForOtherClass = true;
+            candidate.testsForOtherClass = true;
             candidates.append(candidate);
         }
         candidates.removeAllMatching([&](const UnswitchCandidate& candidate) { return !candidate.isHoistable || (takesInt32sAlone && !candidate.asksForInt32s) || (request && candidate.reads.overlaps(request->effectsOfQuietDrafts.writes)); });
@@ -3422,7 +3413,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         m_summaryHasUninlinedCall = false;
         m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = request->asksLengthsOfViewsFromInFrontForWrittenPlaces;
         m_turnsOfRowTakeApartListsFromInFront = request->takesApartListsFromInFront;
-        m_turnsOfRowLookAtStaticFields = request->looksAtStaticField;
+        m_versionIterationsCheckStaticFields = request->looksAtStaticField;
         m_handlersRunOtherCode = request->handlersRunOtherCode;
         m_operationsThatRanOtherCodeOfRow = operationsOutsideCandidates;
         m_guardsOfStoresAskedOfRow = request->guardsOfStoresAsked;
@@ -3521,7 +3512,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         m_loopSummaries[place].isReentryRejected = true;
     }
     if (mayRestartOuterIteration(inputHead)) {
-        LoopSummaryKey keyInEveryCopy = keyOfLoopInEveryCopy(frameIndex, inputHead);
+        LoopSummaryKey keyInEveryCopy = loopKeyAcrossCopies(frameIndex, inputHead);
         std::shared_ptr<const LoopSummary> learnedOutside = m_readerLoopSummaries.get(keyInEveryCopy);
         std::shared_ptr<const BuildsBought> bought = learnedOutside ? learnedOutside->bought : nullptr;
         if (bought && bought->entered.size() == enteringKept.size()) {
@@ -3537,7 +3528,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             m_summaryHasUninlinedCall = bought->hasUninlinedCall;
             m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = bought->asksLengthsOfViewsFromInFrontForWrittenPlaces;
             m_turnsOfRowTakeApartListsFromInFront = bought->takesApartListsFromInFront;
-            m_turnsOfRowLookAtStaticFields = bought->looksAtStaticField;
+            m_versionIterationsCheckStaticFields = bought->looksAtStaticField;
             m_handlersRunOtherCode = bought->handlersRunOtherCode;
             m_operationsThatRanOtherCodeOfRow = bought->operationsThatRanOtherCode;
             m_guardsOfStoresAskedOfRow = bought->guardsOfStoresAsked;
@@ -3558,7 +3549,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             if (m_numberOfTryWhoseWalkIsCutShort)
                 return true;
             if (isBuilt && !m_hasFailed) {
-                count(m_otherClassBelowMixin.others ? StatisticID::LoopsVersionedInsideVersionsForOtherClass : StatisticID::LoopsVersionedInsideOuterVersions);
+                count(m_otherClassBelowMixin.others ? StatisticID::NestedLoopsVersionedForOtherClass : StatisticID::LoopsVersionedInsideOuterVersions);
                 return true;
             }
             m_readerLoopSummaries.remove(keyInEveryCopy);
@@ -3580,7 +3571,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             m_summaryHasUninlinedCall = bought->hasUninlinedCall;
             m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = bought->asksLengthsOfViewsFromInFrontForWrittenPlaces;
             m_turnsOfRowTakeApartListsFromInFront = bought->takesApartListsFromInFront;
-            m_turnsOfRowLookAtStaticFields = bought->looksAtStaticField;
+            m_versionIterationsCheckStaticFields = bought->looksAtStaticField;
             m_handlersRunOtherCode = bought->handlersRunOtherCode;
             m_operationsThatRanOtherCodeOfRow = bought->operationsThatRanOtherCode;
             m_guardsOfStoresAskedOfRow = bought->guardsOfStoresAsked;
@@ -3626,8 +3617,8 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         bool knewEffects = m_loopSummaries[place].knowsEffects;
         bool everyFreshObjectLeaves = m_loopSummaries[place].mentionsThatLeave.contains(everyFreshObject);
         bool wasUnswitchRejected = m_loopSummaries[place].isUnswitchRejected;
-        Effects effectsInFront = m_loopSummaries[place].effects;
-        size_t numberOfSummariesInFront = m_loopSummaries.size();
+        Effects effectsBeforeLoop = m_loopSummaries[place].effects;
+        size_t numberOfPrecedingSummaries = m_loopSummaries.size();
         bool assumedTop = !m_loopSummaries[place].knowsEffects && !m_loopSummaries[place].isPessimistic;
         m_trialVisits.open(frameIndex, inputHead, place);
         m_frames[frameIndex].loopsInTrialVisits.set(loop.index());
@@ -3653,13 +3644,13 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         if (startsInVain) {
             startsInVain |= m_loopSummaries[place].carriedStartsStruck;
             undoPlainWalk();
-            m_loopSummaries.shrink(numberOfSummariesInFront);
+            m_loopSummaries.shrink(numberOfPrecedingSummaries);
             m_loopSummaryIndices.removeIf([&](const auto& row) {
-                return row.value >= numberOfSummariesInFront;
+                return row.value >= numberOfPrecedingSummaries;
             });
             m_loopSummaries[place] = { };
             m_loopSummaries[place].carriedStartsStruck = startsInVain;
-            m_loopSummaries[place].effects = effectsInFront;
+            m_loopSummaries[place].effects = effectsBeforeLoop;
             m_loopSummaries[place].knowsEffects = knewEffects;
             m_loopSummaries[place].isUnswitchRejected = wasUnswitchRejected;
             if (everyFreshObjectLeaves)
@@ -3775,7 +3766,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         bool scopesWantAnotherWalk = learnWhatTurnsStoreIntoScopes(summary, trialVisit, !hasFailedInside && !isCutShort);
         scopesWantAnotherWalk |= trialVisit.requestsCarriedResult;
         if (!hasFailedInside && !isCutShort)
-            scopesWantAnotherWalk |= recordLoopSlots(summary, trialVisit) | learnSlotsOfObjectsThatComeRound(summary, trialVisit) | recordPlacesStoredByCopies(summary, trialVisit);
+            scopesWantAnotherWalk |= recordLoopSlots(summary, trialVisit) | learnSlotsOfObjectsThatComeRound(summary, trialVisit) | recordSlotsStoredByCopies(summary, trialVisit);
         bool fits = effectsFit && !trialVisit.misfits && !trialVisit.freshObjectHasLeft && !hasFailedInside;
         if (!effectsFit && !trialVisit.misfits && !trialVisit.freshObjectHasLeft && !hasFailedInside && !summary.isPessimistic && !isCutShort)
             narrowSummaryToObservedTypes(summary, trialVisit);
@@ -3938,10 +3929,10 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             else
                 fits = false;
         }
-        bool elementsWereFoundInside = fits && !m_trialVisits.isEmpty() && summary.hasAskedAboutNarrowerForm && !summary.hasAskedAboutElementsInside && !summary.isPessimistic && someElementWasFoundInsideSince(summary, trialVisit);
+        bool elementsWereFoundInside = fits && !m_trialVisits.isEmpty() && summary.hasAskedAboutNarrowerForm && !summary.hasTestedElementsInside && !summary.isPessimistic && anyElementProvenInBoundsSince(summary, trialVisit);
         if (fits && (!summary.hasAskedAboutNarrowerForm || elementsWereFoundInside) && !summary.isPessimistic) {
             summary.hasAskedAboutNarrowerForm = true;
-            summary.hasAskedAboutElementsInside |= elementsWereFoundInside;
+            summary.hasTestedElementsInside |= elementsWereFoundInside;
             bool narrows = false;
             std::optional<bool> turnsCheckTheirArithmetic;
             std::optional<Vector<TypeID, 16>> typesThatReach;
@@ -4024,15 +4015,15 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         if (fits && !trialVisit.numberOfEdgesThatCameRound && !m_versionedLoops.isEmpty() && m_versionedLoops.last().inputHead == inputHead && m_versionedLoops.last().frameIndex == frameIndex)
             m_everyTurnOfTypedBuildLeaves = true;
         bool isNeverBuiltSeveralTimes = generatorIsWalkedInLoop || !m_opensGuesses || !has(Mechanism::Guesses) || index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(inputHead);
-        bool onlyArmsRanOtherCode = !trialVisit.doneOutsideArms.mayRunOtherCode() && trialVisit.done.mayRunOtherCode();
-        auto typeOfRowOrInFront = [&](ValueID value) {
+        bool onlyArmsHadEffects = !trialVisit.doneOutsideArms.mayRunOtherCode() && trialVisit.done.mayRunOtherCode();
+        auto typeInSummaryOrBefore = [&](ValueID value) {
             if (value.index() >= summary.firstValue)
                 return value.index() - summary.firstValue < summary.typesOfValues.size() ? summary.typesOfValues[value.index() - summary.firstValue] : TypeID();
             Reference built = referenceOf(value);
             return built ? typeOf(built) : TypeID();
         };
         bool hasSlotFilledOnce = summary.storesIntoScopes.slots.containsIf(isFilledOnceInLoop);
-        bool isQuietOutsideArms = (hasSlotFilledOnce && !trialVisit.doneOutsideArms.mayRunOtherCode()) || (onlyArmsRanOtherCode && (!trialVisit.testsSeen.isEmpty() || trialVisit.looksAtStaticField || loopAccessesViewsUnderViewElements(*this, inputHead, scopedLambda<TypeID(ValueID)>(typeOfRowOrInFront)) || findObjectCopiedInLoop(*this, inputHead, scopedLambda<TypeID(ValueID)>(typeOfRowOrInFront))));
+        bool isQuietOutsideArms = (hasSlotFilledOnce && !trialVisit.doneOutsideArms.mayRunOtherCode()) || (onlyArmsHadEffects && (!trialVisit.testsSeen.isEmpty() || trialVisit.looksAtStaticField || loopIndexesViewsByViewElements(*this, inputHead, scopedLambda<TypeID(ValueID)>(typeInSummaryOrBefore)) || findObjectCopiedInLoop(*this, inputHead, scopedLambda<TypeID(ValueID)>(typeInSummaryOrBefore))));
         bool isSharedGenericVersionPending = !m_sharedGenericVersions.isEmpty() && m_sharedGenericVersions.last().frameIndex == frameIndex && m_sharedGenericVersions.last().inputHead == inputHead && m_sharedGenericVersions.last().isAboutToBeTaken;
         if (fits && !hasAskedForTwoBuilds && !summary.severalBuildsAreStruck && !summary.isPessimistic && has(Mechanism::LoopInvariants) && (isSharedGenericVersionPending || !m_frames[frameIndex].loopsBeingVersioned.contains(loop)) && !isTooLargeToVersion(index, loop)
             && !isNeverBuiltSeveralTimes && !(trialVisit.callOnUsualWayComesRound && stepsMutableIterable) && !walkAroundIsUndone()) {
@@ -4047,7 +4038,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             learned.firstValue = summary.firstValue;
             learned.hasLetMentionsLeave = true;
             if (!m_mergedHeaderObjects.isEmpty())
-                learnSlotsOfMergedObjects(summary, inputHead, m_frames[frameIndex].blocks[inputHead.index()].head);
+                collectMergedObjectSlots(summary, inputHead, m_frames[frameIndex].blocks[inputHead.index()].head);
             learned.slots = summary.storesIntoScopes.slots;
             bool mayByText;
             {
@@ -4058,7 +4049,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
                 m_summaryHasUninlinedCall = trialVisit.hasUninlinedCall;
                 m_turnsOfRowAskLengthsOfViewsFromInFrontForWrittenPlaces = trialVisit.asksLengthsOfViewsFromInFrontForWrittenPlaces;
                 m_turnsOfRowTakeApartListsFromInFront = trialVisit.takesApartListsFromInFront;
-                m_turnsOfRowLookAtStaticFields = trialVisit.looksAtStaticField;
+                m_versionIterationsCheckStaticFields = trialVisit.looksAtStaticField;
                 m_handlersRunOtherCode = trialVisit.handlersRunOtherCode;
                 m_operationsThatRanOtherCodeOfRow = trialVisit.operationsThatRanOtherCode;
                 m_guardsOfStoresAskedOfRow = trialVisit.guardsOfStoresAsked;
@@ -4194,7 +4185,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
                 bool isBuilt;
                 bool sumsWereAsked = !m_sumsAreNotAskedInRow;
                 bool keysWereTakenForCounters = !m_keysAreReadOffLookInRow;
-                bool fieldBoundsWereAsked = !m_fieldBoundsAreNotAskedInRow;
+                bool fieldBoundsWereChecked = !m_skipsFieldBoundsInVersion;
                 bool textsStayedOutOfBuilders = textsOfLoopStayOutOfBuilders(inputHead);
                 if (keepsPlainWalk)
                     isBuilt = makeTypedBuildBesidePlainWalk(learned, trialVisit);
@@ -4247,14 +4238,14 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
                     bought->keepsPlainWalk = keepsPlainWalk;
                     m_loopSummaries[place].bought = WTF::move(bought);
                     if (m_versionedLoops.isEmpty() && callsReaders(*this, inputHead))
-                        m_readerLoopSummaries.set(keyOfLoopInEveryCopy(frameIndex, inputHead), std::make_shared<const LoopSummary>(m_loopSummaries[place]));
+                        m_readerLoopSummaries.set(loopKeyAcrossCopies(frameIndex, inputHead), std::make_shared<const LoopSummary>(m_loopSummaries[place]));
                     if (keepsPlainWalk && trialVisit.assumedSummary)
                         recordSummaryAtLastVisit(place, isWalkedInBuild, trialVisit.assumedSummary);
                     if (mayBuildUnswitchedVersion())
                         buildUnswitchedVersions(&trialVisit);
                     return true;
                 }
-                if ((sumsWereAsked && m_sumsAreNotAskedInRow) || (keysWereTakenForCounters && m_keysAreReadOffLookInRow) || (fieldBoundsWereAsked && m_fieldBoundsAreNotAskedInRow)) {
+                if ((sumsWereAsked && m_sumsAreNotAskedInRow) || (keysWereTakenForCounters && m_keysAreReadOffLookInRow) || (fieldBoundsWereChecked && m_skipsFieldBoundsInVersion)) {
                     hasAskedForTwoBuilds = false;
                     undoPlainWalk();
                     continue;

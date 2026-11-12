@@ -77,7 +77,7 @@ Reference codePointOfCharacterInSight(Walker&, Reference character);
 Reference buildOnlyCharacter(Walker&, Reference string, Origin);
 void noteCodePointBesideCharacter(Walker&, Reference character, Reference codePoint);
 Reference buildLengthOfCharacterInSight(Walker&, Reference character, Origin);
-Reference buildLengthOfJoinReadForItAlone(Walker&, ValueID text, Origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails);
+Reference buildLengthOnlyJoin(Walker&, ValueID text, Origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails);
 Reference buildLengthOfIntegerString(Walker&, Reference string, Origin);
 Reference codeUnitOfCharCodeInSight(Walker&, Reference number);
 Reference stringBehindFlatString(const Walker&, Reference);
@@ -96,7 +96,7 @@ bool buildTruthinessOfLengthOfString(Walker&, const BodyValue&, const InputsOfTy
 bool buildNumberOfPiece(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 void noteOrderedPieceBounds(Walker&, Reference start, Reference end);
 bool buildLengthOfPieceInSight(Walker&, const BodyValue&, const InputsOfTypedOperation&);
-bool buildTruthinessOfPieceInSight(Walker&, const BodyValue&, const InputsOfTypedOperation&);
+bool buildKnownPieceTruthiness(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildCharacterReadByMethod(Walker&, const CallByOneRow&);
 bool buildPieceByMethod(Walker&, const CallByOneRow&);
 bool buildNumberOfPieceByCall(Walker&, const CallByOneRow&);
@@ -161,7 +161,7 @@ Reference clampedPositionForStrings(Walker&, Reference position, Reference limit
 bool nameProvesPositionBelowLengthForStrings(const Walker&, Reference position, Reference string);
 bool readsCharacterBeforeTestedNumber(Walker&, const BodyValue& read);
 bool readsCharacterUnderLoweredCounter(Walker&, const BodyValue& read);
-bool readsCharacterUnderCounterFromAbove(Walker&, const BodyValue& read);
+bool readsCharacterAtOuterCounter(Walker&, const BodyValue& read);
 
 
 Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin, bool readsCodeUnitsAlone = false);

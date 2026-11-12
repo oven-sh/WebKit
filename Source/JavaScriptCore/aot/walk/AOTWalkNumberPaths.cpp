@@ -40,7 +40,7 @@ static constexpr size_t mostNumbersTestedOnNumberPath = defaultLimitValue(LimitI
 static constexpr unsigned mostCastsFollowedInNumberPaths = 16;
 static constexpr uint32_t mostOperationsLookedAtBehindOperatorOfNumberPath = 8;
 static constexpr uint32_t maxUsersOfBoxedSum = 3;
-static constexpr uint32_t maxOperationsToUsersOfBoxedSum = 16;
+static constexpr uint32_t maxOperationsToBoxedSumUsers = 16;
 
 namespace {
 
@@ -177,7 +177,7 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, Valu
         } else if (opcode == Opcode::Integer)
             result.kind = KindOnNumberPath::Integer;
         else if (primitiveConstants.contains(opcode)) {
-        } else if (readBefore && opcode == Opcode::PropGet && operation.objectOperand().index() < first && readAsksSiteForNumber(walker, operation, TypesOfInputs(typeOnPath)))
+        } else if (readBefore && opcode == Opcode::PropGet && operation.objectOperand().index() < first && readsNumberFromSite(walker, operation, TypesOfInputs(typeOnPath)))
             result = { KindOnNumberPath::Read, operation.id(), false, 0 };
         else {
             if (!operatorsOfNumberPaths.contains(opcode) || numberOfOperators == mostOperatorsOfNumberPath)
@@ -311,7 +311,7 @@ static bool buildTruncatedSums(Walker& walker, const BodyValue& firstOperator)
     return false;
 }
 
-static bool isTakenBesideDouble(Walker& walker, ValueID value)
+static bool isUsedWithDouble(Walker& walker, ValueID value)
 {
     static constexpr OpcodeSet steps { Opcode::Add, Opcode::Sub, Opcode::Mul };
     static constexpr unsigned maxSteps = 16;
@@ -371,7 +371,7 @@ static bool isInvariantPathOfDoubles(Walker& walker, const BodyBlock& block, con
         if (!isInvariant)
             return false;
     }
-    return isTakenBesideDouble(walker, ValueID(end - 1));
+    return isUsedWithDouble(walker, ValueID(end - 1));
 }
 
 static bool hoistTestsOfIndex(Walker& walker, const NumberPathInBody& path, ValueID last, Origin origin)
@@ -440,7 +440,7 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
     return walkStretchBehindTestsOfNumbers(walker, path->tests.span(), block, path->begin, path->end, BlockFrequency::Unlikely);
 }
 
-bool walkNumberPathBehindRead(Walker& walker, NumberReadBeforeArms&& firstRead)
+bool walkNumberPathAfterRead(Walker& walker, NumberReadBeforeArms&& firstRead)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID read = firstRead.read;
@@ -464,7 +464,7 @@ bool walkNumberPathBehindRead(Walker& walker, NumberReadBeforeArms&& firstRead)
         if (!reads.last().found || !reads.last().found.isValue() || walker.hasFailed() || walker.isUnreachable())
             return true;
     }
-    walker.count(StatisticID::NumberPathsBehindReads);
+    walker.count(StatisticID::NumberPathsAfterReads);
     walkStretchBehindTestsOfNumbers(walker, path->tests.span(), block.id(), path->begin, path->end, BlockFrequency::Unlikely, EndOfNumberArms::Meet, reads.span());
     walker.bind(read, Reference());
     return true;
@@ -687,7 +687,7 @@ static bool isStoredBoxedAndCompared(Walker& walker, const BodyValue& written, R
     if (usersLeft < 2 || usersLeft > maxUsersOfBoxedSum || !walker.runsInIterations())
         return false;
     BodyBlock block = index.block(index.blockOf(written.id()));
-    const uint32_t end = std::min(block.firstValue().index() + walker.endOfStretchBeingWalked(), written.id().index() + 1 + maxOperationsToUsersOfBoxedSum);
+    const uint32_t end = std::min(block.firstValue().index() + walker.endOfStretchBeingWalked(), written.id().index() + 1 + maxOperationsToBoxedSumUsers);
     uint32_t users = 0;
     bool isStored = false;
     for (uint32_t place = written.id().index() + 1; place < end && users < usersLeft; ++place) {

@@ -30,12 +30,12 @@ template<Opcode known> ALWAYS_INLINE bool buildCopyOrKeyOrderForm(Walker& walker
 }
 inline constexpr OpcodeSet opcodesThatOpenGuessOfKeyOrdersTakes { Opcode::PropGet, Opcode::PropSet };
 AOT_LINK_OF_WALK(openGuessOfKeyOrders, opcodesThatOpenGuessOfKeyOrdersTakes)
-bool readStaticFieldThatIsThere(Walker&, const BodyValue& read);
+bool readPresentStaticField(Walker&, const BodyValue& read);
 template<Opcode known> ALWAYS_INLINE bool readStaticField(Walker& walker, const BodyValueOf<known>& value)
 {
     if constexpr (known == Opcode::PropGet) {
         PropertyKeyID key = value.template as<known>().key();
-        return key && !liesInThread(key) && walker.facts().linked().keysOfStaticFieldsInSight.get(key.index()) && readStaticFieldThatIsThere(walker, value);
+        return key && !liesInThread(key) && walker.facts().linked().knownStaticFieldKeys.get(key.index()) && readPresentStaticField(walker, value);
     } else
         return false;
 }
@@ -84,7 +84,7 @@ struct WaysOutOfOwnKeyTests {
 bool continueIfOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, const WaysOutOfOwnKeyTests&);
 Reference valueOfOwnKey(Walker&, Reference object, LayoutID, FieldIndex, Origin);
 bool isAccessorAmongOwnKeys(const Walker&, LayoutID, FieldIndex);
-bool staysOwnKeyBehindCalls(const Walker&, LayoutID, FieldIndex);
+bool staysOwnKeyAfterCalls(const Walker&, LayoutID, FieldIndex);
 Reference valueOfCopiedKey(Walker&, const BodyValue& copy, Reference object, LayoutID, FieldIndex, Origin);
 bool orderWordTellsOwnKeysOf(const Walker&, LayoutID);
 
@@ -95,15 +95,15 @@ inline bool mayNameProxy(const BodyIndex& index, ValueID receiver)
     ValueID behind = receiver ? index.stripCasts(receiver) : ValueID();
     return behind && (index.isParameter(behind) || namesOfProxies.contains(index.opcodeOf(behind)));
 }
-bool isProxyMadeInSight(const Walker&, Reference);
+bool isKnownProxy(const Walker&, Reference);
 inline bool hasIntegerConstantKey(const BodyIndex& index, const BodyValue& access)
 {
     ValueID key = index.stripCasts(access.propertyOperand());
     return key && !index.isParameter(key) && index.opcodeOf(key) == Opcode::Integer;
 }
-bool accessThroughProxyMadeInSight(Walker&, const BodyValue& access);
+bool accessThroughKnownProxy(Walker&, const BodyValue& access);
 bool recordFindsNothingAbove(const Walker&, LayoutID, PropertyKeyID);
-TypeID typeOfTargetReadThroughProxyMadeInSight(Walker&, Reference proxy);
+TypeID typeOfReadThroughKnownProxy(Walker&, Reference proxy);
 bool accessStaticFieldInVariable(Walker&, const BodyValue& access);
 bool buildCopyThatMakesObject(Walker&, const BodyValue& copy);
 bool fillLiteralInSight(Walker&, const BodyValue& firstCopy);

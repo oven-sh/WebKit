@@ -222,7 +222,7 @@ private:
     void lookInLayout(LayoutID, bool hasOwnFields, PropertyKeyID, MethodKind wanted, bool callsWhatIsFound, CodeFound&) const;
     void findCodeBehindLookup(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, bool callsWhatIsFound, CodeFound&);
     Effects effectsOfLookupItself(SummaryAccess::Kind, PropertyKeyID) const;
-    bool lookupOfThenCannotThrow(const LinkType& subject, PropertyKeyID) const;
+    bool thenLookupCannotThrow(const LinkType& subject, PropertyKeyID) const;
 
     std::span<const BuiltinID> builtinsEnteredBy(FunctionID, const ThinSummary& summary LIFETIME_BOUND, uint32_t call) const LIFETIME_BOUND;
     template<typename Functor> bool forEachRowOf(BuiltinID, const SummaryCall&, const Functor&) const;
@@ -847,7 +847,7 @@ void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subjec
         found.mayBeUnseen = true;
 }
 
-bool CalleeSummarizerForLinkEffects::lookupOfThenCannotThrow(const LinkType& subject, PropertyKeyID key) const
+bool CalleeSummarizerForLinkEffects::thenLookupCannotThrow(const LinkType& subject, PropertyKeyID key) const
 {
     bool asksForThen = key && std::ranges::any_of(m_program.builtins().keysReadBy(Protocol::Thenable), [&](BuiltinName name) { return m_program.keyOf(name) == key; });
     if (!asksForThen || subject.primitives || subject.hasUnknownObjects || subject.holdsLostBuiltins || subject.builtin || subject.classes != LinkType::Classes::None || subject.functions != LinkType::Functions::None)
@@ -1174,7 +1174,7 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
     case SummaryCall::Callee::Name:
         if (!typeAt(id, call.receiver).isNever()) {
             effects = effectsOfLookupItself(SummaryAccess::Kind::Read, call.key);
-            if (call.isMadeByProtocol && lookupOfThenCannotThrow(typeAt(id, call.receiver), call.key))
+            if (call.isMadeByProtocol && thenLookupCannotThrow(typeAt(id, call.receiver), call.key))
                 effects.mayThrow = ThrowEffect(false);
             if (call.key && readMayMakeClosureOfField(typeAt(id, call.receiver), call.key))
                 effects.writes.add(m_program, MemoryLocation::objectField(call.key));

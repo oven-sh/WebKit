@@ -967,7 +967,7 @@ static bool variableHoldsListInChoices(Walker& walker, DataID data)
     return function.isModuleBody() || (body && walker.facts().summaries().at(body).holdsWrittenList(data));
 }
 
-static bool isOnlyLookedUpInChoices(Walker& walker, const Draft& data)
+static bool isLookupOnlyInChoices(Walker& walker, const Draft& data)
 {
     const auto* object = walker.program().at(data.data()).root.tryAs<DataNode::Object>();
     if (!object || !data.inputValueGiven || (walker.program().at(walker.currentFunction()).isModuleBody() && !walker.isInLoop()))
@@ -1013,7 +1013,7 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     data.setEncoding(DataEncoding::ReadOnlyTree);
     if (isAggregateOfDataInChoices(root)) {
         Walker::SurveyOfConstant survey = surveyDataInChoices(walker, data.data());
-        if (survey.tableOfImageHoldsIt && isOnlyLookedUpInChoices(walker, data)) {
+        if (survey.tableOfImageHoldsIt && isLookupOnlyInChoices(walker, data)) {
             data.setEncoding(DataEncoding::SharedObject);
             walker.count(StatisticID::LiteralsSharedByLookups);
             return;

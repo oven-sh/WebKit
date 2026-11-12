@@ -79,7 +79,7 @@ bool Walker::isPassedToCopiesAlone(ValueID cell) const
     return true;
 }
 
-void Walker::keepCopiesThatTakeOver(ValueID cell)
+void Walker::keepCopiesTakingOver(ValueID cell)
 {
     for (size_t place = m_frames.size() - 1; place && cell.index() < m_frames[place].numberOfValuesBuiltBefore; --place)
         m_frames[place].mayLeaveForCall = false;
@@ -129,7 +129,7 @@ void Walker::findMergedHeaderObjects(BlockID inputHead, std::span<const Referenc
             continue;
         if (isNamedAtHead(m_state, cell, inputHead, scopedLambda<Reference(ValueID)>([&](ValueID value) { return referenceOf(value); })))
             continue;
-        keepCopiesThatTakeOver(cell);
+        keepCopiesTakingOver(cell);
         found.append(MergedHeaderObject { position, holder, cell, { }, WTF::move(*object) });
     }
 }
@@ -144,7 +144,7 @@ void Walker::inheritMergedObjects(BlockID inputHead, std::span<const Reference> 
         Reference argument = merged.position < entering.size() ? entering[merged.position] : Reference();
         bool isSameObject = argument && argument.isValue() && underlyingCellOf(m_code, argument.id()) == merged.entering;
         if (isSameObject && !own.unmergedHolders.contains(merged.holder) && !m_inheritedScopeStores.unmergedHolders.contains(merged.holder)) {
-            keepCopiesThatTakeOver(merged.entering);
+            keepCopiesTakingOver(merged.entering);
             found.append(merged);
         }
     }
@@ -199,7 +199,7 @@ bool Walker::addElementsOfMergedArray(const MergedHeaderObject& merged, TypeID t
     return true;
 }
 
-void Walker::addSlotsOfMergedObjects(const LoopPreview& preview, std::span<const Reference> entering, Vector<MergedHeaderObject, 1>& objects, Vector<FieldOfScope, 4>& known)
+void Walker::addMergedObjectSlots(const LoopPreview& preview, std::span<const Reference> entering, Vector<MergedHeaderObject, 1>& objects, Vector<FieldOfScope, 4>& known)
 {
     if (preview.effects.maySuspend) {
         objects.shrink(0);
@@ -422,7 +422,7 @@ void Walker::updateMergedObjects(LoopSummary& summary, std::span<const Reference
     summary.storesIntoScopes.mergedObjects = objects.isEmpty() ? nullptr : std::make_shared<const Vector<MergedHeaderObject, 1>>(WTF::move(objects));
 }
 
-void Walker::learnSlotsOfMergedObjects(LoopSummary& summary, BlockID inputHead, BlockID head)
+void Walker::collectMergedObjectSlots(LoopSummary& summary, BlockID inputHead, BlockID head)
 {
     auto found = head ? m_mergedHeaderObjects.find(head.index()) : m_mergedHeaderObjects.end();
     if (found == m_mergedHeaderObjects.end())
@@ -476,7 +476,7 @@ Vector<Reference, 8> Walker::allocateMergedObjectsAtRestart(std::span<const Refe
     return values;
 }
 
-void Walker::allocateMergedObjectsOnWay(EdgeID& edge, BlockID to, BlockID inputBlock, const OpenEdge& open, std::span<const uint32_t> joined, std::span<const uint32_t> joinedNames, std::span<const ObjectsMetAtJoin> objectsMet, Vector<Reference, 8>& arguments)
+void Walker::allocateMergedObjectsOnEdge(EdgeID& edge, BlockID to, BlockID inputBlock, const OpenEdge& open, std::span<const uint32_t> joined, std::span<const uint32_t> joinedNames, std::span<const ObjectsMetAtJoin> objectsMet, Vector<Reference, 8>& arguments)
 {
     if (isUnderHandler() || m_coldCopyDepth || mayNameObjectsInGenerators())
         return;

@@ -575,7 +575,7 @@ void generatePutByIdAtSite(StubAssembler& jit)
         emitSiteMiss(jit, registers, accessFor(mode), SiteReceiver::IsCell, { putByIdBehindFieldTable(mode), putByIdHashed(mode) });
         return;
     }
-    if (storeAtSiteAsksReplacedMembers(jit.key()))
+    if (siteStoreChecksReplacedMembers(jit.key()))
         storeToReplacedMemberAndReturn(jit, registers.receiver, registers.identifierNumber, jit.operand(1), registers.payload, registers.structureID);
     jit.linkToStub(jit.branchIfNotCell(registers.receiver), slotExit(table, SlotExit::Miss));
     if (storeAtSiteAsksTableOfFields(jit.key())) {

@@ -545,20 +545,20 @@ public:
     enum class FactoryOutcome : uint8_t { Threw, Settled };
     void retainFactoryLoadedImporters(ModuleID mocked, FactoryOutcome outcome)
     {
-        m_importsBesideRefusedRequires.removeAllMatching([&](const auto& pair) {
+        m_importsWithRefusedRequires.removeAllMatching([&](const auto& pair) {
             if (pair.second != mocked)
                 return false;
             if (outcome == FactoryOutcome::Settled && status(pair.first) <= ModuleStatus::Linked && m_table.hasFilePath(pair.first) && host().didRunOriginal)
                 host().didRunOriginal(m_instance.globalObject, m_table.fullPath(pair.first), OriginalRun::PrivateCopy);
             return true;
         });
-        m_filesShownToOwnFactories.clear(mocked.index());
-        bool keepsImportersOfOriginal = !m_originalsThatLoadedImporters.isEmpty() && (outcome == FactoryOutcome::Threw || !m_mocks || isOnCycleWithOtherMock(mocked));
+        m_filesVisibleToOwnFactories.clear(mocked.index());
+        bool keepsImportersOfOriginal = !m_importerLoadingOriginals.isEmpty() && (outcome == FactoryOutcome::Threw || !m_mocks || isOnCycleWithOtherMock(mocked));
         m_factoryLoadedImporters.removeAllMatching([&](const auto& pair) {
             if (pair.second != mocked)
                 return false;
-            if (auto original = m_originalsThatLoadedImporters.find(pair.first); original != m_originalsThatLoadedImporters.end() && original->value == mocked) {
-                m_originalsThatLoadedImporters.remove(original);
+            if (auto original = m_importerLoadingOriginals.find(pair.first); original != m_importerLoadingOriginals.end() && original->value == mocked) {
+                m_importerLoadingOriginals.remove(original);
                 if (keepsImportersOfOriginal)
                     return true;
             }
@@ -575,8 +575,8 @@ public:
         });
     }
     Vector<std::pair<ModuleID, ModuleID>> m_factoryLoadedImporters;
-    Vector<std::pair<ModuleID, ModuleID>> m_importsBesideRefusedRequires;
-    UncheckedKeyHashMap<ModuleID, ModuleID> m_originalsThatLoadedImporters;
+    Vector<std::pair<ModuleID, ModuleID>> m_importsWithRefusedRequires;
+    UncheckedKeyHashMap<ModuleID, ModuleID> m_importerLoadingOriginals;
     bool isOnCycleWithOtherMock(ModuleID mocked) const;
     BitVector m_retainedFactoryImporters;
     void tellThatFileDidNotRunAgain(ModuleID);
@@ -607,8 +607,8 @@ public:
     void ensureUninitializedMock();
     JSObject* uninitializedMock() const { return m_uninitializedMock.get(); }
     Strong<JSObject> m_uninitializedMock;
-    BitVector m_filesShownToOwnFactories;
-    void showOriginalUntilMockIsSet(ModuleID);
+    BitVector m_filesVisibleToOwnFactories;
+    void exposeOriginalUntilMocked(ModuleID);
     bool hasRootsDueBehindImports() const { return !m_rootsDueBehindImports.isEmpty(); }
     void didEvaluateForLoader(ModuleID imported);
     void evaluateRootsDueBehind(ModuleID imported);
@@ -860,7 +860,7 @@ public:
     void displaceLibraryOriginal(ModuleID, LibraryMock);
     bool isReloadedLibraryModule(ModuleID) const;
     bool isLinkedToLibraryModuleBeforeReset(ModuleID importer, ModuleID target) const;
-    void separateImportersLinkedBeforeReset(ModuleID);
+    void detachImportersLinkedBeforeReset(ModuleID);
     bool isReloadedLibraryModuleRead(ModuleID) const;
     ModuleNamespace* reloadedLibraryWord(ModuleID);
     void showPatchToReloadedImporters(ModuleID);
@@ -1465,7 +1465,7 @@ public:
     bool leadsToWhatIsImported(ModuleID imported, ModuleID importer) const;
     bool mayGetNameFromMock(ModuleID exporter, ModuleID importer) const { return !data(exporter).isESModuleOfProgram() || data(exporter).isFacade() || data(exporter).hasDynamicStarExport() || seesMockOf(exporter, importer); }
     bool isOfPackage(ModuleID) const;
-    mutable BitVector m_modulesAskedAboutPackage;
+    mutable BitVector m_modulesRequestedAboutPackage;
     mutable BitVector m_modulesOfPackages;
     bool isExternalizedPackage(ModuleID) const;
     bool wasLoadedUnderActualKey(ModuleID fileOrModule) const;
@@ -1850,7 +1850,7 @@ public:
     bool isFetchedBesideFactory(ModuleID);
     void didDrainDeferredFetchJobs()
     {
-        m_isInJobsBehindArrival = false;
+        m_isInJobsAfterArrival = false;
         m_batchBeingFulfilled = std::nullopt;
     }
     bool fulfillsBatchTogether() const { return m_fulfillsBatchTogether; }
@@ -3441,7 +3441,7 @@ private:
     bool hasImportsToFetch(ModuleID, std::optional<ModuleID> arrived = std::nullopt);
     bool m_fulfillsBatchTogether { true };
     std::optional<uint32_t> m_batchBeingFulfilled;
-    bool m_isInJobsBehindArrival { false };
+    bool m_isInJobsAfterArrival { false };
     Strong<JSPromise> m_promiseOfJobOfRound;
     bool m_isJobOfRoundQueued { false };
     uint32_t m_jobsBehindFirstCall { 0 };

@@ -45,7 +45,7 @@ enum class KnownNote : uint8_t {
     IsOfNoneOfLayouts,
     StorageOfListMadeInSight,
     PlaceOfKeyInMap,
-    KeyIsAbsentFromMap,
+    PlaceOfKeyIsNegative,
     VariableIsAsInFrontOfLoop,
     LoopBoundElementUnchanged,
     NeverLiesBelow,
@@ -129,7 +129,7 @@ std::optional<Vector<uint32_t, 2>> objectsMadeHereThatAloneAreWritten(Walker&, c
 std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker&, const TerminatorDraft&, const Effects&);
 bool writesReceiverArrayAlone(const Walker&, const Draft& call, const Effects&);
 bool writesReceiverArrayAlone(const TerminatorDraft&, const Effects&);
-void endWhatIsWrittenInFreshArray(Walker&, Reference array, const Effects&);
+void endFreshArrayWrites(Walker&, Reference array, const Effects&);
 bool mayBeSameObject(Walker&, Reference, Reference);
 bool isOfLayoutAlone(Walker&, Reference, LayoutID);
 
@@ -177,7 +177,7 @@ std::optional<uint32_t> lengthOfListMadeInSight(Walker&, Reference list);
 std::optional<uint32_t> lengthOfListMadeInSight(const Walker&, const WalkState&, Reference list);
 Reference elementWrittenInListMadeInSight(Walker&, Reference list, uint32_t position);
 Reference elementOfConstantArray(Walker&, DataID, uint32_t position);
-Reference buildSearchInListMadeInSight(Walker&, Reference list, Reference sought, AnswerOfSearch, Origin);
+Reference buildSearchInKnownArray(Walker&, Reference list, Reference sought, AnswerOfSearch, Origin);
 Reference elementWrittenInListMadeInSight(Walker&, const WalkState&, Reference list, uint32_t position);
 void checkLengthOfListMadeInSight(Walker&, Reference list, uint32_t length, Origin);
 struct WhatListWasMadeWith {

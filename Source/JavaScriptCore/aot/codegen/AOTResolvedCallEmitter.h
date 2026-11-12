@@ -44,16 +44,16 @@ public:
     void generateCallResolved(const ValueContext&);
     void generateRegExpMatchLiteral(const ValueContext&);
     void generateRegExpMatchLiteralInParts(const ValueContext&);
-    void generateMatchHeldRegExpInParts(const ValueContext&);
-    void generateGetLastIndexOfRegExp(const ValueContext&);
+    void generateMatchHeldRegExpParts(const ValueContext&);
+    void generateGetRegExpLastIndex(const ValueContext&);
     void generateBoundsOfRegExpMatch(const ValueContext&);
     void generateNewRegExpMatchArray(const ValueContext&);
     void generateGetMatchArrayGroups(const ValueContext&);
     void generateMatchRegExpIntoFrame(const ValueContext&);
     void generateStringLengthWithoutMatches(const ValueContext&);
     void generateIsMatchInFrame(const ValueContext&);
-    void generateLengthOfMatchInFrame(const ValueContext&);
-    void generateBoundsOfMatchInFrame(const ValueContext&);
+    void generateFrameMatchLength(const ValueContext&);
+    void generateFrameMatchBounds(const ValueContext&);
     void generateNewArrayOfRegExpMatch(const ValueContext&);
 
     bool isDeferredLastIndexStore(const ValueContext& store);
@@ -84,7 +84,7 @@ private:
     RegExpMatchEmitter::Begin beginOfMatch(const RegExpMatch&, RegExpMatchEmitter&, const CharacterView&, LBasicBlock calls, LValue& first);
     void storeBounds(RegExpMatchEmitter&, const RegExpMatchEmitter::Bounds&, LValue output, ptrdiff_t offset = 0);
     Boxed createMatchArray(const OperationContext&, const RegExpMatch&);
-    void clearBoundsOfAbsentGroups(CellPointer regExpObject, unsigned count);
+    void clearAbsentGroupBounds(CellPointer regExpObject, unsigned count);
     template<typename T> T matchByFirstCharacter(const ValueContext&, const RegExpMatch&, T miss, NOESCAPE const Invocable<T()> auto& call);
 
     Vector<ValueID, 2> m_stringsAskedFirstCharacter;

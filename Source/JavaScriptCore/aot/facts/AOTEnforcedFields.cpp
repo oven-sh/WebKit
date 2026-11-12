@@ -70,13 +70,13 @@ static bool isReferenceInEnforcedFields(const Type& type)
     return type.hasCells() && !type.hasUnboundedUnknown() && !(type.primitives & (Primitive::Number | Primitive::Boolean));
 }
 
-static constexpr size_t mostFieldsOfSmallRecord = 5;
-static uint32_t fieldsThatMakeCellSmaller(const Program& program, const LinkTables& linked, TypeArena& types, LayoutID id)
+static constexpr size_t maxSmallRecordFields = 5;
+static uint32_t cellShrinkingFields(const Program& program, const LinkTables& linked, TypeArena& types, LayoutID id)
 {
     constexpr uint32_t widthOfNarrowSlot = sizeof(uint32_t);
     constexpr OptionSet<LayoutChange> changesThatMakeExtraProperties { LayoutChange::GainsProperty, LayoutChange::GetsAccessor };
     const auto& fields = program.at(id).fields;
-    if (fields.isEmpty() || fields.size() > mostFieldsOfSmallRecord || id.index() >= linked.layouts.size() || linked.numberOfAppendedKeysOfPlan(id))
+    if (fields.isEmpty() || fields.size() > maxSmallRecordFields || id.index() >= linked.layouts.size() || linked.numberOfAppendedKeysOfPlan(id))
         return 0;
     bool hasHiddenWord = linked.layout(id).possibleChanges.containsAny(changesThatMakeExtraProperties);
     uint32_t end = offsetOfFirstField + (hasHiddenWord ? widthOfNarrowSlot : 0) + static_cast<uint32_t>(sizeof(uint64_t) * fields.size());
@@ -106,11 +106,11 @@ static bool isHeldForSmallerCell(const Program& program, const LinkTables& linke
     uint32_t numberOfMembers = program.at(members).size();
     if (numberOfMembers < 2 || numberOfMembers > mostMembers)
         return false;
-    bool someSmallRecordHasKey = program.at(members).anyOf([&](LayoutID member) {
+    bool anySmallRecordHasKey = program.at(members).anyOf([&](LayoutID member) {
         const Layout& record = program.at(member);
-        return record.fields.size() <= mostFieldsOfSmallRecord && record.findField(key);
+        return record.fields.size() <= maxSmallRecordFields && record.findField(key);
     });
-    if (!someSmallRecordHasKey)
+    if (!anySmallRecordHasKey)
         return false;
     auto isTag = [&](LayoutID member, PropertyKeyID tag) {
         std::optional<uint32_t> field = program.at(member).kind == LayoutKind::Record ? program.at(member).findField(tag) : std::nullopt;
@@ -129,7 +129,7 @@ static bool isHeldForSmallerCell(const Program& program, const LinkTables& linke
     bool isHeld = false;
     program.at(members).forEach([&](LayoutID member) {
         std::optional<uint32_t> field = program.at(member).findField(key);
-        isHeld = isHeld || (field && *field < mostFieldsOfSmallRecord && fieldsThatMakeCellSmaller(program, linked, types, member) >> *field & 1);
+        isHeld = isHeld || (field && *field < maxSmallRecordFields && cellShrinkingFields(program, linked, types, member) >> *field & 1);
     });
     return isHeld;
 }
@@ -334,7 +334,7 @@ bool isLibraryLayout(const Program& program, LayoutID id)
     return layout.module && program.at(layout.module).flags.contains(ModuleFlags::IsLibrary);
 }
 
-static TypeID typeWrittenByOthersOfFamilyInEnforcedFields(const Program& program, const Families& families, TypeArena& types, LayoutID layout, PropertyKeyID key)
+static TypeID typeWrittenByFamilyInEnforcedFields(const Program& program, const Families& families, TypeArena& types, LayoutID layout, PropertyKeyID key)
 {
     FamilyID nearest = families.nearestFamilyOf(layout);
     if (!nearest || !key || program.at(layout).kind != LayoutKind::Instance)
@@ -406,7 +406,7 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
             written = record.declared.written();
         bool isOnlyExpected = record.declared.isExpected() && !record.declared.writtenFlags().contains(PositionFlags::IsFromCompiler);
         if (isOnlyExpected || written == TypeTable::anything) {
-            TypeID ofOthers = typeWrittenByOthersOfFamilyInEnforcedFields(program, families, types, declaration.layout, record.key);
+            TypeID ofOthers = typeWrittenByFamilyInEnforcedFields(program, families, types, declaration.layout, record.key);
             TypeID inWords = ofOthers ? typeInWordsOfTestsInEnforcedFields(families, types, ofOthers) : TypeID();
             TypeID expected = inWords && isOnlyExpected && record.declared.written() ? typeInWordsOfTestsInEnforcedFields(families, types, record.declared.written()) : TypeID();
             if (inWords && (!isOnlyExpected || (expected && types.isSubset(expected, inWords))) && holdsSeenStores(held, types, declaration, inWords, isOnlyExpected)) {

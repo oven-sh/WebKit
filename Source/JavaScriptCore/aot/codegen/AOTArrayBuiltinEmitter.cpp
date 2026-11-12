@@ -378,7 +378,7 @@ Integer ArrayBuiltinEmitter::indexOfInt32(const InlineCall& call, CellPointer ar
     return indexOfBoxedInt32(call, array, searched, firstIndexOfSearch(call));
 }
 
-Integer ArrayBuiltinEmitter::indexOfInt32OrNothing(const InlineCall& call, CellPointer array)
+Integer ArrayBuiltinEmitter::indexOfOptionalInt32(const InlineCall& call, CellPointer array)
 {
     Boxed searched = boxedOperand(call.context(), call.argument(0));
     std::optional<Integer> first = firstIndexOfSearch(call);
@@ -465,7 +465,7 @@ Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole
         return indexOfString(call, array, cellOperand(call.argument(0)));
     }
     if (typeOf(call.argument(0)).isInt32OrNullish() && typeOf(call.argument(0)).primitives & Primitive::Integer)
-        return indexOfInt32OrNothing(call, receiverOf(call));
+        return indexOfOptionalInt32(call, receiverOf(call));
     return indexOfValueComparedByIdentity(call, receiverOf(call), hole);
 }
 

@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class LinkFlow;
 
-Vector<LinkedReceiverAsMade> storesThatFreeListsOfFields(const LinkFlow&, const LinkTables&);
+Vector<LinkedReceiverAsMade> storesFreeingFieldLists(const LinkFlow&, const LinkTables&);
 
 } } } // namespace JSC::AOT::Typed
 

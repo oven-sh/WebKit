@@ -188,7 +188,7 @@ public:
     FlowNodeID sourceOfFamily(FamilyID id) const { return m_sourcesOfFamilies[id.index()]; }
     void makeSourceOfFamily(FamilyID, FlowNodeID);
     bool enterLibraryInReach();
-    bool somebodyCanBeHandedPromises();
+    bool anyListenerMayReceivePromises();
     void stopUnlessRecordsHandedOutFrozenStayAsBorn();
     bool somebodyCanClimbToWhatIsLaidAbovePrototype();
     BuiltinsInReach& builtinsInReach() { return m_builtinsInReach; }
@@ -232,13 +232,13 @@ private:
     bool hostReadsNamesAloneOff(ModuleID) const;
     enum class HostWith : bool { Looks, Takes };
     void showExportsThatHostReadsOff(const Entry&, HostWith);
-    bool globalObjectShowsModuleObjects() const;
-    bool showModuleObjectsOfGlobalObject();
+    bool globalObjectExposesModules() const;
+    bool exposeModulesOnGlobalObject();
     void escapeFacadesWithGetters();
     bool mayHaveAccessor(const LinkType& exports);
     void tellWhatHostFindsAtEntries();
     BitVector findFilesThatHaveRunToTheirEndWhereOthersNameThem() const;
-    Vector<ModuleID> findModulesOfBundlesByFunction() const;
+    Vector<ModuleID> findBundleModulesByFunction() const;
     void findVariablesStoredFirst(LinkFlow&, std::span<const ModuleID> modulesOfBundles, BitVector& found) const;
     void escapeVariable(VariableID, bool isExpectedToStayAsLaid = false);
     void escapeField(FieldReference);
@@ -330,7 +330,7 @@ private:
     Vector<ModuleID> m_initiallyTrackedFacades;
     Vector<uint32_t, 1> m_entriesThatHandHostNothing;
     bool m_showsWaysBetweenModuleObjects { false };
-    bool m_globalObjectMayShowModuleObjects { false };
+    bool m_globalObjectMayExposeModules { false };
 
     Vector<std::pair<ModuleID, VariableID>> m_variablesOfLibraryFiles;
     BuiltinsInReach m_builtinsInReach;
@@ -385,7 +385,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_modulesWithReachedCode = BytesSharedByThreads(m_program.modules.size());
     m_modulesWithEscapedExports = BitVector(m_program.modules.size());
     m_showsWaysBetweenModuleObjects = namesModuleObjects(m_program);
-    m_globalObjectMayShowModuleObjects = !m_showsWaysBetweenModuleObjects && reachesModuleObjects(m_program);
+    m_globalObjectMayExposeModules = !m_showsWaysBetweenModuleObjects && reachesModuleObjects(m_program);
     findModulesWhoseValueStaysInSight();
 
     m_moduleWithBody.fill(ModuleID(), numberOfFunctions);
@@ -972,7 +972,7 @@ BitVector StateOfLinkReach::findFilesThatHaveRunToTheirEndWhereOthersNameThem() 
     return found;
 }
 
-Vector<ModuleID> StateOfLinkReach::findModulesOfBundlesByFunction() const
+Vector<ModuleID> StateOfLinkReach::findBundleModulesByFunction() const
 {
     struct Text {
         uint32_t file;
@@ -1279,7 +1279,7 @@ void StateOfLinkReach::fillVariables()
     m_flow.methodsStoredFirst.shrink(0);
     m_flow.variablesStoredFirst = BitVector(m_program.variables.size());
     findVariablesStoredFirst(m_flow, { }, m_flow.variablesStoredFirst);
-    if (Vector<ModuleID> modules = findModulesOfBundlesByFunction(); !modules.isEmpty())
+    if (Vector<ModuleID> modules = findBundleModulesByFunction(); !modules.isEmpty())
         findVariablesStoredFirst(m_flow, modules.span(), m_flow.variablesStoredFirst);
     const BitVector& isStoredFirst = m_flow.variablesStoredFirst;
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
@@ -1417,7 +1417,7 @@ void StateOfLinkReach::noteCodeOfModule(ModuleID id)
     }
 }
 
-bool StateOfLinkReach::globalObjectShowsModuleObjects() const
+bool StateOfLinkReach::globalObjectExposesModules() const
 {
     if (m_builtinsInReach.unseenCodeCanRun() || m_builtinsInReach.loaderOfMachineCodeIsInUse())
         return true;
@@ -1427,9 +1427,9 @@ bool StateOfLinkReach::globalObjectShowsModuleObjects() const
         || m_builtinsInReach.isOutOfSight(builtins.canonicalID(Builtins::GlobalThis)) || m_builtinsInReach.isOutOfSight(builtins.canonicalID(builtins.at(mainModule).holder));
 }
 
-bool StateOfLinkReach::showModuleObjectsOfGlobalObject()
+bool StateOfLinkReach::exposeModulesOnGlobalObject()
 {
-    if (!m_globalObjectMayShowModuleObjects || m_showsWaysBetweenModuleObjects || !globalObjectShowsModuleObjects())
+    if (!m_globalObjectMayExposeModules || m_showsWaysBetweenModuleObjects || !globalObjectExposesModules())
         return false;
     m_showsWaysBetweenModuleObjects = true;
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
@@ -1967,12 +1967,12 @@ bool StateOfLinkReach::somebodyCanClimbToWhatIsLaidAbovePrototype()
     });
 }
 
-bool StateOfLinkReach::somebodyCanBeHandedPromises()
+bool StateOfLinkReach::anyListenerMayReceivePromises()
 {
     if (m_builtinsInReach.unseenCodeCanRun() || m_builtinsInReach.loaderOfMachineCodeIsInUse() || m_flow.testRuns().isTestRun())
         return true;
     const BuiltinTable& builtins = m_program.builtins();
-    return m_flow.listenerMayBeHandedPromises() || std::ranges::any_of(builtins.marked(BuiltinMark::MayLayListenerForUncaughtExceptions), [&](const BuiltinMarkedEntry& marked) {
+    return m_flow.listenerMayReceivePromises() || std::ranges::any_of(builtins.marked(BuiltinMark::MayLayListenerForUncaughtExceptions), [&](const BuiltinMarkedEntry& marked) {
         return m_builtinsInReach.isOutOfSight(builtins.canonicalID(marked.builtin));
     });
 }
@@ -2043,7 +2043,7 @@ bool StateOfLinkReach::enterLibraryInReach()
         m_flow.arrive(watched, LinkType::anything());
         holdersThatAreWatchedHaveComeOutOfSight = true;
     }
-    somethingHasLeft |= showModuleObjectsOfGlobalObject();
+    somethingHasLeft |= exposeModulesOnGlobalObject();
     for (BuiltinID cameIntoReach : m_builtinsThatCameIntoReach)
         m_flow.testRuns().noteCameIntoReach(cameIntoReach);
     m_flow.testRuns().lookAtWhatHasSettled();
@@ -2099,7 +2099,7 @@ bool StateOfLinkReach::enterLibraryInReach()
     letGoWhatNativeCodeReadsOffModules();
     handOutRecordsOfInternalFiles();
     bool somebodyCanBeHandedSomething = m_nativeCodeMayHoldObjects || m_flow.rowPassesWhatNobodyFollows() || m_builtinsInReach.unseenCodeCanRun();
-    bool promisesHaveChanged = somebodyCanBeHandedSomething && somebodyCanBeHandedPromises() && m_flow.letPromisesBeHandedOut();
+    bool promisesHaveChanged = somebodyCanBeHandedSomething && anyListenerMayReceivePromises() && m_flow.letPromisesBeHandedOut();
     bool hasEntered = holdersThatAreWatchedHaveComeOutOfSight || !m_steps.isEmpty() || !m_stepsThatOneThreadTakes.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
     finish();
     return hasEntered || somethingHasLeft || m_flow.hasBuiltinsLostAtJoinsToLetGo();
@@ -2259,7 +2259,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     if (m_flow.isGivenMore) [[unlikely]]
         giveMoreToNodesOf(id);
 
-    bool leavesResultUnlaid = m_flow.listsReturns(id) && !m_flow.resultIsLaid(id);
+    bool leavesResultUnlaid = m_flow.listsReturns(id) && !m_flow.isResultAdded(id);
     for (const SummaryEdge& edge : summary.edges) {
         if (edge.isConversionByEquality || (leavesResultUnlaid && summary.nodes[edge.to].kind == SummaryNode::Kind::Result))
             continue;
@@ -2801,7 +2801,7 @@ bool LinkFlow::isWorthFollowingToWrites(BuiltinID canonical) const
     return m_stateOfLinkReach->builtinsInReach().isWorthFollowingToWrites(canonical);
 }
 
-bool LinkFlow::staysUnlaidOutOfSight(BuiltinID canonicalHolder, PropertyKeyID key) const
+bool LinkFlow::staysAbsentUnseen(BuiltinID canonicalHolder, PropertyKeyID key) const
 {
     return isPrototypeOfPrimitives(program.builtins(), canonicalHolder) && !m_stateOfLinkReach->builtinsInReach().mayHaveNameLaid(canonicalHolder, key);
 }

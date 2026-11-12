@@ -336,7 +336,7 @@ constexpr uint64_t locationMaskOfElementBase(ElementBase base)
 }
 
 inline constexpr LocationMasks placesUnderLengthsOfLists { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths } };
-inline constexpr LocationMasks placesUnderPositionsInsideLists { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::LoweredArrayLengths } };
+inline constexpr LocationMasks slotsUnderInBoundsIndices { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::LoweredArrayLengths } };
 
 template<typename ProgramWithLocationBits>
 ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, const MemoryLocation& location)

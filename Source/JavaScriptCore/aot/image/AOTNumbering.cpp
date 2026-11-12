@@ -114,7 +114,7 @@ static ALWAYS_INLINE std::optional<uint32_t> offsetOfMentionedWordInStatics(cons
     case NumberSpace::EnvironmentHandedBack:
         return placedOffsetAt(statics.environmentHandedBackOffsets, key[0]);
     case NumberSpace::HeirLookedAt:
-        return placedOffsetAt(statics.structuresOfHeirOffsets, key[0]);
+        return placedOffsetAt(statics.subclassStructuresOffsets, key[0]);
     case NumberSpace::Name:
     case NumberSpace::NameOfText:
     case NumberSpace::String:
@@ -532,7 +532,7 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numberPlaced(statics.arrayProfileOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.readGroupCacheOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.environmentHandedBackOffsets, PlacedStatics::noOffset);
-    count += numberPlaced(statics.structuresOfHeirOffsets, PlacedStatics::noOffset);
+    count += numberPlaced(statics.subclassStructuresOffsets, PlacedStatics::noOffset);
     count += numberPlaced(numbers.originsOfMethodSelectors(), PlacedStatics::noOffset);
     count += numberPlaced(statics.classGuardBits, noClassGuardBit);
     count += statics.classGuardsOfNames.size();

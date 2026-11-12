@@ -652,8 +652,8 @@ public:
         RELEASE_ASSERT(index < nodes.thrown - nodes.firstResult);
         return FlowNodeID(nodes.firstResult + index);
     }
-    bool listsReturns(FunctionID id) const { return m_functionsThatListReturns.get(id.index()); }
-    bool resultIsLaid(FunctionID id) const { return m_functionsWithLaidResults.get(id.index()); }
+    bool listsReturns(FunctionID id) const { return m_functionsListingReturns.get(id.index()); }
+    bool isResultAdded(FunctionID id) const { return m_functionsWithAddedResults.get(id.index()); }
     void layResult(FunctionID);
     FlowNodeID resultToFollow(FunctionID function, uint32_t index)
     {
@@ -826,7 +826,7 @@ public:
     bool mayHoldAccessorOnPrototype(LayoutID, PropertyKeyID) const;
     bool prototypeKeepsConstructor(LayoutID) const;
     void notePrototypeIsReplaced(LayoutID);
-    bool mayLieOnClosuresOf(FunctionID, PropertyKeyID) const;
+    bool mayBeOnClosuresOf(FunctionID, PropertyKeyID) const;
     void addConstructedPrototype(FunctionID, LayoutID, FlowNodeID instance);
     bool isConstructedPrototype(LayoutID) const;
     enum class AccessorsAbove : bool { AreEnteredByNobody, AreEnteredByCaller };
@@ -940,7 +940,7 @@ public:
         uint32_t next { UINT32_MAX };
     };
     bool followsNamesOnClosuresOf(FunctionID, PropertyKeyID) const;
-    bool mayHoldPrototypeOfOtherClass(FunctionID) const;
+    bool mayHoldOtherClassPrototype(FunctionID) const;
     bool isNameFollowedOnClosures(PropertyKeyID) const;
     FunctionID classRowNameHolder(LayoutID, PropertyKeyID) const;
     std::span<const LayoutID> rootsOfClassRows() const LIFETIME_BOUND { return m_rootsOfClassRows.span(); }
@@ -957,7 +957,7 @@ public:
     FlowNodeID extraPropertyStoreNode(LayoutID);
     FlowNodeID joinedExtraProperties(LayoutID);
     void noteCopyOfAppendedFields(FunctionID, uint32_t record);
-    void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records);
+    void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records, size_t numberOfNames);
     template<typename Functor> void forEachAppendedField(LayoutID layout, const Functor& functor) const
     {
         for (uint32_t place = m_newestAppendedFieldOfLayout[layout.index()]; place != UINT32_MAX;) {
@@ -1015,7 +1015,7 @@ public:
             functor(field.key, field.node);
     }
     FlowNodeID foundOnClosuresOf(FunctionID);
-    bool closuresStandBelowFunctionPrototype(FunctionID) const;
+    bool closuresInheritFunctionPrototype(FunctionID) const;
     FlowNodeID foundOnClassObjectsFrom(LayoutID);
     FlowNodeID constructorChainStoreNode(LayoutID, PropertyKeyID);
     LayoutID nearestClassWithStaticFieldThatMayMatch(LayoutID from, PropertyKeyID);
@@ -1085,7 +1085,7 @@ public:
     void prefetchTypeAt(FlowNodeID id) const { __builtin_prefetch(&m_nodes[id.index()]); }
     bool holdsInstancesOfOneSiteAt(FlowNodeID id) const { return id.index() < m_nodes.size() && headOfNode(id.index()).classes == LinkType::Classes::Site; }
     bool holdsInstancesAt(FlowNodeID id) const { return id.index() < m_nodes.size() && headOfNode(id.index()).classes != LinkType::Classes::None; }
-    bool isReadOrLaidThroughFamilyUnder(FlowNodeID, PropertyKeyID) const;
+    bool isAccessedThroughFamilyUnder(FlowNodeID, PropertyKeyID) const;
     bool holdsLayoutsAt(FlowNodeID id) const
     {
         LinkType::Objects objects = id.index() < m_nodes.size() ? headOfNode(id.index()).objects : LinkType::Objects::None;
@@ -1288,7 +1288,7 @@ public:
     };
     std::optional<StillNothing> stillNothing(BuiltinID canonicalHolder, PropertyKeyID key, NOESCAPE const Invocable<bool(FlowNodeID)> auto& tellAgainAt)
     {
-        if (isOutOfSight(canonicalHolder) && !staysUnlaidOutOfSight(canonicalHolder, key))
+        if (isOutOfSight(canonicalHolder) && !staysAbsentUnseen(canonicalHolder, key))
             return std::nullopt;
         for (FlowNodeID laid : { laidOnBuiltin(canonicalHolder, key), laidOnBuiltin(canonicalHolder, { }) }) {
             if (!tellAgainAt(laid) || !holdsNothingAt(laid))
@@ -1303,8 +1303,8 @@ public:
         BuiltinID holder = globalObject();
         if (isOutOfSight(holder))
             return false;
-        FlowNodeID laidUnderAnyKey = laidOnBuiltin(holder, { });
-        if (!tellAgainAt(laidUnderAnyKey) || !holdsNothingAt(laidUnderAnyKey))
+        FlowNodeID definedUnderAnyKey = laidOnBuiltin(holder, { });
+        if (!tellAgainAt(definedUnderAnyKey) || !holdsNothingAt(definedUnderAnyKey))
             return false;
         takeForUnlaid(holder, key);
         noteHolderPassedInSight(holder, key);
@@ -1380,10 +1380,10 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ClassConstructed, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, FieldGivenAccessorOutOfSight, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedViaFlow, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ClassConstructed, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, FieldWithUnseenAccessor, LayoutGetsNullAbove, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedViaFlow, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
     void note(Note, uint32_t number, uint32_t more = 0);
     void noteFieldGivenAccessorByDescriptorInSight(FieldReference);
-    void noteFieldGivenAccessorOutOfSight(FieldReference);
+    void noteFieldWithUnseenAccessor(FieldReference);
     void takeOverCallsWhoseRowsLinkTells();
     static constexpr uint32_t byCode = 1;
     static constexpr uint32_t byRowThatMayRunCode = 2;
@@ -1433,8 +1433,8 @@ public:
     bool objectsReachUnseen() const { return m_objectsReachUnseen; }
     void noteRowPassesWhatNobodyFollows() { LockerOfWhatIsShared locker(*this); m_rowPassesWhatNobodyFollows = true; }
     bool rowPassesWhatNobodyFollows() const { return m_rowPassesWhatNobodyFollows; }
-    void noteListenerMayBeHandedPromises() { LockerOfWhatIsShared locker(*this); m_listenerMayBeHandedPromises = true; }
-    bool listenerMayBeHandedPromises() const { return m_listenerMayBeHandedPromises; }
+    void noteListenerMayReceivePromises() { LockerOfWhatIsShared locker(*this); m_listenerMayReceivePromises = true; }
+    bool listenerMayReceivePromises() const { return m_listenerMayReceivePromises; }
     bool letPromisesBeHandedOut();
     void noteLossOf(BuiltinID builtin) const
     {
@@ -1562,9 +1562,9 @@ public:
         std::array<HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>, 4> layoutsTiedByCopies;
     };
     CopiesObserved& copiesObservedIn(FunctionID);
-    bool storesNamesOfCopyOnPrototype(const FlowObserver&, const LinkType& target, const LinkType& source, CopiesObserved&);
+    bool storesCopiedNamesOnPrototype(const FlowObserver&, const LinkType& target, const LinkType& source, CopiesObserved&);
     bool tellsObserversOnceMore() const { return m_breachesOfClosure; }
-    void noteObserverToldOnceMore(const FlowObserver& observer) { m_observerToldOnceMore = observer; }
+    void noteRenotifiedObserver(const FlowObserver& observer) { m_observerToldOnceMore = observer; }
 
     void noteAccessorLaid(LayoutID, const AccessorLaidInField&);
     BitVector escapedFunctions;
@@ -1598,12 +1598,12 @@ public:
     bool isPlainCallback(FunctionID callback, const BodyIndex&) const;
     Vector<PropertyKeyID, 8> findNamesOfStore(FunctionID, const SummaryAccess&) const;
     bool appendTextsOfKey(FunctionID, const BodyIndex&, ValueID key, Vector<StringID, 8>&) const;
-    bool appendTextsOfListParameter(FunctionID, const BodyIndex&, ValueID list, Vector<StringID, 8>&) const;
+    bool appendArrayParameterStrings(FunctionID, const BodyIndex&, ValueID list, Vector<StringID, 8>&) const;
     bool readsUnderIndex(FunctionID, BodyValue element) const;
     bool appendTextsOfElement(FunctionID, const BodyIndex&, BodyValue element, Vector<StringID, 8>&) const;
     bool appendNamesOfTexts(std::span<const StringID>, Vector<PropertyKeyID, 8>&) const;
     ValueID findCallbackList(FunctionID callback, FunctionID& maker) const;
-    std::optional<uint32_t> findListOfCallbackParameter(FunctionID, uint32_t callbackParameter) const;
+    std::optional<uint32_t> findCallbackParameterArray(FunctionID, uint32_t callbackParameter) const;
     struct ListedObject {
         FunctionID function;
         ValueID object;
@@ -1889,7 +1889,7 @@ public:
     BitVector functionsThatReadPrototypeObjects;
     Vector<FieldReference> fieldsWithKnownAccessors;
     BitVector fieldsGivenAccessorsByDescriptorsInSight;
-    BitVector fieldsGivenAccessorsOutOfSight;
+    BitVector fieldsWithUnseenAccessors;
     BitVector fieldsWrittenAfterConstruction;
     BitVector layoutsThatUnseenCodeMayChange;
     BitVector modulesWhoseValueStaysInSight;
@@ -1957,7 +1957,7 @@ private:
     void takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID);
     void noteHolderPassedInSight(BuiltinID canonicalHolder, PropertyKeyID);
     bool isOutOfSight(BuiltinID canonical) const;
-    bool staysUnlaidOutOfSight(BuiltinID canonicalHolder, PropertyKeyID) const;
+    bool staysAbsentUnseen(BuiltinID canonicalHolder, PropertyKeyID) const;
 
     struct Edge {
         FlowNodeID to;
@@ -2238,7 +2238,7 @@ private:
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_instanceLockNodes;
 
     void indexConstructorFunctions();
-    void findFunctionsThatListReturns();
+    void findFunctionsListingReturns();
     uint32_t recordOfNameOnPrototype(LayoutID, PropertyKeyID);
     uint32_t firstNameOnPrototypeOf(LayoutID) const;
     void forEachPrototypePassedAbove(LayoutID, PropertyKeyID, const Invocable<void(uint32_t record)> auto&);
@@ -2247,7 +2247,7 @@ private:
     void poolNameOnPrototype(uint32_t record);
     bool letPrototypesFoundThroughLostEscape();
     bool callsMethodsOfNewObject(LayoutID made) const;
-    bool noteFieldsLeftEmptyByMethods();
+    bool noteFieldsEmptiedByMethods();
     Vector<LayoutID> m_layoutsFilledByMethods;
     BitVector m_functionsFillingNewObjects;
 
@@ -2441,9 +2441,9 @@ private:
     mutable SetsOfFunctionsInLinkFlow m_setsOfFunctions;
     mutable SetsOfClassesInLinkFlow m_setsOfClasses;
     bool mayStandInOneSet(std::span<const FunctionID> sortedMembers) const;
-    bool layResultsOfListedReturns();
-    BitVector m_functionsThatListReturns;
-    BitVector m_functionsWithLaidResults;
+    bool addListedReturnResults();
+    BitVector m_functionsListingReturns;
+    BitVector m_functionsWithAddedResults;
     HashMap<uint32_t, LinkType, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_resultsGivenWithoutFunctions;
     bool namesOnlyFunctionsOfSet(const LinkType&, const LinkType& set) const;
     void foldFunctionsTakenApart(LinkType& into, std::span<const LinkType> met) const;
@@ -2665,7 +2665,7 @@ private:
     mutable Vector<FunctionID> m_membersOfFamiliesNewlyAtUnseen;
     mutable bool m_objectsReachUnseen { false };
     bool m_rowPassesWhatNobodyFollows { false };
-    bool m_listenerMayBeHandedPromises { false };
+    bool m_listenerMayReceivePromises { false };
     Vector<PropertyKeyID, 2> m_keysThatCodeTellsOfItself;
     bool m_promisesMayBeHandedOut { false };
     mutable Vector<BuiltinID> m_builtinsLost;
@@ -2711,7 +2711,7 @@ private:
         size_t numberOfAppendedFields { 0 };
     };
     Vector<CopyOfAppendedFields> m_copiesOfAppendedFields;
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_copiesOfAppendedFieldsNoted;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_notedAppendedFieldCopies;
     HashSet<std::pair<uint64_t, uint64_t>, DefaultHash<std::pair<uint64_t, uint64_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_appendedFieldsCopied;
     BitVector m_layoutsWithJoinedProperties;
     void joinExtraProperties(LayoutID, FlowNodeID joined);
@@ -2747,6 +2747,7 @@ private:
         size_t numberOfNames;
     };
     Vector<AccessUnderNamesOfRecords> m_accessesUnderNamesOfRecords;
+    size_t m_appendedFieldsWhenAccessesWereTold { 0 };
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAccessesUnderNames;
     struct ReadThroughFamily {
         PropertyKeyID key;
@@ -2967,11 +2968,11 @@ struct NamesAskedOfContentsOfFields {
     Vector<std::pair<uint32_t, uint32_t>> cellsOfGroups;
     Vector<std::pair<uint32_t, uint32_t>> namesOfGroups;
     Vector<std::pair<uint32_t, uint64_t>> valuesOfGroups;
-    struct NamesAskedOfField {
+    struct NamesReadFromField {
         FieldReference field;
         Vector<PropertyKeyID, 4> names;
     };
-    Vector<NamesAskedOfField> fields;
+    Vector<NamesReadFromField> fields;
 };
 
 struct TurnsOfReadings {

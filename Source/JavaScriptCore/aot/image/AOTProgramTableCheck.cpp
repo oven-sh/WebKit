@@ -780,7 +780,7 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
         if (check.expect(isInPart, "OffsetOutsideItsPart"_s, id)) {
             bool namesFieldsInOrder = properties->builtinClass() == Typed::builtinClassOfInstances(written).index() && properties->isBelowMixin() == !!written.mixedBuiltinBase && properties->numberOfNames == written.fields.size();
             for (size_t field = 0; namesFieldsInOrder && field < written.fields.size(); ++field)
-                namesFieldsInOrder = check.numbers.identifiers().numberOf(written.fields[field].key) == std::optional<uint32_t>(properties->names()[field] & ~PropertiesOfHeirsData::mayBeStoredLate) && Typed::isToldByStructureOfClass(written.fields[field]) == !(properties->names()[field] & PropertiesOfHeirsData::mayBeStoredLate);
+                namesFieldsInOrder = check.numbers.identifiers().numberOf(written.fields[field].key) == std::optional<uint32_t>(properties->names()[field] & ~PropertiesOfHeirsData::mayBeStoredLate) && Typed::isDecidedByClassStructure(written.fields[field]) == !(properties->names()[field] & PropertiesOfHeirsData::mayBeStoredLate);
             check.expect(namesFieldsInOrder, "PropertiesOfHeirsDifferFromProgram"_s, id);
         }
     }
@@ -887,19 +887,19 @@ static void checkLayoutRecords(const JoinedTables& check)
             checkObjectRecord(check, offset, id, generalShape);
     }
 
-    uint64_t endOfStructuresOfHeirs = 0;
-    const Vector<uint32_t>& structuresOfHeirOffsets = check.numbers.statics().structuresOfHeirOffsets;
-    for (uint32_t index = 0; index < structuresOfHeirOffsets.size(); ++index) {
-        uint32_t offset = structuresOfHeirOffsets[index];
+    uint64_t subclassStructuresEnd = 0;
+    const Vector<uint32_t>& subclassStructuresOffsets = check.numbers.statics().subclassStructuresOffsets;
+    for (uint32_t index = 0; index < subclassStructuresOffsets.size(); ++index) {
+        uint32_t offset = subclassStructuresOffsets[index];
         if (offset == PlacedStatics::noOffset)
             continue;
         LayoutID heir(index);
         if (!check.expect(index < numberOfLayouts && tables.offsetOfClass(index) && Typed::isKnownByStructureOfClass(check.program.at(heir)), "HeirLookedAtWithoutRecord"_s, heir))
             continue;
-        check.expect(offset >= endOfStructuresOfHeirs && !(offset % alignof(StructuresOfHeir)), "StructuresOfHeirsOverlap"_s, heir);
-        endOfStructuresOfHeirs = offset + StructuresOfHeir::sizeWithDisplacementsOfFields(check.program.at(heir).fields.size());
+        check.expect(offset >= subclassStructuresEnd && !(offset % alignof(StructuresOfHeir)), "StructuresOfHeirsOverlap"_s, heir);
+        subclassStructuresEnd = offset + StructuresOfHeir::sizeWithDisplacementsOfFields(check.program.at(heir).fields.size());
     }
-    check.expect(endOfStructuresOfHeirs <= tables.instanceSizes.sizeOfStatics, "StructuresOfHeirsBeyondStatics"_s);
+    check.expect(subclassStructuresEnd <= tables.instanceSizes.sizeOfStatics, "SubclassStructuresBeyondStatics"_s);
 }
 
 static void checkFieldTable(const JoinedTables& check)

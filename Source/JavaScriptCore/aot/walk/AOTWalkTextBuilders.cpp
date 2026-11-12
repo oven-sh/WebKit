@@ -476,7 +476,7 @@ bool terminatorUsesStringInBuilder(Walker& walker, const BodyTerminator& termina
     return takesText;
 }
 
-bool Walker::branchOnLengthOfSwitchedString(const BodyTerminator& terminator)
+bool Walker::branchOnSwitchedStringLength(const BodyTerminator& terminator)
 {
     auto overStrings = terminator.as<TerminatorKind::SwitchString>();
     ValueID subject = overStrings.subjectOperand();

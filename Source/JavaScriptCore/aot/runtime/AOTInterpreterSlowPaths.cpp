@@ -69,7 +69,7 @@ static Instance* interpreterInstance(JSGlobalObject* realm)
 
 static Instance* instanceOfTables(JSGlobalObject* realm)
 {
-    Instance* instance = realm->aotInstanceOfTables();
+    Instance* instance = realm->aotTableInstance();
     return instance && instance->state ? instance : nullptr;
 }
 
@@ -359,10 +359,10 @@ std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject* globalObje
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void didGetById(JSGlobalObject* globalObject, JSCell* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, bool isFiledBesideCache)
+void didGetById(JSGlobalObject* globalObject, JSCell* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, bool isStoredInTable)
 {
     Instance* instance = base->isObject() ? instanceOfTables(globalObject) : interpreterInstance(globalObject);
-    if (!instance || (!isFiledBesideCache && ((structureBefore->isDictionary() && !slot.isCacheableGetter() && !slot.isUnset()) || slot.isCacheableValue())) || (isJSArray(base) && ident == instance->vm->propertyNames->length))
+    if (!instance || (!isStoredInTable && ((structureBefore->isDictionary() && !slot.isCacheableGetter() && !slot.isUnset()) || slot.isCacheableValue())) || (isJSArray(base) && ident == instance->vm->propertyNames->length))
         return;
     PropertyCaches& caches = *instance->state->propertyCaches;
     UniquedStringImpl* uid = ident.impl();
@@ -656,7 +656,7 @@ void didCreateFunction(JSGlobalObject* globalObject, FunctionExecutable* executa
     if (!allocator)
         return;
     uint64_t header = function->structureID().bits() | static_cast<uint64_t>(std::bit_cast<uint32_t>(function->structure()->typeInfoBlob())) << 32;
-    instance->state->propertyCaches->remember(FunctionBirth { executable, header, allocator.localAllocator() });
+    instance->state->propertyCaches->remember(FunctionAllocationEntry { executable, header, allocator.localAllocator() });
 }
 
 void didCreateClonedArguments(JSGlobalObject* globalObject)
@@ -672,7 +672,7 @@ void rememberSwitchTarget(JSGlobalObject* globalObject, const JSInstruction* ins
         instance->state->propertyCaches->remember(StringSwitchTarget { &atom, instruction, offset });
 }
 
-void fuseReadsOfVariables(CodeBlock& codeBlock, std::span<const JSInstruction* const> resolutions)
+void fuseVariableReads(CodeBlock& codeBlock, std::span<const JSInstruction* const> resolutions)
 {
     static_assert(ClosureVar < 1u << FusedClosureVariableRead::typeBits);
     for (const JSInstruction* instruction : resolutions) {

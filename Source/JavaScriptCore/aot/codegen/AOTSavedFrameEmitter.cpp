@@ -389,11 +389,11 @@ struct LeafStepOfGenerator {
 static constexpr std::array leafGPRs { gprOf(StubRegister::T9), gprOf(StubRegister::T11), gprOf(StubRegister::T13) };
 static constexpr GPRReg scratchOfLeafStep = gprOf(StubRegister::T14);
 static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
-static_assert(areDistinctOnEveryISA(generatorRegisterOfLeafStep, StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
+static_assert(areDistinctOnEveryISA(leafStepGeneratorRegister, StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13, StubRegister::T14));
 static constexpr uint8_t numberOfLeafFPRs = 7;
-static constexpr GPRReg frameOfLeafStep = gprOf(frameRegisterOfLeafStep);
+static constexpr GPRReg frameOfLeafStep = gprOf(leafStepFrameRegister);
 static constexpr GPRReg statusOfLeafStep = gprOf(resumeModeRegister);
-static constexpr GPRReg sentValueOfLeafStep = gprOf(StubRegister::A2);
+static constexpr GPRReg leafStepSentValue = gprOf(StubRegister::A2);
 static FPRReg leafFPR(uint8_t place) { return FPRInfo::toArgumentRegister(place); }
 
 static void emitLeafStep(CCallHelpers& jit, StubCalls& stubCalls, const LeafStepOfGenerator& step)
@@ -591,7 +591,7 @@ static void emitLeafStep(CCallHelpers& jit, StubCalls& stubCalls, const LeafStep
             giveWayUnlessNumber(leafGPRs[instruction.result]);
             break;
         case Kind::LoadSentNumber:
-            jit.move(sentValueOfLeafStep, leafGPRs[instruction.result]);
+            jit.move(leafStepSentValue, leafGPRs[instruction.result]);
             giveWayUnlessNumber(leafGPRs[instruction.result]);
             break;
         case Kind::AddNumbers:
@@ -606,7 +606,7 @@ static void emitLeafStep(CCallHelpers& jit, StubCalls& stubCalls, const LeafStep
         }
     }
     givesWay.link(&jit);
-    jit.move(gprOf(generatorRegisterOfLeafStep), gprOf(StubRegister::A0));
+    jit.move(gprOf(leafStepGeneratorRegister), gprOf(StubRegister::A0));
     stubCalls.tailCall(jit, resumeSteppedGenerator());
     for (auto [jump, label] : jumps)
         jump.linkTo(labels[label], &jit);
@@ -634,7 +634,7 @@ public:
             return nullptr;
         Vector<InstructionOfLeafStep, 32> all;
         all.appendVector(m_loads);
-        appendInOrderOfLikelyWay(all);
+        appendInLikelyOrder(all);
         std::span<InstructionOfLeafStep> kept = m_emitter.m_proc.arena().createSpan<InstructionOfLeafStep>(all.size());
         std::ranges::copy(all, kept.begin());
         auto* step = m_emitter.m_proc.arena().create<LeafStepOfGenerator>();
@@ -919,7 +919,7 @@ private:
 
     static bool endsWay(Kind kind) { return kind == Kind::Jump || kind == Kind::GiveWay || kind == Kind::BoxDouble || kind == Kind::BoxInt64 || kind == Kind::Return || kind == Kind::ReturnNumber; }
 
-    void appendInOrderOfLikelyWay(Vector<InstructionOfLeafStep, 32>& all)
+    void appendInLikelyOrder(Vector<InstructionOfLeafStep, 32>& all)
     {
         const uint32_t numberOfBlocks = m_blocks.size();
         Vector<std::span<const InstructionOfLeafStep>, 13> parts(numberOfBlocks + 1);
@@ -2508,7 +2508,7 @@ GeneratorFunctionOrigin SavedFrameEmitter::originOfGeneratorFunction(FunctionID 
     return m_plan.functionKind(m_program, conventions().closureEntryOf(function)).isInRuntimeModule ? GeneratorFunctionOrigin::Library : GeneratorFunctionOrigin::Program;
 }
 
-Word32 SavedFrameEmitter::loadStructureIDOfGenerators(CellPointer closure, LBasicBlock otherwise)
+Word32 SavedFrameEmitter::loadGeneratorStructureID(CellPointer closure, LBasicBlock otherwise)
 {
     constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
     Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
@@ -2530,7 +2530,7 @@ void SavedFrameEmitter::branchUnlessGeneratorsPlain(CellPointer function, LBasic
 {
     LBasicBlock hasMadeNone = newBlock();
     LBasicBlock makesPlainGenerators = newBlock();
-    Pointer structure = decodeStructureID(loadStructureIDOfGenerators(function, hasMadeNone));
+    Pointer structure = decodeStructureID(loadGeneratorStructureID(function, hasMadeNone));
     Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
     Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
     branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_classInfo), classInfo), otherwise);
@@ -2555,7 +2555,7 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
         branchUnless(isNotZero(*structureID), slowPath);
         structure = decodeStructureID(*structureID);
     } else if (closure) {
-        structureID = loadStructureIDOfGenerators(*closure, slowPath);
+        structureID = loadGeneratorStructureID(*closure, slowPath);
         structure = decodeStructureID(*structureID);
         Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
         Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));

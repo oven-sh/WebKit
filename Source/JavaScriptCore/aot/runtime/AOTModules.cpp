@@ -1691,7 +1691,7 @@ bool Modules::isLinkedToLibraryModuleBeforeReset(ModuleID importer, ModuleID tar
     return !link || !mockWord(*link, instance);
 }
 
-void Modules::separateImportersLinkedBeforeReset(ModuleID module)
+void Modules::detachImportersLinkedBeforeReset(ModuleID module)
 {
     if (!m_momentOfModuleReset || !data(module).isOfLibrary() || isReloadedLibraryModule(module) || isLibraryOriginalDisplaced(module) || !hasBeenImportedSinceReset(module))
         return;
@@ -5428,8 +5428,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             addImportAwaitingSource(module);
         return startImportInLaterTurn(module, referrerAsyncOrder);
     }
-    bool isAskedBesideOwnFactory = m_isInJobsBehindArrival && isMockPending(fileOf(module)) && !isFetchedBesideFactory(module);
-    if (text == ImportSourceState::MayArriveLater && !hasTextAtHand() && !isAskedBesideOwnFactory && textOfImportComesInLaterTurn(module, AskedBy::Import)) [[unlikely]] {
+    bool isRequestedDuringOwnFactory = m_isInJobsAfterArrival && isMockPending(fileOf(module)) && !isFetchedBesideFactory(module);
+    if (text == ImportSourceState::MayArriveLater && !hasTextAtHand() && !isRequestedDuringOwnFactory && textOfImportComesInLaterTurn(module, AskedBy::Import)) [[unlikely]] {
         if (isNewCallAfterTests)
             return promiseForCaller();
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
@@ -9468,7 +9468,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
         ModuleStatus status = modules.status(module);
         bool comesAheadOfLoad = modules.data(module).kind == ModuleKind::SourceText && (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module);
         if (modules.table().anyModuleHasInstances() && !comesAheadOfLoad) {
-            modules.separateImportersLinkedBeforeReset(module);
+            modules.detachImportersLinkedBeforeReset(module);
             RETURN_IF_EXCEPTION(scope, void());
             modules.releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
         }

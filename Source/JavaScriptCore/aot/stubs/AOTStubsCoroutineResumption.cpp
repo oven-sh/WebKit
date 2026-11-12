@@ -92,13 +92,13 @@ void generateStepGenerator(StubAssembler& jit)
     const GPRReg generator = jit.clobberOperand(0);
     const GPRReg result = jit.result();
     const GPRReg status = jit.secondResult();
-    const GPRReg saved = jit.allocateScratch(frameRegisterOfLeafStep);
+    const GPRReg saved = jit.allocateScratch(leafStepFrameRegister);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
-    const GPRReg generatorOfLeafStep = isARM64() ? jit.allocateScratch(generatorRegisterOfLeafStep) : generator;
+    const GPRReg generatorOfLeafStep = isARM64() ? jit.allocateScratch(leafStepGeneratorRegister) : generator;
     static_assert(static_cast<int32_t>(Generator::State::Running) < 0 && static_cast<int32_t>(Generator::State::Completed) < 0);
     static_assert(static_cast<int32_t>(Generator::State::SuspendedAtStart) >= 0 && static_cast<int32_t>(Generator::State::SuspendedAtYield) >= 0);
     RELEASE_ASSERT(noOverlap(generator, jit.operand(1), jit.operand(2), status, saved, scratch, instanceGPR));
-    RELEASE_ASSERT(noOverlap(result, status, scratch) && generatorOfLeafStep == gprOf(generatorRegisterOfLeafStep));
+    RELEASE_ASSERT(noOverlap(result, status, scratch) && generatorOfLeafStep == gprOf(leafStepGeneratorRegister));
     checkStubOperands(resumeSteppedGenerator(), { generator, jit.operand(1), jit.operand(2), saved });
 
     JumpList isNotStepped;
@@ -129,7 +129,7 @@ void generateStepGenerator(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-StubSignature signatureOfResumeSteppedGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(frameRegisterOfLeafStep) }); }
+StubSignature signatureOfResumeSteppedGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(leafStepFrameRegister) }); }
 
 void generateResumeSteppedGenerator(StubAssembler& jit)
 {
@@ -250,7 +250,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
     Jump callsFunction = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.performMicrotaskJobWord)));
     Jump takesElement = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseAllResolveJobWord)));
     Jump throwsIntoFunction = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.resumeJobWords) + sizeof(uint64_t)));
-    Jump takesStepOfReactionChain = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.reactionChainStepJobWord)));
+    Jump takesReactionChainStep = jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.reactionChainStepJobWord)));
     JumpList takesSettledElement;
     takesSettledElement.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseAllSettledResolveJobWords))));
     takesSettledElement.append(jit.branch64(CCallHelpers::Equal, scratch, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseAllSettledResolveJobWords) + sizeof(uint64_t))));
@@ -408,7 +408,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
             doesNotGoOn.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
         };
 
-        takesStepOfReactionChain.link(&jit);
+        takesReactionChainStep.link(&jit);
         {
             JumpList isForOtherStatus;
             const GPRReg promiseOfChain = scratchOfElement;
@@ -423,7 +423,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
             hasHandlerOfReactionChain.append(jit.jump());
 
             isForOtherStatus.link(&jit);
-            emitBranchIfReactionChainGoesOn(jit, saved, handler, scratch, leaveWithSentinel);
+            emitBranchIfReactionChainContinues(jit, saved, handler, scratch, leaveWithSentinel);
             jit.move(promiseOfChain, promise);
             jit.jump().linkTo(hasPromiseToResolve, &jit);
         }

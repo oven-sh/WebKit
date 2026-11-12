@@ -12,7 +12,7 @@
 # Nobody reads a value profile here, so none is written.
 
 const CompiledObjectType = constexpr CompiledObjectType
-const ResolveOfClosureVar = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::None))
+const ClosureVarResolve = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::None))
 const FusedRead = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::Read))
 const FusedReadIntoScopeRegister = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::ReadIntoScopeRegister))
 const FusedReadAndCheck = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::ReadAndCheck))
@@ -22,8 +22,8 @@ const FusedReadOuterIntoScopeRegister = constexpr (AOT::Interpreter::FusedClosur
 const FusedReadOuterAndCheck = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::ReadOuterAndCheck))
 const FusedReadOuterIntoScopeRegisterAndCheck = constexpr (AOT::Interpreter::FusedClosureVariableRead::typeAndKind(AOT::Interpreter::FusedClosureVariableRead::ReadOuterIntoScopeRegisterAndCheck))
 const FirstFusedRead = constexpr (AOT::Interpreter::FusedClosureVariableRead::kindOnly(AOT::Interpreter::FusedClosureVariableRead::Read))
-const FirstFusedReadOfGlobal = constexpr (AOT::Interpreter::FusedClosureVariableRead::kindOnly(AOT::Interpreter::FusedClosureVariableRead::ReadGlobal))
-const FusedReadOfGlobalIntoScopeRegister = constexpr (AOT::Interpreter::FusedClosureVariableRead::kindOnly(AOT::Interpreter::FusedClosureVariableRead::ReadGlobalIntoScopeRegister))
+const FirstFusedGlobalRead = constexpr (AOT::Interpreter::FusedClosureVariableRead::kindOnly(AOT::Interpreter::FusedClosureVariableRead::ReadGlobal))
+const FusedGlobalReadIntoScopeRegister = constexpr (AOT::Interpreter::FusedClosureVariableRead::kindOnly(AOT::Interpreter::FusedClosureVariableRead::ReadGlobalIntoScopeRegister))
 const FusedGlobalShift = constexpr AOT::Interpreter::FusedClosureVariableRead::offsetShift
 const FusedVariable = constexpr AOT::Interpreter::FusedClosureVariableRead::offsetOfVariable
 const NarrowReferenceInSiteCache = constexpr AOT::Interpreter::narrowReferenceInSiteCache
@@ -51,7 +51,7 @@ const InstanceEnumerators = constexpr (AOT_INSTANCE_OFFSET(objects.enumerators))
 const InstanceHasInstanceUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID))
 const InstancePrototypeUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID))
 const InstanceDefaultHasInstanceFunction = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.defaultHasInstanceFunction))
-const InstanceFunctionBirths = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.functionBirths))
+const InstanceFunctionAllocations = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.functionAllocationEntries))
 const InstanceClonedArgumentsAllocator = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.clonedArgumentsAllocator))
 const MaxInlineClonedArguments = 16
 const InstanceSwitchTargets = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.switchTargets))
@@ -101,12 +101,12 @@ const LocalAllocatorCellSize = constexpr (LocalAllocator::offsetOfCellSize())
 const FreeCellScrambledBits = constexpr (FreeCell::offsetOfScrambledBits())
 const StructureTypeInfoBlob = constexpr (Structure::indexingModeIncludingHistoryOffset())
 
-const FunctionBirthExecutable = constexpr (OBJECT_OFFSETOF(AOT::FunctionBirth, executable))
-const FunctionBirthHeader = constexpr (OBJECT_OFFSETOF(AOT::FunctionBirth, header))
-const FunctionBirthAllocator = constexpr (OBJECT_OFFSETOF(AOT::FunctionBirth, allocator))
-const FunctionBirthSize = constexpr (sizeof(AOT::FunctionBirth))
-const NumberOfFunctionBirths = constexpr AOT::FunctionBirth::numberOfBirths
-const FunctionBirthExecutableShift = constexpr AOT::FunctionBirth::executableShift
+const FunctionAllocationExecutable = constexpr (OBJECT_OFFSETOF(AOT::FunctionAllocationEntry, executable))
+const FunctionAllocationHeader = constexpr (OBJECT_OFFSETOF(AOT::FunctionAllocationEntry, header))
+const FunctionAllocationAllocator = constexpr (OBJECT_OFFSETOF(AOT::FunctionAllocationEntry, allocator))
+const FunctionAllocationSize = constexpr (sizeof(AOT::FunctionAllocationEntry))
+const NumberOfFunctionAllocations = constexpr AOT::FunctionAllocationEntry::numberOfBirths
+const FunctionAllocationExecutableShift = constexpr AOT::FunctionAllocationEntry::executableShift
 
 const SwitchTargetString = constexpr (OBJECT_OFFSETOF(AOT::StringSwitchTarget, string))
 const SwitchTargetInstruction = constexpr (OBJECT_OFFSETOF(AOT::StringSwitchTarget, instruction))
@@ -206,15 +206,15 @@ macro loadConstantOperand(size, index, value, isLoaded)
     jmp isLoaded
 end
 
-# AOT::instanceOfTables(), whose tables answer for every cell, compiled object or not. What belongs to a realm is asked of the instance that loadInstanceOfRealm() leaves.
-macro loadInstanceOfTables(instance, hasNone)
+# AOT::instanceOfTables(), whose tables answer for every cell, compiled object or not. What belongs to a realm is asked of the instance that loadRealmInstance() leaves.
+macro loadTableInstance(instance, hasNone)
     loadp CodeBlock[cfr], instance
     loadp CodeBlock::m_globalObject[instance], instance
-    loadp JSGlobalObject::m_aotInstanceOfTables[instance], instance
+    loadp JSGlobalObject::m_aotTableInstance[instance], instance
     btpz instance, hasNone
 end
 
-macro loadInstanceOfRealm(instance, hasNone)
+macro loadRealmInstance(instance, hasNone)
     loadp CodeBlock[cfr], instance
     loadp CodeBlock::m_globalObject[instance], instance
     loadp JSGlobalObject::m_aotInstance[instance], instance
@@ -617,7 +617,7 @@ end
 
 # t3: the compiled object, t1: the uid. Leaves the value in t0.
 macro getFromCompiledObject(slow, done)
-    loadInstanceOfTables(t5, slow)
+    loadTableInstance(t5, slow)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -666,7 +666,7 @@ end
 
 # t3: the object, t1: the uid.
 macro testPresenceInObject(slow, isPresent, isAbsent)
-    loadInstanceOfTables(t5, slow)
+    loadTableInstance(t5, slow)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -716,7 +716,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     return(t0)
 
 .isNotInButterfly:
-    bilt t1, 0, .otherModeOfStructure
+    bilt t1, 0, .otherStructureMode
     bigteq t1, NarrowReferenceInSiteCache, .narrowReference
     bigteq t1, ExtraPropertyInSiteCache, .extraProperty
     subi FieldInSiteCache, t1
@@ -729,7 +729,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     andi constexpr AOT::Interpreter::maxHiddenWordOffsetInSiteCache, t0
     loadi [t3, t0], t0
     btiz t0, .compiledObject
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
     loadhsq OpGetById::Metadata::m_modeMetadata.defaultMode.cachedOffset[t2], t1
@@ -741,15 +741,15 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     subi NarrowReferenceInSiteCache, t1
     loadi [t3, t1], t0
     bib t0, constexpr AOT::minCell32, .compiledObject
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     lshiftp constexpr AOT::cell32Shift, t0
     addp InstanceCellCageBase[t5], t0
     return(t0)
 
-.otherModeOfStructure:
+.otherStructureMode:
     bbneq OpGetById::Metadata::m_modeMetadata.mode[t2], constexpr GetByIdMode::ProtoLoad, .isAbsent
     loadp OpGetById::Metadata::m_modeMetadata.protoLoadMode.cachedSlot[t2], t0
-    andi constexpr AOT::Interpreter::offsetMaskOfOtherMode, t1
+    andi constexpr AOT::Interpreter::otherModeOffsetMask, t1
     bigteq t1, firstOutOfLineOffset, .methodIsOutOfLine
     loadq sizeof JSObjectWithButterfly[t0, t1, 8], t0
     return(t0)
@@ -802,12 +802,12 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     # What the cache of the site does not hold.
 .probe:
     loadi OpGetById::Metadata::m_modeMetadata.defaultMode.structureID[t2], t7
-    bbb JSCell::m_type[t3], ObjectType, .baseIsNoObject
+    bbb JSCell::m_type[t3], ObjectType, .baseIsNotObject
 .mayBeFiled:
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadIdentifier(size, OpGetById, m_property, t1, t0)
     loadi JSCell::m_structureID[t3], t2
-    findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .isUnfiled)
+    findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .isAbsentFromTable)
     loadb SlotKind[t6], t0
     # Compiled code may have filed the property before the site ran for the first time. Only the slow path fills the cache of the site.
     btinz t7, .readsHashedSlot
@@ -883,13 +883,13 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     restoreStateAfterCCall()
     dispatch()
 
-.isUnfiled:
-    callSlowPath(_llint_slow_path_aot_get_unfiled)
+.isAbsentFromTable:
+    callSlowPath(_llint_slow_path_aot_get_uncached)
     dispatch()
 
-.baseIsNoObject:
+.baseIsNotObject:
     # Its Structure is the VM's, its prototype the realm's.
-    loadInstanceOfRealm(t5, .slow)
+    loadRealmInstance(t5, .slow)
     bbeq JSCell::m_type[t3], StringType, .mayBeFiled
 .slow:
     callSlowPath(_llint_slow_path_get_by_id)
@@ -904,7 +904,7 @@ aotOp(op_get_by_id_with_this, OpGetByIdWithThis, macro (size, get, dispatch, met
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .slow)
     bbb JSCell::m_type[t3], ObjectType, .slow
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadIdentifier(size, OpGetByIdWithThis, m_property, t1, t0)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .slow)
@@ -921,7 +921,7 @@ aotOp(op_get_by_id_with_this, OpGetByIdWithThis, macro (size, get, dispatch, met
 end)
 
 # The index is in bounds. A character that takes more than one byte has no string of its own in SmallStrings.
-macro loadCharacterOfString(impl, index, character, isWide)
+macro loadStringCharacter(impl, index, character, isWide)
     btiz StringImpl::m_hashAndFlags[impl], HashFlags8BitBuffer, .has16BitCharacters
     loadp StringImpl::m_data8[impl], impl
     loadb [impl, index], character
@@ -979,7 +979,7 @@ aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     btpnz t1, isRopeInPointer, .otherAccess
     biaeq t3, StringImpl::m_length[t1], .otherAccess
     zxi2q t3, t3
-    loadCharacterOfString(t1, t3, t2, .otherAccess)
+    loadStringCharacter(t1, t3, t2, .otherAccess)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
     loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t2, PtrSize], t0
@@ -1099,7 +1099,7 @@ aotOp(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
     btqnz t3, notCellMask, .slow
     bbb JSCell::m_type[t3], ObjectType, .slow
     btbz JSCell::m_flags[t3], ImplementsDefaultHasInstance, .slow
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadi JSCell::m_structureID[t3], t2
     loadp InstanceHasInstanceUID[t5], t1
     move t3, t7
@@ -1164,7 +1164,7 @@ aotOp(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dis
     return(t1)
 
 .compiledObject:
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadi JSCell::m_structureID[t0], t1
     loadi (constexpr AOT::offsetOfOrderWord)[t0], t2
     move t1, t3
@@ -1308,7 +1308,7 @@ aotOp(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size, get, dispatch
     bbeq t1, constexpr JSPropertyNameEnumerator::IndexedMode, .slow
     loadVariable(get, m_propertyName, t2)
     loadNameOfKey(t2, t1, .slow)
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadi JSCell::m_structureID[t0], t2
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
     loadb SlotKind[t6], t1
@@ -1444,7 +1444,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .ordinary
-    loadInstanceOfTables(t5, .ordinary)
+    loadTableInstance(t5, .ordinary)
     loadIdentifier(size, OpPutById, m_property, t1, t2)
     loadi JSCell::m_structureID[t0], t2
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .ordinary)
@@ -1554,7 +1554,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .compiledObject:
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .slow
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadIdentifier(size, OpPutById, m_property, t1, t2)
     loadi JSCell::m_structureID[t0], t2
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
@@ -1902,7 +1902,7 @@ end
 
 # JSLexicalEnvironment::create(), once SymbolTable::notifyCreation() has nothing left to say.
 aotOp(op_create_lexical_environment, OpCreateLexicalEnvironment, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     get(m_symbolTable, t0)
     loadConstantOrVariable(size, t0, t1)
     bpneq (constexpr AOT::Interpreter::SymbolTableOffsets::offsetOfSingleton)[t1], constexpr AOT::Interpreter::SymbolTableOffsets::invalidatedSingleton, .slow
@@ -1969,7 +1969,7 @@ end)
 
 # AOT::generateNewPromise().
 aotOp(op_new_promise, OpNewPromise, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadRealmInstance(t5, .slow)
     loadp InstancePromiseAllocator[t5], t0
     btpz t0, .slow
     allocateCell(t0, t1, t2, .slow)
@@ -2036,7 +2036,7 @@ aotOp(op_resolve_scope, OpResolveScope, macro (size, get, dispatch, metadata, re
         loadq [cfr, scope, 8], scope
     end
 
-    macro storeIntoDestinationOfRead(value, scratch)
+    macro storeIntoReadDestination(value, scratch)
         loadbsq (constexpr (op_resolve_scope_length + OpGetFromScope_m_dst_index)) + 2 * OpcodeIDNarrowSize[PB, PC, 1], scratch
         storeq value, [cfr, scratch, 8]
     end
@@ -2059,30 +2059,30 @@ aotOp(op_resolve_scope, OpResolveScope, macro (size, get, dispatch, metadata, re
         loadScopeOfRegister(t0, t2)
         loadVariable()
         storeIntoScopeRegister(t0)
-        storeIntoDestinationOfRead(t1, t2)
+        storeIntoReadDestination(t1, t2)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length)) + 2 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
     .isNoRead:
-        bineq t3, FusedReadIntoScopeRegister, .isNoReadIntoScopeRegister
+        bineq t3, FusedReadIntoScopeRegister, .isNotReadIntoScopeRegister
         loadScopeOfRegister(t0, t2)
         loadVariable()
         storeIntoScopeRegister(t1)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length)) + 2 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
-    .isNoReadIntoScopeRegister:
-        bineq t3, FusedReadAndCheck, .isNoReadAndCheck
+    .isNotReadIntoScopeRegister:
+        bineq t3, FusedReadAndCheck, .isNotReadAndCheck
         loadScopeOfRegister(t0, t2)
         loadVariable()
         btqz t1, isEmpty
         storeIntoScopeRegister(t0)
-        storeIntoDestinationOfRead(t1, t2)
+        storeIntoReadDestination(t1, t2)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length + op_check_tdz_length)) + 3 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
-    .isNoReadAndCheck:
-        bineq t3, FusedReadIntoScopeRegisterAndCheck, .isNoReadIntoScopeRegisterAndCheck
+    .isNotReadAndCheck:
+        bineq t3, FusedReadIntoScopeRegisterAndCheck, .isNotReadIntoScopeRegisterAndCheck
         loadScopeOfRegister(t0, t2)
         loadVariable()
         btqz t1, isEmpty
@@ -2090,36 +2090,36 @@ aotOp(op_resolve_scope, OpResolveScope, macro (size, get, dispatch, metadata, re
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length + op_check_tdz_length)) + 3 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
-    .isNoReadIntoScopeRegisterAndCheck:
+    .isNotReadIntoScopeRegisterAndCheck:
         bib t3, FirstFusedRead, .isNotFused
-        biaeq t3, FirstFusedReadOfGlobal, .readsGlobal
-        bineq t3, FusedReadOuter, .isNoReadOuter
+        biaeq t3, FirstFusedGlobalRead, .readsGlobal
+        bineq t3, FusedReadOuter, .isNotReadOuter
         loadScope(t0, t2)
         loadVariable()
         storeIntoScopeRegister(t0)
-        storeIntoDestinationOfRead(t1, t2)
+        storeIntoReadDestination(t1, t2)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length)) + 2 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
-    .isNoReadOuter:
-        bineq t3, FusedReadOuterIntoScopeRegister, .isNoReadOuterIntoScopeRegister
+    .isNotReadOuter:
+        bineq t3, FusedReadOuterIntoScopeRegister, .isNotReadOuterIntoScopeRegister
         loadScope(t0, t2)
         loadVariable()
         storeIntoScopeRegister(t1)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length)) + 2 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
-    .isNoReadOuterIntoScopeRegister:
-        bineq t3, FusedReadOuterAndCheck, .isNoReadOuterAndCheck
+    .isNotReadOuterIntoScopeRegister:
+        bineq t3, FusedReadOuterAndCheck, .isNotReadOuterAndCheck
         loadScope(t0, t2)
         loadVariable()
         btqz t1, isEmpty
         storeIntoScopeRegister(t0)
-        storeIntoDestinationOfRead(t1, t2)
+        storeIntoReadDestination(t1, t2)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length + op_check_tdz_length)) + 3 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
-    .isNoReadOuterAndCheck:
+    .isNotReadOuterAndCheck:
         bineq t3, FusedReadOuterIntoScopeRegisterAndCheck, .isNotFused
         loadScope(t0, t2)
         loadVariable()
@@ -2139,9 +2139,9 @@ aotOp(op_resolve_scope, OpResolveScope, macro (size, get, dispatch, metadata, re
         loadq [t1], t1
         loadSitePointer(OpResolveScope, m_constantScope, t5, t0)
         btqz t1, isEmpty
-        biaeq t3, FusedReadOfGlobalIntoScopeRegister, .readsGlobalIntoScopeRegister
+        biaeq t3, FusedGlobalReadIntoScopeRegister, .readsGlobalIntoScopeRegister
         storeIntoScopeRegister(t0)
-        storeIntoDestinationOfRead(t1, t2)
+        storeIntoReadDestination(t1, t2)
         addp (constexpr (op_resolve_scope_length + op_get_from_scope_length)) + 2 * OpcodeIDNarrowSize, PC
         nextInstruction()
 
@@ -2155,13 +2155,13 @@ aotOp(op_resolve_scope, OpResolveScope, macro (size, get, dispatch, metadata, re
 
     size(readVariable, macro (isEmpty) end, macro (isEmpty) end, macro (readVariable) readVariable(.isEmpty) end)
 
-    bineq t3, ResolveOfClosureVar, .isNoClosureVariable
+    bineq t3, ClosureVarResolve, .isNotClosureVariable
     loadScope(t0, t2)
 .isEmpty:
     storeIntoScopeRegister(t0)
     dispatch()
 
-.isNoClosureVariable:
+.isNotClosureVariable:
     bineq t3, GlobalProperty, .ordinary
     loadSitePointer(OpResolveScope, m_constantScope, t5, t0)
     loadSiteInt(OpResolveScope, m_globalLexicalBindingEpoch, t5, t1)
@@ -2181,7 +2181,7 @@ aotOp(op_get_from_scope, OpGetFromScope, macro (size, get, dispatch, metadata, r
     else
         loadb OpGetFromScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t3
     end
-    bineq t3, GlobalProperty, .isNoGlobalProperty
+    bineq t3, GlobalProperty, .isNotGlobalProperty
     get(m_scope, t0)
     loadq [cfr, t0, 8], t0
     loadSiteInt(OpGetFromScope, m_structureID, t5, t1)
@@ -2190,15 +2190,15 @@ aotOp(op_get_from_scope, OpGetFromScope, macro (size, get, dispatch, metadata, r
     loadPropertyAtVariableOffset(t1, t0, t2)
     return(t2)
 
-.isNoGlobalProperty:
+.isNotGlobalProperty:
     loadSitePointer(OpGetFromScope, m_operand, t5, t1)
-    bineq t3, ClosureVar, .isNoClosureVariable
+    bineq t3, ClosureVar, .isNotClosureVariable
     get(m_scope, t0)
     loadq [cfr, t0, 8], t0
     loadq JSLexicalEnvironment_variables[t0, t1, 8], t2
     return(t2)
 
-.isNoClosureVariable:
+.isNotClosureVariable:
     bia t3, GlobalLexicalVar, .isNoVariable
     loadq [t1], t2
     btqz t2, .ordinary
@@ -2213,18 +2213,18 @@ aotOp(op_get_from_scope, OpGetFromScope, macro (size, get, dispatch, metadata, r
     bbneq JSCell::m_type[t0], constexpr GlobalObjectType, .ordinary
     loadp JSGlobalObject::m_contextifiedObject[t0], t3
     btpz t3, .ordinary
-    loadInstanceOfTables(t5, .ordinary)
+    loadTableInstance(t5, .ordinary)
     loadIdentifier(size, OpGetFromScope, m_var, t1, t0)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .ordinary)
     loadb SlotKind[t6], t0
     bbeq t0, constexpr AOT::Slot::Kind::Absent, .isBehindSandbox
-    bbeq JSCell::m_type[t3], CompiledObjectType, .isOfCompiledSandbox
+    bbeq JSCell::m_type[t3], CompiledObjectType, .isInCompiledSandbox
     bbneq JSCell::m_type[t3], FinalObjectType, .ordinary
     bbneq t0, constexpr AOT::Slot::Kind::Value, .ordinary
     getFromHashedSlot(t6, .ordinary, .ordinary, .isOfSandbox)
 
-.isOfCompiledSandbox:
+.isInCompiledSandbox:
     getFromCompiledObject(.ordinary, .isOfSandbox)
 
     # The sandbox itself reads as the global object. A field that is absent reads as undefined too.
@@ -2257,7 +2257,7 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
         loadi OpPutToScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t0
     end
     andi ResolveTypeMask, t0
-    bineq t0, ClosureVar, .isNoClosureVariable
+    bineq t0, ClosureVar, .isNotClosureVariable
     get(m_value, t1)
     loadOperandInRegister(size, t1, t2, .valueIsConstant)
 .hasValue:
@@ -2273,9 +2273,9 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
 .valueIsConstant:
     loadConstantOperand(size, t1, t2, .hasValue)
 
-.isNoClosureVariable:
+.isNotClosureVariable:
     bieq t0, GlobalLexicalVar, .storesGlobal
-    bia t0, GlobalVar, .perhapsOfContext
+    bia t0, GlobalVar, .maybeContextVariable
     bieq t0, GlobalProperty, .storesGlobalProperty
     varReadOnlyCheck(.ordinary, t2)
 .storesGlobal:
@@ -2311,8 +2311,8 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
     dispatch()
 
     # A variable of a context, whose address the site has, and of which the sandbox has a property: AOT::Interpreter::tryPutToContext().
-.perhapsOfContext:
-    bineq t0, constexpr Dynamic, .isNoVariableOfContext
+.maybeContextVariable:
+    bineq t0, constexpr Dynamic, .isNotContextVariable
     loadSitePointer(OpPutToScope, m_operand, t5, t1)
     btpz t1, .ordinary
     get(m_scope, t0)
@@ -2324,7 +2324,7 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
 .hasSandbox:
     bbeq JSCell::m_type[t0], FinalObjectType, .hasHolder
     bbneq JSCell::m_type[t0], CompiledObjectType, .ordinary
-    loadInstanceOfTables(t5, .ordinary)
+    loadTableInstance(t5, .ordinary)
     loadi JSCell::m_structureID[t0], t2
     move t2, t3
     structureIDToStructureWithScratch(t3, t1)
@@ -2355,7 +2355,7 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
     else
         loadb OpPutToScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t2
     end
-    bineq t2, constexpr Dynamic, .storesPropertyOfGlobalObject
+    bineq t2, constexpr Dynamic, .storesGlobalObjectProperty
     loadSitePointer(OpPutToScope, m_operand, t5, t2)
     storeq t1, [t2]
     btqnz t1, notCellMask, .isDone
@@ -2366,7 +2366,7 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
     dispatch()
 
     # A property of the global object is looked for twice: what forbids the store is known before the sandbox is written to.
-.isNoVariableOfContext:
+.isNotContextVariable:
     bineq t0, constexpr UnresolvedProperty, .ordinary
 .isOtherProperty:
     get(m_scope, t0)
@@ -2386,7 +2386,7 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
     jmp .hasSandbox
 
     # t0: what holds the property of the sandbox.
-.storesPropertyOfGlobalObject:
+.storesGlobalObjectProperty:
     btqnz t1, notCellMask, .holderIsDone
     writeBarrierOnCell(t0, t1)
 .holderIsDone:
@@ -2407,7 +2407,7 @@ aotOp(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, retur
     jumpToOrdinaryHandler(size, op_put_to_scope)
 end)
 
-# No JIT counts the turns of a loop. op_check_traps, which follows, is done as well.
+# There is no JIT to count the iterations of a loop. This also executes op_check_traps, which follows.
 aotOp(op_loop_hint, OpLoopHint, macro (size, get, dispatch, metadata, return)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
@@ -2428,7 +2428,7 @@ aotOp(op_switch_string, OpSwitchString, macro (size, get, dispatch, metadata, re
     bbneq JSCell::m_type[t0], StringType, .slow
     loadp JSString::m_fiber[t0], t0
     btpnz t0, isRopeInPointer, .slow
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadp InstanceSwitchTargets[t5], t5
     btpz t5, .slow
     move PB, t2
@@ -2452,7 +2452,7 @@ aotOp(op_switch_string, OpSwitchString, macro (size, get, dispatch, metadata, re
     nextInstruction()
 end)
 
-# Nobody reads what kinds of numbers an operation had.
+# The profiles of arithmetic operations are not read.
 aotOp(op_sub, OpSub, macro (size, get, dispatch, metadata, return)
     get(m_lhs, t2)
     get(m_rhs, t3)
@@ -2742,11 +2742,11 @@ aotOp(op_unsigned, OpUnsigned, macro (size, get, dispatch, metadata, return)
     jumpToOrdinaryHandler(size, op_unsigned)
 end)
 
-# JSFunction::create() of an executable that has made functions before: AOT::FunctionBirth.
+# JSFunction::create() of an executable that has made functions before: AOT::FunctionAllocationEntry.
 macro aotNewFunction(opcodeName, opcodeStruct, executables)
     aotOp(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, metadata, return)
-        loadInstanceOfTables(t5, .slow)
-        loadp InstanceFunctionBirths[t5], t5
+        loadTableInstance(t5, .slow)
+        loadp InstanceFunctionAllocations[t5], t5
         btpz t5, .slow
         getu(size, opcodeStruct, m_functionDecl, t1)
         loadp CodeBlock[cfr], t0
@@ -2754,14 +2754,14 @@ macro aotNewFunction(opcodeName, opcodeStruct, executables)
         loadp (constexpr AOT::Interpreter::offsetOfExecutablesInStorage)[t0, t1, PtrSize], t0
         btpz t0, .slow
         move t0, t1
-        urshiftp FunctionBirthExecutableShift, t1
-        andp NumberOfFunctionBirths - 1, t1
-        muli FunctionBirthSize, t1
+        urshiftp FunctionAllocationExecutableShift, t1
+        andp NumberOfFunctionAllocations - 1, t1
+        muli FunctionAllocationSize, t1
         addp t1, t5
-        bpneq t0, FunctionBirthExecutable[t5], .slow
-        loadp FunctionBirthAllocator[t5], t1
+        bpneq t0, FunctionAllocationExecutable[t5], .slow
+        loadp FunctionAllocationAllocator[t5], t1
         allocateCell(t1, t2, t3, .slow)
-        loadq FunctionBirthHeader[t5], t3
+        loadq FunctionAllocationHeader[t5], t3
         storeq t3, [t2]
         storep 0, JSObjectWithButterfly::m_butterfly[t2]
         get(m_scope, t1)
@@ -2781,7 +2781,7 @@ aotNewFunction(new_func, OpNewFunc, CodeBlock::m_functionDecls)
 
 aotNewFunction(new_func_exp, OpNewFuncExp, CodeBlock::m_functionExprs)
 
-# The allocation profile of the constructor, as Baseline code reads it. No JIT asks which callees there were.
+# Reads the allocation profile of the constructor as Baseline code does. No JIT reads the profile of callees.
 aotOp(op_create_this, OpCreateThis, macro (size, get, dispatch, metadata, return)
     get(m_callee, t1)
     loadq [cfr, t1, 8], t0
@@ -2817,7 +2817,7 @@ end)
 
 # ClonedArguments::createWithMachineFrame(), for as many arguments as a small butterfly holds. The butterfly is allocated first: nobody sees it when the cell cannot be.
 aotOp(op_create_cloned_arguments, OpCreateClonedArguments, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadp CodeBlock[cfr], t0
     loadp CodeBlock::m_globalObject[t0], t0
     loadi JSGlobalObject::m_clonedArgumentsStructure[t0], t1
@@ -2956,7 +2956,7 @@ end)
 
 # constructArrayNegativeIndexed(), where storing the elements leaves the indexing type of the profile as it is.
 aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .ofOtherRealm)
+    loadRealmInstance(t5, .ofOtherRealm)
     # AOT::branchIfHavingABadTime().
     btiz InstanceNewArrayWithContiguousHeader[t5], .slow
 .hasInstance:
@@ -3107,7 +3107,7 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
 .ofOtherRealm:
     getu(size, OpNewArray, m_argc, t0)
     btiz t0, .slow
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadp CodeBlock[cfr], t0
     loadp CodeBlock::m_globalObject[t0], t0
     move constexpr ArrayWithContiguous, t1
@@ -3124,7 +3124,7 @@ end)
 
 # constructArray() of the arguments behind the named parameters. The butterfly is allocated first: nobody sees it when the cell cannot be.
 aotOp(op_create_rest, OpCreateRest, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .ofOtherRealm)
+    loadRealmInstance(t5, .ofOtherRealm)
     # AOT::branchIfHavingABadTime().
     btiz InstanceNewArrayWithContiguousHeader[t5], .slow
 .hasInstance:
@@ -3183,7 +3183,7 @@ aotOp(op_create_rest, OpCreateRest, macro (size, get, dispatch, metadata, return
 
     # A realm without an instance of its own.
 .ofOtherRealm:
-    loadInstanceOfTables(t5, .slow)
+    loadTableInstance(t5, .slow)
     loadp CodeBlock[cfr], t0
     loadp CodeBlock::m_globalObject[t0], t0
     move constexpr ArrayWithContiguous, t1
@@ -3447,7 +3447,7 @@ macro loadFlagsAndLengthOfString(string, flags, length)
 .isLoaded:
 end
 
-# The string that VM::numericStrings keeps of a small integer. The strings are its first member: stringOfInteger().
+# The string that VM::numericStrings keeps of a small integer. The strings are its first member: stringFromInteger().
 macro loadStringOfSmallInteger(value, scratch, cannot)
     bqb value, numberTag, cannot
     biaeq value, constexpr NumericStrings::cacheSize, cannot
@@ -3489,14 +3489,14 @@ aotOp(op_add, OpAdd, macro (size, get, dispatch, metadata, return)
     loadStringOfSmallInteger(t0, t2, .addsNumberToString)
     jmp .hasStrings
 
-.rightIsNoCell:
+.rightIsNotCell:
     loadStringOfSmallInteger(t1, t2, .addsNumberToString)
     jmp .hasStrings
 
 .leftIsNoInt32:
     btqnz t0, notCellMask, .leftIsNoCell
     bbneq JSCell::m_type[t0], StringType, .ordinary
-    btqnz t1, notCellMask, .rightIsNoCell
+    btqnz t1, notCellMask, .rightIsNotCell
     bbneq JSCell::m_type[t1], StringType, .ordinary
 .hasStrings:
     loadFlagsAndLengthOfString(t0, t2, t3)
@@ -3510,7 +3510,7 @@ aotOp(op_add, OpAdd, macro (size, get, dispatch, metadata, return)
     orp isRopeInPointer, t2
 
     # t1: the right string, t2: the left string and the flags, t3: the length
-    loadInstanceOfTables(t5, .ordinary)
+    loadTableInstance(t5, .ordinary)
     loadp InstanceRopeStringAllocator[t5], t6
     allocateCell(t6, t7, t0, .ordinary)
     loadq InstanceStringHeader[t5], t0
@@ -3615,7 +3615,7 @@ aotOp(op_strcat, OpStrcat, macro (size, get, dispatch, metadata, return)
     urshiftq 32, t2
     lshiftq 16, t3
     orq t3, t2
-    loadInstanceOfTables(t1, .slow)
+    loadTableInstance(t1, .slow)
     loadp InstanceRopeStringAllocator[t1], t7
     allocateCell(t7, t0, t3, .slow)
     loadq InstanceStringHeader[t1], t3
@@ -4305,7 +4305,7 @@ _llint_aot_is_array_thunk:
 .isArrayHostFunction:
     jmp _llint_native_call_trampoline
 
-macro loadVMOfThunk(vm, scratch1, scratch2)
+macro loadThunkVM(vm, scratch1, scratch2)
     loadp CalleeFrameAtEntry + Callee[sp], scratch1
     loadStructureWithScratch(scratch1, vm, scratch2)
     loadp Structure::m_realm[vm], vm
@@ -4326,8 +4326,8 @@ _llint_aot_char_at_thunk:
     btpnz t1, isRopeInPointer, .charAtHostFunction
     biaeq t2, StringImpl::m_length[t1], .charAtHostFunction
     zxi2q t2, t2
-    loadCharacterOfString(t1, t2, t0, .charAtHostFunction)
-    loadVMOfThunk(t1, t2, t3)
+    loadStringCharacter(t1, t2, t0, .charAtHostFunction)
+    loadThunkVM(t1, t2, t3)
     loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t0, PtrSize], r0
     ret
 .charAtHostFunction:
@@ -4343,7 +4343,7 @@ _llint_aot_from_char_code_thunk:
     bqb t0, t1, .fromCharCodeHostFunction
     bia t0, constexpr maxSingleCharacterString, .fromCharCodeHostFunction
     zxi2q t0, t0
-    loadVMOfThunk(t1, t2, t3)
+    loadThunkVM(t1, t2, t3)
     loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t0, PtrSize], r0
     ret
 .fromCharCodeHostFunction:
@@ -4363,7 +4363,7 @@ _llint_aot_has_own_property_thunk:
     btpnz t2, isRopeInPointer, .hasOwnPropertyHostFunction
     loadi StringImpl::m_hashAndFlags[t2], t5
     btiz t5, constexpr StringImpl::s_hashFlagStringKindIsAtom, .hasOwnPropertyHostFunction
-    loadVMOfThunk(t1, t0, t6)
+    loadThunkVM(t1, t0, t6)
     loadp VM::m_hasOwnPropertyCache[t1], t1
     btpnz t1, HasOwnPropertyCacheIsLazy, .hasOwnPropertyHostFunction
     loadi JSCell::m_structureID[t3], t0
@@ -4386,10 +4386,10 @@ global _llint_aot_math_floor_thunk
 _llint_aot_math_floor_thunk:
     loadFirstArgumentOfThunk(t0, .floorHostFunction)
     move constexpr JSValue::NumberTag, t1
-    bqb t0, t1, .floorOfNoInt32
+    bqb t0, t1, .floorOfNonInt32
     move t0, r0
     ret
-.floorOfNoInt32:
+.floorOfNonInt32:
     btqz t0, t1, .floorHostFunction
     addq t1, t0
     fq2d t0, ft0
@@ -4402,9 +4402,9 @@ _llint_aot_math_floor_thunk:
     bdlteq ft1, ft0, .isFloor
     subq 1, t2
 .isFloor:
-    btqnz t2, .isNoNegativeZero
+    btqnz t2, .isNotNegativeZero
     bqlt t0, 0, .floorHostFunction
-.isNoNegativeZero:
+.isNotNegativeZero:
     sxi2q t2, t3
     bqneq t2, t3, .floorHostFunction
     zxi2q t2, t2
@@ -4414,7 +4414,7 @@ _llint_aot_math_floor_thunk:
 .floorHostFunction:
     jmp _llint_native_call_trampoline
 
-macro loadInt32ArgumentsOfThunk(first, second, tag, hostFunction)
+macro loadThunkInt32Arguments(first, second, tag, hostFunction)
     loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], first
     bineq first, 3, hostFunction
     move constexpr JSValue::NumberTag, tag
@@ -4426,7 +4426,7 @@ end
 
 global _llint_aot_math_imul_thunk
 _llint_aot_math_imul_thunk:
-    loadInt32ArgumentsOfThunk(t0, t2, t1, .imulHostFunction)
+    loadThunkInt32Arguments(t0, t2, t1, .imulHostFunction)
     muli t2, t0
     orq t1, t0
     move t0, r0
@@ -4435,7 +4435,7 @@ _llint_aot_math_imul_thunk:
     jmp _llint_native_call_trampoline
 
 # Leaves a double, and the number in result as it is.
-macro loadDoubleOfThunk(value, tag, scratch, result, hostFunction)
+macro loadThunkDouble(value, tag, scratch, result, hostFunction)
     bqaeq value, tag, .isInt32
     btqz value, tag, hostFunction
     move value, scratch
@@ -4448,7 +4448,7 @@ macro loadDoubleOfThunk(value, tag, scratch, result, hostFunction)
 end
 
 # Math.max() and Math.min() of int32s, and of two numbers of which one is greater.
-macro extremeOfThunk(keepsFirstInt32, keepsFirstDouble, hostFunction)
+macro minMaxThunk(keepsFirstInt32, keepsFirstDouble, hostFunction)
     loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t2
     bib t2, 2, hostFunction
     subi 2, t2
@@ -4471,9 +4471,9 @@ macro extremeOfThunk(keepsFirstInt32, keepsFirstDouble, hostFunction)
     loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t2
     bineq t2, 3, hostFunction
     loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], t0
-    loadDoubleOfThunk(t0, t1, t2, ft0, hostFunction)
+    loadThunkDouble(t0, t1, t2, ft0, hostFunction)
     loadq CalleeFrameAtEntry + FirstArgumentOffset + 8[sp], t3
-    loadDoubleOfThunk(t3, t1, t2, ft1, hostFunction)
+    loadThunkDouble(t3, t1, t2, ft1, hostFunction)
     keepsFirstDouble(ft0, ft1, .isLast)
     move t3, t0
     keepsFirstDouble(ft1, ft0, .isLast)
@@ -4481,13 +4481,13 @@ end
 
 global _llint_aot_math_max_thunk
 _llint_aot_math_max_thunk:
-    extremeOfThunk(macro (first, second, keepsFirst) bigteq first, second, keepsFirst end, macro (first, second, keepsFirst) bdgt first, second, keepsFirst end, .maxHostFunction)
+    minMaxThunk(macro (first, second, keepsFirst) bigteq first, second, keepsFirst end, macro (first, second, keepsFirst) bdgt first, second, keepsFirst end, .maxHostFunction)
 .maxHostFunction:
     jmp _llint_native_call_trampoline
 
 global _llint_aot_math_min_thunk
 _llint_aot_math_min_thunk:
-    extremeOfThunk(macro (first, second, keepsFirst) bilteq first, second, keepsFirst end, macro (first, second, keepsFirst) bdlt first, second, keepsFirst end, .minHostFunction)
+    minMaxThunk(macro (first, second, keepsFirst) bilteq first, second, keepsFirst end, macro (first, second, keepsFirst) bdlt first, second, keepsFirst end, .minHostFunction)
 .minHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4495,7 +4495,7 @@ global _llint_aot_math_abs_thunk
 _llint_aot_math_abs_thunk:
     loadFirstArgumentOfThunk(t0, .absHostFunction)
     move constexpr JSValue::NumberTag, t1
-    bqb t0, t1, .absOfNoInt32
+    bqb t0, t1, .absOfNonInt32
     bigteq t0, 0, .isAbsolute
     bieq t0, -2147483648, .absHostFunction
     negi t0
@@ -4503,7 +4503,7 @@ _llint_aot_math_abs_thunk:
 .isAbsolute:
     move t0, r0
     ret
-.absOfNoInt32:
+.absOfNonInt32:
     btqz t0, t1, .absHostFunction
     addq t1, t0
     lshiftq 1, t0
@@ -4519,13 +4519,13 @@ global _llint_aot_math_sqrt_thunk
 _llint_aot_math_sqrt_thunk:
     loadFirstArgumentOfThunk(t0, .sqrtHostFunction)
     move constexpr JSValue::NumberTag, t1
-    loadDoubleOfThunk(t0, t1, t2, ft0, .sqrtHostFunction)
+    loadThunkDouble(t0, t1, t2, ft0, .sqrtHostFunction)
     sqrtd ft0, ft0
-    bcd2i ft0, t0, .rootIsNoInt32
+    bcd2i ft0, t0, .rootIsNotInt32
     orq t1, t0
     move t0, r0
     ret
-.rootIsNoInt32:
+.rootIsNotInt32:
     bdnequn ft0, ft0, .sqrtHostFunction
     fd2q ft0, t0
     subq t1, t0

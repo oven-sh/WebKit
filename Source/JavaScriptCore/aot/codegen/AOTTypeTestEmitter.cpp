@@ -389,12 +389,12 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
 
     bool everyOtherPasses = plan.everyNonCellPasses();
     LBasicBlock continuation = newBlock();
-    if (m_asksNumbersFirst && !everyOtherPasses && (plan.passingPrimitives & Primitive::Number) && verdictOfNumbers(plan) == TypeTestVerdict::AlwaysPasses) {
+    if (m_testsNumbersFirst && !everyOtherPasses && (plan.passingPrimitives & Primitive::Number) && verdictOfNumbers(plan) == TypeTestVerdict::AlwaysPasses) {
         LBasicBlock isNoNumber = newBlock();
         ScopeFork fork = m_out.forkScope();
         m_out.branch(isNumber(value).value(), normalEdge(continuation), unlikelyEdge(isNoNumber));
         m_out.appendToArm(isNoNumber, fork);
-        SetForScope numberWasAsked(m_asksNumbersFirst, false);
+        SetForScope numberWasTested(m_testsNumbersFirst, false);
         testBoxed(value, plan, failure);
         m_out.jump(continuation);
         m_out.appendToJoin(continuation, fork);

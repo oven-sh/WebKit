@@ -483,7 +483,7 @@ static Reference buildParseOfProvenNumber(Walker& walker, const CallByOneRow& ca
     return standsInLoop && walker.opensGuesses() && number.isValue() ? buildParsedIntegerOfFractionInNumberBuiltins(walker, call, number) : Reference();
 }
 
-static Reference buildParseBehindTest(Walker& walker, const CallByOneRow& call, Reference value, TypeID tested, bool parsesInteger)
+static Reference buildParseAfterTest(Walker& walker, const CallByOneRow& call, Reference value, TypeID tested, bool parsesInteger)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     BlockID inputBlock = index.blockOf(call.call.id());
@@ -556,7 +556,7 @@ static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallBy
         if (!isDecimal)
             return { };
     }
-    return isNumber ? buildParseOfProvenNumber(walker, call, value, parsesInteger) : buildParseBehindTest(walker, call, value, tested, parsesInteger);
+    return isNumber ? buildParseOfProvenNumber(walker, call, value, parsesInteger) : buildParseAfterTest(walker, call, value, tested, parsesInteger);
 }
 
 Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)

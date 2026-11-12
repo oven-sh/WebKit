@@ -414,7 +414,7 @@ struct PlacesOfFieldsInSlotPlan {
     static constexpr uint8_t inCell = UINT8_MAX;
     Vector<BitVector> appendedFieldsThatShareGranule;
     Vector<Vector<uint8_t>> granulesOfAppendedFields;
-    Vector<uint32_t> numbersOfFieldsInCellAsInBase;
+    Vector<uint32_t> cellFieldNumbersFromBase;
     static constexpr uint8_t granuleNotChosen = inCell - 1;
     static constexpr uint8_t withoutSlot = inCell - 2;
     Vector<uint8_t> granulesOfListedFields;
@@ -879,7 +879,7 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
     static_assert(maxAppendedFieldsOutOfLine <= noGranule && maxExtensionGranules <= PlacesOfFieldsInSlotPlan::withoutSlot);
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     result.granulesOfAppendedFields.grow(numberOfLayouts);
-    result.numbersOfFieldsInCellAsInBase.fill(0, numberOfLayouts);
+    result.cellFieldNumbersFromBase.fill(0, numberOfLayouts);
     result.appendedFieldsThatShareGranule.grow(numberOfLayouts);
     Vector<uint8_t> numbersOfGranulesTaken;
     numbersOfGranulesTaken.fill(0, numberOfLayouts);
@@ -895,11 +895,11 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
         Vector<PropertyKeyID, 16> keysOfBase = base && !result.granulesOfAppendedFields[base.index()].isEmpty() ? link.appendedKeysOfPlan(base) : Vector<PropertyKeyID, 16>();
         for (uint32_t place = 0; place < keys.size(); ++place) {
             size_t placeInBase = std::ranges::find(keysOfBase, keys[place]) - keysOfBase.begin();
-            bool liesInCellOfBase = placeInBase < keysOfBase.size() && result.granulesOfAppendedFields[base.index()][placeInBase] == PlacesOfFieldsInSlotPlan::inCell;
+            bool isInBaseCell = placeInBase < keysOfBase.size() && result.granulesOfAppendedFields[base.index()][placeInBase] == PlacesOfFieldsInSlotPlan::inCell;
             bool isRequired = link.isAppendedFieldRequiredByTypeOfThis({ LayoutID(index), numberListed + place });
-            bool isOfComputedLiteral = link.computedLiterals.get(index) && numberListed + keys.size() <= mostNamesOfComputedLiteral;
-            result.numbersOfFieldsInCellAsInBase[index] += liesInCellOfBase && !isRequired;
-            result.granulesOfAppendedFields[index].append(liesInCellOfBase || isRequired || isOfComputedLiteral ? PlacesOfFieldsInSlotPlan::inCell : noGranule);
+            bool isOfComputedLiteral = link.computedLiterals.get(index) && numberListed + keys.size() <= maxComputedLiteralNames;
+            result.cellFieldNumbersFromBase[index] += isInBaseCell && !isRequired;
+            result.granulesOfAppendedFields[index].append(isInBaseCell || isRequired || isOfComputedLiteral ? PlacesOfFieldsInSlotPlan::inCell : noGranule);
         }
     };
     for (uint32_t index = 0; index < numberOfLayouts; ++index)
@@ -1495,16 +1495,16 @@ void layAppendedFieldInCellForFields(const Program& program, const Facts& facts,
         giveSlotFormOfPlaceInSlotPlan(slot, formProvenOfFieldForSlotPlan(program, facts, facts.linked(), reference), slot.type);
 }
 
-static constexpr uint64_t mostBytesOfCellWithLateNames = 128;
+static constexpr uint64_t maxCellBytesWithLateNames = 128;
 
 static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, uint64_t endOfSlotsInCell, bool areFilledTogether)
 {
-    constexpr uint64_t mostBytesOfCell = mostBytesOfCellWithLateNames;
+    constexpr uint64_t mostBytesOfCell = maxCellBytesWithLateNames;
     constexpr uint64_t bytesOfLargeCell = 512;
     const uint64_t mostBytesAdded = areFilledTogether ? mostBytesOfCell : 2 * bytesPerSlotInSlotPlan;
     const Vector<uint8_t>& granules = places.granulesOfAppendedFields[id.index()];
     uint64_t end = endOfSlotsInCell;
-    endOfSlotsInCell -= places.numbersOfFieldsInCellAsInBase[id.index()] * bytesPerSlotInSlotPlan;
+    endOfSlotsInCell -= places.cellFieldNumbersFromBase[id.index()] * bytesPerSlotInSlotPlan;
     for (size_t place = 0; place < granules.size(); ++place) {
         if (granules[place] >= maxExtensionGranules)
             continue;
@@ -1521,14 +1521,14 @@ static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const Cel
     return cellSizes.cellSizeFor(end) <= std::max(cellSizes.cellSizeFor(endOfSlotsInCell), sizeWithMore);
 }
 
-static BitVector lateNamesOfMethodsInCell(const LinkTables& link, const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, std::span<const PropertyKeyID> appendedKeys, uint64_t endOfSlotsInCell)
+static BitVector lateMethodNamesInCell(const LinkTables& link, const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, std::span<const PropertyKeyID> appendedKeys, uint64_t endOfSlotsInCell)
 {
     BitVector lieInCell;
     uint64_t end = endOfSlotsInCell;
     for (size_t place = 0; place < appendedKeys.size(); ++place) {
         if (places.granulesOfAppendedFields[id.index()][place] >= maxExtensionGranules || places.appendedFieldsThatShareGranule[id.index()].get(place) || !link.isLateFieldStoredThroughThis(id, appendedKeys[place]))
             continue;
-        if (cellSizes.cellSizeFor(end + bytesPerSlotInSlotPlan) > mostBytesOfCellWithLateNames)
+        if (cellSizes.cellSizeFor(end + bytesPerSlotInSlotPlan) > maxCellBytesWithLateNames)
             break;
         lieInCell.set(place);
         end += bytesPerSlotInSlotPlan;
@@ -1589,11 +1589,11 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
     uint64_t endOfSlotsInCell = end;
     for (FieldIndex field = numberOfDeclaredFields; field < numberOfFields; ++field)
         endOfSlotsInCell += places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields] == PlacesOfFieldsInSlotPlan::inCell ? bytesPerSlotInSlotPlan : 0;
-    const bool mayLateNamesLieInCell = isCompiledObject && !build.recordedOptions().useWideReferences() && !places.layoutsWithListedFieldsOutOfLine.quickGet(id.index());
-    const bool lateNamesLieInCell = mayLateNamesLieInCell && lateNamesFitInCell(places, cellSizes, id, endOfSlotsInCell, facts.linked().layoutsFillingLateFieldsTogether.get(id.index()));
+    const bool canPlaceLateNamesInCell = isCompiledObject && !build.recordedOptions().useWideReferences() && !places.layoutsWithListedFieldsOutOfLine.quickGet(id.index());
+    const bool lateNamesLieInCell = canPlaceLateNamesInCell && lateNamesFitInCell(places, cellSizes, id, endOfSlotsInCell, facts.linked().layoutsFillingLateFieldsTogether.get(id.index()));
     BitVector lateNamesInCell;
-    if (mayLateNamesLieInCell && !lateNamesLieInCell) {
-        lateNamesInCell = lateNamesOfMethodsInCell(facts.linked(), places, cellSizes, id, planned.appendedKeys.span(), endOfSlotsInCell);
+    if (canPlaceLateNamesInCell && !lateNamesLieInCell) {
+        lateNamesInCell = lateMethodNamesInCell(facts.linked(), places, cellSizes, id, planned.appendedKeys.span(), endOfSlotsInCell);
         endOfSlotsInCell += lateNamesInCell.bitCount() * bytesPerSlotInSlotPlan;
     }
     bool hasWordLeftOver = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(endOfSlotsInCell) - endOfSlotsInCell >= bytesPerSlotInSlotPlan;

@@ -464,13 +464,13 @@ void ResolvedCallEmitter::recordMatch(const OperationContext& context, const Reg
         m_out.store32(part->start.value(), field(cachedResult + RegExpCachedResult::offsetOfInputStart()));
         m_out.store32(part->source.length.value(), field(cachedResult + RegExpCachedResult::offsetOfInputLength()));
     }
-    const RegExpCachedResult::State recordedState = part ? RegExpCachedResult::State::LazyWithPartOfInput : RegExpCachedResult::State::Lazy;
+    const RegExpCachedResult::State recordedState = part ? RegExpCachedResult::State::LazyWithSubstringInput : RegExpCachedResult::State::Lazy;
     m_out.store32As8(m_out.constInt32(static_cast<int32_t>(recordedState)), field(cachedResult + RegExpCachedResult::offsetOfReified()));
     m_out.store32As8(m_out.constInt32(0), field(cachedResult + RegExpCachedResult::offsetOfOneCharacterMatch()));
     emitter<BarrierEmitter>().barrier(context, globalObject);
 }
 
-void ResolvedCallEmitter::clearBoundsOfAbsentGroups(CellPointer regExpObject, unsigned count)
+void ResolvedCallEmitter::clearAbsentGroupBounds(CellPointer regExpObject, unsigned count)
 {
     const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
     LBasicBlock isRecompiled = newBlock();
@@ -493,7 +493,7 @@ void ResolvedCallEmitter::clearBoundsOfAbsentGroups(CellPointer regExpObject, un
 ValueID ResolvedCallEmitter::findDeferredLastIndexStore(ValueID match)
 {
     const Operation& operation = operationAt(match);
-    if (operation.opcode != Opcode::MatchHeldRegExpInParts || !operation.isPrivate() || !operation.lastIndexOperand() || !operation.regExpFlags().containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
+    if (operation.opcode != Opcode::MatchHeldRegExpParts || !operation.isPrivate() || !operation.lastIndexOperand() || !operation.regExpFlags().containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
         return { };
     auto root = [&](ValueID id) { return m_code.valueBehindNames<cellPreservingOpcodes>(id); };
     for (ValueID id = operation.previous; id; id = operationAt(id).previous) {
@@ -524,7 +524,7 @@ bool ResolvedCallEmitter::isDeferredLastIndexStore(const ValueContext& store)
     return true;
 }
 
-void ResolvedCallEmitter::generateMatchHeldRegExpInParts(const ValueContext& value)
+void ResolvedCallEmitter::generateMatchHeldRegExpParts(const ValueContext& value)
 {
     RegExpMatch match { value->pattern(), value->regExpFlags(), in<CellPointer>(value->stringOperand()), in<CellPointer>(value->regExpOperand()) };
     match.isHeld = true;
@@ -539,14 +539,14 @@ void ResolvedCallEmitter::generateMatchHeldRegExpInParts(const ValueContext& val
             m_out.store64(in<Boxed>(operationAt(deferredStore).valueOperand()).value(), m_out.address(m_heaps.entire(AbstractHeap::RegExpState), match.regExpObject.value(), RegExpObject::offsetOfLastIndex()));
         Condition isFound = unboxBoolean(Boxed(callStub(value, regExpMatch(RegExpMatchResult::Parts), { match.regExpObject.value(), match.string.value() }, { .calledBuiltin = functionOf(value->overload()) }).first));
         if (!match.isPrivate && m_facts.mayRecompileRegExps())
-            clearBoundsOfAbsentGroups(match.regExpObject, value->count());
+            clearAbsentGroupBounds(match.regExpObject, value->count());
         return isFound;
     };
     const RegExpMatchPlan* plan = matchPlanOf(value.block(), match);
     define(value, plan ? matchInPlace<Condition>(value, *plan, match, RegExpMatchAnswer::Parts, boolean(false), call) : call());
 }
 
-void ResolvedCallEmitter::generateGetLastIndexOfRegExp(const ValueContext& value)
+void ResolvedCallEmitter::generateGetRegExpLastIndex(const ValueContext& value)
 {
     CellPointer regExpObject = in<CellPointer>(value->regExpOperand());
     define(value, low32(Integer(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::RegExpState), regExpObject.value(), RegExpObject::offsetOfLastIndex())))));
@@ -589,7 +589,7 @@ Pointer ResolvedCallEmitter::matchIntoFrameByCall(const ValueContext& value, LVa
     m_out.appendTo(isInOutput);
     LValue regExp = m_out.bitAnd(m_out.load64(m_out.address(state, regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), static_cast<int64_t>(RegExpObject::regExpMask));
     LValue count = m_out.add(m_out.zeroExtPtr(m_out.load32(m_out.address(state, regExp, RegExp::offsetOfNumSubpatterns()))), 1);
-    m_out.branch(m_out.belowOrEqual(count, maxPartsOfMatchInFrame), normalEdge(fits), rareEdge(isLarge));
+    m_out.branch(m_out.belowOrEqual(count, maxFrameMatchParts), normalEdge(fits), rareEdge(isLarge));
 
     m_out.appendTo(fits);
     Pointer output = matchOutput();
@@ -617,7 +617,7 @@ Pointer ResolvedCallEmitter::matchIntoFrameByCall(const ValueContext& value, LVa
 
 void ResolvedCallEmitter::generateMatchRegExpIntoFrame(const ValueContext& value)
 {
-    LValue slot = m_out.lockedStackSlot(sizeof(uint64_t) * (1 + maxPartsOfMatchInFrame));
+    LValue slot = m_out.lockedStackSlot(sizeof(uint64_t) * (1 + maxFrameMatchParts));
     slot->slot()->setIsDeadAtSuspensions(true);
     RegExpMatch match { value->pattern(), value->regExpFlags(), in<CellPointer>(value->stringOperand()), in<CellPointer>(value->regExpOperand()) };
     match.isHeld = true;
@@ -638,7 +638,7 @@ void ResolvedCallEmitter::generateMatchRegExpIntoFrame(const ValueContext& value
     LValue first { nullptr };
     RegExpMatchEmitter::Begin begin = beginOfMatch(match, matcher, view, calls, first);
     RegExpMatchEmitter::Bounds bounds = matcher.match(misses, begin, first);
-    if (bounds.size() <= 2 * maxPartsOfMatchInFrame) {
+    if (bounds.size() <= 2 * maxFrameMatchParts) {
         m_out.store64(m_out.constInt64(bounds.size() / 2), m_out.address(state, slot));
         storeBounds(matcher, bounds, slot, sizeof(uint64_t));
         ensureStillAliveHere(view.owner);
@@ -668,13 +668,13 @@ void ResolvedCallEmitter::generateIsMatchInFrame(const ValueContext& value)
     define(value, Condition(m_out.notZero64(in<Pointer>(value->matchOperand()).value())));
 }
 
-void ResolvedCallEmitter::generateLengthOfMatchInFrame(const ValueContext& value)
+void ResolvedCallEmitter::generateFrameMatchLength(const ValueContext& value)
 {
     Pointer record = in<Pointer>(value->matchOperand());
     define(value, Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::RegExpState), record.value()))));
 }
 
-void ResolvedCallEmitter::generateBoundsOfMatchInFrame(const ValueContext& value)
+void ResolvedCallEmitter::generateFrameMatchBounds(const ValueContext& value)
 {
     const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
     Pointer record = in<Pointer>(value->matchOperand());

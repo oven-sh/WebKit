@@ -504,7 +504,7 @@ void Order::askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, 
         letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
 }
 
-void Order::askBytesOfTwoTestsAtOnce(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value)
+void Order::mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value)
 {
     Procedure& procedure = first->procedure();
     Arena& arena = procedure.arena();

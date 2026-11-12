@@ -264,7 +264,7 @@ static bool declaresStaticMethod(const Closure& closure, UniquedStringImpl* name
 
 static Presence presenceOfStaticFieldInVariable(const Closure& closure, UniquedStringImpl* name)
 {
-    if (!closure.mayHoldStaticFieldInVariable(name))
+    if (!closure.canHoldStaticFieldInVariable(name))
         return Presence::Absent;
     return StaticFields::tryRead(closure, name) ? Presence::Present : Presence::Unknown;
 }
@@ -792,7 +792,7 @@ bool tryListCallingGetters(JSGlobalObject* globalObject, JSObject* object, Marke
     return true;
 }
 
-JSObject* tryCopyCallingGettersAsBefore(JSGlobalObject* globalObject, JSObject* object, uint32_t excludedRunNumberPlusOne, std::span<UniquedStringImpl* const> excludedNames)
+JSObject* tryCopyWithGetters(JSGlobalObject* globalObject, JSObject* object, uint32_t excludedRunNumberPlusOne, std::span<UniquedStringImpl* const> excludedNames)
 {
     VM& vm = globalObject->vm();
     Object& typed = *uncheckedDowncast<Object>(object);

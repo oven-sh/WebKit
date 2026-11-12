@@ -366,7 +366,7 @@ JSValue JSPromise::asyncStackTraceContext() const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise* JSPromise::settledByReactionCell(JSCell* cell)
+JSPromise* JSPromise::promiseForReactionCell(JSCell* cell)
 {
     if (!cell)
         return nullptr;

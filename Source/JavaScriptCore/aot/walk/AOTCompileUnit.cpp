@@ -332,11 +332,11 @@ struct ClosuresThatCalledParametersHold {
     {
         if (frames.get(operation.origin().inlineFrame) || (operation.opcode == Opcode::CallDirect && functions.contains(operation.function())))
             return true;
-        return !operation.origin().inlineFrame && positionsOfCallsOfBuiltins.contains(operation.origin().position);
+        return !operation.origin().inlineFrame && builtinCallPositions.contains(operation.origin().position);
     }
 
     Vector<FunctionID, 4> functions;
-    Vector<uint32_t, 4> positionsOfCallsOfBuiltins;
+    Vector<uint32_t, 4> builtinCallPositions;
     BitVector frames;
 };
 
@@ -379,13 +379,13 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
                 continue;
             uint32_t place = callee.index() - body->block(entryBlock).firstParameter().index();
             if (place < 32 && (parametersCalled >> place & 1))
-                held.positionsOfCallsOfBuiltins.append(call.position());
+                held.builtinCallPositions.append(call.position());
         }
     }
 
     std::span<const InlineFrame> copied = code.inlineFrames();
     for (uint32_t frame = 1; frame < copied.size(); ++frame) {
-        bool isOfCalledParameter = !copied[frame].parent && (held.functions.contains(copied[frame].callee) || held.positionsOfCallsOfBuiltins.contains(copied[frame].callPosition));
+        bool isOfCalledParameter = !copied[frame].parent && (held.functions.contains(copied[frame].callee) || held.builtinCallPositions.contains(copied[frame].callPosition));
         if (isOfCalledParameter || held.frames.get(copied[frame].parent))
             held.frames.set(frame);
     }

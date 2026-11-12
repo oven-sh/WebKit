@@ -1570,7 +1570,7 @@ bool Walker::threadBranchOf(BlockID inputBlock)
     return KnownThreading(*this, inputBlock).endArmWithBranch();
 }
 
-bool Walker::endOfBlockLeavesStringsInBuilders(uint32_t begin)
+bool Walker::blockEndKeepsStringBuilders(uint32_t begin)
 {
     const Frame& frame = m_frames.last();
     const BodyIndex& index = *frame.index;
@@ -1610,7 +1610,7 @@ bool Walker::canThreadBranchAfterMatch(const BodyValue& operation)
     if (isUnreachable() || m_hasFailed || !block.holds(operation.id()))
         return false;
     uint32_t place = operation.id().index() - block.firstValue().index();
-    return (!hasStringsInBuilders() || endOfBlockLeavesStringsInBuilders(place)) && KnownThreading(*this, frame.block).armsMayWalkEndOfBlockFrom(place + 1);
+    return (!hasStringsInBuilders() || blockEndKeepsStringBuilders(place)) && KnownThreading(*this, frame.block).armsMayWalkEndOfBlockFrom(place + 1);
 }
 
 bool Walker::canThreadBranchFrom(ValueID first)

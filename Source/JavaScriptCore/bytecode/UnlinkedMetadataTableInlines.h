@@ -140,7 +140,7 @@ ALWAYS_INLINE unsigned UnlinkedMetadataTable::addValueProfile()
 {
     ASSERT(!m_isFinalized);
     m_hasMetadata = true;
-    // Nobody reads them where compiled code runs and no JIT: all operations share one.
+    // Nothing reads value profiles when compiled code runs without a JIT, so all operations share one.
     if (Options::runsCompiledImage()) {
         m_numValueProfiles = 1;
         return 1;

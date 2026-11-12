@@ -257,7 +257,7 @@ void emitCallOfNumberOrStringConstructor(StubAssembler& jit, GPRReg scratch)
     isAnotherFunction.link(&jit);
 }
 
-void emitCallOfObjectOrArrayConstructor(StubAssembler& jit, GPRReg scratch)
+void emitObjectOrArrayConstructorCall(StubAssembler& jit, GPRReg scratch)
 {
     if (!jit.key().count())
         return;

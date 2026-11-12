@@ -41,7 +41,7 @@ public:
     };
     enum class FurtherFlag : uint8_t {
         HasKeyOrderOfOneObject = 1 << 0,
-        HasKeyOrderBesideExtraProperties = 1 << 1,
+        HasKeyOrderWithExtraProperties = 1 << 1,
         ReportsReplacements = 1 << 2,
     };
     using KeyOrderEntries = Vector<uint16_t, 16>;

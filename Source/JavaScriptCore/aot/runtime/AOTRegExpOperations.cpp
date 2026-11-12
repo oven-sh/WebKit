@@ -628,7 +628,7 @@ static JSString* replaceInOnePass(JSGlobalObject* globalObject, VM& vm, JSString
 }
 
 static constexpr unsigned mostOperandsOfReplacer = 6;
-static constexpr unsigned operandsOfReplacerBesideGroups = 3;
+static constexpr unsigned replacerOperandsWithoutGroups = 3;
 
 static JSString* replaceByCompiledCode(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* object, JSObject* replacer, const CallData& callData)
 {
@@ -696,7 +696,7 @@ static JSString* replaceMatches(JSGlobalObject* globalObject, VM& vm, JSString* 
             if (hasReplaced)
                 return result;
         }
-        if (RegExp* regExp = regExpObject->regExp(); replacement.isCell() && regExp->global() && !regExp->hasNamedCaptures() && regExp->numSubpatterns() + operandsOfReplacerBesideGroups <= mostOperandsOfReplacer && string->length() < Options::thresholdForStringReplaceCache()) {
+        if (RegExp* regExp = regExpObject->regExp(); replacement.isCell() && regExp->global() && !regExp->hasNamedCaptures() && regExp->numSubpatterns() + replacerOperandsWithoutGroups <= mostOperandsOfReplacer && string->length() < Options::thresholdForStringReplaceCache()) {
             if (CallData callData = compiledCallDataOf(replacement.asCell()); callData.type == CallData::Type::Compiled)
                 RELEASE_AND_RETURN(scope, replaceByCompiledCode(globalObject, vm, string, regExpObject, asObject(replacement), callData));
         }

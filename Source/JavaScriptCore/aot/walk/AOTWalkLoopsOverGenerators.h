@@ -25,7 +25,7 @@ struct LoopOverIterator {
     bool stepStandsInHeadOfLoop { false };
 };
 std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex&, ValueID open);
-ValueID findOnlyStepAtLoopHeader(const BodyIndex&, ValueID open);
+ValueID findSoleLoopHeaderStep(const BodyIndex&, ValueID open);
 void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker&, Origin, bool asksGeneratorForIterator = true);
 void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker&, Origin);
 bool buildLoopOverGenerator(Walker&, const BodyValue&);

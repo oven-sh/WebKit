@@ -21,7 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsUnderStructureInHeirsOfBuiltins { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
 
-static constexpr AbstractHeapSet heapsUnderElementsOfSubclass = heapsUnderStructureInHeirsOfBuiltins | AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ShapeWords };
+static constexpr AbstractHeapSet subclassElementHeaps = heapsUnderStructureInHeirsOfBuiltins | AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ShapeWords };
 
 LayoutID findLayoutKnownByStructure(const Walker& walker, TypeID type)
 {
@@ -91,7 +91,7 @@ Reference buildNameBehindLookAtStructureOfClass(Walker& walker, Reference value,
         noteKnown(walker, KnownNote::StructureOfClassIsSeen, { }, name, layout.index(), LocationMasks(heapsUnderStructureInHeirsOfBuiltins), name.bits());
     const Operation& asked = walker.code().at(look.id());
     if (asked.opcode == Opcode::HasStructureOfClass && asked.asksElements())
-        noteKnown(walker, KnownNote::ElementsOfSubclassAreSeen, name, { }, 0, LocationMasks(heapsUnderElementsOfSubclass), 1);
+        noteKnown(walker, KnownNote::ElementsOfSubclassAreSeen, name, { }, 0, LocationMasks(subclassElementHeaps), 1);
     return name;
 }
 
@@ -121,7 +121,7 @@ LayoutID viewSubclassWithLength(const Walker& walker, TypeID type)
     return findMemberAboveHeirsOfBuiltinClass(walker, above, key) ? layout : LayoutID();
 }
 
-Draft draftElementsTestOfSubclass(Reference array, LayoutID subclass, Origin origin)
+Draft draftSubclassElementsTest(Reference array, LayoutID subclass, Origin origin)
 {
     origin.isTailCall = false;
     Draft test(Opcode::HasStructureOfClass, origin);
@@ -229,7 +229,7 @@ bool isLengthOfTypedArraySubclass(const Walker& walker, const BodyValue& read, L
     return above && isTypedView(walker.program().builtins().typedArrayTypeOf(above));
 }
 
-void buildLengthOfTypedArraySubclass(Walker& walker, const BodyValue& read, Reference view, LayoutID subclass)
+void buildTypedArraySubclassLength(Walker& walker, const BodyValue& read, Reference view, LayoutID subclass)
 {
     Origin origin = walker.originOf(read);
     Draft length(Opcode::GetTypedArrayLength, origin);

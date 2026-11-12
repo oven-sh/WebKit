@@ -228,7 +228,7 @@ bool Encoder::wasNumberRegisterWrittenRecently(const Step& step, FPRReg reg) con
     return false;
 }
 
-static bool keepsRestOfX86Destination(Opcode opcode)
+static bool keepsUpperX86Destination(Opcode opcode)
 {
     return opcode == FloatToDouble || opcode == DoubleToFloat || opcode == Sqrt || opcode == Floor || opcode == Ceil || opcode == FTrunc;
 }
@@ -241,7 +241,7 @@ bool Encoder::startsNumberChain(const Step& step) const
     auto holdsWord = [](const Location& source) { return source.isRegister() && source.reg().isGPR(); };
     if (std::ranges::any_of(step.sources, holdsNumber))
         return false;
-    if (step.kind != StepKind::Execute || !keepsRestOfX86Destination(step.operation->opcode()))
+    if (step.kind != StepKind::Execute || !keepsUpperX86Destination(step.operation->opcode()))
         return true;
     return std::ranges::count_if(step.sources, holdsWord) > 1;
 }

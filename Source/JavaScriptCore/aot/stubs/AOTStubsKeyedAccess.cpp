@@ -516,7 +516,7 @@ void branchUnlessKindOfValueIsAccepted(StubAssembler& jit, GPRReg value, GPRReg 
     isNotKnownToBeAccepted.append(jit.branch32(CCallHelpers::NotEqual, inAcceptedKind(entry, OBJECT_OFFSETOF(AcceptedKindOfValue, kind)), kind));
 }
 
-static void branchIfRangeAsksMoreThanKind(StubAssembler& jit, GPRReg value, GPRReg record, GPRReg range, GPRReg scratch, JumpList& asksMoreThanKind)
+static void branchIfRangeExceedsKind(StubAssembler& jit, GPRReg value, GPRReg record, GPRReg range, GPRReg scratch, JumpList& asksMoreThanKind)
 {
     RELEASE_ASSERT(noOverlap(value, record, range, scratch, instanceGPR));
     JumpList kindSaysEnough;
@@ -547,7 +547,7 @@ void rememberAcceptedKindOfValue(StubAssembler& jit, GPRReg value, GPRReg type, 
     JumpList asksMoreThanKind;
     jit.zeroExtend32ToWord(type, record);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), record);
-    branchIfRangeAsksMoreThanKind(jit, value, record, scratch, secondScratch, asksMoreThanKind);
+    branchIfRangeExceedsKind(jit, value, record, scratch, secondScratch, asksMoreThanKind);
     asksMoreThanKind.append(jit.branchTest16(CCallHelpers::NonZero, Address(record, RuntimeType::offsetOfNumberOfLiteralStrings())));
     jit.load8(Address(record, OBJECT_OFFSETOF(RuntimeType, numberOfTestsOfMoreThanOneFunctionIfFew)), end);
     asksMoreThanKind.append(jit.branch32(CCallHelpers::Equal, end, TrustedImm32(RuntimeType::hasManyTestsOfMoreThanOneFunction)));
@@ -633,7 +633,7 @@ void rememberPlaceOfValueInField(StubAssembler& jit, GPRReg object, GPRReg key, 
     JumpList asksMoreThanKind;
     jit.zeroExtend32ToWord(type, record);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), record);
-    branchIfRangeAsksMoreThanKind(jit, value, record, scratch, secondScratch, asksMoreThanKind);
+    branchIfRangeExceedsKind(jit, value, record, scratch, secondScratch, asksMoreThanKind);
     asksMoreThanKind.append(jit.branchTest16(CCallHelpers::NonZero, Address(record, RuntimeType::offsetOfNumberOfLiteralStrings())));
     jit.load8(Address(record, OBJECT_OFFSETOF(RuntimeType, numberOfTestsOfMoreThanOneFunctionIfFew)), end);
     asksMoreThanKind.append(jit.branch32(CCallHelpers::Equal, end, TrustedImm32(RuntimeType::hasManyTestsOfMoreThanOneFunction)));
@@ -1885,7 +1885,7 @@ static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters&
     const GPRReg words = registers.key;
     const GPRReg run = registers.structureID;
     jit.load64(Address(base, offsetOfOrderWord), words);
-    jit.or32(TrustedImm32(static_cast<int32_t>(markOfRunOfRemoval)), offset);
+    jit.or32(TrustedImm32(static_cast<int32_t>(removalRunMark)), offset);
     jit.urshift64(words, TrustedImm32(32), run);
     jit.xor32(words, run);
     jit.xor32(offset, run);
@@ -1970,7 +1970,7 @@ static void replaceOwnValueOfKeyAndReturn(StubAssembler& jit, SlotOperation oper
     replaceOwnValueAndReturn(jit, operation, lookup, ObjectLookupName::IsGivenByUID, value, miss, isDefinition ? InvalidGPRReg : registers.key, isDefinition ? nullptr : &rememberPlaceOfOwnValue);
 }
 
-static Label storeAtKeyedPlaceAndReturn(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& hasNoPlace)
+static Label storeKeyedElementAndReturn(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& hasNoPlace)
 {
     const GPRReg wordIndex = registers.uid;
     const GPRReg storage = registers.entry;
@@ -2000,7 +2000,7 @@ static void storeByKeyedSlot(StubAssembler& jit, SlotOperation operation, const 
     Label storeAtWordIndex;
     if (hasPlaces) {
         JumpList hasNoPlace;
-        storeAtWordIndex = storeAtKeyedPlaceAndReturn(jit, operation, registers, value, hasNoPlace);
+        storeAtWordIndex = storeKeyedElementAndReturn(jit, operation, registers, value, hasNoPlace);
         storeAtPlaceInGlobalObjectAndReturn(jit, registers, value);
         hasNoPlace.link(&jit);
         structureIDOfBase = StructureIDOfBase::IsLoaded;
@@ -2118,7 +2118,7 @@ void generateReflectSet(StubAssembler& jit)
     asksOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(handler, JSObject::butterflyOffset())));
     targetReceives.link(&jit);
     JumpList hasNoPlace;
-    storeAtKeyedPlaceAndReturn(jit, SlotOperation::StoreSloppy, registers, value, hasNoPlace);
+    storeKeyedElementAndReturn(jit, SlotOperation::StoreSloppy, registers, value, hasNoPlace);
 
     const StubKey store = putByValCached(PutMode::Sloppy);
     checkStubOperands(store, { base, key, value });

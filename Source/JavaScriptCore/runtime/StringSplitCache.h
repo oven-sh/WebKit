@@ -104,7 +104,7 @@ private:
         return s_splitOnce[place / 64 % s_splitOnce.size()].fetch_or(bit, std::memory_order_relaxed) & bit;
     }
 
-    // A bit for each string that was split. The strings are static, so one list serves every thread. Where two strings share a bit, the second one enters the cache at its first split.
+    // One bit for each string that was split. The strings are static, so all threads share the bits. If two strings share a bit, the second one is cached at its first split.
     inline static constinit std::array<std::atomic<uint64_t>, 128> s_splitOnce { };
 
     std::array<StringEntry, stringCacheSize> m_stringEntries { };

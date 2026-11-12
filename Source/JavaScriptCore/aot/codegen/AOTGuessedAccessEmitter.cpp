@@ -170,7 +170,7 @@ Word32 GuessedAccessEmitter::indexOrElse(Boxed position, LBasicBlock failure)
     return unboxInt32(position);
 }
 
-bool GuessedAccessEmitter::isReadByNextReadAlone(const ValueContext& read)
+bool GuessedAccessEmitter::isUsedOnlyByNextRead(const ValueContext& read)
 {
     if (generator().isLayingOutTurns() || generator().keepsValuesInHeapFrame() || generator().checksEffects() || emittersCheckProofs())
         return false;
@@ -256,7 +256,7 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     };
 
     bool holdsNarrowReference = slot.representation == SlotRepresentation::OptionalCell32 && !slot.isOutOfLine();
-    bool isContinuedByNext = !ways && holdsNarrowReference && !asksWhatSlotsHold && !asksObjectAgain && isReadByNextReadAlone(value);
+    bool isContinuedByNext = !ways && holdsNarrowReference && !asksWhatSlotsHold && !asksObjectAgain && isUsedOnlyByNextRead(value);
     LBasicBlock blockOfCell = nullptr;
     CellPointer cellRead;
     auto addCell = [&](CellPointer read) {
@@ -300,8 +300,8 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         bool asksWhetherSlotIsFilled = value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark;
         LBasicBlock slotIsEmptyWhereItIsToldFilled = !asksWhetherSlotIsFilled && asksWhatSlotsHold ? newBlock() : nullptr;
-        bool asksForReference = isContinuedByNext || (!ways && holdsNarrowReference && !asksWhatSlotsHold && asksWhetherSlotIsFilled && !generator().isLayingOutTurns());
-        if (asksForReference) {
+        bool requestsReference = isContinuedByNext || (!ways && holdsNarrowReference && !asksWhatSlotsHold && asksWhetherSlotIsFilled && !generator().isLayingOutTurns());
+        if (requestsReference) {
             build().statistics().count(StatisticID::ReferencesTestedBeforeDecoding);
             NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
             LBasicBlock isReference = newBlock();
@@ -318,13 +318,13 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
             }
             join->add(foundInSlot(Boxed(m_out.zeroExt(word.value(), Machine::Int64))));
         }
-        Operand loaded = asksForReference ? Operand() : asksWhetherSlotIsFilled
+        Operand loaded = requestsReference ? Operand() : asksWhetherSlotIsFilled
             ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure))
             : slotIsEmptyWhereItIsToldFilled ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, rareEdge(slotIsEmptyWhereItIsToldFilled))
             : slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         if (ways)
             branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
-        else if (!asksForReference)
+        else if (!requestsReference)
             join->add(foundInSlot(conversions.box(value, loaded, types().at(widestTypeOf(loaded.representation)))));
 
         if (slotIsEmptyWhereItIsToldFilled) {
@@ -689,7 +689,7 @@ void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
     define(value, join.finish());
 }
 
-static bool isCutToInt32ByOnlyUser(const Code& code, ValueID number)
+static bool isOnlyUserTruncation(const Code& code, ValueID number)
 {
     ValueID user = code.useCountOf(number) == 1 ? code.onlyUserOf(number) : ValueID();
     if (user && code.at(user).opcode == Opcode::ToNumber && code.useCountOf(user) == 1)
@@ -708,11 +708,11 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
     bool keyIsRawNumber = keyIsOptionalNumber || representationOf(value->positionOperand()) == Representation::Double;
     Integer index = elements.indexOrElse(value->positionOperand(), !keyIsRawNumber || typeOf(value->positionOperand()).isNumberWithoutFraction(), keyIsRawNumber ? outOfLine : nullptr, ElementAccessEmitter::NaNIndexMode::ProduceOutOfBoundsIndex);
     ArrayElements storage = elements.elementsOf(list);
-    bool takesBitsAlone = result.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) && isCutToInt32ByOnlyUser(m_code, value.id()) && !generator().isLayingOutTurns() && !generator().asksBehindTurnsWhetherElementIsThere(value.id());
+    bool takesBitsAlone = result.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) && isOnlyUserTruncation(m_code, value.id()) && !generator().isLayingOutTurns() && !generator().asksBehindTurnsWhetherElementIsThere(value.id());
     if (takesBitsAlone)
         build().statistics().count(StatisticID::ElementBitsReadAsWords);
     OperandJoin join(m_out, takesBitsAlone ? Representation::Int32 : representation);
-    auto joinBitsOfNumberThatIsNoInt32 = [&](Boxed element) {
+    auto joinNonInt32NumberBits = [&](Boxed element) {
         Condition isDouble = isNumber(element);
         if (result.primitives & Primitive::Undefined) {
             LBasicBlock holdsDouble = newBlock();
@@ -726,16 +726,16 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
             emitter<ThrowEmitter>().requireOrCrash(value, isDouble, element, ProofSource::Contents);
         join.add(emitter<ConversionEmitter>().toInt32(unboxDouble(element)));
     };
-    auto joinBitsOf = [&](Boxed element, LBasicBlock whereEmpty) {
+    auto joinBitsOf = [&](Boxed element, LBasicBlock blockIfEmpty) {
         LBasicBlock holdsInt32 = newBlock();
         LBasicBlock holdsOther = newBlock();
         m_out.branch(isInt32(element).value(), normalEdge(holdsInt32), normalEdge(holdsOther));
         m_out.appendTo(holdsInt32);
         join.add(unboxInt32(element));
         m_out.appendTo(holdsOther);
-        if (whereEmpty)
-            continueGuessedAccessIf(m_out, isNotEmpty(element), rareEdge(whereEmpty));
-        joinBitsOfNumberThatIsNoInt32(element);
+        if (blockIfEmpty)
+            continueGuessedAccessIf(m_out, isNotEmpty(element), rareEdge(blockIfEmpty));
+        joinNonInt32NumberBits(element);
     };
     auto readInForm = [&](const ArrayStorageForm& form) {
         LengthTest test = elements.testLength(value, index, storage);

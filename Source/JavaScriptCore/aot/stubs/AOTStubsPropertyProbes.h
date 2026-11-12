@@ -26,7 +26,7 @@ inline constexpr StubRegister keyCellRegister = StubRegister::A1;
 inline constexpr StubRegister storedValueByValRegister = StubRegister::A2;
 inline constexpr StubRegister valueStoredThroughProxyRegister = StubRegister::T10;
 
-void loadKeyOfProxySlot(StubAssembler&, SlotForm, GPRReg header, GPRReg key, JumpList& isForNoProxies);
+void loadProxySlotKey(StubAssembler&, SlotForm, GPRReg header, GPRReg key, JumpList& isForNoProxies);
 #if CPU(X86_64)
 inline constexpr StubRegister readSiteCacheRegister = StubRegister::A1;
 inline constexpr StubRegister storeSiteCacheRegister = StubRegister::A2;

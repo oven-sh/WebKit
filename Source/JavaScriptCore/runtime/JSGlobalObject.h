@@ -236,8 +236,8 @@ private:
     VM* const m_vm;
 #if ENABLE(AOT)
     AOT::Instance* m_aotInstance { nullptr };
-    AOT::Instance* m_aotInstanceOfTables { nullptr };
-    // What node:vm contextified. The class of its global objects keeps it alive.
+    AOT::Instance* m_aotTableInstance { nullptr };
+    // The object that node:vm contextified. The class of node:vm's global objects visits it.
     JSObject* m_contextifiedObject { nullptr };
     JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
 #endif
@@ -1174,11 +1174,11 @@ public:
     void setAOTInstance(AOT::Instance* instance)
     {
         m_aotInstance = instance;
-        m_aotInstanceOfTables = instance;
+        m_aotTableInstance = instance;
     }
-    // The instance whose tables, which are the VM's, the interpreter asks. A realm without an instance of its own has another realm's.
-    AOT::Instance* aotInstanceOfTables() const { return m_aotInstanceOfTables; }
-    void setAOTInstanceOfTables(AOT::Instance* instance) { m_aotInstanceOfTables = instance; }
+    // The instance whose tables the interpreter reads. The VM owns the tables, so a realm without its own instance has another realm's.
+    AOT::Instance* aotTableInstance() const { return m_aotTableInstance; }
+    void setAOTTableInstance(AOT::Instance* instance) { m_aotTableInstance = instance; }
     JSObject* contextifiedObject() const { return m_contextifiedObject; }
     void setContextifiedObject(JSObject* object) { m_contextifiedObject = object; }
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }

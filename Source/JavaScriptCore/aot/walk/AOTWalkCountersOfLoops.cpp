@@ -32,7 +32,7 @@ static constexpr OpcodeSet stepsByNumberOrFactorOfCountersOfLoops = stepsByNumbe
 static constexpr OpcodeSet operatorsOnBitsOfCountersOfLoops { Opcode::BitOr, Opcode::BitAnd, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift };
 static constexpr OpcodeSet accessesUnderKeysInCountersOfLoops { Opcode::ElemGet, Opcode::ElemSet };
 static constexpr size_t mostNamesOfCounterOfLoop = 16;
-static constexpr size_t mostStepsOfCounterOfLoop = 64;
+static constexpr size_t maxLoopCounterSteps = 64;
 
 using NamesOfCounterOfLoop = Vector<ValueID, mostNamesOfCounterOfLoop>;
 
@@ -296,7 +296,7 @@ static VariableID findNumberInVariableThatNoTurnWritesInCountersOfLoops(Walker& 
     return mayBeInt32 ? definition.variable() : VariableID();
 }
 
-static ValueID readOfVariableInCountersOfLoops(const BodyIndex& index, ValueID written)
+static ValueID variableReadInLoopCounters(const BodyIndex& index, ValueID written)
 {
     ValueID read = index.stripCasts(written);
     return index.opcodeOf(read) == Opcode::CheckInitialized ? index.stripCasts(index.value(read).operand(0)) : read;
@@ -426,7 +426,7 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
     UsersOfNamesInCountersOfLoops usersLeft(users);
     size_t numberOfStepsByOne = 0;
     auto add = [&](ValueID name, bool standsBehindStep) {
-        if (names.size() >= mostNamesOfCounterOfLoop + std::min<size_t>(numberOfStepsByOne * 2, mostStepsOfCounterOfLoop))
+        if (names.size() >= mostNamesOfCounterOfLoop + std::min<size_t>(numberOfStepsByOne * 2, maxLoopCounterSteps))
             return;
         numberOfStepsByOne += !index.isParameter(name) && stepsByOneOfCountersOfLoops.contains(index.opcodeOf(name));
         names.append(name);
@@ -695,7 +695,7 @@ static bool isElementCarriedIndex(Walker& walker, const BodyIndex& index, const 
     return false;
 }
 
-static bool bringsRemaindersFromZeroUp(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position, const NamesOfCounterOfLoop& names, Reference enters)
+static bool yieldsNonNegativeRemainders(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position, const NamesOfCounterOfLoop& names, Reference enters)
 {
     static constexpr OpcodeSet differences { Opcode::Sub, Opcode::Decrement, Opcode::Negate };
     BackEdgeInputs inputs = findBackEdgeInputs(walker, index, inputHead, position, names);
@@ -1249,7 +1249,7 @@ static bool findInvariantViewElement(Walker& walker, BlockID inputHead, ValueID 
     else {
         found.boundFieldView = nameOfListThatEntersLoopAround(walker, index, index.value(read));
         found.boundVariable = found.boundFieldView ? VariableID() : findViewInUnwrittenVariable(walker, index, ofTurns, view);
-        type = found.boundFieldView && found.boundFieldView.isValue() ? typeOfNameInFront(found.boundFieldView) : found.boundVariable ? walker.types().withoutPrimitives(widestTypeOfOperation(walker, index.value(readOfVariableInCountersOfLoops(index, view))), Primitive::Absent) : TypeID();
+        type = found.boundFieldView && found.boundFieldView.isValue() ? typeOfNameInFront(found.boundFieldView) : found.boundVariable ? walker.types().withoutPrimitives(widestTypeOfOperation(walker, index.value(variableReadInLoopCounters(index, view))), Primitive::Absent) : TypeID();
     }
     if (!type || !isViewOfNumbersReadInLine(walker, type) || isFloat(typedArrayTypeOf({ walker.program(), walker.types() }, type)))
         return false;
@@ -1310,10 +1310,10 @@ CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker& walker, Bloc
         if (view.index() < firstValueOfLoop && isViewOfNumbersReadInLine(walker, typeInFront(view)))
             found.viewWhoseLengthIsBound = view;
     }
-    bool isBoundInFront = found.viewWhoseLengthIsBound || rangeOfIntegerFromInFront(relation.operand(1)) || integerInFront(relation.operand(1));
-    found.isBoundByVariable = !isBoundInFront && asked == relationBoundByVariable;
-    isBoundInFront |= found.isBoundByVariable;
-    if (!counter || (!isBoundInFront && !findInvariantViewElement(walker, inputHead, relation.operand(1), ofTurns, typeInFront, typeOfNameInFront, found)))
+    bool isHoistedBound = found.viewWhoseLengthIsBound || rangeOfIntegerFromInFront(relation.operand(1)) || integerInFront(relation.operand(1));
+    found.isBoundByVariable = !isHoistedBound && asked == relationBoundByVariable;
+    isHoistedBound |= found.isBoundByVariable;
+    if (!counter || (!isHoistedBound && !findInvariantViewElement(walker, inputHead, relation.operand(1), ofTurns, typeInFront, typeOfNameInFront, found)))
         return found;
     found.position = counter.index() - firstValueOfLoop;
     found.relation = asked;
@@ -2901,7 +2901,7 @@ Vector<HoistedCounterCheck, 2> findHoistedCounterChecks(Walker& walker, BlockID 
             }));
             NamesOfCounterOfLoop names;
             if (!isTested && isElementCarriedIndex(walker, index, users(), inputHead, position, names)) {
-                bool isFromZeroUp = bringsRemaindersFromZeroUp(walker, index, inputHead, position, names, enters);
+                bool isFromZeroUp = yieldsNonNegativeRemainders(walker, index, inputHead, position, names, enters);
                 counters.append({ position, isFromZeroUp ? walker.types().integer(Range { 0, std::numeric_limits<int32_t>::max() }) : TypeID(TypeTable::int32), true });
                 walker.count(StatisticID::CarriedIndexGuardsHoisted);
                 continue;
@@ -3420,7 +3420,7 @@ void hoistKeyFields(Walker& walker, BlockID inputHead)
     });
 }
 
-static constexpr OpcodeSet conversionsToNumbersOfCountersOfLoops { Opcode::ToNumber, Opcode::ToNumeric };
+static constexpr OpcodeSet numberConversionsOfLoopCounters { Opcode::ToNumber, Opcode::ToNumeric };
 
 struct ConvertedField {
     ValueID holder;
@@ -3436,7 +3436,7 @@ static std::optional<ConvertedField> findConvertedField(const BodyIndex& index, 
     ValueID holder = index.stripCasts(index.value(read).objectOperand());
     if (holder && holder.index() < firstValueOfLoop)
         return ConvertedField { holder, { }, index.value(read).key() };
-    ValueID readOfVariable = holder ? readOfVariableInCountersOfLoops(index, holder) : ValueID();
+    ValueID readOfVariable = holder ? variableReadInLoopCounters(index, holder) : ValueID();
     if (!readOfVariable || index.isParameter(readOfVariable) || index.opcodeOf(readOfVariable) != Opcode::GetModuleVariable)
         return std::nullopt;
     return ConvertedField { { }, readOfVariable, index.value(read).key() };
@@ -3445,7 +3445,7 @@ static std::optional<ConvertedField> findConvertedField(const BodyIndex& index, 
 void hoistConvertedFields(Walker& walker, BlockID inputHead)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    if (walker.isUnreachable() || !walker.has(Mechanism::UnboxedNumbers) || !walker.framesKeepFields() || !index.holdsAnyOf(OpcodeSet { Opcode::Mod }) || !index.holdsAnyOf(conversionsToNumbersOfCountersOfLoops))
+    if (walker.isUnreachable() || !walker.has(Mechanism::UnboxedNumbers) || !walker.framesKeepFields() || !index.holdsAnyOf(OpcodeSet { Opcode::Mod }) || !index.holdsAnyOf(numberConversionsOfLoopCounters))
         return;
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
@@ -3453,7 +3453,7 @@ void hoistConvertedFields(Walker& walker, BlockID inputHead)
         if (index.loopOf(member) != loop)
             continue;
         for (BodyValue operation : index.block(member).values()) {
-            std::optional<ConvertedField> field = conversionsToNumbersOfCountersOfLoops.contains(operation.opcode()) ? findConvertedField(index, firstValueOfLoop, operation) : std::nullopt;
+            std::optional<ConvertedField> field = numberConversionsOfLoopCounters.contains(operation.opcode()) ? findConvertedField(index, firstValueOfLoop, operation) : std::nullopt;
             if (!field || !field->holder || walker.isUnreachable())
                 continue;
             Origin origin = walker.originOf(*index.block(inputHead).values().begin());
@@ -3625,7 +3625,7 @@ void guessTermsOfRemainders(Walker& walker, BlockID inputHead, const LoopPreview
                 variablesRead.append(variable);
             return smallIntegers;
         }
-        if (!index.isParameter(value) && conversionsToNumbersOfCountersOfLoops.contains(index.opcodeOf(value))) {
+        if (!index.isParameter(value) && numberConversionsOfLoopCounters.contains(index.opcodeOf(value))) {
             if (TypeID converted = typeOfConversion(index.value(value)))
                 return converted;
         }
@@ -3817,7 +3817,7 @@ void findNumbersOnlyReckonedWith(Walker& walker, BlockID inputHead, Vector<Hoist
     }
 }
 
-static bool isArithmeticOnNumbersFromInFront(Walker& walker, const BodyIndex& index, const BodyBlock& head, ValueID value, unsigned operatorsLeft)
+static bool isArithmeticOnHoistedNumbers(Walker& walker, const BodyIndex& index, const BodyBlock& head, ValueID value, unsigned operatorsLeft)
 {
     static constexpr OpcodeSet operators { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
     if (!value)
@@ -3831,11 +3831,11 @@ static bool isArithmeticOnNumbersFromInFront(Walker& walker, const BodyIndex& in
     if (index.opcodeOf(value) == Opcode::Integer)
         return true;
     return operatorsLeft && operators.contains(index.opcodeOf(value)) && std::ranges::all_of(std::array { index.value(value).operand(0), index.value(value).operand(1) }, [&](ValueID operand) {
-        return isArithmeticOnNumbersFromInFront(walker, index, head, operand, operatorsLeft - 1);
+        return isArithmeticOnHoistedNumbers(walker, index, head, operand, operatorsLeft - 1);
     });
 }
 
-static bool buildArithmeticInFront(Walker& walker, const BodyIndex& index, uint32_t firstValueOfLoop, ValueID value)
+static bool buildHoistedArithmetic(Walker& walker, const BodyIndex& index, uint32_t firstValueOfLoop, ValueID value)
 {
     if (value.index() < firstValueOfLoop)
         return true;
@@ -3846,7 +3846,7 @@ static bool buildArithmeticInFront(Walker& walker, const BodyIndex& index, uint3
         walker.bind(value, walker.constant(WTF::move(integer)));
         return true;
     }
-    return buildArithmeticInFront(walker, index, firstValueOfLoop, written.operand(0)) && buildArithmeticInFront(walker, index, firstValueOfLoop, written.operand(1)) && buildTypedOperator(walker, written) && !walker.hasFailed();
+    return buildHoistedArithmetic(walker, index, firstValueOfLoop, written.operand(0)) && buildHoistedArithmetic(walker, index, firstValueOfLoop, written.operand(1)) && buildTypedOperator(walker, written) && !walker.hasFailed();
 }
 
 static Reference makeBoundOutOfNumberFromInFrontInCountersOfLoops(Walker& walker, const BodyIndex& index, const BodyBlock& head, ValueID bound)
@@ -3855,14 +3855,14 @@ static Reference makeBoundOutOfNumberFromInFrontInCountersOfLoops(Walker& walker
     if (Reference made = walker.nameOfOperatorMadeInFrontOfLoop(bound))
         return made;
     uint32_t firstValueOfLoop = head.firstParameter().index();
-    if (index.isParameter(bound) || index.opcodeOf(bound) == Opcode::Integer || !isArithmeticOnNumbersFromInFront(walker, index, head, bound, mostOperators))
+    if (index.isParameter(bound) || index.opcodeOf(bound) == Opcode::Integer || !isArithmeticOnHoistedNumbers(walker, index, head, bound, mostOperators))
         return { };
     if (walker.isVersioningDryRun())
         return walker.referenceOf(bound);
     Reference made;
     {
         Walker::ClosedArm takesNameBack(walker);
-        if (buildArithmeticInFront(walker, index, firstValueOfLoop, bound))
+        if (buildHoistedArithmetic(walker, index, firstValueOfLoop, bound))
             made = walker.referenceOf(bound);
     }
     if (made)

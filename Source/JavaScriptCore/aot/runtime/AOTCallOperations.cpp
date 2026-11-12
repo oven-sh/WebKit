@@ -225,12 +225,12 @@ static bool fitsOnStack(VM& vm, uint64_t length)
     return length <= maxArguments && vm.ensureJSStackCapacityFor(static_cast<Register*>(currentStackPointer()) - length);
 }
 
-static JSArrayBufferView* viewOfNumbersOrNull(JSObject* object)
+static JSArrayBufferView* numericViewOrNull(JSObject* object)
 {
     return object->type() >= Int8ArrayType && object->type() <= Float64ArrayType ? uncheckedDowncast<JSArrayBufferView>(object) : nullptr;
 }
 
-static bool findsLengthOfItsKind(VM& vm, JSArrayBufferView* view)
+static bool hasOwnKindLength(VM& vm, JSArrayBufferView* view)
 {
     return view->getPrototypeDirect() == view->realm()->typedArrayPrototype(typedArrayType(view->type())) && view->structure()->tryMarkPristine(vm);
 }
@@ -248,13 +248,13 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
     auto* mapped = dynamicDowncast<DirectArguments>(object);
     if (mapped && mapped->overrodeThings())
         mapped = nullptr;
-    JSArrayBufferView* view = viewOfNumbersOrNull(object);
+    JSArrayBufferView* view = numericViewOrNull(object);
     uint64_t length;
     if (auto* array = dynamicDowncast<JSArray>(object)) [[likely]]
         length = array->length();
     else if (mapped)
         length = mapped->internalLength();
-    else if (view && findsLengthOfItsKind(vm, view))
+    else if (view && hasOwnKindLength(vm, view))
         length = view->isOutOfBounds() ? 0 : view->length();
     else {
         length = toLength(globalObject, object);
@@ -318,7 +318,7 @@ static JSValue createArrayOfHeir(JSGlobalObject* globalObject, VM& vm, JSObject*
     return array;
 }
 
-static void fillArrayOfHeir(JSGlobalObject* globalObject, VM& vm, JSArray* array, const ArgList& values)
+static void fillSubclassArray(JSGlobalObject* globalObject, VM& vm, JSArray* array, const ArgList& values)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     IndexingType shape = array->indexingType() & IndexingShapeMask;
@@ -380,7 +380,7 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
             JSValue array = createArrayOfHeir(globalObject, vm, asObject(newTarget), arguments.size());
             RETURN_IF_EXCEPTION(scope, { });
             scope.release();
-            fillArrayOfHeir(globalObject, vm, asArray(array), arguments);
+            fillSubclassArray(globalObject, vm, asArray(array), arguments);
             return array;
         }
         JSValue given = arguments.isEmpty() ? jsNumber(0) : arguments.at(0);
@@ -484,8 +484,8 @@ static JSArray* tryCopyMappedArguments(Instance* instance, JSValue arrayLike)
 static JSArray* tryCopyNumbersOfView(Instance* instance, JSValue arrayLike)
 {
     VM& vm = *instance->vm;
-    JSArrayBufferView* view = arrayLike.isObject() ? viewOfNumbersOrNull(asObject(arrayLike)) : nullptr;
-    if (!view || !findsLengthOfItsKind(vm, view) || view->isOutOfBounds() || instance->globalObject->isHavingABadTime())
+    JSArrayBufferView* view = arrayLike.isObject() ? numericViewOrNull(asObject(arrayLike)) : nullptr;
+    if (!view || !hasOwnKindLength(vm, view) || view->isOutOfBounds() || instance->globalObject->isHavingABadTime())
         return nullptr;
     uint64_t count = view->length();
     if (!fitsOnStack(vm, count))
@@ -535,7 +535,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* 
         if (given.isUInt32() && given.asUInt32() <= maxHoleArrayCapacity && state && state->objects) {
             if (JSArray* array = state->objects->classes.tryCreateRememberedHeir(vm, JSValue::decode(parent).asCell(), JSValue::decode(newTarget).asCell(), given.asUInt32())) {
                 if (count > 1)
-                    fillArrayOfHeir(globalObject, vm, array, ArgList(const_cast<EncodedJSValue*>(argumentValues), count));
+                    fillSubclassArray(globalObject, vm, array, ArgList(const_cast<EncodedJSValue*>(argumentValues), count));
                 OPERATION_RETURN(scope, JSValue::encode(array));
             }
         }

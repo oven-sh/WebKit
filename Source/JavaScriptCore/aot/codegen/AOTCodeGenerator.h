@@ -594,7 +594,7 @@ private:
     enum class TriedFirst : int32_t { Int32s, Doubles, Int32sAlways };
     void findKindsTried();
     std::optional<KindTried> findKindTriedAt(BlockID test);
-    bool isReadBehindFailure(const KindTried&);
+    bool isReadAfterFailure(const KindTried&);
     TypedPointer kindTriedAddress(size_t place);
     void enterBlockWithKindsTried(BlockID);
     void beginKindsTried(const TerminatorContext&);
@@ -929,7 +929,7 @@ private:
         };
         Vector<StepsOfLanes, 4> stepsOfLanes;
         Vector<std::pair<ValueID, int64_t>, 4> indexParameters;
-        Vector<std::pair<ValueID, int64_t>, 2> relationsHeldInFront;
+        Vector<std::pair<ValueID, int64_t>, 2> relationsHeldBeforeLoop;
         Vector<ValueID, 2> numbersTested;
         Vector<ValueID, 2> invariantsTested;
         Vector<std::pair<ValueID, LValue>, 2> reciprocals;
@@ -993,7 +993,7 @@ private:
         BlockID outerHead;
         BlockID entry;
         Vector<BlockID, 16> blocksBeforeRow;
-        Vector<BlockID, 4> blocksBehindRow;
+        Vector<BlockID, 4> blocksAfterVersion;
         Vector<ValueID, 4> steppedParameters;
         Vector<ValueID, 32> dependentOperations;
         Vector<std::pair<ValueID, size_t>, 2> readsBeforeRow;
@@ -1004,7 +1004,7 @@ private:
         Machine::StackSlot* kept { nullptr };
         unsigned rows { 0 };
         bool rowsAreEvenlySpaced { false };
-        bool rowsAreOneBehindAnother { false };
+        bool rowsAreConsecutive { false };
         unsigned row { 0 };
         LValue step { nullptr };
         LValue numberStored { nullptr };

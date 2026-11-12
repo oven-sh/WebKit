@@ -1947,7 +1947,7 @@ static void testMachineOperationsThatKeepRestOfDestination()
     AOT_TEST_CHECK(!zeroed(Shape::OperandDies, true));
 }
 
-static void testMachineConversionsOfFloatsInLoops()
+static void testFloatConversionsInLoops()
 {
     if (!isX86_64())
         return;
@@ -1989,7 +1989,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/numbers/arithmetic"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfNumberArithmetic> },
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
-        { "machine/operations/numbers/floats-widened-in-loops"_s, runOperationTestWhereCodeRuns<testMachineConversionsOfFloatsInLoops> },
+        { "machine/operations/numbers/floats-widened-in-loops"_s, runOperationTestWhereCodeRuns<testFloatConversionsInLoops> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
         { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testConstantComparisonOperations> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },

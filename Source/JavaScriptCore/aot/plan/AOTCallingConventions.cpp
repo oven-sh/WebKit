@@ -672,7 +672,7 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
     if (function.isCoroutine()) {
         add(CodeRole::CoroutineBody);
         convention.coroutineNeverSuspends = isAsyncFunctionInWhichNothingSuspends(program, facts, id);
-        convention.generatorNeverYields = isGeneratorThatNeverYields(program, facts, id);
+        convention.generatorNeverYields = isNonYieldingGenerator(program, facts, id);
     }
 }
 
@@ -909,7 +909,7 @@ static void boxResultsThatNobodyTakesRaw(const Program& program, const LinkTable
     }
 }
 
-static bool returnsWhatIsTakenOutOfList(const Program& program, const ThinSummary& summary, TypeID result)
+static bool returnsValueReadFromList(const Program& program, const ThinSummary& summary, TypeID result)
 {
     bool takesOut = false;
     bool mayHaveFraction = program.at(result).primitives & Primitive::FractionalNumber;
@@ -976,7 +976,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
                 const LinkedFunction& proven = linked.function(id);
                 if (proven.ringsOfTailCallsAreListed && (proven.everyTakerOfResultKnowsCallee || directlyCalledClosures.get(index))) {
                     Representation form = formOfResultProvenToBe(program, proven.result);
-                    if (form == Representation::OptionalDouble && returnsWhatIsTakenOutOfList(program, facts.summaries().at(id), proven.result))
+                    if (form == Representation::OptionalDouble && returnsValueReadFromList(program, facts.summaries().at(id), proven.result))
                         form = Representation::JSValue;
                     if (form == Representation::Double && !declaresNumberInConvention(program, function.results.last()) && program.at(proven.result).isNumberWithoutFraction() && returnsValueCarriedByLoop(facts, id))
                         form = Representation::JSValue;

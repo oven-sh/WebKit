@@ -288,13 +288,13 @@ static unsigned lengthOfPrefixesSearchedFor(ASCIILiteral patternString, OptionSe
     CompiledRegExp regExp = compileToCode({ patternString, flags });
     for (const RegExpSymbol& symbol : regExp.code[width]->symbols) {
         auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
-        if (routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfTwoPrefixes)
-            return std::get<Yarr::SharedRoutine::FindFirstOfTwoPrefixes>(routine->payload).prefixLength;
+        if (routine && routine->kind() == Yarr::SharedRoutine::Kind::FindEitherPrefix)
+            return std::get<Yarr::SharedRoutine::FindEitherPrefix>(routine->payload).prefixLength;
     }
     return 0;
 }
 
-static void testTwoPrefixesAreSearchedForAtOnce()
+static void testTwoPrefixesAreSearchedTogether()
 {
     OptionSet<Yarr::Flags> ignoreCase { Yarr::Flags::IgnoreCase };
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcdefgh|hgfedcba"_s) == 8);
@@ -375,7 +375,7 @@ std::span<const NativeTest> regExpCompilerTests()
         { "regexp-compiler/only-a-rare-first-character-is-searched-for"_s, testOnlyARareFirstCharacterIsSearchedFor },
         { "regexp-compiler/two-places-of-one-unit-each-are-searched-for-at-once"_s, testTwoPlacesOfOneUnitEachAreSearchedForAtOnce },
 #if CPU(X86_64)
-        { "regexp-compiler/two-prefixes-are-searched-for-at-once"_s, testTwoPrefixesAreSearchedForAtOnce },
+        { "regexp-compiler/two-prefixes-are-searched-for-at-once"_s, testTwoPrefixesAreSearchedTogether },
 #endif
         { "regexp-compiler/unicode-property-lookup"_s, testUnicodePropertyLookup },
         { "regexp-compiler/class-table-limits-are-counted"_s, testClassTableLimitsAreCounted },

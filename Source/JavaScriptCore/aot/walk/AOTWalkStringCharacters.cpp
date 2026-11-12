@@ -366,7 +366,7 @@ bool BuilderOfCharacterRead::build(Reference position)
 
     Type type = types.at(m_walker.typeOf(position));
     m_isOutsideAtFirst = type.isInteger() && type.integers.minimum < 0 && type.integers.minimum >= -mostOutsideAtFirst;
-    if (m_method == CharacterReadInWalkStrings::Element && mayRestartIteration() && !m_isOutsideAtFirst && readsCharacterUnderCounterFromAbove(m_walker, m_value)) {
+    if (m_method == CharacterReadInWalkStrings::Element && mayRestartIteration() && !m_isOutsideAtFirst && readsCharacterAtOuterCounter(m_walker, m_value)) {
         m_isOutsideAtFirst = true;
         m_walker.count(StatisticID::CharactersReadPastLengths);
     }
@@ -547,7 +547,7 @@ Reference buildOnlyCharacter(Walker& walker, Reference string, Origin origin)
     return { };
 }
 
-static constexpr size_t mostTextsMeasuredForOneJoin = 2;
+static constexpr size_t maxStringsMeasuredPerJoin = 2;
 
 Reference buildLengthOfCharacterInSight(Walker& walker, Reference character, Origin origin)
 {
@@ -630,7 +630,7 @@ Reference buildLengthOfIntegerString(Walker& walker, Reference string, Origin or
     return length ? buildOperatorForStrings(walker, Opcode::Add, length, known, origin) : known;
 }
 
-Reference buildLengthOfJoinReadForItAlone(Walker& walker, ValueID text, Origin origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails)
+Reference buildLengthOnlyJoin(Walker& walker, ValueID text, Origin origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails)
 {
     Vector<Reference, 8> parts;
     if (!walker.isInLoop() || !takePartsOfJoinMadeForOneReader(walker, text, parts, &joinsThatFailWhereReaderFails))
@@ -643,7 +643,7 @@ Reference buildLengthOfJoinReadForItAlone(Walker& walker, ValueID text, Origin o
             lengthOfWrittenTexts += lengthOfTextForStrings(walker, written);
             continue;
         }
-        if (texts.size() == mostTextsMeasuredForOneJoin || !isProvenString(walker, walker.typeOf(part)))
+        if (texts.size() == maxStringsMeasuredPerJoin || !isProvenString(walker, walker.typeOf(part)))
             return { };
         texts.append(part);
     }

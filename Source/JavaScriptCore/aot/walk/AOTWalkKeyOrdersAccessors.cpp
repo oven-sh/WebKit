@@ -126,13 +126,13 @@ static bool isListedUnder(const Program& program, LayoutID layout, FieldIndex fi
     return field < listed.size() && listed[field].key == key;
 }
 
-struct ProxyMadeInSight {
+struct KnownProxy {
     ValueID made;
     ValueID target;
     ValueID handler;
 };
 
-static std::optional<ProxyMadeInSight> findProxyMadeInSight(const Walker& walker, Reference proxy)
+static std::optional<KnownProxy> findKnownProxy(const Walker& walker, Reference proxy)
 {
     const Code& code = walker.code();
     ValueID made = proxy && proxy.isValue() ? underlyingCellOf(code, proxy.id()) : ValueID();
@@ -148,7 +148,7 @@ static std::optional<ProxyMadeInSight> findProxyMadeInSight(const Walker& walker
     std::span<const ValueID> arguments = construction.argumentsOperands();
     if (arguments.size() != 2 || !arguments[0] || !arguments[1] || code.isConstant(arguments[0]) || code.isConstant(arguments[1]))
         return std::nullopt;
-    return ProxyMadeInSight { made, arguments[0], arguments[1] };
+    return KnownProxy { made, arguments[0], arguments[1] };
 }
 
 static FunctionID functionWrittenUnder(const Walker& walker, PropertyKeyID key, ValueID holder, ValueID made)
@@ -184,7 +184,7 @@ struct ProxyWrittenIntoVariable {
     bool targetIsArray { false };
 };
 
-static std::optional<ProxyWrittenIntoVariable> findProxyWrittenIntoVariable(const Walker& walker, Reference proxy, BuiltinName trap)
+static std::optional<ProxyWrittenIntoVariable> findProxyInVariable(const Walker& walker, Reference proxy, BuiltinName trap)
 {
     const Program& program = walker.program();
     const Code& code = walker.code();
@@ -268,32 +268,32 @@ static std::optional<ProxyWrittenIntoVariable> findProxyWrittenIntoVariable(cons
     return std::nullopt;
 }
 
-bool isProxyMadeInSight(const Walker& walker, Reference value)
+bool isKnownProxy(const Walker& walker, Reference value)
 {
-    return findProxyMadeInSight(walker, value) || findProxyWrittenIntoVariable(walker, value, BuiltinNames::get);
+    return findKnownProxy(walker, value) || findProxyInVariable(walker, value, BuiltinNames::get);
 }
 
-TypeID typeOfTargetReadThroughProxyMadeInSight(Walker& walker, Reference proxy)
+TypeID typeOfReadThroughKnownProxy(Walker& walker, Reference proxy)
 {
-    if (std::optional<ProxyWrittenIntoVariable> written = findProxyWrittenIntoVariable(walker, proxy, BuiltinNames::get))
+    if (std::optional<ProxyWrittenIntoVariable> written = findProxyInVariable(walker, proxy, BuiltinNames::get))
         return written->trap || !written->target ? TypeID() : walker.types().forLayout(written->target);
-    std::optional<ProxyMadeInSight> sight = findProxyMadeInSight(walker, proxy);
+    std::optional<KnownProxy> sight = findKnownProxy(walker, proxy);
     const Code& code = walker.code();
     if (!sight || code.at(underlyingCellOf(code, sight->handler)).opcode != Opcode::NewObject || functionWrittenUnder(walker, walker.program().keyOf(BuiltinNames::get), sight->handler, sight->made))
         return { };
     return walker.typeOf(Reference::value(underlyingCellOf(code, sight->target)));
 }
 
-bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
+bool accessThroughKnownProxy(Walker& walker, const BodyValue& access)
 {
-    static constexpr OptionSet<CellFact> factsThatBindNoAnswer { CellFact::IsExtensible, CellFact::NoExtraProperties, CellFact::NoFieldOutsideSlot };
+    static constexpr OptionSet<CellFact> factsBindingNoAnswer { CellFact::IsExtensible, CellFact::NoExtraProperties, CellFact::NoFieldOutsideSlot };
     bool isKeyed = access.opcode() == Opcode::ElemGet;
     if (!isKeyed && access.isFreeName())
         return false;
     Reference proxy = walker.referenceOf(access.objectOperand());
     bool isStore = access.opcode() == Opcode::PropSet;
-    std::optional<ProxyMadeInSight> sight = findProxyMadeInSight(walker, proxy);
-    std::optional<ProxyWrittenIntoVariable> written = sight ? std::nullopt : findProxyWrittenIntoVariable(walker, proxy, isStore ? BuiltinNames::set : BuiltinNames::get);
+    std::optional<KnownProxy> sight = findKnownProxy(walker, proxy);
+    std::optional<ProxyWrittenIntoVariable> written = sight ? std::nullopt : findProxyInVariable(walker, proxy, isStore ? BuiltinNames::set : BuiltinNames::get);
     if (!sight && !written)
         return false;
     const Program& program = walker.program();
@@ -333,9 +333,9 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
     uint32_t numberOfListedFields = targetIsArray ? 0 : program.at(layoutOfTarget).fields.size();
     uint32_t numberOfFields = targetIsArray ? 0 : numberOfListedFields + walker.facts().linked().numberOfAppendedKeysOfPlan(layoutOfTarget);
     for (uint32_t number = 0; number < numberOfFields; ++number) {
-        static constexpr OptionSet<FieldForm> formsThatMayBind { FieldForm::IsReadOnly, FieldForm::IsNotConfigurable };
+        static constexpr OptionSet<FieldForm> possiblyBindingForms { FieldForm::IsReadOnly, FieldForm::IsNotConfigurable };
         OptionSet<FieldForm> form = walker.facts().field(FieldReference { layoutOfTarget, FieldIndex(number) }).formOfValue;
-        if (form.containsAny(formsThatMayBind) || (number < numberOfListedFields && program.at(layoutOfTarget).fields[number].form.containsAny(formsThatMayBind)))
+        if (form.containsAny(possiblyBindingForms) || (number < numberOfListedFields && program.at(layoutOfTarget).fields[number].form.containsAny(possiblyBindingForms)))
             return false;
     }
     auto findSlotOfValue = [&](LayoutID layout, PropertyKeyID name) {
@@ -368,13 +368,13 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID meeting = walker.addBlock();
     walker.recordSpeculation();
-    walker.count(StatisticID::TrapsOfProxiesCalledInSight);
+    walker.count(StatisticID::KnownProxyTrapsCalled);
 
     Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
     Walker::ArmsThatMeet arms;
     Walker::IterationPurity purity = walker.isIterationEffectFree() ? Walker::IterationPurity::EffectFree : Walker::IterationPurity::KnownEffectsOnlyWithInlinees;
     bool restarts = walker.canRestartIteration();
-    bool someTestLeadsToArm = false;
+    bool anyTestLeadsToArm = false;
     bool isAskedInFront = false;
     auto continueIfCheckPasses = [&](Draft&& test, BlockID whereTestFails, bool passesWithYes = true) {
         Reference passes = walker.isUnreachable() ? Reference() : walker.build(WTF::move(test));
@@ -385,12 +385,12 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
             return passes;
         BlockID passed = walker.addBlock();
         walker.branch(passes, passesWithYes ? passed : whereTestFails, passesWithYes ? whereTestFails : passed);
-        someTestLeadsToArm |= whereTestFails == asWritten;
+        anyTestLeadsToArm |= whereTestFails == asWritten;
         walker.continueIn(passed);
         return walker.isUnreachable() ? Reference() : passes;
     };
     auto walkAsWritten = [&] {
-        if (!someTestLeadsToArm)
+        if (!anyTestLeadsToArm)
             return;
         if (!restarts)
             return walker.walkClosedArm(asWritten, stretch, arms);
@@ -398,7 +398,7 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
         if (!walker.isUnreachable())
             walker.restartIteration();
     };
-    auto testThatTargetBindsNoAnswer = [&] {
+    auto testTargetBindsNoAnswer = [&] {
         if (targetIsArray) {
             Draft test(Opcode::BindsNoTrapAnswer, origin);
             test.setTargetOperand(target);
@@ -412,7 +412,7 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
         return test;
     };
     auto targetBindsNoAnswer = [&] {
-        return !targetIsArray && walker.state().cellFacts(target).containsAll(factsThatBindNoAnswer);
+        return !targetIsArray && walker.state().cellFacts(target).containsAll(factsBindingNoAnswer);
     };
     Draft nameAsString(Opcode::String, origin);
     nameAsString.setString(name);
@@ -429,7 +429,7 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
 
     BlockID inFrontOfTests = walker.currentBlock();
     walker.letGuessFailUnasked(asWritten, origin);
-    someTestLeadsToArm = walker.currentBlock() != inFrontOfTests;
+    anyTestLeadsToArm = walker.currentBlock() != inFrontOfTests;
     if (written) {
         auto buildProof = [&](Reference value, Reference test, uint32_t operandIndex) {
             Walker::SpecializedPreheaderScope preheaderScope(walker, isAskedInFront, purity);
@@ -525,10 +525,10 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
             walker.joinArms(stretch, arms, meeting);
         return true;
     }
-    bool goesOn = targetBindsNoAnswer() || !!continueIfCheckPasses(testThatTargetBindsNoAnswer(), asWritten);
+    bool goesOn = targetBindsNoAnswer() || !!continueIfCheckPasses(testTargetBindsNoAnswer(), asWritten);
     if (goesOn) {
         if (!targetIsArray)
-            walker.state().recordCellFacts(target, factsThatBindNoAnswer | OptionSet<CellFact> { CellFact::NotFrozen });
+            walker.state().recordCellFacts(target, factsBindingNoAnswer | OptionSet<CellFact> { CellFact::NotFrozen });
         Draft look(Opcode::IsSlotFilled, origin);
         fillSlotOperationInKeyOrdersAccessors(walker, look, handler, FieldReference { layoutOfHandler, *field }, nameOfTrap);
         goesOn = !!continueIfCheckPasses(WTF::move(look), asWritten);
@@ -562,7 +562,7 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
         arguments.append(proxy);
         Reference answer;
         {
-            Walker::StandIn proxyStandsForItself(walker, access.objectOperand(), proxy);
+            Walker::StandIn proxyActsAsItself(walker, access.objectOperand(), proxy);
             if (callTrapOfProxy(walker, access, trap, handlerGiven, arguments.span(), closure))
                 answer = walker.isUnreachable() || walker.hasFailed() ? Reference() : walker.referenceBoundTo(access.id());
             else {
@@ -598,7 +598,7 @@ bool accessThroughProxyMadeInSight(Walker& walker, const BodyValue& access)
         }
         if (answer && !walker.isUnreachable() && !targetBindsNoAnswer()) {
             BlockID binds = walker.addBlock(BlockFrequency::Rare);
-            if (!!continueIfCheckPasses(testThatTargetBindsNoAnswer(), binds)) {
+            if (!!continueIfCheckPasses(testTargetBindsNoAnswer(), binds)) {
                 if (!isStore)
                     walker.bind(access.id(), answer);
                 walker.listArm(stretch, arms);
@@ -785,7 +785,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     return true;
 }
 
-static LayoutID findClassOfReceiverInKeyOrdersAccessors(const Walker& walker, TypeID receiver, PropertyKeyID key)
+static LayoutID findReceiverClassInKeyOrdersAccessors(const Walker& walker, TypeID receiver, PropertyKeyID key)
 {
     const Program& program = walker.program();
     if (!receiver || !key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::Text)
@@ -818,10 +818,10 @@ static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, 
 
 static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, TypeID receiver, PropertyKeyID key)
 {
-    return findVariableOfStaticFieldInKeyOrdersAccessors(walker, findClassOfReceiverInKeyOrdersAccessors(walker, receiver, key), key);
+    return findVariableOfStaticFieldInKeyOrdersAccessors(walker, findReceiverClassInKeyOrdersAccessors(walker, receiver, key), key);
 }
 
-static VariableID findVariableOfInheritedStaticField(Walker& walker, LayoutID heir, PropertyKeyID key)
+static VariableID findInheritedStaticFieldVariable(Walker& walker, LayoutID heir, PropertyKeyID key)
 {
     const Program& program = walker.program();
     size_t numberOfClassesLeft = program.layouts.size();
@@ -853,7 +853,7 @@ static void nameStaticFieldInEffects(const Program& program, Opcode opcode, Prop
 bool readsStaticMethod(const Walker& walker, const Draft& read)
 {
     PropertyKeyID key = read.key();
-    LayoutID classLayout = findClassOfReceiverInKeyOrdersAccessors(walker, walker.typeOf(read.objectOperand()), key);
+    LayoutID classLayout = findReceiverClassInKeyOrdersAccessors(walker, walker.typeOf(read.objectOperand()), key);
     const LinkTables& linked = walker.facts().linked();
     if (!classLayout || !walker.plan().hasClassRecord(classLayout) || !walker.facts().isEvaluatedAtMostOnce(classLayout) || linked.keysOfStaticFields.get(key.index()))
         return false;
@@ -999,7 +999,7 @@ static void storeStaticFieldInVariable(Walker& walker, Reference object, Variabl
     noteStaticFieldInVariable(walker, variable, key, stored);
 }
 
-static void storeWhereArmHasSeenStaticField(Walker& walker, Reference object, VariableID variable, PropertyKeyID key, Reference before, Reference stored, Origin origin)
+static void storeInArmWithStaticField(Walker& walker, Reference object, VariableID variable, PropertyKeyID key, Reference before, Reference stored, Origin origin)
 {
     if (before && walker.canRecordUndoableStore())
         walker.recordUndoableStaticStore(variable, key, object, before);
@@ -1037,7 +1037,7 @@ static bool isReadOffFilledClass(Walker& walker, const BodyValue& access)
     return false;
 }
 
-bool readStaticFieldThatIsThere(Walker& walker, const BodyValue& access)
+bool readPresentStaticField(Walker& walker, const BodyValue& access)
 {
     const LinkTables& linked = walker.facts().linked();
     PropertyKeyID key = access.key();
@@ -1066,7 +1066,7 @@ bool readStaticFieldThatIsThere(Walker& walker, const BodyValue& access)
     Origin origin = walker.originOf(access);
     origin.isTailCall = false;
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
-    bool isReadBeforeLoop = walker.iterationsKeepStaticFieldsInVariables() && !walker.iterationsStoreUnderKey(key) && walker.isInvariantInSpecializedVersion(object, purity);
+    bool isReadBeforeLoop = walker.iterationsKeepStaticFields() && !walker.iterationsStoreUnderKey(key) && walker.isInvariantInSpecializedVersion(object, purity);
     Reference held;
     {
         Walker::SpecializedPreheaderScope preheaderScope(walker, isReadBeforeLoop, purity);
@@ -1140,9 +1140,9 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         return false;
     TypeArena& types = walker.types();
     VariableID variable = findVariableOfStaticFieldInKeyOrdersAccessors(walker, walker.typeOf(object), access.key());
-    LayoutID heir = variable || isStore ? LayoutID() : findClassOfReceiverInKeyOrdersAccessors(walker, walker.typeOf(object), access.key());
+    LayoutID heir = variable || isStore ? LayoutID() : findReceiverClassInKeyOrdersAccessors(walker, walker.typeOf(object), access.key());
     if (heir)
-        variable = findVariableOfInheritedStaticField(walker, heir, access.key());
+        variable = findInheritedStaticFieldVariable(walker, heir, access.key());
     if (!variable)
         return false;
 
@@ -1157,25 +1157,25 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     origin.isTailCall = false;
 
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::KnownEffectsOnly;
-    auto buildTestOfHeir = [&] {
+    auto buildSubclassTest = [&] {
         MemberConditionRecord isInherited { MemberConditionKind::MemberUnchanged, heir, ClassSide::Static, access.key() };
         Draft test(Opcode::AreMembersUnchanged, origin);
         test.setConditions(std::span { &isInherited, 1 });
         return walker.build(WTF::move(test));
     };
     bool testsHeir = !!heir;
-    if (heir && walker.iterationsKeepStaticFieldsInVariables() && walker.iterationsPreserveMemberGuards(purity) && walker.isInvariantInSpecializedVersion(object, purity)) {
+    if (heir && walker.iterationsKeepStaticFields() && walker.iterationsPreserveMemberGuards(purity) && walker.isInvariantInSpecializedVersion(object, purity)) {
         Reference inherits;
         {
             Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
-            inherits = buildTestOfHeir();
+            inherits = buildSubclassTest();
         }
         if (!inherits || walker.hasFailed())
             return true;
         testsHeir = !walker.tryBranchInPreheader(inherits, true, purity, Walker::GuardedIterations::SomeWithUnguardedVersion);
         if (!testsHeir) {
             walker.recordSpeculation();
-            walker.count(StatisticID::HeirGuardsHoisted);
+            walker.count(StatisticID::SubclassGuardsHoisted);
         }
     }
 
@@ -1189,7 +1189,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
             *seen = { variable, held, walker.currentBlock(), walker.code().numberOfValues(), access.id(), origin.inlineFrame };
             return true;
         }
-        storeWhereArmHasSeenStaticField(walker, object, variable, access.key(), seen->held, stored, origin);
+        storeInArmWithStaticField(walker, object, variable, access.key(), seen->held, stored, origin);
         *seen = { variable, stored, walker.currentBlock(), walker.code().numberOfValues(), { }, 0 };
         return true;
     }
@@ -1203,7 +1203,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         return true;
     }
 
-    if (!testsHeir && walker.iterationsKeepStaticFieldsInVariables() && walker.isInvariantInSpecializedVersion(object, purity)) {
+    if (!testsHeir && walker.iterationsKeepStaticFields() && walker.isInvariantInSpecializedVersion(object, purity)) {
         Reference before;
         Reference isAbsentBefore;
         {
@@ -1257,7 +1257,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
 
     BlockID foundElsewhere;
     if (testsHeir) {
-        Reference inherits = buildTestOfHeir();
+        Reference inherits = buildSubclassTest();
         if (!inherits || walker.hasFailed())
             return true;
         foundElsewhere = walker.addBlock(BlockFrequency::Rare);
@@ -1327,7 +1327,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         proof.setIsOnTakenEdge(false);
         Reference liesThere = !isStore || walker.canRecordUndoableStore() ? walker.build(WTF::move(proof)) : Reference();
         if (isStore) {
-            storeWhereArmHasSeenStaticField(walker, object, variable, access.key(), liesThere, stored, origin);
+            storeInArmWithStaticField(walker, object, variable, access.key(), liesThere, stored, origin);
             liesThere = stored;
         } else
             walker.bind(access.id(), liesThere);

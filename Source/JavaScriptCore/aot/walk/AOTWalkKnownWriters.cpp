@@ -539,7 +539,7 @@ std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker& wa
     return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, tried.operand(0));
 }
 
-void endWhatIsWrittenInFreshArray(Walker& walker, Reference array, const Effects& effects)
+void endFreshArrayWrites(Walker& walker, Reference array, const Effects& effects)
 {
     WalkState& state = walker.state();
     Reference written = rootInKnownWriters(walker.code(), array);

@@ -163,7 +163,7 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
     return true;
 }
 
-static bool openGuessAtRegExpTakenAsMade(Walker& walker, const BodyValue& call, BuiltinID builtin)
+static bool openUnmodifiedRegExpGuess(Walker& walker, const BodyValue& call, BuiltinID builtin)
 {
     std::span<const ValueID> arguments = call.argumentsOperands();
     if (!walker.isInLoop() || arguments.empty() || arguments.size() > 2)
@@ -178,7 +178,7 @@ static bool openGuessAtRegExpTakenAsMade(Walker& walker, const BodyValue& call, 
     NotesOfStrings& notes = notesOfStrings(walker);
     ValueID callBefore = std::exchange(notes.callWhoseOperandIsTested, call.id());
     size_t depthBefore = std::exchange(notes.depthOfCopiesAroundThatCall, walker.depthOfCopies());
-    openGuessAtOperandTakenAsMade(walker, call, value, walker.typeOf(value), std::nullopt, { }, findLengthReadBehindReplace(walker, call));
+    openGuessAtOperandTakenAsMade(walker, call, value, walker.typeOf(value), std::nullopt, { }, findLengthReadAfterReplace(walker, call));
     notes.callWhoseOperandIsTested = callBefore;
     notes.depthOfCopiesAroundThatCall = depthBefore;
     return true;
@@ -217,7 +217,7 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call, Oper
     }
     if (ValueID receiver = call.thisValueOperand(); receiver && tested == OperandsTestedAtBuiltinCall::All && openGuessAtOperandForStringOperands(walker, call, builtin, receiver, BuiltinOperand::receiver()))
         return true;
-    if (tested == OperandsTestedAtBuiltinCall::All && openGuessAtRegExpTakenAsMade(walker, call, builtin))
+    if (tested == OperandsTestedAtBuiltinCall::All && openUnmodifiedRegExpGuess(walker, call, builtin))
         return true;
     unsigned position = 0;
     for (ValueID argument : call.argumentsOperands()) {

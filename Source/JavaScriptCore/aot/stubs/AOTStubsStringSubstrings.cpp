@@ -20,7 +20,7 @@
 namespace JSC { namespace AOT {
 
 static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
-static constexpr int32_t bitsOfNoKeptPair = static_cast<int32_t>(0xff80ff80);
+static constexpr int32_t emptyPairBits = static_cast<int32_t>(0xff80ff80);
 static_assert(JSRopeString::offsetOfFiber0() == sizeof(EncodedJSValue) && JSRopeString::offsetOfLength() == 2 * sizeof(EncodedJSValue));
 static_assert(maxSingleCharacterString == 0xff);
 
@@ -70,7 +70,7 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
         part.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(makesRope, &part);
         part.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
         part.load32(BaseIndex(characters, start, CCallHelpers::TimesTwo), codeUnit);
-        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(bitsOfNoKeptPair)).linkTo(makesRope, &part);
+        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(emptyPairBits)).linkTo(makesRope, &part);
         part.preserving(savedAroundLeaf.span(), [&] {
             part.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
             part.move(codeUnit, leafFunctionGPR);
@@ -202,7 +202,7 @@ void generateSubstring(StubAssembler& jit)
     jit.loadPtr(Address(base, JSString::offsetOfValue()), fiber);
     jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
     jit.load32(BaseIndex(fiber, start, CCallHelpers::TimesTwo), span);
-    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(bitsOfNoKeptPair)).linkTo(isReady, &jit);
+    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isReady, &jit);
     fails.append(jit.jump());
     isNotTwoOfRope.link(&jit);
     Jump isSingleRopeCharacter = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
@@ -216,7 +216,7 @@ void generateSubstring(StubAssembler& jit)
     jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(isLong, &jit);
     jit.loadPtr(Address(fiber, StringImpl::dataOffset()), base);
     jit.load32(BaseIndex(base, from, CCallHelpers::TimesTwo), span);
-    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(bitsOfNoKeptPair)).linkTo(isLong, &jit);
+    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isLong, &jit);
     fails.append(jit.jump());
 
     isSingleRopeCharacter.link(&jit);

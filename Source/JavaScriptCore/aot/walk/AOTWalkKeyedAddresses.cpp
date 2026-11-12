@@ -310,7 +310,7 @@ struct FieldStoredInLoop {
     friend auto operator<=>(const FieldStoredInLoop&, const FieldStoredInLoop&) = default;
 };
 
-static void addLoopsThatUpdateFields(const BodyIndex& index, Vector<FieldStoredInLoop>& stored, Vector<uint64_t>& found)
+static void addLoopsUpdatingFields(const BodyIndex& index, Vector<FieldStoredInLoop>& stored, Vector<uint64_t>& found)
 {
     std::ranges::sort(stored);
     uint32_t loopLookedAt = noLoop;
@@ -352,7 +352,7 @@ const Vector<uint64_t>& Walker::holdersStoredByName(const BodyIndex& index)
                     found.append(entryOfHolder(loop.index(), holder));
             }
         }
-        addLoopsThatUpdateFields(index, stored, found);
+        addLoopsUpdatingFields(index, stored, found);
         std::ranges::sort(found);
         return found;
     }).iterator->value;
@@ -378,7 +378,7 @@ bool Walker::updatesFieldInLoop(const BodyIndex& index, LoopID loop)
     return std::ranges::binary_search(holdersStoredByName(index), entryOfHolder(loop.index(), updatesField));
 }
 
-static bool someLoopAroundStoresUnderName(Walker& walker, const BodyIndex& index, const BodyValue& access, PropertyKeyID key)
+static bool anyOuterLoopStoresName(Walker& walker, const BodyIndex& index, const BodyValue& access, PropertyKeyID key)
 {
     LoopID outermost = index.loopOf(index.blockOf(access.id()));
     if (!outermost)
@@ -394,7 +394,7 @@ static bool isFieldFoundBeforeLoop(Walker& walker, const BodyIndex& index, const
     if (!source || index.isParameter(source) || index.opcodeOf(source) != Opcode::PropGet)
         return false;
     BodyValue read = index.value(source);
-    return !read.isFreeName() && isFoundBeforeLoop(walker, index, access, read.objectOperand()) && !someLoopAroundStoresUnderName(walker, index, access, read.key());
+    return !read.isFreeName() && isFoundBeforeLoop(walker, index, access, read.objectOperand()) && !anyOuterLoopStoresName(walker, index, access, read.key());
 }
 
 static bool isFunctionOutsideClasses(Walker& walker, TypeID holder)
@@ -435,7 +435,7 @@ bool mayUseNamedAddress(Walker& walker, const BodyValue& access, TypeID holder)
     bool wasFoundBeforeLoop = isFoundBeforeLoop(walker, index, access, access.objectOperand()) || isFieldFoundBeforeLoop(walker, index, access, access.objectOperand());
     if (!wasFoundBeforeLoop && !storesIntoIterationObject(walker, index, access, holder))
         return false;
-    if (access.opcode() == Opcode::PropGet && index.loopOf(index.blockOf(access.id())) && !someLoopAroundStoresUnderName(walker, index, access, key))
+    if (access.opcode() == Opcode::PropGet && index.loopOf(index.blockOf(access.id())) && !anyOuterLoopStoresName(walker, index, access, key))
         return false;
     if (isInFunction)
         return key != program.keyOf(BuiltinNames::prototype) && key != program.keyOf(BuiltinNames::name);

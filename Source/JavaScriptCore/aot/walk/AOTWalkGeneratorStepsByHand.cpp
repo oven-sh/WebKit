@@ -98,8 +98,8 @@ static bool isPlainPrimitiveInStepsByHand(Walker& walker, const BodyIndex& index
     static constexpr OpcodeSet operators = opcodesOfFamily(OperationFamily::Operator);
     static constexpr OpcodeSet written { Opcode::Integer, Opcode::Double, Opcode::String, Opcode::Boolean, Opcode::Undefined, Opcode::Null };
     value = index.stripCasts(value);
-    bool standsBehindRead = value && !index.isParameter(value) && index.blockOf(value) == index.blockOf(read) && value.index() > read.index();
-    if (!standsBehindRead) {
+    bool followsRead = value && !index.isParameter(value) && index.blockOf(value) == index.blockOf(read) && value.index() > read.index();
+    if (!followsRead) {
         Reference built = value ? walker.referenceOf(value) : Reference();
         return built && walker.typeOf(built) && walker.types().at(walker.typeOf(built)).hasOnlyPrimitives(plainPrimitives);
     }

@@ -69,7 +69,7 @@ struct GetterWalkHooks {
 bool hasGetterToCall(JSObject* compiledObject);
 enum class NewObjectTakes : bool { Definitions, Stores };
 bool tryListCallingGetters(JSGlobalObject*, JSObject* compiledObject, MarkedArgumentBuffer* keys, MarkedArgumentBuffer& values);
-JSObject* tryCopyCallingGettersAsBefore(JSGlobalObject*, JSObject* compiledObject, uint32_t excludedRunNumberPlusOne = 0, std::span<UniquedStringImpl* const> excludedNames = { });
+JSObject* tryCopyWithGetters(JSGlobalObject*, JSObject* compiledObject, uint32_t excludedRunNumberPlusOne = 0, std::span<UniquedStringImpl* const> excludedNames = { });
 JSObject* tryCopyCallingGetters(JSGlobalObject*, JSObject* compiledObject, NewObjectTakes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut = nullptr, JSObject* unseenTarget = nullptr);
 Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks = { });
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);

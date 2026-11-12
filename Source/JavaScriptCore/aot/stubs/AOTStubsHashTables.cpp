@@ -985,7 +985,7 @@ static void emitFindStringKey(StubAssembler& jit, const HashTableRegisters& regi
     if (lookup.findsHashedSubstrings && !lookup.findsInsertionPoint && !lookup.keepsSlot) {
         exits.unknown.append(jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSRopeString::isSubstringInPointer)));
         exits.unknown.append(jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSRopeString::is8BitInPointer)));
-        jit.urshift64(impl, TrustedImm32(JSRopeString::shiftOfHashOfSubstring), hash);
+        jit.urshift64(impl, TrustedImm32(JSRopeString::substringHashShift), hash);
         exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, hash));
         if (lookup.comparison == KeyComparison::String) {
             isLeftToFormForAnyValue.append(jit.jump());

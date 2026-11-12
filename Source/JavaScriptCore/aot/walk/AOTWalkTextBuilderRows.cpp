@@ -315,14 +315,14 @@ static bool keepNumberThatIsConvertedInFrontOfOtherParts(Walker& walker, const B
     return true;
 }
 
-static bool joinTextAndListInSightInTextBuilderRows(Walker&, const BodyValue& sum);
+static bool joinStringAndArrayInTextBuilderRows(Walker&, const BodyValue& sum);
 
 bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyValue& sum)
 {
     bool isConversion = sum.opcode() == Opcode::ToString;
     if ((sum.opcode() != Opcode::Add && !isConversion) || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable())
         return false;
-    if (!isConversion && joinTextAndListInSightInTextBuilderRows(walker, sum))
+    if (!isConversion && joinStringAndArrayInTextBuilderRows(walker, sum))
         return true;
     ValueID guessed = isConversion ? sum.operand(OperandIndex::ToString::value) : findOperandBesideStringInTextBuilderRows(walker, sum);
     bool isAppendedSum = !isConversion && !guessed;
@@ -494,7 +494,7 @@ static std::optional<Vector<Reference, 8>> elementsOfJoinedListInTextBuilderRows
     return elements;
 }
 
-static bool takePartsOfElementsInTextBuilderRows(Walker&, Reference list, Reference separator, PartsInTextBuilderRows&);
+static bool takeElementPartsInTextBuilderRows(Walker&, Reference list, Reference separator, PartsInTextBuilderRows&);
 
 static bool takePartsOfJoinedListInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
 {
@@ -506,10 +506,10 @@ static bool takePartsOfJoinedListInTextBuilderRows(Walker& walker, const BodyVal
     bool isLeftOut = arguments.empty() || hasOnlyInTextBuilderRows(walker, separator, Primitive::Undefined);
     if (!isLeftOut && !hasOnlyInTextBuilderRows(walker, separator, Primitive::AnyString))
         return false;
-    return takePartsOfElementsInTextBuilderRows(walker, list, isLeftOut ? Reference() : separator, parts);
+    return takeElementPartsInTextBuilderRows(walker, list, isLeftOut ? Reference() : separator, parts);
 }
 
-static bool isConvertedByItsJoinInTextBuilderRows(Walker& walker, Reference list)
+static bool isConvertedByJoinInTextBuilderRows(Walker& walker, Reference list)
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -533,7 +533,7 @@ bool takePartsOfConvertedList(Walker& walker, Reference list, Vector<Reference, 
     if (!list || !list.isValue() || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable() || !walker.types().at(walker.typeOf(list)).isObject())
         return false;
     size_t numberOfParts = parts.size();
-    if (!isFreshPristineArray(walker, list) || !isConvertedByItsJoinInTextBuilderRows(walker, list) || !takePartsOfElementsInTextBuilderRows(walker, list, { }, parts)) {
+    if (!isFreshPristineArray(walker, list) || !isConvertedByJoinInTextBuilderRows(walker, list) || !takeElementPartsInTextBuilderRows(walker, list, { }, parts)) {
         parts.shrink(numberOfParts);
         return false;
     }
@@ -542,7 +542,7 @@ bool takePartsOfConvertedList(Walker& walker, Reference list, Vector<Reference, 
     return true;
 }
 
-static bool takePartsOfElementsInTextBuilderRows(Walker& walker, Reference list, Reference separator, PartsInTextBuilderRows& parts)
+static bool takeElementPartsInTextBuilderRows(Walker& walker, Reference list, Reference separator, PartsInTextBuilderRows& parts)
 {
     std::optional<Vector<Reference, 8>> elements = elementsOfJoinedListInTextBuilderRows(walker, list);
     if (!elements)
@@ -600,7 +600,7 @@ static bool takePartsOfConcatInTextBuilderRows(Walker& walker, const BodyValue& 
     return true;
 }
 
-static bool nothingEverLiesUnderKeyFromInTextBuilderRows(const Program& program, BuiltinID start, PropertyKeyID key)
+static bool isKeyAlwaysAbsentInTextBuilderRows(const Program& program, BuiltinID start, PropertyKeyID key)
 {
     const BuiltinTable& table = program.builtins();
     if (!start || !key)
@@ -622,7 +622,7 @@ static bool nothingEverLiesUnderKeyFromInTextBuilderRows(const Program& program,
     }
 }
 
-static bool joinTextAndListInSightInTextBuilderRows(Walker& walker, const BodyValue& sum)
+static bool joinStringAndArrayInTextBuilderRows(Walker& walker, const BodyValue& sum)
 {
     ValueID written = findOperandBesideStringInTextBuilderRows(walker, sum);
     Reference list = written ? walker.referenceOf(written) : Reference();
@@ -637,7 +637,7 @@ static bool joinTextAndListInSightInTextBuilderRows(Walker& walker, const BodyVa
     };
     if (!finds(BuiltinNames::valueOf, Builtins::ObjectPrototypeValueOf) || !finds(BuiltinNames::toString, Builtins::ArrayPrototypeToString) || !finds(BuiltinNames::join, Builtins::ArrayPrototypeJoin))
         return false;
-    if (!nothingEverLiesUnderKeyFromInTextBuilderRows(program, Builtins::ArrayPrototype, program.keyOf(table.nameOf(WellKnownSymbol::ToPrimitive))))
+    if (!isKeyAlwaysAbsentInTextBuilderRows(program, Builtins::ArrayPrototype, program.keyOf(table.nameOf(WellKnownSymbol::ToPrimitive))))
         return false;
     std::optional<Vector<Reference, 8>> elements = elementsOfJoinedListInTextBuilderRows(walker, list);
     if (!elements)

@@ -133,7 +133,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::ResultAt:
         return RepresentationRule::ResultAt;
 
-    case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::GetRawOfTemplateObject: case Opcode::Data:
+    case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::GetTemplateObjectRaw: case Opcode::Data:
     case Opcode::DirectEval: case Opcode::ScopeHasBinding: case Opcode::NewDictionary: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::AppendHole:
     case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::BindsNoTrapAnswer: case Opcode::HasNumberOfBoundArguments: case Opcode::MakesPlainGenerators: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::GetAssignedMember: case Opcode::GetWordOfBoundFunction: case Opcode::IsHolderWithoutAddedNames: case Opcode::BeginMemberGuards:
     case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled: case Opcode::HasNoFieldOutsideSlot:
@@ -189,9 +189,9 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CountExecution:
     case Opcode::PutStaticField:
     case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::HasPropertyOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent: case Opcode::GetValueUnderKeyOrAbsent: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
-    case Opcode::RegExpMatchLiteralInParts: case Opcode::MatchHeldRegExpInParts: case Opcode::GetLastIndexOfRegExp: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
+    case Opcode::RegExpMatchLiteralInParts: case Opcode::MatchHeldRegExpParts: case Opcode::GetRegExpLastIndex: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
     case Opcode::StringLengthWithoutMatches:
-    case Opcode::MatchRegExpIntoFrame: case Opcode::IsMatchInFrame: case Opcode::LengthOfMatchInFrame: case Opcode::GetMatchArrayGroups: case Opcode::BoundsOfMatchInFrame: case Opcode::NewArrayOfRegExpMatch:
+    case Opcode::MatchRegExpIntoFrame: case Opcode::IsMatchInFrame: case Opcode::FrameMatchLength: case Opcode::GetMatchArrayGroups: case Opcode::FrameMatchBounds: case Opcode::NewArrayOfRegExpMatch:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
     case Opcode::GetObjectStorage: case Opcode::GetObjectStorageLength:
     case Opcode::GetArrayCapacity: case Opcode::ExtendArrayLength: case Opcode::ShortenArray: case Opcode::RestoreArrayStore: case Opcode::SetArrayLength: case Opcode::GetElementWord: case Opcode::RestoreElementWord:

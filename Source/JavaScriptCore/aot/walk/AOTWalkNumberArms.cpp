@@ -206,7 +206,7 @@ bool tryGuardCounterBound(Walker& walker, Draft& relation, ValueID written)
     return false;
 }
 
-static bool isIndexInTurnsOfNumberArms(const BodyIndex& index, ValueID value)
+static bool isIndexInNumberArmIterations(const BodyIndex& index, ValueID value)
 {
     LoopID loop = index.loopOf(index.blockOf(value));
     return loop && std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
@@ -226,7 +226,7 @@ bool tryGuardAddendOfIndex(Walker& walker, Draft& sum, ValueID written)
         Reference beside = sum.operand(1 - side);
         if (!addend.isValue() || walker.representationOf(addend) != Representation::OptionalInt64 || !types.overlap(walker.typeOf(addend), TypeTable::int32) || types.at(walker.typeOf(addend)).isNumber() || !types.at(walker.typeOf(beside)).isInt32())
             continue;
-        if (!isIndexInTurnsOfNumberArms(walker.currentBodyIndex(), written))
+        if (!isIndexInNumberArmIterations(walker.currentBodyIndex(), written))
             return false;
         Origin origin = sum.origin();
         origin.isTailCall = false;
@@ -341,7 +341,7 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
         if (!number.reads.isEmpty())
             noteCheckedRead(walker, number.value, proven);
     };
-    size_t operatorsMadeAhead = walker.numberOfOperatorsMadeAhead();
+    size_t operatorsMadeAhead = walker.numberOfHoistedOperators();
     auto bindNumber = [&](NumberTestedInArms& number, Reference proven) {
         for (ValueID name : number.names) {
             number.boundBefore.append(walker.referenceBoundTo(name));

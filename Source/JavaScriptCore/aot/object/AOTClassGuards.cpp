@@ -1685,7 +1685,7 @@ void ClassTable::forEachMethodNamed(const LayoutData& layout, ClassSide side, ui
         functor(methods[index]);
 }
 
-bool ClassTable::memberMayBeStoredOver(const LayoutData& layout, ClassSide side, uint32_t key) const
+bool ClassTable::memberMayBeOverwritten(const LayoutData& layout, ClassSide side, uint32_t key) const
 {
     bool mayBeStoredOver = false;
     for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
@@ -1703,7 +1703,7 @@ void ClassTable::noteReplacedMember(VM& vm, const LayoutData& layout, ClassSide 
     if ((!hasNoGuardLeft(layout, side) && !m_sidesWhereNamesEnded.get(indexOfGuard(layout, side))) || m_memberBeingDefined.classLayout || m_classDefinedFromRecord)
         return;
     std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
-    if (!key || hasComputedMemberNames(layout) || (layout.classData().isChangedInSightAlone(side) && !memberMayBeStoredOver(layout, side, *key)))
+    if (!key || hasComputedMemberNames(layout) || (layout.classData().isChangedInSightAlone(side) && !memberMayBeOverwritten(layout, side, *key)))
         return;
     Structure* structure = holder->structure();
     if (structure->isDictionary() || structure->isCompiledStructure() || structure->isImmutableProperty(uid) || isWriteJudgedByWriter(structure, uid))

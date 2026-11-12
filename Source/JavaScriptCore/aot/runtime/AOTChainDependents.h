@@ -88,7 +88,7 @@ public:
     virtual void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) = 0;
     virtual bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const = 0;
     virtual bool keepChainDependent(VM&, uint32_t, UniquedStringImpl*, const CreatedMembers&) { return false; }
-    virtual bool readsValuesWhereTheyAre() const { return false; }
+    virtual bool readsValuesInPlace() const { return false; }
 };
 
 enum class ChainDependentOwnerID : uint8_t { NoOwner = UINT8_MAX };

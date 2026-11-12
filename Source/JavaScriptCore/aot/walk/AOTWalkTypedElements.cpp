@@ -59,7 +59,7 @@ struct AccessOfTypedElements {
     bool isOnlyAskedAbout { false };
     ValueID counterThatPushGoesBy { };
     bool isPushAtLength { false };
-    bool storesNumberFromInFront { false };
+    bool storesNumberFromBefore { false };
 };
 
 struct LevelOfArrayReadOfTypedElements {
@@ -931,7 +931,7 @@ static bool canGuardAccess(const AccessOfTypedElements& access)
     return access.walker.stretchMayRunAsWrittenInstead() || access.walker.canBuildIterationGuard() || access.walker.canGuardAfterStores() || access.walker.canGuardRecursion();
 }
 
-static ValueID findRelationFailedByHole(Walker& walker, const BodyValue& read, Reference list)
+static ValueID findRelationFalseForHole(Walker& walker, const BodyValue& read, Reference list)
 {
     static constexpr OpcodeSet steps { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
     const BodyIndex& index = walker.currentBodyIndex();
@@ -1021,7 +1021,7 @@ bool guardElementPresenceInIteration(Walker& walker, Draft& read, Reference list
     std::optional<PassedTest> present = walker.isUnreachable() || walker.hasFailed() ? std::nullopt : walker.showElementPresentBehindTest(list, position, walker.findPassedTest(test));
     if (!present)
         return false;
-    noteKnown(walker, KnownNote::PositionFoundInsideList, list, position, 0, placesUnderPositionsInsideLists, test.bits());
+    noteKnown(walker, KnownNote::PositionFoundInsideList, list, position, 0, slotsUnderInBoundsIndices, test.bits());
     read.setIsPresent(*present);
     return true;
 }
@@ -1994,7 +1994,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         walker.count(StatisticID::StoringLoopHoleChecksRemoved);
     bool leavesTurnAtHole = !presentAtHead && !takesNaNForHole && tested && canGuardAccess(access) && (tested->onlyHoldsRows || (walker.canGuardRecursion() && isReadOfBody(access) && isElementUsedNumerically(walker, walker.currentBodyIndex(), access.value.id())) || holeLeavesTurnBehindRow(walker, access.value, *tested));
     bool findsNothingOutsideList = read.isInBounds() || isArrayIndexInTypedElements(access.typeOfKey);
-    ValueID relationFailedByHole = !leavesTurnAtHole && !presentAtHead && !takesNaNForHole && tested && tested->turnsStoreIntoLists && !tested->onlyHoldsRows && isNumericStorage(read.arrayStorage()) && !read.admitsInt32Storage() && findsNothingOutsideList && read.inputValueGiven == access.value.id() && walker.isInLoop() ? findRelationFailedByHole(walker, access.value, access.base) : ValueID();
+    ValueID relationFailedByHole = !leavesTurnAtHole && !presentAtHead && !takesNaNForHole && tested && tested->turnsStoreIntoLists && !tested->onlyHoldsRows && isNumericStorage(read.arrayStorage()) && !read.admitsInt32Storage() && findsNothingOutsideList && read.inputValueGiven == access.value.id() && walker.isInLoop() ? findRelationFalseForHole(walker, access.value, access.base) : ValueID();
     bool canTakeNaN = !leavesTurnAtHole && !relationFailedByHole && tested && !tested->onlyHoldsRows && findsNothingOutsideList && isNumericStorage(read.arrayStorage());
     std::optional<Walker::CallOfCopy> computingCaller = canTakeNaN ? findComputingCaller(walker, access.value) : std::nullopt;
     if (canTakeNaN && (computingCaller || everyUserTakesUndefinedForNaNInTypedElements(walker, access.value, WhatStandsBesideRead::NumberOrNothing)))
@@ -2041,7 +2041,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         if (isReadInFront && walker.checksBounds())
             readAgain = read;
         Walker::SpecializedPreheaderScope preheaderScope(walker, isReadInFront, walker.arrayGuardPurity());
-        if (isReadInFront && tested && tested->name == access.base && walker.hasLoopAroundPlaceOfBuilding())
+        if (isReadInFront && tested && tested->name == access.base && walker.isBuildingInsideLoop())
             takeStorageAndLengthFromInFrontOfLoop(walker, read, *tested);
         WhatListWasMadeWith held = namesStorage && read.isPresent() && read.arrayStorage() == ArrayStorage::Contiguous ? whatListWasMadeWith(walker, access.base) : WhatListWasMadeWith();
         auto typeAsBuilt = [&](ValueID input) {
@@ -2089,7 +2089,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     if (isReadUnderNumber && !givesNaNForHole && element && element.isValue())
         noteKnown(walker, KnownNote::ElementReadUnderNumber, access.base, access.key, 0, LocationMasks(elementGuardHeaps), element.bits());
     element = numberMadeOnceOfElementInTypedElements(walker, access.value, element);
-    if (element && element.isValue() && tested && tested->storage == ArrayStorage::Int32 && !tested->admitsInt32Storage && findsElement && walker.isInLoop() && isReadOfBody(access) && walker.representationOf(element) != Representation::Int32 && (isTermOfRemainder(walker.currentBodyIndex(), access.value.id()) || isTermOfStartOfCounter(walker.currentBodyIndex(), access.value.id()))) {
+    if (element && element.isValue() && tested && tested->storage == ArrayStorage::Int32 && !tested->admitsInt32Storage && findsElement && walker.isInLoop() && isReadOfBody(access) && walker.representationOf(element) != Representation::Int32 && (isTermOfRemainder(walker.currentBodyIndex(), access.value.id()) || isCounterStartTerm(walker.currentBodyIndex(), access.value.id()))) {
         Draft conversion(Opcode::ToInt32, walker.originOf(access.value));
         conversion.setOperand(0, element);
         element = walker.build(WTF::move(conversion));
@@ -2522,7 +2522,7 @@ std::span<const uint32_t> Walker::pushesOntoLiteralsOf(LoopID loop)
 bool Walker::loopsPushNumbersOnto(ValueID literal)
 {
     const BodyIndex& index = currentBodyIndex();
-    const Vector<ValueID>& literals = m_literalsThatLoopsPushOnto.ensure(&index, [&] {
+    const Vector<ValueID>& literals = m_literalsPushedOntoByLoops.ensure(&index, [&] {
         Vector<ValueID> found;
         if (!index.numberOfLoops() || !index.holdsAnyOf(OpcodeSet { Opcode::NewArray }) || !index.holdsAnyOf(OpcodeSet { Opcode::ElemGet }))
             return found;
@@ -2544,7 +2544,7 @@ bool Walker::isPushOntoLiteral(const BodyValue& call)
     return loop && std::ranges::binary_search(pushesOntoLiteralsOf(loop), call.id().index());
 }
 
-bool Walker::isOutermostLoopOfPushAndPop(LoopID loop)
+bool Walker::isOutermostPushPopLoop(LoopID loop)
 {
     static constexpr OpcodeSet otherCalls { Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::SuperConstruct };
     static constexpr OpcodeSet numbersOrElements { Opcode::ElemGet, Opcode::ResultAt, Opcode::Add };
@@ -2557,7 +2557,7 @@ bool Walker::isOutermostLoopOfPushAndPop(LoopID loop)
         type = type ? m_types.withoutPrimitives(type, Primitive::Undefined) : TypeID();
         return type && !isNeverType(type) && m_types.at(type).isNumber();
     };
-    Vector<std::optional<bool>>& ofLoops = m_outermostLoopsOfPushAndPop.ensure(&index, [&] {
+    Vector<std::optional<bool>>& ofLoops = m_outermostPushPopLoops.ensure(&index, [&] {
         Vector<std::optional<bool>> none;
         none.grow(index.numberOfLoops());
         return none;
@@ -2756,8 +2756,8 @@ static bool mayAppendToLiteral(const AccessOfTypedElements& access, const Hoiste
     LoopID loop = index.loopOf(index.blockOf(access.value.id()));
     if (loop && storesFromInitialLength(walker, index, access.value))
         return true;
-    if (loop && storesFromLengthOfRow(walker, index, access.value)) {
-        walker.count(StatisticID::RowStoresThatMayAppend);
+    if (loop && storesFromRowLength(walker, index, access.value)) {
+        walker.count(StatisticID::RowStoresMaybeAppending);
         return true;
     }
     bool isUntouched = false;
@@ -2857,10 +2857,10 @@ static Reference finalLengthInLoop(const AccessOfTypedElements& access)
             if (member != head && !index.isInLoop(target.block(), loop))
                 return { };
         }
-        auto mayStandInSuchLoop = [&](BodyValue operation) {
+        auto canBeInSuchLoop = [&](BodyValue operation) {
             return opcodesOfSuchLoops.contains(operation.opcode()) || (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operation.key() == walker.program().keyOf(BuiltinNames::length));
         };
-        if (!std::ranges::all_of(index.block(member).values(), mayStandInSuchLoop))
+        if (!std::ranges::all_of(index.block(member).values(), canBeInSuchLoop))
             return { };
     }
     auto isSteppedBy = [&](Opcode step, ValueID parameter) {
@@ -3057,7 +3057,7 @@ static bool expectsStoredNumber(const AccessOfTypedElements& access, const std::
         && access.walker.representationOf(access.stored) == Representation::JSValue && canGuardAccess(access);
 }
 
-static bool storesNumberFromInFrontOfCallers(const AccessOfTypedElements& access, const std::optional<HoistedArrayGuard>& tested)
+static bool storesNumberFromBeforeCallers(const AccessOfTypedElements& access, const std::optional<HoistedArrayGuard>& tested)
 {
     Walker& walker = access.walker;
     TypeArena& types = walker.types();
@@ -3121,13 +3121,13 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         return false;
     bool rowAsksForWritableList = tested && tested->isWritable;
     if (!storesNumber && !hasBoxedElements && !storesByAnyKind) {
-        if (storesNumberFromInFrontOfCallers(access, tested)) {
+        if (storesNumberFromBeforeCallers(access, tested)) {
             AccessOfTypedElements number = access;
             number.typeOfStored = TypeTable::number;
-            number.storesNumberFromInFront = true;
+            number.storesNumberFromBefore = true;
             if (!access.isOnlyAskedAbout) {
                 number.stored = readAsNumber(access);
-                walker.count(StatisticID::NumbersOfCallersStoredByKind);
+                walker.count(StatisticID::CallerNumbersStoredByKind);
             }
             return number.stored && buildStoreBehindRowOfTypedElements(number);
         }
@@ -3149,7 +3149,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         bool isRowReadForEitherKind = tested && tested->storage == ArrayStorage::Double && tested->admitsInt32Storage && (isReadOffListInTypedElements(walker.currentBodyIndex(), access.value) || isNamedList(walker.currentBodyIndex(), access.value));
         if (tested && tested->storage == ArrayStorage::Other && isNamedList(walker.currentBodyIndex(), access.value))
             tested = std::nullopt;
-        bool mayGoByKind = (!tested || (isRowReadForEitherKind && !mayStoreAgainInIteration(access) && (types.isSubset(access.typeOfStored, TypeTable::int32) || canGuardAccess(access)))) && (asked == ArrayStorage::Double || types.isSubset(access.typeOfStored, TypeTable::int32)) && walker.isInvariantInSpecializedVersion(access.base) && (isRowReadForEitherKind || access.storesNumberFromInFront || !textOfLoopsReadsListByKeyInTypedElements(walker.currentBodyIndex(), access.value));
+        bool mayGoByKind = (!tested || (isRowReadForEitherKind && !mayStoreAgainInIteration(access) && (types.isSubset(access.typeOfStored, TypeTable::int32) || canGuardAccess(access)))) && (asked == ArrayStorage::Double || types.isSubset(access.typeOfStored, TypeTable::int32)) && walker.isInvariantInSpecializedVersion(access.base) && (isRowReadForEitherKind || access.storesNumberFromBefore || !textOfLoopsReadsListByKeyInTypedElements(walker.currentBodyIndex(), access.value));
         tested = tryHoistArrayGuardForAccess(walker, access.value, access.base, asked, mayGoByKind);
     }
     bool isCheckedInIteration = !isPush && access.base.isValue() && (!walker.isInvariantInSpecializedVersion(access.base) || isReadOffListInTypedElements(walker.currentBodyIndex(), access.value));
@@ -5308,7 +5308,7 @@ static bool branchReadsTestedElement(const AccessOfTypedElements& access)
     });
 }
 
-static bool buildPresenceTestOfReadElement(const AccessOfTypedElements& access)
+static bool buildReadElementPresenceTest(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
     if (access.isOnlyAskedAbout || !walker.isInLoop() || !walker.opensGuesses() || !walker.has(Mechanism::Folding) || !access.base || !access.base.isValue() || !access.key || !access.typeOfKey.isInteger())
@@ -5341,7 +5341,7 @@ static bool buildPresenceTestOfReadElement(const AccessOfTypedElements& access)
     walker.continueIn(asWritten);
     Draft test = walker.draftOf(access.value);
     walker.chooseConservativeFields(test);
-    Reference tested = walker.hasFailed() ? Reference() : walker.buildBesideInlineLookup(WTF::move(test));
+    Reference tested = walker.hasFailed() ? Reference() : walker.buildWithInlineLookup(WTF::move(test));
     if (walker.hasFailed())
         return true;
     Draft none(Opcode::Absent, origin);
@@ -5398,7 +5398,7 @@ static bool bindElementOfPresenceTest(const AccessOfTypedElements& access)
     walker.continueIn(asWritten);
     Draft read = walker.draftOf(access.value);
     walker.chooseConservativeFields(read);
-    Reference readAsWritten = walker.hasFailed() ? Reference() : walker.buildBesideInlineLookup(WTF::move(read));
+    Reference readAsWritten = walker.hasFailed() ? Reference() : walker.buildWithInlineLookup(WTF::move(read));
     if (walker.hasFailed())
         return true;
     if (readAsWritten && !walker.isUnreachable())
@@ -5465,7 +5465,7 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
             return true;
         }
         Vector<ValueID, 2> joinsThatFailWhereReaderFails;
-        if (Reference ofParts = walker.hasFailed() ? Reference() : buildLengthOfJoinReadForItAlone(walker, value.objectOperand(), walker.originOf(value), joinsThatFailWhereReaderFails)) {
+        if (Reference ofParts = walker.hasFailed() ? Reference() : buildLengthOnlyJoin(walker, value.objectOperand(), walker.originOf(value), joinsThatFailWhereReaderFails)) {
             walker.bind(value.id(), ofParts);
             for (ValueID join : joinsThatFailWhereReaderFails)
                 walker.code().letJoinFailWhereItsReaderFails(join);
@@ -5656,7 +5656,7 @@ bool buildTypedElementAccess(Walker& walker, const BodyValue& value, const Input
         return bindElementOfPresenceTest(access) || buildReadOfTypedElements(access);
     }
     if (opcode == Opcode::ElemHas)
-        return buildTestOfTypedElements(access) || buildPresenceTestOfReadElement(access);
+        return buildTestOfTypedElements(access) || buildReadElementPresenceTest(access);
     access.stored = builtFor(value.valueOperand());
     access.typeOfStored = inputs.typeOf(value.valueOperand());
     return buildStoreOfTypedElements(access);
@@ -5799,8 +5799,8 @@ bool hearRaiseWherePushIsBuiltAsWrittenOfItsOpcodes(Walker& walker, const BodyVa
     if (!walker.has(Mechanism::TypedOperations) || !walker.isInTrialVisit() || walker.isUnreachable())
         return false;
     bool isInVersion = walker.isInSpecializedIteration();
-    Reference poppedFrom = listOfFieldPoppedFrom(walker, call);
-    if (Reference list = poppedFrom ? poppedFrom : listOfFieldPushedOnto(walker, call); list && !(isInVersion && findListTestedForStoresInFrontOfLoop(walker, list))) {
+    Reference poppedFrom = fieldArrayPoppedFrom(walker, call);
+    if (Reference list = poppedFrom ? poppedFrom : fieldArrayPushedOnto(walker, call); list && !(isInVersion && findListTestedForStoresInFrontOfLoop(walker, list))) {
         Opcode opcode = poppedFrom ? Opcode::ShortenArray : Opcode::ExtendArrayLength;
         Draft raise(opcode, walker.originOf(call));
         walker.chooseConservativeFields(raise);
@@ -5964,9 +5964,9 @@ bool buildPushOntoLiteralThatLoopFillsOfItsOpcodes(Walker& walker, const BodyVal
     const BodyIndex& index = walker.currentBodyIndex();
     if (call.id().index() >= index.numberOfValues() || index.value(call.id()).words() != call.words())
         return false;
-    if (Reference list = listOfFieldPushedOnto(walker, call))
+    if (Reference list = fieldArrayPushedOnto(walker, call))
         return buildPushAtLength(walker, call, list);
-    if (Reference list = listOfFieldPoppedFrom(walker, call))
+    if (Reference list = fieldArrayPoppedFrom(walker, call))
         return buildPopFromList(walker, call, list);
     LoopID loop = index.loopOf(index.blockOf(call.id()));
     if (!loop)

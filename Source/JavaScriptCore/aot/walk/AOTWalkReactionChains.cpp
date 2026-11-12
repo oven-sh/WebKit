@@ -57,7 +57,7 @@ static KeptByReactionChains& keptByReactionChains(Walker& walker)
     return static_cast<KeptByReactionChains&>(*kept);
 }
 
-static bool mayBeHandlerOfReactionChain(const Walker& walker, FunctionID id)
+static bool canBeReactionChainHandler(const Walker& walker, FunctionID id)
 {
     constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsGenerator, FunctionFlags::HasNewTarget, FunctionFlags::TakesCallee };
     const Program& program = walker.program();
@@ -78,7 +78,7 @@ static std::optional<LinkOfReactions> findLinkOfReactions(const Walker& walker, 
     if (index.isParameter(closure) || index.opcodeOf(closure) != Opcode::NewClosure || index.onlyUsingValue(closure) != call.id() || index.blockOf(closure) != index.blockOf(call.id()))
         return std::nullopt;
     FunctionID handler = index.value(closure).as<Opcode::NewClosure>().function();
-    return mayBeHandlerOfReactionChain(walker, handler) ? std::optional(LinkOfReactions { call.id(), closure, handler }) : std::nullopt;
+    return canBeReactionChainHandler(walker, handler) ? std::optional(LinkOfReactions { call.id(), closure, handler }) : std::nullopt;
 }
 
 static std::optional<bool> handlesRejectionsOf(const Walker& walker, BuiltinID builtin)

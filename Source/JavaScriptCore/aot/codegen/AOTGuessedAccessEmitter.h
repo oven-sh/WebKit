@@ -30,7 +30,7 @@ public:
 
 private:
     CellPointer receiverOrElse(const ValueContext&, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest = nullptr, std::optional<CellPointer>* baseOfSlot = nullptr, bool isKnownCell = false);
-    bool isReadByNextReadAlone(const ValueContext& read);
+    bool isUsedOnlyByNextRead(const ValueContext& read);
     CellPointer elementsOwnerOrElse(const ValueContext&, Boxed object, LBasicBlock failure);
     Word32 indexOrElse(Boxed position, LBasicBlock failure);
     bool isTestedForPresence(const ValueContext& read);

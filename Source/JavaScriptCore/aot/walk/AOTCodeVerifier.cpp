@@ -172,7 +172,7 @@ private:
     void verifySharedObjects(BlockID, ValueID, const Operation&);
     void verifyStorageOfObject(BlockID, ValueID access, const Operation&);
     ValueID mirroredLengthOf(ValueID access) const;
-    bool isMirroredByViewOfOneBuffer(const Operation& read, ValueID view) const;
+    bool isMirroredBySameBufferView(const Operation& read, ValueID view) const;
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
     void verifyMakerOfClosure(BlockID, ValueID, const Operation&);
@@ -854,7 +854,7 @@ EffectTraits CodeVerifier::boundOnTraitsOf(const Operation& operation)
 void CodeVerifier::verifySharedObjects(BlockID block, ValueID id, const Operation& operation)
 {
     static constexpr OpcodeSet lookups { Opcode::ElemGet, Opcode::ElemHas, Opcode::GetKeyedPropertyAddress };
-    static constexpr OptionSet<OperandUse> usesThatLeak { OperandUse::Retains, OperandUse::Returns, OperandUse::WritesContents };
+    static constexpr OptionSet<OperandUse> leakingUses { OperandUse::Retains, OperandUse::Returns, OperandUse::WritesContents };
     Opcode opcode = operation.opcode;
     for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands(); ++operandIndex) {
         ValueID operand = operation.operand(operandIndex);
@@ -864,7 +864,7 @@ void CodeVerifier::verifySharedObjects(BlockID block, ValueID id, const Operatio
         if (!cell || m_code.isConstant(cell) || m_code.at(cell).opcode != Opcode::Data || m_code.at(cell).encoding() != DataEncoding::SharedObject)
             continue;
         bool isNamed = operandIndex < numberOfNamedOperandsOf(opcode);
-        if (!isNamed || (!lookups.contains(opcode) && !cellPreservingOpcodes.contains(opcode) && operandInfoOf(opcode, operandIndex).uses.containsAny(usesThatLeak)))
+        if (!isNamed || (!lookups.contains(opcode) && !cellPreservingOpcodes.contains(opcode) && operandInfoOf(opcode, operandIndex).uses.containsAny(leakingUses)))
             return fail(block, id, "an operation stores into a literal that is made once, or hands it on"_s, operand);
     }
 }
@@ -1081,7 +1081,7 @@ void CodeVerifier::verifyPointerIntoStorage(BlockID block, ValueID access, Value
     }
     if (read.opcode != readOfPointer)
         return fail(block, access, "an access takes for a pointer into storage what no read of such a pointer gives"_s, pointer);
-    bool isOfBuffer = readOfPointer == Opcode::GetMirroredVector && m_code.at(mirroredLengthOf(access)).isOfBuffer() && isMirroredByViewOfOneBuffer(read, owner);
+    bool isOfBuffer = readOfPointer == Opcode::GetMirroredVector && m_code.at(mirroredLengthOf(access)).isOfBuffer() && isMirroredBySameBufferView(read, owner);
     if (!isOfBuffer && !areSameCells(read.operand(*baseOf(readOfPointer)), owner))
         return fail(block, access, "an access takes a pointer into the storage of another object"_s, pointer);
     if (readOfPointer != Opcode::GetArrayStorage && readOfPointer != Opcode::GetObjectStorage)
@@ -1090,7 +1090,7 @@ void CodeVerifier::verifyPointerIntoStorage(BlockID block, ValueID access, Value
         fail(block, access, "the storage of an array is written between the read of a pointer into it and an access through that pointer"_s, writer);
 }
 
-bool CodeVerifier::isMirroredByViewOfOneBuffer(const Operation& read, ValueID view) const
+bool CodeVerifier::isMirroredBySameBufferView(const Operation& read, ValueID view) const
 {
     const Operation& held = m_code.at(underlyingCell(view));
     if (!m_plan || held.opcode != Opcode::GetModuleVariable)
@@ -1969,7 +1969,7 @@ bool CodeVerifier::isLengthOfView(ValueID length, ValueID view, BlockID block)
 {
     length = underlyingCell(length);
     bool isReadOffView = m_code.at(length).opcode == Opcode::GetTypedArrayLength || m_code.at(length).opcode == Opcode::GetMirroredLength;
-    if (isReadOffView && (areSameCells(m_code.at(length).viewOperand(), view) || isMirroredByViewOfOneBuffer(m_code.at(length), view)))
+    if (isReadOffView && (areSameCells(m_code.at(length).viewOperand(), view) || isMirroredBySameBufferView(m_code.at(length), view)))
         return true;
     if (m_code.at(length).opcode == Opcode::GetArrayLength && areSameCells(m_code.at(length).arrayOperand(), view))
         return true;

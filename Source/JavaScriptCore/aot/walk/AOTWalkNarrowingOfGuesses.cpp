@@ -126,7 +126,7 @@ static bool oneBuiltinClassAnswersAllNamesInNarrowingOfGuesses(const Walker& wal
     });
 }
 
-static bool isHandedToMethodOfSubclassInNarrowingOfGuesses(Walker& walker, ValueID input, LayoutID expected)
+static bool isPassedToSubclassMethodInNarrowing(Walker& walker, ValueID input, LayoutID expected)
 {
     const Program& program = walker.program();
     const Function& function = program.at(walker.currentFunction());
@@ -157,7 +157,7 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
         return false;
     if (someCastStatesLayoutInNarrowingOfGuesses(walker, input, expected))
         return false;
-    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && isHandedToMethodOfSubclassInNarrowingOfGuesses(walker, input, expected))
+    if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && isPassedToSubclassMethodInNarrowing(walker, input, expected))
         return false;
     return std::ranges::none_of(names, [&](PropertyKeyID name) {
         return nameSpeaksForLayoutInNarrowingOfGuesses(walker, name);

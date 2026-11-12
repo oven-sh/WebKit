@@ -86,7 +86,7 @@ bool isAccessorAmongOwnKeys(const Walker& walker, LayoutID layout, FieldIndex fi
     return expected && expected->getter;
 }
 
-bool staysOwnKeyBehindCalls(const Walker& walker, LayoutID layout, FieldIndex field)
+bool staysOwnKeyAfterCalls(const Walker& walker, LayoutID layout, FieldIndex field)
 {
     OptionSet<FieldStability> stability = walker.facts().field({ layout, field }).stability;
     if (!stability.contains(FieldStability::IsNeverDeleted))
@@ -141,7 +141,7 @@ static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const
     OwnKeyOrder order { layout, { }, { } };
     order.created.append(created);
     for (FieldIndex field : created) {
-        if (order.listsAccessors && !staysOwnKeyBehindCalls(walker, layout, field))
+        if (order.listsAccessors && !staysOwnKeyAfterCalls(walker, layout, field))
             return std::nullopt;
         switch (classifyFieldInCopiesOwnKeys(walker, layout, field)) {
         case FieldInOwnKeyPlan::Unknown:

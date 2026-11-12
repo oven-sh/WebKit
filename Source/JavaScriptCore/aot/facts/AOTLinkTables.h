@@ -218,7 +218,7 @@ struct LinkedNameBesideFields {
     friend constexpr auto operator<=>(const LinkedNameBesideFields&, const LinkedNameBesideFields&) = default;
 };
 
-inline constexpr size_t mostNamesOfComputedLiteral = 4;
+inline constexpr size_t maxComputedLiteralNames = 4;
 
 struct LinkedInitialNames {
     LayoutID layout;
@@ -478,7 +478,7 @@ struct LookupsPastProgramObjects {
     BitVector namesWrittenThroughLostBuiltins;
     BitVector namesWrittenThroughUnseenByProgram;
     BitVector namesWrittenThroughUnseenByLibrary;
-    bool writesUnderAnyNameThroughUnseenByLibrary { false };
+    bool writesAnyNameThroughUnseenByLibrary { false };
     bool writesUnderAnyNameThroughUnseenByProgram { false };
     bool writesUnderAnyNameThroughLostBuiltins { false };
     BitVector namesWrittenThroughLostBuiltinsBesideProduct;
@@ -613,7 +613,7 @@ struct LinkTables : LinkedFirstStores {
     Vector<LinkedReceiverAsMade> iterablesThatStayAsMade;
     Vector<LinkedReceiverAsMade> listsWithoutHoles;
     Vector<LinkedReceiverAsMade> plainListsRead;
-    Vector<LinkedReceiverAsMade> storesThatFreeLists;
+    Vector<LinkedReceiverAsMade> storesFreeingLists;
     Vector<LinkedReceiverAsMade> iterablesWithoutHoles;
     Vector<LinkedReadOffViews> readsOffViewsOfWrittenLengths;
     FieldsOfNumbers fieldsReadAsIntegers;
@@ -624,7 +624,7 @@ struct LinkTables : LinkedFirstStores {
     FieldsOfNumbers fieldsFilledByInitializers;
     BitVector initializerMethods;
     BitVector functionsDoneInIterations;
-    BitVector functionsDoneInNestedIterations;
+    BitVector functionsFinishedInNestedIterations;
     BitVector functionsCalledInLoops;
     BitVector keysCalledInLoops;
     bool elementsAreCalledInLoops { false };
@@ -642,9 +642,9 @@ struct LinkTables : LinkedFirstStores {
     BitVector keysOfFieldsOverMethods;
     HashMap<uint64_t, FunctionID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsUnderFields;
     BitVector keysOfStaticFields;
-    BitVector keysOfAccessorsOrStaticFields;
+    BitVector accessorOrStaticFieldKeys;
     Vector<LinkedStaticField> staticFields;
-    BitVector keysOfStaticFieldsInSight;
+    BitVector knownStaticFieldKeys;
     BitVector variablesOfFilledClasses;
     const LinkedStaticField* findStaticField(VariableID variable) const
     {
@@ -699,7 +699,7 @@ struct LinkTables : LinkedFirstStores {
     BitVector appendedFieldsThatFollowersOfMakersStore;
     BitVector keysAppendedByHeldAloneThatFollowersOfMakersStore;
     Vector<LinkedNameBesideFields> namesStoredBesideFields;
-    BitVector keysStoredBesideFields;
+    BitVector keysStoredOutsideFields;
     Vector<LinkedInitialNames> initialNames;
     BitVector computedLiterals;
     void sortInitialNames();
@@ -762,8 +762,8 @@ struct LinkTables : LinkedFirstStores {
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;
     bool leadsTo(FunctionID referrer, FunctionID function) const { return cycleLeadsTo(functions[referrer.index()].cycle, functions[function.index()].cycle); }
     static constexpr uint32_t maxOperationsOfCallbackCopies = 60;
-    static constexpr uint8_t maxCallSitesOfCallbackCopies = 2;
-    bool hasFewCallSites(FunctionID id, uint32_t numberOfOperations) const { return function(id).numberOfCallSites && function(id).numberOfCallSites <= maxCallSitesOfCallbackCopies && numberOfOperations <= maxOperationsOfCallbackCopies; }
+    static constexpr uint8_t maxCallbackCopyCallSites = 2;
+    bool hasFewCallSites(FunctionID id, uint32_t numberOfOperations) const { return function(id).numberOfCallSites && function(id).numberOfCallSites <= maxCallbackCopyCallSites && numberOfOperations <= maxOperationsOfCallbackCopies; }
     bool bodyTakesWhatCallersLeave(FunctionID id) const { return functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].isNamedInItsCycle; }
     bool entryByValueMayBeClosed(FunctionID id) const { return functions[id.index()].isReached && functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].holdsInt32Promise; }
     bool standsOutsideCycles(CodeUnit unit) const { return namesOnlyUnitsOfItsFunction(unit.role) && functions[unit.function.index()].isInQueueFromStart && !(unit.role == CodeRole::GenericCallEntry && functions[unit.function.index()].callEntryWalksBody); }
@@ -1009,7 +1009,7 @@ struct LinkTables : LinkedFirstStores {
         auto found = std::ranges::lower_bound(readsOffViewsOfWrittenLengths, LinkedReadOffViews { function, site, 0 });
         return found != readsOffViewsOfWrittenLengths.end() && found->function == function && found->site == site ? found->leastLength : 0;
     }
-    bool storeFreesList(FunctionID function, ValueID site) const { return std::ranges::binary_search(storesThatFreeLists, LinkedReceiverAsMade { function, site }); }
+    bool storeFreesList(FunctionID function, ValueID site) const { return std::ranges::binary_search(storesFreeingLists, LinkedReceiverAsMade { function, site }); }
     bool readsPlainListAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(plainListsRead, LinkedReceiverAsMade { function, site }); }
     bool listHasNoHolesAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(listsWithoutHoles, LinkedReceiverAsMade { function, site }); }
     bool iterableHasNoHolesAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(iterablesWithoutHoles, LinkedReceiverAsMade { function, site }); }

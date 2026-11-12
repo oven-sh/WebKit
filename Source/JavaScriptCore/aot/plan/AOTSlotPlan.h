@@ -313,10 +313,10 @@ struct PlannedVariable {
     uint64_t initialWord { 0 };
 };
 
-constexpr int32_t offsetOfVectorInViewMirror = 8;
-constexpr int32_t offsetOfLengthInViewMirror = 16;
-constexpr int32_t offsetOfLengthOfBufferInViewMirror = 24;
-constexpr unsigned sizeOfVariableWithViewMirror = 32;
+constexpr int32_t viewMirrorVectorOffset = 8;
+constexpr int32_t viewMirrorLengthOffset = 16;
+constexpr int32_t bufferLengthOffsetInViewMirror = 24;
+constexpr unsigned viewMirrorVariableSize = 32;
 
 enum class MemberCreation : uint8_t {
     AtDefinition,

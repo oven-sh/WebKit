@@ -1548,7 +1548,7 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
     }
 }
 
-std::span<ProgramStatics::VariableWithViewMirror> ProgramStatics::variablesWithViewMirrorIn(const StaticsRange& range)
+std::span<ProgramStatics::VariableWithViewMirror> ProgramStatics::viewMirrorVariables(const StaticsRange& range)
 {
     return { reinterpret_cast<VariableWithViewMirror*>(m_instance.statics() + range.offset), range.size / sizeof(VariableWithViewMirror) };
 }
@@ -1557,7 +1557,7 @@ void ProgramStatics::refreshViewMirrors()
 {
     bool mirrorAlone = true;
     for (const StaticsRange& range : m_tables.variablesWithViewMirror()) {
-        std::span<VariableWithViewMirror> views = variablesWithViewMirrorIn(range);
+        std::span<VariableWithViewMirror> views = viewMirrorVariables(range);
         if (!std::exchange(mirrorAlone, false)) {
             VariableWithViewMirror::refreshViewsOfOneBuffer(views);
             continue;
@@ -1602,14 +1602,14 @@ void ProgramStatics::didWriteVariable(uint32_t offset)
     if (range == ranges.begin() && range != ranges.end())
         at<VariableWithViewMirror>(offset).refresh();
     else if (range != ranges.end())
-        VariableWithViewMirror::refreshViewsOfOneBuffer(variablesWithViewMirrorIn(*range));
+        VariableWithViewMirror::refreshViewsOfOneBuffer(viewMirrorVariables(*range));
 }
 
 void ProgramStatics::didMoveStorageOf(JSCell* view)
 {
     bool mirrorAlone = true;
     for (const StaticsRange& range : m_tables.variablesWithViewMirror()) {
-        std::span<VariableWithViewMirror> views = variablesWithViewMirrorIn(range);
+        std::span<VariableWithViewMirror> views = viewMirrorVariables(range);
         bool areOfOneBuffer = !std::exchange(mirrorAlone, false);
         bool holdsView = false;
         for (VariableWithViewMirror& mirrored : views) {

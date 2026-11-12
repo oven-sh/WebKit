@@ -24,7 +24,7 @@ static constexpr uint32_t startOfRangeInTextBuilderPieces = 0;
 static constexpr uint32_t endOfRangeInTextBuilderPieces = 1;
 static constexpr int64_t decimalRadixInTextBuilderPieces = 10;
 static constexpr int64_t hexadecimalRadixInTextBuilderPieces = 16;
-static constexpr int64_t digitsOfByteInTextBuilderPieces = 2;
+static constexpr int64_t byteDigitsInTextBuilderPieces = 2;
 
 namespace {
 
@@ -210,7 +210,7 @@ std::optional<HexadecimalText> findHexadecimalText(const Walker& walker, Referen
     ValueID padding;
     if (const Operation& record = code.at(made); record.opcode == Opcode::CallInline && record.inlineBuiltin() == InlineBuiltin::StringPadStart) {
         std::span<const ValueID> arguments = record.argumentsOperands();
-        if (!record.receiverOperand() || arguments.size() != 2 || !isIntegerInTextBuilderPieces(walker, arguments[0], digitsOfByteInTextBuilderPieces) || !isDigitZeroInTextBuilderPieces(walker, arguments[1]))
+        if (!record.receiverOperand() || arguments.size() != 2 || !isIntegerInTextBuilderPieces(walker, arguments[0], byteDigitsInTextBuilderPieces) || !isDigitZeroInTextBuilderPieces(walker, arguments[1]))
             return std::nullopt;
         padding = made;
         made = underlyingCellOf(code, record.receiverOperand());
@@ -229,7 +229,7 @@ std::optional<HexadecimalText> findHexadecimalText(const Walker& walker, Referen
     return HexadecimalText { number, receiver, made, padding };
 }
 
-static Reference buildCallAgainInTextBuilderPieces(Walker& walker, ValueID made, Reference receiver, Origin origin)
+static Reference rebuildCallInTextBuilderPieces(Walker& walker, ValueID made, Reference receiver, Origin origin)
 {
     if (walker.isUnreachable() || !receiver)
         return { };
@@ -250,8 +250,8 @@ static Reference buildCallAgainInTextBuilderPieces(Walker& walker, ValueID made,
 
 Reference buildHexadecimalTextAgain(Walker& walker, const HexadecimalText& text, Origin origin)
 {
-    Reference made = buildCallAgainInTextBuilderPieces(walker, text.conversion, text.receiver, origin);
-    return text.padding ? buildCallAgainInTextBuilderPieces(walker, text.padding, made, origin) : made;
+    Reference made = rebuildCallInTextBuilderPieces(walker, text.conversion, text.receiver, origin);
+    return text.padding ? rebuildCallInTextBuilderPieces(walker, text.padding, made, origin) : made;
 }
 
 bool appendResultOfBuiltinStraight(Walker& walker, StringInBuilder& text, Reference name, Reference part, Origin origin)

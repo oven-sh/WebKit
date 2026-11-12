@@ -68,7 +68,7 @@ public:
 
 private:
     CoroutineKind kindOfFunction() const;
-    Word32 loadStructureIDOfGenerators(CellPointer closure, LBasicBlock otherwise);
+    Word32 loadGeneratorStructureID(CellPointer closure, LBasicBlock otherwise);
     CellPointer allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin, LBasicBlock slowPath);
     GeneratorFunctionOrigin originOfGeneratorFunction(FunctionID) const;
     LValue cellOrZero(ValueID driver);

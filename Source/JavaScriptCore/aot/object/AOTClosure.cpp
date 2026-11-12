@@ -296,7 +296,7 @@ bool mayHaveLazyProperty(VM& vm, JSCell* cell, UniquedStringImpl* uid, LookupPos
     auto* closure = uncheckedDowncast<Closure>(cell);
     if (!closure->kind().isConstructor)
         return false;
-    return !closure->classData() || !closure->getDirect(vm, vm.propertyNames->prototype) || closure->mayHoldStaticFieldInVariable(uid);
+    return !closure->classData() || !closure->getDirect(vm, vm.propertyNames->prototype) || closure->canHoldStaticFieldInVariable(uid);
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(closurePrototypeProperty);
@@ -360,7 +360,7 @@ bool Closure::hasStaticFieldsLeft() const
     return classLayout && classes.hasStaticFieldsLeft(*classLayout) && StaticFields::areReadInVariables(*this);
 }
 
-bool Closure::mayHoldStaticFieldInVariable(UniquedStringImpl* uid) const
+bool Closure::canHoldStaticFieldInVariable(UniquedStringImpl* uid) const
 {
     return (hasStaticFieldsLeft() || isLazyClassObject()) && state().objects->classes.staticField(*classData(), uid);
 }

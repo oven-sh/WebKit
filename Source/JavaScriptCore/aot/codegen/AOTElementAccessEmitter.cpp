@@ -134,20 +134,20 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
     return hasShape(indexingMode(array, arrayStorageTestMask), arrayStorageFormOf(kind));
 }
 
-static constexpr uint32_t bitOfDoublesAmongNumericShapes = DoubleShape & ~Int32Shape;
+static constexpr uint32_t doubleBitAmongNumericShapes = DoubleShape & ~Int32Shape;
 
-static_assert(WTF::isPowerOfTwo(bitOfDoublesAmongNumericShapes) && DoubleShape == (Int32Shape | bitOfDoublesAmongNumericShapes) && !(bitOfDoublesAmongNumericShapes & ~IndexingShapeMask));
+static_assert(WTF::isPowerOfTwo(doubleBitAmongNumericShapes) && DoubleShape == (Int32Shape | doubleBitAmongNumericShapes) && !(doubleBitAmongNumericShapes & ~IndexingShapeMask));
 
 Condition ElementAccessEmitter::numericListHoldsDoubles(CellPointer list)
 {
-    build().statistics().count(StatisticID::NumericListsAskedByOneBit);
-    return hasBits(loadByte(list, m_heaps.JSArray_indexingTypeAndMisc), bitOfDoublesAmongNumericShapes);
+    build().statistics().count(StatisticID::NumericArraysTestedByOneBit);
+    return hasBits(loadByte(list, m_heaps.JSArray_indexingTypeAndMisc), doubleBitAmongNumericShapes);
 }
 
 Condition ElementAccessEmitter::numericListHoldsInt32s(CellPointer list)
 {
-    build().statistics().count(StatisticID::NumericListsAskedByOneBit);
-    return hasNoBits(loadByte(list, m_heaps.JSArray_indexingTypeAndMisc), bitOfDoublesAmongNumericShapes);
+    build().statistics().count(StatisticID::NumericArraysTestedByOneBit);
+    return hasNoBits(loadByte(list, m_heaps.JSArray_indexingTypeAndMisc), doubleBitAmongNumericShapes);
 }
 
 // The byte of an array with storage of its own of a plain kind has the bits of the kind and no other, so hasWritableShape() compares all of it. A lock bit that another thread holds for a moment sends the access the slow way.

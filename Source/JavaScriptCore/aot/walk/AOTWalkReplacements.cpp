@@ -1152,7 +1152,7 @@ static TypeID namesOfComputedLiteral(Walker& walker, const BodyValue& definition
     for (const Field& field : program.at(layout).fields)
         names.append(field.key);
     names.appendVector(walker.plan().slots().layout(layout).appendedKeys);
-    if (names.isEmpty() || names.size() > std::min(mostTextsToldApart, mostNamesOfComputedLiteral))
+    if (names.isEmpty() || names.size() > std::min(mostTextsToldApart, maxComputedLiteralNames))
         return { };
     TypeArena& types = walker.types();
     TypeID texts;

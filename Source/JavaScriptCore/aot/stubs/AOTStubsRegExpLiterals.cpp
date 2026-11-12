@@ -373,7 +373,7 @@ void generateRegExpTest(StubAssembler& jit)
     jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), length);
     Label hasCharacters = jit.label();
     outOfLine.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    outOfLine.append(jit.branch32(CCallHelpers::Above, length, Address(matcher, offsetOfMaxLengthOfMatcher)));
+    outOfLine.append(jit.branch32(CCallHelpers::Above, length, Address(matcher, matcherMaxLengthOffset)));
     const GPRReg end = takesRegExp ? string : jit.allocateScratch(registerOfMatcherEnd);
     RELEASE_ASSERT(end == gprOf(registerOfMatcherEnd));
     for (StubRegister clobbered : { StubRegister::R0, StubRegister::A1, StubRegister::A3, StubRegister::A4, StubRegister::A5, StubRegister::T9, StubRegister::T13, StubRegister::Operation })

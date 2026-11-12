@@ -187,7 +187,7 @@ void emitTakeReactionChainStepJob(StubAssembler& jit, const HeadJobRegisters& re
     jit.addPtr(TrustedImm32(AOT_INSTANCE_OFFSET(coroutines.handlerOfReactionChain)), instanceGPR, handler);
 }
 
-void emitBranchIfReactionChainGoesOn(StubAssembler& jit, GPRReg chain, GPRReg index, GPRReg scratch, JumpList& goesOn)
+void emitBranchIfReactionChainContinues(StubAssembler& jit, GPRReg chain, GPRReg index, GPRReg scratch, JumpList& goesOn)
 {
     jit.load32(Address(chain, ReactionChain::offsetOfDescription()), scratch);
     jit.urshift32(TrustedImm32(ReactionChain::lastHandlerShift), scratch);

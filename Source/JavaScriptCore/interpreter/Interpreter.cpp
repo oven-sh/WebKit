@@ -1345,8 +1345,8 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
 }
 
 #if ENABLE(AOT)
-// The first frame that isExceptionCaughtByUserCatchClause() visits, if the interpreter runs it. The record that an operation of compiled code
-// publishes as the top frame is no CallFrame: it returns into compiled code, but not to where a stub calls a function.
+// Checks the first frame that isExceptionCaughtByUserCatchClause() visits, if it is the interpreter's. The record that an operation of compiled
+// code publishes as the top frame is not a CallFrame: its return address is in compiled code, but not after a stub's call of a function.
 bool Interpreter::isCaughtByInterpretedTopFrame()
 {
     VM& vm = this->vm();

@@ -679,10 +679,10 @@ public:
     JSString* substringBase() const { return fiber1(); }
 
 #if CPU(ADDRESS64)
-    // A substring has no first fiber. The word keeps the hash of its characters once it was asked for, and zero before.
-    static constexpr unsigned shiftOfHashOfSubstring = 32;
-    unsigned hashOfSubstring() const { return static_cast<unsigned>(m_fiber >> shiftOfHashOfSubstring); }
-    void setHashOfSubstring(unsigned hash) const { m_fiber |= static_cast<uintptr_t>(hash) << shiftOfHashOfSubstring; }
+    // A substring has no first fiber. This word caches the hash of its characters. It is zero until the hash is computed.
+    static constexpr unsigned substringHashShift = 32;
+    unsigned hashOfSubstring() const { return static_cast<unsigned>(m_fiber >> substringHashShift); }
+    void setHashOfSubstring(unsigned hash) const { m_fiber |= static_cast<uintptr_t>(hash) << substringHashShift; }
 #endif
 
     unsigned substringOffset() const

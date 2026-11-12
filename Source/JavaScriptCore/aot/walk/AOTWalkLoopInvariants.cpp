@@ -105,7 +105,7 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
         if (std::optional<Effects> ofStaticField = effectsOfStaticFieldAccess(walker, operation, types(operation.objectOperand())))
             return ofStaticField;
     }
-    if (typedForm == TypedForm::None && sitesMayAnswer && walker.looksTakeFormsBehindLooksAsBuilt() && (siteMayAnswerReadWithoutOtherCode(walker, operation) || mayReadLengthInIterations(walker, operation) || mayAskPresenceBeforeLoop(walker, operation)))
+    if (typedForm == TypedForm::None && sitesMayAnswer && walker.looksTakeFormsBehindLooksAsBuilt() && (siteMayAnswerReadWithoutOtherCode(walker, operation) || mayReadLengthInIterations(walker, operation) || canTestPresenceBeforeLoop(walker, operation)))
         return Effects::ofReadByNameThatRunsNoCode();
     bool isBuiltBehindLooks = !isByKey && walker.looksTakeFormsBehindLooksAsBuilt() && typedForm != TypedForm::None && typedForm != TypedForm::BuiltAsCall && typedForm != TypedForm::BuiltOnObjectAsMade;
     bool isFoundAbovePrimitive = typedForm == TypedForm::BuiltOnObjectAsMade && walker.looksTakeFormsBehindLooksAsBuilt();
@@ -1255,7 +1255,7 @@ void Walker::appendCarriedResults(BlockID head, Vector<Reference, 8>& arguments)
         if (requests[slot].isField()) {
             size_t place = loop->carriedFields.findIf([&](const OpenLoop::CarriedField& field) { return field.slot == slot; });
             if (place != notFound && loop->carriedFields[place].object) {
-                result = fieldThatComesRound(requests[slot], loop->carriedFields[place]);
+                result = fieldCarriedAcrossBackEdge(requests[slot], loop->carriedFields[place]);
                 if (m_hasFailed)
                     return;
                 if (!result || !m_types.isSubset(ownTypeOf(result), m_code.at(parameter).type)) {
@@ -1299,7 +1299,7 @@ Reference Walker::absentCarriedResult(const CarriedResult& requested)
     return constant(WTF::move(nothing));
 }
 
-Reference Walker::fieldThatComesRound(const CarriedResult& requested, const OpenLoop::CarriedField& field)
+Reference Walker::fieldCarriedAcrossBackEdge(const CarriedResult& requested, const OpenLoop::CarriedField& field)
 {
     if (requested.staticField) {
         std::optional<uint64_t> held = findKnown(*this, KnownNote::StaticFieldInVariable, { }, { }, requested.staticField.index());
@@ -1343,7 +1343,7 @@ void Walker::requestCarriedField(Reference object, PropertyKeyID key, Reference 
     if (!staticField) {
         std::optional<FilledSlot> filled = findFilledSlot(*this, typeOf(object), key);
         if (!filled && isSlotTestedBeforeLoop(*place, object, key))
-            filled = findSlotThatStaysFilled(*this, typeOf(object), key, true);
+            filled = findPermanentlyFilledSlot(*this, typeOf(object), key, true);
         if (!filled)
             return;
         wanted.field = filled->place;
@@ -1376,7 +1376,7 @@ bool Walker::canTestStoredSlotBeforeLoop(Reference object, PropertyKeyID key, It
     bool isPrivate = kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::ModulePrivateName;
     if (!isPrivate && ofIterations.writes.overlaps(LocationMasks(ownKeysHeaps)))
         return false;
-    return !!findSlotThatStaysFilled(*this, typeOf(object), key, true);
+    return !!findPermanentlyFilledSlot(*this, typeOf(object), key, true);
 }
 
 bool Walker::isSlotTestedBeforeLoop(uint32_t indexOfLoop, Reference object, PropertyKeyID key) const
@@ -1558,7 +1558,7 @@ void Walker::strikeCarriedElement(BlockID head, CarriedResult& element, Represen
     fail("an element carried around a loop is not passed by an edge"_s);
 }
 
-static constexpr uint64_t noGuardOfCarriedElement = std::numeric_limits<uint64_t>::max();
+static constexpr uint64_t noCarriedElementGuard = std::numeric_limits<uint64_t>::max();
 
 Reference Walker::findElementAtConstant(Reference array, int64_t position) const
 {
@@ -1827,7 +1827,7 @@ void Walker::noteCarriedElements(BlockID head)
         std::optional<uint64_t> guard = array && array.isValue() ? findArrayGuard(*this, m_state, array) : std::nullopt;
         if (!array || !array.isValue())
             continue;
-        noteKnown(*this, KnownNote::CarriedElement, array, Reference::value(parameters[slot]), 0, LocationMasks(elementGuardHeaps), guard.value_or(noGuardOfCarriedElement));
+        noteKnown(*this, KnownNote::CarriedElement, array, Reference::value(parameters[slot]), 0, LocationMasks(elementGuardHeaps), guard.value_or(noCarriedElementGuard));
         hasElements = true;
     }
     if (hasElements)
@@ -2324,9 +2324,9 @@ std::optional<uint32_t> Walker::outermostLoopToLookUpInFrontOf(std::span<const R
     return outermost;
 }
 
-std::optional<uint32_t> Walker::outermostLoopToReadBuiltinInFrontOf()
+std::optional<uint32_t> Walker::outermostLoopForBuiltinPreheaderRead()
 {
-    static constexpr OpcodeSet visibleInFrontOfFirstRead { Opcode::InitializeBuiltin, Opcode::CallBuiltin };
+    static constexpr OpcodeSet visibleBeforeFirstRead { Opcode::InitializeBuiltin, Opcode::CallBuiltin };
     std::optional<uint32_t> specialized = specializedOpenLoop(IterationPurity::KnownEffectsOnly);
     if (!specialized || m_openLoops[*specialized].hasBuiltinRead)
         return std::nullopt;
@@ -2338,7 +2338,7 @@ std::optional<uint32_t> Walker::outermostLoopToReadBuiltinInFrontOf()
             continue;
         const Operation& operation = m_code.at(ValueID(index));
         bool listsNames = operation.opcode == Opcode::CallInline && operation.inlineBuiltin() == InlineBuiltin::OwnPropertyKeys;
-        if (!listsNames && !visibleInFrontOfFirstRead.contains(operation.opcode))
+        if (!listsNames && !visibleBeforeFirstRead.contains(operation.opcode))
             continue;
         BlockID block = m_code.blockOf(ValueID(index));
         uint32_t depth = block && block.index() < m_preheaderDepths.size() ? m_preheaderDepths[block.index()] : 0;

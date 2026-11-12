@@ -85,7 +85,7 @@ inline constexpr OpcodeSet opcodesThatOpenGuessAtTakesInChains = opcodesOfFamily
     | OpcodeSet { Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::Call, Opcode::Construct, Opcode::CallList, Opcode::RequireObjectCoercible };
 GuessOpened openGuessAtOfItsOpcodes(Walker&, const BodyValue&);
 GuessOpened openGuessAtOnlyProvenHolderOfName(Walker&, const BodyValue&);
-bool guardArrayOfNumbersForBlocks(Walker&, const BodyValue& access);
+bool guardNumericArrayForBlocks(Walker&, const BodyValue& access);
 bool guardArraysOfNumbers(Walker&, const BodyValue& read);
 bool tellRowsApartByKindOfStorage(Walker&, const BodyValue& read);
 inline constexpr OpcodeSet opcodesThatAskRowOnceWhereStretchStoresIntoItTakes { Opcode::ElemGet, Opcode::ElemSet };

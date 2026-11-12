@@ -607,7 +607,7 @@ Condition SlotEmitter::holdsValue(CellPointer cell, const PlacedSlot& slot, cons
 Condition SlotEmitter::isFilled(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)
 {
     Condition slotHoldsValue = holdsValue(cell, slot, location, extensionWord);
-    if (!isListedByKeyOrderAlone(slot.representation) && (!slot.isOutOfLine() || !slot.mayExistWithoutStorage))
+    if (!isListedOnlyByKeyOrder(slot.representation) && (!slot.isOutOfLine() || !slot.mayExistWithoutStorage))
         return slotHoldsValue;
     RELEASE_ASSERT(!location.isEntireHeap());
     return either<Condition>(slotHoldsValue, [&] {
@@ -658,7 +658,7 @@ Condition SlotEmitter::holdsDeclaredType(CellPointer cell, const PlacedSlot& slo
         Condition isUncreated = equal(word, uncreatedDeferredClosure);
         return logicalOr(isUncreated, above(word, undefinedCell32));
     }
-    if (isListedByKeyOrderAlone(slot.representation))
+    if (isListedOnlyByKeyOrder(slot.representation))
         return boolean(true);
     if (!traitsOf(slot.representation).hasUndefined)
         return holdsValue(cell, slot, location, extensionWord);

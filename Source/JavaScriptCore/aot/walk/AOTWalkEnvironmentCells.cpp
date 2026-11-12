@@ -860,7 +860,7 @@ static SlotOfLoop* findPlaceInWalk(Vector<SlotOfLoop>& places, const SlotOfLoop&
     return found == notFound ? nullptr : &places[found];
 }
 
-static bool stepsPlaceByOneInWalk(const Code& code, const Draft& store, Reference before)
+static bool incrementsSlotInWalk(const Code& code, const Draft& store, Reference before)
 {
     Reference stored = store.valueOperand();
     if (!stored.isValue() || code.isConstant(stored.id()))
@@ -911,7 +911,7 @@ void Walker::noteAccessByCopy(const Draft& draft)
         return;
     if (isStore) {
         Reference before = place.variable ? m_state.variable(place.variable) : m_state.environmentField(draft.environmentOperand(), place.field);
-        place.isSteppedByOne = stepsPlaceByOneInWalk(m_code, draft, before);
+        place.isSteppedByOne = incrementsSlotInWalk(m_code, draft, before);
         place.isComputedFromItself = place.variable && computesPlaceFromItself(m_code, draft, before);
     }
     size_t openLoop = m_openLoops.size();
@@ -932,7 +932,7 @@ void Walker::noteAccessByCopy(const Draft& draft)
     }
 }
 
-void Walker::noteScopeMadeInFront(TypeID scope, uint32_t loop)
+void Walker::noteScopeAllocatedBefore(TypeID scope, uint32_t loop)
 {
     size_t openLoop = m_openLoops.size();
     for (size_t number = m_trialVisits.size(); number--;) {
@@ -941,11 +941,11 @@ void Walker::noteScopeMadeInFront(TypeID scope, uint32_t loop)
             --openLoop;
         if (openLoop <= loop)
             return;
-        visit.scopesMadeInFront.appendIfNotContains(scope);
+        visit.scopesAllocatedBeforeLoop.appendIfNotContains(scope);
     }
 }
 
-bool Walker::recordPlacesStoredByCopies(LoopSummary& summary, TrialVisit& visit)
+bool Walker::recordSlotsStoredByCopies(LoopSummary& summary, TrialVisit& visit)
 {
     bool hasLearnedMore = false;
     Vector<SlotOfLoop, 2>& slots = summary.storesIntoScopes.slots;
@@ -956,10 +956,10 @@ bool Walker::recordPlacesStoredByCopies(LoopSummary& summary, TrialVisit& visit)
         if (!isReadByItsStores && !findPlaceInWalk(visit.placesReadByCopies, stored))
             continue;
         if (!stored.variable) {
-            size_t scope = visit.scopesMadeInFront.findIf([&](TypeID type) { return m_types.at(type).environment == stored.field.layout; });
+            size_t scope = visit.scopesAllocatedBeforeLoop.findIf([&](TypeID type) { return m_types.at(type).environment == stored.field.layout; });
             if (scope == notFound)
                 continue;
-            stored.typeOfScope = visit.scopesMadeInFront[scope];
+            stored.typeOfScope = visit.scopesAllocatedBeforeLoop[scope];
         }
         auto place = std::ranges::lower_bound(slots, stored.order(), { }, &SlotOfLoop::order);
         if (place != slots.end() && place->order() == stored.order()) {
@@ -972,7 +972,7 @@ bool Walker::recordPlacesStoredByCopies(LoopSummary& summary, TrialVisit& visit)
     return hasLearnedMore && !visit.done.mayRunOtherCode();
 }
 
-void Walker::findPlacesStoredByCopies(std::span<const SlotOfLoop> slots, const Effects& ofTurns, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
+void Walker::findSlotsStoredByCopies(std::span<const SlotOfLoop> slots, const Effects& ofTurns, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
 {
     if (ofTurns.mayRunOtherCode())
         return;
@@ -1222,7 +1222,7 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
         return;
     const BodyIndex& index = currentBodyIndex();
     findLoopSlots(slots, index.block(inputHead).firstParameter().index(), known, shouldReadBeforeHeader);
-    findPlacesStoredByCopies(slots, ofTurns, known, shouldReadBeforeHeader);
+    findSlotsStoredByCopies(slots, ofTurns, known, shouldReadBeforeHeader);
     if ((!index.opcodes().contains(Opcode::PutEnvironmentField) && !index.opcodes().contains(Opcode::PutModuleVariable)) || (shouldReadBeforeHeader && isUnreachable()))
         return;
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();

@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBitVector.h"
-#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinIDTypes.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
@@ -71,7 +71,7 @@ public:
             if (layout.kind == LayoutKind::Instance)
                 m_isInstance.set(index);
             uint32_t numberRequired = 0;
-            uint32_t numberGivenByNoMaker = 0;
+            uint32_t numberWithoutInitializer = 0;
             for (uint32_t place = 0; place < layout.fields.size(); ++place) {
                 const Field& field = layout.fields[place];
                 if (!field.key)
@@ -81,9 +81,9 @@ public:
                     continue;
                 ++numberRequired;
                 const LinkedCell* cell = held.findCellOfField({ LayoutID(index), place });
-                numberGivenByNoMaker += cell && cell->isGivenByNoMaker;
+                numberWithoutInitializer += cell && cell->isGivenByNoMaker;
             }
-            if (numberGivenByNoMaker > numberRequired - numberGivenByNoMaker)
+            if (numberWithoutInitializer > numberRequired - numberWithoutInitializer)
                 m_sparseRecords.set(index);
             for (PropertyKeyID key : linked.appendedKeysOf(LayoutID(index)))
                 pairs.append(holder | key.index());
@@ -168,11 +168,11 @@ public:
     bool isInstance(LayoutID layout) const { return m_isInstance.get(layout.index()); }
     bool isLayoutOfInitializer(LayoutID layout) const { return m_isLayoutOfInitializer.get(layout.index()); }
 
-    void leaveOutFewSparseRecords(Program& program, std::span<const DeclaredSetForFamilies> declaredSets)
+    void dropFewSparseRecords(Program& program, std::span<const DeclaredSetForFamilies> declaredSets)
     {
         if (m_sparseRecords.isEmpty())
             return;
-        constexpr size_t fewestOthersOfSparseRecord = 64;
+        constexpr size_t minOthersOfSparseRecord = 64;
         TypeArena types(program.types, ArenaKeeps::InProgram);
         Vector<LayoutID> sparse;
         m_sparseRecords.forEachSetBit([&](size_t layout) {
@@ -180,17 +180,17 @@ public:
         });
         LayoutSetID sparseRecords = types.layoutSets().ofSorted(sparse.span());
         for (const DeclaredSetForFamilies& declared : declaredSets) {
-            if (declared.size <= fewestOthersOfSparseRecord || !overlap(types.at(declared.layouts).untyped(), types.at(sparseRecords).untyped()))
+            if (declared.size <= minOthersOfSparseRecord || !overlap(types.at(declared.layouts).untyped(), types.at(sparseRecords).untyped()))
                 continue;
             LayoutSetID part = types.layoutSets().differenceOf(declared.layouts, sparseRecords);
             size_t sizeOfPart = types.layoutSets().sizeOf(part);
             size_t numberOfSparse = declared.size - sizeOfPart;
-            if (numberOfSparse * fewestOthersOfSparseRecord >= declared.size)
+            if (numberOfSparse * minOthersOfSparseRecord >= declared.size)
                 continue;
-            size_t numberOfOthersInUse = 0;
+            size_t numberOfUsedOthers = 0;
             bool areFew = types.at(part).anyOf([&](LayoutID layout) {
-                numberOfOthersInUse += isInUse(layout);
-                return numberOfOthersInUse + numberOfSparse > numberOfSparse * fewestOthersOfSparseRecord;
+                numberOfUsedOthers += isInUse(layout);
+                return numberOfUsedOthers + numberOfSparse > numberOfSparse * minOthersOfSparseRecord;
             });
             if (!areFew)
                 continue;

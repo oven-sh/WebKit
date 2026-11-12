@@ -577,7 +577,7 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
             return fromZero.subtractPosition(grounds.isFromZeroUp, grounds.isNonNegativeResult);
         return fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp, grounds.isNonNegativeResult);
     };
-    auto isFromZeroUpAfterLoop = [&] {
+    auto isNonNegativeAfterLoop = [&] {
         ValueID counter = grounds.loweringLoopIsClosed && grounds.loweredCounter ? rootInSumOverRecords(code, grounds.loweredCounter) : ValueID();
         if (!counter || code.isConstant(counter) || code.at(counter).opcode != Opcode::Parameter || !code.at(code.at(counter).block()).isLoopHead)
             return false;
@@ -598,7 +598,7 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
         SumOverRecords above(code, types, least.value_or(0));
         return least && above.add(position, 1) && above.add(counter, -1) && above.isFromZeroUp();
     };
-    isFromZeroUp = isFromZeroUp || isFromZeroUpAfterLoop();
+    isFromZeroUp = isFromZeroUp || isNonNegativeAfterLoop();
     isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp, grounds.isNonNegativeResult) && subtractNonNegativeTest() && fromZero.isFromZeroUp());
     if (grounds.loweredCounter && !(belowLength.add(grounds.loweredCounter, 1) && belowLength.add(grounds.loweredFrom, -1)))
         return false;

@@ -531,7 +531,7 @@ void Object::willCreateField(State&, const FieldData& field)
 
 void Object::didCreateField(State& state, const FieldData& field, bool withStorage)
 {
-    if (isListedByKeyOrderAlone(field.slot.representation()) && isInKeyOrder(state, field)) [[unlikely]]
+    if (isListedOnlyByKeyOrder(field.slot.representation()) && isInKeyOrder(state, field)) [[unlikely]]
         return;
     if (withStorage)
         willCreateField(state, field);
@@ -910,7 +910,7 @@ static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& ob
     uint32_t orderWord = object.orderWord();
     uint32_t structureID = object.structureID().bits();
     static_assert(MarkedBlock::atomSize >= 4);
-    uint32_t structureWord = hiddenKeys == HiddenKeys::LeftOut ? enumerableKeyListWordOfStructure(structureID) : keyListWordOfStructure(structureID);
+    uint32_t structureWord = hiddenKeys == HiddenKeys::LeftOut ? structureEnumerableKeysWord(structureID) : keyListWordOfStructure(structureID);
     KeyListCacheEntry& cacheEntry = state.instance.objects.keyLists[indexOfKeyList(structureWord, orderWord)];
     if (cacheEntry.shapeWord == structureWord && cacheEntry.orderWord == orderWord)
         return uncheckedDowncast<JSCellButterfly>(cacheEntry.list);
@@ -1166,7 +1166,7 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
     }
     EnumeratorBelowCompiledObjects& place = keyOrders.enumeratorBelowCompiledObjects(structureBefore->id().bits());
     if (ownNamesAreFixed && describesNames(vm, this, place)) {
-        countEvent(vm, RuntimeCounterID::EnumeratorsBelowCompiledObjectsFound);
+        countEvent(vm, RuntimeCounterID::CompiledObjectEnumeratorsFound);
         return place.enumerator;
     }
 
@@ -1224,7 +1224,7 @@ JSPropertyNameEnumerator* Object::enumeratorOfFinalObject(JSGlobalObject* global
         RELEASE_AND_RETURN(scope, JSC::propertyNameEnumerator(globalObject, base));
     EnumeratorBelowCompiledObjects& place = instance->state->objects->keyOrders.enumeratorBelowCompiledObjects(structure->id().bits());
     if (describesNames(vm, base, place)) {
-        countEvent(vm, RuntimeCounterID::EnumeratorsBelowCompiledObjectsFound);
+        countEvent(vm, RuntimeCounterID::CompiledObjectEnumeratorsFound);
         return place.enumerator;
     }
     JSPropertyNameEnumerator* enumerator = JSC::propertyNameEnumerator(globalObject, base);

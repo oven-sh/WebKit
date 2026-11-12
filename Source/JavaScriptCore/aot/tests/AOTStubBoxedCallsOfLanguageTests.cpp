@@ -859,7 +859,7 @@ static void testSpliceOfOneItemInLanguageCallTests()
         AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uintptr_t>(made.data()) && made[0] == headerOfValues && !static_cast<uint32_t>(made[2]));
         AOT_TEST_CHECK(list.length() == expected.size() && std::ranges::equal(list.elements().first(list.length()), expected.span()));
     };
-    auto nothingGoesOutInStub = [&](auto& list, uint64_t start) {
+    auto removesNothingInStub = [&](auto& list, uint64_t start) {
         Vector<uint64_t, 20> before = copyOf(list);
         made.fill(0);
         allocatorOfNone.makeRoomAt(std::bit_cast<uintptr_t>(made.data()), sizeOfArrayWithStorage(arrayLiteralVectorLength(0)));
@@ -906,10 +906,10 @@ static void testSpliceOfOneItemInLanguageCallTests()
         goesOutInStub(longestTakenOutOf, 0, 0, header);
         LongList longestPutInto(shape, integersInLanguageCallTests(mostValuesMoved).span(), IsPristine, ofThisRealm);
         comesInInStub(longestPutInto, 0, 0, come);
-        LongList tooLongToTakeOutOf(shape, integersInLanguageCallTests(mostValuesMoved + 2).span(), IsPristine, ofThisRealm);
-        isLeftToOperation(tooLongToTakeOutOf, none, one);
-        LongList tooLongToPutInto(shape, integersInLanguageCallTests(mostValuesMoved + 1).span(), IsPristine, ofThisRealm);
-        isLeftToOperation(tooLongToPutInto, none, none, come);
+        LongList arrayTooLongForRemoval(shape, integersInLanguageCallTests(mostValuesMoved + 2).span(), IsPristine, ofThisRealm);
+        isLeftToOperation(arrayTooLongForRemoval, none, one);
+        LongList arrayTooLongForInsertion(shape, integersInLanguageCallTests(mostValuesMoved + 1).span(), IsPristine, ofThisRealm);
+        isLeftToOperation(arrayTooLongForInsertion, none, none, come);
         auto full = listOf(shape, ListInLanguageCallTests::capacity);
         isLeftToOperation(full, int32InLanguageCallTests(ListInLanguageCallTests::capacity - 1), none, come);
 
@@ -917,8 +917,8 @@ static void testSpliceOfOneItemInLanguageCallTests()
         isLeftToOperation(five, int32InLanguageCallTests(5), one);
         isLeftToOperation(five, int32InLanguageCallTests(INT32_MAX), one);
         isLeftToOperation(five, int32InLanguageCallTests(6), none, come);
-        nothingGoesOutInStub(five, one);
-        nothingGoesOutInStub(five, int32InLanguageCallTests(-9));
+        removesNothingInStub(five, one);
+        removesNothingInStub(five, int32InLanguageCallTests(-9));
         isLeftToOperation(five, static_cast<uint64_t>(JSValue::encode(jsDoubleNumber(1))), none);
         isLeftToOperation(five, one, int32InLanguageCallTests(2));
         isLeftToOperation(five, one, one, come);

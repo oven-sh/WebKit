@@ -655,7 +655,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
 
     const bool looksForCoveredBarriers = m_looksForCoveredBarriers;
     const bool looksForCoveredFences = m_looksForCoveredFences;
-    if (!m_storesThatAwaitBirth.isEmpty() && m_blockWhereBirthsAreAwaited != id)
+    if (!m_storesThatAwaitBirth.isEmpty() && m_blockAwaitingAllocations != id)
         forgetStoresThatAwaitBirth();
     if (looksForCoveredBarriers && !m_coveredAtHeads.isEmpty() && block.terminator.numberOfEdges && m_numberCoveredAtHead[code.at(block.terminator.edge(0)).to.index()])
         beginCoverageAtEndOf(id);

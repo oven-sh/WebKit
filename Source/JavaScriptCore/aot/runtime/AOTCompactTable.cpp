@@ -328,7 +328,7 @@ uint32_t CompactTable::numberOfTakenSlots() const
 }
 
 template<CompactTable::SlotKind kind>
-NEVER_INLINE void CompactTable::fillIndexOfLargeTable(uint8_t* index, unsigned indexBits, uint32_t count)
+NEVER_INLINE void CompactTable::fillLargeTableIndex(uint8_t* index, unsigned indexBits, uint32_t count)
 {
     constexpr uint32_t distance = 8;
     uintptr_t base = cageBaseOf(this);
@@ -386,8 +386,8 @@ void CompactTable::fillIndex(uint32_t count)
     unsigned indexBits = this->indexBits();
     withSlotKind(slotKind(), [&](auto kind) ALWAYS_INLINE_LAMBDA {
         if constexpr (kind() == SlotKind::Long) {
-            if (hasNarrowKeys() && count >= fewestEntriesOfLargeTable)
-                return fillIndexOfLargeTable<kind()>(index, indexBits, count);
+            if (hasNarrowKeys() && count >= minLargeTableEntries)
+                return fillLargeTableIndex<kind()>(index, indexBits, count);
         }
         for (uint32_t entry = 0; entry < count; ++entry)
             insertIntoIndex<kind()>(index, indexBits, entry, hashOfStoredKey(uncheckedKeyAt(entry)));

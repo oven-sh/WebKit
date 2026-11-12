@@ -747,7 +747,7 @@ private:
 
     BitVector m_functionsThatAreNoLeaves;
     BitVector m_layoutsOfFirstExports;
-    void findLayoutsOfFirstExports();
+    void findFirstExportLayouts();
     void writeCalls();
     static constexpr size_t mostCallbackCallees = 4;
     bool callsOneOf(const BitVector& classes, FunctionID) const;
@@ -756,8 +756,8 @@ private:
     void writeGettersExpectedAtReads();
     void writeFunctionsInRecords();
     void findParametersCalledInLoops();
-    void findCallbacksPassedByNames();
-    TypeID typeOfCallbacksPassedByNameTo(FunctionID, uint32_t entryParameter);
+    void findNamedCallbacks();
+    TypeID callbackTypeByName(FunctionID, uint32_t entryParameter);
     static constexpr size_t maxTableCallees = 16;
     void findTableCallees();
     void layGettersReadOffTablesAmongRows();
@@ -784,7 +784,7 @@ private:
     };
     Vector<MethodUnderKey> m_methodsUnderKeys;
     void indexMethodsUnderFields();
-    bool m_someClassIsBelowBuiltin { false };
+    bool m_anyClassExtendsBuiltin { false };
 
     TypeID unlessAnything(TypeID) const;
     TypeID widened(TypeID);
@@ -848,7 +848,7 @@ private:
     void forEachRecordReadUnderUnknownKeyBy(FunctionID reader, const Invocable<void(LayoutID)> auto&) const;
     void forEachFunctionInFieldsOf(LayoutID record, const Invocable<void(FunctionID)> auto&) const;
     void forEachFunctionListedWhateverCameFirst(const LinkFlow::CalleesOfCall&, const Invocable<void(FunctionID)> auto& name, const Invocable<void(FunctionID)> auto& nameIfAcyclic) const;
-    void forEachMethodCopiedInArms(const SummaryCall&, const LinkFlow::CalleesOfCall&, const Invocable<void(FunctionID)> auto& name) const;
+    void forEachArmMethod(const SummaryCall&, const LinkFlow::CalleesOfCall&, const Invocable<void(FunctionID)> auto& name) const;
     void forEachFunctionNamedBySharedCall(uint32_t shared, const Invocable<void(FunctionID)> auto& name, const Invocable<void(FunctionID)> auto& nameIfAcyclic) const;
     void forEachMemberOf(const LinkedGroup&, const Invocable<void(FunctionID)> auto& name, const Invocable<void(FunctionID)> auto& nameIfAcyclic) const;
 
@@ -899,7 +899,7 @@ private:
     Vector<ParameterCalledInLoop> m_parametersCalledInLoops;
     Vector<uint8_t> m_argumentsCalledByNames;
     Vector<CallbackPassedByName> m_callbacksPassedByNames;
-    BitVector m_functionsPassedCallbacksByNames;
+    BitVector m_functionsWithNamedCallbacks;
     Vector<FunctionUnderKey> m_functionsUnderKeys;
     Vector<FunctionOfClass> m_functionsOfClasses;
     Vector<FunctionOfClass> m_functionsThatSlotsOfRecordsMayDefer;
@@ -945,7 +945,7 @@ void WriterOfLink::writeWhatMakesNoType()
     findLayoutsWithUnlistedNames();
     findParametersCalledInLoops();
     writeCalls();
-    findCallbacksPassedByNames();
+    findNamedCallbacks();
     findTableCallees();
     writeAccessesUnderOneKey();
     writeGettersExpectedAtReads();
@@ -971,7 +971,7 @@ void WriterOfLink::writeProofsThatMakeNoType()
 
     findExportsThatStayIn();
     writeReceiversThatStayAsMade();
-    m_tables.storesThatFreeLists = storesThatFreeListsOfFields(m_flow, m_tables);
+    m_tables.storesFreeingLists = storesFreeingFieldLists(m_flow, m_tables);
     writeReadsOffViewsOfWrittenLengths();
     findRingsOfTailCalls();
 }
@@ -1420,7 +1420,7 @@ void WriterOfLink::weighLeaves()
     }
 }
 
-void WriterOfLink::findLayoutsOfFirstExports()
+void WriterOfLink::findFirstExportLayouts()
 {
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
@@ -1439,7 +1439,7 @@ void WriterOfLink::findLayoutsOfFirstExports()
 void WriterOfLink::writeCalls()
 {
     if (writesWhatIsExpected())
-        findLayoutsOfFirstExports();
+        findFirstExportLayouts();
     PropertyKeyID keyOfIterators = m_program.keyOf(m_program.builtins().nameOf(WellKnownSymbol::Iterator));
     Vector<LinkedCall> found = collectInParallel<LinkedCall>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<LinkedCall>& calls) {
         if (!m_flow.reached.get(index))
@@ -2082,7 +2082,7 @@ void WriterOfLink::findParametersCalledInLoops()
         m_argumentsCalledByNames[PropertyKeyID::fromBits(static_cast<uint32_t>(place.keyAndArgument >> 32)).index()] |= 1u << static_cast<uint32_t>(place.keyAndArgument);
 }
 
-void WriterOfLink::findCallbacksPassedByNames()
+void WriterOfLink::findNamedCallbacks()
 {
     if (m_parametersCalledInLoops.isEmpty())
         return;
@@ -2190,7 +2190,7 @@ void WriterOfLink::findCallbacksPassedByNames()
         for (FunctionID callback : callbacks)
             m_callbacksPassedByNames.append({ place.method, place.entryParameter, callback });
         if (!callbacks.isEmpty())
-            m_functionsPassedCallbacksByNames.set(place.method.index());
+            m_functionsWithNamedCallbacks.set(place.method.index());
     }
     std::ranges::sort(m_callbacksPassedByNames);
 }
@@ -2291,7 +2291,7 @@ void WriterOfLink::findTableCallees()
     }
 }
 
-TypeID WriterOfLink::typeOfCallbacksPassedByNameTo(FunctionID method, uint32_t entryParameter)
+TypeID WriterOfLink::callbackTypeByName(FunctionID method, uint32_t entryParameter)
 {
     TypeID callbacks;
     for (const CallbackPassedByName& passed : std::ranges::equal_range(m_callbacksPassedByNames, std::pair(method, entryParameter), { }, [](const CallbackPassedByName& row) { return std::pair(row.method, row.entryParameter); })) {
@@ -3324,7 +3324,7 @@ ALWAYS_INLINE void WriterOfLink::writeParameters(FunctionID id, const LinkedFunc
             TypeID seenToArrive = typeIDOf(seen);
             parameter.written = written;
             parameter.seenToArrive = typesAtHand().isUninformative(seenToArrive) ? TypeID() : seenToArrive;
-            if (TypeID callbacks = !isThis && !parameter.seenToArrive && m_functionsPassedCallbacksByNames.get(id.index()) ? typeOfCallbacksPassedByNameTo(id, index) : TypeID()) {
+            if (TypeID callbacks = !isThis && !parameter.seenToArrive && m_functionsWithNamedCallbacks.get(id.index()) ? callbackTypeByName(id, index) : TypeID()) {
                 parameter.seenToArrive = callbacks;
                 if (written && typesAtHand().isSubset(callbacks, written))
                     parameter.written = callbacks;
@@ -3643,7 +3643,7 @@ void WriterOfLink::findCallbackFunctions(BitVector& functionsCalledInLoops, std:
     for (size_t candidate : functionsCalledInLoops) {
         uint32_t index = static_cast<uint32_t>(candidate);
         FunctionID function(index);
-        if (numbersOfCallSites[index] > LinkTables::maxCallSitesOfCallbackCopies || !m_program.at(function).thisParameterIndex())
+        if (numbersOfCallSites[index] > LinkTables::maxCallbackCopyCallSites || !m_program.at(function).thisParameterIndex())
             continue;
         const ThinSummary& summary = m_flow.summaries.at(function);
         m_tables.functions[index].mayCallBack = m_tables.hasFewCallSites(function, summary.numberOfOperations) && !summary.has(SummaryTrait::HasLoops) && m_flow.reached.get(index) && callsOneOf(classesWithLoops, function);
@@ -3664,7 +3664,7 @@ void WriterOfLink::forEachFunctionListedWhateverCameFirst(const LinkFlow::Callee
     }
 }
 
-void WriterOfLink::forEachMethodCopiedInArms(const SummaryCall& call, const LinkFlow::CalleesOfCall& callees, const Invocable<void(FunctionID)> auto& name) const
+void WriterOfLink::forEachArmMethod(const SummaryCall& call, const LinkFlow::CalleesOfCall& callees, const Invocable<void(FunctionID)> auto& name) const
 {
     static constexpr size_t maxMethods = 4;
     static constexpr uint32_t maxOperations = 80;
@@ -3804,7 +3804,7 @@ void WriterOfLink::findMixedSubclasses()
     if (writesWhatIsExpected())
         return;
     for (const Layout& layout : m_program.layouts) {
-        m_someClassIsBelowBuiltin |= layout.writtenBuiltinBase && layout.constructor;
+        m_anyClassExtendsBuiltin |= layout.writtenBuiltinBase && layout.constructor;
         if (layout.mixedSubclass && !m_mixedSubclasses.contains(layout.mixedSubclass))
             m_mixedSubclasses.append(layout.mixedSubclass);
     }
@@ -3873,7 +3873,7 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, TablesReadInOrderOfFu
             name(named);
     }
 
-    if (!proving && (m_someClassIsBelowBuiltin || !m_mixedSubclasses.isEmpty())) [[unlikely]]
+    if (!proving && (m_anyClassExtendsBuiltin || !m_mixedSubclasses.isEmpty())) [[unlikely]]
         forEachConstructorOfReceiver(function, summary, name);
 
     const LinkedFunction& linked = m_tables.function(referrer);
@@ -3921,7 +3921,7 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, TablesReadInOrderOfFu
                 name(findNakedConstructorOf(m_program, m_flow.typeAt(FlowNodeID(m_flow.nodesOfSummaryOf(referrer)[call.subject])).builtin));
         }
         forEachFunctionListedWhateverCameFirst(callees, name, nameIfAcyclic);
-        forEachMethodCopiedInArms(summary.calls[index], callees, nameIfAcyclic);
+        forEachArmMethod(summary.calls[index], callees, nameIfAcyclic);
         for (uint32_t shared : callees.shared())
             name(m_groupOfSharedCall[shared]);
     }
@@ -4910,7 +4910,7 @@ static bool isUninformativeInHeldReading(const TypeReader& types, TypeID held)
     return type.hasUnboundedUnknown() || (!type.hasObjects() && (type.primitives & Primitive::All) == Primitive::All);
 }
 
-static void gatherNamesAskedOfFieldsOfOneClass(const Program& program, const LinkFlow& flow, const LinkTables& held, NamesAskedOfContentsOfFields& result)
+static void collectClassFieldNames(const Program& program, const LinkFlow& flow, const LinkTables& held, NamesAskedOfContentsOfFields& result)
 {
     static constexpr uint32_t severalClasses = UINT32_MAX;
     TypeReader types(program);
@@ -4974,14 +4974,14 @@ static void gatherNamesAskedOfFieldsOfOneClass(const Program& program, const Lin
     }
 }
 
-static void expectFieldsByNamesAsked(Program& program, const NamesAskedOfContentsOfFields& asked, const LayoutsByNames& byNames, TypeArena& types, LinkTables& held)
+static void speculateFieldsByNames(Program& program, const NamesAskedOfContentsOfFields& asked, const LayoutsByNames& byNames, TypeArena& types, LinkTables& held)
 {
     static constexpr size_t mostClassesOfField = 4;
     HashMap<uint64_t, TypeID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> expected;
     auto wordOf = [](FieldReference field) {
         return static_cast<uint64_t>(field.layout.index()) << 32 | field.field;
     };
-    for (const NamesAskedOfContentsOfFields::NamesAskedOfField& row : asked.fields) {
+    for (const NamesAskedOfContentsOfFields::NamesReadFromField& row : asked.fields) {
         Vector<PropertyKeyID, 16> names;
         Vector<PropertyKeyID, 16> namesThatChoose;
         for (PropertyKeyID name : row.names) {
@@ -5030,7 +5030,7 @@ static void expectFieldsByNamesAsked(Program& program, const NamesAskedOfContent
     }
 }
 
-static NamesAskedOfContentsOfFields gatherNamesAskedOfAppendedFields(const Program& program, const LinkFlow& flow, const LinkTables& held)
+static NamesAskedOfContentsOfFields collectAppendedFieldNames(const Program& program, const LinkFlow& flow, const LinkTables& held)
 {
     struct NameAsked {
         uint64_t cell { 0 };
@@ -5191,15 +5191,15 @@ static NamesAskedOfContentsOfFields gatherNamesAskedOfAppendedFields(const Progr
 
 NamesAskedOfContentsOfFields gatherNamesAskedOfContentsOfFields(const Program& program, const LinkFlow& flow, const LinkTables& held)
 {
-    NamesAskedOfContentsOfFields result = gatherNamesAskedOfAppendedFields(program, flow, held);
-    gatherNamesAskedOfFieldsOfOneClass(program, flow, held, result);
+    NamesAskedOfContentsOfFields result = collectAppendedFieldNames(program, flow, held);
+    collectClassFieldNames(program, flow, held, result);
     return result;
 }
 
 void expectContentsOfFieldsByNamesAsked(Program& program, const LinkFlow& flow, const NamesAskedOfContentsOfFields& asked, const LayoutsByNames& byNames, LinkTables& held)
 {
     TypeArena types(program.types, ArenaKeeps::InProgram);
-    expectFieldsByNamesAsked(program, asked, byNames, types, held);
+    speculateFieldsByNames(program, asked, byNames, types, held);
     for (size_t next = 0; next < asked.namesOfGroups.size();) {
         uint32_t group = asked.namesOfGroups[next].first;
         Vector<PropertyKeyID, 16> names;

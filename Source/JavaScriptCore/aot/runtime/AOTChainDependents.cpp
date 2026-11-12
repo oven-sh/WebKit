@@ -120,10 +120,10 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
     if (chainObjects.empty())
         return;
     VM& vm = *m_state.instance.vm;
-    const bool readsValuesWhereTheyAre = ownerOf(dependent).readsValuesWhereTheyAre();
+    const bool readsValuesInPlace = ownerOf(dependent).readsValuesInPlace();
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
-        if (!readsValuesWhereTheyAre)
+        if (!readsValuesInPlace)
             m_state.instance.propertyCaches.forgetReplacedMembersOf(object);
         if (holdsExtraProperty(vm, object, dependent.uidOrNull))
             startReportingReplacements(vm, object);

@@ -93,7 +93,7 @@ bool Object::isInSlot(const FieldData& field) const
     SlotRepresentation representation = field.slot.representation();
     if (!slot || slotHoldsAbsent(representation, slot))
         return false;
-    if (isListedByKeyOrderAlone(representation) && readSlotBits(representation, slot) == bitsBeforeCreation(representation)) [[unlikely]]
+    if (isListedOnlyByKeyOrder(representation) && readSlotBits(representation, slot) == bitsBeforeCreation(representation)) [[unlikely]]
         return isInKeyOrder(state(), field);
     return true;
 }
@@ -114,7 +114,7 @@ JSValue Object::read(const FieldData& field) const
         return isInSlot(field) ? const_cast<Object*>(this)->materializeDeferredClosure(vm(), field) : JSValue();
     const void* slot = slotOf(field);
     State& state = this->state();
-    if (isListedByKeyOrderAlone(representation) && !isInSlot(field)) [[unlikely]]
+    if (isListedOnlyByKeyOrder(representation) && !isInSlot(field)) [[unlikely]]
         return { };
     JSValue value = slot ? readSlot(representation, slot, state.instance) : JSValue();
     if (!value && field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field) && !livesInExtraProperties(*state.instance.vm, *this, field))

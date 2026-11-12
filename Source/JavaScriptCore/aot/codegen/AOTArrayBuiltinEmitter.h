@@ -101,7 +101,7 @@ private:
 
     Integer indexOfNumber(const InlineCall&, CellPointer array);
     Integer indexOfInt32(const InlineCall&, CellPointer array);
-    Integer indexOfInt32OrNothing(const InlineCall&, CellPointer array);
+    Integer indexOfOptionalInt32(const InlineCall&, CellPointer array);
     Integer indexOfBoxedInt32(const InlineCall&, CellPointer array, Boxed searched, std::optional<Integer> first);
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);

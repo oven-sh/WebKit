@@ -217,14 +217,14 @@ bool Object::tryRepeat(VM& vm, const FieldReturn& back, JSValue value)
 
 bool Object::mayBearMark() const
 {
-    return std::ranges::any_of(layout().fieldsToLastOfBirth() | std::views::reverse, [](const FieldData& field) {
+    return std::ranges::any_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [](const FieldData& field) {
         return field.isFilledAtBirth || field.holdsRawValueFromBirth;
     });
 }
 
 bool Object::hasEveryFieldOfBirth() const
 {
-    return std::ranges::all_of(layout().fieldsToLastOfBirth() | std::views::reverse, [&](const FieldData& field) {
+    return std::ranges::all_of(layout().fieldsThroughLastAllocated() | std::views::reverse, [&](const FieldData& field) {
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
             return slot && !slotHoldsMarker(field.slot.representation(), slot);

@@ -143,7 +143,7 @@ struct FlatFrame {
     uint32_t extra;
 };
 
-enum class FlatStartScan : uint8_t { None, OneCharacter, Table, TableBehindPair, RequiredTextsAlone, PrecedingUnitAlone };
+enum class FlatStartScan : uint8_t { None, OneCharacter, Table, TableBehindPair, RequiredTextsAlone, PrecedingUnitOnly };
 
 class FlatProgram {
     WTF_MAKE_TZONE_ALLOCATED(FlatProgram);
@@ -193,7 +193,7 @@ public:
             return;
         // A text at a fixed distance names the one place to try, and the attempt there fails as soon as the table would.
         bool isTextAtFixedDistance = texts.size() == 1 && !texts[0].text.isEmpty() && texts[0].leastDistance == texts[0].greatestDistance;
-        if (startScan == FlatStartScan::None || startScan == FlatStartScan::PrecedingUnitAlone || isTextAtFixedDistance || (mayMatchOnlyAtInputEnd && texts[0].isAllThatMatchesAtEndHold))
+        if (startScan == FlatStartScan::None || startScan == FlatStartScan::PrecedingUnitOnly || isTextAtFixedDistance || (mayMatchOnlyAtInputEnd && texts[0].isAllThatMatchesAtEndHold))
             startScan = FlatStartScan::RequiredTextsAlone;
         // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
         if (std::exchange(skipsStartsBehindFailedRuns, false))
@@ -265,11 +265,11 @@ public:
     StartPair startPair;
     static constexpr unsigned leastLengthSearchedByStartPair = 64;
     FlatStartScan startScan { FlatStartScan::None };
-    // The unit in front of a match, as far as the lookbehinds, and the ^ that a line satisfies, at the start of every match say. No attempt is made behind another unit.
+    // The code units that may precede a match, according to the lookbehinds and the multiline ^ at the start of every match. No attempt is made after any other unit.
     struct PrecedingUnits {
         std::array<uint64_t, 4> latin1 { };
         bool mayBeWide { false };
-        // A match can begin where the input does.
+        // A match can begin at the start of the input.
         bool mayBeAbsent { false };
 
         friend bool operator==(const PrecedingUnits&, const PrecedingUnits&) = default;

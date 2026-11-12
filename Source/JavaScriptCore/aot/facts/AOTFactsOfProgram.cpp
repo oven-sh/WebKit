@@ -656,7 +656,7 @@ private:
     bool rowsOnlyBindAsReceiver(BuiltinID callee, BuiltinOperand) const;
     bool linkFollowsWritesOn(ValueID written, ValueID site) const;
     bool linkHoldsAsTheObject(ValueID) const;
-    bool storesGlobalObjectOntoItself(const BodyValue&) const;
+    bool storesGlobalObjectOnItself(const BodyValue&) const;
     bool rowsOnlyConstructReceiver(BuiltinID callee, BuiltinID receiver) const;
     bool rowsOnlyCallReceiver(BuiltinID callee, BuiltinID receiver) const;
     Fate fateOf(const BodyValue& user, uint32_t operandIndex) const;
@@ -1123,7 +1123,7 @@ bool BodyLookOfProgramFacts::linkFollowsWritesOn(ValueID written, ValueID site) 
     return linkHoldsAsTheObject(written) && (std::ranges::contains(m_summary.calls, site, &SummaryCall::site) || std::ranges::contains(m_summary.accesses, site, &SummaryAccess::site) || std::ranges::contains(m_summary.changes, site, &SummaryChange::site));
 }
 
-bool BodyLookOfProgramFacts::storesGlobalObjectOntoItself(const BodyValue& store) const
+bool BodyLookOfProgramFacts::storesGlobalObjectOnItself(const BodyValue& store) const
 {
     if (store.opcode() != Opcode::PropSet)
         return false;
@@ -1320,7 +1320,7 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
             return Fate::IsInspected;
         if (accessClassOf(opcode) == AccessClass::ByName && receiverOf(opcode) == operandIndex && !isOnlyInspected)
             return (user.operandUses(operandIndex) - usesThatOnlyWriteOnOperandInProgramFacts).isEmpty() && linkFollowsWritesOn(user.operand(operandIndex), user.id()) ? Fate::IsWrittenOn : Fate::IsLetGo;
-        if (operandIndex == OperandIndex::PropSet::value && storesGlobalObjectOntoItself(user))
+        if (operandIndex == OperandIndex::PropSet::value && storesGlobalObjectOnItself(user))
             return Fate::IsInspected;
         if (opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::value && linkFollowsWritesOn(user.operand(operandIndex), user.id()))
             return Fate::IsFollowedByLink;
@@ -2415,7 +2415,7 @@ const FieldsOfNumbers& fieldsStoredWhatIsNoInt32In(const LooksAtBodies& looks)
     return looks.fieldsStoredWhatIsNoInt32;
 }
 
-const FieldsOfNumbers& fieldsFilledByInitializersIn(const LooksAtBodies& looks)
+const FieldsOfNumbers& initializerFields(const LooksAtBodies& looks)
 {
     RELEASE_ASSERT(looks.isFilled);
     return looks.fieldsFilledByInitializers;
@@ -2629,7 +2629,7 @@ BitVector functionsCalledByValueInLoopsIn(const Program& program, const ThinSumm
     return functions;
 }
 
-BitVector functionsCalledByComparatorsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+BitVector comparatorCallees(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
 {
     BitVector functions(program.functions.size());
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
@@ -2647,7 +2647,7 @@ BitVector functionsCalledByComparatorsIn(const Program& program, const ThinSumma
     return functions;
 }
 
-FunctionsDoneInIterations findFunctionsDoneInIterations(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+FunctionsDoneInIterations findFunctionsFinishedInIterations(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
 {
     struct MethodsUnderName {
         Vector<FunctionID, 1> methods;
@@ -3519,7 +3519,7 @@ public:
     void settle();
 
     bool canLockAtStartUp(BuiltinID member) const;
-    bool programAsksForPrototypes() const { return m_programAsksForPrototypes; }
+    bool programReadsPrototypes() const { return m_programReadsPrototypes; }
     bool isLost(BuiltinID canonical) const { return m_isLost.quickGet(canonical.index()); }
     bool isStoredUnderThroughUnseen(PropertyKeyID) const;
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLostOutOfPlaceThatHolds); }
@@ -3556,7 +3556,7 @@ private:
     BitVector m_isLost;
     BitVector m_isLostOutOfPlaceThatHolds;
     BitVector m_isWithinReachOfUnseen;
-    bool m_programAsksForPrototypes { false };
+    bool m_programReadsPrototypes { false };
     bool m_locksAreLaid { true };
 };
 
@@ -3695,7 +3695,7 @@ bool WritesOnBuiltinsInProgramFacts::runsCodeThatNoLockIsLaidBeside(BuiltinID ca
     return !runsOnlyText && !m_builtins.has(BuiltinMark::EvaluatesTextInGlobalScope, canonical);
 }
 
-static bool handsOutPrototypesInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+static bool exposesPrototypesInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
     for (BuiltinID handsOut : { Builtins::ObjectGetPrototypeOf, Builtins::ReflectGetPrototypeOf, Builtins::ReflectGet, Builtins::ObjectGetOwnPropertyDescriptor, Builtins::ReflectGetOwnPropertyDescriptor, Builtins::ObjectGetOwnPropertyDescriptors, Builtins::ObjectValues, Builtins::ObjectEntries, Builtins::ObjectPrototype__lookupGetter__ }) {
         if (canonical == builtins.canonicalID(handsOut))
@@ -3726,7 +3726,7 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
         if (isOfProgram && uses.containsAny(usesOfObjectItselfInProgramFacts))
             m_locksAreLaid &= !runsCodeThatNoLockIsLaidBeside(canonical, uses.contains(BuiltinUse::Escaped));
         if (isOfProgram && !(uses - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
-            m_programAsksForPrototypes |= handsOutPrototypesInProgramFacts(m_builtins, canonical);
+            m_programReadsPrototypes |= exposesPrototypesInProgramFacts(m_builtins, canonical);
         if (isOfProgram && uses.contains(BuiltinUse::Escaped))
             carryOut(canonical, finding.kind == Kind::ReadOfAnyMember, isFileOfProductInTestRun(m_source, FunctionID(finding.witness.function)));
         break;
@@ -3973,8 +3973,8 @@ public:
     void takeBuiltinsThatCameOutOfSight(Vector<BuiltinID>&);
     bool objectsMayHaveMethodCalledWithStartupLoads() const { return m_objectsMayHaveMethodCalledWithStartupLoads; }
     bool climberMayBeHandedWhatNobodyKnows() const { return m_climberMayBeHandedWhatNobodyKnows; }
-    bool programMayComeByPrototypes() const;
-    bool writersMayRunOutOfSight() const;
+    bool programMayReachPrototypes() const;
+    bool writersMayRunUnseen() const;
     bool isOutOfSight(BuiltinID canonical) const { return m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
     bool isInReach(BuiltinID canonical) const { return !(m_uses[canonical.index()] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty(); }
     bool machineCodeMayBeLoaded() const;
@@ -4456,16 +4456,16 @@ void BuilderOfProgramFacts::noteStandsAboveClass(BuiltinID builtin, FunctionID c
     take(findings.span());
 }
 
-bool BuilderOfProgramFacts::programMayComeByPrototypes() const
+bool BuilderOfProgramFacts::programMayReachPrototypes() const
 {
     auto spells = [&](BuiltinName name) {
         PropertyKeyID key = m_source.keyOf(name);
         return key && m_namesSpelledByProgram.get(key.index());
     };
-    return m_writes.programAsksForPrototypes() || spells(BuiltinNames::__proto__) || (spells(BuiltinNames::constructor) && spells(BuiltinNames::prototype)) || !m_inputs.linked.lookups.readsOfProgramUnderKeysNobodyKnows.isEmpty();
+    return m_writes.programReadsPrototypes() || spells(BuiltinNames::__proto__) || (spells(BuiltinNames::constructor) && spells(BuiltinNames::prototype)) || !m_inputs.linked.lookups.readsOfProgramUnderKeysNobodyKnows.isEmpty();
 }
 
-bool BuilderOfProgramFacts::writersMayRunOutOfSight() const
+bool BuilderOfProgramFacts::writersMayRunUnseen() const
 {
     for (size_t index : m_rows.writeUnderKeysOfCalls) {
         if (anyRowMayApply(BuiltinID(static_cast<uint32_t>(index))))
@@ -7369,7 +7369,7 @@ void BuiltinsInReach::noteWriteThroughLostBuiltins(PropertyKeyID key, bool isByF
 void BuiltinsInReach::noteNameWrittenThroughUnseenByLibrary(PropertyKeyID key)
 {
     LookupsPastProgramObjects& lookups = m_linked->lookups;
-    m_wasToldSomethingNew |= key ? !lookups.namesWrittenThroughUnseenByLibrary.set(key.index()) : !std::exchange(lookups.writesUnderAnyNameThroughUnseenByLibrary, true);
+    m_wasToldSomethingNew |= key ? !lookups.namesWrittenThroughUnseenByLibrary.set(key.index()) : !std::exchange(lookups.writesAnyNameThroughUnseenByLibrary, true);
 }
 
 void BuiltinsInReach::noteWriteThroughUnseenByProgram(PropertyKeyID key, bool isByFileOfProduct)
@@ -7481,7 +7481,7 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     m_builder->takeBuiltinsThatCameOutOfSight(cameOutOfSight);
 
     m_builder->writes().settle();
-    m_writersMayRunOutOfSight = m_writersMayRunOutOfSight || m_builder->writersMayRunOutOfSight();
+    m_writersMayRunUnseen = m_writersMayRunUnseen || m_builder->writersMayRunUnseen();
     BitVector& taken = m_linked->lookups.membersTakenForConstants;
     for (size_t index : taken) {
         BuiltinID member(static_cast<uint32_t>(index));
@@ -7502,11 +7502,11 @@ bool BuiltinsInReach::mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID k
 {
     bool evaluatesTextOnGlobalObject = m_builder->unseenCodeCanRun() && canonicalHolder == m_builder->globalObject();
     auto isStoredUnderAnyName = [&] {
-        bool someWriterMayRun = m_linked->lookups.writesUnderAnyNameThroughUnseenByLibrary || m_writersMayRunOutOfSight;
-        return m_builder->unseenCodeCanRun() || (someWriterMayRun && (m_builder->programMayComeByPrototypes() || m_builder->writes().isLost(canonicalHolder)));
+        bool someWriterMayRun = m_linked->lookups.writesAnyNameThroughUnseenByLibrary || m_writersMayRunUnseen;
+        return m_builder->unseenCodeCanRun() || (someWriterMayRun && (m_builder->programMayReachPrototypes() || m_builder->writes().isLost(canonicalHolder)));
     };
-    bool isLaidOutOfSight = isPrototypeOfPrimitives(m_inputs->program.builtins(), canonicalHolder) && (isStoredUnderAnyName() || (m_builder->isOutOfSight(canonicalHolder) && m_builder->writes().isStoredUnderThroughUnseen(key)));
-    return m_builder->machineCodeMayBeLoaded() || evaluatesTextOnGlobalObject || isLaidOutOfSight || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key);
+    bool isDefinedUnseen = isPrototypeOfPrimitives(m_inputs->program.builtins(), canonicalHolder) && (isStoredUnderAnyName() || (m_builder->isOutOfSight(canonicalHolder) && m_builder->writes().isStoredUnderThroughUnseen(key)));
+    return m_builder->machineCodeMayBeLoaded() || evaluatesTextOnGlobalObject || isDefinedUnseen || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key);
 }
 
 void BuiltinsInReach::takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID key)

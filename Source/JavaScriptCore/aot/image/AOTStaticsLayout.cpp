@@ -58,7 +58,7 @@ public:
             && placeArrayProfiles()
             && placeRowsOfReads()
             && placeEnvironmentsHandedBack()
-            && placeStructuresOfHeirs()
+            && placeSubclassStructures()
             && placeMethodTable()
             && finish();
     }
@@ -134,7 +134,7 @@ private:
 
     static unsigned widthOfVariable(const PlannedVariable& planned)
     {
-        return planned.hasViewMirror ? Typed::sizeOfVariableWithViewMirror : widthOf(planned.representation);
+        return planned.hasViewMirror ? Typed::viewMirrorVariableSize : widthOf(planned.representation);
     }
 
     static WordKind kindOfWord(const PlannedVariable& planned)
@@ -226,7 +226,7 @@ private:
         m_statics.arrayProfileOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ArrayProfile).size());
         m_statics.readGroupCacheOffsets = withoutOffsets(m_mentions.keys(NumberSpace::ReadGroupCache).size());
         m_statics.environmentHandedBackOffsets = withoutOffsets(m_program.layouts.size());
-        m_statics.structuresOfHeirOffsets = withoutOffsets(m_program.layouts.size());
+        m_statics.subclassStructuresOffsets = withoutOffsets(m_program.layouts.size());
         m_statics.classGuardBits = Vector<uint32_t>(FillWith { }, m_program.layouts.size() * numberOfClassSides, noClassGuardBit);
     }
 
@@ -406,7 +406,7 @@ private:
                 m_statics.variablesWithViewMirror.append({ offset, 0 });
             if (beginsRange)
                 m_statics.variablesWithViewMirror.append({ offset, 0 });
-            m_statics.variablesWithViewMirror.last().size += Typed::sizeOfVariableWithViewMirror;
+            m_statics.variablesWithViewMirror.last().size += Typed::viewMirrorVariableSize;
         }
         return fitsWithin(m_limit);
     }
@@ -550,10 +550,10 @@ private:
         return true;
     }
 
-    bool placeStructuresOfHeirs()
+    bool placeSubclassStructures()
     {
         for (size_t layout : m_mentions.byID(NumberSpace::HeirLookedAt).isMentioned)
-            m_statics.structuresOfHeirOffsets[layout] = allocate(StructuresOfHeir::sizeWithDisplacementsOfFields(m_program.layouts[layout].fields.size()), alignof(StructuresOfHeir));
+            m_statics.subclassStructuresOffsets[layout] = allocate(StructuresOfHeir::sizeWithDisplacementsOfFields(m_program.layouts[layout].fields.size()), alignof(StructuresOfHeir));
         return fitsWithin(m_limit);
     }
 

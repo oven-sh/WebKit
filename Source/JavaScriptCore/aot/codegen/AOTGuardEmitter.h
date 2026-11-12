@@ -63,7 +63,7 @@ public:
     Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
     Condition realmWatchesSpeciesOfLists();
-    TypedPointer wordOfStructuresOfHeir(const Machine::AbstractHeap&, LayoutID classLayout, ptrdiff_t offset);
+    TypedPointer subclassStructuresWord(const Machine::AbstractHeap&, LayoutID classLayout, ptrdiff_t offset);
 
 private:
     Boxed assignedMember(const MemberConditionRecord&);

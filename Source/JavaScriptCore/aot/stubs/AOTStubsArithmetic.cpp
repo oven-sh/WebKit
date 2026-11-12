@@ -518,7 +518,7 @@ static void emitBigIntOrder(StubAssembler& jit, const BinaryRegisters& registers
     isLeftToOperation.link(&jit);
 }
 
-static void emitOrderOfBigIntAndNumber(StubAssembler& jit, const BinaryRegisters& registers, BinaryOperator operation)
+static void emitBigIntNumberComparison(StubAssembler& jit, const BinaryRegisters& registers, BinaryOperator operation)
 {
     const auto [left, right, first, second, scratch, leftNumber, rightNumber] = registers;
     const Comparison& comparison = comparisonOf(operation);
@@ -617,7 +617,7 @@ static BinaryRegisters takeBinaryRegisters(StubAssembler& jit)
     };
 }
 
-static void replaceNumberOrBigIntByTruth(StubAssembler& jit, GPRReg value)
+static void replaceNumberOrBigIntWithTruthiness(StubAssembler& jit, GPRReg value)
 {
     Jump isInt32 = jit.branch64(CCallHelpers::AboveOrEqual, value, numberTag);
     Jump isDouble = jit.branchTest64(CCallHelpers::NonZero, value, numberTag);
@@ -658,7 +658,7 @@ void generateRemainderTruth(StubAssembler& jit)
     slow.link(&jit);
     jit.goOnAtEveryReturnIn(std::nullopt);
     jit.callOperationAndReturn(binaryOperations[static_cast<uint8_t>(BinaryOperator::Mod)], { .secondArgumentIn = registers.left, .thirdArgumentIn = registers.right }, [&] {
-        replaceNumberOrBigIntByTruth(jit, jit.result());
+        replaceNumberOrBigIntWithTruthiness(jit, jit.result());
     });
 }
 
@@ -698,7 +698,7 @@ void generateBinaryOperation(StubAssembler& jit)
     if (isComparison(operation)) {
         emitStringOrder(jit, registers, operation);
         emitBigIntOrder(jit, registers, operation);
-        emitOrderOfBigIntAndNumber(jit, registers, operation);
+        emitBigIntNumberComparison(jit, registers, operation);
     }
     if (hasWayOfTwoTexts(operation)) {
         JumpList isCell;

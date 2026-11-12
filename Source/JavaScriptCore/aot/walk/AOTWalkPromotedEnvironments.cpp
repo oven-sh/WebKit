@@ -56,7 +56,7 @@ Reference valueNoLongerCaptured(Walker& walker, FunctionID function, uint32_t ca
         TypeID scope = walker.program().provenTypeOf(walker.program().at(function).captures[capture]);
         std::optional<uint32_t> loop = walker.isInTrialVisit() && walker.types().at(scope).environment ? findLoopForPromotedCapture(walker, function, closure) : std::nullopt;
         if (loop)
-            walker.noteScopeMadeInFront(scope, *loop);
+            walker.noteScopeAllocatedBefore(scope, *loop);
         return word;
     }
     origin.isTailCall = false;

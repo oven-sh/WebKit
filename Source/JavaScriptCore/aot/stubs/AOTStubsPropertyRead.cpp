@@ -1228,7 +1228,7 @@ void generateInById(StubAssembler& jit)
     frontDoesNotSay.link(&jit);
     if (question == PresenceQuestion::In) {
         isNotInFront.append(branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, T12 }, Slot::Kind::Uncacheable, T10));
-        loadKeyOfProxySlot(jit, SlotForm::PackedSlot, T12, T13, isNotInFront);
+        loadProxySlotKey(jit, SlotForm::PackedSlot, T12, T13, isNotInFront);
         jit.jumpToStub(throughProxy(TrapOfProxy::Has));
     }
 

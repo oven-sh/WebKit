@@ -354,7 +354,7 @@ static std::optional<Vector<PropertyOfFreshObject, 8>> nestedLiteralProperties(W
     return properties;
 }
 
-static std::optional<uint32_t> orderWordBehindDefinitionOnFreshObject(Walker& walker, const Draft& definition)
+static std::optional<uint32_t> orderWordAfterFreshDefinition(Walker& walker, const Draft& definition)
 {
     Reference root = rootOfObjectInWrittenDescriptors(walker, definition.objectOperand());
     if (!walker.has(Mechanism::TypedOperations) || !root || !root.isValue() || walker.code().isConstant(root.id()) || !walker.state().isFresh(root))
@@ -763,7 +763,7 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         if (descriptor->setter)
             definition.setSetterOperand(descriptor->setter);
         definition.setDescriptorFlags(flags);
-        std::optional<uint32_t> orderWord = orderWordBehindDefinitionOnFreshObject(walker, definition);
+        std::optional<uint32_t> orderWord = orderWordAfterFreshDefinition(walker, definition);
         if (!orderWord)
             return walker.build(WTF::move(definition));
         definition.setOrderWordAfter(OrderWord(*orderWord));

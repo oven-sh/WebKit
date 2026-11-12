@@ -220,8 +220,8 @@ private:
     static constexpr unsigned logMaxSteps = 12;
     static constexpr unsigned logInitialSteps = 8;
     size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) const { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> (32 - m_logNumberOfSteps) & ~static_cast<size_t>(1); }
-    void putStepOfKeyOrder(const StepOfKeyOrder&);
-    void growStepsOfKeyOrders();
+    void putKeyOrderStep(const StepOfKeyOrder&);
+    void growKeyOrderSteps();
     StepOfKeyOrder* m_stepsOfKeyOrders { nullptr };
     unsigned m_logNumberOfSteps { logInitialSteps };
     uint32_t m_stepsPutSinceGrowth { 0 };

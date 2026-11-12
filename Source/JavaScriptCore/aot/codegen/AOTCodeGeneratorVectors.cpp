@@ -87,12 +87,12 @@ private:
     void joinPassedOn();
     void joinStores();
     bool tryJoin(ValueID first, ValueID second);
-    bool mayStandBesideVectors(ValueID) const;
+    bool canCoexistWithVectors(ValueID) const;
     bool noteReadsOfLanes();
 
     Element elementAt(ValueID position) const;
     bool areAdjacentElements(const Operation& first, const Operation& second) const;
-    bool onlyStoresBeside(size_t begin, size_t end, const Operation& first, const Operation& second) const;
+    bool onlyStoresNearby(size_t begin, size_t end, const Operation& first, const Operation& second) const;
 
     const CodeGenerator& m_generator;
     const Code& m_code;
@@ -137,7 +137,7 @@ bool LaneFinder::areAdjacentElements(const Operation& first, const Operation& se
     return elementOfFirst.base == elementOfSecond.base && elementOfSecond.offset == elementOfFirst.offset + 1;
 }
 
-bool LaneFinder::onlyStoresBeside(size_t begin, size_t end, const Operation& first, const Operation& second) const
+bool LaneFinder::onlyStoresNearby(size_t begin, size_t end, const Operation& first, const Operation& second) const
 {
     Element elementOfFirst = elementAt(first.positionOperand());
     Element elementOfSecond = elementAt(second.positionOperand());
@@ -292,7 +292,7 @@ void LaneFinder::joinStores()
                 continue;
             const Operation& first = at(m_values[position]);
             for (size_t other = 0; other < m_values.size(); ++other) {
-                if (!storesValue(m_values[other], pair.second) || !areAdjacentElements(first, at(m_values[other])) || !onlyStoresBeside(std::min(position, other) + 1, std::max(position, other), first, at(m_values[other])))
+                if (!storesValue(m_values[other], pair.second) || !areAdjacentElements(first, at(m_values[other])) || !onlyStoresNearby(std::min(position, other) + 1, std::max(position, other), first, at(m_values[other])))
                     continue;
                 append(LaneSource::Store, m_values[position], m_values[other]);
                 m_saved += first.typedArrayType() == TypeFloat32 ? 2 : 1;
@@ -390,7 +390,7 @@ bool LaneFinder::noteReadsOfLanes()
     return isInOrder;
 }
 
-bool LaneFinder::mayStandBesideVectors(ValueID value) const
+bool LaneFinder::canCoexistWithVectors(ValueID value) const
 {
     static constexpr OpcodeSet computations {
         Opcode::LoopHint, Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::ToInt32,
@@ -432,7 +432,7 @@ std::optional<CodeGenerator::LanePlan> LaneFinder::find()
                 return std::nullopt;
         }
         for (ValueID value : m_code.valuesOf(block)) {
-            if (!mayStandBesideVectors(value))
+            if (!canCoexistWithVectors(value))
                 return std::nullopt;
             m_values.append(value);
         }
@@ -813,13 +813,13 @@ void CodeGenerator::layOutLanes(const CountedLoop& loop, LanePlan& plan)
     m_relationsAskedInFrontOfTurnsLaidOut = loop.relationsAskedInFront;
     m_relationsAskedInFrontOfTurnsLaidOut.appendVector(loop.relationsOfCounterBelowBound);
     m_accessesUnderCounterBelowBoundOfTurnsLaidOut = loop.accessesUnderCounterBelowBound.span();
-    Values valuesBehindTurn;
-    Vector<LValue, 8> vectorsBehindTurn;
-    auto valueBehindTurn = [&](size_t index) -> LValue {
-        if (valuesBehindTurn[index])
-            return valuesBehindTurn[index];
+    Values valuesAfterIteration;
+    Vector<LValue, 8> vectorsAfterIteration;
+    auto valueAfterIteration = [&](size_t index) -> LValue {
+        if (valuesAfterIteration[index])
+            return valuesAfterIteration[index];
         size_t place = plan.pairWith(parameters[index]) - plan.pairs.begin();
-        return takeApart(plan.pairs[place], vectorsBehindTurn[place], parameters[index]);
+        return takeApart(plan.pairs[place], vectorsAfterIteration[place], parameters[index]);
     };
     for (unsigned iteration = 0; iteration < iterationsInRow; ++iteration) {
         if (iteration) {
@@ -827,11 +827,11 @@ void CodeGenerator::layOutLanes(const CountedLoop& loop, LanePlan& plan)
             m_out.setOrigin(Machine::Origin());
             SetForScope<const OperationContext*> whileTesting(m_operation, &context);
             LBasicBlock again = m_out.newBlock();
-            LBasicBlock ended = blockPassing(phisOfWrittenHead, writtenHead, valueBehindTurn);
-            m_out.branch(askCounter(loop.relation, valuesBehindTurn[indexOfCounter], endOfStretch), normalEdge(again), unlikelyEdge(ended));
+            LBasicBlock ended = blockPassing(phisOfWrittenHead, writtenHead, valueAfterIteration);
+            m_out.branch(askCounter(loop.relation, valuesAfterIteration[indexOfCounter], endOfStretch), normalEdge(again), unlikelyEdge(ended));
             m_out.appendTo(again);
-            valuesOfTurn = std::exchange(valuesBehindTurn, { });
-            vectorsOfTurn = std::exchange(vectorsBehindTurn, { });
+            valuesOfTurn = std::exchange(valuesAfterIteration, { });
+            vectorsOfTurn = std::exchange(vectorsAfterIteration, { });
             plan.spreadWords.shrink(0);
             for (BlockID block : turn) {
                 for (ValueID value : code().valuesOf(block))
@@ -872,17 +872,17 @@ void CodeGenerator::layOutLanes(const CountedLoop& loop, LanePlan& plan)
         }
         RELEASE_ASSERT(m_nextBlockGoesOnHere && currentBlockIsOpen() && m_argumentsForNextTurn.size() == parameters.size());
         for (size_t index = 0; index < parameters.size(); ++index)
-            valuesBehindTurn.append(!valuesOfTurn[index] ? nullptr : index == indexOfCounter ? m_out.add(valuesOfTurn[index], m_out.constantOfType(valuesOfTurn[index]->type(), loop.step)) : m_argumentsForNextTurn[index].value);
+            valuesAfterIteration.append(!valuesOfTurn[index] ? nullptr : index == indexOfCounter ? m_out.add(valuesOfTurn[index], m_out.constantOfType(valuesOfTurn[index]->type(), loop.step)) : m_argumentsForNextTurn[index].value);
         TerminatorContext contextOfEnd(turn.back(), code().at(turn.back()).terminator, nullptr);
         SetForScope<const OperationContext*> whileEnding(m_operation, &contextOfEnd);
         for (const LanePair& pair : plan.pairs) {
             if (!isCarried(pair)) {
-                vectorsBehindTurn.append(nullptr);
+                vectorsAfterIteration.append(nullptr);
                 continue;
             }
             ValueID first = passedOn[indexOfParameter(pair.first)];
             ValueID second = passedOn[indexOfParameter(pair.second)];
-            vectorsBehindTurn.append(pair.source == LaneSource::Parameter ? vectorOfLanes(first, second) : vectorOfConvertedLanes(first, second));
+            vectorsAfterIteration.append(pair.source == LaneSource::Parameter ? vectorOfLanes(first, second) : vectorOfConvertedLanes(first, second));
         }
     }
     m_nextBlockGoesOnHere = false;
@@ -896,31 +896,31 @@ void CodeGenerator::layOutLanes(const CountedLoop& loop, LanePlan& plan)
     m_lanes = nullptr;
     m_out.setOrigin(Machine::Origin());
 
-    LValue counterBehindTurn = valuesBehindTurn[indexOfCounter];
+    LValue counterAfterIteration = valuesAfterIteration[indexOfCounter];
     {
         SetForScope<const OperationContext*> whileEnding(m_operation, &context);
         LBasicBlock again = m_out.newBlock();
         LBasicBlock stretchHasEnded = m_out.newBlock();
-        m_out.branch(askCounter(loop.relation, counterBehindTurn, endOfStretch), normalEdge(again), unlikelyEdge(stretchHasEnded));
+        m_out.branch(askCounter(loop.relation, counterAfterIteration, endOfStretch), normalEdge(again), unlikelyEdge(stretchHasEnded));
         m_out.appendTo(again);
         for (size_t place = 0; place < plan.pairs.size(); ++place) {
-            if (vectorsBehindTurn[place])
-                m_out.upsilon(vectorsBehindTurn[place], phisOfVectors[place]);
+            if (vectorsAfterIteration[place])
+                m_out.upsilon(vectorsAfterIteration[place], phisOfVectors[place]);
         }
         pass(phisOfTurns, turns, [&](size_t index) {
-            return valuesBehindTurn[index];
+            return valuesAfterIteration[index];
         });
 
         m_out.appendTo(stretchHasEnded);
         Values values;
         for (size_t index = 0; index < parameters.size(); ++index)
-            values.append(phisOfHead[index] ? valueBehindTurn(index) : nullptr);
+            values.append(phisOfHead[index] ? valueAfterIteration(index) : nullptr);
         if (pollsBetweenStretches) {
             LBasicBlock polls = m_out.newBlock();
             LBasicBlock ended = blockPassing(phisOfWrittenHead, writtenHead, [&](size_t index) {
                 return values[index];
             });
-            m_out.branch(askCounter(loop.relation, counterBehindTurn, bound), normalEdge(polls), normalEdge(ended));
+            m_out.branch(askCounter(loop.relation, counterAfterIteration, bound), normalEdge(polls), normalEdge(ended));
             m_out.appendTo(polls);
             generateValue(code().blockOf(loop.poll), loop.poll, code().at(loop.poll), false, { });
             m_out.setOrigin(Machine::Origin());
@@ -1198,7 +1198,7 @@ bool WideLoopFinder::findTests()
         }
         if (!isInvariant(condition) && test.opcode == Opcode::Less && test.form() == OperatorForm::Integers && isInvariant(test.rightOperand()) && isInteger(representationOf(test.rightOperand()))) {
             m_tests.append(condition);
-            m_found.relationsHeldInFront.append({ condition, 0 });
+            m_found.relationsHeldBeforeLoop.append({ condition, 0 });
             continue;
         }
         if (isInvariant(condition) || test.opcode != Opcode::StrictEq || test.form() != OperatorForm::Numbers || test.leftOperand() != test.rightOperand() || representationOf(test.leftOperand()) != Representation::Double)
@@ -1502,7 +1502,7 @@ std::optional<CodeGenerator::WideLoop> WideLoopFinder::find()
         if (!isData(tested) || isWord(tested))
             return std::nullopt;
     }
-    for (auto& [relation, step] : m_found.relationsHeldInFront) {
+    for (auto& [relation, step] : m_found.relationsHeldBeforeLoop) {
         std::optional<int64_t> stepOfPosition = stepOf(at(relation).leftOperand());
         if (!stepOfPosition || *stepOfPosition < 0)
             return std::nullopt;
@@ -1958,7 +1958,7 @@ void CodeGenerator::layOutWide(const CountedLoop& loop, WideLoop& wide)
             require(m_out.below(position, length));
             require(m_out.belowOrEqual(m_out.add(position, iterationsLeft), length));
         }
-        for (auto [relation, step] : wide.relationsHeldInFront) {
+        for (auto [relation, step] : wide.relationsHeldBeforeLoop) {
             const Operation& operation = code().at(relation);
             ValueContext contextOfRelation(code().blockOf(relation), relation, operation, nullptr);
             SetForScope<const OperationContext*> whileComparing(m_operation, &contextOfRelation);

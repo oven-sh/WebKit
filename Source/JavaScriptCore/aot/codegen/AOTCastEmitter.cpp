@@ -296,7 +296,7 @@ ValueID CastEmitter::conversionAfterInt32Test(const ValueContext& test)
     return { };
 }
 
-ValueID CastEmitter::integerBehindDoubleTest(const ValueContext& test)
+ValueID CastEmitter::integerAfterDoubleTest(const ValueContext& test)
 {
     const Terminator& end = m_code.at(test.block()).terminator;
     if (test->testedType() != TypeTable::int32 || end.kind != TerminatorKind::Branch || end.conditionOperand() != test.id() || generator().keepsValuesInHeapFrame())
@@ -319,7 +319,7 @@ bool CastEmitter::tryBranchOnWholeDouble(const ValueContext& test, Operand opera
 {
     if (operand.representation != Representation::Double)
         return false;
-    ValueID conversion = integerBehindDoubleTest(test);
+    ValueID conversion = integerAfterDoubleTest(test);
     if (!conversion)
         return false;
     BranchTargets targets = test.branchTargets();
@@ -643,7 +643,7 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
     }
     if (!passesWhateverComes && !value->asksInFull() && (tryBranchOnInt32AndHandItOn(value, operand) || tryBranchOnNumberAndHandItOn(value, operand) || tryBranchOnTruncatedInt32(value, operand) || tryBranchOnWholeDouble(value, operand) || tryDeferTestToSum(value, operand)))
         return;
-    SetForScope asksNumbersFirst(emitter<TypeTestEmitter>().asksNumbersFirst(), operand.is<Boxed>() && (plan.passingPrimitives & Primitive::Number) && plan.someCellPasses() && isUsuallyComputed(m_code, definitionOf(source)));
+    SetForScope testsNumbersFirst(emitter<TypeTestEmitter>().testsNumbersFirst(), operand.is<Boxed>() && (plan.passingPrimitives & Primitive::Number) && plan.someCellPasses() && isUsuallyComputed(m_code, definitionOf(source)));
     branchOnType(operand, plan, value.branchTargets());
 }
 

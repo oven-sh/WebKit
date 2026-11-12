@@ -113,10 +113,10 @@ public:
     void storeStaticField(const FieldData&, JSValue);
     uint32_t& createdStaticFieldsEnd(const LayoutData&);
     void didEmptyStaticFields(const LayoutData&);
-    void leaveStaticFieldsInVariables(const LayoutData&);
+    void keepStaticFieldsInVariables(const LayoutData&);
     bool hasStaticFieldsLeft(const LayoutData&) const;
     bool leavesSomeStaticFields() const { return m_leavesSomeStaticFields; }
-    bool isEvaluatedAnew(const LayoutData& classLayout) const { return m_classesEvaluatedAnew.get(m_tables.rankOfClass(classLayout.index)); }
+    bool isEvaluatedAnew(const LayoutData& classLayout) const { return m_reevaluatedClasses.get(m_tables.rankOfClass(classLayout.index)); }
 
     Structure* structureWithBrandOfHeirs(VM&, JSCell* parent, JSCell* newTarget, Structure*);
     JSArray* tryCreateArrayOfHeir(VM&, JSCell* newTarget, Structure*, unsigned length);
@@ -420,7 +420,7 @@ private:
     static_assert(std::is_same_v<PropertyOffset, decltype(PlaceOfPrototypeProperty::offset)>);
     static size_t indexOfPlace(uint32_t structureID) { return indexOfPlaceOfPrototypeProperty(structureID); }
 
-    static size_t indexOfClassObject(const JSCell* classObject) { return productOfClassObject(std::bit_cast<uintptr_t>(classObject)) >> shiftOfProductOfClassObject << 1; }
+    static size_t indexOfClassObject(const JSCell* classObject) { return productOfClassObject(std::bit_cast<uintptr_t>(classObject)) >> classObjectProductShift << 1; }
 
     size_t indexOfGuard(const LayoutData& classLayout, ClassSide side) const { return static_cast<size_t>(m_tables.rankOfClass(classLayout.index)) * numberOfClassSides + static_cast<size_t>(side); }
 
@@ -431,7 +431,7 @@ private:
         Structure* structure;
     };
     static constexpr size_t numberOfCalleesWithThisBeside = 64;
-    static size_t indexOfCalleeWithThisBeside(const JSCell* callee) { return productOfClassObject(std::bit_cast<uintptr_t>(callee)) >> shiftOfProductOfClassObject & (numberOfCalleesWithThisBeside - 1); }
+    static size_t indexOfCalleeWithThisBeside(const JSCell* callee) { return productOfClassObject(std::bit_cast<uintptr_t>(callee)) >> classObjectProductShift & (numberOfCalleesWithThisBeside - 1); }
     void rememberThisBesideCallee(VM&, JSObject* callee, Structure* structureOfThis);
     struct InstanceBelowObject {
         JSCell* newTarget;
@@ -464,7 +464,7 @@ private:
 
     Symbol* brandOfHeirsFor(VM&, JSCell* parent, JSCell* newTarget);
     void rememberTemplateOfViews(JSCell* parent, JSCell* newTarget, Structure* withoutBrand, Structure*);
-    void rememberTemplateOfEmptyCollection(VM&, JSCell* parent, JSCell* newTarget, Structure* withoutBrand, Structure*);
+    void cacheEmptyCollectionTemplate(VM&, JSCell* parent, JSCell* newTarget, Structure* withoutBrand, Structure*);
     struct StructureWithBrandOfHeirs {
         JSCell* parent;
         JSCell* newTarget;
@@ -476,10 +476,10 @@ private:
         bool holdsProperties;
         bool isOfClass;
     };
-    static constexpr size_t numberOfStructuresWithBrandsOfHeirs = numberOfHeirTemplates;
-    static size_t indexOfStructureWithBrandOfHeirs(const JSCell* newTarget) { return indexOfHeirTemplate(newTarget); }
+    static constexpr size_t numberOfStructuresWithBrandsOfHeirs = numberOfSubclassTemplates;
+    static size_t indexOfStructureWithBrandOfHeirs(const JSCell* newTarget) { return subclassTemplateIndex(newTarget); }
     std::array<StructureWithBrandOfHeirs, numberOfStructuresWithBrandsOfHeirs> m_structuresWithBrandsOfHeirs { };
-    std::array<HeirTemplate, numberOfHeirTemplates> m_heirTemplates { };
+    std::array<HeirTemplate, numberOfSubclassTemplates> m_heirTemplates { };
     Vector<Symbol*> m_brandsOfHeirs;
     RefPtr<PrivateSymbolImpl> m_classObjectOfHolderLeftOut;
     BitVector m_endedGuards;
@@ -494,7 +494,7 @@ private:
     BitVector m_sidesWithOtherParent;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersReplacedOnce;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersReplacedAgain;
-    bool memberMayBeStoredOver(const LayoutData&, ClassSide, uint32_t key) const;
+    bool memberMayBeOverwritten(const LayoutData&, ClassSide, uint32_t key) const;
     JSValue findAssignedMember(const AssignedMemberData&) const;
     void updateAssignedMember(const AssignedMemberData&);
     void clearDeadAssignedMembers(VM&, CollectionScope);
@@ -515,9 +515,9 @@ private:
     PagedNumberSet m_fieldsWhoseCreationEndsNoGuard;
     PagedNumberSet m_classesWithoutIndexedMembers;
     Vector<uint32_t> m_createdStaticFieldsEnds;
-    BitVector m_classesWithStaticFieldsLeft;
+    BitVector m_classesWithKeptStaticFields;
     bool m_leavesSomeStaticFields { false };
-    BitVector m_classesEvaluatedAnew;
+    BitVector m_reevaluatedClasses;
     Vector<uint32_t> m_offsetsOfStructuresOfHeirsInUse;
     struct VerdictOnStructureOfHeir {
         static constexpr uint32_t passesBit = 1;

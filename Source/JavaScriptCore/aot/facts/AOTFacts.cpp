@@ -165,7 +165,7 @@ static BuiltinClassID builtinClassPassedToMixin(const Program& program, TypeRead
     return { };
 }
 
-static BuiltinClassID builtinClassPassedToMixinOf(const Program& program, TypeReader types, const BodyIndex& index, ValueID heritage)
+static BuiltinClassID builtinClassOfMixin(const Program& program, TypeReader types, const BodyIndex& index, ValueID heritage)
 {
     heritage = index.stripCasts(heritage);
     if (!index.isParameter(heritage))
@@ -197,7 +197,7 @@ static void noteSubclassesForFacts(Program& program, BodyIndexTable& bodies)
         bool isBelowWrittenClass = !!writtenBaseOf(program.at(newClass.layout()));
         BuiltinClassID builtinClass;
         if (isBelowWrittenClass)
-            builtinClass = builtinClassPassedToMixinOf(program, types, index, heritage);
+            builtinClass = builtinClassOfMixin(program, types, index, heritage);
         else if (BuiltinID builtin = builtinWrittenAsHeritageForFacts(types, index.value(heritage)))
             builtinClass = classMadeByHeritage(program.builtins(), builtin);
         if (builtinClass)
@@ -1182,18 +1182,18 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
     parts.linked.namesReadAsIntegers = namesReadAsIntegersIn(*looks);
     parts.linked.fieldsReadForArithmetic = fieldsReadForArithmeticIn(*looks);
     parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
-    parts.linked.fieldsFilledByInitializers = fieldsFilledByInitializersIn(*looks);
+    parts.linked.fieldsFilledByInitializers = initializerFields(*looks);
     parts.linked.initializerMethods = initializerMethodsIn(*looks, program);
     parts.linked.functionsCalledInLoops = functionsCalledInLoopsIn(*looks, program, *parts.summaries, parts.linked, parts.held, parts.linked.keysCalledInLoops, parts.linked.elementsAreCalledInLoops);
     parts.linked.functionsCalledInLoopsOfOwnFile = functionsCalledInLoopsOfOwnFileIn(*looks, program, *parts.summaries, parts.linked, parts.held);
     parts.linked.functionsCalledByValueInLoops = functionsCalledByValueInLoopsIn(program, *parts.summaries, parts.linked, parts.linked.functionsInElements);
-    parts.linked.keysOfAccessorsOrStaticFields = parts.linked.keysOfAccessorsExpectedInFields;
-    parts.linked.keysOfAccessorsOrStaticFields.merge(parts.linked.keysOfStaticFields);
-    parts.linked.functionsCalledByComparators = functionsCalledByComparatorsIn(program, *parts.summaries, parts.linked, parts.held);
+    parts.linked.accessorOrStaticFieldKeys = parts.linked.keysOfAccessorsExpectedInFields;
+    parts.linked.accessorOrStaticFieldKeys.merge(parts.linked.keysOfStaticFields);
+    parts.linked.functionsCalledByComparators = comparatorCallees(program, *parts.summaries, parts.linked, parts.held);
     markLiteralsStoredByCallees(*parts.summaries, parts.linked, parts.held);
-    FunctionsDoneInIterations iterations = findFunctionsDoneInIterations(program, *parts.summaries, parts.linked, parts.held);
+    FunctionsDoneInIterations iterations = findFunctionsFinishedInIterations(program, *parts.summaries, parts.linked, parts.held);
     parts.linked.functionsDoneInIterations = WTF::move(iterations.functions);
-    parts.linked.functionsDoneInNestedIterations = WTF::move(iterations.inNestedIterations);
+    parts.linked.functionsFinishedInNestedIterations = WTF::move(iterations.inNestedIterations);
     parts.linked.constructorsCalledInLoops = constructorsCalledInLoopsIn(program, *parts.summaries, parts.linked, parts.held);
     if (program.someClassExtendsMixin)
         parts.linked.mixedClassesConstructed = mixedClassesConstructedIn(program, *parts.summaries, parts.linked, parts.held);
@@ -1549,7 +1549,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         [&] { fillTablesOfLayoutsAndClassesForFacts(program, build, parts); },
         [&] { fillTablesOfFunctionsForFacts(program, request, build, parts); },
     });
-    parts.layoutsByNames.leaveOutFewSparseRecords(program, setsDeclaredInProgram.span());
+    parts.layoutsByNames.dropFewSparseRecords(program, setsDeclaredInProgram.span());
     for (size_t layout = 0; layout < parts.linked.layouts.size() && layout < parts.tables.classes.size(); ++layout) {
         if (parts.tables.classes[layout].evaluations != ExecutionCount::AtMostOnce)
             parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = false;

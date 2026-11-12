@@ -31,7 +31,7 @@ using Label = MacroAssembler::Label;
 using TrustedImm32 = MacroAssembler::TrustedImm32;
 
 static constexpr unsigned maxCharactersUnrolled = 4;
-static constexpr unsigned maxCostOfPlanWithLoadedTable = 4;
+static constexpr unsigned maxLoadedTablePlanCost = 4;
 static constexpr std::array registersOfMatcher { gprOf(StubRegister::A0), gprOf(StubRegister::A3), gprOf(StubRegister::A4), gprOf(StubRegister::T9), gprOf(StubRegister::A5), gprOf(StubRegister::T13), gprOf(StubRegister::A1) };
 static constexpr std::array registersOfRecordingMatcher { gprOf(StubRegister::A0), gprOf(StubRegister::A3), gprOf(StubRegister::A4), gprOf(StubRegister::T9) };
 static constexpr GPRReg characterGPR = gprOf(StubRegister::Operation);
@@ -530,7 +530,7 @@ void MatcherCompiler::emitWordBoundary(const Node& node, std::span<const Node> r
         isWordBehind = isWordCharacter(rest.front().characters);
     JumpList isDone;
 
-    auto failUnlessWordBehindIs = [&](bool isExpected) {
+    auto failUnlessNextWordIs = [&](bool isExpected) {
         if (isWordBehind) {
             if (*isWordBehind != isExpected)
                 fails.jumps.append(m_jit.jump());
@@ -548,17 +548,17 @@ void MatcherCompiler::emitWordBoundary(const Node& node, std::span<const Node> r
         isNoWord.link(&m_jit);
     };
     if (isPrecededByWordCharacter) {
-        failUnlessWordBehindIs(*isPrecededByWordCharacter != isBoundary);
+        failUnlessNextWordIs(*isPrecededByWordCharacter != isBoundary);
         return;
     }
     JumpList isNoWord;
     if (!state.previous && !state.offset)
         isNoWord.append(m_jit.branch64(MacroAssembler::Equal, baseOf(state), start()));
     failUnlessCharacterIsIn(baseOf(state), static_cast<int32_t>(state.offset) - 1, m_wordCharacters, isNoWord);
-    failUnlessWordBehindIs(!isBoundary);
+    failUnlessNextWordIs(!isBoundary);
     isDone.append(m_jit.jump());
     isNoWord.link(&m_jit);
-    failUnlessWordBehindIs(isBoundary);
+    failUnlessNextWordIs(isBoundary);
     isDone.link(&m_jit);
 }
 
@@ -687,7 +687,7 @@ auto MatcherCompiler::compile() -> Outcome
         }
 
         LoadedTable table;
-        if (m_plan.firstCharacters && m_plan.cost <= maxCostOfPlanWithLoadedTable) {
+        if (m_plan.firstCharacters && m_plan.cost <= maxLoadedTablePlanCost) {
             table = loadTable(*m_plan.firstCharacters, state.numberOfRegisters);
             if (table.address != InvalidGPRReg)
                 allocate(state);

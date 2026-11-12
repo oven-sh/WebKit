@@ -703,7 +703,7 @@ static bool tryEncodeX86SelectWithUnlikelyArm(Encoder& encoder, const X86Compari
     return true;
 }
 
-static bool tryEncodeX86SelectOfEndOfExactIntegers(Encoder& encoder, const X86Comparison& comparison, const X86SelectArm& whenItHolds, const X86SelectArm& otherwise, GPRReg destination)
+static bool tryEncodeX86SelectOfExactIntegerBound(Encoder& encoder, const X86Comparison& comparison, const X86SelectArm& whenItHolds, const X86SelectArm& otherwise, GPRReg destination)
 {
     bool holdsRarely = Encoder::isEndOfExactIntegers(whenItHolds.value);
     if (holdsRarely == Encoder::isEndOfExactIntegers(otherwise.value) || comparison.kind == Test::CompareNumbers || encoder.placeOf(encoder.m_block).loop == noLoop)
@@ -1064,7 +1064,7 @@ void Encoder::encodeSelect(const Step& step)
     X86SelectArm otherwise = takeArmOfX86Select(*this, operation, 2, cursor);
 
     Reg destination = step.destination.reg();
-    if (destination.isGPR() && tryEncodeX86SelectOfEndOfExactIntegers(*this, comparison, whenItHolds, otherwise, destination.gpr()))
+    if (destination.isGPR() && tryEncodeX86SelectOfExactIntegerBound(*this, comparison, whenItHolds, otherwise, destination.gpr()))
         return;
     if (destination.isGPR() && canMoveArmOfX86SelectWithoutClobberingFlags(whenItHolds) && canMoveArmOfX86SelectWithoutClobberingFlags(otherwise)) {
         encodeX86SelectByConditionalMove(*this, comparison, whenItHolds, otherwise, destination.gpr());

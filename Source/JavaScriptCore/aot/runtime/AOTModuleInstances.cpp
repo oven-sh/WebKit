@@ -209,7 +209,7 @@ ModuleNamespace* Modules::mockNamespaceForLoad(ModuleID target)
     if (standing) {
         word->setMockOfView(vm, standing);
         word->setRestoredAfterPatch(standing == held.preloadMock.get() && m_restoredPreloadMocks.get(file.index()));
-    } else if (cyclesOfImports().find(file) && !m_filesShownToOwnFactories.get(file.index())) {
+    } else if (cyclesOfImports().find(file) && !m_filesVisibleToOwnFactories.get(file.index())) {
         word->setUninitializedMock(true);
         ensureUninitializedMock();
     }
@@ -3653,7 +3653,7 @@ void releaseEarlierImporters(JSGlobalObject* realm, ModuleID module)
     if (!modules->currentInstance(module) && !hasLoad)
         return;
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    modules->separateImportersLinkedBeforeReset(module);
+    modules->detachImportersLinkedBeforeReset(module);
     RETURN_IF_EXCEPTION(scope, void());
     modules->releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
 }

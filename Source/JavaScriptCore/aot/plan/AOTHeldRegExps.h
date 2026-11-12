@@ -16,8 +16,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class BodyIndex;
 class Facts;
 class Program;
+struct FieldReference;
 
 struct HeldRegExp {
     StringID pattern;

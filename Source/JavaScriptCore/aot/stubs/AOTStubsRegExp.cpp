@@ -701,7 +701,7 @@ static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, 
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const std::array saved { operands.regExpObject, operands.string, frame };
     slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfRareData())));
-    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(maxPartsOfMatchInFrame)));
+    slowCases.append(jit.branch32(CCallHelpers::AboveOrEqual, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(maxFrameMatchParts)));
     callMatchingCodeInFrame(jit, saved, subjectLength, std::nullopt, scratch, [&](GPRReg output) {
         ASSERT_UNUSED(output, output == frame);
         jit.addPtr(TrustedImm32(sizeof(uint64_t)), frame);

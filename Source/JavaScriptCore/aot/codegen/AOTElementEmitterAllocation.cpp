@@ -123,7 +123,7 @@ bool newArrayFencesBeforeHandingCellOn(const Operation& newArray)
         && length > maxArrayElementsInRegisters && length <= std::min<size_t>(maxInlineArrayLiteralLength, maxArrayLengthInStubKey);
 }
 
-std::optional<EmptyArray> ArrayAllocationEmitter::emptyArrayWithRoomForPushes(BlockID block, ValueID literal)
+std::optional<EmptyArray> ArrayAllocationEmitter::emptyArrayWithPushCapacity(BlockID block, ValueID literal)
 {
     static constexpr unsigned mostElements = 17;
     if (m_code.useCountOf(literal) <= capacityOfEmptyArrayLiteral)
@@ -184,7 +184,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         return newNumberLiteral(value, elements);
     }
     if (!length && formAtSite.kind == ArrayStorage::Contiguous) {
-        if (std::optional<EmptyArray> emptyArray = emptyArrayWithRoomForPushes(value.block(), value.id()))
+        if (std::optional<EmptyArray> emptyArray = emptyArrayWithPushCapacity(value.block(), value.id()))
             return callNewEmptyArray(value, *emptyArray);
     }
     return newArrayInForm(value, elements, length ? form : formAtSite, hasPropertyRoom);
@@ -406,7 +406,7 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithRoom(const OperationCo
 
 static constexpr int64_t mostRoomOfEmptyListLikeSource = 9;
 
-std::optional<Pointer> ArrayAllocationEmitter::profileOfEmptyListsAtSite(Origin origin)
+std::optional<Pointer> ArrayAllocationEmitter::emptyArraySiteProfile(Origin origin)
 {
     static constexpr uint32_t markOfEmptyLists = 16;
     if (!origin.inlineFrame)
@@ -418,7 +418,7 @@ std::optional<Pointer> ArrayAllocationEmitter::profileOfEmptyListsAtSite(Origin 
     return Pointer(m_out.valueOf(instanceWord(m_heaps.entire(AbstractHeap::RuntimeState), m_mentions.add(NumberSpace::ArrayProfile, site->span()))));
 }
 
-void ArrayAllocationEmitter::countEmptyListAtSite(const OperationContext& context, Pointer profile, CellPointer list)
+void ArrayAllocationEmitter::countEmptyArrayAtSite(const OperationContext& context, Pointer profile, CellPointer list)
 {
     auto word = m_out.address(m_heaps.AOTInstance_arrayProfiles, profile.value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word));
     LBasicBlock isDueForReview = newBlock();

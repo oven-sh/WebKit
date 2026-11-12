@@ -802,7 +802,7 @@ bool Encoder::isCall(const PatchOperation& patch)
     return std::popcount(patch.lateClobberedMask()) >= fewestRegisters;
 }
 
-void Encoder::noteShortLoopsThatEndWith(const Block* block)
+void Encoder::noteShortLoopsEndingWith(const Block* block)
 {
     static constexpr ptrdiff_t maxBytes = 128;
     for (const Edge& edge : block->successors()) {
@@ -925,7 +925,7 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
     if (isX86_64() && m_mayEndLoop) [[unlikely]] {
         m_mayEndLoop = false;
         if (place.loop != noLoop && place.layoutPart == LayoutPart::Likely)
-            noteShortLoopsThatEndWith(block);
+            noteShortLoopsEndingWith(block);
     }
 }
 

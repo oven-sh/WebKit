@@ -200,11 +200,11 @@ constexpr unsigned widthOf(SlotRepresentation representation) { return traitsOf(
 constexpr bool representsAbsentAsZero(SlotRepresentation representation) { return traitsOf(representation).hasAbsent && !traitsOf(representation).absentBits; }
 constexpr bool canLeaveSlot(SlotRepresentation representation) { return traitsOf(representation).hasAbsent; }
 
-constexpr bool isListedByKeyOrderAlone(SlotRepresentation representation) { return representation == SlotRepresentation::Int32; }
-constexpr bool mayBeCreatedByStore(SlotRepresentation representation) { return canLeaveSlot(representation) || isListedByKeyOrderAlone(representation); }
+constexpr bool isListedOnlyByKeyOrder(SlotRepresentation representation) { return representation == SlotRepresentation::Int32; }
+constexpr bool mayBeCreatedByStore(SlotRepresentation representation) { return canLeaveSlot(representation) || isListedOnlyByKeyOrder(representation); }
 constexpr uint64_t bitsBeforeCreation(SlotRepresentation representation)
 {
-    if (isListedByKeyOrderAlone(representation))
+    if (isListedOnlyByKeyOrder(representation))
         return static_cast<uint32_t>(absentInt32);
     SlotTraits traits = traitsOf(representation);
     return traits.hasAbsent ? traits.absentBits : 0;

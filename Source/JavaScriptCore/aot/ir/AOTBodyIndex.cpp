@@ -389,7 +389,7 @@ void BodyIndexBuilder::indexWords()
             value.forEachOperand([&](ValueID operand, uint32_t) {
                 fileUse(operand, BodyUseKind::Operand, user);
             });
-            if (opcodesFiledInBodyIndex.contains(value.opcode()) || value.words()[0] & Wire::WrittenPositionFollows) [[unlikely]]
+            if (opcodesInBodyIndex.contains(value.opcode()) || value.words()[0] & Wire::WrittenPositionFollows) [[unlikely]]
                 fileWhatFewOperationsBring(value, id);
         }
 

@@ -92,7 +92,7 @@ ALWAYS_INLINE bool lookAtCellHasNoFlagThatReads(Opcode opcode, const Operation& 
 }
 
 template<typename Operation>
-ALWAYS_INLINE bool restsOnVariablesOfBuffer(Opcode opcode, const Operation& operation)
+ALWAYS_INLINE bool dependsOnBufferVariables(Opcode opcode, const Operation& operation)
 {
     return opcode == Opcode::GetMirroredLength && operation.isOfBuffer();
 }
@@ -110,7 +110,7 @@ Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const 
     Effects effects = Effects::none();
     EffectsBuilder builder(program, effects);
     forEachDeclaredEffect(operation, builder);
-    if (restsOnVariablesOfBuffer(opcode, operation))
+    if (dependsOnBufferVariables(opcode, operation))
         effects.reads.add(AbstractHeap::ModuleVariables);
     if (lookAtCellHasNoFlagThatReads(opcode, operation))
         effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
@@ -132,7 +132,7 @@ const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode,
     storage = Effects::none();
     EffectsBuilder builder(program, storage);
     forEachDeclaredEffect(operation, builder);
-    if (restsOnVariablesOfBuffer(opcode, operation))
+    if (dependsOnBufferVariables(opcode, operation))
         storage.reads.add(AbstractHeap::ModuleVariables);
     if (lookAtCellHasNoFlagThatReads(opcode, operation))
         storage.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);

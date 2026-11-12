@@ -63,6 +63,7 @@
 #include "DateTimeWriter.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
+#include "TopExceptionScope.h"
 #include <variant>
 #include <wtf/HashSet.h>
 #endif

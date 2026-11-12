@@ -367,8 +367,8 @@ struct SummaryChange {
     bool laysNewValueOfNativeCode { false };
     bool laysTextNumberOrBooleanThatIsWritten { false };
     bool definesValueWithAttributes { false };
-    bool getterLeavesOnlyThroughLink { false };
-    bool accessorLeavesOnlyThroughLink { false };
+    bool getterEscapesOnlyThroughLink { false };
+    bool accessorEscapesOnlyThroughLink { false };
     bool fillsObjectBeingMade { false };
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };

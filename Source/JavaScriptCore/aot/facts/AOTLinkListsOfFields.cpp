@@ -31,7 +31,7 @@ public:
         for (ASCIILiteral name : { "push"_s, "pop"_s, "shift"_s, "unshift"_s, "splice"_s, "slice"_s, "concat"_s, "join"_s, "indexOf"_s, "lastIndexOf"_s, "includes"_s, "at"_s, "forEach"_s, "map"_s, "filter"_s, "some"_s, "every"_s, "find"_s, "findIndex"_s, "findLast"_s, "findLastIndex"_s, "reduce"_s, "reduceRight"_s })
             addMethod(name, m_methods);
         for (ASCIILiteral name : { "sort"_s, "reverse"_s, "fill"_s, "copyWithin"_s })
-            addMethod(name, m_methodsThatReturnReceiver);
+            addMethod(name, m_methodsReturningReceiver);
     }
 
     Vector<LinkedReceiverAsMade> find()
@@ -129,7 +129,7 @@ private:
                     nameElsewhere(family);
                     continue;
                 }
-                m_nodesThatMayHold.add(node.index());
+                m_possibleHolderNodes.add(node.index());
                 if (record == none) {
                     record = static_cast<uint32_t>(m_records.size());
                     m_records.append(Record { .family = family, .key = key, .module = layout.module });
@@ -224,7 +224,7 @@ private:
                 FlowNodeID node(nodes[place]);
                 uint32_t recordNumber = recordAt(node);
                 if (recordNumber != none)
-                    lookAtNodeOfSummary(m_records[recordNumber], function, summary, summary.nodes[place], node);
+                    inspectSummaryNode(m_records[recordNumber], function, summary, summary.nodes[place], node);
             }
         }
         dropRecordsNamedElsewhere();
@@ -234,31 +234,31 @@ private:
     {
         m_flow.forEachContents(scopedLambda<void(SiteID, SlotOfContents, FlowNodeID)>([&](SiteID site, SlotOfContents slot, FlowNodeID node) {
             if (slot.stateSlot() && m_flow.classOf(site) == BuiltinClasses::ArrayIterator && !m_flow.hasEscaped(site))
-                m_nodesThatMayHold.add(node.index());
+                m_possibleHolderNodes.add(node.index());
         }));
         for (uint32_t number = 0; number < m_flow.numberOfNodes(); ++number) {
             FlowNodeID node(number);
             uint32_t recordNumber = recordAt(node);
-            if (recordNumber == none || m_familiesNamedElsewhere.quickGet(m_records[recordNumber].family) || m_nodesThatMayHold.contains(number) || m_flow.isReadOrLaidThroughFamilyUnder(node, m_records[recordNumber].key))
+            if (recordNumber == none || m_familiesNamedElsewhere.quickGet(m_records[recordNumber].family) || m_possibleHolderNodes.contains(number) || m_flow.isAccessedThroughFamilyUnder(node, m_records[recordNumber].key))
                 continue;
             nameElsewhere(m_records[recordNumber].family);
         }
         dropRecordsNamedElsewhere();
     }
 
-    void lookAtNodeOfSummary(Record& record, FunctionID function, const ThinSummary& summary, const SummaryNode& node, FlowNodeID inFlow)
+    void inspectSummaryNode(Record& record, FunctionID function, const ThinSummary& summary, const SummaryNode& node, FlowNodeID inFlow)
     {
         switch (node.kind) {
         case SummaryNode::Kind::Field:
             return;
         case SummaryNode::Kind::ClassInstance:
-            m_nodesThatMayHold.add(inFlow.index());
+            m_possibleHolderNodes.add(inFlow.index());
             return;
         case SummaryNode::Kind::ResultOfAccess: {
             const SummaryAccess& access = summary.accesses[node.first];
             if (access.kind != SummaryAccess::Kind::Read || access.isToContents() || access.key != record.key || access.receiver != noSummaryNode || !access.site)
                 break;
-            m_nodesThatMayHold.add(inFlow.index());
+            m_possibleHolderNodes.add(inFlow.index());
             if (std::ranges::none_of(record.reads, [&](const Read& read) { return read.function == function && read.site == access.site; }))
                 record.reads.append(Read { function, access.site, access.site });
             return;
@@ -269,7 +269,7 @@ private:
             bool isMaker = std::ranges::contains(record.makers, LinkedReceiverAsMade { function, site });
             if (!site || !index || index->isParameter(site) || (!isMaker && !index->isUnused(site)))
                 break;
-            m_nodesThatMayHold.add(inFlow.index());
+            m_possibleHolderNodes.add(inFlow.index());
             return;
         }
         default:
@@ -409,7 +409,7 @@ private:
         case Opcode::ElemSet:
             return escapeAllBut(user.as<Opcode::ElemSet>().objectOperand());
         case Opcode::Call:
-            return escapeAllBut(isCallOfMethodOfList(uses, user) ? user.as<Opcode::Call>().thisValueOperand() : ValueID());
+            return escapeAllBut(isArrayMethodCall(uses, user) ? user.as<Opcode::Call>().thisValueOperand() : ValueID());
         case Opcode::IteratorOpen: {
             auto open = user.as<Opcode::IteratorOpen>();
             if (open.iteratorKind() != IteratorKind::Sync || open.isDelegating())
@@ -422,7 +422,7 @@ private:
         }
     }
 
-    bool isCallOfMethodOfList(const Uses& uses, const BodyValue& user) const
+    bool isArrayMethodCall(const Uses& uses, const BodyValue& user) const
     {
         auto call = user.as<Opcode::Call>();
         uint32_t list = uses.readOf(call.thisValueOperand());
@@ -434,19 +434,19 @@ private:
         auto method = uses.index.value(callee).as<Opcode::PropGet>();
         if (method.isFreeName() || uses.readOf(method.objectOperand()) != list)
             return false;
-        return m_methods.contains(method.key()) || (m_methodsThatReturnReceiver.contains(method.key()) && uses.index.isUnused(user.id()));
+        return m_methods.contains(method.key()) || (m_methodsReturningReceiver.contains(method.key()) && uses.index.isUnused(user.id()));
     }
 
     void lookAtStores()
     {
         for (const Record& record : m_records) {
-            if (!nobodyStoresWhileListIsInUse(record))
+            if (!hasNoStoresDuringListUse(record))
                 nameElsewhere(record.family);
         }
         dropRecordsNamedElsewhere();
     }
 
-    bool nobodyStoresWhileListIsInUse(const Record& record)
+    bool hasNoStoresDuringListUse(const Record& record)
     {
         BitVector leadToStores(m_program.functions.size());
         Vector<FunctionID, 16> toVisit;
@@ -520,17 +520,17 @@ private:
     const BodyIndexTable& m_bodies;
     Vector<uint32_t> m_recordOfFamily;
     BitVector m_familiesNamedElsewhere;
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesThatMayHold;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_possibleHolderNodes;
     Vector<Record> m_records;
     Vector<PropertyKeyID, 24> m_methods;
-    Vector<PropertyKeyID, 24> m_methodsThatReturnReceiver;
+    Vector<PropertyKeyID, 24> m_methodsReturningReceiver;
     Vector<FunctionID> m_callers;
     Vector<uint32_t> m_endOfCallers;
 };
 
 } // anonymous namespace
 
-Vector<LinkedReceiverAsMade> storesThatFreeListsOfFields(const LinkFlow& flow, const LinkTables& tables)
+Vector<LinkedReceiverAsMade> storesFreeingFieldLists(const LinkFlow& flow, const LinkTables& tables)
 {
     if (flow.leavesOutDirectEvals || !flow.program.openedNames.isEmpty() || flow.program.admitsInspector)
         return { };

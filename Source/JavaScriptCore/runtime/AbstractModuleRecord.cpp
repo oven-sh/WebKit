@@ -2037,7 +2037,7 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
     bool found = false;
 
     auto follow = [&](JSValue value) {
-        if (JSPromise* promise = JSPromise::settledByReactionCell(cellOf(value)))
+        if (JSPromise* promise = JSPromise::promiseForReactionCell(cellOf(value)))
             work.append(promise);
     };
 

@@ -1939,7 +1939,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncConcat, (JSGlobalObject* globalObject, Ca
                 JSArray* resultArray = uncheckedDowncast<JSArray>(result);
                 JSArray* otherArray = uncheckedDowncast<JSArray>(object);
                 unsigned startIndex = resultIndex;
-                // Copying in one piece would put holes over elements that the species constructor has left there.
+                // A single copy would overwrite elements that the species constructor created with holes.
                 bool success = resultIndex >= resultArray->length() && resultArray->appendMemcpy(globalObject, vm, resultIndex, otherArray);
                 RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 if (!success) {

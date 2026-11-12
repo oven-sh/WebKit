@@ -48,7 +48,7 @@ SharedRoutine::Kind SharedRoutine::kind() const
         [](const FindFirstOfClass&) { return Kind::FindFirstOfClass; },
         [](const FindFirstOfTwoUnits&) { return Kind::FindFirstOfTwoUnits; },
         [](const FindFirstPairOfUnits&) { return Kind::FindFirstPairOfUnits; },
-        [](const FindFirstOfTwoPrefixes&) { return Kind::FindFirstOfTwoPrefixes; },
+        [](const FindEitherPrefix&) { return Kind::FindEitherPrefix; },
         [](const CanonicalEquivalence&) { return Kind::CanonicalEquivalence; });
 }
 
@@ -76,7 +76,7 @@ void add(Hasher& hasher, const SharedRoutine& routine)
         [&](const SharedRoutine::FindFirstPairOfUnits& payload) {
             add(hasher, payload.charSize, payload.distance, payload.first, payload.second);
         },
-        [&](const SharedRoutine::FindFirstOfTwoPrefixes& payload) {
+        [&](const SharedRoutine::FindEitherPrefix& payload) {
             add(hasher, payload.prefixLength);
         },
         [&](const SharedRoutine::CanonicalEquivalence& payload) {
@@ -106,7 +106,7 @@ bool canGenerateSharedRoutine(const SharedRoutine& routine)
         [](const SharedRoutine::FindFirstOfClass&) { return isSupportedCPU; },
         [](const SharedRoutine::FindFirstOfTwoUnits&) { return isSupportedCPU; },
         [](const SharedRoutine::FindFirstPairOfUnits&) { return isSupportedCPU; },
-        [](const SharedRoutine::FindFirstOfTwoPrefixes&) { return isX86_64(); },
+        [](const SharedRoutine::FindEitherPrefix&) { return isX86_64(); },
         [](const SharedRoutine::CanonicalEquivalence&) { return comparesWideBackreferences && rangeHiEntriesAboveBMP().has_value(); });
 }
 
@@ -372,21 +372,21 @@ static void generateMatchCodePointAgainstClassTable(CCallHelpers& jit, const Sha
 static void generateClearCaptures(CCallHelpers& jit)
 {
 #if CPU(X86_64)
-    // Four captures at a time, the last four together with some that are cleared already. A string instruction takes longer to begin.
+    // Four captures at a time. The last four may include some that are cleared already. A string instruction has a higher startup cost.
     YarrJITDefaultRegisters regs;
     constexpr auto next = MacroAssembler::s_scratchRegister;
     constexpr FPRReg cleared = YarrJITDefaultRegisters::vectorInput0;
-    constexpr int32_t bytesAtATime = 4 * sizeof(uint64_t);
+    constexpr int32_t bytesPerIteration = 4 * sizeof(uint64_t);
     auto clear = [&](MacroAssembler::RegisterID at) {
         jit.m_assembler.movups_rm(cleared, 0, at);
-        jit.m_assembler.movups_rm(cleared, bytesAtATime / 2, at);
+        jit.m_assembler.movups_rm(cleared, bytesPerIteration / 2, at);
     };
     jit.add64(regs.output, next);
-    jit.getEffectiveAddress(MacroAssembler::BaseIndex(next, regs.regT0, MacroAssembler::TimesEight, -bytesAtATime), regs.regT0);
+    jit.getEffectiveAddress(MacroAssembler::BaseIndex(next, regs.regT0, MacroAssembler::TimesEight, -bytesPerIteration), regs.regT0);
     jit.m_assembler.pcmpeqd_rr(cleared, cleared);
     MacroAssembler::Label loop = jit.label();
     clear(next);
-    jit.add64(MacroAssembler::TrustedImm32(bytesAtATime), next);
+    jit.add64(MacroAssembler::TrustedImm32(bytesPerIteration), next);
     jit.branch64(MacroAssembler::Below, next, regs.regT0).linkTo(loop, &jit);
     clear(regs.regT0);
     jit.ret();
@@ -1107,9 +1107,9 @@ struct FirstPairOfUnitsSearchGenerator {
 #endif
 
 #if CPU(X86_64)
-// Finds where prefixes end. Bit k of a character's byte says that it may be at position k of a prefix. A bit stays set where the characters before it are at the positions before k: one, then two, then four at a time, taken over from the vector before.
-struct FirstOfTwoPrefixesSearchGenerator {
-    static constexpr int32_t unitsInStep = unitsInVectorOfPrefixSearch;
+// Finds the ends of prefixes. Bit k of a character's byte is set if the character may be at position k of a prefix. The bit stays set if the characters before it are at the positions before k. That is checked for one, then two, then four characters, with carries from the previous vector.
+struct EitherPrefixSearchGenerator {
+    static constexpr int32_t unitsInStep = prefixSearchVectorLength;
     static constexpr unsigned maxSteps = 3;
     static constexpr MacroAssembler::RegisterID found = YarrJITDefaultRegisters::regT0;
     static constexpr MacroAssembler::RegisterID table = YarrJITDefaultRegisters::regT1;
@@ -1120,8 +1120,8 @@ struct FirstOfTwoPrefixesSearchGenerator {
     static constexpr FPRReg firstPositions = YarrJITDefaultRegisters::vectorInput1;
     static constexpr FPRReg secondPositions = YarrJITDefaultRegisters::vectorInput2;
     static constexpr FPRReg previous = YarrJITDefaultRegisters::vectorInput3;
-    static constexpr std::array<FPRReg, maxSteps> carriesOfFirst { YarrJITDefaultRegisters::vectorTemp2, YarrJITDefaultRegisters::vectorTemp3, YarrJITDefaultRegisters::vectorTemp4 };
-    static constexpr std::array<FPRReg, maxSteps> carriesOfSecond { YarrJITDefaultRegisters::vectorScratch0, YarrJITDefaultRegisters::vectorScratch1, YarrJITDefaultRegisters::vectorScratch2 };
+    static constexpr std::array<FPRReg, maxSteps> firstCarries { YarrJITDefaultRegisters::vectorTemp2, YarrJITDefaultRegisters::vectorTemp3, YarrJITDefaultRegisters::vectorTemp4 };
+    static constexpr std::array<FPRReg, maxSteps> secondCarries { YarrJITDefaultRegisters::vectorScratch0, YarrJITDefaultRegisters::vectorScratch1, YarrJITDefaultRegisters::vectorScratch2 };
 
     bool hasTwoTables() const { return payload.prefixLength == longPrefixLength; }
     unsigned steps() const { return hasTwoTables() ? 3 : 2; }
@@ -1129,23 +1129,23 @@ struct FirstOfTwoPrefixesSearchGenerator {
     void clearCarries()
     {
         for (unsigned step = 0; step < steps(); ++step) {
-            jit.m_assembler.pxor_rr(carriesOfFirst[step], carriesOfFirst[step]);
+            jit.m_assembler.pxor_rr(firstCarries[step], firstCarries[step]);
             if (hasTwoTables())
-                jit.m_assembler.pxor_rr(carriesOfSecond[step], carriesOfSecond[step]);
+                jit.m_assembler.pxor_rr(secondCarries[step], secondCarries[step]);
         }
     }
 
-    void matchPrefixes(FPRReg tableOfPrefix, FPRReg positions, const std::array<FPRReg, maxSteps>& carries)
+    void matchPrefixes(FPRReg prefixTable, FPRReg positions, const std::array<FPRReg, maxSteps>& carries)
     {
         auto& assembler = jit.m_assembler;
-        assembler.movaps_rr(tableOfPrefix, positions);
+        assembler.movaps_rr(prefixTable, positions);
         assembler.pshufb_rr(characters, positions); // Zero for a character that is not ASCII.
         for (unsigned step = 0; step < steps(); ++step) {
             unsigned distance = 1u << step;
             assembler.movaps_rr(positions, previous);
             assembler.palignr_i8rr(unitsInStep - distance, carries[step], previous);
             assembler.movaps_rr(positions, carries[step]);
-            assembler.psllw_i8r(distance, previous); // What comes over from the byte below are bits that no later step reads.
+            assembler.psllw_i8r(distance, previous); // The bits shifted in from the byte below are not read by later steps.
             assembler.pand_rr(previous, positions);
         }
     }
@@ -1155,9 +1155,9 @@ struct FirstOfTwoPrefixesSearchGenerator {
         emitVerifySubjectRead(jit, MacroAssembler::BaseIndex(regs.input, regs.index, MacroAssembler::TimesOne), unitsInStep, regs.input, regs.length, 0, __LINE__);
         auto& assembler = jit.m_assembler;
         assembler.movdqu_mr(0, regs.input, regs.index, MacroAssembler::TimesOne, characters);
-        matchPrefixes(firstTable, firstPositions, carriesOfFirst);
+        matchPrefixes(firstTable, firstPositions, firstCarries);
         if (hasTwoTables()) {
-            matchPrefixes(secondTable, secondPositions, carriesOfSecond);
+            matchPrefixes(secondTable, secondPositions, secondCarries);
             assembler.por_rr(secondPositions, firstPositions);
         } else {
             assembler.movaps_rr(firstPositions, previous);
@@ -1184,7 +1184,7 @@ struct FirstOfTwoPrefixesSearchGenerator {
         jit.add32(MacroAssembler::TrustedImm32(unitsInStep), regs.index);
         jit.branch32(MacroAssembler::LessThanOrEqual, regs.index, limit).linkTo(nextVector, &jit);
 
-        // Less than a vector is left: again from where a prefix that ends there may begin.
+        // Less than a vector is left: search again from the earliest start of a prefix that ends there.
         MacroAssembler::Jump isAtEnd = jit.branch32(MacroAssembler::GreaterThanOrEqual, regs.index, regs.length);
         jit.sub32(MacroAssembler::TrustedImm32(charactersBeforeEnd), regs.index);
         jit.branch32(MacroAssembler::LessThanOrEqual, regs.index, limit).linkTo(begin, &jit);
@@ -1204,15 +1204,15 @@ struct FirstOfTwoPrefixesSearchGenerator {
     }
 
     CCallHelpers& jit;
-    const SharedRoutine::FindFirstOfTwoPrefixes& payload;
+    const SharedRoutine::FindEitherPrefix& payload;
     YarrJITDefaultRegisters regs { };
 };
 #endif
 
-static void generateFindFirstOfTwoPrefixes(CCallHelpers& jit, const SharedRoutine::FindFirstOfTwoPrefixes& payload)
+static void generateFindEitherPrefix(CCallHelpers& jit, const SharedRoutine::FindEitherPrefix& payload)
 {
 #if CPU(X86_64)
-    FirstOfTwoPrefixesSearchGenerator { jit, payload }.generate();
+    EitherPrefixSearchGenerator { jit, payload }.generate();
 #else
     UNUSED_PARAM(jit);
     UNUSED_PARAM(payload);
@@ -1310,7 +1310,7 @@ void generateSharedRoutine(CCallHelpers& jit, const SharedRoutine& routine, Code
         [&](const SharedRoutine::FindFirstOfClass& payload) { generateFindFirstOfClass(jit, payload); },
         [&](const SharedRoutine::FindFirstOfTwoUnits& payload) { generateFindFirstOfTwoUnits(jit, payload); },
         [&](const SharedRoutine::FindFirstPairOfUnits& payload) { generateFindFirstPairOfUnits(jit, payload); },
-        [&](const SharedRoutine::FindFirstOfTwoPrefixes& payload) { generateFindFirstOfTwoPrefixes(jit, payload); },
+        [&](const SharedRoutine::FindEitherPrefix& payload) { generateFindEitherPrefix(jit, payload); },
         [&](const SharedRoutine::CanonicalEquivalence& payload) { generateCanonicalEquivalence(jit, payload, addressing); });
 }
 

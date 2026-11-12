@@ -191,7 +191,7 @@ public:
 
     template<FrameCoverage> void encodeBlocksUnder();
     template<FrameCoverage> ALWAYS_INLINE void encodeBlockUnder(Block*);
-    void noteShortLoopsThatEndWith(const Block*);
+    void noteShortLoopsEndingWith(const Block*);
     static bool isCall(const PatchOperation&);
     MacroAssembler::Label m_lastCall;
     bool m_mayEndLoop { false };

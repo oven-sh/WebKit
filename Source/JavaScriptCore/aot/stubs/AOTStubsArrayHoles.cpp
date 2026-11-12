@@ -651,7 +651,7 @@ static constexpr IndexingType indexingShapeOf(ArrayElementKind kind)
     return indexingTypeOf(kind) & IndexingShapeMask;
 }
 
-static void emitReuseOfReleasedArray(StubAssembler& jit, ArrayElementKind kind, GPRReg capacity, GPRReg butterfly)
+static void emitReleasedArrayReuse(StubAssembler& jit, ArrayElementKind kind, GPRReg capacity, GPRReg butterfly)
 {
     const GPRReg array = jit.result();
     const GPRReg scratch = jit.reuseScratch(StubRegister::T13);
@@ -693,7 +693,7 @@ static void emitReuseOfReleasedArray(StubAssembler& jit, ArrayElementKind kind, 
 
 static void emitJumpToEmptyContiguousArrayStub(StubAssembler& jit, bool kindIsWritten, GPRReg capacity, GPRReg scratch)
 {
-    emitReuseOfReleasedArray(jit, ArrayElementKind::Contiguous, capacity, scratch);
+    emitReleasedArrayReuse(jit, ArrayElementKind::Contiguous, capacity, scratch);
     if (!kindIsWritten) {
         jit.linkToStub(jit.branchTest32(CCallHelpers::Zero, capacity), arrayLiteral(0));
         jit.linkToStub(jit.branch32(CCallHelpers::BelowOrEqual, capacity, TrustedImm32(3)), newEmptyArrayWithCapacity());
@@ -714,7 +714,7 @@ static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, 
     if (kind != ArrayElementKind::Double)
         jit.linkToStub(branchIfHavingABadTime(jit), arrayLiteral(0));
     jit.zeroExtend8To32(shapeAndCapacity, capacity);
-    emitReuseOfReleasedArray(jit, kind, capacity, shapeAndCapacity);
+    emitReleasedArrayReuse(jit, kind, capacity, shapeAndCapacity);
     Jump hasDefaultCapacity = jit.branchTest32(CCallHelpers::Zero, capacity);
     switch (kind) {
     case ArrayElementKind::Int32:

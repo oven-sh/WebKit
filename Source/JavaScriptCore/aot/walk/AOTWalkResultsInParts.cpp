@@ -46,7 +46,7 @@ struct MentionsOfResultInParts {
     bool isReadByIndex { false };
     bool escapes { false };
     bool isReturned { false };
-    uint32_t numberOfPartsThatMeet { 0 };
+    uint32_t numberOfMergedParts { 0 };
     Vector<uint32_t, 2> meetsOthersAt;
     Vector<PropertyKeyID, 2> groupKeysRead;
 };
@@ -104,7 +104,7 @@ static BuiltinName nameInTableForResultsInParts(const Walker& walker, ASCIILiter
     return walker.program().builtins().nameOf(byteCast<uint8_t>(text.span()));
 }
 
-static Reference keyOfTextInResultsInParts(Walker& walker, StringID text)
+static Reference stringKeyInResultsInParts(Walker& walker, StringID text)
 {
     Draft key(Opcode::String);
     key.setString(text);
@@ -113,7 +113,7 @@ static Reference keyOfTextInResultsInParts(Walker& walker, StringID text)
 
 static Reference keyOfNameInResultsInParts(Walker& walker, BuiltinName name)
 {
-    return keyOfTextInResultsInParts(walker, walker.program().stringOf(name));
+    return stringKeyInResultsInParts(walker, walker.program().stringOf(name));
 }
 
 static bool isWrittenNullishInResultsInParts(const BodyIndex& index, ValueID value)
@@ -305,7 +305,7 @@ static void lookAtResultsOfBody(Walker& walker, const BodyIndex& index, LooksAtR
     }
 }
 
-static LooksAtResultsInParts& ensureLooksAtResultsInParts(Walker& walker)
+static LooksAtResultsInParts& ensureResultPartsAnalysis(Walker& walker)
 {
     std::unique_ptr<Walker::KeptForBuild>& kept = notesOfStrings(walker).looksAtResultsInParts;
     if (!kept)
@@ -313,19 +313,19 @@ static LooksAtResultsInParts& ensureLooksAtResultsInParts(Walker& walker)
     return static_cast<LooksAtResultsInParts&>(*kept);
 }
 
-static void countPartsOfResultsThatMeet(LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>& mentions)
+static void countMergedResultParts(LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>& mentions)
 {
     for (auto& entry : mentions)
-        entry.value.numberOfPartsThatMeet = entry.value.numberOfParts();
+        entry.value.numberOfMergedParts = entry.value.numberOfParts();
     bool changes = true;
     while (changes) {
         changes = false;
         for (auto& entry : mentions) {
             for (uint32_t place : entry.value.meetsOthersAt) {
                 MentionsOfResultInParts& met = mentions.find(place)->value;
-                const uint32_t most = std::max(met.numberOfPartsThatMeet, entry.value.numberOfPartsThatMeet);
-                changes |= most != met.numberOfPartsThatMeet || most != entry.value.numberOfPartsThatMeet;
-                met.numberOfPartsThatMeet = entry.value.numberOfPartsThatMeet = most;
+                const uint32_t most = std::max(met.numberOfMergedParts, entry.value.numberOfMergedParts);
+                changes |= most != met.numberOfMergedParts || most != entry.value.numberOfMergedParts;
+                met.numberOfMergedParts = entry.value.numberOfMergedParts = most;
             }
         }
     }
@@ -333,10 +333,10 @@ static void countPartsOfResultsThatMeet(LooksAtResultsInParts::ByNumber<Mentions
 
 static const LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>& mentionsOfResultsOfBody(Walker& walker, FunctionID function, const BodyIndex& index)
 {
-    auto added = ensureLooksAtResultsInParts(walker).byFunction.add(function.index(), LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>());
+    auto added = ensureResultPartsAnalysis(walker).byFunction.add(function.index(), LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>());
     if (added.isNewEntry) {
         lookAtResultsOfBody(walker, index, added.iterator->value);
-        countPartsOfResultsThatMeet(added.iterator->value);
+        countMergedResultParts(added.iterator->value);
     }
     return added.iterator->value;
 }
@@ -370,7 +370,7 @@ static std::optional<MentionsOfResultInParts> findAllResultMentions(Walker& walk
             all.readsIndex |= found->value.readsIndex;
             all.readsInput |= found->value.readsInput;
             all.readsGroups |= found->value.readsGroups;
-            all.numberOfPartsThatMeet = std::max(all.numberOfPartsThatMeet, found->value.numberOfPartsThatMeet);
+            all.numberOfMergedParts = std::max(all.numberOfMergedParts, found->value.numberOfMergedParts);
             isReturned |= found->value.isReturned;
             for (uint32_t next : found->value.meetsOthersAt) {
                 if (!toLookAt.contains(next))
@@ -414,7 +414,7 @@ static bool endOfBlockAsksWhetherThereIsResult(Walker& walker, const BodyValue& 
     return (namesResult(asked.operand(0)) && isWrittenNullishInResultsInParts(index, asked.operand(1))) || (namesResult(asked.operand(1)) && isWrittenNullishInResultsInParts(index, asked.operand(0)));
 }
 
-static std::optional<Vector<uint32_t, 2>> addPlacesOfGroupsRead(Walker& walker, MentionsOfResultInParts& mentions, const RegExpSummary& summary)
+static std::optional<Vector<uint32_t, 2>> addReadGroupSlots(Walker& walker, MentionsOfResultInParts& mentions, const RegExpSummary& summary)
 {
     Vector<uint32_t, 2> places;
     if (!mentions.readsGroups)
@@ -480,13 +480,13 @@ static bool isKeyOfNotedLastIndex(Walker& walker, PropertyKeyID key)
     return kept && static_cast<LooksAtResultsInParts&>(*kept).keyOfLastIndex == key;
 }
 
-static void noteLastIndexOfRegExp(Walker& walker, Reference regExpObject, Reference lastIndexOrNull)
+static void noteRegExpLastIndex(Walker& walker, Reference regExpObject, Reference lastIndexOrNull)
 {
     BuiltinName lastIndex = nameInTableForResultsInParts(walker, "lastIndex"_s);
     Reference root = rootForStrings(walker, regExpObject);
     if (!lastIndex || !root.isValue())
         return;
-    ensureLooksAtResultsInParts(walker).keyOfLastIndex = walker.program().keyOf(lastIndex);
+    ensureResultPartsAnalysis(walker).keyOfLastIndex = walker.program().keyOf(lastIndex);
     noteKnown(walker, KnownNote::LastIndexOfRegExp, root, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::RegExpState }), lastIndexOrNull.bits(), true);
 }
 
@@ -509,7 +509,7 @@ Reference findLastIndexOfMatch(Walker& walker, Reference regExpObject, PropertyK
 void noteMatchStoresLastIndex(Walker& walker, const HeldRegExp& regExp, Reference regExpObject)
 {
     if (hasMechanismsOfResultsInParts(walker) && (regExp.isPrivate || !walker.facts().mayRecompileRegExps()) && regExp.flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
-        noteLastIndexOfRegExp(walker, regExpObject, { });
+        noteRegExpLastIndex(walker, regExpObject, { });
 }
 
 static NEVER_INLINE bool buildNotedLastIndex(Walker& walker, const BodyValue& read)
@@ -531,7 +531,7 @@ static NEVER_INLINE bool buildNotedLastIndex(Walker& walker, const BodyValue& re
         if (found.isValue())
             walker.checkProof(found, TypeTable::length, TypeTable::anything, ProofSource::OtherOperation, origin);
     }
-    Draft lastIndex(Opcode::GetLastIndexOfRegExp, origin);
+    Draft lastIndex(Opcode::GetRegExpLastIndex, origin);
     walker.chooseConservativeFields(lastIndex);
     lastIndex.setRegExpOperand(regExpObject);
     if (Reference built = walker.build(WTF::move(lastIndex)))
@@ -564,7 +564,7 @@ static void noteGroupsOfMatch(Walker& walker, const MatchAskedForInParts& asked,
             value = noted == notFound ? Reference() : notes[noted].second;
         }
         if (value)
-            walker.state().noteElement(object, keyOfTextInResultsInParts(walker, walker.types().at(asked.mentions.groupKeysRead[position]).text), value);
+            walker.state().noteElement(object, stringKeyInResultsInParts(walker, walker.types().at(asked.mentions.groupKeysRead[position]).text), value);
     }
     walker.state().noteElementsLieOutsideViews(object);
     walker.state().noteFresh(object);
@@ -585,7 +585,7 @@ static Reference buildMatchArray(Walker& walker, Draft&& whole, const MatchAsked
     }
     if (asked.regExpWithLastIndex) {
         if (Reference end = buildPlaceOfMatch(walker, results, firstBoundOfParts + 1, origin))
-            noteLastIndexOfRegExp(walker, asked.regExpWithLastIndex, end);
+            noteRegExpLastIndex(walker, asked.regExpWithLastIndex, end);
     }
     if (BuiltinName input = nameInTableForResultsInParts(walker, "input"_s))
         notes.append({ keyOfNameInResultsInParts(walker, input), asked.string });
@@ -642,7 +642,7 @@ static bool buildMatchOnTwoWaysInResultsInParts(Walker& walker, const BodyValue&
     return true;
 }
 
-static Reference buildListOfPlacesRead(Walker& walker, Reference string, const MentionsOfResultInParts& mentions, uint32_t length, const RegExpSummary& summary, Origin origin)
+static Reference buildReadSlotList(Walker& walker, Reference string, const MentionsOfResultInParts& mentions, uint32_t length, const RegExpSummary& summary, Origin origin)
 {
     NotesOfResultInParts notes;
     const uint32_t numberOfParts = mentions.numberOfParts();
@@ -673,7 +673,7 @@ static bool isReturnedAtOnce(const Walker& walker, const BodyValue& call)
     return (end.kind() == TerminatorKind::Return || end.kind() == TerminatorKind::ReturnCall) && end.operand(0) && index.stripCasts(end.operand(0)) == call.id();
 }
 
-static bool buildPlacesReadOnTwoWays(Walker& walker, const BodyValue& call, Draft&& match, Reference string, const MentionsOfResultInParts& mentions, const RegExpSummary& summary)
+static bool buildSlotsReadOnTwoPaths(Walker& walker, const BodyValue& call, Draft&& match, Reference string, const MentionsOfResultInParts& mentions, const RegExpSummary& summary)
 {
     if (!(endOfBlockAsksWhetherThereIsResult(walker, call) || isReturnedAtOnce(walker, call)) || !walker.canThreadBranchAfterMatch(call))
         return false;
@@ -695,7 +695,7 @@ static bool buildPlacesReadOnTwoWays(Walker& walker, const BodyValue& call, Draf
     }
 
     walker.continueIn(present);
-    Reference array = buildListOfPlacesRead(walker, string, mentions, mentions.numberOfPartsThatMeet, summary, origin);
+    Reference array = buildReadSlotList(walker, string, mentions, mentions.numberOfMergedParts, summary, origin);
     if (!array || walker.isUnreachable())
         return true;
     noteFreshList(walker, array);
@@ -729,7 +729,7 @@ Reference buildPlacesReadOfMatch(Walker& walker, const BodyValue& call, BuiltinO
         match.setRegExpOperand(objectOfCall);
     match.setPattern(regExp.pattern);
     match.setRegExpFlags(regExp.flags);
-    if (buildPlacesReadOnTwoWays(walker, call, WTF::move(match), string, *mentions, summary))
+    if (buildSlotsReadOnTwoPaths(walker, call, WTF::move(match), string, *mentions, summary))
         return { };
     Reference isFound = walker.build(WTF::move(match));
     if (!isFound || walker.isUnreachable())
@@ -745,7 +745,7 @@ Reference buildPlacesReadOfMatch(Walker& walker, const BodyValue& call, BuiltinO
     walker.jumpTo(joined, std::array { walker.constant(PrimitiveKnownToFolding::null()) });
 
     walker.continueIn(present);
-    Reference array = buildListOfPlacesRead(walker, string, *mentions, mentions->numberOfParts(), summary, origin);
+    Reference array = buildReadSlotList(walker, string, *mentions, mentions->numberOfParts(), summary, origin);
     if (!array || walker.isUnreachable())
         return { };
     walker.jumpTo(joined, std::array { array });
@@ -781,7 +781,7 @@ bool buildMatchInPartsByCodeOfRegExp(Walker& walker, const BodyValue& call, Buil
     std::optional<MentionsOfResultInParts> mentions = mentionsOfResultOnlyTakenApart(walker, call);
     if (!mentions)
         return false;
-    std::optional<Vector<uint32_t, 2>> groups = addPlacesOfGroupsRead(walker, *mentions, summary);
+    std::optional<Vector<uint32_t, 2>> groups = addReadGroupSlots(walker, *mentions, summary);
     if (!groups || mentions->numberOfParts() > summary.numSubpatterns + 1)
         return false;
 
@@ -800,7 +800,7 @@ bool buildMatchInPartsByCodeOfRegExp(Walker& walker, const BodyValue& call, Buil
     return buildMatchOnTwoWaysInResultsInParts(walker, call, WTF::move(match), WTF::move(whole), { string, *mentions, WTF::move(*groups), summary.groupsPresentInEveryMatch, summary.numSubpatterns + 1 });
 }
 
-static Reference findLastIndexStoredInResultsInParts(Walker& walker, Reference regExpObject)
+static Reference findStoredLastIndexInResultsInParts(Walker& walker, Reference regExpObject)
 {
     const Code& code = walker.code();
     const Reference root = rootForStrings(walker, regExpObject);
@@ -825,7 +825,7 @@ static Reference findLastIndexStoredInResultsInParts(Walker& walker, Reference r
     return { };
 }
 
-bool buildMatchOfHeldRegExpInParts(Walker& walker, const BodyValue& call, BuiltinOverloadID overload, const HeldRegExp& regExp, Reference regExpObject, Reference string, Origin origin)
+bool buildHeldRegExpMatchInParts(Walker& walker, const BodyValue& call, BuiltinOverloadID overload, const HeldRegExp& regExp, Reference regExpObject, Reference string, Origin origin)
 {
     if (!hasMechanismsOfResultsInParts(walker) || walker.isUnreachable() || !walker.runsInIterations())
         return false;
@@ -837,7 +837,7 @@ bool buildMatchOfHeldRegExpInParts(Walker& walker, const BodyValue& call, Builti
         return false;
     Vector<char16_t> buffer;
     const RegExpSummary& summary = summaries->summaryOf(regExp.pattern, toYarrFlags(regExp.flags), walker.types().viewOf(regExp.pattern, buffer));
-    std::optional<Vector<uint32_t, 2>> groups = summary.canBeCreated() ? addPlacesOfGroupsRead(walker, *mentions, summary) : std::nullopt;
+    std::optional<Vector<uint32_t, 2>> groups = summary.canBeCreated() ? addReadGroupSlots(walker, *mentions, summary) : std::nullopt;
     if (!groups || mentions->numberOfParts() > summary.numSubpatterns + 1)
         return false;
     const bool keepsPattern = regExp.isPrivate || !walker.facts().mayRecompileRegExps();
@@ -845,7 +845,7 @@ bool buildMatchOfHeldRegExpInParts(Walker& walker, const BodyValue& call, Builti
         return false;
     const bool storesLastIndex = regExp.flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky });
 
-    Draft match(Opcode::MatchHeldRegExpInParts, origin);
+    Draft match(Opcode::MatchHeldRegExpParts, origin);
     walker.chooseConservativeFields(match);
     match.setOverload(overload);
     match.setRegExpOperand(regExpObject);
@@ -854,7 +854,7 @@ bool buildMatchOfHeldRegExpInParts(Walker& walker, const BodyValue& call, Builti
     match.setRegExpFlags(regExp.flags);
     match.setIsPrivate(regExp.isPrivate);
     match.setCount(std::max<uint32_t>(mentions->numberOfParts(), storesLastIndex));
-    if (Reference stored = storesLastIndex ? findLastIndexStoredInResultsInParts(walker, regExpObject) : Reference())
+    if (Reference stored = storesLastIndex ? findStoredLastIndexInResultsInParts(walker, regExpObject) : Reference())
         match.setLastIndexOperand(stored);
 
     Draft whole = draftOfWholeOfMatchInResultsInParts(walker, string, origin);
@@ -877,7 +877,7 @@ static bool isConstantMemberOf(Walker& walker, BuiltinID holder, BuiltinName nam
 
 static bool engineStepsMatches(Walker& walker)
 {
-    std::optional<bool>& answer = ensureLooksAtResultsInParts(walker).engineStepsMatches;
+    std::optional<bool>& answer = ensureResultPartsAnalysis(walker).engineStepsMatches;
     if (answer)
         return *answer;
     const BuiltinTable& table = walker.program().builtins();
@@ -921,7 +921,7 @@ static std::optional<LoopOverResult> findLoopOverResult(Walker& walker, const Bo
     BodyBlock block = index.block(walker.inputBlockOf(call.id()));
     if (walker.walksStretchInsideAnother() || openID.index() - block.firstValue().index() >= walker.endOfStretchBeingWalked())
         return std::nullopt;
-    const ValueID step = findOnlyStepAtLoopHeader(index, openID);
+    const ValueID step = findSoleLoopHeaderStep(index, openID);
     if (!step || !index.value(step).as<Opcode::IteratorResume>().heldOperands().empty())
         return std::nullopt;
     return LoopOverResult { openID, step };
@@ -970,7 +970,7 @@ bool openMatchIteration(Walker& walker, const CallByOneRow& matchAll)
     if (!regExp || !matchesAreSteppedByExec(walker, regExp->pattern, regExp->flags))
         return false;
     const Reference matcher = regExp->object;
-    auto& iterations = ensureLooksAtResultsInParts(walker).matchIterations.add(keyOfOpen(walker, loop->open), Vector<MatchIteration, 1>()).iterator->value;
+    auto& iterations = ensureResultPartsAnalysis(walker).matchIterations.add(keyOfOpen(walker, loop->open), Vector<MatchIteration, 1>()).iterator->value;
     iterations.removeAllMatching([&](const MatchIteration& earlier) { return earlier.regExpObject == matcher; });
     iterations.append({ matcher, matchAll.receiver });
     walker.count(StatisticID::MatchIterationsInlined);
@@ -1132,7 +1132,7 @@ static std::pair<StringID, OptionSet<RegExpFlags>> patternOfMatcher(const Walker
 static Reference buildMatchOfStep(Walker& walker, Reference regExpObject, Reference string, uint32_t numberOfParts, Origin origin)
 {
     auto [pattern, flags] = patternOfMatcher(walker, regExpObject);
-    Draft match(Opcode::MatchHeldRegExpInParts, origin);
+    Draft match(Opcode::MatchHeldRegExpParts, origin);
     walker.chooseConservativeFields(match);
     match.setOverload(overloadOfMatchAll(walker));
     match.setRegExpOperand(regExpObject);
@@ -1147,7 +1147,7 @@ static Reference buildMatchOfStep(Walker& walker, Reference regExpObject, Refere
     return isFound;
 }
 
-static Draft draftOfWholeOfStep(Walker& walker, Reference regExpObject, Reference string, Origin origin)
+static Draft draftOfEntireStep(Walker& walker, Reference regExpObject, Reference string, Origin origin)
 {
     auto [pattern, flags] = patternOfMatcher(walker, regExpObject);
     Draft whole = draftOfWholeOfMatchInResultsInParts(walker, string, origin);
@@ -1176,7 +1176,7 @@ void stepOverMatchesOfString(Walker& walker, Reference string, Reference regExpO
     if (walker.hasFailed())
         return;
     walker.continueIn(present);
-    Reference array = walker.build(draftOfWholeOfStep(walker, regExpObject, string, origin));
+    Reference array = walker.build(draftOfEntireStep(walker, regExpObject, string, origin));
     if (array && !walker.isUnreachable())
         give(array);
 }
@@ -1209,7 +1209,7 @@ static bool stepMatchIteration(Walker& walker, const BodyValue& step, const Matc
         mentions.isOnlyTakenApart = false;
     std::optional<Vector<uint32_t, 2>> groups;
     if (mentions.isOnlyTakenApart)
-        groups = addPlacesOfGroupsRead(walker, mentions, summary);
+        groups = addReadGroupSlots(walker, mentions, summary);
     if (!groups || mentions.numberOfParts() > summary.numSubpatterns + 1)
         mentions.isOnlyTakenApart = false;
 
@@ -1237,7 +1237,7 @@ static bool stepMatchIteration(Walker& walker, const BodyValue& step, const Matc
         walker.jumpTo(joined, std::array { done, nothing });
 
     walker.continueIn(present);
-    Draft whole = draftOfWholeOfStep(walker, iteration.regExpObject, iteration.string, origin);
+    Draft whole = draftOfEntireStep(walker, iteration.regExpObject, iteration.string, origin);
     const MatchAskedForInParts asked { iteration.string, mentions, groups ? *groups : Vector<uint32_t, 2>(), summary.groupsPresentInEveryMatch, summary.numSubpatterns + 1 };
     NotesOfResultInParts notes;
     Reference array = mentions.isOnlyTakenApart ? buildMatchArray(walker, WTF::move(whole), asked, notes, origin) : walker.build(WTF::move(whole));
@@ -1442,9 +1442,9 @@ static LooksAtResultsInParts& looksAtResultsInParts(Walker& walker)
     return static_cast<LooksAtResultsInParts&>(*notesOfStrings(walker).looksAtResultsInParts);
 }
 
-static std::optional<std::pair<Reference, Reference>> buildBoundsOfMatchInFrame(Walker& walker, const MatchInFrameForParts& found, Reference index, Origin origin)
+static std::optional<std::pair<Reference, Reference>> buildFrameMatchBounds(Walker& walker, const MatchInFrameForParts& found, Reference index, Origin origin)
 {
-    Draft bounds(Opcode::BoundsOfMatchInFrame, origin);
+    Draft bounds(Opcode::FrameMatchBounds, origin);
     walker.chooseConservativeFields(bounds);
     bounds.setMatchOperand(found.match);
     bounds.setIndexOperand(index);
@@ -1527,7 +1527,7 @@ bool buildMatchIntoFrame(Walker& walker, const BodyValue& call, BuiltinOverloadI
     if (knownLength)
         numberOfParts = integerForStrings(walker, *knownLength);
     else {
-        Draft length(Opcode::LengthOfMatchInFrame, origin);
+        Draft length(Opcode::FrameMatchLength, origin);
         walker.chooseConservativeFields(length);
         length.setMatchOperand(found.match);
         numberOfParts = walker.build(WTF::move(length));
@@ -1537,7 +1537,7 @@ bool buildMatchIntoFrame(Walker& walker, const BodyValue& call, BuiltinOverloadI
     Reference array = walker.build(WTF::move(whole));
     NotesOfResultInParts notes;
     if (mentions.placesRead || mentions.readsIndex) {
-        auto bounds = buildBoundsOfMatchInFrame(walker, found, integerForStrings(walker, 0), origin);
+        auto bounds = buildFrameMatchBounds(walker, found, integerForStrings(walker, 0), origin);
         if (Reference piece = bounds && mentions.placesRead ? buildPieceOrUndefinedInResultsInParts(walker, string, bounds->first, bounds->second, origin) : Reference())
             notes.append({ integerForStrings(walker, 0), piece });
         if (Reference index = bounds && mentions.readsIndex ? buildOperatorForStrings(walker, Opcode::BitAnd, bounds->first, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin) : Reference())
@@ -1575,7 +1575,7 @@ static ValueID findOnlyLengthRead(const Walker& walker, const BodyValue& call)
     return !read.isFreeName() && read.objectOperand() == name && walker.program().nameClassOf(read.key()) == NameClass::Length ? user : ValueID();
 }
 
-ValueID findLengthReadBehindReplace(const Walker& walker, const BodyValue& call)
+ValueID findLengthReadAfterReplace(const Walker& walker, const BodyValue& call)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     std::span<const ValueID> arguments = call.argumentsOperands();
@@ -1620,11 +1620,11 @@ static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference
     ValueID cell = underlyingCellOf(code, name.id());
     if (code.isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return { };
-    static constexpr OpcodeSet arraysBesideParts { Opcode::NewRegExpMatchArray, Opcode::GetMatchArrayGroups, Opcode::NewStringSplitArray, Opcode::NewArrayOfRegExpMatch };
-    return arraysBesideParts.contains(code.at(cell).opcode) ? Reference::value(cell) : Reference();
+    static constexpr OpcodeSet arraysWithParts { Opcode::NewRegExpMatchArray, Opcode::GetMatchArrayGroups, Opcode::NewStringSplitArray, Opcode::NewArrayOfRegExpMatch };
+    return arraysWithParts.contains(code.at(cell).opcode) ? Reference::value(cell) : Reference();
 }
 
-bool buildElementOfMatchInFrame(Walker& walker, const BodyValue& read, const InputsOfTypedOperation& inputs)
+bool buildFrameMatchElement(Walker& walker, const BodyValue& read, const InputsOfTypedOperation& inputs)
 {
     if (inputs.areOnlyTypes() || walker.isUnreachable())
         return false;
@@ -1641,7 +1641,7 @@ bool buildElementOfMatchInFrame(Walker& walker, const BodyValue& read, const Inp
     Origin origin = walker.originOf(read);
     origin.isTailCall = false;
     bool testsElement = endOfBlockAsksWhetherThereIsResult(walker, read) && walker.canThreadBranchAfterMatch(read);
-    auto bounds = buildBoundsOfMatchInFrame(walker, found, index, origin);
+    auto bounds = buildFrameMatchBounds(walker, found, index, origin);
     if (!bounds)
         return true;
     auto [start, end] = *bounds;
@@ -1684,7 +1684,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& wa
         return { };
     if (whole && walker.code().at(whole.id()).opcode == Opcode::GetMatchArrayGroups) {
         const PropertyKey& name = walker.types().at(key);
-        return name.kind == PropertyKeyKind::Text ? walker.state().element(whole, keyOfTextInResultsInParts(walker, name.text)) : Reference();
+        return name.kind == PropertyKeyKind::Text ? walker.state().element(whole, stringKeyInResultsInParts(walker, name.text)) : Reference();
     }
     BuiltinName written = walker.program().builtinNameOf(key);
     if (!written || walker.program().builtins().isSymbolName(written))

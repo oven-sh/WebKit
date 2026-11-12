@@ -393,7 +393,7 @@ void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, con
     uint64_t layouts = 0;
     switch (access.kind) {
     case SummaryAccess::Kind::Read:
-        if (lookupOfThenCannotThrow(subject, key))
+        if (thenLookupCannotThrow(subject, key))
             ofLookup.mayThrow = ThrowEffect(false);
         if (key && readMayMakeClosureOfField(subject, key)) {
             ofLookup.writes.add(m_program, MemoryLocation::objectField(key));

@@ -250,7 +250,7 @@ static void emitObjectHasOwnProperty(StubAssembler& jit, GPRReg scratch, JumpLis
 
 static void emitObjectIntegrityTest(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
-    const bool asksWhetherExtensible = static_cast<BoxedCallForm>(jit.key().form()) == BoxedCallForm::ObjectIsExtensible;
+    const bool testsExtensibility = static_cast<BoxedCallForm>(jit.key().form()) == BoxedCallForm::ObjectIsExtensible;
     constexpr GPRReg object = argumentGPR(0);
     JumpList isNoObject;
     isNoObject.append(jit.branchIfNotCell(object));
@@ -263,14 +263,14 @@ static void emitObjectIntegrityTest(StubAssembler& jit, GPRReg scratch, JumpList
     loadStructure(jit, object, scratch);
     callsHostFunction.append(jit.branchTest32(CCallHelpers::NonZero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_didPreventExtensionsBits)));
     Label isExtensible = jit.label();
-    returnBoxedBoolean(jit, asksWhetherExtensible);
+    returnBoxedBoolean(jit, testsExtensibility);
 
     isCompiledObject.link(&jit);
     jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits))).linkTo(isExtensible, &jit);
     callsHostFunction.append(jit.jump());
 
     isNoObject.link(&jit);
-    returnBoxedBoolean(jit, !asksWhetherExtensible);
+    returnBoxedBoolean(jit, !testsExtensibility);
 }
 
 static void emitIsNaN(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
@@ -901,7 +901,7 @@ static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShap
 static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithDoubleHeader) == AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header) + 8);
 static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header) + 16);
 
-static void loadKindOfNumbersOrValues(StubAssembler& jit, GPRReg array, GPRReg kind, unsigned mask, JumpList& fails)
+static void loadNumberOrValueKind(StubAssembler& jit, GPRReg array, GPRReg kind, unsigned mask, JumpList& fails)
 {
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
     jit.and32(TrustedImm32(mask), kind);
@@ -909,7 +909,7 @@ static void loadKindOfNumbersOrValues(StubAssembler& jit, GPRReg array, GPRReg k
     fails.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape - Int32Shape)));
 }
 
-static void allocateStorageOfNewArray(StubAssembler& jit, const NewArrayRegisters& registers, JumpList& fails)
+static void allocateNewArrayStorage(StubAssembler& jit, const NewArrayRegisters& registers, JumpList& fails)
 {
     const auto [kind, storage, allocator, scratch] = registers;
     fails.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxLengthForElementwiseCopy)));
@@ -923,7 +923,7 @@ static void allocateStorageOfNewArray(StubAssembler& jit, const NewArrayRegister
     jit.addPtr(TrustedImm32(sizeof(JSArray)), storage);
 }
 
-static void storeLengthsOfNewArray(StubAssembler& jit, const NewArrayRegisters& registers)
+static void storeNewArrayLengths(StubAssembler& jit, const NewArrayRegisters& registers)
 {
     const auto [kind, storage, hole, length] = registers;
     jit.store32(length, Address(storage, 0));
@@ -970,8 +970,8 @@ static void concatPlainArrays(StubAssembler& jit, GPRReg scratch, JumpList& isLe
     }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
     isLeftToOperation.append(branchIfWatchpointSetIsNotWatched(jit, Address(scratch, OBJECT_OFFSETOF(JSGlobalObject, m_arrayIsConcatSpreadableWatchpointSet)), scratch));
-    loadKindOfNumbersOrValues(jit, thisGPR, kind, IndexingShapeMask, isLeftToOperation);
-    loadKindOfNumbersOrValues(jit, second, kindOfSecond, IndexingShapeMask, isLeftToOperation);
+    loadNumberOrValueKind(jit, thisGPR, kind, IndexingShapeMask, isLeftToOperation);
+    loadNumberOrValueKind(jit, second, kindOfSecond, IndexingShapeMask, isLeftToOperation);
     jit.loadPtr(Address(second, JSObject::butterflyOffset()), source);
     jit.load32(Address(source, Butterfly::offsetOfPublicLength()), countOfSecond);
     jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), source);
@@ -988,9 +988,9 @@ static void concatPlainArrays(StubAssembler& jit, GPRReg scratch, JumpList& isLe
     jit.move(TrustedImm32(ContiguousShape - Int32Shape), kind);
     areOfOneKind.link(&jit);
     jit.add32(count, countOfSecond, scratch);
-    allocateStorageOfNewArray(jit, registers, isLeftToOperation);
+    allocateNewArrayStorage(jit, registers, isLeftToOperation);
     jit.add32(count, countOfSecond, scratch);
-    storeLengthsOfNewArray(jit, registers);
+    storeNewArrayLengths(jit, registers);
 
     auto copyElements = [&](GPRReg index) {
         Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, index);
@@ -1238,7 +1238,7 @@ static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsH
         isLeftToOperation.append(jit.branchIfNotInt32(start));
         isLeftToOperation.append(jit.branchIfNotInt32(deleteCount));
         isLeftToOperation.append(branchIfNotPristine(jit, thisGPR));
-        loadKindOfNumbersOrValues(jit, thisGPR, kind, IndexingShapeAndWritabilityMask, isLeftToOperation);
+        loadNumberOrValueKind(jit, thisGPR, kind, IndexingShapeAndWritabilityMask, isLeftToOperation);
         if (!jit.options().hasOneInstance) {
             loadStructure(jit, thisGPR, scratch);
             isLeftToOperation.append(branchIfNotOfThisRealm(jit, scratch));
@@ -1252,9 +1252,9 @@ static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsH
         jit.load32(Address(scratch, Butterfly::offsetOfPublicLength()), length);
         isLeftToOperation.append(jit.branch32(CCallHelpers::LessThan, deleteCount, length));
         jit.move(length, scratch);
-        allocateStorageOfNewArray(jit, registers, isLeftToOperation);
+        allocateNewArrayStorage(jit, registers, isLeftToOperation);
         jit.move(length, scratch);
-        storeLengthsOfNewArray(jit, registers);
+        storeNewArrayLengths(jit, registers);
         const GPRReg source = jit.reuseScratch(StubRegister::A2);
         jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), source);
         jit.store32(TrustedImm32(0), Address(source, Butterfly::offsetOfPublicLength()));

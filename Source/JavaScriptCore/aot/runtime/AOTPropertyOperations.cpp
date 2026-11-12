@@ -213,7 +213,7 @@ static uint64_t orderAndShapeWordsOf(const Object& object)
     return WTF::unalignedLoad<uint64_t>(reinterpret_cast<const uint8_t*>(&object) + offsetOfOrderWord);
 }
 
-static void rememberOrderBehindRemoval(Instance& instance, Object& object, UniquedStringImpl* uid, StructureID structureBefore, uint64_t wordsBefore)
+static void recordOrderAfterRemoval(Instance& instance, Object& object, UniquedStringImpl* uid, StructureID structureBefore, uint64_t wordsBefore)
 {
     uint32_t orderWordBefore = static_cast<uint32_t>(wordsBefore);
     if (object.structureID() != structureBefore || orderWordBefore & ~orderAndCountMask || object.orderWord() == orderWordBefore || object.compiledStructure().hasOutOfLineKeyOrder())
@@ -221,7 +221,7 @@ static void rememberOrderBehindRemoval(Instance& instance, Object& object, Uniqu
     const FieldData* field = object.fieldNamed(object.state(), uid);
     if (!field || field->isOutOfLine() || field->isPrivate() || !absentPatternOf(field->slot.representation()) || field->slot.offset > UINT16_MAX)
         return;
-    uint64_t key = keyOfRunOfRemoval(static_cast<uint16_t>(field->slot.offset));
+    uint64_t key = removalRunKey(static_cast<uint16_t>(field->slot.offset));
     instance.objects.keyOrderRuns[indexOfKeyOrderRun(wordsBefore, key)] = { wordsBefore, key, object.orderWord(), 0 };
 }
 
@@ -320,7 +320,7 @@ static ALWAYS_INLINE size_t deleteByName(Instance* instance, JSCell* base, Uniqu
     size_t deleted = deleteNamedProperty(globalObject, object, name, isStrict, instanceThatFiles);
     RETURN_IF_EXCEPTION(scope, 0);
     if (deleted)
-        rememberOrderBehindRemoval(*instance, *compiled, uid, structureBefore, wordsBefore);
+        recordOrderAfterRemoval(*instance, *compiled, uid, structureBefore, wordsBefore);
     return deleted;
 }
 

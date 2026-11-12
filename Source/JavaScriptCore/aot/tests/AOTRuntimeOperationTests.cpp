@@ -61,7 +61,7 @@ static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-wit
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
 static constexpr ASCIILiteral literalBornHoldingListTest = "runtime-operations/literal-born-holding-list"_s;
 static constexpr ASCIILiteral growingTextTest = "runtime-operations/a-text-that-is-added-to-grows-in-a-buffer"_s;
-static constexpr ASCIILiteral longTextSharesBufferTest = "runtime-operations/a-long-text-shares-the-characters-of-its-buffer"_s;
+static constexpr ASCIILiteral longStringSharesBufferTest = "runtime-operations/a-long-text-shares-the-characters-of-its-buffer"_s;
 static constexpr ASCIILiteral partsOfOtherWidthTest = "runtime-operations/a-growing-text-takes-parts-whose-characters-have-changed-width"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
 static constexpr ASCIILiteral pollShowsRegistersTest = "runtime-operations/poll-that-faults-shows-every-register-to-the-collector"_s;
@@ -548,13 +548,13 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     AOT_TEST_CHECK(text->length() == 2 * (numberOfPiecesWithPart + numberOfPiecesBetweenCollections));
 }
 
-static void checkLongTextSharesItsBuffer(LoadedProgram& program)
+static void checkLongStringSharesBuffer(LoadedProgram& program)
 {
     VM& vm = program.vm();
     Instance& instance = program.instance();
     JSGlobalObject* realm = program.realm();
-    constexpr unsigned numberOfTensInPiece = 5;
-    JSString* piece = jsNontrivialString(vm, repeated("0123456789"_s, numberOfTensInPiece));
+    constexpr unsigned tensPerPiece = 1;
+    JSString* piece = jsNontrivialString(vm, repeated("0123456789"_s, tensPerPiece));
     unsigned numberOfPieces = 1;
     JSString* text = piece;
     auto grow = [&](unsigned length) {
@@ -569,7 +569,7 @@ static void checkLongTextSharesItsBuffer(LoadedProgram& program)
 
     grow(minLengthSharedWithBuffer);
     AOT_TEST_CHECK(canGrowInPlace(instance, text));
-    String expected = repeated("0123456789"_s, numberOfTensInPiece * numberOfPieces);
+    String expected = repeated("0123456789"_s, tensPerPiece * numberOfPieces);
     const StringImpl* buffer = uncheckedDowncast<JSRopeString>(text)->substringBase()->tryGetValueImpl();
     JSString* pieceOfRopes = jsString(realm, jsNontrivialString(vm, "ab"_s), jsString(realm, jsNontrivialString(vm, "cd"_s), jsNontrivialString(vm, "ef"_s)));
     JSString* first = jsString(realm, jsString(realm, text, pieceOfRopes), jsNontrivialString(vm, "first"_s));
@@ -1149,9 +1149,9 @@ static void textThatIsAddedToGrowsInBuffer()
     runWithLoadedProgram(growingTextTest, programText, checkTextThatIsAddedToGrowsInBuffer);
 }
 
-static void longTextSharesItsBuffer()
+static void longStringSharesBuffer()
 {
-    runWithLoadedProgram(longTextSharesBufferTest, programText, checkLongTextSharesItsBuffer);
+    runWithLoadedProgram(longStringSharesBufferTest, programText, checkLongStringSharesBuffer);
 }
 
 static void growingTextTakesPartsWhoseCharactersHaveChangedWidth()
@@ -1210,7 +1210,7 @@ std::span<const NativeTest> runtimeOperationTests()
         { pushesAndHolesTest, pushesAndHoles },
         { literalBornHoldingListTest, literalsAreBornHoldingLists },
         { growingTextTest, textThatIsAddedToGrowsInBuffer },
-        { longTextSharesBufferTest, longTextSharesItsBuffer },
+        { longStringSharesBufferTest, longStringSharesBuffer },
         { partsOfOtherWidthTest, growingTextTakesPartsWhoseCharactersHaveChangedWidth },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
         { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },

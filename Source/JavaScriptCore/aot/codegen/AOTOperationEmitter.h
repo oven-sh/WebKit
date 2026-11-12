@@ -145,8 +145,8 @@ protected:
     std::optional<Pointer> siteCacheAddress(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersAtSite(const OperationContext&, PropertyKeyID, SiteUse);
     std::optional<NumberedImmediate> answersAtSite(Origin, PropertyKeyID, SiteUse);
-    std::optional<NumberedImmediate> answersOfPresenceTestAtSite(Origin, PropertyKeyID);
-    std::optional<NumberedImmediate> answersAtSiteOfUse(Origin, PropertyKeyID, uint32_t use);
+    std::optional<NumberedImmediate> presenceTestSiteAnswers(Origin, PropertyKeyID);
+    std::optional<NumberedImmediate> isAnsweredAtUse(Origin, PropertyKeyID, uint32_t use);
 
     COLD void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 

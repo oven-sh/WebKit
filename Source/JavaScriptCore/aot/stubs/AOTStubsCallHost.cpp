@@ -132,7 +132,7 @@ static void fetchFunctionLeftUnfetched(StubAssembler& jit, GPRReg scratch, unsig
     });
 }
 
-static void pushManyOntoListWithRoom(StubAssembler& jit, const CallRegisters& registers, std::variant<unsigned, GPRReg> count)
+static void pushManyWithinCapacity(StubAssembler& jit, const CallRegisters& registers, std::variant<unsigned, GPRReg> count)
 {
     static_assert(numberOfArgumentGPRs >= 2);
     constexpr int32_t offsetOfStackWordsAtEntry = static_cast<int32_t>(offsetOfStackWordsFromFrame) - static_cast<int32_t>(prologueStackPointerDelta());
@@ -201,7 +201,7 @@ void generateCallHostFunction(StubAssembler& jit)
         fetchFunctionLeftUnfetched(jit, executable, count);
         jit.bindEntry(callHostFunctionWithoutBoxedCall(count));
     } else if (count > BoxedCallEntry::maxArgumentCount)
-        pushManyOntoListWithRoom(jit, registers, count);
+        pushManyWithinCapacity(jit, registers, count);
     emitLoadExecutable(jit, executable);
     hasNoBoxedCall.link(&jit);
     jit.emitFunctionPrologue();
@@ -303,7 +303,7 @@ void generateCallHostFunctionWithCount(StubAssembler& jit)
     JumpList doesNotFitOnStack;
 
     Jump fitsInRegisters = jit.branch32(CCallHelpers::BelowOrEqual, count, TrustedImm32(numberOfArgumentGPRs));
-    pushManyOntoListWithRoom(jit, registers, count);
+    pushManyWithinCapacity(jit, registers, count);
     fitsInRegisters.link(&jit);
 
     jit.emitFunctionPrologue();
@@ -334,7 +334,7 @@ void generateCallInternalFunction(StubAssembler& jit)
     if (kind == CodeSpecializationKind::CodeForCall) {
         emitCallOfBooleanConstructor(jit, scratch);
         emitCallOfNumberOrStringConstructor(jit, scratch);
-        emitCallOfObjectOrArrayConstructor(jit, scratch);
+        emitObjectOrArrayConstructorCall(jit, scratch);
     }
 
     jit.emitFunctionPrologue();

@@ -6546,11 +6546,11 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if defined(YARR_FOR_IMAGE) && CPU(X86_64)
                 if (op.m_maskedAltInfo) {
-                    if (auto prefixes = planSearchForTwoPrefixes()) {
+                    if (auto prefixes = planTwoPrefixSearch()) {
                         MacroAssembler::JumpList matched;
-                        m_jit.add32(MacroAssembler::TrustedImm32(unitsInVectorOfPrefixSearch), m_regs.index, m_regs.regT1);
+                        m_jit.add32(MacroAssembler::TrustedImm32(prefixSearchVectorLength), m_regs.index, m_regs.regT1);
                         auto restIsShort = m_jit.branch32(MacroAssembler::Above, m_regs.regT1, m_regs.length);
-                        generateSearchForTwoPrefixes(op, *prefixes, matched);
+                        generateTwoPrefixSearch(op, *prefixes, matched);
                         auto isOutOfInput = m_jit.jump();
                         restIsShort.link(&m_jit);
                         auto range = op.m_bmInfo ? op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, false) : std::nullopt;
@@ -11182,20 +11182,20 @@ class YarrGenerator final : public YarrJITInfo {
     }
 
 #if CPU(X86_64)
-    // What FindFirstOfTwoPrefixes looks at: of each prefix the characters at its first positions, by their low halves.
+    // The input of FindEitherPrefix: the characters at the first positions of each prefix, by their low halves.
     struct TwoPrefixes {
         unsigned length { 0 };
-        std::array<uint8_t, 2 * unitsInVectorOfPrefixSearch> table { };
+        std::array<uint8_t, 2 * prefixSearchVectorLength> table { };
     };
 
-    std::optional<TwoPrefixes> planSearchForTwoPrefixes() const
+    std::optional<TwoPrefixes> planTwoPrefixSearch() const
     {
         static constexpr unsigned halves = 16;
-        static constexpr unsigned leastRarityOfPrefix = 8;
+        static constexpr unsigned minPrefixRarity = 8;
         auto& alternatives = m_pattern.m_body->m_alternatives;
         if (m_direction != Forward || m_executionMode == ExecutionMode::InlineTest || m_charSize != CharSize::Char8 || !m_jit.supportsSupplementalSSE3())
             return std::nullopt;
-        // The search ends where the first alternative has no input left: the second must need as much.
+        // The search ends when too little input is left for the first alternative, so the second must not need less.
         if (alternatives.size() != 2 || alternatives[0]->m_minimumSize > alternatives[1]->m_minimumSize)
             return std::nullopt;
 
@@ -11246,25 +11246,25 @@ class YarrGenerator final : public YarrJITInfo {
                 rarity += 4 - std::bit_width(prefixes[i][position].count() - 1);
                 prefixes[i][position].forEachSetBit([&](size_t half) {
                     if (result.length == longPrefixLength)
-                        result.table[i * unitsInVectorOfPrefixSearch + half] |= 1u << position;
+                        result.table[i * prefixSearchVectorLength + half] |= 1u << position;
                     else
                         result.table[half] |= 1u << (i * shortPrefixLength + position);
                 });
             }
-            if (rarity < leastRarityOfPrefix)
+            if (rarity < minPrefixRarity)
                 return std::nullopt;
         }
         return result;
     }
 
-    void generateSearchForTwoPrefixes(YarrOp& beginOp, const TwoPrefixes& prefixes, MacroAssembler::JumpList& matched)
+    void generateTwoPrefixSearch(YarrOp& beginOp, const TwoPrefixes& prefixes, MacroAssembler::JumpList& matched)
     {
         unsigned claimed = beginOp.m_checkedOffset.value();
         JIT_COMMENT(m_jit, "search for two prefixes");
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for two prefixes of ", prefixes.length, " characters");
         m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
         m_addressing.moveAddressOfData(std::span { prefixes.table }, m_regs.regT1);
-        callRoutine(SharedRoutine::FindFirstOfTwoPrefixes { static_cast<uint8_t>(prefixes.length) });
+        callRoutine(SharedRoutine::FindEitherPrefix { static_cast<uint8_t>(prefixes.length) });
         m_jit.add32(MacroAssembler::Imm32(claimed), m_regs.index);
         matched.append(m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, m_regs.length));
 

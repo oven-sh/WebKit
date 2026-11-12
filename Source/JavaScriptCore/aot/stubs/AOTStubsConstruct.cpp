@@ -198,7 +198,7 @@ static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function,
     jit.urshift64(TrustedImm32(shiftOfClassObjectForPrototype), offset);
     jit.move(TrustedImm32(static_cast<int32_t>(multiplierOfPlaceOfPrototypeProperty)), place);
     jit.mul32(offset, place);
-    jit.urshift32(TrustedImm32(shiftOfProductOfClassObject), place);
+    jit.urshift32(TrustedImm32(classObjectProductShift), place);
     jit.lshift32(TrustedImm32(2), place);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.prototypesOfClassObjects)), offset);
     jit.getEffectiveAddress(BaseIndex(offset, place, CCallHelpers::TimesEight), place);

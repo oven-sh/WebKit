@@ -189,7 +189,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
         SlotEmitter& slots = emitter<SlotEmitter>();
         MemoryLocation location = MemoryLocation::objectField(value->key());
         CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(object, access, value->receivers());
-        if (value->holdsDeclaredType() && !isListedByKeyOrderAlone(access.slot.representation))
+        if (value->holdsDeclaredType() && !isListedOnlyByKeyOrder(access.slot.representation))
             return slots.holdsDeclaredType(base, access.slot, location, &access.extensionWord);
         return slots.isFilled(base, access.slot, location, &access.extensionWord);
     };
@@ -396,7 +396,7 @@ void GuardEmitter::generateHasStructureOfClass(const ValueContext& value)
         }
         auto goOnUnlessItIsTheOneAt = [&](ptrdiff_t offsetOfWord, BlockEdge whereItIs, BlockEdge (*edgeToRest)(LBasicBlock)) {
             LBasicBlock isAnother = newBlock();
-            Word32 remembered(m_out.load32(wordOfStructuresOfHeir(m_heaps.collectorState, classLayout, offsetOfWord)));
+            Word32 remembered(m_out.load32(subclassStructuresWord(m_heaps.collectorState, classLayout, offsetOfWord)));
             branch(equal(structureID, remembered), { whereItIs, edgeToRest(isAnother) });
             m_out.appendTo(isAnother);
         };
@@ -411,7 +411,7 @@ void GuardEmitter::generateHasStructureOfClass(const ValueContext& value)
             return;
         m_out.appendTo(*isInstance);
         CellPointer prototype = unboxCell(loadField<Boxed>(loadStructure(cell), m_heaps.Structure_prototype));
-        Word32 withoutElements(m_out.load32(wordOfStructuresOfHeir(m_heaps.collectorState, classLayout, StructuresOfHeir::offsetOfPrototypeWithoutElements())));
+        Word32 withoutElements(m_out.load32(subclassStructuresWord(m_heaps.collectorState, classLayout, StructuresOfHeir::offsetOfPrototypeWithoutElements())));
         LBasicBlock mayHoldElements = newBlock();
         branch(equal(loadStructureID(prototype), withoutElements), { end.taken, rareEdge(mayHoldElements) });
         m_out.appendTo(mayHoldElements);
@@ -419,7 +419,7 @@ void GuardEmitter::generateHasStructureOfClass(const ValueContext& value)
     });
 }
 
-TypedPointer GuardEmitter::wordOfStructuresOfHeir(const Machine::AbstractHeap& heap, LayoutID classLayout, ptrdiff_t offset)
+TypedPointer GuardEmitter::subclassStructuresWord(const Machine::AbstractHeap& heap, LayoutID classLayout, ptrdiff_t offset)
 {
     return instanceWord(heap, m_mentions.add(NumberSpace::HeirLookedAt, classLayout, static_cast<int32_t>(offset)));
 }

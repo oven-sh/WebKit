@@ -15,14 +15,14 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr OpcodeSet callsThatGiveBoundsOfParts { Opcode::BoundsOfRegExpMatch, Opcode::BoundsOfStringSplit };
 inline constexpr uint32_t firstBoundOfParts = 0;
 
-bool buildMatchOfHeldRegExpInParts(Walker&, const BodyValue& call, BuiltinOverloadID, const HeldRegExp&, Reference regExpObject, Reference string, Origin);
+bool buildHeldRegExpMatchInParts(Walker&, const BodyValue& call, BuiltinOverloadID, const HeldRegExp&, Reference regExpObject, Reference string, Origin);
 Reference findLastIndexOfMatch(Walker&, Reference regExpObject, PropertyKeyID);
 void noteMatchStoresLastIndex(Walker&, const HeldRegExp&, Reference regExpObject);
 bool buildLastIndexOfMatch(Walker&, const BodyValue& read);
 bool buildMatchIntoFrame(Walker&, const BodyValue& call, BuiltinOverloadID, const HeldRegExp*, Reference regExpObject, Reference string, Origin);
-ValueID findLengthReadBehindReplace(const Walker&, const BodyValue& call);
+ValueID findLengthReadAfterReplace(const Walker&, const BodyValue& call);
 bool buildLengthWithoutMatches(Walker&, const BodyValue& call, BuiltinOverloadID, Reference string, Reference regExpObject, Origin);
-bool buildElementOfMatchInFrame(Walker&, const BodyValue& read, const InputsOfTypedOperation&);
+bool buildFrameMatchElement(Walker&, const BodyValue& read, const InputsOfTypedOperation&);
 bool buildMatchInPartsByCodeOfRegExp(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 Reference buildPlacesReadOfMatch(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 bool buildSplitInParts(Walker&, const CallByOneRow&);

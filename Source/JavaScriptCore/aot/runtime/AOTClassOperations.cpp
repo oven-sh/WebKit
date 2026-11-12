@@ -274,11 +274,11 @@ static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, S
         return;
     PropertyOffset offset = after->transitionOffset();
     std::optional<uint32_t> newCapacity = capacityOfStorageGrownByStub(vm, before, after, offset);
-    bool liesBesideElements = !newCapacity && before->typeInfo().type() == ArrayType && offset == firstOutOfLineOffset && !before->outOfLineCapacity() && after->outOfLineCapacity() == initialOutOfLineCapacity
+    bool isStoredWithElements = !newCapacity && before->typeInfo().type() == ArrayType && offset == firstOutOfLineOffset && !before->outOfLineCapacity() && after->outOfLineCapacity() == initialOutOfLineCapacity
         && !before->hasElementsStartOffset() && !before->mayBePrototype() && !before->mayHaveImmutableProperties() && after->propertyAccessesAreCacheable();
-    if (!newCapacity && !liesBesideElements)
+    if (!newCapacity && !isStoredWithElements)
         return;
-    int32_t placeOfValue = liesBesideElements ? 1 : *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
+    int32_t placeOfValue = isStoredWithElements ? 1 : *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
     int32_t placeOfBrand = brand ? locationOf(*brand) : 0;
     if (placeOfValue != static_cast<int16_t>(placeOfValue) || placeOfBrand != static_cast<int16_t>(placeOfBrand))
         return;

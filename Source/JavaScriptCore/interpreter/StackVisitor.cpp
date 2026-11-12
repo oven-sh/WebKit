@@ -99,7 +99,7 @@ StackVisitor::WithCompiledFrames::WithCompiledFrames(CallFrame* startFrame, VM& 
                 if (startFrame == vm.topCallFrame)
                     startFrame = topFrame;
             } else if (startsAtTop) {
-                // It is no frame of compiled code: that was asked above.
+                // Not a frame of compiled code: that was checked above.
                 StackVisitor::readFrame(topFrame);
                 return;
             }

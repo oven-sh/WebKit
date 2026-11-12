@@ -73,7 +73,7 @@ public:
     bool valueUnderIsHeardByNobody(UniquedStringImpl*) const;
     bool isBuiltinFunction() const;
     bool hasStaticFieldsLeft() const;
-    bool mayHoldStaticFieldInVariable(UniquedStringImpl*) const;
+    bool canHoldStaticFieldInVariable(UniquedStringImpl*) const;
     void ensureClassObject(VM&);
     void ensureStaticMethods(VM&);
     void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);

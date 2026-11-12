@@ -520,7 +520,7 @@ bool Walker::endBlockWithSwitchOverAlternatives(const BodyTerminator& terminator
     return true;
 }
 
-bool Walker::endBlockWithNumberOfCondition(const BodyTerminator& terminator)
+bool Walker::endBlockWithConditionNumber(const BodyTerminator& terminator)
 {
     if (!has(Mechanism::TypedOperations) || isUnreachable() || !isInLoop() || terminator.numberOfTargets() != 2)
         return false;

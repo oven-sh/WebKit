@@ -15,6 +15,7 @@
 #include "AOTVectorOutput.h"
 #include <algorithm>
 #include <ranges>
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -67,7 +68,7 @@ struct RowLoop {
     Vector<Body, 1> bodies;
     Vector<Step, 24> stepsInFront;
     Vector<Step, 24> stepsBefore;
-    Vector<Step, 24> stepsBesideSum;
+    Vector<Step, 24> stepsWithSum;
     Vector<Step, 24> stepsAfter;
     ValueID store;
     std::unique_ptr<RowLoop> nested;
@@ -921,7 +922,7 @@ bool RowLoopFinder::findOrderOfSteps()
         Vector<Step, 24> afterSum;
         for (const Step& step : m_found.stepsAfter) {
             bool readsSum = step.value == m_found.store || (step.kind != Step::Kind::Row && dependsOnSum(step.kind == Step::Kind::Name ? step.source : step.value));
-            (readsSum ? afterSum : m_found.stepsBesideSum).append(step);
+            (readsSum ? afterSum : m_found.stepsWithSum).append(step);
         }
         m_found.stepsAfter = WTF::move(afterSum);
     }
@@ -964,10 +965,10 @@ bool RowLoopFinder::findOrderOfNest()
         if (!isOfRow && (!isKnown(read.list) || !m_generator.isArrayWithoutRows(read.list)))
             return false;
     }
-    size_t storedRows = nested.stepsBesideSum.findIf([&](const Step& step) { return step.kind == Step::Kind::Row && m_generator.m_rows->guards[step.guard].names.contains(at(nested.store).arrayOperand()); });
+    size_t storedRows = nested.stepsWithSum.findIf([&](const Step& step) { return step.kind == Step::Kind::Row && m_generator.m_rows->guards[step.guard].names.contains(at(nested.store).arrayOperand()); });
     if (storedRows == notFound || !isKnown(nested.bound) || !isKnown(nested.innerBound) || !isKnown(nested.firstSum))
         return false;
-    for (std::span<const Step> steps : { nested.stepsBefore.span(), nested.stepsBesideSum.span(), nested.stepsAfter.span() }) {
+    for (std::span<const Step> steps : { nested.stepsBefore.span(), nested.stepsWithSum.span(), nested.stepsAfter.span() }) {
         for (const Step& step : steps) {
             if (step.kind == Step::Kind::Row && !isKnown(m_generator.m_rows->guards[step.guard].array))
                 return false;
@@ -988,7 +989,7 @@ bool RowLoopFinder::findOrderOfNest()
         steps = WTF::move(dependent);
     };
     split(m_found.stepsBefore, m_found.stepsInFront);
-    split(m_found.stepsAfter, m_found.stepsBesideSum);
+    split(m_found.stepsAfter, m_found.stepsWithSum);
     split(nested.stepsInFront, m_found.stepsOfNest);
     return true;
 }
@@ -1097,7 +1098,7 @@ private:
         LValue cell { nullptr };
     };
     bool isNamedInRows(ValueID list) const;
-    void emitBasesInFront();
+    void emitHoistedBases();
     void emitHolders(std::span<const Step>);
     void emitColumnHolder();
     void emitSums();
@@ -1138,7 +1139,7 @@ private:
     void emitNextIteration(LBasicBlock entry, LValue counter, LValue next);
     Exit exitTo(const Exit& exit, LValue counter) const { return m_columnEnd && exit.target == m_written.target ? m_written : Exit { exit.target, exit.phi, counter }; }
     bool admitsInt32s() const;
-    bool isBaseInFront(size_t place) const { return !!m_bases[place].cell; }
+    bool isHoistedBase(size_t place) const { return !!m_bases[place].cell; }
     bool isInnerBlock(BlockID block) const
     {
         return block == m_loop.innerHead || std::ranges::any_of(m_loop.bodies, [&](const Body& body) { return body.blocks.contains(block); });
@@ -1290,7 +1291,7 @@ bool RowLoopEmitter::admitsInt32s() const
         return false;
     bool someIsRow = false;
     for (size_t place = 0; place < m_body->reads.size(); ++place) {
-        if (isBaseInFront(place))
+        if (isHoistedBase(place))
             continue;
         someIsRow = true;
         if (!m_code.at(m_body->reads[place].access).admitsInt32Storage())
@@ -1389,7 +1390,7 @@ Vector<LValue, 6> RowLoopEmitter::emitScalarElements(ArrayStorage kind, std::spa
     Vector<LValue, 6> elements;
     for (size_t place = 0; place < m_body->reads.size(); ++place) {
         const ElementRead& read = m_body->reads[place];
-        ArrayStorage kindOfRead = isBaseInFront(place) ? ArrayStorage::Double : kind;
+        ArrayStorage kindOfRead = isHoistedBase(place) ? ArrayStorage::Double : kind;
         elements.append(emitElement(read, kindOfRead, bases[place], read.isColumn ? column : index, read.isColumn ? offsetOfColumn : term, exit));
     }
     return elements;
@@ -1811,7 +1812,7 @@ void RowLoopEmitter::emitRows(ArrayStorage kind, LBasicBlock entry, LValue count
     Vector<Base, 6> bases = m_bases;
     Vector<std::pair<LValue, Base>, 6> known;
     for (size_t place = 0; place < m_body->reads.size(); ++place) {
-        if (isBaseInFront(place))
+        if (isHoistedBase(place))
             continue;
         const ElementRead& read = m_body->reads[place];
         LValue cell = valueOf(read.list, m_loop.innerHead);
@@ -1845,7 +1846,7 @@ void RowLoopEmitter::emitRows(ArrayStorage kind, LBasicBlock entry, LValue count
                 return;
         }
     } else {
-        emitSteps(m_loop.stepsBesideSum.span(), written);
+        emitSteps(m_loop.stepsWithSum.span(), written);
         if (m_generator.m_hasFailed)
             return;
         name(m_loop.sum, emitInnerSum(kind, bases.span(), isPair, written));
@@ -1958,7 +1959,7 @@ void RowLoopEmitter::emitColumns(ArrayStorage kind, LBasicBlock entry, LValue co
     Exit writtenAtStore = exitTo(m_written, stored);
     name(m_loop.counter, stored);
     emitSteps(m_loop.stepsBefore.span(), writtenAtStore);
-    emitSteps(m_loop.stepsBesideSum.span(), writtenAtStore);
+    emitSteps(m_loop.stepsWithSum.span(), writtenAtStore);
     if (m_generator.m_hasFailed)
         return;
     name(m_loop.sum, m_out.loadDouble(m_out.baseIndex(m_generator.heaps().frameSlots, m_out.slotBase(m_sums), place, ScaleEight)));
@@ -1986,7 +1987,7 @@ bool RowLoopEmitter::isNamedInRows(ValueID list) const
     });
 }
 
-void RowLoopEmitter::emitBasesInFront()
+void RowLoopEmitter::emitHoistedBases()
 {
     m_bases.shrink(0);
     m_basesOfStores.shrink(0);
@@ -2059,7 +2060,7 @@ void RowLoopEmitter::emitColumnHolder()
     m_sums = m_generator.m_proc.addStackSlot(8 * sizeof(double));
     name(m_loop.counter, m_first);
     emitSteps(m_loop.stepsBefore.span(), m_front);
-    emitSteps(m_loop.stepsBesideSum.span(), m_front);
+    emitSteps(m_loop.stepsWithSum.span(), m_front);
     m_out.setOrigin(Machine::Origin());
 }
 
@@ -2188,7 +2189,7 @@ void RowLoopEmitter::emitBody()
         if (!m_keptNumbers)
             m_keptNumbers = m_generator.m_proc.addStackSlot(mostNumbersKept * sizeof(double));
     }
-    emitBasesInFront();
+    emitHoistedBases();
     emitRowsByLength(ArrayStorage::Double, m_first, m_written);
 }
 
@@ -2309,7 +2310,7 @@ void RowLoopEmitter::emitFrontOfNested(const RowLoop& nest, const Exit& front)
     LValue bound = m_limit;
     leaveUnless(m_out.greaterThan(bound, m_out.int32Zero), m_front);
     emitHolders(m_loop.stepsBefore.span());
-    emitHolders(m_loop.stepsBesideSum.span());
+    emitHolders(m_loop.stepsWithSum.span());
     leaveUnless(m_out.equal(m_limit, bound), m_front);
     m_lengthAsWord = valueOf(m_loop.innerBound, m_loop.head);
     leaveUnless(m_out.below(m_out.sub(m_lengthAsWord, m_out.int32One), m_out.constInt32(longestInnerLoop)), m_front);
@@ -2324,7 +2325,7 @@ void RowLoopEmitter::emitFrontOfNested(const RowLoop& nest, const Exit& front)
         m_storagesOfHolders.append({ *m_loop.innerGuard, m_elements.elementsOf(CellPointer(array)).butterfly.value() });
         m_sums = m_generator.m_proc.addStackSlot(8 * sizeof(double));
     }
-    emitBasesInFront();
+    emitHoistedBases();
     name(m_loop.counter, bound);
     name(m_loop.innerCounter, m_lengthAsWord);
     emitSteps(nest.stepsAtEnd.span(), m_front);
@@ -2386,13 +2387,13 @@ void RowLoopEmitter::emitNest()
     const RowLoop& nested = *m_loop.nested;
     RowLoopEmitter sums(m_generator, nested, m_contextOfEnd);
     m_body = &m_loop.bodies[0];
-    emitSteps(m_loop.stepsBesideSum.span(), m_front);
+    emitSteps(m_loop.stepsWithSum.span(), m_front);
     if (m_generator.m_hasFailed)
         return;
     sums.emitFrontOfNested(m_loop, m_front);
     if (m_generator.m_hasFailed)
         return;
-    emitBasesInFront();
+    emitHoistedBases();
     if (m_loop.innerGuard) {
         const RowGuard& guard = m_generator.m_rows->guards[*m_loop.innerGuard];
         LValue array = valueOf(guard.array, m_loop.innerHead);
@@ -2401,8 +2402,8 @@ void RowLoopEmitter::emitNest()
         m_storagesOfHolders.append({ *m_loop.innerGuard, m_elements.elementsOf(CellPointer(array)).butterfly.value() });
     }
     auto holderOf = [&](const RowLoopEmitter& emitter, unsigned guard) { return std::ranges::find(emitter.m_storagesOfHolders, guard, &std::pair<unsigned, LValue>::first)->second; };
-    size_t storedStep = nested.stepsBesideSum.findIf([&](const Step& step) { return step.kind == Step::Kind::Row && m_generator.m_rows->guards[step.guard].names.contains(m_code.at(nested.store).arrayOperand()); });
-    std::pair<LValue, LValue> storedRows = emitRange(holderOf(sums, nested.stepsBesideSum[storedStep].guard), sums.m_limit);
+    size_t storedStep = nested.stepsWithSum.findIf([&](const Step& step) { return step.kind == Step::Kind::Row && m_generator.m_rows->guards[step.guard].names.contains(m_code.at(nested.store).arrayOperand()); });
+    std::pair<LValue, LValue> storedRows = emitRange(holderOf(sums, nested.stepsWithSum[storedStep].guard), sums.m_limit);
     for (const Step& step : nested.stepsBefore) {
         if (step.kind == Step::Kind::Row)
             leaveUnlessDisjoint(storedRows, emitRange(holderOf(sums, step.guard), sums.m_limit));
@@ -2502,7 +2503,7 @@ void RowLoopEmitter::emit(LValue first, const Exit& front, const Exit& written)
         leaveUnless(m_out.lessThan(first, m_limit), m_front);
     }
     emitHolders(m_loop.stepsBefore.span());
-    emitHolders(m_loop.stepsBesideSum.span());
+    emitHolders(m_loop.stepsWithSum.span());
     if (!m_storagesOfHolders.isEmpty())
         leaveUnless(m_out.lessThan(first, m_limit), m_front);
     m_lengthAsWord = valueOf(m_loop.innerBound, m_loop.innerHead);
@@ -2525,7 +2526,7 @@ void RowLoopEmitter::emit(LValue first, const Exit& front, const Exit& written)
             emitColumnHolder();
         if (m_generator.m_hasFailed)
             return;
-        emitBasesInFront();
+        emitHoistedBases();
         emitSums();
     }
 }

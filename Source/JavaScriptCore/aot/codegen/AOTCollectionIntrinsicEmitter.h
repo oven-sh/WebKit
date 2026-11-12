@@ -26,7 +26,7 @@ public:
     void generateFindKeyInMap(const ValueContext&);
     void generateMovesOfEntriesInCollections(const ValueContext&);
     enum class EntryAnswer : uint8_t { IsPresent, Value, Place };
-    Operand lookUpNumberAtItsPlace(CellPointer owner, Boxed key, EntryAnswer, const ScopedLambda<Operand()>& lookUpByHash);
+    Operand findNumberAtHomeSlot(CellPointer owner, Boxed key, EntryAnswer, const ScopedLambda<Operand()>& lookUpByHash);
     bool isCounterOrSmallNumber(ValueID key) const;
     void generateTryPutValueAtPlaceInMap(const ValueContext&);
 

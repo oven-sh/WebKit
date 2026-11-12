@@ -465,10 +465,10 @@ struct StructureTable::VariantMaps {
 
     static bool describes(const Variant& variant, const CompiledStructure& structure)
     {
-        return structure.hasOtherPrototype() == variant.hasOtherPrototype && describesBesideOtherPrototype(variant, structure);
+        return structure.hasOtherPrototype() == variant.hasOtherPrototype && describesWithOtherPrototype(variant, structure);
     }
 
-    static bool describesBesideOtherPrototype(const Variant& variant, const CompiledStructure& structure)
+    static bool describesWithOtherPrototype(const Variant& variant, const CompiledStructure& structure)
     {
         if (structure.layout().shape != variant.layout->shape || structure.storedPrototype() != variant.prototype)
             return false;
@@ -535,7 +535,7 @@ struct StructureTable::VariantMaps {
             if (filed[place].hash != hash || !filed[place].structure)
                 continue;
             CompiledStructure* structure = decode(filed[place].structure);
-            if (!describesBesideOtherPrototype(variant, *structure))
+            if (!describesWithOtherPrototype(variant, *structure))
                 continue;
             if (!structure->hasOtherPrototype())
                 return structure;
@@ -1237,19 +1237,19 @@ void StructureTable::rememberStepOfKeyOrder(StructureID before, uint32_t orderAn
         m_stepsOfKeyOrders = static_cast<StepOfKeyOrder*>(m_state.pages.allocate(sizeof(StepOfKeyOrder) << logMaxSteps));
         m_state.caches->addClearedEachCollection("steps of key orders"_s, asWritableBytes(std::span { m_stepsOfKeyOrders, size_t { 1 } << logMaxSteps }));
     }
-    putStepOfKeyOrder({ before, orderAndCountBefore, field << 2 | static_cast<uint32_t>(kind), after, orderAndCountAfter });
+    putKeyOrderStep({ before, orderAndCountBefore, field << 2 | static_cast<uint32_t>(kind), after, orderAndCountAfter });
     if (++m_stepsPutSinceGrowth > 1u << m_logNumberOfSteps >> 1 && m_logNumberOfSteps < logMaxSteps) [[unlikely]]
-        growStepsOfKeyOrders();
+        growKeyOrderSteps();
 }
 
-void StructureTable::putStepOfKeyOrder(const StepOfKeyOrder& step)
+void StructureTable::putKeyOrderStep(const StepOfKeyOrder& step)
 {
     size_t newer = placeOfStep(step.before, step.orderAndCountBefore, step.fieldAndKind);
     m_stepsOfKeyOrders[newer + 1] = m_stepsOfKeyOrders[newer];
     m_stepsOfKeyOrders[newer] = step;
 }
 
-NEVER_INLINE void StructureTable::growStepsOfKeyOrders()
+NEVER_INLINE void StructureTable::growKeyOrderSteps()
 {
     std::span used { m_stepsOfKeyOrders, size_t { 1 } << m_logNumberOfSteps };
     Vector<StepOfKeyOrder> previous(used);
@@ -1259,7 +1259,7 @@ NEVER_INLINE void StructureTable::growStepsOfKeyOrders()
     m_stepsPutSinceGrowth = 0;
     for (size_t index = previous.size(); index--;) {
         if (previous[index].before)
-            putStepOfKeyOrder(previous[index]);
+            putKeyOrderStep(previous[index]);
     }
 }
 
@@ -1572,7 +1572,7 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
     if (parameters.outOfLineKeyOrder) {
         m_flags.add(Flag::HasOutOfLineKeyOrder);
         if (parameters.hasExtraProperties)
-            m_furtherFlags.add(FurtherFlag::HasKeyOrderBesideExtraProperties);
+            m_furtherFlags.add(FurtherFlag::HasKeyOrderWithExtraProperties);
     }
     if (!parameters.hasOtherPrototype && !parameters.hasExtraProperties && parameters.prototype == JSValue(parameters.realm->objectPrototype()))
         m_flags.add(Flag::HasOnlyFieldsBelowObjectPrototype);

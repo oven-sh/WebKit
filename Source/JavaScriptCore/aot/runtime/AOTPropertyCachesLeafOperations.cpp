@@ -34,6 +34,7 @@
 #include "JSGlobalProxy.h"
 #include "SparseArrayValueMap.h"
 #include <algorithm>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT {
 
@@ -222,7 +223,7 @@ static void nameExtraPropertiesStructure(VM& vm, Object& object)
     const CompiledStructure& structure = object.compiledStructure();
     if (!structure.hasExtraProperties() || structure.extraPropertiesStructureID() || !structure.extraPropertiesSlot()) [[likely]]
         return;
-    Structure& extraPropertiesStructure = *object.extraProperties()->structure();
+    Structure& extraPropertiesStructure = *WTF::opaque(object.extraProperties()->structure());
     if (!extraPropertiesStructure.isDictionary() && (hasCompiledStructureAtHand(vm) || object.state().objects->structures.existingWithExtraProperties(structure, extraPropertiesStructure)))
         object.ensureStructureForExtraProperties(vm);
 }
@@ -327,7 +328,7 @@ static GetterSetter* findAndFileAccessorAboveCompiledObject(Instance* instance, 
         slot.setCacheableGetterSlot(walk.holder, walk.attributes, accessor, walk.offset);
         ReadQuery query { instance->globalObject, &object, structure, uid, slot, ChainWalkMode::AllocatesNothing };
         PropertyAnswer answer = classifyRead(query);
-        answerByFieldOfGetter(&object, structure, answer);
+        answerByGetterField(&object, structure, answer);
         if (answer.isCacheable())
             caches.cache({ structure, name, SlotAccess::Read }, answer);
     }

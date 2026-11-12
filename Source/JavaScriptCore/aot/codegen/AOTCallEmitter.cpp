@@ -150,7 +150,7 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
-static void emitMarkOfDelegatedCall(CCallHelpers& jit)
+static void emitDelegatedCallMark(CCallHelpers& jit)
 {
 #if CPU(X86_64)
     for (uint8_t byte : headOfDelegationMark)
@@ -266,7 +266,7 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
             break;
         }
         if (callerDelegates)
-            emitMarkOfDelegatedCall(jit);
+            emitDelegatedCallMark(jit);
         if (!wordsOfThrowSite.empty())
             records->traps.callThrowSites.append(CallThrowSite { returnSite, Vector<uint32_t, 3>(wordsOfThrowSite), wordsThatAreMentions });
     });

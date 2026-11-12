@@ -386,7 +386,7 @@ struct StringSwitchTarget {
     intptr_t offset;
 };
 
-struct FunctionBirth {
+struct FunctionAllocationEntry {
     static constexpr unsigned numberOfBirths = 128;
     static constexpr unsigned executableShift = 4;
 
@@ -470,7 +470,7 @@ struct PropertyCacheWords {
     uint8_t prototypeChainFiltersMayBeFilled;
 
     const StringSwitchTarget* switchTargets;
-    const FunctionBirth* functionBirths;
+    const FunctionAllocationEntry* functionAllocationEntries;
     void* clonedArgumentsAllocator;
 
     ReplacedMember replacedMembers[ReplacedMember::numberOfPlaces];

@@ -1327,7 +1327,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
 {
     StructureID id = structure->id();
     ASSERT(slot.structureID == id);
-    const bool staysOutOfHashedTable = access == SlotAccess::Read && isPreparedBeforeLookups(m_vm, name.uid);
+    const bool isExcludedFromHashedTable = access == SlotAccess::Read && isPreparedBeforeLookups(m_vm, name.uid);
     if (std::optional<uint32_t> column = hasFrontCells(access) ? frontColumnFor(m_vm, name) : std::nullopt) {
         bool isSet = m_front.trySet(structure, *column, access, slot);
         if (m_front.takeDidMovePlanes()) {
@@ -1347,7 +1347,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
         if (!isSet)
             m_front.remove(id, *column, access);
     }
-    if (staysOutOfHashedTable)
+    if (isExcludedFromHashedTable)
         return;
     if (m_hashedTable.set(name.uid, access, slot) == HashedSlotTable::SetResult::Stored)
         return;
@@ -1538,7 +1538,7 @@ PropertyCaches::PropertyCaches(State& state)
     , m_missCounters(state.tableArena.allocate<uint8_t>(numberOfMissCounters), numberOfMissCounters)
     , m_prototypeChainFilters(state.tableArena.allocate<PrototypeChainFilter>(PrototypeChainFilter::numberOfFilters), PrototypeChainFilter::numberOfFilters)
     , m_switchTargets(state.tableArena.allocate<StringSwitchTarget>(StringSwitchTarget::numberOfTargets), StringSwitchTarget::numberOfTargets)
-    , m_functionBirths(state.tableArena.allocate<FunctionBirth>(FunctionBirth::numberOfBirths), FunctionBirth::numberOfBirths)
+    , m_functionAllocationEntries(state.tableArena.allocate<FunctionAllocationEntry>(FunctionAllocationEntry::numberOfBirths), FunctionAllocationEntry::numberOfBirths)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
@@ -1546,7 +1546,7 @@ PropertyCaches::PropertyCaches(State& state)
     state.caches->addClearedEachCollection("returns of fields"_s, asMutableByteSpan(std::span { m_fieldReturns }));
     state.caches->addClearedEachCollection("filters of prototype chains"_s, asMutableByteSpan(std::span { m_prototypeChainFilters }), &state.instance.propertyCaches.prototypeChainFiltersMayBeFilled);
     state.caches->addClearedEachCollection("targets of switches"_s, asMutableByteSpan(std::span { m_switchTargets }), &m_switchTargetsMayBeFilled);
-    state.caches->addClearedEachCollection("births of functions"_s, asMutableByteSpan(std::span { m_functionBirths }), &m_functionBirthsMayBeFilled);
+    state.caches->addClearedEachCollection("births of functions"_s, asMutableByteSpan(std::span { m_functionAllocationEntries }), &m_functionAllocationsMayBeFilled);
     state.caches->addClearedEachCollection("extra properties added"_s, asMutableByteSpan(std::span { m_addedExtraProperties }));
     state.caches->addClearedEachCollection("ordinary constructors"_s, asMutableByteSpan(std::span { state.instance.propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors }));
     state.caches->add(CacheKind::ClearedEachCollection, "exits of fields beside their table"_s, m_fieldExitsBesideTable);
@@ -1555,7 +1555,7 @@ PropertyCaches::PropertyCaches(State& state)
     state.instance.propertyCaches.fieldReturns = m_fieldReturns.data();
     state.instance.propertyCaches.prototypeChainFilters = m_prototypeChainFilters.data();
     state.instance.propertyCaches.switchTargets = m_switchTargets.data();
-    state.instance.propertyCaches.functionBirths = m_functionBirths.data();
+    state.instance.propertyCaches.functionAllocationEntries = m_functionAllocationEntries.data();
 }
 
 PropertyCaches::~PropertyCaches() = default;
@@ -1990,7 +1990,7 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
     m_siteCaches.fill(site, *slot, name.uid, walk.changeableObjects.span());
 }
 
-void PropertyCaches::fillSiteCacheOfStore(SiteCache site, Structure* structure, UniquedStringImpl* uid, PropertyOffset offset)
+void PropertyCaches::fillStoreSiteCache(SiteCache site, Structure* structure, UniquedStringImpl* uid, PropertyOffset offset)
 {
     structure->didCachePropertyReplacement(m_vm, offset);
     m_siteCaches.fill(site, Slot::createInStorage(structure->id(), Slot::Kind::Value, Slot::isOwn, nullptr, offset), uid, { });
@@ -2386,7 +2386,7 @@ bool AnswersAtSites::tryDropWideAnswers(uint32_t place, WideSiteAnswers& wide)
     m_placesOfWideAnswers[numberOfWide] = UINT32_MAX;
     m_numbersOfWideAnswersGivenBack.append(static_cast<uint16_t>(numberOfWide));
     m_placesWithoutFurtherAnswers.add(place);
-    countEvent(*m_state.instance.vm, RuntimeCounterID::SitesGivingUpFurtherAnswers);
+    countEvent(*m_state.instance.vm, RuntimeCounterID::SitesWithoutFurtherAnswers);
     return true;
 }
 
@@ -2395,7 +2395,7 @@ bool AnswersAtSites::beginTrialUnlessTried(uint32_t place, WideSiteAnswers& wide
     if (!m_states.hasReachedLongestWait(keyOfState(place)))
         return false;
     uint8_t& timesWithoutRoom = m_timesWithoutRoom.add(place, 0).iterator->value;
-    if (timesWithoutRoom == TrialOfFurtherAnswers::timesWithoutRoomBeforeTrial || ++timesWithoutRoom != TrialOfFurtherAnswers::timesWithoutRoomBeforeTrial)
+    if (timesWithoutRoom == TrialOfFurtherAnswers::overflowsBeforeTrial || ++timesWithoutRoom != TrialOfFurtherAnswers::overflowsBeforeTrial)
         return false;
     m_trials.set(place, TrialOfFurtherAnswers { wide });
     wide.structuresOfFurtherAnswers.fill(0);
@@ -2795,7 +2795,7 @@ static std::optional<SiteAnswers::Answer> answerForTypedSlotInCell(const Object&
     return SiteAnswers::tryByShapeInTypedSlot(object.shapeWord(), field.slot.representation(), field.slot.offset);
 }
 
-static std::optional<AnswersAtSites::AnswerByStructure> answerOfFieldOfGetter(SiteUse use, const Slot& slot)
+static std::optional<AnswersAtSites::AnswerByStructure> getterFieldAnswer(SiteUse use, const Slot& slot)
 {
     if (slot.kind != Slot::fieldOfGetter || !isRead(use) || slot.has(Slot::isOutOfLine))
         return std::nullopt;
@@ -3235,7 +3235,7 @@ bool PropertyCaches::fillFromHeldValue(uint32_t place, SiteUse use, Object& obje
     return true;
 }
 
-void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use, bool stubFollowsFurtherAnswers, bool stubJumpsToArmOfAnswer, bool asksForPresence)
+void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use, bool stubFollowsFurtherAnswers, bool stubJumpsToArmOfAnswer, bool testsForPresence)
 {
     Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
@@ -3260,7 +3260,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     }
     if (use == SiteUse::Call)
         keepIfBelowBuiltinClass(structure);
-    if (isCompiledClosure(base) && uncheckedDowncast<Closure>(base)->mayHoldStaticFieldInVariable(name.uid)) {
+    if (isCompiledClosure(base) && uncheckedDowncast<Closure>(base)->canHoldStaticFieldInVariable(name.uid)) {
         m_tables.remove(id, name, SlotAccess::Read);
         return;
     }
@@ -3304,7 +3304,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
             m_answersAtSites.fillByShape(place, use, *answer, stubJumpsToArmOfAnswer ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInExtension, answer->operand) : std::nullopt);
             return;
         }
-        if (!field && !asksForPresence && object->compiledStructure().heldExtraProperties() && fillFromHeldValue(place, use, *object, name.uid, stubFollowsFurtherAnswers))
+        if (!field && !testsForPresence && object->compiledStructure().heldExtraProperties() && fillFromHeldValue(place, use, *object, name.uid, stubFollowsFurtherAnswers))
             return;
         if (std::optional<uint32_t> operand = field && (use == SiteUse::Call || stubJumpsToArmOfAnswer) && isPlainValueInExtension(*object, *field) && object->isInSlot(*field) ? SiteAnswers::operandOfFieldInExtension(field->slot.offset) : std::nullopt) {
             if (std::optional<SiteAnswers::Answer> answer = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInExtension, *operand))
@@ -3326,7 +3326,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter) && belongsToOneObject(structure))
         slot = std::nullopt;
     bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
-    std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !asksForPresence ? answerOfFieldOfGetter(use, *slot) : std::nullopt;
+    std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !testsForPresence ? getterFieldAnswer(use, *slot) : std::nullopt;
     if (!answer && slot && slot->kind == Slot::fieldOfGetter) {
         ChainWalk above = walkChain({ m_state.instance.globalObject, structure, asObject(base), ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
         if (above.result == ChainWalkResult::Found && above.holder && isValidOffset(above.offset) && (above.attributes & PropertyAttribute::Accessor))
@@ -3343,7 +3343,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         return;
     }
     bool isOneMoreStructureThatLacksName = slot->kind == Slot::Kind::Absent && m_answersAtSites.holdsAnotherStructure(place, use, id);
-    bool mayGiveUp = isRead(use) && !asksForPresence;
+    bool mayGiveUp = isRead(use) && !testsForPresence;
     if (!slot->has(Slot::dependsOnChain)) {
         if (isOneMoreStructureThatLacksName)
             m_answersAtSites.addStructureThatLacksName(place, id, name.uid, { }, mayGiveUp);

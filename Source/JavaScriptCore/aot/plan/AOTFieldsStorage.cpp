@@ -346,8 +346,8 @@ private:
     void layFieldsSharedByFamilies();
     void layFieldsOfUnions();
     std::optional<FieldReference> findFieldAbove(const BitVector& isLaid, FieldReference, LayoutID base) const;
-    const PlacedSlot* findAppendedSlotOfBase(LayoutID, PropertyKeyID, const PlacedSlot&) const;
-    void layAppendedFieldsAsInBase(LayoutID, const BitVector& isLaid);
+    const PlacedSlot* findBaseAppendedSlot(LayoutID, PropertyKeyID, const PlacedSlot&) const;
+    void placeAppendedFieldsAsInBase(LayoutID, const BitVector& isLaid);
     void layFieldsOf(LayoutID, const BitVector& isLaid);
     void handOffsetsToSlotsOf(LayoutID);
     void fillCellThatStaysAsLaid(LayoutID);
@@ -428,7 +428,7 @@ void ChooserOfFieldsStorage::findOffsetsOfFirstSlots()
         uint32_t numberListed = static_cast<uint32_t>(m_program.at(id).fields.size());
         for (uint32_t place = 0; place < planned.appendedKeys.size() && !isLaidAgain(id.index()) && !groupsLaidForGood.quickGet(m_groups.groupOf[id.index()]); ++place) {
             const PlacedSlot& slot = planned.slots[numberListed + place];
-            const PlacedSlot* slotOfBase = findAppendedSlotOfBase(id, planned.appendedKeys[place], slot);
+            const PlacedSlot* slotOfBase = findBaseAppendedSlot(id, planned.appendedKeys[place], slot);
             if (slotOfBase && slotOfBase->offset != slot.offset)
                 layGroupAgain(id);
         }
@@ -646,7 +646,7 @@ std::optional<FieldReference> ChooserOfFieldsStorage::findFieldAbove(const BitVe
     return above;
 }
 
-const PlacedSlot* ChooserOfFieldsStorage::findAppendedSlotOfBase(LayoutID id, PropertyKeyID key, const PlacedSlot& slot) const
+const PlacedSlot* ChooserOfFieldsStorage::findBaseAppendedSlot(LayoutID id, PropertyKeyID key, const PlacedSlot& slot) const
 {
     LayoutID base = isObjectLayout(m_program.at(id).kind) ? writtenBaseOf(m_program.at(id)) : LayoutID();
     if (!base || !hasCells(base) || slot.storage != SlotStorage::Inline || slot.liesInCellOnTrial())
@@ -659,7 +659,7 @@ const PlacedSlot* ChooserOfFieldsStorage::findAppendedSlotOfBase(LayoutID id, Pr
     return slotOfBase.storage == SlotStorage::Inline && !slotOfBase.liesInCellOnTrial() && slotOfBase.representation == slot.representation ? &slotOfBase : nullptr;
 }
 
-void ChooserOfFieldsStorage::layAppendedFieldsAsInBase(LayoutID id, const BitVector& isLaid)
+void ChooserOfFieldsStorage::placeAppendedFieldsAsInBase(LayoutID id, const BitVector& isLaid)
 {
     m_slotsAsInBase.clearAll();
     if (!hasCells(id))
@@ -671,7 +671,7 @@ void ChooserOfFieldsStorage::layAppendedFieldsAsInBase(LayoutID id, const BitVec
     uint32_t numberListed = static_cast<uint32_t>(m_program.at(id).fields.size());
     for (uint32_t place = 0; place < planned.appendedKeys.size(); ++place) {
         PlacedSlot& slot = planned.slots[numberListed + place];
-        const PlacedSlot* slotOfBase = findAppendedSlotOfBase(id, planned.appendedKeys[place], slot);
+        const PlacedSlot* slotOfBase = findBaseAppendedSlot(id, planned.appendedKeys[place], slot);
         if (!slotOfBase || !m_cell.isFree(slotOfBase->offset, slot.width()))
             continue;
         m_cell.occupy(slotOfBase->offset, slot.width());
@@ -712,7 +712,7 @@ void ChooserOfFieldsStorage::layFieldsOf(LayoutID id, const BitVector& isLaid)
         m_offsets[row] = m_offsets[rowAbove];
         m_placesInCells[row] = m_placesInCells[rowAbove];
     }
-    layAppendedFieldsAsInBase(id, isLaid);
+    placeAppendedFieldsAsInBase(id, isLaid);
     auto layWhereRoomIs = [&](uint32_t field) {
         if (field >= numberListed)
             return;

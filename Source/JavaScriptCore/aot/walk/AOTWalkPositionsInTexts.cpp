@@ -358,7 +358,7 @@ bool readsCharacterBeforeTestedNumber(Walker& walker, const BodyValue& read)
     return written && bodyTestHoldsNumberAfterPosition(walker, index, index.blockOf(read.id()), written->text, written->position);
 }
 
-bool readsCharacterUnderCounterFromAbove(Walker& walker, const BodyValue& read)
+bool readsCharacterAtOuterCounter(Walker& walker, const BodyValue& read)
 {
     std::optional<CharacterReadAsWritten> written = findCharacterReadAsWritten(walker, read);
     const BodyIndex& index = walker.currentBodyIndex();
