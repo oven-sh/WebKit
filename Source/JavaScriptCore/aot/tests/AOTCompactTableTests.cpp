@@ -655,6 +655,22 @@ static void testFindByCharacters(LoadedProgram& program)
     AOT_TEST_CHECK(set.find(partOf("the alpha version"_s, 4, 5)) == 0u && set.find(partOf("the beta version"_s, 4, 4)) == 2u && set.find(partOf("the gamma version"_s, 4, 5)) == 4u);
     AOT_TEST_CHECK(!set.has(partOf("the alpha version"_s, 4, 4)) && !set.has(partOf("the alphaa version"_s, 4, 6)) && !set.has(partOf("the delta version"_s, 4, 5)));
 
+#if CPU(ADDRESS64)
+    for (bool isMember : { true, false }) {
+        auto* part = uncheckedDowncast<JSRopeString>(isMember ? partOf("the alpha version"_s, 4, 5) : partOf("the delta version"_s, 4, 5));
+        unsigned hash = isMember ? String("alpha"_s).hash() : String("delta"_s).hash();
+        AOT_TEST_CHECK(!part->hashOfSubstring());
+        for (unsigned round = 0; round < 2; ++round) {
+            auto answer = callOperationFromTest(vm, operationAOTMapHas, &program.instance(), set.owner(), JSValue::encode(part));
+            AOT_TEST_CHECK(!answer.exception && JSValue::decode(answer.value) == jsBoolean(isMember));
+            AOT_TEST_CHECK(part->isSubstring() && part->hashOfSubstring() == hash);
+        }
+        vm.heap.collectSync(CollectionScope::Full);
+        AOT_TEST_CHECK(part->isSubstring() && part->hashOfSubstring() == hash && part->substringOffset() == 4 && part->length() == 5);
+        AOT_TEST_CHECK(part->getString(program.realm()) == String(isMember ? "alpha"_s : "delta"_s));
+    }
+#endif
+
     JSString* rope = jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("pha"_s)));
     AOT_TEST_CHECK(rope->isRope() && set.find(rope) == 0u);
     AOT_TEST_CHECK(!set.has(jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("ph"_s)))));

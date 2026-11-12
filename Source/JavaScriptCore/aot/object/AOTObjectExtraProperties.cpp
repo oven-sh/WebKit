@@ -65,8 +65,10 @@ static CompiledStructure* structureForNewExtraProperties(VM& vm, Object& object,
 {
     StructureTable& structures = object.state().objects->structures;
     const CompiledStructure& current = object.compiledStructure();
-    if (!current.extraPropertiesSlot())
+    if (!current.extraPropertiesSlot()) {
+        structures.growFutureCells(current.layout());
         return structures.holdingExtraProperties(vm, current, extra);
+    }
     CompiledStructure* structure = namesStructure ? structures.withExtraProperties(vm, current, extra->structure()) : structures.existingWithExtraProperties(current, *extra->structure());
     return structure ? structure : structures.withExtraProperties(vm, current, nullptr);
 }
@@ -839,7 +841,7 @@ void Object::adoptExtraProperties(VM& vm, JSObject* filled)
 void Object::setExtraProperties(VM& vm, JSObject* extra, CompiledStructure* withExtraProperties)
 {
     ASSERT(!hasExtraProperties() && withExtraProperties->hasExtraProperties());
-    ASSERT(layout().extraPropertiesSlot() || withExtraProperties->heldExtraProperties() == extra);
+    ASSERT(withExtraProperties->extraPropertiesSlot() || withExtraProperties->heldExtraProperties() == extra);
     vm.mutatorFence();
     writeExtraPropertiesWord(*this, extra);
     vm.mutatorFence();
@@ -858,7 +860,7 @@ bool Object::tryCreateExtraPropertiesOfNewObject(VM& vm, std::span<const ExtraPr
 {
     ASSERT(!hasExtraProperties() && !hasFlagsInOrderWord());
     const LayoutData& layout = this->layout();
-    if (!layout.extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
+    if (!compiledStructure().extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
         return false;
     for (auto& property : inOrder)
         willAddExtraProperty(vm, property.name);
@@ -873,6 +875,11 @@ void Object::didChangeExtraProperties(VM& vm)
     if (!extra)
         return;
     const CompiledStructure& current = compiledStructure();
+    if (Structure* listed = current.heldStructure()) [[unlikely]] {
+        if (listed != extra->structure())
+            JSCell::setStructure(vm, state().objects->structures.withoutHeldStructure(vm, current));
+        return;
+    }
     StructureID namedStructureID = current.extraPropertiesStructureID();
     if (namedStructureID == extra->structureID())
         return;
@@ -895,6 +902,11 @@ void Object::ensureStructureForExtraProperties(VM& vm)
     if (wasDictionary && !extra->structure()->isDictionary())
         didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, nullptr);
     const CompiledStructure& current = compiledStructure();
+    if (current.heldExtraProperties()) [[unlikely]] {
+        didChangeExtraProperties(vm);
+        tryNameHeldStructure(vm);
+        return;
+    }
     if (current.extraPropertiesStructureID() == extra->structureID())
         return;
     CompiledStructure* updatedStructure = state().objects->structures.withExtraProperties(vm, current, extra->structure());
@@ -904,6 +916,21 @@ void Object::ensureStructureForExtraProperties(VM& vm)
     state().propertyCaches->forgetFieldExits();
     if (!wasDictionary)
         state().propertyCaches->forgetAddedExtraProperties();
+}
+
+bool Object::tryNameHeldStructure(VM& vm)
+{
+    const CompiledStructure& current = compiledStructure();
+    JSObject* held = current.heldExtraProperties();
+    if (!held || held->type() != FinalObjectType)
+        return false;
+    Structure* structure = held->structure();
+    if (Structure* named = current.heldStructure())
+        return named == structure;
+    if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || !structure->propertyAccessesAreCacheableForAbsence())
+        return false;
+    current.setHeldStructure(vm, structure);
+    return true;
 }
 
 bool Object::ensureStructureForExtraPropertiesIfNeeded(VM& vm, JSCell* cell)
@@ -932,7 +959,7 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || (isDefinition && attributes))
             return { };
         extra->putDirectOffset(vm, offset, value);
-        if (structure()->mayBePrototype()) [[unlikely]] {
+        if (structure()->mayBePrototype() && compiledStructure().reportsReplacements()) [[unlikely]] {
             countEvent(vm, RuntimeCounterID::ValuesReplacedOnCompiledPrototypes);
             didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
         }

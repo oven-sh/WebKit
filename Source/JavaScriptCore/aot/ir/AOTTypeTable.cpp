@@ -733,7 +733,7 @@ void TypeTable::endStableNumbersOfPropertyKeys()
     endStableNumbersOfPropertyKeys(ParallelLoops(1));
 }
 
-static bool keyIsLookedUpAsName(const Program& program, const PropertyKey& key, PropertyKeyID id)
+static bool isOrdinaryName(const Program& program, const PropertyKey& key, PropertyKeyID id)
 {
     if (key.kind == PropertyKeyKind::PrivateName)
         return false;
@@ -749,12 +749,12 @@ void TypeTable::endStableNumbersOfPropertyKeys(const ParallelLoops& loops)
         return;
 
     m_locationBitsOfKeys.grow(m_numberOfKeysWithStableNumbers);
-    m_keysLookedUpAsNames.grow(m_numberOfKeysWithStableNumbers);
+    m_keysLookedUpByName.grow(m_numberOfKeysWithStableNumbers);
     forEachRangeOfIndicesInParallel(loops, m_numberOfKeysWithStableNumbers, [&](size_t first, size_t end) {
         for (size_t position = first; position < end; ++position) {
             const PropertyKey& key = m_propertyKeys.at(static_cast<uint32_t>(position));
             m_locationBitsOfKeys[position] = locationBitOfKeyInTypeTable(*m_program, key);
-            m_keysLookedUpAsNames[position] = keyIsLookedUpAsName(*m_program, key, PropertyKeyID(static_cast<uint32_t>(position)));
+            m_keysLookedUpByName[position] = isOrdinaryName(*m_program, key, PropertyKeyID(static_cast<uint32_t>(position)));
         }
     });
 }
@@ -779,18 +779,11 @@ void TypeTable::keepAddressesOfTypes()
     m_numberOfTypesFoundByAddress = numberOfTypes;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 const Type& TypeTable::typeKeptBeforeFreezeAt(TypeID id) const
 {
-    uint32_t position = positionInProgramOf(id);
-    if (position < m_numberOfTypesFoundByAddress) [[likely]]
-        return *reinterpret_cast<const Type*>(m_addressesOfPositionZeroInTypeSegments.data()[internedSegmentOf(position)] + static_cast<uintptr_t>(position) * sizeof(Type));
     RELEASE_ASSERT(liesInProgram(id));
-    return m_types.at(position);
+    return m_types.at(positionInProgramOf(id));
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void TypeTable::addKeysOfTexts(uint32_t numberOfStrings, const ParallelLoops& loops)
 {
@@ -816,7 +809,9 @@ std::optional<PropertyKeyID> TypeTable::find(const PropertyKey& key) const
 ProvenInEveryVersion TypeTable::provenTypeOfWhatIsOnlyExpected(const DeclaredType& declared) const
 {
     TypeID predicted = declared.expected().predicted();
-    Type expected = at(predicted);
+    if (isItsOwnValue(predicted))
+        return Proven::byPosition(primitivesInID(predicted) & Primitive::Absent ? anythingOrAbsent : anything);
+    const Type& expected = typeKeptAt(predicted);
     if (!expected.isJavaScriptValue())
         return Proven::byPosition(predicted);
     return Proven::byPosition(expected.primitives & Primitive::Absent ? anythingOrAbsent : anything);

@@ -39,9 +39,10 @@ public:
         IsCopiedByWords = 1 << 6,
         HasOnlyConfigurableFields = 1 << 7,
     };
-    enum class HeldKeyOrder : uint8_t {
-        IsOfOneObject = 1 << 0,
-        IsBesideExtraProperties = 1 << 1,
+    enum class FurtherFlag : uint8_t {
+        HasKeyOrderOfOneObject = 1 << 0,
+        HasKeyOrderWithExtraProperties = 1 << 1,
+        ReportsReplacements = 1 << 2,
     };
     using KeyOrderEntries = Vector<uint16_t, 16>;
 
@@ -57,7 +58,9 @@ public:
         const LayoutData* layout { nullptr };
         bool hasOtherPrototype { false };
         bool mayBePrototype { false };
+        bool reportsReplacements { false };
         bool hasExtraProperties { false };
+        bool hasSpareWord { false };
         Structure* extraPropertiesStructure { nullptr };
         JSObject* heldExtraProperties { nullptr };
         std::optional<std::span<const uint16_t>> outOfLineKeyOrder;
@@ -115,12 +118,19 @@ public:
         const RareData* rareData = this->rareData();
         return rareData ? rareData->heldExtraProperties.get() : nullptr;
     }
+    Structure* heldStructure() const
+    {
+        const RareData* rareData = this->rareData();
+        return rareData ? rareData->heldStructure.get() : nullptr;
+    }
+    void setHeldStructure(VM&, Structure*) const;
     std::optional<SlotData> extraPropertiesSlot() const
     {
         if (!m_extraPropertiesSlot.offset)
             return std::nullopt;
         return m_extraPropertiesSlot;
     }
+    inline bool hasSpareWord() const;
     std::optional<SlotData> extensionSlot() const
     {
         if (!m_extensionSlot.offset)
@@ -157,7 +167,8 @@ public:
         ASSERT(hasOutOfLineKeyOrder());
         const_cast<RareData*>(rareData())->keyOrderWasFoundAgain = true;
     }
-    bool hasKeyOrderOfOneObject() const { return m_heldKeyOrder.contains(HeldKeyOrder::IsOfOneObject); }
+    bool hasKeyOrderOfOneObject() const { return m_furtherFlags.contains(FurtherFlag::HasKeyOrderOfOneObject); }
+    bool reportsReplacements() const { return m_furtherFlags.contains(FurtherFlag::ReportsReplacements); }
     std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder() const
     {
         ASSERT(hasKeyOrderOfOneObject());
@@ -223,10 +234,13 @@ public:
     static constexpr ptrdiff_t offsetOfExtraPropertiesCellSize() { return OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSize); }
     static constexpr ptrdiff_t offsetOfNumberOfExtraKeys() { return OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys); }
     static constexpr ptrdiff_t offsetOfExtraPropertiesSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot); }
+    static constexpr ptrdiff_t offsetOfLowBitsOfRareData() { return OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.lowBitsOfRareData); }
+    static constexpr ptrdiff_t offsetOfHighBitsOfRareData() { return OBJECT_OFFSETOF(CompiledStructure, m_highBitsOfRareData); }
+    static constexpr ptrdiff_t offsetOfHeldExtraPropertiesInRareData() { return OBJECT_OFFSETOF(RareData, heldExtraProperties); }
     static constexpr ptrdiff_t offsetOfExtensionSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot); }
     static constexpr ptrdiff_t offsetOfEnvironmentShapePage() { return OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(CompiledStructure, m_flags); }
-    static constexpr ptrdiff_t offsetOfHeldKeyOrder() { return OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder); }
+    static constexpr ptrdiff_t offsetOfFurtherFlags() { return OBJECT_OFFSETOF(CompiledStructure, m_furtherFlags); }
     static constexpr ptrdiff_t offsetOfSuccessorByPrivateName() { return OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName); }
 
     template<typename Visitor>
@@ -239,6 +253,7 @@ private:
         KeyOrderEntries outOfLineKeyOrder;
         Vector<RefPtr<UniquedStringImpl>> keysNamedByOrder;
         WriteBarrier<JSObject> heldExtraProperties;
+        WriteBarrierStructureID heldStructure;
         bool keyOrderHasEnded { false };
         bool keyOrderWasFoundAgain { false };
     };
@@ -283,7 +298,7 @@ private:
         uint16_t m_environmentShapePage;
     };
     OptionSet<Flag> m_flags;
-    OptionSet<HeldKeyOrder> m_heldKeyOrder;
+    OptionSet<FurtherFlag> m_furtherFlags;
     union {
         uint32_t m_listedOrderAndCount { ListedFields::noOrderWord };
         ExtraKeysAndCellSize m_extraKeysAndCellSize;

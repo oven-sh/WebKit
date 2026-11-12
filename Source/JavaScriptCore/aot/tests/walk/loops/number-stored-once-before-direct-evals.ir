@@ -1,0 +1,58 @@
+# var total = 64, view = new Int32Array(16); function copy() { for (var i = 0; i < total / 4; ++i) view[i] = i; } function evaluate(text) { return eval(text); } copy(); evaluate("1");
+# One store alone gives the variable a whole number, so as long as no direct eval was handed a text it holds undefined or that number, and the bound of the loop is written.
+# LIBRARY: own
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: undefined|64 @{{*}}GetModuleVariable variable=g0
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: PutTypedArrayElement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="total" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="copy" module=m0 declared={type=anything} initialization=Function function=f2
+variable g3 module=m0 declared={type=anything} initialization=Undefined flags=[MarksEvaluation]
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="total" depth=1 variable=g0}, {name="view" depth=1 variable=g1}, {name="copy" depth=1 variable=g2}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=64
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=Int32Array
+    v3 = Integer integer=16
+    v4 = Construct v2, -, v3
+    PutModuleVariable v4 variable=g1
+    v6 = GetModuleVariable variable=g2
+    v7 = Call v6
+    v8 = NewClosure function=f1
+    v9 = String string="1"
+    v10 = Call v8, -, v9
+    Return v10
+}
+function f1 name="evaluate" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    PutModuleVariable v3 variable=g3
+    v5 = DirectEval v2, v0, v1 evalScope=e0
+    Return v5
+}
+function f2 name="copy" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = GetModuleVariable variable=g0
+    v4 = Integer integer=4
+    v5 = Div v3, v4
+    v6 = Less v1, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g1
+    ElemSet v7, v1, v1 mode=Sloppy
+    v9 = Increment v1
+    Jump -> next b1(v9)
+  b3():
+    v10 = Undefined
+    Return v10
+}

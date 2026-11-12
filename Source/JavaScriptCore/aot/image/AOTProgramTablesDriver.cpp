@@ -113,7 +113,6 @@ static ProgramTables makeHeaderOfProgramTables(const TableInputs& inputs, const 
     header.numberOfFieldTableRows = shapes.firstEnvironmentShape() - 1;
     header.numberOfFieldTableColumns = numbers.identifiers().countWithFieldTableColumn();
     header.numberOfClosureCells = numbers.numberOfClosureCells();
-    header.sizeOfStructuresOfHeirs = numbers.sizeOfStructuresOfHeirs();
     header.closureFunctions = { firstClosureFunction, functions.endOfClosureFunctions().index(), firstClosureFunction };
     return header;
 }
@@ -121,6 +120,7 @@ static ProgramTables makeHeaderOfProgramTables(const TableInputs& inputs, const 
 static Vector<uint32_t> typeOffsetsInJoinedTables(std::span<const TablePart> parts, const FirstTableParts& firstParts)
 {
     uint32_t start = static_cast<uint32_t>(startInJoinedTables(parts, TablePartID::Types));
+    RELEASE_ASSERT(start == FirstTableParts::startOfTypes);
     return firstParts.typeOffsets.map([start](uint32_t offsetInPart) -> uint32_t {
         return offsetInPart ? start + offsetInPart : 0;
     });
@@ -194,6 +194,7 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
     for (TableEncoder& encoder : encoders)
         parts.append(WTF::move(encoder.part));
     ProgramTables header = makeHeaderOfProgramTables(inputs, numbers);
+    header.shiftOfTypeNumbers = firstParts.shiftOfTypeNumbers;
     Vector<uint8_t> tables = joinTableParts(parts.mutableSpan(), header, build);
     times.didFinish("join"_s);
     if (diagnostics.hasErrors())

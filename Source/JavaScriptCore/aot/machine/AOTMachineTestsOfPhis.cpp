@@ -101,8 +101,14 @@ std::optional<int64_t> valueOfTestWherePhiHolds(const Operation* tested, const O
 
 bool holdsNothingButTestOfItsPhi(const Block* join, const Operation* phi)
 {
+    ASSERT(phi->owner() == join);
+    return testsOnlyPhi(join, phi);
+}
+
+bool testsOnlyPhi(const Block* join, const Operation* phi)
+{
     const Operation* branch = join->last();
-    ASSERT(branch->opcode() == Branch && phi->owner() == join && phi->useCount() == 1);
+    ASSERT(branch->opcode() == Branch && phi->useCount() <= 2);
     if (branch->child(0) == phi || !valueOfTestWherePhiHolds(branch->child(0), phi, 0))
         return false;
 

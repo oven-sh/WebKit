@@ -121,6 +121,7 @@ struct LayoutFacts {
 struct ClassFacts {
     ExecutionCount evaluations { ExecutionCount::Unknown };
     BaseState baseState { BaseState::Unknown };
+    bool isEvaluatedOncePerInstance { false };
     LayoutID base;
     LayoutID prototypeBase;
 };

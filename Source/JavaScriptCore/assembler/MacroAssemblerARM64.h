@@ -3286,6 +3286,7 @@ public:
 
     void loadVector(BaseIndex address, FPRegisterID dest)
     {
+        // The register offset of a 128-bit access is scaled by 1 or 16.
         if (address.scale == TimesOne) {
             if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
                 m_assembler.ldr<128>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
@@ -4848,6 +4849,12 @@ public:
     }
 
     Jump branch32(RelationalCondition cond, Address left, TrustedImm32 right)
+    {
+        load32(left, getCachedMemoryTempRegisterIDAndInvalidate());
+        return branch32(cond, memoryTempRegister, right);
+    }
+
+    Jump branch32(RelationalCondition cond, BaseIndex left, RegisterID right)
     {
         load32(left, getCachedMemoryTempRegisterIDAndInvalidate());
         return branch32(cond, memoryTempRegister, right);

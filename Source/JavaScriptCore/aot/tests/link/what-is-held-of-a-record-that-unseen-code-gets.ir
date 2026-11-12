@@ -4,7 +4,7 @@
 # RUN: link fields layouts mechanisms=all
 # CHECK-NOT: field L0.0 "name" proven
 # CHECK-NOT: field L0.1 "size" proven
-# CHECK: field L1.0 "mark" proven=i32 writers-known
+# CHECK: field L1.0 "mark" proven=2 writers-known
 # CHECK-NOT: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor] stays-with-compiled-code
 # CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
 # CHECK: layout L1 changes=[] stays-with-compiled-code

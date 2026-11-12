@@ -1,11 +1,16 @@
 # function difference(pair: number[]) { return pair[0] - pair[1]; }
 # Link proves that `pair` is a list of numbers; nothing names its storage. A literal whose elements are not all proven numbers, and every list that once held something else, holds its numbers boxed:
-# the read in line has an arm for that kind behind the two for raw numbers, and asks the element for its proven type there.
+# the read in line has an arm for doubles and one for boxed elements, int32s or others. The conversion of a boxed element asks for its proven type: an int32, a double, undefined, or it stops.
 # RUN: emit f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: = Load({{*}}indexedDoubleProperties[0]
-# CHECK: = Load({{*}}indexedContiguousProperties[0]
-# CHECK: = Load({{*}}indexedContiguousProperties[0]
+# CHECK: Int64 @[[boxed]] = Load({{*}}indexedContiguousProperties[0]
+# CHECK: = AboveEqual(@[[boxed]], {{*}}
+# CHECK: Int64 @[[tag]] = BitAnd(@[[boxed]], {{*}}
+# CHECK: Branch(@[[tag]], {{*}}unlikely
+# CHECK: @[[undefined]] = Equal(@[[boxed]], {{*}}
+# CHECK: Branch(@[[undefined]], {{*}}rare
+# CHECK: Patch(@[[boxed]]:SomeRegister, {{*}}Terminal
 # RUN(ANSWER): run-in-shell globalThis.seed = 3; globalThis.tell = answer => print(answer);
 # ANSWER: 3.25
 # ANSWER-NEXT: exited with 0

@@ -136,7 +136,7 @@ Word32 AccessEmitter::findPrototypeTransition(CellPointer object, Boxed prototyp
     LBasicBlock isKnown = newBlock();
     const Machine::AbstractHeap& heap = m_heaps.collectorState;
     Word32 before = loadStructureID(object);
-    Word32 hash = shiftRightUnsigned(bitXor(before, low32(prototype)), prototypeTransitionHashShift);
+    Word32 hash = shiftRightUnsigned(bitXor(before, Word32(m_out.castToInt32(prototype.value()))), prototypeTransitionHashShift);
     Integer index = zeroExtended(bitAnd(hash, word32(numberOfPrototypeTransitions - 1)));
     LValue transition = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.prototypeTransitions)), index, 4).value();
     Condition hasPrototype = equal(Boxed(m_out.load64(m_out.address(heap, transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)))), prototype);
@@ -188,12 +188,12 @@ AccessEmitter::ExcludedKeys AccessEmitter::excludedKeysOf(const ValueContext& va
     }
     for (ValueID key : value->excludedOperands())
         keys.append(in<Boxed>(key));
-    return { run, word32(static_cast<int32_t>(keys.size())), argumentBuffer(keys.span()) };
+    return { run, word32(static_cast<int32_t>(keys.size())), keys.isEmpty() ? pointerConstant(0) : argumentBuffer(keys.span()) };
 }
 
 AccessEmitter::ExcludedKeys AccessEmitter::noExcludedKeys()
 {
-    return { word32(0), word32(0), argumentBuffer(std::span<const Boxed>()) };
+    return { word32(0), word32(0), pointerConstant(0) };
 }
 
 void AccessEmitter::copyDataProperties(const ValueContext& value, CellPointer target, ValueID sourceID, Origin origin, NOESCAPE const Invocable<ExcludedKeys()> auto& excludedKeys)
@@ -222,6 +222,10 @@ void AccessEmitter::copyDataProperties(const ValueContext& value, CellPointer ta
 
 void AccessEmitter::generateCopyDataProperties(const ValueContext& value)
 {
+    if (value->excludedKeys().empty() && value->excludedOperands().empty() && !m_generator.isInLoop(value.block())) {
+        callStub(value, copyAllDataProperties(), { in<CellPointer>(value->targetOperand()).value(), in<Boxed>(value->sourceOperand()).value() });
+        return;
+    }
     copyDataProperties(value, in<CellPointer>(value->targetOperand()), value->sourceOperand(), value.origin(), [&] {
         return excludedKeysOf(value);
     });
@@ -444,38 +448,43 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     auto isGeneralShape = [&](Word32 shapeWord) {
         return equal(shapeWord, static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first)));
     };
-    auto refuse = [&] {
-        return boolean(false);
+    LBasicBlock refused = newBlock();
+    auto continueIf = [&](Condition condition) {
+        LBasicBlock next = newBlock();
+        m_out.branch(condition.value(), normalEdge(next), normalEdge(refused));
+        m_out.appendToContinuation(next);
     };
-    defineTest(value, either<Condition>(isGeneralShape(shapeTests.shapeWordWithMarkOf(source)), [&] {
-        Word32 orderWord = shapeTests.orderWordOf(source);
-        Condition hasNoOtherBits = hasNoBits(orderWord, ~(orderAndCountMask | orderWordIntegrityBits));
-        Condition hasOnlyFields = logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
-        if (const PlacedSlot& extensionWord = m_plan.slots().extensionWord(layout); extensionWord.hasStorage()) {
-            TypedPointer address = m_out.address(fields, source.value(), extensionWord.offset);
-            bool isNarrow = traitsOf(extensionWord.representation).isNarrowReference;
-            hasOnlyFields = logicalAnd(hasOnlyFields, isNarrow ? isZero(Word32(m_out.load32(address))) : isZero(Integer(m_out.load64(address))));
-        }
-        for (const PlacedSlot& slot : slots) {
-            if (!slot.hasStorage() || slot.isOutOfLine() || slot.representation != SlotRepresentation::DeferredClosure)
-                continue;
-            Word32 word(m_out.load32(m_out.address(fields, source.value(), slot.offset)));
-            hasOnlyFields = logicalAnd(hasOnlyFields, notEqual(word, uncreatedDeferredClosure));
-        }
-        return either<Condition>(hasOnlyFields, [&] {
-            if (planned.size > offsetOfFirstField)
-                emitter<CellAllocationEmitter>().copyFieldWords(source, target, static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size)) - offsetOfFirstField);
-            LValue orderWordOfTarget = bitAnd(orderWord, static_cast<int32_t>(orderAndCountMask)).value();
-            if (shapesOfLayout.count > 1)
-                orderWordOfTarget = m_out.select(isGeneralShape(shapeTests.shapeWordOf(target)).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
-            m_out.store32(orderWordOfTarget, m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
-            if (planned.mayBearMark)
-                shapeTests.clearMark(target);
-            if (mayCopyCell)
-                emitter<BarrierEmitter>().barrier(value, target);
-            return boolean(true);
-        }, refuse);
-    }, refuse));
+    Join<Condition> didCopy(m_out);
+    continueIf(isGeneralShape(shapeTests.shapeWordWithMarkOf(source)));
+    Word32 orderWord = shapeTests.orderWordOf(source);
+    continueIf(hasNoBits(orderWord, ~(orderAndCountMask | orderWordIntegrityBits)));
+    continueIf(notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
+    if (const PlacedSlot& extensionWord = m_plan.slots().extensionWord(layout); extensionWord.hasStorage()) {
+        TypedPointer address = m_out.address(fields, source.value(), extensionWord.offset);
+        bool isNarrow = traitsOf(extensionWord.representation).isNarrowReference;
+        continueIf(isNarrow ? isZero(Word32(m_out.load32(address))) : isZero(Integer(m_out.load64(address))));
+    }
+    for (const PlacedSlot& slot : slots) {
+        if (!slot.hasStorage() || slot.isOutOfLine() || slot.representation != SlotRepresentation::DeferredClosure)
+            continue;
+        Word32 word(m_out.load32(m_out.address(fields, source.value(), slot.offset)));
+        continueIf(notEqual(word, uncreatedDeferredClosure));
+    }
+    if (planned.size > offsetOfFirstField)
+        emitter<CellAllocationEmitter>().copyFieldWords(source, target, static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size)) - offsetOfFirstField);
+    LValue orderWordOfTarget = bitAnd(orderWord, static_cast<int32_t>(orderAndCountMask)).value();
+    if (shapesOfLayout.count > 1)
+        orderWordOfTarget = m_out.select(isGeneralShape(shapeTests.shapeWordOf(target)).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
+    m_out.store32(orderWordOfTarget, m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
+    if (planned.mayBearMark)
+        shapeTests.clearMark(target);
+    if (mayCopyCell)
+        emitter<BarrierEmitter>().barrier(value, target);
+    didCopy.add(boolean(true));
+
+    m_out.appendTo(refused);
+    didCopy.add(boolean(false));
+    defineTest(value, didCopy.finish());
 }
 
 void AccessEmitter::generateGetSuperBase(const ValueContext& value)

@@ -1,0 +1,67 @@
+# An int32 that replaces an int32 in an array is stored as a whole boxed word. The next read of the element loads the word, and no CPU forwards a wide load out of a narrower store.
+# function update(n) { for (let j = 0; j < n; j++) counts[j & 3] = (counts[j & 3] + j) & 1023; return counts[0]; }
+# RUN: emit f1 mechanisms=all
+# CHECK-LABEL: unit f1
+# CHECK: Int32 @{{*}} = Add(
+# CHECK-NEXT: Int32 @[[number]] = BitAnd(
+# CHECK-NEXT: Int64 @[[wide]] = ZExt32(@[[number]],
+# CHECK-NEXT: Int64 @[[word]] = Add(@[[wide]],
+# CHECK-NEXT: = Shl(
+# CHECK-NEXT: Int64 @[[place]] =
+# CHECK-NEXT: = Store(@[[word]], @[[place]],
+
+variable g0 name="counts" module=m0 declared={type=undefined|null|absent|Array<number> flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=2
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Builtin builtin=Number
+    v8 = Call v7, -, v6 calleeName="Number"
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v10 = Call v1, -, v9 calleeName="update"
+    v11 = PropGet v5 key="publish" [isFreeName]
+    v12 = Call v11, -, v10
+    Return
+}
+function f1 name="update" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="counts"
+    v8 = Integer integer=3
+    v9 = BitAnd v3, v8
+    v10 = GetModuleVariable variable=g0
+    v11 = CheckInitialized v10 name="counts"
+    v12 = Integer integer=3
+    v13 = BitAnd v3, v12
+    v14 = ElemGet v11, v13
+    v15 = Add v14, v3
+    v16 = Integer integer=1023
+    v17 = BitAnd v15, v16
+    ElemSet v7, v9, v17
+    v19 = Increment v3
+    v20 = Convert v19 declared={type=number}
+    Jump -> next b1(v20)
+  b3():
+    v21 = GetModuleVariable variable=g0
+    v22 = CheckInitialized v21 name="counts"
+    v23 = Integer
+    v24 = ElemGet v22, v23
+    v25 = Convert v24 declared={type=number} illTypedCause=Assertion
+    Return v25
+}
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+entry module=m0

@@ -36,6 +36,7 @@
 
 #if ENABLE(AOT)
 #include "AOTClassPrototype.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalkInlines.h"
 #endif
 
@@ -52,11 +53,11 @@ static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorDefineProperties);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorCreate);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorSeal);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorFreeze);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorFreeze);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorPreventExtensions);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorIsSealed);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorIsFrozen);
-static JSC_DECLARE_HOST_FUNCTION(objectConstructorIsExtensible);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorIsSealed);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorIsFrozen);
+JSC_DECLARE_HOST_FUNCTION(objectConstructorIsExtensible);
 static JSC_DECLARE_HOST_FUNCTION(objectConstructorHasOwn);
 
 }
@@ -303,6 +304,12 @@ static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* 
             RETURN_IF_EXCEPTION(scope, void());
         }
         bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source, goesOnKeyByKey);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (didAssign)
+            return;
+    }
+    if (vm.hasCompiledCode() && !target->structure()->isCompiledStructure()) {
+        bool didAssign = AOT::PropertyWalk::tryAssignThroughCaches(globalObject, target, source);
         RETURN_IF_EXCEPTION(scope, void());
         if (didAssign)
             return;
@@ -1319,6 +1326,9 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
+    if (object->structure()->isCompiledStructure() && AOT::PropertyWalk::tryFreezeFields(vm, object))
+        return object;
+
     // Once its members exist, the prototype object of a compiled class is an ordinary object and takes the single transition below like any other.
     AOT::ClassPrototype::ensureMembers(object);
 #endif
@@ -1482,6 +1492,12 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
             object = proxy->target();
     }
 
+#if ENABLE(AOT)
+    // An object that is still being filled is a dictionary, and the keys of a dictionary are not cached.
+    if (vm.aotState().hasObjectsBeingFilled && object->type() == FinalObjectType && object->structure()->isDictionary()) [[unlikely]]
+        AOT::flattenOnce(vm, object);
+#endif
+
     // We attempt to look up own property keys cache in Object.keys / Object.getOwnPropertyNames cases.
     if (!globalObject->isHavingABadTime()) [[likely]] {
         if (auto* immutableButterfly = object->structure()->cachedPropertyNames(kind)) {
@@ -1495,6 +1511,14 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
                 filter = propertyNameMode == PropertyNameMode::Strings ? AOT::PropertyWalk::Filter::Strings : AOT::PropertyWalk::Filter::StringsAndSymbols;
             if (auto* keys = AOT::PropertyWalk::tryGetCachedOwnKeys(vm, object, filter))
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+        }
+        if (!Inherit && propertyNameMode == PropertyNameMode::Symbols && object->structure()->isCompiledStructure()) [[unlikely]] {
+            JSObject* extraProperties = nullptr;
+            if (AOT::PropertyWalk::keepsSymbolsInExtraProperties(object, extraProperties)) {
+                if (!extraProperties)
+                    RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+                RELEASE_AND_RETURN(scope, (getPropertyKeys<Inherit>(globalObject, extraProperties, propertyNameMode, dontEnumPropertiesMode)));
+            }
         }
 #endif
     }

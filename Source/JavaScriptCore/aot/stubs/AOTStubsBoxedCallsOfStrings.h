@@ -15,6 +15,7 @@ void emitStringCodeUnitAt(StubAssembler&, GPRReg scratch, JumpList& callsHostFun
 void emitStringCharacterAt(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
 void emitStringPiece(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
 void emitStringLastIndexOf(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
+void emitStringLocaleCompare(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
 
 } } // namespace JSC::AOT
 

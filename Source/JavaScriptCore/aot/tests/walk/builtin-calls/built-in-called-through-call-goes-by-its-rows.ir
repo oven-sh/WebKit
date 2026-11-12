@@ -33,7 +33,7 @@
 # RUN(UNUSED): walk f6 mechanisms=all
 # UNUSED-LABEL: code f6:Body
 # UNUSED: = PropHasOwn v0 key="a" calledBuiltin=ObjectPrototypeHasOwnProperty
-# UNUSED: = CallBuiltin {{*}}overload=ObjectPrototypeIsPrototypeOf
+# UNUSED: = CallInline {{*}}inlineBuiltin=ObjectIsPrototypeOf overload=ObjectPrototypeIsPrototypeOf
 # With calls of built-ins withheld the call stays as it is written.
 # RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+DirectCalls
 # CLOSED-LABEL: code f1:Body

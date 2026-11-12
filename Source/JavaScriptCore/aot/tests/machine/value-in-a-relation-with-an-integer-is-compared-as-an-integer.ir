@@ -15,9 +15,8 @@
 # EMIT-LABEL: unit f1:Body
 # EMIT: = LessThan(
 # EMIT-NEXT: = Branch(
-# EMIT: = Patch(
-# EMIT-NEXT: = Trunc(
-# EMIT-NEXT: = Branch(
+# EMIT: Void {{*}} = Patch(
+# EMIT-NOT: = Branch(
 # RUN(NODOUBLE): emit f1:Body mechanisms=none+TypedOperations
 # NODOUBLE-NOT: = IToD(
 # RUN(COUNT): walk f3 mechanisms=all

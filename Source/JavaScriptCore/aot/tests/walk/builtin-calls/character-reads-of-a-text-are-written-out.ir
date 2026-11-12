@@ -14,10 +14,9 @@
 # ALL: = GetStringCodeUnit
 # function pointAt(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.codePointAt(i)]; }
 # RUN(POINT): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# outside loops codePointAt is one operation, whose code opens the text once
 # POINT-LABEL: code f2:Body
-# POINT: = GetStringCodeUnit
-# POINT: = GetStringCodeUnit
-# POINT: = LShift
+# POINT: = CallInline {{*}}inlineBuiltin=StringCodePointAt
 # function letterAt(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.charAt(i)]; }
 # RUN(LETTER): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
 # LETTER-LABEL: code f3:Body

@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet opcodesThatNameModulesInScanStrings = opcodesWhere([](Opcode opcode) {
     return PayloadWord::module(opcode) || PayloadWord::referrer(opcode);
 });
-static constexpr OpcodeSet opcodesThatGoByNumbersOfModulesInScanStrings { Opcode::ModuleNamespace, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy };
+static constexpr OpcodeSet opcodesThatGoByNumbersOfModulesInScanStrings { Opcode::ModuleNamespace, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::InstanceNamespace, Opcode::InstanceImportMeta };
 
 namespace {
 

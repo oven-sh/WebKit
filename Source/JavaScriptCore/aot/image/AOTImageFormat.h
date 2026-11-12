@@ -24,6 +24,7 @@
 #include <array>
 #include <bit>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -76,10 +77,37 @@ public:
         return group + m_steps[function];
     }
 
+    uint32_t startOfGroup(uint32_t group) const
+    {
+        uint32_t start = m_groups[group];
+        return start & wideGroup ? m_groups[start & ~wideGroup] : start;
+    }
+
+    uint32_t find(uint32_t offset, uint32_t firstGroup, uint32_t lastGroup) const
+    {
+        uint32_t group = firstGroup;
+        while (group < lastGroup && startOfGroup(group + 1) <= offset)
+            ++group;
+        uint32_t firstFunction = group << groupShift;
+        uint32_t start = m_groups[group];
+        if (start & wideGroup) [[unlikely]]
+            return firstFunction + indexOfLastUpTo(m_groups + (start & ~wideGroup), offset);
+        return firstFunction + indexOfLastUpTo(m_steps + firstFunction, std::min<uint32_t>(offset - start, std::numeric_limits<uint16_t>::max()));
+    }
+
     const uint16_t* steps() const { return m_steps; }
     const uint32_t* groups() const { return m_groups; }
 
 private:
+    template<typename T>
+    static uint32_t indexOfLastUpTo(const T* first, uint32_t value)
+    {
+        uint32_t index = 0;
+        for (uint32_t step = functionsInGroup / 2; step; step /= 2)
+            index += first[index + step] <= value ? step : 0;
+        return index;
+    }
+
     const uint16_t* m_steps;
     const uint32_t* m_groups;
 };
@@ -162,6 +190,7 @@ enum class ImageFlag : uint32_t {
     RunsEntryPointsAgain = 1 << 8,
     LetsGlobalObjectGo = 1 << 9,
     SetsMainModulePath = 1 << 10,
+    HasReloadableModules = 1 << 11,
     RefusesOriginalsBesideMocks = 1 << 12,
 };
 
@@ -172,6 +201,7 @@ struct ImageNumberRanges {
     uint32_t endOfStringHeaders;
     uint32_t numberOfStringWords;
     uint32_t numberOfCodedTexts;
+    uint32_t numberOfPlacedConstants;
 };
 
 struct ImageHeader {
@@ -331,8 +361,8 @@ static_assert(sizeof(StubAddressInImage) == 16);
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
 struct PositionIndex {
-    static constexpr unsigned functionsBetween = 32;
-    static constexpr unsigned numberOfCodes = 15;
+    static constexpr unsigned functionsBetween = 16;
+    static constexpr unsigned numberOfCodes = 21;
     static constexpr size_t numberOfEntriesFor(size_t numberOfFunctions) { return (numberOfFunctions + functionsBetween - 1) / functionsBetween; }
 
     static const uint8_t* firstEntry(const uint8_t* section, size_t group, size_t numberOfFunctions)

@@ -908,7 +908,7 @@ static void unionsOfTypesWithEarlierStatesAreTheUnions()
     told.forgetEarlierStates();
 }
 
-static void rememberedAnswersDoNotShareNumbers()
+static void cachedResultsHaveUniqueIDs()
 {
     TypeTable table(BuiltinTable::singleton());
     table.setObjects(makeUniqueWithoutFastMallocCheck<ObjectTable>(BuiltinTable::singleton(), std::span<const FunctionInOrderOfObjects>()));
@@ -1310,7 +1310,7 @@ std::span<const NativeTest> idSetTests()
         { "id-sets/unions-of-types-with-earlier-states"_s, unionsOfTypesWithEarlierStatesAreTheUnions },
         { "id-sets/compare-by-content"_s, idSetsCompareByContent },
         { "id-sets/typed-sets"_s, typedIDSetsAnswerLikeUntypedOnes },
-        { "id-sets/remembered-answers-do-not-share-numbers"_s, rememberedAnswersDoNotShareNumbers },
+        { "id-sets/remembered-answers-do-not-share-numbers"_s, cachedResultsHaveUniqueIDs },
         { "id-sets/freezing-type-table-frees-outgrown-slots"_s, freezingTypeTableFreesOutgrownSlots },
         { "id-sets/list-memo"_s, idListMemoKeepsWhatIsAskedFor },
         { "id-sets/shared-answers-eight-threads-number-lists"_s, eightThreadsGetOneNumberForEachSharedList },

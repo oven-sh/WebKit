@@ -121,7 +121,7 @@ void StraightEmitter::generateBinding(const BodyValue& value)
         generateGetModuleVariable(*this, value);
         return;
     case Opcode::PutModuleVariable:
-        storeVariable(value.variable(), loadIntoResultRegister(value.valueOperand()));
+        storeVariable(value.variable(), value.valueOperand());
         return;
     case Opcode::GetEnvironmentField:
         generateGetEnvironmentField(*this, value);

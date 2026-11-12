@@ -2,6 +2,7 @@ enum KnowledgeLevel { Unknown Expected Proven }
 enum AccessCost { ByName TestsReceiver TestsSlot Free }
 enum AccessKind { Unknown Read Store Define Has Delete Call Construct Truthiness Equality Arithmetic Comparison Conversion TypeOf InstanceOf Iteration Spread }
 enum UnprovenCause { Unknown UnknownObject UnknownCallee Untracked }
+enum TypeOriginReason { Unknown Untracked BuiltinResult CallResult PropertyRead OutsideCaller ExposedObject ExposedVariable CaughtException OtherValue ArrayArgument OtherBuiltin OtherFunction ManyShapes ManyFunctions ChangedShape MissingField CheckedElement CheckedResult CheckedKeys StaticField BuiltinProperty ComputedName }
 enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode FlowResultDisabled RunsMachineCode LoadsCodeByName }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped StoredByName NamedAtRunTime }
 enum FeatureUseKind { Named Unnamed NamedAtRunTime FoundByName }
@@ -25,6 +26,8 @@ enum ResultSection {
     FunctionNames LayoutNames
     WorkerStartsFromURLs
     MissingLibraryModules
+    InlinedStrings
+    TypeOrigins
 }
 
 record TextRange abi { offset: UInt32 length: UInt32 }
@@ -49,8 +52,9 @@ record WorkerStartRecord abi { witness: Witness }
 record WorkerURLStartRecord abi { witness: Witness }
 record AccessRecord abi {
     location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause layout: Layout? copies: UInt32
-    function: Function? cost: AccessCost loopDepth: UInt32
+    function: Function? cost: AccessCost loopDepth: UInt32 origin: UInt32 hasOtherOrigins: UInt32
 }
+record TypeOriginRecord abi { reason: TypeOriginReason location: SourceLocation entry: SourceLocation name: TextRange builtin: Builtin? }
 record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }
 record TypeTestRecord abi { location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 layout: Layout? }
 record AllocationRemarkRecord abi {
@@ -61,6 +65,7 @@ record FormBytesRecord abi { operation: TextRange form: CodeForm count: UInt32 b
 record ModuleBytesRecord abi { module: Module functions: UInt32 codeBytes: UInt64 tableBytes: UInt64 }
 record FunctionNameRecord abi { function: Function module: Module? name: TextRange }
 record LayoutNameRecord abi { layout: Layout name: TextRange }
+record InlinedStringRecord abi { text: TextRange }
 record ObfuscatedSiteRecord abi { function: UInt32 site: UInt32 location: SourceLocation name: TextRange }
 
 enum CompileAction { Compile VerifyOnly CheckOnly }
@@ -68,11 +73,11 @@ enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing ReplayFinalLoopVisits RepeatFittingLoopVisits FlowMonotonicity }
-flags ReportSet { Flow Symbols Allocations AccessCounts Uses }
+flags ReportSet { Flow Symbols Allocations AccessCounts Uses InlinedStrings }
 flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules DelayOtherFlowRules ShuffleExpectedTypes AssumeNullishHostResults CheckProofsAtRunTime AssumeUnknownCallsReturnUndefined ForceStraightCompilation CheckProofsAtEntries CheckProofsAtEntriesAndFields DisableFrameCells CheckBoundsAtRunTime AssumeIndexesInBounds CheckEffectsAtRunTime UnderstateEffects AssumeCalleesRetainNothing AssumeArgumentsNeverEscape ShuffleBlockFrequencies FailSpeculations WidenFlowNodes ShuffleChoices DisableLaterUnitSpeculation CheckWalkAtRunTime ForceFallbackBlockOrder ForceWalkMode AbortLoopVisits DropLengthCheckedReads AssumeInvariantLoopBounds AssumeGuardsAndFacts SkipFencesAfterLateStores AssumeUInt32Dividends IgnoreAlternativeOverloads IgnoreFreshArrayEscapes MisroundLoopBounds SkipInt32Reboxing MisfoldBranchInSweep DropEdgeInSweep CheckBoundsInEmittersOnly SkipUnrollEntryChecks SkipUnrollTripCountCheck CheckHoistedCallsAtRunTime AssumeInlineBuiltinsPure AssumeNoNaNStores UseGenericOwnKeyReads MisidentifyHoistedReadOperands SkipUnrolledShapeChecks TreatEqualIntegersAsLess AssumeInvariantArrayStorage IgnoreMarksInShapeChecks IgnoreDormantMemberUpdates TreatMemberCalleesAsUnknown MisplaceUncheckedAccesses DisableFamilyReadShortcut CheckDictionaryReadProofs DropPatchOnlySaves MisplaceUncheckedReads AssumeSpillSlotsDead IgnoreEscapeAfterUnknownCall TreatLiteralFieldsAsDefined OverstateTypedArrayLength CheckResultFreshnessAtRunTime }
-flags FaultInjection { IgnoreCollectorSpillReads MisplaceHoistedArrayStorage AssumeLaterValuesUnaliased AssumeLocalArrayReceivers IgnoreLoopArrayStores OverstateBoundArgumentCount AssumeNumericAddends AssumePermanentlyPristineIterables SkipSuperMethodGuard SkipSuperPrototypeGuard SkipBoundsProof SkipHierarchyGuards IgnoreSiblingPrototypes SkipPrototypeChecks AssumeLayoutPrototype SkipSuperclassCheck SkipClassGuards AssumePristineDestructuring AssumeIterationsRestartable AssumeInBoundsElementsPresent IgnoreLoopEscapes IgnoreLoopWrites IgnoreLoopUses DropLastCase SkipPairGuard AllowMarkedObjects SkipCapacityChecks DropLargeCountEntries MisnumberFunctionRecords OverstateClosureNumberRuns SwapClosureNumbers SwapBuiltinCellNumbers ReverseFusedCallEntries ReverseFunctionSourceEntries AssumeInvariantOperands AssumeEnumeratorCurrent AssumePristineReceivers SkipStorageChecks AssumeVariablesInitialized IgnoreVariableChecks SkipLengthChecks IgnoreLengthStores IgnorePrototypeReads AssumeSlotsInitialized AssumeArithmeticElementUsers AssumeClearUpperHalves }
+flags FaultInjection { IgnoreCollectorSpillReads MisplaceHoistedArrayStorage AssumeLaterValuesUnaliased AssumeLocalArrayReceivers IgnoreLoopArrayStores OverstateBoundArgumentCount AssumeNumericAddends AssumePermanentlyPristineIterables SkipSuperMethodGuard SkipSuperPrototypeGuard SkipBoundsProof SkipHierarchyGuards IgnoreSiblingPrototypes SkipPrototypeChecks AssumeLayoutPrototype SkipSuperclassCheck SkipClassGuards AssumePristineDestructuring AssumeIterationsRestartable AssumeInBoundsElementsPresent IgnoreLoopEscapes IgnoreLoopWrites IgnoreLoopUses DropLastCase SkipPairGuard AllowMarkedObjects SkipCapacityChecks DropLargeCountEntries MisnumberFunctionRecords OverstateClosureNumberRuns SwapClosureNumbers SwapBuiltinCellNumbers ReverseFusedCallEntries ReverseFunctionSourceEntries AssumeInvariantOperands AssumeEnumeratorCurrent AssumePristineReceivers SkipStorageChecks AssumeVariablesInitialized IgnoreVariableChecks SkipLengthChecks IgnoreLengthStores IgnorePrototypeReads AssumeSlotsInitialized AssumeArithmeticElementUsers AssumeClearUpperHalves MisstateFact }
 flags AdmittedCode { Inspector ReplacedBuiltins }
-flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FeaturesNamedAtRunTime }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FeaturesNamedAtRunTime UnlistedGlobals }
 flags OutputOptions { Obfuscate RunsInSeveralRealms KeepsFunctionNames }
 record TargetOptions abi { features: UInt64 featuresRetainedByName: UInt64[8] architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
@@ -82,7 +87,7 @@ record CompileOptions abi {
     excludedCode: ExcludedCode understatedEffects: UInt32
     shuffleSeed: UInt32 speculationFailurePeriod: UInt32
     forcedWalkMode: UInt32 forcedWalkModePeriod: UInt32
-    loopVisitAbortPeriod: UInt32 loopVisitAbortPhase: UInt32 reserved: UInt32
+    loopVisitAbortPeriod: UInt32 loopVisitAbortPhase: UInt32 misstatedFact: UInt32
 }
 
 word "check" "<name>,.." "check" custom applyCheck listChecks

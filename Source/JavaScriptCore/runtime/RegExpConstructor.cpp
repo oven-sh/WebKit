@@ -199,7 +199,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorInput, (JSGlobalObject* globalObject, 
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.input getter requires RegExp constructor as |this|"_s);
     RegExpGlobalData::willReadLegacyStatics(vm);
-    return JSValue::encode(globalObject->regExpGlobalData().input());
+    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().input(globalObject)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorMultiline, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))

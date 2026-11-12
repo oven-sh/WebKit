@@ -4,9 +4,9 @@
 # function grow() { const o = { 1: 10, style: 7 }; o.width = 5; return o; }
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: PutSlotOrAdd {{*}}key="width" {{*}}level=Expected
-# RUN(WORD): walk f1 mechanisms=all
-# WORD-NOT: orderWordAfter
+# CHECK: Branch
+# CHECK: PropSet {{*}}key="width"
+# CHECK: PutSlotOrAdd {{*}}key="width" receivers=[L0]
 # RUN(SHELL): run-in-shell globalThis.sink = (grow, other) => { if (!grow) return; const o = grow(); print(Object.keys(o).join() + ":" + o[1] + ":" + o.style + ":" + o.width); };
 # SHELL: 1,style,width:10:7:5
 

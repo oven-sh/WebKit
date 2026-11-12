@@ -7,11 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFactRecords.h"
 #include "AOTLinkTables.h"
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {

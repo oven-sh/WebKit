@@ -126,7 +126,9 @@ const ArrayStorageForm& ElementAccessEmitter::expectedFormOf(ValueID array)
 
 ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueID stored)
 {
-    return goesByKindOfListOfNumbers(list, stored) ? formsOfListOfNumbersFor(stored, true) : candidateFormsFor(stored, ArrayStorage::Other);
+    const Type& type = typeOf(stored);
+    bool isNumber = type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+    return isNumber || goesByKindOfListOfNumbers(list, stored) ? formsOfListOfNumbersFor(stored, true) : candidateFormsFor(stored, ArrayStorage::Other);
 }
 
 ArrayStorageFormList ElementAccessEmitter::formExpectedToHold(ValueID list, ValueID stored)
@@ -154,7 +156,7 @@ bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
 {
     if (store.opcode() != Opcode::PutArrayElement)
         return false;
-    return !generator().takesFormOfLoops(store);
+    return !generator().takesFormOfLoops(store) && !generator().isInRecursion(store.block());
 }
 
 void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm, ValueID int32StoredInEitherKind)
@@ -233,6 +235,48 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+std::optional<int64_t> ElementAccessEmitter::lengthFilledByLoop(const ValueContext& store)
+{
+    static constexpr OpcodeSet passing { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger };
+    if (!generator().takesFormOfLoops(store))
+        return std::nullopt;
+    const Code& code = generator().code();
+    ValueID position = store->positionOperand();
+    while (passing.contains(code.at(position).opcode))
+        position = code.at(position).valueOperand();
+    BlockID home = code.isConstant(position) ? BlockID() : code.blockOf(position);
+    if (!home || !code.at(home).isLoopHead || !std::ranges::contains(code.at(home).parameters(), position))
+        return std::nullopt;
+    const Type& type = typeOf(position);
+    if (!type.isInteger() || type.integers.minimum < 0 || type.integers.maximum >= std::numeric_limits<int32_t>::max())
+        return std::nullopt;
+    return type.integers.maximum;
+}
+
+void ElementAccessEmitter::requireRoomInVector(const ValueContext& store, const ArrayElements& elements, Integer index, LBasicBlock isBeyondVector)
+{
+    std::optional<int64_t> filled = lengthFilledByLoop(store);
+    if (!filled) {
+        branchUnless(below(index, vectorLength(elements)), isBeyondVector);
+        return;
+    }
+    LBasicBlock hasRoom = newBlock();
+    LBasicBlock isFull = newBlock();
+    LBasicBlock grows = newBlock();
+    m_out.branch(below(index, vectorLength(elements)).value(), normalEdge(hasRoom), unlikelyEdge(isFull));
+
+    m_out.appendTo(isFull);
+    branchUnless(equal(index, publicLength(elements)), isBeyondVector);
+    m_out.jump(grows);
+    m_out.appendTo(grows);
+    Integer fourfold = add(mul(index, integer(4)), integer(4));
+    Integer room(m_out.select(m_out.lessThan(fourfold.value(), m_out.constInt64(*filled)), fourfold.value(), m_out.constInt64(*filled)));
+    callVoidOperation(store, RuntimeOperation::GrowFilledArray, { elements.array, room }, { .isOnRarePath = true });
+    m_out.jump(isBeyondVector);
+
+    m_out.appendTo(hasRoom);
+}
+
 void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement, LBasicBlock isBeyondVector)
 {
     LengthTest test = testLength(index, elements);
@@ -247,11 +291,26 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
     m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
 
     m_out.appendTo(isBeyondLength);
-    branchUnless(below(index, vectorLength(elements)), isBeyondVector);
+    requireRoomInVector(store, elements, index, isBeyondVector);
     setPublicLength(elements, add(index, integer(1)));
     m_out.jump(isWithinLength);
     m_out.appendTo(isWithinLength);
     replaceElement(store, form, elements, test.indexInside, rawElement);
+}
+
+void ElementAccessEmitter::appendInVector(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement, LBasicBlock isBeyondVector)
+{
+    LBasicBlock growsList = newBlock();
+    LBasicBlock done = newBlock();
+    branchUnless(below(index, vectorLength(elements)), isBeyondVector);
+    replaceElement(store, form, elements, index, rawElement);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(below(index, publicLength(elements)).value(), unlikelyEdge(done), normalEdge(growsList));
+
+    m_out.appendToArm(growsList, fork);
+    setPublicLength(elements, add(index, integer(1)));
+    m_out.jump(done);
+    m_out.appendToJoin(done, fork);
 }
 
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
@@ -332,7 +391,7 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     } else {
         Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
         ArrayElements elements = elementsOf(array);
-        ArrayStorageFormList forms = formExpectedToHold(value->arrayOperand(), stored);
+        ArrayStorageFormList forms = generator().isInRecursion(value.block()) ? formsThatMayHold(value->arrayOperand(), stored) : formExpectedToHold(value->arrayOperand(), stored);
         forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
             Operand rawElement = *rawElementToStore(form, stored, slowPath);
             storeInVector(value, form, elements, index, rawElement, slowPath);
@@ -355,20 +414,23 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
     LBasicBlock continuation = newBlock();
     Integer index = indexOrElse(value->positionOperand(), true, nullptr);
     ArrayElements elements = elementsOf(list);
+    bool zeroesRowCounts = generator().mustZeroRowCounts(value);
     forEachFormByShape(indexingMode(list, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, forms, outOfLine, [&](const ArrayStorageForm& form) {
         std::optional<Operand> rawElement = rawElementToStore(form, stored, outOfLine);
         if (!rawElement) {
             m_out.jump(outOfLine);
             return;
         }
+        if (zeroesRowCounts && form.holdsCells) [[unlikely]]
+            generator().zeroRowCounts();
         LengthTest test = testLength(index, elements);
-        if (!value->isInBounds() && generator().takesFormOfLoops(value)) {
+        if (!value->isInBounds() && (generator().takesFormOfLoops(value) || generator().isInRecursion(value.block()))) {
             LBasicBlock inBounds = newBlock();
             LBasicBlock pastEnd = newBlock();
-            m_out.branch(test.isInside.value(), normalEdge(inBounds), normalEdge(pastEnd));
+            m_out.branch(test.isInside.value(), normalEdge(inBounds), unlikelyEdge(pastEnd));
             m_out.appendTo(pastEnd);
-            branchUnless(equal(test.indexInside, publicLength(elements)), outOfLine);
-            branchUnless(below(test.indexInside, vectorLength(elements)), outOfLine);
+            requireRoomInVector(value, elements, test.indexInside, outOfLine);
+            build().statistics().count(StatisticID::StoresPastLengthEmittedInline);
             setPublicLength(elements, add(test.indexInside, integer(1)));
             m_out.jump(inBounds);
             m_out.appendTo(inBounds);
@@ -532,7 +594,9 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
             LengthTest test = testLength(index, elements);
             branchUnless(test.isInside, otherwise);
             replaceElement(store, form, elements, test.indexInside, rawElement);
-        } else
+        } else if (store.opcode() == Opcode::TryPutIndex && !hasOnlyExpectedArmInLine(store))
+            appendInVector(store, form, elements, index, rawElement, otherwise);
+        else
             storeInVector(store, form, elements, index, rawElement, otherwise);
         join.add(boolean(true));
     });
@@ -547,31 +611,13 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     }
     LBasicBlock isLeftToOthers = newBlock();
     const ArrayStorageForm& forInt32 = arrayStorageFormOf(ArrayStorage::Int32);
-    const ArrayStorageForm& forAnyValue = arrayStorageFormOf(ArrayStorage::Contiguous);
     Operand given = get(stored);
     bool mayBeNoNumber = !typeOf(stored).isNumber();
     if (mayBeNoNumber && (given.representation == Representation::JSValue || given.representation == Representation::Cell)) {
         branchUnless(hasWritableShape(mode, forInt32), isLeftToOthers);
-        if (given.representation == Representation::JSValue) {
-            Boxed boxed = given.as<Boxed>();
-            LBasicBlock isNumberBlock = newBlock();
-            LBasicBlock isAnyValue = newBlock();
-            branch(isNumber(boxed), { normalEdge(isNumberBlock), normalEdge(isAnyValue) });
-
-            m_out.appendTo(isNumberBlock);
-            branchUnless(logicalNot(isInt32(boxed)), isLeftToOthers);
-            Number fraction = unboxDouble(boxed);
-            branchUnless(equal(fraction, fraction), isAnyValue);
-            turnIntegersIntoFractions(array, elements, isLeftToOthers);
-            storeInVector(store, arrayStorageFormOf(ArrayStorage::Double), elements, index, fraction, isLeftToOthers);
-            join.add(boolean(true));
-
-            m_out.appendTo(isAnyValue);
-        }
-        widenStorageOfIntegers(array, forAnyValue, isLeftToOthers);
-        Operand rawElement = *rawElementToStore(forAnyValue, stored, isLeftToOthers);
-        storeInVector(store, forAnyValue, elements, index, rawElement, isLeftToOthers);
-        join.add(boolean(true));
+        if (given.representation == Representation::JSValue)
+            branchUnless(logicalNot(isInt32(given.as<Boxed>())), isLeftToOthers);
+        join.add(Condition(m_out.castToInt32(callStub(store, storeWideningIntegers(), { array.value(), given.value, index.value() }, { .accessesCollectorState = true }).first)));
     } else if (std::optional<Operand> fraction = mayBeNoNumber || typeOf(stored).isInt32() ? std::nullopt : rawElementToStore(arrayStorageFormOf(ArrayStorage::Double), stored, isLeftToOthers)) {
         branchUnless(hasWritableShape(mode, forInt32), isLeftToOthers);
         branchUnless(below(index, hasOnlyExpectedArmInLine(store) ? publicLength(elements) : vectorLength(elements)), isLeftToOthers);

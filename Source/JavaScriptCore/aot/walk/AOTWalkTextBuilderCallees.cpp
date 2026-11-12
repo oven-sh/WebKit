@@ -83,11 +83,12 @@ static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& wa
         ExpectationOfValue expectation = findExpectation(walker, written[place]);
         if (!expectation.type || isNeverType(expectation.type) || !hasTextByItself(walker.types().at(expectation.type)))
             return false;
-        if (!walker.types().overlap(walker.typeOf(parts[place]), expectation.type))
+        TypeID tested = walker.types().testablePartOf(walker.types().withLiteralStringsWidened(expectation.type));
+        if (!tested || isNeverType(tested) || !walker.types().overlap(walker.typeOf(parts[place]), tested))
             return false;
-        if (!shouldOpenGuess(walker, parts[place], expectation.type, expectation.isDeclared, weightOfPartAppendedInLine))
+        if (!shouldOpenGuess(walker, parts[place], tested, expectation.isDeclared, weightOfPartAppendedInLine))
             return false;
-        guesses.append({ place, expectation.type });
+        guesses.append({ place, tested });
     }
     if (guesses.isEmpty())
         return false;

@@ -27,7 +27,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = NewClosure function=f4
     v9 = NewClosure function=f7
     v10 = NewClosure function=f8
-    v11 = Call v4, -, v2, v5, v6, v7, v8, v9, v10
+    v11 = NewClosure function=f9
+    v12 = Call v4, -, v2, v5, v6, v7, v8, v9, v10, v11
     Return
 }
 function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
@@ -71,11 +72,15 @@ function f8 name="get" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="shared"
     Return v1
 }
+function f9 name="load" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
 )IR"_s;
 
 static constexpr ASCIILiteral statementsThatCount = R"JS(
 globalThis.shared = 0;
-globalThis.publish = (Counter, make, store, define, readRun, put, get) => {
+globalThis.publish = (Counter, make, store, define, readRun, put, get, load) => {
     const counted = (what, names, work, most = 3) => {
         const sum = () => { let total = 0; for (let at = 0; at < names.length; at++) total += Number(aotOperationCount("operationAOT" + names[at])); return total; };
         for (let i = 0; i < 8; i++) work(i);
@@ -86,6 +91,7 @@ globalThis.publish = (Counter, make, store, define, readRun, put, get) => {
     const record = make(0), counter = new Counter, grown = make(1);
     counted("replaced", ["PutByVal"], i => store(record, i & 7, i));
     counted("replaced in an instance", ["PutByVal"], i => store(counter, i & 7, i));
+    counted("read in an instance", ["GetByVal", "GetByValAndCache"], i => load(counter, i & 7));
     const whereFreeListsRunOut = 8;
     counted("first", ["PutByVal"], i => { const t = make(i); store(t, 0, i); store(t, 1, t); }, whereFreeListsRunOut);
     counted("grown", ["PutByVal"], i => store(grown, i & 63, i), whereFreeListsRunOut);
@@ -96,7 +102,7 @@ globalThis.publish = (Counter, make, store, define, readRun, put, get) => {
 static void testStubsServe()
 {
     String counted = outputOfProgramInShell(programOfStores, { "references=narrow"_s }, statementsThatCount, { "--aotCountsPath=/dev/null"_s }, waysToCompilePrograms[0]);
-    checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(waysToCompilePrograms[0], { "references=narrow"_s }), counted, "replaced: by the stub\nreplaced in an instance: by the stub\nfirst: by the stub\ngrown: by the stub\ncomputed: the key: by the stub\ncomputed: the definition: by the stub\n"_s);
+    checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(waysToCompilePrograms[0], { "references=narrow"_s }), counted, "replaced: by the stub\nreplaced in an instance: by the stub\nread in an instance: by the stub\nfirst: by the stub\ngrown: by the stub\ncomputed: the key: by the stub\ncomputed: the definition: by the stub\n"_s);
 }
 static constexpr ASCIILiteral statementsThatAnswer = R"JS(
 globalThis.publish = (Counter, make, store, define, readRun) => {
@@ -137,9 +143,92 @@ static void testAnswers()
     checkOutputOfProgramInShell(programOfStores, answersOfStores, { "references=narrow"_s }, statementsThatAnswer, { "--collectContinuously=1"_s });
 }
 
+static constexpr ASCIILiteral programOfLateNames = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Pair" constructor=f1 fields=[{key="car" declared={type=anything} flags=[IsRequired]}, {key="cdr" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = Construct v2
+    v5 = Construct v2
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="publish" [isFreeName]
+    v8 = NewClosure function=f2
+    v9 = NewClosure function=f3
+    v10 = NewClosure function=f4
+    v11 = NewClosure function=f5
+    v12 = NewClosure function=f6
+    v13 = Call v7, -, v3, v4, v5, v8, v9, v10, v11, v12
+    Return
+}
+function f1 name="Pair" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=7
+    PropDefine v2, v3 key="car"
+    PropDefine v2, v3 key="cdr"
+    Return v2
+}
+function f2 name="store" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2
+    Return
+}
+function f3 name="load" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f4 name="get" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="later"
+    Return v1
+}
+function f5 name="put" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="later"
+    Return
+}
+function f6 name="getInherited" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+)IR"_s;
+
+static constexpr ASCIILiteral statementsWithLateNames = R"JS(
+globalThis.publish = (first, second, third, store, load, get, put, getInherited) => {
+    const readOperations = ["GetByIdAndCache", "GetById", "GetByVal", "GetByValAndCache", "GetGeneric"], storeOperations = ["PutByIdAndCache", "PutById", "PutByVal", "PutByValAndCache"];
+    const counted = (what, names, work, most = 8) => {
+        const sum = () => { let total = 0; for (let at = 0; at < names.length; at++) total += Number(aotOperationCount("operationAOT" + names[at]) ?? 0); return total; };
+        for (let i = 0; i < 64; i++) work(i);
+        const before = sum();
+        for (let i = 0; i < 400; i++) work(i);
+        print(what + ": " + (sum() - before <= most ? "by the stub" : (sum() - before) + " calls"));
+    };
+    const pairs = [first, second, third], keys = ["later", "further", "later"];
+    for (const pair of pairs) { store(pair, "later", 1); store(pair, "further", 2); }
+    counted("read", readOperations, () => get(first));
+    counted("read in three", readOperations, i => get(pairs[i % 3]), 12);
+    counted("read by key", readOperations, i => load(first, keys[i % 3]), 16);
+    counted("inherited", readOperations, () => getInherited(second));
+    counted("stored", storeOperations, i => put(third, i), 16);
+    counted("stored by key", storeOperations, i => store(third, keys[i % 3], i), 16);
+    print(get(first) + " " + get(second) + " " + load(third, "later") + " " + load(third, "further") + " " + Object.keys(third));
+    delete first.later; print(get(first) + " " + load(first, "later") + " " + load(first, "further"));
+    store(first, "later", "again"); print(get(first));
+    Object.defineProperty(second, "later", { get() { return this === second; }, configurable: true }); print(get(second));
+    store(third, "toString", 5); print(getInherited(third));
+};
+)JS"_s;
+
+static void testLateNamesStayInStubs()
+{
+    String printed = outputOfProgramInShell(programOfLateNames, { "references=narrow"_s }, statementsWithLateNames, { "--aotCountsPath=/dev/null"_s }, waysToCompilePrograms[0]);
+    checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(waysToCompilePrograms[0], { "references=narrow"_s }), printed, "read: by the stub\nread in three: by the stub\nread by key: by the stub\ninherited: by the stub\nstored: by the stub\nstored by key: by the stub\n1 1 399 397 car,cdr,later,further\nundefined undefined 2\nagain\ntrue\n5\n"_s);
+}
+
 std::span<const NativeTest> storesOfStubsProgramTests()
 {
     static constexpr NativeTest tests[] = {
+        { "stores-of-stubs/late-names"_s, testLateNamesStayInStubs },
         { "stores-of-stubs/the-stubs-serve"_s, testStubsServe },
         { "stores-of-stubs/answers"_s, testAnswers },
     };

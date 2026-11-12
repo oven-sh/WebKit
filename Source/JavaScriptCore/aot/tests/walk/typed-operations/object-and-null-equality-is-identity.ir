@@ -1,0 +1,51 @@
+# function Node(left) { this.left = left; }  function same(a, b) { return a.left == b.left; }  a.left is an object or null.
+# Values with other bits are equal under == where one of them is undefined and the other one is null. Where neither may be undefined, the bits alone decide.
+# RUN: emit f2:Body mechanisms=all
+# CHECK: Equal(
+# CHECK-NOT: BitAnd(
+# RUN(MIXED): emit f3:Body mechanisms=all
+# MIXED: BitAnd(
+
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="left" declared={type=anything} flags=[IsRequired]}, {key="right" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = Null
+    v5 = Undefined
+    v6 = Construct v1, -, v4, v5 calleeName="Node"
+    v7 = Construct v1, -, v6, v6 calleeName="Node"
+    v8 = Construct v1, -, v7, v4 calleeName="Node"
+    v9 = Call v2, -, v6, v7 calleeName="same"
+    v10 = Call v2, -, v7, v8 calleeName="same"
+    v11 = Call v3, -, v6, v7 calleeName="mixed"
+    v12 = Call v3, -, v8, v7 calleeName="mixed"
+    Return v12
+}
+function f1 name="Node" module=m0 flags=[IsSloppy, HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToThis v0
+    v4 = Convert v3 declared={type=L0 flags=[IsExpected]}
+    PropSet v4, v1 key="left" mode=Sloppy
+    PropSet v4, v2 key="right" mode=Sloppy
+    v7 = Undefined
+    Return v7
+}
+function f2 name="same" module=m0 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0}, {type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    v2 = PropGet v0 key="left"
+    v3 = PropGet v1 key="left"
+    v4 = Eq v2, v3
+    Return v4
+}
+function f3 name="mixed" module=m0 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0}, {type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    v2 = PropGet v0 key="right"
+    v3 = PropGet v1 key="right"
+    v4 = Eq v2, v3
+    Return v4
+}

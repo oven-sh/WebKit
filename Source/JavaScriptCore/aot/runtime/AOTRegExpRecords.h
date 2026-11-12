@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTRegExpRecord.h"
 #include "AOTVector.h"
+#include <array>
 #include <span>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
@@ -69,6 +70,24 @@ public:
     RegExp* regExpIfCreated(RegExpRecordID, OptionSet<Yarr::Flags>) const;
     JS_EXPORT_PRIVATE RegExp* regExpFor(VM&, RegExpRecordID, OptionSet<Yarr::Flags>);
 
+    using RopeWords = std::array<uint64_t, 3>;
+    struct RopePattern {
+        RopeWords words;
+        uint32_t flags;
+        uint32_t recordNumber;
+    };
+    RopePattern& ropePattern(const RopeWords&);
+
+    struct SubstringCount {
+        JSString* base;
+        RegExp* regExp;
+        uint32_t offset;
+        uint32_t length;
+        uint32_t count;
+        uint32_t startOfLast;
+    };
+    SubstringCount& lastSubstringCount() { return m_lastSubstringCounts[0]; }
+
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
@@ -80,6 +99,9 @@ private:
     Vector<RegExp*> m_cellsInOrderOfCreation;
     size_t m_numberOfCellsVisited { 0 };
     uint32_t m_lastFullVisitVersion { 0 };
+    static constexpr unsigned ropePatternsShift = 6;
+    std::array<RopePattern, 1 << ropePatternsShift> m_ropePatterns { };
+    std::array<SubstringCount, 1> m_lastSubstringCounts { };
 };
 
 } // namespace AOT

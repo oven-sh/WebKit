@@ -7,11 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTOperationEmitter.h"
 #include "AOTVector.h"
 #include "HandlerInfo.h"
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -40,6 +40,7 @@ private:
         uint32_t indexInRecords;
         uint32_t next;
         HandlerType type;
+        uint32_t loopExit;
     };
     static constexpr uint32_t noLandingPad = UINT32_MAX;
     template<typename T> using BlockMap = std::span<T>;

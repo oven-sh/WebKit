@@ -3,7 +3,7 @@
 # RUN: link layouts fields mechanisms=all
 # CHECK: layout L0 changes=[] {{*}}stays-with-compiled-code
 # CHECK-NOT: parsers-may-make L0
-# CHECK: field L0.0 "total" proven=i32
+# CHECK: field L0.0 "total" proven=1
 
 expectedresult x0 type=L0 layouts=[L0]
 layout L0 module=m0 fields=[{key="total" declared={type=number} flags=[IsRequired]}] ownFieldCount=1

@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTID.h"
 #include "AOTImageForward.h"
 #include "AOTVector.h"
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
@@ -22,8 +22,14 @@ class Plan;
 class Program;
 }
 
+struct FieldReturnedByGetter {
+    FunctionID getter;
+    Typed::PropertyKeyID field;
+};
+
 struct BodyFactsForTables {
     BitVector functionsThatOnlyReturn;
+    Vector<FieldReturnedByGetter> fieldsReturnedByGetters;
     BitVector functionsWithFrames;
 };
 

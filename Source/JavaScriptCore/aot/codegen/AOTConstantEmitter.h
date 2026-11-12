@@ -38,6 +38,7 @@ public:
     void generateBuiltin(const ValueContext&);
     void generateModuleBuiltin(const ValueContext&);
     void generateData(const ValueContext&);
+    LValue wordKeptOnHeap(const ValueContext&, ValueID);
     void generateNewClosure(const ValueContext&);
     bool closureLentLiesInFrame(ValueID closure);
     void generateKeyConstant(const ValueContext&);
@@ -46,6 +47,7 @@ public:
 
     CellPointer stringConstant(const OperationContext&, StringID);
     bool loadsStringConstantByStub(const OperationContext&, StringID);
+    bool tryStoreStringConstantByStub(const OperationContext&, ValueID string, CellPointer object, uint64_t offset, const TypedPointer& word);
     CellPointer keyConstant(const OperationContext&, PropertyKeyID);
     CellPointer bigIntConstant(const OperationContext&, StringID digits);
     CellPointer builtinCell(const OperationContext& context, BuiltinID id) { return builtinCell(context, BuiltinCellKey::object(id)); }
@@ -91,6 +93,7 @@ private:
     FormAtPlace formOfConstantsWithCellsAt(const OperationContext&);
     CellPointer cellMadeByStub(const OperationContext&, StubKey, const CallOptions&, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord);
     const RegisterSet& registersLostAtSiteOf(ConstantAtSite);
+    CellPointer sharedObjectOfData(const ValueContext&);
     CellPointer newCopyOnWriteArray(const ValueContext&);
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
 

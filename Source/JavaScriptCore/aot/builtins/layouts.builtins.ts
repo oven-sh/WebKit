@@ -12,7 +12,7 @@ export default b.declarations(
     enumerable: b.bool,
     configurable: b.bool,
   }),
-  b.tuple("EntriesPair", [b.any, b.any]),
+  b.tuple("EntriesPair", [b.string, b.any]),
   b.layout("ReadAndWrittenCounts", { read: bufferLength, written: bufferLength }),
   b.layout("WebAssemblyInstantiatedSource", {
     module: b.instance("WebAssembly.Module"),

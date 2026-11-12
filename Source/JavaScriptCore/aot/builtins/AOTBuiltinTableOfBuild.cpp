@@ -8,12 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinNameSlots.h"
 #include "AOTIRProgram.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 

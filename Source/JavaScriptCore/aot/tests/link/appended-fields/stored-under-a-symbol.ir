@@ -5,7 +5,7 @@
 # RUN: link accesses fields layouts mechanisms=all
 # CHECK: access f1 v3 under symbol("depth")@m0:0
 # CHECK: field L0.0 "x" proven={{*}} writers-known written-at-construction-alone
-# CHECK-NEXT: field L0.1 symbol("depth")@m0:0 appended proven=i32 writers-known
+# CHECK-NEXT: field L0.1 symbol("depth")@m0:0 appended proven=int[0, 2147483647] writers-known
 # CHECK: layout L0 changes=[]
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: layout L0 CompiledObject

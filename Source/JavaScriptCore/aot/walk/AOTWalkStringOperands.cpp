@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "AOTWalkResultsInParts.h"
 #include "AOTWalkStrings.h"
 
 #if ENABLE(AOT)
@@ -28,12 +29,20 @@ static bool convertsToIntegerForStringOperands(BuiltinConversion conversion)
     return conversion == BuiltinConversion::ToIntegerOrInfinity || conversion == BuiltinConversion::ToInt32 || conversion == BuiltinConversion::ToUint32;
 }
 
-static TypeID typeThatEveryRowTakesForStringOperands(Walker& walker, BuiltinID builtin, BuiltinOperand position)
+struct AcceptedOperandType {
+    TypeID type;
+    TypeID acceptedByOtherOverloads { };
+};
+
+static AcceptedOperandType findAcceptedOperandType(Walker& walker, BuiltinID builtin, BuiltinOperand position)
 {
     const BuiltinTable& table = walker.program().builtins();
     BuiltinTypeContext context { walker.program(), walker.types() };
     TypeID taken;
-    bool someRowHasCodeInLine = false;
+    TypeID acceptedInline;
+    TypeID acceptedByOthers;
+    bool overloadsDiffer = false;
+    uint32_t inlineOverloadCount = 0;
     for (const BuiltinOverload& overload : table.overloadsOf(builtin)) {
         if (overload.mode != BuiltinCallMode::Call)
             continue;
@@ -41,12 +50,20 @@ static TypeID typeThatEveryRowTakesForStringOperands(Walker& walker, BuiltinID b
         if (!parameter || !parameter->accepted)
             return { };
         TypeID takenByRow = convertsToIntegerForStringOperands(parameter->conversion) ? TypeID(TypeTable::int32) : typeOfBuiltinType(context, parameter->accepted);
-        if (taken && taken != takenByRow)
-            return { };
+        overloadsDiffer |= taken && taken != takenByRow;
         taken = takenByRow;
-        someRowHasCodeInLine |= overload.code.implementation.inlineBuiltin.has_value();
+        if (overload.code.implementation.inlineBuiltin) {
+            ++inlineOverloadCount;
+            acceptedInline = takenByRow;
+        } else
+            acceptedByOthers = acceptedByOthers ? walker.types().unionOf(acceptedByOthers, takenByRow) : takenByRow;
     }
-    return someRowHasCodeInLine ? taken : TypeID();
+    if (!overloadsDiffer)
+        return { inlineOverloadCount ? taken : TypeID() };
+    bool othersAcceptObjects = acceptedByOthers && !walker.types().at(acceptedByOthers).primitives;
+    if (walker.isInLoop() && inlineOverloadCount == 1 && acceptedInline == TypeTable::string && othersAcceptObjects)
+        return { acceptedInline, acceptedByOthers };
+    return { };
 }
 
 static TypeID presentTypeThatRowsTakeForStringOperands(Walker& walker, BuiltinID builtin, BuiltinOperand position, TypeID proven, TypeID expected)
@@ -74,6 +91,14 @@ static TypeID presentTypeThatRowsTakeForStringOperands(Walker& walker, BuiltinID
     return someRowTakesPresence && (everyRowRefusesAbsence || types.at(present).isObject()) ? present : TypeID();
 }
 
+static bool isOftenPassedNumbers(const BuiltinTable& table, BuiltinID builtin)
+{
+    static constexpr std::array patternsAndParsers { Builtins::RegExpPrototypeTest, Builtins::RegExpPrototypeExec, Builtins::ParseInt, Builtins::ParseFloat };
+    return std::ranges::any_of(patternsAndParsers, [&](auto listed) {
+        return builtin == table.canonicalID(listed);
+    });
+}
+
 static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue& call, BuiltinID builtin, ValueID operand, BuiltinOperand position)
 {
     TypeArena& types = walker.types();
@@ -82,13 +107,20 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
         return false;
     TypeID proven = walker.typeOf(value);
     ExpectationOfValue expectation = findExpectation(walker, operand);
-    TypeID tested = typeThatEveryRowTakesForStringOperands(walker, builtin, position);
-    if (!tested || types.isSubset(proven, tested) || !types.overlap(proven, tested))
+    auto [tested, acceptedByOtherOverloads] = findAcceptedOperandType(walker, builtin, position);
+    if (acceptedByOtherOverloads) {
+        TypeID present = expectation.isDeclared && expectation.type ? types.withoutNullish(expectation.type) : TypeID();
+        if (!present || isNeverType(present) || !types.overlap(present, acceptedByOtherOverloads) || singleBuiltinClassOf(types, types.at(present)))
+            tested = { };
+    }
+    if (!tested || types.isSubset(proven, tested) || !types.overlap(proven, tested)) {
         tested = presentTypeThatRowsTakeForStringOperands(walker, builtin, position, proven, expectation.type);
+        acceptedByOtherOverloads = { };
+    }
     if (!tested || types.isSubset(proven, tested) || !types.overlap(proven, tested) || types.testablePartOf(tested) != tested)
         return false;
 
-    if (expectation.type && !types.overlap(expectation.type, tested))
+    if (!acceptedByOtherOverloads && expectation.type && !types.overlap(expectation.type, tested))
         return false;
     if (!shouldOpenGuess(walker, value, tested, expectation.isDeclared, weightOfCallByOneRowForStrings))
         return false;
@@ -104,6 +136,17 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
     if (!typeAloneDecides && !goesByOneRowOnOperandAsMade(walker, call, builtin, value, behindTest))
         return false;
 
+    auto typeOfInputWithNumber = [&](ValueID input) {
+        Reference reference = walker.referenceOf(input);
+        if (reference == value)
+            return types.intersectionOf(proven, TypeTable::number);
+        return reference ? walker.typeOf(reference) : TypeID();
+    };
+    bool convertsNumber = typeAloneDecides && walker.isInLoop() && tested == TypeTable::string && types.overlap(proven, TypeTable::number) && isOftenPassedNumbers(walker.program().builtins(), builtin) && (!expectation.isDeclared || !expectation.type || types.overlap(expectation.type, TypeTable::number))
+        && wouldCallBuiltin(walker, call, TypesOfInputs(typeOfInputWithNumber)) == BuiltinCallAskedAbout::ByOneRow;
+    if (convertsNumber)
+        walker.count(StatisticID::StringSpeculationsWithNumberFallback);
+
     const BodyIndex& index = walker.currentBodyIndex();
     BlockID inputBlock = index.blockOf(call.id());
     uint32_t place = call.id().index() - index.block(inputBlock).firstValue().index();
@@ -112,9 +155,30 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
     ValueID callBefore = std::exchange(notes.callWhoseOperandIsTested, call.id());
     size_t depthBefore = std::exchange(notes.depthOfCopiesAroundThatCall, walker.depthOfCopies());
     if (typeAloneDecides)
-        openGuess(walker, value, tested, inputBlock, place, place + 1);
+        openGuess(walker, value, tested, inputBlock, place, place + 1, convertsNumber ? TypeID(TypeTable::number) : TypeID());
     else
         openGuessAtOperandTakenAsMade(walker, call, value, tested);
+    notes.callWhoseOperandIsTested = callBefore;
+    notes.depthOfCopiesAroundThatCall = depthBefore;
+    return true;
+}
+
+static bool openUnmodifiedRegExpGuess(Walker& walker, const BodyValue& call, BuiltinID builtin)
+{
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (!walker.isInLoop() || arguments.empty() || arguments.size() > 2)
+        return false;
+    TypeArena& types = walker.types();
+    Reference value = walker.referenceOf(arguments[0]);
+    if (!value || !value.isValue() || isNeverType(walker.typeOf(value)) || !types.isSubset(walker.typeOf(value), types.builtinClass(BuiltinClasses::RegExp)) || isKnownPristine(walker, value))
+        return false;
+    BuiltinOverloadID onlyRow;
+    if (!goesByOneRowOnOperandAsMade(walker, call, builtin, value, walker.typeOf(value), &onlyRow) || !walker.program().builtins().at(onlyRow).code.implementation.inlineBuiltin)
+        return false;
+    NotesOfStrings& notes = notesOfStrings(walker);
+    ValueID callBefore = std::exchange(notes.callWhoseOperandIsTested, call.id());
+    size_t depthBefore = std::exchange(notes.depthOfCopiesAroundThatCall, walker.depthOfCopies());
+    openGuessAtOperandTakenAsMade(walker, call, value, walker.typeOf(value), std::nullopt, { }, findLengthReadAfterReplace(walker, call));
     notes.callWhoseOperandIsTested = callBefore;
     notes.depthOfCopiesAroundThatCall = depthBefore;
     return true;
@@ -152,6 +216,8 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call, Oper
         }
     }
     if (ValueID receiver = call.thisValueOperand(); receiver && tested == OperandsTestedAtBuiltinCall::All && openGuessAtOperandForStringOperands(walker, call, builtin, receiver, BuiltinOperand::receiver()))
+        return true;
+    if (tested == OperandsTestedAtBuiltinCall::All && openUnmodifiedRegExpGuess(walker, call, builtin))
         return true;
     unsigned position = 0;
     for (ValueID argument : call.argumentsOperands()) {
@@ -227,7 +293,7 @@ bool openGuessAtOperandThatSpecialCaseTakesAsMade(Walker& walker, const BodyValu
 static TypeID typeProvenOrExpectedForStringOperands(Walker& walker, ValueID input, ValueID call)
 {
     Reference reference = walker.referenceOf(input);
-    TypeID proven = reference ? walker.typeOf(reference) : TypeID();
+    TypeID proven = reference && reference.isRecord() ? walker.typeOf(reference) : TypeID();
     TypeID expected = input < call ? findExpectation(walker, input).type : TypeID();
     if (!expected)
         return proven;
@@ -238,7 +304,7 @@ static BuiltinID builtinExpectedToBeCalledForStringOperands(Walker& walker, cons
 {
     TypeArena& types = walker.types();
     const BodyIndex& index = walker.currentBodyIndex();
-    if (Reference callee = walker.referenceOf(call.calleeOperand())) {
+    if (Reference callee = walker.referenceOf(call.calleeOperand()); callee && callee.isRecord()) {
         Type type = types.at(walker.typeOf(callee));
         if (BuiltinID builtin = type.isObject() ? singleBuiltinOf(types, type) : BuiltinID())
             return builtin;

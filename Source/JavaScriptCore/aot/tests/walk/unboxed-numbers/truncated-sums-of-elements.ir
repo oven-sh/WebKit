@@ -1,0 +1,42 @@
+# const view = new Int32Array(64); function mix(i) { return (view[i] + view[i + 1] - view[i + 2]) | 0; }
+# An element of a view is an int32 or undefined. A sum of a few int32s loses no bit, and with undefined among them it is NaN, which is cut to 0: no term is made a double.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: @OptionalDouble
+# CHECK-NOT: form=Numbers
+# CHECK: = Sub {{*}}form=Integers
+# CHECK: = ToInt32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="mix" module=m0 declared={type=anything} initialization=Function function=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=64
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v5, -, v6
+    Return v7
+}
+function f1 name="mix" module=m0 length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    v3 = Integer integer=1
+    v4 = Add v0, v3
+    v5 = ElemGet v1, v4
+    v6 = Add v2, v5
+    v7 = Integer integer=2
+    v8 = Add v0, v7
+    v9 = ElemGet v1, v8
+    v10 = Sub v6, v9
+    v11 = Integer
+    v12 = BitOr v10, v11
+    Return v12
+}

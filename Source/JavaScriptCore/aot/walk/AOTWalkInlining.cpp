@@ -5,36 +5,47 @@
 
 #include "config.h"
 #include "AOTWalk.h"
+#include "AOTWalkScalarReplacement.h"
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
 #include "AOTInliningRules.h"
 #include "AOTLimits.h"
 #include "AOTLinkTables.h"
+#include "AOTOpcodeSets.h"
 #include "AOTSweep.h"
 #include "AOTThinSummary.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkKnown.h"
+#include "AOTWalkNumberGuesses.h"
+#include "AOTWalkSortKeys.h"
 #include <algorithm>
 #include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t inlineLimitOutsideLoops = 6;
+static constexpr uint32_t inlineLimitInNestedIterations = 24;
+static constexpr uint32_t inlineLimitInAsyncBody = 2;
+static constexpr uint32_t inlineLimitInComparators = 10;
 static constexpr uint32_t inlineLimitInLoops = 40;
 static constexpr uint32_t inlineLimitInLoopsWithoutObjects = 24;
-static constexpr uint32_t mostOperationsThatThrow = 12;
+static constexpr uint32_t inlineLimitOfRemovedObjects = 48;
+static constexpr uint32_t maxThrowingOperations = 12;
 static constexpr uint32_t inlineWindowOfWrittenCall = 40;
 static constexpr uint32_t inlineWindowOfWrittenCallInLoops = 120;
+static constexpr uint32_t inlineWindowOfRemovedObjects = 240;
 static constexpr uint32_t inlineLimitOfLeaves = 12;
 static constexpr uint32_t inlineLimitOfLeavesOutsideLoops = 3;
 static constexpr uint32_t inlineLimitOfHeads = 4;
 static constexpr uint32_t inlineLimitOfHeadsWhoseQuestionWasAsked = inlineLimitOfHeads + 1;
+static constexpr uint32_t inlineLimitOfHeadsTestingParameters = 8;
 static constexpr uint32_t inlineLimitOfHelpers = 40;
-static constexpr uint32_t inlineWindowOfHelpers = 120;
+static constexpr uint32_t inlineWindowOfHelpers = 140;
 
 static constexpr uint64_t mostInlineFramesAtInlining = defaultLimitValue(LimitID::InlineFramesPerFunction, hostArchitecture());
 
@@ -66,18 +77,23 @@ static bool isNoLargerThanCallWithItsOwnCallsAtInlining(const ThinSummary& summa
     return size <= inlineLimitOutsideLoops + numberOfOperands;
 }
 
+static bool passesFreshObject(const Walker& walker, std::span<const Reference> passedOperands)
+{
+    return std::ranges::any_of(passedOperands, [&](Reference operand) {
+        if (!operand || !operand.isValue())
+            return false;
+        ValueID cell = underlyingCellOf(walker.code(), operand.id());
+        return !walker.code().isConstant(cell) && walker.state().isFresh(Reference::value(cell));
+    });
+}
+
 static bool copyMayLetObjectFallAwayAtInlining(const Walker& walker, FunctionID callee, const std::span<const Reference>* passedOperands)
 {
     if (!passedOperands)
         return true;
     if (walker.facts().summaries().at(callee).makesObjects || walker.program().at(callee).has(FunctionFlags::HasRestParameter))
         return true;
-    return std::ranges::any_of(*passedOperands, [&](Reference operand) {
-        if (!operand || !operand.isValue())
-            return false;
-        ValueID cell = underlyingCellOf(walker.code(), operand.id());
-        return !walker.code().isConstant(cell) && walker.state().isFresh(Reference::value(cell));
-    });
+    return passesFreshObject(walker, *passedOperands);
 }
 
 static bool isOnlyCalledAtInlining(const BodyIndex& body, ValueID parameter)
@@ -149,6 +165,117 @@ static bool passesTypedArrayElement(const Walker& walker, const std::span<const 
     });
 }
 
+static bool readsFieldOf(const BodyIndex& body, ValueID parameter)
+{
+    for (uint32_t number = 0; body.opcodes().contains(Opcode::PropGet) && number < body.numberOfBlocks(); ++number) {
+        for (BodyValue operation : body.block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::PropGet && body.stripCasts(operation.objectOperand()) == parameter)
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool onlyCalculates(const Walker& walker, FunctionID leaf, const BodyIndex& body, uint32_t& numberOfOperations, unsigned depth = 0)
+{
+    static constexpr unsigned maxDepth = 2;
+    numberOfOperations += walker.facts().summaries().at(leaf).numberOfOperations;
+    static constexpr OpcodeSet calculations = allNumericOperators | allRelations | allEqualities | opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double, Opcode::ToBoolean, Opcode::LogicalNot, Opcode::Undefined, Opcode::Builtin, Opcode::Call, Opcode::GetModuleVariable, Opcode::CheckInitialized, Opcode::PropGet };
+    if ((body.opcodes() | calculations) != calculations || body.hasLoops())
+        return false;
+    if (!body.holdsAnyOf(OpcodeSet { Opcode::Call, Opcode::GetModuleVariable, Opcode::PropGet }))
+        return true;
+    const LinkTables& linked = walker.facts().linked();
+    const TypeArena& types = walker.types();
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        for (BodyValue operation : body.block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::Call && !isMathCall(walker, body, operation)) {
+                FunctionID callee = linked.calleeAt(leaf, operation.id());
+                const BodyIndex* called = callee && callee != leaf && depth < maxDepth ? walker.facts().bodies().find(callee) : nullptr;
+                if (!called || !onlyCalculates(walker, callee, *called, numberOfOperations, depth + 1))
+                    return false;
+            } else if (operation.opcode() == Opcode::PropGet) {
+                ValueID object = operation.isFreeName() ? ValueID() : body.stripCasts(operation.objectOperand());
+                if (!object || !body.isParameter(object) || body.blockOf(object) != entryBlock)
+                    return false;
+            } else if (operation.opcode() == Opcode::GetModuleVariable) {
+                TypeID proven = linked.variable(operation.as<Opcode::GetModuleVariable>().variable()).proven;
+                Type type = types.at(proven ? proven : TypeID(TypeTable::anything));
+                type.primitives &= ~Primitive::Absent;
+                if (!type.isNumber() && !singleFunctionOf(types, type))
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool onlyCalculatesInWindow(const Walker& walker, FunctionID leaf, const BodyIndex& body)
+{
+    uint32_t numberOfOperations = 0;
+    return onlyCalculates(walker, leaf, body, numberOfOperations) && numberOfOperations <= inlineWindowOfWrittenCallInLoops;
+}
+
+static bool calculatesWithPassedNumbers(const Walker& walker, FunctionID leaf, const std::span<const Reference>* passedOperands)
+{
+    const BodyIndex* body = walker.facts().bodies().find(leaf);
+    if (!passedOperands || !body || (walker.currentBlock() && walker.code().at(walker.currentBlock()).frequency == BlockFrequency::Rare))
+        return false;
+    BodyBlock entry = body->block(entryBlock);
+    bool takesNumber = false;
+    for (uint32_t position = 0; position < entry.numberOfParameters(); ++position) {
+        if (!body->useCount(entry.parameter(position)))
+            continue;
+        Reference passed = position < passedOperands->size() ? (*passedOperands)[position] : Reference();
+        TypeID type = passed ? walker.typeOf(passed) : TypeID();
+        if (type && readsFieldOf(*body, entry.parameter(position))) {
+            if (!singleLayoutOf(walker.types(), walker.types().at(type)))
+                return false;
+            continue;
+        }
+        if (!type || !walker.types().overlap(type, TypeTable::number))
+            return false;
+        takesNumber = true;
+    }
+    return takesNumber && onlyCalculatesInWindow(walker, leaf, *body);
+}
+
+bool passesValueToCalculation(const Walker& walker, const BodyValue& call, ValueID value)
+{
+    FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), call.id());
+    const BodyIndex* body = callee ? walker.facts().bodies().find(callee) : nullptr;
+    if (!body || !onlyCalculatesInWindow(walker, callee, *body))
+        return false;
+    const Function& function = walker.program().at(callee);
+    std::span<const ValueID> arguments = call.as<Opcode::Call>().argumentsOperands();
+    size_t position = std::ranges::find(arguments, value) - arguments.begin();
+    if (position >= arguments.size() || position >= function.numberOfPositionalParameters())
+        return false;
+    ValueID parameter = body->block(entryBlock).parameter(function.firstParameterIndex() + position);
+    auto isWrittenNumber = [&](ValueID operand) {
+        return !body->isParameter(operand) && (body->opcodeOf(operand) == Opcode::Integer || body->opcodeOf(operand) == Opcode::Double);
+    };
+    auto suitsNumbers = [&](const BodyValue& operation) {
+        if (numberProducingOperators.contains(operation.opcode()) || allBitwiseOperators.contains(operation.opcode()))
+            return true;
+        return (operation.opcode() == Opcode::Add || allRelations.contains(operation.opcode())) && (isWrittenNumber(operation.operand(0)) || isWrittenNumber(operation.operand(1)));
+    };
+    Vector<ValueID, 8> names { parameter };
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        for (BodyValue operation : body->block(BlockID(number)).values()) {
+            bool takesValue = false;
+            operation.forEachOperand([&](ValueID operand, uint32_t) { takesValue |= names.contains(body->stripCasts(operand)); });
+            if (!takesValue || opcodesThatStateTypes.contains(operation.opcode()))
+                continue;
+            if (suitsNumbers(operation))
+                return true;
+            if (operation.opcode() == Opcode::Add)
+                names.append(operation.id());
+        }
+    }
+    return false;
+}
+
 static bool leafReadsElementsOfHolderFromInFrontOfLoopAtInlining(const Walker& walker, FunctionID leaf, const std::span<const Reference>* passedOperands)
 {
     const BodyIndex* body = walker.facts().bodies().find(leaf);
@@ -181,8 +308,128 @@ static bool readsParameterElements(const BodyIndex& body)
     return false;
 }
 
+static std::optional<uint32_t> findConstantTripCount(const BodyIndex& body, LoopID loop)
+{
+    BlockID head = body.loop(loop).head;
+    BodyTerminator end = body.terminator(head);
+    ValueID asked = end.kind() == TerminatorKind::Branch ? end.as<TerminatorKind::Branch>().conditionOperand() : ValueID();
+    if (!asked || body.isParameter(asked) || (body.opcodeOf(asked) != Opcode::Less && body.opcodeOf(asked) != Opcode::LessEq))
+        return std::nullopt;
+    auto integerOf = [&](ValueID value) -> std::optional<int64_t> {
+        value = body.stripCasts(value);
+        if (!value || body.isParameter(value) || body.opcodeOf(value) != Opcode::Integer)
+            return std::nullopt;
+        return body.value(value).integer();
+    };
+    ValueID counter = body.stripCasts(body.value(asked).operand(0));
+    std::optional<int64_t> bound = integerOf(body.value(asked).operand(1));
+    if (!bound || !counter || !body.isParameter(counter) || body.blockOf(counter) != head)
+        return std::nullopt;
+    uint32_t position = counter.index() - body.block(head).firstParameter().index();
+    std::optional<int64_t> start;
+    bool isCounted = true;
+    for (uint32_t number = 0; number < body.numberOfBlocks() && isCounted; ++number) {
+        body.block(BlockID(number)).forEachOutgoingEdge([&](BodyTarget target, bool) {
+            if (target.block() != head)
+                return;
+            ValueID brought = position < target.arguments().size() ? body.stripCasts(target.arguments()[position]) : ValueID();
+            if (body.isInLoop(BlockID(number), loop)) {
+                isCounted &= brought && !body.isParameter(brought) && body.opcodeOf(brought) == Opcode::Increment && body.stripCasts(body.value(brought).operand(0)) == counter;
+                return;
+            }
+            isCounted &= !start;
+            start = brought ? integerOf(brought) : std::nullopt;
+        });
+    }
+    if (!isCounted || !start)
+        return std::nullopt;
+    int64_t trips = *bound - *start + (body.opcodeOf(asked) == Opcode::LessEq);
+    return trips > 0 && trips <= inlineLimitInLoops ? std::optional { static_cast<uint32_t>(trips) } : std::nullopt;
+}
+
+std::optional<uint32_t> Walker::constantTripCountOf(uint32_t openLoop) const
+{
+    const OpenLoop& loop = m_openLoops[openLoop];
+    const Frame& frame = m_frames[loop.frame];
+    return frame.index && loop.loop ? findConstantTripCount(*frame.index, loop.loop) : std::nullopt;
+}
+
+static bool isShortNest(const Walker& walker, FunctionID callee, const BodyIndex& body, uint32_t numberOfOperations)
+{
+    if (body.numberOfLoops() > 2)
+        return false;
+    Vector<uint32_t, 2> trips;
+    for (uint32_t loop = 0; loop < body.numberOfLoops(); ++loop) {
+        std::optional<uint32_t> found = findConstantTripCount(body, LoopID(loop));
+        if (!found)
+            return false;
+        trips.append(*found);
+    }
+    uint32_t size = numberOfOperations;
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        uint32_t times = 1;
+        for (LoopID loop = body.loopOf(BlockID(number)); loop; loop = body.loop(loop).parent)
+            times *= trips[loop.index()];
+        for (BodyValue operation : body.block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::CallDirect || operation.opcode() == Opcode::CallList || operation.opcode() == Opcode::Construct)
+                return false;
+            if (operation.opcode() != Opcode::Call)
+                continue;
+            FunctionID called = walker.facts().linked().calleeAt(callee, operation.id());
+            if (!called || walker.facts().summaries().at(called).has(SummaryTrait::HasLoops))
+                return false;
+            size += times * walker.facts().summaries().at(called).numberOfOperations;
+        }
+        if (size > inlineWindowOfWrittenCallInLoops)
+            return false;
+    }
+    return true;
+}
+
+static bool readsHolderFieldElements(const Walker& walker, const BodyIndex& body, const std::span<const Reference>* passedOperands)
+{
+    std::optional<uint32_t> loop = walker.innermostOpenLoop();
+    if (passedOperands && !loop)
+        return false;
+    BodyBlock entry = body.block(entryBlock);
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        for (BodyValue read : body.block(BlockID(number)).values()) {
+            if (read.opcode() != Opcode::ElemGet)
+                continue;
+            ValueID field = body.stripCasts(read.objectOperand());
+            if (!field || body.isParameter(field) || body.opcodeOf(field) != Opcode::PropGet || body.value(field).isFreeName())
+                continue;
+            std::optional<uint32_t> position = entry.indexOfParameter(body.stripCasts(body.value(field).objectOperand()));
+            if (!position)
+                continue;
+            Reference holder = passedOperands && *position < passedOperands->size() ? (*passedOperands)[*position] : Reference();
+            if (!passedOperands || (holder && walker.standsInFrontOfOpenLoop(*loop, holder)))
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool isSmallFieldLoop(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const std::span<const Reference>* passedOperands)
+{
+    static constexpr uint32_t maxCallSites = 2;
+    static constexpr OpcodeSet calls { Opcode::Call, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::SuperConstruct, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray };
+    const ThinSummary& summary = walker.facts().summaries().at(callee);
+    const LinkedFunction& linked = walker.facts().linked().function(callee);
+    if (!place.isInLoop || !summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > inlineLimitInLoopsWithoutObjects || !linked.numberOfCallSites || linked.numberOfCallSites > maxCallSites)
+        return false;
+    if (place.caller != walker.unit().function && (place.caller != walker.currentFunction() || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > inlineWindowOfWrittenCallInLoops))
+        return false;
+    if (walker.standsUnderHandler() || (place.body && place.body->block(place.body->blockOf(place.call)).hasHandler()))
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    return body && body->numberOfLoops() == 1 && !body->holdsAnyOf(calls) && readsHolderFieldElements(walker, *body, passedOperands);
+}
+
 bool canInlineSingleCallLoop(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const std::span<const Reference>* passedOperands)
 {
+    if (isSmallFieldLoop(walker, callee, place, passedOperands))
+        return true;
     static constexpr OpcodeSet callsOfValues { Opcode::Call, Opcode::CallDirect, Opcode::CallList, Opcode::Construct };
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     if (!place.isInLoop || place.caller != walker.unit().function || !summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > inlineLimitInLoops || !walker.facts().linked().function(callee).hasSingleCallSite)
@@ -190,8 +437,18 @@ bool canInlineSingleCallLoop(const Walker& walker, FunctionID callee, const Plac
     if (walker.standsUnderHandler() || (place.body && place.body->block(place.body->blockOf(place.call)).hasHandler()))
         return false;
     const BodyIndex* body = walker.facts().bodies().find(callee);
-    if (!body || body->numberOfLoops() != 1 || body->holdsAnyOf(callsOfValues))
+    if (!body)
         return false;
+    if (body->numberOfLoops() != 1 || body->holdsAnyOf(callsOfValues)) {
+        if (!isShortNest(walker, callee, *body, summary.numberOfOperations))
+            return false;
+        if (!passedOperands)
+            return true;
+        std::optional<uint32_t> loop = walker.innermostOpenLoop();
+        return loop && std::ranges::any_of(*passedOperands, [&](Reference passed) {
+            return passed && passed.isValue() && walker.standsInFrontOfOpenLoop(*loop, passed) && walker.types().at(walker.typeOf(passed)).hasObjects();
+        });
+    }
     return passedOperands ? leafReadsElementsOfHolderFromInFrontOfLoopAtInlining(walker, callee, passedOperands) : readsParameterElements(*body);
 }
 
@@ -277,7 +534,13 @@ static bool isInRecursionWithoutLoops(const Walker& walker)
     return !walker.currentBodyIndex().hasLoops() && walker.isCurrentFrameRecursive();
 }
 
-static uint32_t operationsThatThrowAtInlining(const BodyIndex& body)
+static bool returnsNumberAtInlining(const Walker& walker, FunctionID callee)
+{
+    TypeID result = walker.facts().linked().function(callee).result;
+    return result && walker.types().at(result).isNumber();
+}
+
+static uint32_t throwingOperations(const BodyIndex& body)
 {
     uint32_t number = 0;
     for (uint32_t block = 0; block < body.numberOfBlocks(); ++block) {
@@ -289,13 +552,52 @@ static uint32_t operationsThatThrowAtInlining(const BodyIndex& body)
     return number;
 }
 
+static uint32_t failingPrivateNameCheckOperations(const BodyIndex& body)
+{
+    if (!body.holdsAnyOf(OpcodeSet { Opcode::NewRuntimeError }))
+        return 0;
+    uint32_t number = 0;
+    bool checksPrivateNames = false;
+    for (uint32_t block = 0; block < body.numberOfBlocks(); ++block) {
+        TerminatorKind end = body.isReachable(BlockID(block)) ? body.terminator(BlockID(block)).kind() : TerminatorKind::Return;
+        if (end != TerminatorKind::Throw && end != TerminatorKind::Unreachable)
+            continue;
+        for (BodyValue operation : body.block(BlockID(block)).values()) {
+            bool isCheck = operation.opcode() == Opcode::NewRuntimeError && (operation.runtimeError() == RuntimeErrorKind::InvalidPrivateRead || operation.runtimeError() == RuntimeErrorKind::InvalidPrivateWrite);
+            checksPrivateNames |= isCheck;
+            number += isCheck || end == TerminatorKind::Unreachable;
+        }
+    }
+    return checksPrivateNames ? number : 0;
+}
+
+static uint32_t comparisonsOfOneParameterWithConstants(const BodyIndex& body)
+{
+    static constexpr OpcodeSet comparisons { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq };
+    Vector<uint32_t, 8> numbers;
+    numbers.fill(0, body.block(entryBlock).numberOfParameters());
+    uint32_t greatest = 0;
+    for (uint32_t block = 0; block < body.numberOfBlocks(); ++block) {
+        for (BodyValue operation : body.block(BlockID(block)).values()) {
+            if (!comparisons.contains(operation.opcode()))
+                continue;
+            ValueID left = body.stripCasts(operation.operand(0));
+            ValueID right = body.stripCasts(operation.operand(1));
+            if (left && right && body.isParameter(left) && body.blockOf(left) == entryBlock && left.index() < numbers.size() && !body.isParameter(right) && body.opcodeOf(right) == Opcode::Integer)
+                greatest = std::max(greatest, ++numbers[left.index()]);
+        }
+    }
+    return greatest;
+}
+
 static bool takesListAtInlining(const Function& callee, unsigned entryParameter);
 
-static uint32_t readsOfRestListAtInlining(const Walker& walker, FunctionID callee, uint32_t numberOfOperations)
+static constexpr uint32_t maxRestArrayReads = 12;
+
+static NEVER_INLINE uint32_t restArrayReads(const Walker& walker, FunctionID callee)
 {
-    static constexpr uint32_t mostReads = 12;
     const Function& function = walker.program().at(callee);
-    const BodyIndex* body = function.has(FunctionFlags::HasRestParameter) && numberOfOperations > inlineLimitInLoops && numberOfOperations <= inlineLimitInLoops + mostReads ? walker.facts().bodies().find(callee) : nullptr;
+    const BodyIndex* body = function.has(FunctionFlags::HasRestParameter) ? walker.facts().bodies().find(callee) : nullptr;
     if (!body)
         return 0;
     uint32_t number = 0;
@@ -308,24 +610,509 @@ static uint32_t readsOfRestListAtInlining(const Walker& walker, FunctionID calle
             number += parameter && takesListAtInlining(function, *parameter);
         }
     }
-    return number;
+    return std::min(number, maxRestArrayReads);
+}
+
+static bool fitsLoopWithoutRestArray(const Walker& walker, FunctionID callee, uint32_t numberOfOperations)
+{
+    return numberOfOperations <= inlineLimitInLoops || (numberOfOperations <= inlineLimitInLoops + maxRestArrayReads && numberOfOperations - restArrayReads(walker, callee) <= inlineLimitInLoops);
+}
+
+static std::optional<uint32_t> operationsForPassedBuiltin(const Walker& walker, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body)
+        return std::nullopt;
+    const TypeArena& types = walker.types();
+    const BuiltinTable& table = walker.program().builtins();
+    BodyBlock entry = body->block(entryBlock);
+    bool comparesPassedBuiltin = false;
+    auto typePassedTo = [&](ValueID operand) -> Type {
+        std::optional<uint32_t> parameter = entry.indexOfParameter(body->stripCasts(operand));
+        Reference passed = parameter && *parameter < passedOperands.size() ? passedOperands[*parameter] : Reference();
+        TypeID type = passed ? walker.typeOf(passed) : TypeID();
+        return type ? types.at(type) : Type();
+    };
+    auto answerOf = [&](ValueID condition) -> std::optional<bool> {
+        while (!body->isParameter(condition) && body->opcodeOf(condition) == Opcode::ToBoolean)
+            condition = body->value(condition).operand(0);
+        if (body->isParameter(condition))
+            return std::nullopt;
+        BodyValue question = body->value(condition);
+        if (question.opcode() == Opcode::HasJSType) {
+            Type passed = typePassedTo(question.operand(0));
+            const ClassPart* part = passed.isObject() ? singleBuiltinClassOf(types, passed) : nullptr;
+            if (!part)
+                return std::nullopt;
+            JSType type = table.at(part->builtinClass).type;
+            auto asked = question.as<Opcode::HasJSType>();
+            return type >= toJSType(asked.first()) && type <= toJSType(asked.last());
+        }
+        if (question.opcode() != Opcode::StrictEq)
+            return std::nullopt;
+        ValueID compared = question.operand(1);
+        if (body->isParameter(compared) || body->opcodeOf(compared) != Opcode::Builtin)
+            return std::nullopt;
+        Type passed = typePassedTo(question.operand(0));
+        BuiltinID builtin = passed.isObject() ? singleBuiltinOf(types, passed) : BuiltinID();
+        if (!builtin)
+            return std::nullopt;
+        comparesPassedBuiltin = true;
+        return table.canonicalID(builtin) == table.canonicalID(body->value(compared).as<Opcode::Builtin>().builtin());
+    };
+    uint32_t number = 0;
+    Vector<BlockID, 16> worklist { entryBlock };
+    BitVector isVisited(body->numberOfBlocks());
+    isVisited.set(entryBlock.index());
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        for (BodyValue operation : body->block(block).values())
+            number += !opcodesThatStateTypes.contains(operation.opcode());
+        BodyTerminator end = body->terminator(block);
+        std::optional<bool> answer = end.kind() == TerminatorKind::Branch ? answerOf(end.operand(0)) : std::nullopt;
+        uint32_t targetIndex = 0;
+        for (BodyTarget target : end.targets()) {
+            if ((answer && targetIndex++ != !*answer) || isVisited.set(target.block().index()))
+                continue;
+            worklist.append(target.block());
+        }
+    }
+    return comparesPassedBuiltin ? std::optional<uint32_t>(number) : std::nullopt;
+}
+
+ValueID findWrittenArgument(const BodyValue& call, const Function& callee, uint32_t entryParameter)
+{
+    if (call.opcode() == Opcode::CallDirect) {
+        std::span<const ValueID> operands = call.variadicOperands();
+        return entryParameter < operands.size() ? operands[entryParameter] : ValueID();
+    }
+    if (call.opcode() != Opcode::Call || callee.entryParameterKind(entryParameter) != EntryParameter::Parameter)
+        return { };
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    uint32_t position = entryParameter - callee.firstParameterIndex();
+    return position < arguments.size() ? arguments[position] : ValueID();
+}
+
+static bool matchesParameter(const Walker& walker, const BodyIndex& body, ValueID parameter)
+{
+    const Program& program = walker.program();
+    const BuiltinName test = program.builtins().nameOf(byteCast<uint8_t>(("test"_s).span()));
+    const std::array methods { program.keyOf(BuiltinNames::exec), test ? program.keyOf(test) : program.keyOf(BuiltinNames::exec) };
+    for (uint32_t number = 0; number < body.numberOfValues(); ++number) {
+        ValueID id(number);
+        if (body.isParameter(id) || body.opcodeOf(id) != Opcode::Call)
+            continue;
+        auto call = body.value(id).as<Opcode::Call>();
+        if (!call.thisValueOperand() || body.stripCasts(call.thisValueOperand()) != parameter)
+            continue;
+        ValueID method = body.stripCasts(call.calleeOperand());
+        if (!body.isParameter(method) && body.opcodeOf(method) == Opcode::PropGet && std::ranges::find(methods, body.value(method).key()) != methods.end())
+            return true;
+    }
+    return false;
+}
+
+static bool copyMatchesKnownPattern(const Walker& walker, FunctionID callee, const PlaceOfCall& place)
+{
+    if (!place.isInLoop || !place.body || place.caller != walker.unit().function || place.body != &walker.currentBodyIndex() || place.body->opcodeOf(place.call) != Opcode::Call || walker.facts().summaries().at(callee).numberOfOperations > inlineLimitInLoops)
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body)
+        return false;
+    const BodyValue call = place.body->value(place.call);
+    const Function& function = walker.program().at(callee);
+    BodyBlock entry = body->block(entryBlock);
+    for (uint32_t position = static_cast<uint32_t>(function.captures.size()); position < entry.numberOfParameters(); ++position) {
+        if (findRegExpPassed(walker, findWrittenArgument(call, function, position)) && matchesParameter(walker, *body, entry.parameter(position)))
+            return true;
+    }
+    return false;
+}
+
+static bool isResultOnlyRead(const BodyIndex& body, ValueID call)
+{
+    static constexpr uint32_t mostOperationsLookedAt = 40;
+    BodyBlock block = body.block(body.blockOf(call));
+    uint32_t end = std::min(block.endOfValues().index(), call.index() + 1 + mostOperationsLookedAt);
+    Vector<ValueID, 4> names { call };
+    uint32_t usesToCome = body.useCount(call);
+    if (!usesToCome)
+        return false;
+    for (uint32_t number = call.index() + 1; number < end && usesToCome; ++number) {
+        BodyValue operation = body.value(ValueID(number));
+        Opcode opcode = operation.opcode();
+        bool isRead = true;
+        operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (!operand || !names.contains(operand))
+                return;
+            --usesToCome;
+            if (opcodesThatStateTypes.contains(opcode)) {
+                names.append(operation.id());
+                usesToCome += body.useCount(operation.id());
+            } else
+                isRead &= opcode == Opcode::PropGet || (opcode == Opcode::Call && operandIndex);
+        });
+        if (!isRead)
+            return false;
+    }
+    return !usesToCome;
+}
+
+static bool isResultStoredInto(const BodyIndex& body, ValueID call)
+{
+    static constexpr uint32_t mostOperationsLookedAt = 12;
+    uint32_t end = std::min(body.block(body.blockOf(call)).endOfValues().index(), call.index() + 1 + mostOperationsLookedAt);
+    for (uint32_t number = call.index() + 1; number < end; ++number) {
+        BodyValue operation = body.value(ValueID(number));
+        if (operation.opcode() == Opcode::PropSet && body.stripCasts(operation.objectOperand()) == call)
+            return true;
+    }
+    return false;
+}
+
+static bool isConstructorWithoutCalls(const Walker& walker, FunctionID callee)
+{
+    static constexpr OpcodeSet calls { Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
+    const Function& function = walker.program().at(callee);
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    bool isConstructor = isClassConstructorOf(function.kind) && function.constructedClass;
+    if (!body || body->holdsAnyOf(calls) || (!isConstructor && function.kind != FunctionKind::Initializer))
+        return false;
+    if (!body->holdsAnyOf(OpcodeSet { Opcode::CallDirect }))
+        return true;
+    for (uint32_t number = 0; isConstructor && number < body->numberOfBlocks(); ++number) {
+        for (BodyValue operation : body->block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::CallDirect && (walker.program().at(operation.function()).kind != FunctionKind::Initializer || !isConstructorWithoutCalls(walker, operation.function())))
+                return false;
+        }
+    }
+    return isConstructor;
+}
+
+static bool passedTypesDecideOperations(const Walker& walker, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    static constexpr OpcodeSet writtenNumbers { Opcode::Integer, Opcode::Double };
+    static constexpr OpcodeSet writtenValues { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::String, Opcode::Builtin, Opcode::GetModuleVariable, Opcode::NewObject };
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body)
+        return false;
+    const TypeArena& types = walker.types();
+    const LinkTables& link = walker.facts().linked();
+    Vector<TypeID> known;
+    known.fill(TypeID(), body->numberOfValues());
+    BodyBlock entry = body->block(entryBlock);
+    for (uint32_t position = 0; position < std::min<size_t>(entry.numberOfParameters(), passedOperands.size()); ++position) {
+        if (passedOperands[position])
+            known[entry.parameter(position).index()] = walker.typeOf(passedOperands[position]);
+    }
+    auto isNumber = [&](ValueID value) {
+        TypeID type = value ? known[value.index()] : TypeID();
+        return type && types.at(type).isNumber();
+    };
+    auto fieldOf = [&](ValueID object, PropertyKeyID key) -> std::optional<FieldReference> {
+        TypeID type = object && key ? known[object.index()] : TypeID();
+        if (!type || (types.at(type).primitives & ~Primitive::UndefinedOrNull) || !types.at(type).hasOnlyLayouts())
+            return std::nullopt;
+        LayoutID layout = singleLayoutOf(types, types.at(type));
+        if (!layout || !walker.plan().isInUse(layout))
+            return std::nullopt;
+        std::optional<FieldReference> field = findField(walker.program(), layout, key);
+        return field && link.field(*field).isFilledAtEveryRead ? field : std::nullopt;
+    };
+    auto isCalleeOfKnownCall = [&](ValueID read) {
+        for (BodyValue operation : body->block(body->blockOf(read)).values()) {
+            if (operation.opcode() == Opcode::Call && body->stripCasts(operation.calleeOperand()) == read)
+                return !!link.calleeAt(callee, operation.id());
+        }
+        return false;
+    };
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        for (BodyValue operation : body->block(BlockID(number)).values()) {
+            Opcode opcode = operation.opcode();
+            TypeID& result = known[operation.id().index()];
+            if (opcodesThatStateTypes.contains(opcode) || opcode == Opcode::NarrowByTest || opcode == Opcode::ToThis || opcode == Opcode::CheckInitialized)
+                result = known[operation.operand(0).index()];
+            else if (writtenNumbers.contains(opcode))
+                result = TypeTable::number;
+            else if (writtenValues.contains(opcode))
+                continue;
+            else if (opcode == Opcode::PropGet) {
+                if (operation.isFreeName())
+                    return false;
+                if (std::optional<FieldReference> field = fieldOf(operation.objectOperand(), operation.key()))
+                    result = link.field(*field).proven;
+                else if (!isCalleeOfKnownCall(operation.id()) && (body->isParameter(operation.objectOperand()) || body->opcodeOf(operation.objectOperand()) != Opcode::Builtin))
+                    return false;
+            } else if (opcode == Opcode::PropSet) {
+                if (!fieldOf(operation.objectOperand(), operation.key()))
+                    return false;
+            } else if (opcode == Opcode::PrivateGet || opcode == Opcode::PrivateSet) {
+                FieldReference field { operation.layout(), operation.field() };
+                TypeID type = known[operation.objectOperand().index()];
+                if (!type || !types.at(type).hasOnlyLayouts() || singleLayoutOf(types, types.at(type)) != field.layout)
+                    return false;
+                if (opcode == Opcode::PrivateGet)
+                    result = link.field(field).proven;
+            } else if (opcode == Opcode::Call || opcode == Opcode::Construct) {
+                FunctionID called = link.calleeAt(callee, operation.id());
+                if (called)
+                    result = walker.plan().typeHeldOfResult(walker.program(), link, called);
+                else if (opcode == Opcode::Construct || body->isParameter(operation.calleeOperand()) || body->opcodeOf(body->stripCasts(operation.calleeOperand())) != Opcode::Builtin)
+                    return false;
+                else
+                    result = TypeTable::number;
+            } else if (allNumericOperators.contains(opcode) || allRelations.contains(opcode)) {
+                bool everyOperandIsNumber = true;
+                operation.forEachOperand([&](ValueID operand, uint32_t) {
+                    everyOperandIsNumber &= isNumber(operand);
+                });
+                if (!everyOperandIsNumber)
+                    return false;
+                if (allNumericOperators.contains(opcode))
+                    result = TypeTable::number;
+            } else
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool constructsForOtherClasses(const Walker& walker, FunctionID constructor)
+{
+    const Function& function = walker.program().at(constructor);
+    const LinkTables& link = walker.facts().linked();
+    const LinkedFunction& linked = link.function(constructor);
+    unsigned newTarget = function.numberOfEntryParametersBefore(EntryParameter::NewTarget);
+    if (!function.has(FunctionFlags::HasNewTarget) || newTarget >= linked.numberOfParameters)
+        return false;
+    TypeID proven = link.parameters[linked.firstParameter + newTarget].proven;
+    return !proven || !singleFunctionOf(walker.types(), walker.types().at(proven));
+}
+
+static bool isCalledByEveryNestedIteration(const Walker& walker, const PlaceOfCall& place)
+{
+    return place.body && place.call && place.caller == walker.unit().function && walker.facts().linked().functionsFinishedInNestedIterations.get(place.caller.index())
+        && place.body->dominates(place.body->blockOf(place.call), walker.lastReturnDominator(*place.body));
+}
+
+static bool copyPaysInIterations(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const std::span<const Reference>* passedOperands)
+{
+    bool isInOwnFileLoops = walker.facts().linked().functionsCalledInLoopsOfOwnFile.get(walker.unit().function.index());
+    if (!isInOwnFileLoops && !walker.facts().linked().functionsFinishedInNestedIterations.get(walker.unit().function.index()))
+        return false;
+    const ThinSummary& summary = walker.facts().summaries().at(callee);
+    if (summary.has(SummaryTrait::HasLoops))
+        return false;
+    if (summary.numberOfOperations <= inlineLimitInNestedIterations && isCalledByEveryNestedIteration(walker, place) && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations))
+        return true;
+    if (!isInOwnFileLoops)
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    bool makesObject = body && body->holdsAnyOf(OpcodeSet { Opcode::Construct, Opcode::NewObject });
+    bool objectMayBeEliminated = makesObject && place.body && place.call && isResultOnlyRead(*place.body, place.call);
+    if (place.body && place.call && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations) && isConstructorWithoutCalls(walker, callee) && isResultStoredInto(*place.body, place.call))
+        return true;
+    if (summary.numberOfOperations <= inlineLimitInLoops && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations)
+        && isConstructorWithoutCalls(walker, callee) && constructsForOtherClasses(walker, callee))
+        return true;
+    return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations)
+        && (passedOperands ? passedTypesDecideOperations(walker, callee, *passedOperands) : objectMayBeEliminated);
+}
+
+struct PartOfCalleeLeftByTypes {
+    uint32_t numberOfOperations { 0 };
+};
+
+static std::optional<uint16_t> primitivesNamedByTypeOfAtInlining(const Type& type)
+{
+    for (uint16_t primitives : { Primitive::Number, Primitive::AnyString, Primitive::Boolean, Primitive::AnySymbol }) {
+        if (type.hasOnlyPrimitives(primitives))
+            return primitives;
+    }
+    return std::nullopt;
+}
+
+static bool holdsEveryPrimitiveAtInlining(const Type& asked, const Type& passed)
+{
+    return !passed.hasObjects() && !(passed.primitives & ~asked.primitives) && (!(passed.primitives & Primitive::Integer) || passed.integers.isSubsetOf(asked.integers));
+}
+
+static std::optional<PartOfCalleeLeftByTypes> findPartLeftByPassedTypes(const Walker& walker, FunctionID callee, std::span<const Reference> passedOperands, size_t mostOperations)
+{
+    static constexpr OpcodeSet constants { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String };
+    const TypeArena& types = walker.types();
+    bool passesKnownType = std::ranges::any_of(passedOperands, [&](Reference operand) {
+        TypeID type = operand ? walker.typeOf(operand) : TypeID();
+        return type && !types.isUninformative(type);
+    });
+    if (!passesKnownType)
+        return std::nullopt;
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || !body->holdsAnyOf(OpcodeSet { Opcode::TypeTest, Opcode::TypeOf }))
+        return std::nullopt;
+    Vector<TypeID> passedTypes;
+    Vector<ValueID> named;
+    passedTypes.fill(TypeID(), body->numberOfValues());
+    named.fill(ValueID(), body->numberOfValues());
+    auto sourceOf = [&](ValueID value) {
+        while (value && named[value.index()])
+            value = named[value.index()];
+        return value;
+    };
+    auto typeOf = [&](ValueID value) -> Type {
+        ValueID source = value ? sourceOf(value) : ValueID();
+        TypeID type = source ? passedTypes[source.index()] : TypeID();
+        return type ? types.at(type) : Type();
+    };
+    auto isKnown = [&](ValueID value) {
+        ValueID source = value ? sourceOf(value) : ValueID();
+        return source && passedTypes[source.index()];
+    };
+    BodyBlock entry = body->block(entryBlock);
+    for (uint32_t position = 0; position < std::min<size_t>(entry.numberOfParameters(), passedOperands.size()); ++position) {
+        TypeID type = passedOperands[position] ? walker.typeOf(passedOperands[position]) : TypeID();
+        if (type && !types.isUninformative(type))
+            passedTypes[entry.parameter(position).index()] = type;
+    }
+
+    bool typesDecide = false;
+    auto answerOf = [&](ValueID condition) -> std::optional<bool> {
+        if (!condition || body->isParameter(condition))
+            return std::nullopt;
+        BodyValue question = body->value(condition);
+        Opcode opcode = question.opcode();
+        if (opcode == Opcode::TypeTest && isKnown(question.operand(0))) {
+            Type passed = typeOf(question.operand(0));
+            Type asked = types.at(question.testedType());
+            if (holdsEveryPrimitiveAtInlining(asked, passed))
+                return true;
+            if (!(passed.primitives & asked.primitives) && !(passed.hasObjects() && asked.hasObjects()))
+                return false;
+            return std::nullopt;
+        }
+        if (opcode != Opcode::Eq && opcode != Opcode::StrictEq)
+            return std::nullopt;
+        ValueID left = question.operand(0);
+        ValueID right = question.operand(1);
+        if (isKnown(left) && sourceOf(left) == sourceOf(right) && !typeOf(left).mayBeNaN())
+            return true;
+        if (body->isParameter(left) || body->isParameter(right) || body->opcodeOf(left) != Opcode::TypeOf || body->opcodeOf(right) != Opcode::TypeOf)
+            return std::nullopt;
+        ValueID leftValue = body->value(left).operand(0);
+        ValueID rightValue = body->value(right).operand(0);
+        if (!isKnown(leftValue) || !isKnown(rightValue))
+            return std::nullopt;
+        std::optional<uint16_t> leftNamed = primitivesNamedByTypeOfAtInlining(typeOf(leftValue));
+        std::optional<uint16_t> rightNamed = primitivesNamedByTypeOfAtInlining(typeOf(rightValue));
+        if (!leftNamed || !rightNamed)
+            return std::nullopt;
+        return *leftNamed == *rightNamed;
+    };
+
+    PartOfCalleeLeftByTypes left;
+    Vector<BlockID, 16> worklist { entryBlock };
+    BitVector isVisited(body->numberOfBlocks());
+    isVisited.set(entryBlock.index());
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (body->loopOf(block))
+            return std::nullopt;
+        for (BodyValue operation : body->block(block).values()) {
+            Opcode opcode = operation.opcode();
+            if (opcodesThatStateTypes.contains(opcode) || opcode == Opcode::NarrowByTest) {
+                named[operation.id().index()] = operation.operand(0);
+                continue;
+            }
+            bool isOfKnownType = (opcode == Opcode::TypeTest || opcode == Opcode::TypeOf) && isKnown(operation.operand(0));
+            if (opcode == Opcode::BitOr && !body->isParameter(operation.operand(1)) && body->opcodeOf(operation.operand(1)) == Opcode::Integer && !body->value(operation.operand(1)).integer() && isKnown(operation.operand(0)) && typeOf(operation.operand(0)).isInt32())
+                named[operation.id().index()] = operation.operand(0);
+            else if (!constants.contains(opcode) && !isOfKnownType)
+                ++left.numberOfOperations;
+        }
+        if (left.numberOfOperations > mostOperations)
+            return std::nullopt;
+        BodyTerminator end = body->terminator(block);
+        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+        std::optional<bool> answer = answerOf(condition);
+        typesDecide |= answer.has_value();
+        uint32_t targetIndex = 0;
+        for (BodyTarget target : end.targets()) {
+            if (answer && targetIndex++ != !*answer)
+                continue;
+            BodyBlock next = body->block(target.block());
+            if (body->numberOfIncomingEdges(target.block()) == 1) {
+                uint32_t position = 0;
+                for (ValueID argument : target.arguments())
+                    named[next.parameter(position++).index()] = argument;
+                for (uint32_t operandIndex : target.proofs()) {
+                    ValueID proven = condition && !body->isParameter(condition) ? body->value(condition).operand(operandIndex) : ValueID();
+                    named[next.parameter(position++).index()] = proven;
+                }
+            }
+            if (!isVisited.set(target.block().index()))
+                worklist.append(target.block());
+        }
+    }
+    return typesDecide ? std::optional(left) : std::nullopt;
+}
+
+static bool isForwarderOfArguments(const Walker& walker, FunctionID callee)
+{
+    static constexpr uint32_t mostOperationsOfForwarder = 16;
+    const ThinSummary& summary = walker.facts().summaries().at(callee);
+    return summary.has(SummaryTrait::OnlyPassesOnGatheredArguments) && !summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations <= mostOperationsOfForwarder && walker.program().at(callee).has(FunctionFlags::HasHiddenRest);
+}
+
+static constexpr uint32_t maxOperationsAroundCallback = 400;
+
+static ALWAYS_INLINE bool mayBeCallback(const Walker& walker, FunctionID callee)
+{
+    return walker.facts().linked().function(callee).mayCallBack || walker.isInCallbackCopy();
+}
+
+static NEVER_INLINE bool callsBackAtInlining(const Walker& walker, const BodyValue& call, FunctionID callee)
+{
+    ValueID receiver = call.as<Opcode::Call>().thisValueOperand();
+    return receiver && walker.callsEnclosingReceiver(callee, walker.referenceOf(receiver));
+}
+
+static NEVER_INLINE bool callbackCopyPays(const Walker& walker, FunctionID callee, const std::span<const Reference>* passedOperands)
+{
+    const LinkTables& link = walker.facts().linked();
+    const ThinSummary& summary = walker.facts().summaries().at(callee);
+    if (!passedOperands || summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > LinkTables::maxOperationsOfCallbackCopies)
+        return false;
+    if ((walker.depthOfCopies() ? walker.operationsCopiedAtWrittenCall() : 0) + summary.numberOfOperations > maxOperationsAroundCallback)
+        return false;
+    std::optional<unsigned> thisParameter = walker.program().at(callee).thisParameterIndex();
+    Reference receiver = thisParameter && *thisParameter < passedOperands->size() ? (*passedOperands)[*thisParameter] : Reference();
+    if (link.hasFewCallSites(callee, summary.numberOfOperations) && (walker.isInCallbackCopy() || walker.callsEnclosingReceiver(callee, receiver)))
+        return true;
+    return summary.numberOfOperations <= inlineLimitInLoops && walker.findEnclosingReceiver(receiver);
 }
 
 static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t numberOfOperands, const PlaceOfCall& place, const std::span<const Reference>* passedOperands)
 {
     if (copyIsDrawnAwayAtInlining(walker, callee, place))
         return false;
+    if (place.isInLoop && mayBeCallback(walker, callee) && callbackCopyPays(walker, callee, passedOperands))
+        return true;
+    if (isForwarderOfArguments(walker, callee) && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + walker.facts().summaries().at(callee).numberOfOperations <= inlineWindowOfWrittenCallInLoops))
+        return true;
     if (!place.isInLoop && onlyHandsFunctionToHelperThatCallsItAtInlining(walker, callee))
         return false;
     const ThinSummary& summary = walker.facts().summaries().at(callee);
+    if (walker.isInCopyOfKey() && !summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations <= inlineLimitInLoops && walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= inlineWindowOfWrittenCallInLoops)
+        return true;
     uint32_t window = place.isInLoop ? inlineWindowOfWrittenCallInLoops : inlineWindowOfWrittenCall;
     bool isLeaf = walker.facts().linked().function(callee).weightAsLeaf != LinkedFunction::notLeaf;
-    uint32_t operationsWithoutRestList = summary.numberOfOperations - (place.isInLoop ? readsOfRestListAtInlining(walker, callee, summary.numberOfOperations) : 0);
     size_t operations = summary.numberOfOperations - (isLeaf ? summary.numberOfOperationsThatOnlyTurnTruthRound : 0);
-    size_t mostOperations = inlineLimitOutsideLoops + numberOfOperands;
-    if (place.isInLoop && operations > mostOperations && operations <= mostOperations + mostOperationsThatThrow) {
+    bool isSmallCopy = !place.isInLoop && walker.isOutsideLoopsOfAsyncBody() && !(passedOperands && passesFreshObject(walker, *passedOperands));
+    bool isInComparator = !place.isInLoop && !isSmallCopy && place.caller == walker.unit().function && walker.facts().linked().function(place.caller).isRepeatedCallback;
+    size_t mostOperations = (isSmallCopy ? inlineLimitInAsyncBody : isInComparator ? inlineLimitInComparators : inlineLimitOutsideLoops) + numberOfOperands;
+    if (operations > mostOperations && operations <= mostOperations + maxThrowingOperations && (place.isInLoop || (walker.isUnderCatch()))) {
         if (const BodyIndex* body = walker.facts().bodies().find(callee))
-            operations -= std::min<size_t>(operations, operationsThatThrowAtInlining(*body));
+            operations -= std::min<size_t>(operations, throwingOperations(*body));
     }
     if (operations <= mostOperations
         && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window || isNoLargerThanCallWithItsOwnCallsAtInlining(summary, numberOfOperands)))
@@ -336,19 +1123,40 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
     if (weight <= (place.isInLoop ? inlineLimitOfLeaves : inlineLimitOfLeavesOutsideLoops) + numberOfOperands
         && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + weight <= window))
         return true;
-    if (place.isInLoop && place.caller == walker.unit().function && walker.facts().linked().function(callee).weightAsLeaf <= window && (passesTypedArrayElement(walker, passedOperands) || leafReadsElementsOfHolderFromInFrontOfLoopAtInlining(walker, callee, passedOperands)))
+    if (place.isInLoop && place.caller == walker.unit().function && walker.facts().linked().function(callee).weightAsLeaf <= window && (passesTypedArrayElement(walker, passedOperands) || calculatesWithPassedNumbers(walker, callee, passedOperands) || leafReadsElementsOfHolderFromInFrontOfLoopAtInlining(walker, callee, passedOperands)))
         return true;
-    if (place.isInLoop && place.caller == walker.unit().function && operationsWithoutRestList <= inlineLimitInLoops && passesStringLiteralKey(walker, callee, passedOperands))
+    if (place.isInLoop && place.caller == walker.unit().function && fitsLoopWithoutRestArray(walker, callee, summary.numberOfOperations) && passesStringLiteralKey(walker, callee, passedOperands))
         return true;
     if ((place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= inlineWindowOfWrittenCallInLoops) && summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations <= inlineLimitInLoops
         && passesStringLiteralKey(walker, callee, passedOperands, true))
         return true;
     if (canInlineSingleCallLoop(walker, callee, place, passedOperands))
         return true;
+    if (place.isInLoop && place.caller == walker.unit().function && !summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations > inlineLimitInLoopsWithoutObjects && summary.numberOfOperations <= inlineWindowOfWrittenCallInLoops) {
+        const BodyIndex* body = walker.facts().bodies().find(callee);
+        uint32_t cheap = body ? 2 * comparisonsOfOneParameterWithConstants(*body) : 0;
+        if (cheap >= inlineLimitOfLeaves && summary.numberOfOperations - std::min(cheap, summary.numberOfOperations) <= inlineLimitInLoopsWithoutObjects)
+            return true;
+    }
+    if (place.isInLoop && place.caller == walker.unit().function && isLeaf && weight <= inlineWindowOfWrittenCallInLoops && walker.facts().linked().isWrittenOverBuiltin(callee))
+        return true;
     if (walker.program().at(callee).kind == FunctionKind::Initializer)
         return summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
-    if (place.caller != walker.unit().function && place.isInLoop && walker.canBuildIterationGuard())
-        return walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window && !summary.has(SummaryTrait::HasLoops);
+    if (place.isInLoop && !summary.has(SummaryTrait::HasLoops) && walker.program().at(callee).has(FunctionFlags::IsAlwaysInlined)
+        && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window)) {
+        std::optional<uint32_t> operationsLeft = passedOperands ? operationsForPassedBuiltin(walker, callee, *passedOperands) : 0u;
+        if (operationsLeft && *operationsLeft <= inlineLimitInLoopsWithoutObjects)
+            return true;
+    }
+    if (place.isInLoop && (place.caller == walker.unit().function || place.caller == walker.currentFunction()) && summary.numberOfOperations <= inlineWindowOfWrittenCallInLoops
+        && (summary.has(SummaryTrait::HasLoops) || place.caller == walker.unit().function || !walker.canBuildIterationGuard())) {
+        if (std::optional<PartOfCalleeLeftByTypes> left = passedOperands ? findPartLeftByPassedTypes(walker, callee, *passedOperands, inlineLimitOutsideLoops + numberOfOperands) : std::nullopt; left
+            && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + left->numberOfOperations <= window))
+            return true;
+    }
+    bool isSmallLoop = summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations <= inlineLimitOfLeaves + numberOfOperands;
+    if (place.isInLoop && walker.canBuildIterationGuard() && (place.caller != walker.unit().function || isSmallLoop))
+        return (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window) && (isSmallLoop || !summary.has(SummaryTrait::HasLoops));
     if (passedOperands && place.isInLoop && place.caller == walker.unit().function && summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations <= inlineLimitInLoops && loopOfLeafStoresParameterFields(walker, callee))
         return true;
     if (place.caller == walker.unit().function && place.isInLoop && summary.has(SummaryTrait::HasLoops) && summary.numberOfOperations <= inlineLimitInLoops) {
@@ -357,14 +1165,22 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
     }
     if (place.caller != walker.unit().function && place.caller == walker.currentFunction() && summary.has(SummaryTrait::HasLoops) && walker.program().at(callee).has(FunctionFlags::IsAlwaysInlined))
         return walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window;
-    if (!place.isInLoop && isLeaf && place.caller == walker.unit().function && place.caller == walker.currentFunction() && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects && !summary.has(SummaryTrait::HasLoops)
+    if (!place.isInLoop && weight <= inlineLimitOfLeaves + numberOfOperands && place.caller == walker.unit().function && place.caller == walker.currentFunction() && !summary.has(SummaryTrait::HasLoops) && returnsNumberAtInlining(walker, callee)
         && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations) && isInRecursionWithoutLoops(walker))
+        return true;
+    if (!place.isInLoop && copyPaysInIterations(walker, callee, place, passedOperands))
         return true;
     if (!place.isInLoop || summary.has(SummaryTrait::HasLoops))
         return false;
+    if (place.caller != walker.unit().function && passedOperands && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects && operationsFitWindowOfCallWrittenInLoop(walker, summary.numberOfOperations) && passedTypesDecideOperations(walker, callee, *passedOperands))
+        return true;
     if (place.caller != walker.unit().function && (place.caller != walker.currentFunction() || (!walker.isInLoopOfBodyAtWork() && !walker.program().at(callee).has(FunctionFlags::HasRestParameter)) || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > window))
         return false;
-    return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects || (operationsWithoutRestList <= inlineLimitInLoops && (copyMayLetObjectFallAwayAtInlining(walker, callee, passedOperands) || calleeAsksForClassOfWhatItIsHandedAtInlining(walker, callee)));
+    if (summary.numberOfOperations > inlineLimitInLoopsWithoutObjects && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects + maxThrowingOperations) {
+        if (const BodyIndex* body = walker.facts().bodies().find(callee); body && summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects + failingPrivateNameCheckOperations(*body))
+            return true;
+    }
+    return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects || (fitsLoopWithoutRestArray(walker, callee, summary.numberOfOperations) && (copyMayLetObjectFallAwayAtInlining(walker, callee, passedOperands) || calleeAsksForClassOfWhatItIsHandedAtInlining(walker, callee)));
 }
 
 static bool copyFillsObjectMadeForItAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
@@ -390,6 +1206,17 @@ static bool isClosureOfOneFunctionAtInlining(const Walker& walker, Reference val
         return false;
     Type type = walker.types().at(proven);
     return type.isObject() && type.isJavaScriptValue() && singleFunctionOf(walker.types(), type);
+}
+
+static bool calleeKnowsPassedFunction(const Walker& walker, FunctionID callee, size_t parameter, Reference passed)
+{
+    if (!passed || !passed.isValue() || walker.code().isConstant(passed.id()) || walker.code().at(passed.id()).opcode == Opcode::NewClosure || !walker.facts().linked().function(callee).everyCallerIsKnown)
+        return false;
+    std::span<const LinkedParameter> parameters = walker.facts().linked().parametersOf(callee);
+    if (parameter >= parameters.size() || !parameters[parameter].proven)
+        return false;
+    Type proven = walker.types().at(parameters[parameter].proven);
+    return proven.isObject() && proven.isJavaScriptValue() && singleFunctionOf(walker.types(), proven);
 }
 
 static bool isSecondLoopOverWhatCopyCallsAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place, std::span<const Reference> passedOperands)
@@ -428,6 +1255,8 @@ static bool isProfitableForPassedClosure(const Walker& walker, FunctionID callee
         if (!(called >> index & 1))
             continue;
         Reference function = (*passedOperands)[index];
+        if (!place.isInLoop && calleeKnowsPassedFunction(walker, callee, index, function))
+            continue;
         if (isClosureOfOneFunctionAtInlining(walker, function) || (place.isInLoop && function && isBuiltinCalledWithoutReceiver(walker, walker.typeOf(function))))
             return true;
     }
@@ -669,7 +1498,7 @@ static Vector<Reference, 8> buildEntryArgumentsAtInlining(Walker& walker, Origin
         uint32_t capture = kind == EntryParameter::Capture ? numberOfCapturesPassed++ : 0;
         if (kind == EntryParameter::Capture && walker.plan().promotedEnvironments().isRemoved(call.callee, capture)) {
             bool isInSight = passedOperands[index] && !walker.types().at(walker.typeOf(passedOperands[index])).mayBeUnspecified();
-            operands.append(isInSight ? passedOperands[index] : valueNoLongerCaptured(walker, call.callee, capture, origin));
+            operands.append(isInSight ? passedOperands[index] : valueNoLongerCaptured(walker, call.callee, capture, origin, call.closure));
             continue;
         }
         if (passedOperands[index]) {
@@ -854,7 +1683,7 @@ static bool copyOpensWhatWasJustMadeAtInlining(const Walker& walker, FunctionID 
 {
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     const BodyIndex* body = walker.facts().bodies().find(callee);
-    if (!passedOperands || !body || summary.numberOfOperations > inlineLimitOfHelpers || !body->opcodes().contains(Opcode::IteratorOpen))
+    if (!passedOperands || !body || summary.numberOfOperations > inlineLimitOfHelpers || !(body->opcodes().contains(Opcode::IteratorOpen) || body->numberOfLoops()))
         return false;
     if (!place.isInLoop && walker.program().at(walker.unit().function).isModuleBody())
         return false;
@@ -868,9 +1697,13 @@ static bool copyOpensWhatWasJustMadeAtInlining(const Walker& walker, FunctionID 
         if (isIteratorOfTableJustMade(walker, handed) && findOpeningThatAloneTakesParameter(*body, parameter))
             return true;
         const Operation& made = walker.code().at(handed.id());
-        if (body->numberOfLoops() || summary.numberOfOperations > inlineLimitInLoopsWithoutObjects)
-            continue;
         if (made.opcode != Opcode::CallDirect || made.role() == CodeRole::CoroutineBody || !walker.program().at(made.function()).has(FunctionFlags::IsGenerator) || walker.program().at(made.function()).has(FunctionFlags::IsAsync))
+            continue;
+        if (place.isInLoop && (findOpeningThatAloneTakesParameter(*body, parameter) || onlyStepsParameter(walker.program(), *body, parameter)))
+            return true;
+        if (body->numberOfLoops() && walker.openOfPassedGenerator(callee, static_cast<uint32_t>(entry)))
+            return true;
+        if (body->numberOfLoops() || summary.numberOfOperations > inlineLimitInLoopsWithoutObjects)
             continue;
         for (uint32_t block = 0; block < body->numberOfBlocks(); ++block) {
             for (BodyValue operation : body->block(BlockID(block)).values()) {
@@ -885,7 +1718,7 @@ static bool copyOpensWhatWasJustMadeAtInlining(const Walker& walker, FunctionID 
     return false;
 }
 
-static bool copyKeepsReceiverLocalAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const OperandsInSightAtInlining* inSight)
+static bool copyKeepsReceiverLocal(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const OperandsInSightAtInlining* inSight)
 {
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     if (!inSight || !place.isInLoop || place.caller == walker.unit().function || place.caller != walker.currentFunction() || summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > inlineLimitInLoopsWithoutObjects)
@@ -900,7 +1733,64 @@ static bool copyKeepsReceiverLocalAtInlining(const Walker& walker, FunctionID ca
     return !walker.code().isConstant(cell) && walker.code().at(cell).opcode == Opcode::NewObject && !walker.program().at(walker.code().at(cell).layout()).isEnvironment() && walker.state().isFresh(Reference::value(cell));
 }
 
-static bool writesOutTurnsAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
+static bool unitIsCalledInLoops(const Walker& walker)
+{
+    const LinkTables& link = walker.facts().linked();
+    FunctionID unit = walker.unit().function;
+    return link.functionsCalledInLoops.get(unit.index()) || link.function(unit).isIterationCallback || walker.isCurrentFrameRecursive();
+}
+
+static bool loopRemovesResult(const Walker& walker, ValueID call, FunctionID callee)
+{
+    if (!call)
+        return false;
+    bool isInArm = !walker.facts().linked().calleeAt(walker.currentFunction(), call);
+    TypeID result = walker.facts().linked().function(callee).result;
+    if (!isInArm && (!result || !holdsNumbersAlone(walker, singleLayoutOf(walker.types(), walker.types().at(result)))))
+        return false;
+    return isRemovableInLoops(walker, callee) && fateOfCallResult(walker, walker.currentFunction(), walker.currentBodyIndex(), call) != FateOfValue::Escapes;
+}
+
+static bool copyRemovesObjects(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place, const OperandsInSightAtInlining* inSight)
+{
+    const ThinSummary& summary = walker.facts().summaries().at(callee);
+    bool isInCopy = place.caller != walker.unit().function;
+    if (!inSight || summary.has(SummaryTrait::HasLoops))
+        return false;
+    if (place.isInLoop && !isInCopy)
+        return summary.numberOfOperations > inlineLimitInLoopsWithoutObjects && loopRemovesResult(walker, place.call ? place.call : site.inputValueGiven, callee);
+    if (summary.numberOfOperations > inlineLimitOfRemovedObjects || (isInCopy && walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > inlineWindowOfRemovedObjects))
+        return false;
+    auto isCalledInLoops = [&] {
+        return place.isInLoop || unitIsCalledInLoops(walker);
+    };
+    ValueID call = place.call ? place.call : site.inputValueGiven;
+    auto isResultOnlyDestructured = [&] {
+        FateOfValue fate = call ? fateOfCallResult(walker, walker.currentFunction(), walker.currentBodyIndex(), call) : FateOfValue::Escapes;
+        if (fate == FateOfValue::Returned) {
+            std::optional<Walker::CallOfCopy> copy = walker.callOfCopy();
+            fate = copy ? fateOfCallResult(walker, copy->caller, *copy->index, copy->call) : FateOfValue::Escapes;
+        }
+        return fate == FateOfValue::OnlyTakenApart;
+    };
+    for (unsigned index = 0; walker.state().holdsFreshObjects() && index < inSight->passedOperands.size(); ++index) {
+        Reference passed = inSight->passedOperands[index];
+        if (!passed || !passed.isValue())
+            continue;
+        ValueID cell = underlyingCellOf(walker.code(), passed.id());
+        if (walker.code().isConstant(cell) || walker.code().at(cell).opcode != Opcode::NewObject || walker.program().at(walker.code().at(cell).layout()).isEnvironment() || !walker.state().isFresh(Reference::value(cell)))
+            continue;
+        if (!holdsNumbersAlone(walker, walker.code().at(cell).layout()) || !isCalledInLoops())
+            continue;
+        FateOfValue fate = fateOfParameter(walker, callee, index);
+        if (fate == FateOfValue::OnlyTakenApart || (fate == FateOfValue::Returned && isResultOnlyDestructured()))
+            return true;
+    }
+    TypeID result = walker.facts().linked().function(callee).result;
+    return result && holdsNumbersAlone(walker, singleLayoutOf(walker.types(), walker.types().at(result))) && isCalledInLoops() && returnsNewObject(walker, callee) && isResultOnlyDestructured();
+}
+
+static bool unrollsWhenInlined(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     bool isInCopy = place.caller != walker.unit().function;
     if (!walker.facts().summaries().at(callee).has(SummaryTrait::HasLoops) || (!place.isInLoop && (isInCopy || stepsForOfAtInlining(walker, callee))))
@@ -923,9 +1813,11 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
             || copyPaysForClosureThatCalleeOnlyCallsAtInlining(walker, callee, place, inSight ? &inSight->passedOperands : nullptr)
             || copyOfNakedConstructorPaysAtInlining(walker, callee, place, inSight ? &inSight->passedOperands : nullptr)
             || copyOpensWhatWasJustMadeAtInlining(walker, callee, place, inSight ? &inSight->passedOperands : nullptr)
-            || copyKeepsReceiverLocalAtInlining(walker, callee, place, inSight)
+            || copyMatchesKnownPattern(walker, callee, place)
+            || copyKeepsReceiverLocal(walker, callee, place, inSight)
+            || copyRemovesObjects(walker, site, callee, place, inSight)
             || ((!inSight || inSight->callsParameterOfCopy) && isProfitableAsPassedClosure(walker, callee, place))
-            || writesOutTurnsAtInlining(walker, site, callee, place);
+            || unrollsWhenInlined(walker, site, callee, place);
     };
     if (copyFillsObjectMadeForItAtInlining(walker, site, callee, place))
         return true;
@@ -981,7 +1873,7 @@ bool calleeIsCopiedInLoopsAlone(const Walker& walker, FunctionID callee, size_t 
 
 static bool bodyOfUnitCallsItselfAtInlining(const Walker& walker, const Draft& site, FunctionID callee)
 {
-    if (!walker.walksOwnBodyOfUnit() || callee != walker.unit().function || walker.unit().role != CodeRole::Body || !site.inputValueGiven)
+    if ((!walker.walksOwnBodyOfUnit() && !walker.walksSpecializedBody()) || callee != walker.unit().function || walker.unit().role != CodeRole::Body || !site.inputValueGiven)
         return false;
     const BodyIndex& body = walker.currentBodyIndex();
     BodyTerminator end = body.terminator(body.blockOf(site.inputValueGiven));
@@ -994,9 +1886,16 @@ static bool bodyOfUnitTakesCopyOfItselfAtInlining(const Walker& walker, const Dr
     return bodyOfUnitCallsItselfAtInlining(walker, site, callee) && walker.facts().summaries().at(callee).numberOfOperations <= inlineLimitInLoopsWithoutObjects;
 }
 
-static bool isLibraryFunctionInRecursion(const Walker& walker, FunctionID callee)
+static bool constructsItselfOnce(const Walker& walker, const Draft& site, FunctionID callee)
 {
-    return isLibraryCode(walker.program(), walker.program().at(callee)) && isInRecursionWithoutLoops(walker);
+    const Function& function = walker.program().at(callee);
+    bool isConstruction = constructionsOfInlining.contains(site.opcode) || (site.opcode == Opcode::CallDirect && site.isConstruction());
+    return isConstruction && walker.currentFunction() == callee && !isClassConstructorOf(function.kind) && !walker.walksOwnBodyOfUnit() && !walker.isBeingConstructed(callee);
+}
+
+static bool isLibraryFunctionInRecursion(const Walker& walker, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    return isLibraryCode(walker.program(), walker.program().at(callee)) && std::ranges::any_of(passedOperands, [&](Reference operand) { return isClosureOfOneFunctionAtInlining(walker, operand); }) && isInRecursionWithoutLoops(walker);
 }
 
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& written)
@@ -1005,7 +1904,7 @@ bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, c
     PlaceOfCall place = written;
     place.isInLoop |= callsItself;
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, nullptr)
-        && (callsItself || !walker.isBeingWalked(callee)) && mayBeWalkedAtInlining(walker, callee, entersBodyOfCoroutineAtInlining(site));
+        && (callsItself || !walker.isBeingWalked(callee) || constructsItselfOnce(walker, site, callee)) && mayBeWalkedAtInlining(walker, callee, entersBodyOfCoroutineAtInlining(site));
 }
 
 bool copyOfCalleeCalledInLoopPays(const Walker& walker, FunctionID callee, size_t numberOfArguments)
@@ -1023,9 +1922,9 @@ bool shouldCopyCallee(const Walker& walker, const Draft& site, FunctionID callee
 {
     OperandsInSightAtInlining inSight { passedOperands, callsParameterOfCopy, false };
     bool callsItself = bodyOfUnitTakesCopyOfItselfAtInlining(walker, site, callee);
-    PlaceOfCall place { walker.currentFunction(), walker.isInLoop() || callsItself || isLibraryFunctionInRecursion(walker, callee) };
+    PlaceOfCall place { walker.currentFunction(), walker.isInLoop() || callsItself || isLibraryFunctionInRecursion(walker, callee, passedOperands) };
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, &inSight)
-        && (callsItself || !walker.isBeingWalked(callee)) && mayBeWalkedAtInlining(walker, callee, entersBodyOfCoroutineAtInlining(site));
+        && (callsItself || !walker.isBeingWalked(callee) || constructsItselfOnce(walker, site, callee)) && mayBeWalkedAtInlining(walker, callee, entersBodyOfCoroutineAtInlining(site));
 }
 
 Vector<Reference, 8> collectPassedOperands(const Draft& site, const Function& callee)
@@ -1256,6 +2155,22 @@ static bool branchAsksFieldAtInlining(const BodyIndex& body, BodyTerminator bran
     }
 }
 
+namespace {
+
+struct KeptByInlining final : Walker::KeptForBuild {
+    BitVector functionsWithoutHeads;
+};
+
+} // anonymous namespace
+
+static ALWAYS_INLINE KeptByInlining& keptByInlining(const Walker& walker)
+{
+    std::unique_ptr<Walker::KeptForBuild>& kept = walker.keptByInlining();
+    if (!kept) [[unlikely]]
+        kept = makeUniqueWithoutFastMallocCheck<KeptByInlining>();
+    return static_cast<KeptByInlining&>(*kept);
+}
+
 static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex& body, uint32_t limit = inlineLimitOfHeads)
 {
     Vector<BlockID, 8> head;
@@ -1316,6 +2231,72 @@ static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex
     return inlinedHeadBlocks;
 }
 
+static constexpr OpcodeSet operationsOfHeadsTestingParameters = primitiveConstants | OpcodeSet { Opcode::Convert, Opcode::NarrowByTest, Opcode::TypeTest };
+static constexpr OpcodeSet operationsReturnedByHeadsTestingParameters { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Negate, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+
+static std::optional<BitVector> findHeadThatTestsParametersAtInlining(Walker& walker, const BodyIndex& body, std::span<const Reference> passedOperands)
+{
+    TypeArena& types = walker.types();
+    auto mayPassTest = [&](BodyTerminator end) {
+        ValueID asked = valueBehindChecksAtInlining(body, end.operand(0));
+        if (body.isParameter(asked) || body.opcodeOf(asked) != Opcode::TypeTest)
+            return false;
+        BodyValue test = body.value(asked);
+        std::optional<uint32_t> entryParameter = body.block(entryBlock).indexOfParameter(valueBehindChecksAtInlining(body, test.valueOperand()));
+        if (!entryParameter || *entryParameter >= passedOperands.size())
+            return false;
+        Reference argument = passedOperands[*entryParameter];
+        TypeID type = argument ? walker.typeOf(argument) : TypeID(TypeTable::undefined);
+        return type && types.overlap(type, test.testedType());
+    };
+    Vector<BlockID, 8> head;
+    Vector<BlockID, 8> queue { entryBlock };
+    uint32_t weight = 0;
+    bool returnsArithmetic = false;
+    for (size_t next = 0; next < queue.size() && head.size() <= inlineLimitOfHeadsTestingParameters; ++next) {
+        BlockID id = queue[next];
+        if (std::ranges::contains(queue.span().first(next), id))
+            continue;
+        BodyBlock block = body.block(id);
+        BodyTerminator end = block.terminator();
+        bool returns = end.kind() == TerminatorKind::Return;
+        bool isAdmitted = !block.hasHandler() && !block.isHandlerBlock() && !body.loopDepthOf(id) && (returns ? next > 0 : end.kind() == TerminatorKind::Branch && mayPassTest(end));
+        uint32_t weightOfBlock = !returns;
+        bool holdsArithmetic = false;
+        for (uint32_t place = 0; isAdmitted && place < block.numberOfValues(); ++place) {
+            Opcode opcode = body.opcodeOf(ValueID(block.firstValue().index() + place));
+            holdsArithmetic |= operationsReturnedByHeadsTestingParameters.contains(opcode);
+            isAdmitted = operationsOfHeadsTestingParameters.contains(opcode) || (returns && operationsReturnedByHeadsTestingParameters.contains(opcode));
+            weightOfBlock += !operationsThatWeighNothingInHeadsAtInlining.contains(opcode) && !primitiveConstants.contains(opcode);
+        }
+        if (!isAdmitted || weight + weightOfBlock > inlineLimitOfHeadsTestingParameters)
+            continue;
+        weight += weightOfBlock;
+        returnsArithmetic |= returns && holdsArithmetic;
+        head.append(id);
+        for (BodyTarget target : end.targets())
+            queue.append(target.block());
+    }
+    for (bool hasChanged = true; hasChanged;) {
+        hasChanged = head.removeAllMatching([&](BlockID id) {
+            BodyTerminator end = body.block(id).terminator();
+            return end.kind() != TerminatorKind::Return && std::ranges::none_of(end.targets(), [&](BodyTarget target) { return head.contains(target.block()); });
+        });
+    }
+    if (!returnsArithmetic || !head.contains(entryBlock))
+        return std::nullopt;
+    BitVector inlinedHeadBlocks(body.numberOfBlocks());
+    for (BlockID id : head) {
+        inlinedHeadBlocks.quickSet(id.index());
+        for (BodyTarget target : body.block(id).terminator().targets()) {
+            BodyBlock behindHead = body.block(target.block());
+            if (!head.contains(target.block()) && (behindHead.hasHandler() || behindHead.isHandlerBlock()))
+                return std::nullopt;
+        }
+    }
+    return inlinedHeadBlocks;
+}
+
 namespace {
 
 struct QuestionOfBits {
@@ -1353,19 +2334,6 @@ static std::optional<QuestionOfBits> findQuestionOfBitsAtInlining(const BodyInde
     return std::nullopt;
 }
 
-static ValueID argumentWrittenForAtInlining(const BodyValue& call, const Function& callee, uint32_t entryParameter)
-{
-    if (call.opcode() == Opcode::CallDirect) {
-        std::span<const ValueID> operands = call.variadicOperands();
-        return entryParameter < operands.size() ? operands[entryParameter] : ValueID();
-    }
-    if (call.opcode() != Opcode::Call || callee.entryParameterKind(entryParameter) != EntryParameter::Parameter)
-        return { };
-    std::span<const ValueID> arguments = call.argumentsOperands();
-    uint32_t position = entryParameter - callee.firstParameterIndex();
-    return position < arguments.size() ? arguments[position] : ValueID();
-}
-
 bool Walker::questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID callee, const BitVector& inlinedHeadBlocks)
 {
     const BodyIndex& bodyOfCallee = facts().bodies().at(callee);
@@ -1394,7 +2362,7 @@ bool Walker::questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID calle
 
     size_t frameIndex = m_frames.size() - 1;
     ValueID site = call.id();
-    ValueID argument = argumentWrittenForAtInlining(call, program().at(callee), *entryParameter);
+    ValueID argument = findWrittenArgument(call, program().at(callee), *entryParameter);
     while (argument) {
         const BodyIndex& index = *m_frames[frameIndex].index;
         argument = valueBehindChecksAtInlining(index, argument);
@@ -1417,7 +2385,7 @@ bool Walker::questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID calle
                 const BodyIndex* bodyAbove = calledAbove ? facts().bodies().find(calledAbove) : nullptr;
                 std::optional<QuestionOfBits> question = bodyAbove && bodyAbove->opcodes().contains(Opcode::BitAnd) ? findQuestionOfBitsAtInlining(*bodyAbove, bodyAbove->terminator(entryBlock)) : std::nullopt;
                 std::optional<uint32_t> parameterAsked = question ? bodyAbove->block(entryBlock).indexOfParameter(question->object) : std::nullopt;
-                ValueID handed = parameterAsked ? argumentWrittenForAtInlining(other, program().at(calledAbove), *parameterAsked) : ValueID();
+                ValueID handed = parameterAsked ? findWrittenArgument(other, program().at(calledAbove), *parameterAsked) : ValueID();
                 if (handed)
                     asked.append({ valueBehindChecksAtInlining(index, handed), question->key, question->mask, id });
             }
@@ -1437,7 +2405,7 @@ bool Walker::questionOfHeadWasAskedAbove(const BodyValue& call, FunctionID calle
         site = m_frames[frameIndex].callCopied;
         FunctionID copied = m_frames[frameIndex].function;
         --frameIndex;
-        argument = parameterOfCopy && site ? argumentWrittenForAtInlining(m_frames[frameIndex].index->value(site), program().at(copied), *parameterOfCopy) : ValueID();
+        argument = parameterOfCopy && site ? findWrittenArgument(m_frames[frameIndex].index->value(site), program().at(copied), *parameterOfCopy) : ValueID();
     }
     return false;
 }
@@ -1448,7 +2416,15 @@ static ALWAYS_INLINE bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const
         return false;
     if (call.opcode() == Opcode::CallDirect ? site.isConstruction() || site.role() != CodeRole::Body : !isEnteredAtInlining(walker.program().at(callee), false))
         return false;
-    std::optional<BitVector> head = findHeadThatAsksFieldsAtInlining(walker.facts().bodies().at(callee));
+    BitVector& functionsWithoutHeads = keptByInlining(walker).functionsWithoutHeads;
+    std::optional<BitVector> head;
+    if (!functionsWithoutHeads.get(callee.index())) {
+        head = findHeadThatAsksFieldsAtInlining(walker.facts().bodies().at(callee));
+        if (!head)
+            functionsWithoutHeads.set(callee.index());
+    }
+    if (!head && walker.isInLoop())
+        head = findHeadThatTestsParametersAtInlining(walker, walker.facts().bodies().at(callee), passedOperands);
     if (!head) {
         const BodyIndex& body = walker.facts().bodies().at(callee);
         if (!body.opcodes().contains(Opcode::BitAnd) || !findQuestionOfBitsAtInlining(body, body.terminator(entryBlock)))
@@ -1462,6 +2438,639 @@ static ALWAYS_INLINE bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const
         return true;
     }
     return walker.walkInline(call, callee, passedOperands, &site, &*head);
+}
+
+namespace {
+
+struct PredicateResults {
+    uint32_t whereFalse { 0 };
+    uint32_t whereTrue { 0 };
+};
+
+constexpr uint32_t callableKind = 1 << 16;
+constexpr uint32_t otherObjectKind = 1 << 17;
+constexpr uint32_t objectKinds = callableKind | otherObjectKind;
+constexpr uint32_t everyKind = Primitive::All | objectKinds;
+constexpr std::array primitiveKinds { Primitive::Undefined, Primitive::Null, Primitive::False, Primitive::True, Primitive::Number, Primitive::String, Primitive::Symbol, Primitive::BigInt };
+constexpr uint32_t maxOperationsOfPredicate = 80;
+constexpr uint32_t maxPredicateSteps = 64;
+constexpr unsigned maxPredicateDepth = 3;
+constexpr size_t maxVariablesOfPredicate = 2;
+
+class PredicateEvaluator {
+    WTF_MAKE_NONCOPYABLE(PredicateEvaluator);
+public:
+    explicit PredicateEvaluator(Walker& walker)
+        : m_walker(walker)
+    {
+    }
+
+    PredicateResults evaluate(FunctionID, uint32_t entryParameter, uint32_t kinds);
+
+    std::span<const VariableID> checkedVariables() const LIFETIME_BOUND { return m_checkedVariables.span(); }
+
+    static uint32_t kindsIn(const Type&);
+
+private:
+    struct Value {
+        ValueID name;
+        bool isArgument { false };
+        uint32_t kindsIfTrue { 0 };
+    };
+    using Values = Vector<Value, 16>;
+
+    static const Value* find(const Values&, ValueID);
+    uint32_t kindsPassing(TypeID tested, uint32_t& kinds);
+    void evaluateFrom(FunctionID, const BodyIndex&, BlockID, uint32_t kinds, Values, PredicateResults&);
+    bool evaluateOperation(FunctionID, const BodyIndex&, const BodyValue&, uint32_t& kinds, Values&);
+
+    Walker& m_walker;
+    Vector<VariableID, 2> m_checkedVariables;
+    uint32_t m_numberOfSteps { 0 };
+    unsigned m_depth { 0 };
+};
+
+} // anonymous namespace
+
+static uint32_t primitivesOfKind(uint16_t kind)
+{
+    return kind == Primitive::String ? Primitive::AnyString : kind == Primitive::Symbol ? Primitive::AnySymbol : kind;
+}
+
+uint32_t PredicateEvaluator::kindsIn(const Type& type)
+{
+    uint32_t kinds = type.hasObjects() ? objectKinds : 0;
+    for (uint16_t kind : primitiveKinds) {
+        if (type.primitives & primitivesOfKind(kind))
+            kinds |= kind;
+    }
+    return kinds;
+}
+
+const PredicateEvaluator::Value* PredicateEvaluator::find(const Values& values, ValueID name)
+{
+    for (const Value& value : values) {
+        if (value.name == name)
+            return &value;
+    }
+    return nullptr;
+}
+
+uint32_t PredicateEvaluator::kindsPassing(TypeID tested, uint32_t& kinds)
+{
+    TypeArena& types = m_walker.types();
+    Type type = types.at(tested);
+    if (!type.isJavaScriptValue()) {
+        kinds = 0;
+        return 0;
+    }
+    uint32_t passing = 0;
+    for (uint16_t kind : primitiveKinds) {
+        bool isWhole = kind != Primitive::Number || (type.integers == Range::full() && type.boundsOfFractions.isEmpty());
+        if ((type.primitives & kind) == kind && isWhole)
+            passing |= kind;
+        else if (type.primitives & primitivesOfKind(kind))
+            kinds &= ~kind;
+    }
+    if (!type.hasObjects())
+        return passing;
+    if (type.anyObject)
+        return passing | objectKinds;
+    if (types.withOnlyObjects(tested) == TypeTable::function)
+        return passing | callableKind;
+    kinds &= ~objectKinds;
+    return passing;
+}
+
+bool PredicateEvaluator::evaluateOperation(FunctionID function, const BodyIndex& body, const BodyValue& operation, uint32_t& kinds, Values& values)
+{
+    TypeArena& types = m_walker.types();
+    auto bind = [&](uint32_t kindsIfTrue) {
+        values.append({ operation.id(), false, kindsIfTrue & everyKind });
+        return true;
+    };
+    switch (operation.opcode()) {
+    case Opcode::TypeTest: {
+        const Value* operand = find(values, operation.valueOperand());
+        return operand && operand->isArgument && bind(kindsPassing(operation.testedType(), kinds));
+    }
+    case Opcode::ToBoolean:
+    case Opcode::LogicalNot: {
+        const Value* operand = find(values, operation.operand(0));
+        if (!operand)
+            return false;
+        bool isNegated = operation.opcode() == Opcode::LogicalNot;
+        if (!operand->isArgument)
+            return bind(isNegated ? ~operand->kindsIfTrue : operand->kindsIfTrue);
+        uint32_t truthy = kindsIn(types.at(truthyPartOf(types, TypeTable::anything)));
+        uint32_t falsy = kindsIn(types.at(falsyPartOf(types, TypeTable::anything)));
+        kinds &= truthy ^ falsy;
+        return bind(isNegated ? falsy : truthy);
+    }
+    case Opcode::StrictEq: {
+        const Value* left = find(values, operation.operand(0));
+        const Value* right = find(values, operation.operand(1));
+        if (!left || !right || !left->isArgument || !right->isArgument)
+            return false;
+        kinds &= ~Primitive::Number;
+        return bind(everyKind);
+    }
+    case Opcode::Boolean:
+        return bind(operation.as<Opcode::Boolean>().boolean() ? everyKind : 0);
+    case Opcode::GetModuleVariable:
+    case Opcode::GetEnvironmentField:
+    case Opcode::Undefined:
+    case Opcode::Null:
+    case Opcode::Integer:
+    case Opcode::String:
+        return true;
+    case Opcode::CheckInitialized: {
+        ValueID read = operation.operand(0);
+        if (body.isParameter(read) || body.opcodeOf(read) != Opcode::GetModuleVariable)
+            return false;
+        VariableID variable = body.value(read).variable();
+        if (!m_checkedVariables.contains(variable))
+            m_checkedVariables.append(variable);
+        return m_checkedVariables.size() <= maxVariablesOfPredicate;
+    }
+    case Opcode::Call: {
+        FunctionID callee = m_walker.facts().linked().calleeAt(function, operation.id());
+        if (!callee)
+            return false;
+        const Function& called = m_walker.program().at(callee);
+        for (uint32_t entryParameter = 0; entryParameter < called.numberOfEntryParameters(); ++entryParameter) {
+            ValueID written = findWrittenArgument(operation, called, entryParameter);
+            const Value* argument = written ? find(values, written) : nullptr;
+            if (!argument || !argument->isArgument)
+                continue;
+            PredicateResults results = evaluate(callee, entryParameter, kinds);
+            kinds &= results.whereFalse | results.whereTrue;
+            return bind(results.whereTrue);
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+void PredicateEvaluator::evaluateFrom(FunctionID function, const BodyIndex& body, BlockID id, uint32_t kinds, Values values, PredicateResults& results)
+{
+    while (kinds) {
+        BodyBlock block = body.block(id);
+        if (block.hasHandler() || block.isHandlerBlock())
+            return;
+        for (BodyValue operation : block.values()) {
+            if (++m_numberOfSteps > maxPredicateSteps || !evaluateOperation(function, body, operation, kinds, values) || !kinds)
+                return;
+        }
+        BodyTerminator end = block.terminator();
+        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+        auto enter = [&](BodyTarget target, Values& entered) {
+            BodyBlock next = body.block(target.block());
+            uint32_t position = 0;
+            auto pass = [&](ValueID passed) {
+                ValueID parameter = next.parameter(position++);
+                const Value* known = passed ? find(values, passed) : nullptr;
+                if (!known)
+                    return;
+                Value value = *known;
+                value.name = parameter;
+                entered.append(value);
+            };
+            for (ValueID argument : target.arguments())
+                pass(argument);
+            for (uint32_t operandIndex : target.proofs())
+                pass(condition && !body.isParameter(condition) ? body.value(condition).operand(operandIndex) : ValueID());
+            return target.block();
+        };
+        switch (end.kind()) {
+        case TerminatorKind::Return: {
+            const Value* returned = end.operand(0) ? find(values, end.operand(0)) : nullptr;
+            if (returned && !returned->isArgument) {
+                results.whereTrue |= kinds & returned->kindsIfTrue;
+                results.whereFalse |= kinds & ~returned->kindsIfTrue;
+            }
+            return;
+        }
+        case TerminatorKind::Jump: {
+            Values entered = values;
+            id = enter(end.targets()[0], entered);
+            values = WTF::move(entered);
+            break;
+        }
+        case TerminatorKind::Branch: {
+            const Value* asked = find(values, condition);
+            if (!asked || asked->isArgument)
+                return;
+            uint32_t taken = kinds & asked->kindsIfTrue;
+            uint32_t notTaken = kinds & ~asked->kindsIfTrue;
+            auto targets = end.targets();
+            if (taken) {
+                Values entered = values;
+                BlockID next = enter(targets[0], entered);
+                evaluateFrom(function, body, next, taken, WTF::move(entered), results);
+            }
+            Values entered = values;
+            id = enter(targets[1], entered);
+            values = WTF::move(entered);
+            kinds = notTaken;
+            break;
+        }
+        default:
+            return;
+        }
+    }
+}
+
+PredicateResults PredicateEvaluator::evaluate(FunctionID id, uint32_t entryParameter, uint32_t kinds)
+{
+    const Function& function = m_walker.program().at(id);
+    const ThinSummary& summary = m_walker.facts().summaries().at(id);
+    const BodyIndex* body = m_walker.facts().bodies().find(id);
+    PredicateResults results;
+    if (!body || m_depth == maxPredicateDepth || summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > maxOperationsOfPredicate || !isEnteredAtInlining(function, false) || function.isCoroutine()
+        || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }) || entryParameter >= body->block(entryBlock).numberOfParameters() || body->numberOfIncomingEdges(entryBlock)
+        || function.entryParameterKind(entryParameter) != EntryParameter::Parameter || takesListAtInlining(function, entryParameter) || tellsAbsentFromUndefinedAtInlining(m_walker, function, entryParameter))
+        return results;
+    if (const DeclaredType* declared = function.declaredEntryParameter(entryParameter); declared && declared->written() && !m_walker.types().at(declared->written()).isAnything())
+        return results;
+    ++m_depth;
+    evaluateFrom(id, *body, entryBlock, kinds, { Value { body->block(entryBlock).parameter(entryParameter), true, 0 } }, results);
+    --m_depth;
+    return results;
+}
+
+static TypeID typeTestingKinds(TypeArena& types, uint32_t kinds, uint32_t kindsOfArgument)
+{
+    TypeID tested = TypeArena::fromPrimitives(kinds & Primitive::All);
+    uint32_t objects = kinds & objectKinds;
+    if (objects && objects == (kindsOfArgument & objectKinds))
+        tested = types.unionOf(tested, TypeTable::object);
+    else if (objects == callableKind)
+        tested = types.unionOf(tested, TypeTable::function);
+    else if (objects)
+        return { };
+    return types.testablePartOf(tested) == tested ? tested : TypeID();
+}
+
+static NEVER_INLINE bool inlinePredicateByKinds(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    TypeArena& types = walker.types();
+    if (!types.at(walker.facts().linked().function(callee).result).isBoolean())
+        return false;
+    if (call.opcode() != Opcode::Call || !walker.opensGuesses() || site.resultIsReturnedAtOnce || site.isTailCall || site.isNeverInlined() || (!walker.isInLoop() && !unitIsCalledInLoops(walker)))
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || !body->opcodes().contains(Opcode::TypeTest) || walker.facts().isTakenToRunOnce(callee))
+        return false;
+    const Function& function = walker.program().at(callee);
+    for (uint32_t entryParameter = 0; entryParameter < passedOperands.size(); ++entryParameter) {
+        Reference argument = passedOperands[entryParameter];
+        if (!argument || !argument.isValue() || function.entryParameterKind(entryParameter) != EntryParameter::Parameter)
+            continue;
+        TypeID type = walker.typeShown(argument);
+        if (!type || isNeverType(type) || !types.at(type).isJavaScriptValue() || (types.at(type).primitives & (Primitive::Absent | Primitive::Unspecified)))
+            continue;
+        uint32_t kinds = PredicateEvaluator::kindsIn(types.at(type));
+        PredicateEvaluator evaluator(walker);
+        PredicateResults results = evaluator.evaluate(callee, entryParameter, kinds);
+        if (!results.whereFalse && !results.whereTrue)
+            continue;
+
+        bool isEveryKindKnown = !(kinds & ~(results.whereFalse | results.whereTrue));
+        TypeID testedForResult = isEveryKindKnown && results.whereFalse && results.whereTrue ? typeTestingKinds(types, results.whereTrue, kinds) : TypeID();
+        bool constantResult = std::popcount(results.whereTrue) > std::popcount(results.whereFalse);
+        TypeID leftToCall;
+        if (!testedForResult) {
+            uint32_t kindsLeft = kinds & ~(constantResult ? results.whereTrue : results.whereFalse);
+            if (kindsLeft & otherObjectKind)
+                kindsLeft |= kinds & callableKind;
+            bool sparesCalls = !(kindsLeft & (Primitive::Number | Primitive::String));
+            leftToCall = kindsLeft && kindsLeft != kinds && sparesCalls ? typeTestingKinds(types, kindsLeft, kinds) : TypeID();
+            if (kindsLeft && !leftToCall)
+                return false;
+        }
+
+        Origin origin = site.origin();
+        origin.isTailCall = false;
+        auto buildTest = [&](Reference value, TypeID tested) {
+            Draft test(Opcode::TypeTest, origin);
+            test.setValueOperand(value);
+            test.setTestedType(tested);
+            return walker.build(WTF::move(test));
+        };
+        BlockID blockAtCall;
+        auto leaveForCall = [&](Reference isLeft) {
+            if (!blockAtCall)
+                blockAtCall = walker.addBlock();
+            BlockID blockIfKnown = walker.addBlock();
+            walker.branch(isLeft, blockAtCall, blockIfKnown);
+            walker.continueIn(blockIfKnown);
+        };
+        walker.count(StatisticID::PredicatesTestedAtCalls);
+        for (VariableID variable : evaluator.checkedVariables()) {
+            Draft read(Opcode::GetModuleVariable, origin);
+            read.setVariable(variable);
+            read.setReturnsRawSlot(true);
+            walker.chooseConservativeFields(read);
+            Reference held = walker.build(WTF::move(read));
+            if (!held || walker.isUnreachable())
+                return true;
+            if (!(types.at(walker.typeOf(held)).primitives & Primitive::Absent))
+                continue;
+            if (Reference isAbsent = buildTest(held, TypeArena::fromPrimitives(Primitive::Absent)))
+                leaveForCall(isAbsent);
+            if (walker.isUnreachable() || walker.hasFailed())
+                return true;
+        }
+        if (leftToCall) {
+            if (Reference isLeft = buildTest(argument, leftToCall))
+                leaveForCall(isLeft);
+            if (walker.isUnreachable() || walker.hasFailed())
+                return true;
+        }
+        Reference known;
+        if (testedForResult)
+            known = buildTest(argument, testedForResult);
+        else {
+            Draft constant(Opcode::Boolean, origin);
+            constant.setBoolean(constantResult);
+            known = walker.constant(WTF::move(constant));
+        }
+        if (!blockAtCall || !known) {
+            if (known)
+                walker.bind(call.id(), known);
+            return true;
+        }
+
+        const BodyIndex& index = walker.currentBodyIndex();
+        BodyBlock block = index.block(index.blockOf(call.id()));
+        uint32_t place = call.id().index() - block.firstValue().index();
+        BlockID blockIfKnown = walker.currentBlock();
+        BlockID continuationBlock = walker.addBlock();
+        Reference result;
+        walker.continueIn(blockAtCall);
+        {
+            Walker::ClosedArm calls(walker);
+            walker.walkStretch(block.id(), place, place + 1);
+            if (walker.hasFailed())
+                return true;
+            Reference called = walker.isUnreachable() ? Reference() : walker.referenceOf(call.id());
+            bool keepsForm = called && types.isSubset(walker.typeOf(known), walker.typeOf(called));
+            result = walker.addParameter(continuationBlock, keepsForm ? walker.typeOf(called) : TypeID(TypeTable::anything), keepsForm ? walker.representationOf(called) : Representation::JSValue);
+            if (called)
+                walker.jumpTo(continuationBlock, singleElementSpan(called));
+        }
+        walker.continueIn(blockIfKnown);
+        walker.jumpTo(continuationBlock, singleElementSpan(known));
+        walker.continueIn(continuationBlock);
+        walker.bind(call.id(), result);
+        return true;
+    }
+    return false;
+}
+
+namespace {
+
+struct NumberVersion {
+    uint32_t operationsLeft { 0 };
+    uint32_t operationsDecided { 0 };
+    bool comparesArguments { false };
+    bool returnsArgument { false };
+};
+
+constexpr uint32_t maxOperationsOfComparator = 64;
+constexpr uint32_t maxRemainingNumberOperations = 10;
+constexpr uint32_t minOperationsDecidedByNumbers = 4;
+
+class NumberVersionEvaluator {
+    WTF_MAKE_NONCOPYABLE(NumberVersionEvaluator);
+public:
+    explicit NumberVersionEvaluator(Walker& walker)
+        : m_walker(walker)
+    {
+    }
+
+    std::optional<NumberVersion> evaluate(FunctionID, std::span<const uint32_t> entryParameters);
+
+private:
+    enum class Kind : uint8_t { Other, Variable, OtherConstant, Argument, Number, Boolean, True, False };
+
+    bool evaluateOperation(FunctionID, const BodyValue&);
+    static bool isNumber(Kind kind) { return kind == Kind::Argument || kind == Kind::Number; }
+    static Kind negated(Kind kind) { return kind == Kind::True ? Kind::False : kind == Kind::False ? Kind::True : kind; }
+    Kind& kindOf(ValueID value) { return m_kinds[value.index()]; }
+
+    Walker& m_walker;
+    Vector<Kind> m_kinds;
+    NumberVersion m_version;
+};
+
+} // anonymous namespace
+
+bool NumberVersionEvaluator::evaluateOperation(FunctionID function, const BodyValue& operation)
+{
+    TypeArena& types = m_walker.types();
+    Kind& kind = kindOf(operation.id());
+    Opcode opcode = operation.opcode();
+    switch (opcode) {
+    case Opcode::Integer:
+    case Opcode::Double:
+        kind = Kind::Number;
+        return true;
+    case Opcode::Boolean:
+        kind = operation.as<Opcode::Boolean>().boolean() ? Kind::True : Kind::False;
+        return true;
+    case Opcode::Undefined:
+    case Opcode::Null:
+    case Opcode::String:
+        kind = Kind::OtherConstant;
+        return true;
+    case Opcode::GetModuleVariable:
+    case Opcode::GetEnvironmentField:
+    case Opcode::CheckInitialized:
+        kind = Kind::Variable;
+        return true;
+    case Opcode::TypeTest:
+        if (!isNumber(kindOf(operation.valueOperand())))
+            return false;
+        if (types.isSubset(TypeTable::number, operation.testedType()))
+            kind = Kind::True;
+        else if (!types.overlap(TypeTable::number, operation.testedType()))
+            kind = Kind::False;
+        else
+            return false;
+        ++m_version.operationsDecided;
+        return true;
+    case Opcode::ToBoolean:
+    case Opcode::LogicalNot: {
+        Kind operand = kindOf(operation.operand(0));
+        if (operand <= Kind::OtherConstant || isNumber(operand))
+            return false;
+        kind = opcode == Opcode::LogicalNot ? negated(operand) : operand;
+        return true;
+    }
+    case Opcode::Call: {
+        FunctionID callee = m_walker.facts().linked().calleeAt(function, operation.id());
+        if (!callee)
+            return false;
+        const Function& called = m_walker.program().at(callee);
+        for (uint32_t entryParameter = 0; entryParameter < called.numberOfEntryParameters(); ++entryParameter) {
+            ValueID written = findWrittenArgument(operation, called, entryParameter);
+            if (!written || !isNumber(kindOf(written)))
+                continue;
+            PredicateResults results = PredicateEvaluator(m_walker).evaluate(callee, entryParameter, Primitive::Number);
+            if (results.whereTrue != Primitive::Number && results.whereFalse != Primitive::Number)
+                return false;
+            kind = results.whereTrue ? Kind::True : Kind::False;
+            m_version.operationsDecided += 2;
+            return true;
+        }
+        return false;
+    }
+    default:
+        break;
+    }
+    bool isRelation = allRelations.contains(opcode);
+    bool isEquality = opcode == Opcode::StrictEq || opcode == Opcode::Eq;
+    if (!isRelation && !isEquality && !numberProducingOperators.contains(opcode))
+        return false;
+    if (opcode == Opcode::StrictEq) {
+        Kind left = kindOf(operation.operand(0));
+        Kind right = kindOf(operation.operand(1));
+        if ((left == Kind::OtherConstant && isNumber(right)) || (right == Kind::OtherConstant && isNumber(left))) {
+            kind = Kind::False;
+            ++m_version.operationsDecided;
+            return true;
+        }
+        if ((left == Kind::Variable && isNumber(right)) || (right == Kind::Variable && isNumber(left))) {
+            kind = Kind::Boolean;
+            return ++m_version.operationsLeft <= maxRemainingNumberOperations;
+        }
+    }
+    bool takesNumbers = true;
+    bool takesArguments = true;
+    operation.forEachOperand([&](ValueID operand, uint32_t) {
+        takesNumbers &= isNumber(kindOf(operand));
+        takesArguments &= kindOf(operand) == Kind::Argument;
+    });
+    if (!takesNumbers)
+        return false;
+    kind = isRelation || isEquality ? Kind::Boolean : Kind::Number;
+    m_version.operationsDecided += takesArguments;
+    m_version.comparesArguments |= isRelation && takesArguments;
+    return ++m_version.operationsLeft <= maxRemainingNumberOperations;
+}
+
+std::optional<NumberVersion> NumberVersionEvaluator::evaluate(FunctionID id, std::span<const uint32_t> entryParameters)
+{
+    const Function& function = m_walker.program().at(id);
+    const ThinSummary& summary = m_walker.facts().summaries().at(id);
+    const BodyIndex* body = m_walker.facts().bodies().find(id);
+    if (!body || summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > maxOperationsOfComparator || !body->holdsAnyOf(allRelations) || !isEnteredAtInlining(function, false) || function.isCoroutine()
+        || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }) || body->numberOfIncomingEdges(entryBlock))
+        return std::nullopt;
+    m_kinds.fill(Kind::Other, body->numberOfValues());
+    for (uint32_t entryParameter : entryParameters)
+        kindOf(body->block(entryBlock).parameter(entryParameter)) = Kind::Argument;
+    Vector<BlockID, 16> worklist { entryBlock };
+    BitVector isVisited(body->numberOfBlocks());
+    isVisited.set(entryBlock.index());
+    while (!worklist.isEmpty()) {
+        BodyBlock block = body->block(worklist.takeLast());
+        if (block.hasHandler() || block.isHandlerBlock())
+            return std::nullopt;
+        for (BodyValue operation : block.values()) {
+            if (!evaluateOperation(id, operation))
+                return std::nullopt;
+        }
+        BodyTerminator end = block.terminator();
+        if (end.kind() == TerminatorKind::Return) {
+            m_version.returnsArgument |= end.operand(0) && kindOf(end.operand(0)) == Kind::Argument;
+            continue;
+        }
+        if (end.kind() != TerminatorKind::Branch && end.kind() != TerminatorKind::Jump)
+            return std::nullopt;
+        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+        Kind asked = condition ? kindOf(condition) : Kind::True;
+        if (asked <= Kind::OtherConstant || isNumber(asked))
+            return std::nullopt;
+        bool isTaken = true;
+        for (BodyTarget target : end.targets()) {
+            if (asked == (std::exchange(isTaken, false) ? Kind::False : Kind::True))
+                continue;
+            if (isVisited.set(target.block().index()))
+                continue;
+            BodyBlock next = body->block(target.block());
+            uint32_t position = 0;
+            for (ValueID argument : target.arguments())
+                kindOf(next.parameter(position++)) = kindOf(argument);
+            for (uint32_t operandIndex : target.proofs()) {
+                ValueID proven = condition && !body->isParameter(condition) ? body->value(condition).operand(operandIndex) : ValueID();
+                kindOf(next.parameter(position++)) = proven ? kindOf(proven) : Kind::Other;
+            }
+            worklist.append(target.block());
+        }
+    }
+    return m_version;
+}
+
+static NEVER_INLINE bool inlineComparatorForNumbers(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    if (call.opcode() != Opcode::Call || !walker.opensGuesses() || site.resultIsReturnedAtOnce || site.isTailCall || site.isNeverInlined() || (!walker.isInLoop() && !unitIsCalledInLoops(walker)))
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || !body->holdsAnyOf(allRelations) || walker.facts().isTakenToRunOnce(callee))
+        return false;
+    const Function& function = walker.program().at(callee);
+    TypeArena& types = walker.types();
+    Vector<uint32_t, 2> entryParameters;
+    Vector<TestOfNumber, 2> tests;
+    for (uint32_t entryParameter = 0; entryParameter < passedOperands.size(); ++entryParameter) {
+        Reference argument = passedOperands[entryParameter];
+        if (!argument || function.entryParameterKind(entryParameter) != EntryParameter::Parameter)
+            continue;
+        if (const DeclaredType* declared = function.declaredEntryParameter(entryParameter); declared && declared->written() && !types.at(declared->written()).isAnything())
+            return false;
+        ValueID written = findWrittenArgument(call, function, entryParameter);
+        TypeID type = walker.typeOf(argument);
+        if (!written || !type || !types.overlap(type, TypeTable::number))
+            return false;
+        if (!types.at(type).isNumber()) {
+            if (!argument.isValue() || !types.at(type).isJavaScriptValue() || walker.representationOf(argument) != Representation::JSValue)
+                return false;
+            tests.append(TestOfNumber { written, TypeTable::number });
+        }
+        entryParameters.append(entryParameter);
+    }
+    if (entryParameters.size() != 2 || !operationsFitWindowOfCallWrittenInLoop(walker, maxRemainingNumberOperations))
+        return false;
+    std::optional<NumberVersion> version = NumberVersionEvaluator(walker).evaluate(callee, entryParameters.span());
+    if (!version || !version->comparesArguments || version->operationsDecided < minOperationsDecidedByNumbers)
+        return false;
+    if (tests.isEmpty()) {
+        Vector<Reference, 8> numbers(passedOperands);
+        for (uint32_t entryParameter : entryParameters) {
+            if (version->returnsArgument || !walker.has(Mechanism::UnboxedNumbers) || !numbers[entryParameter].isValue() || walker.representationOf(numbers[entryParameter]) != Representation::JSValue)
+                continue;
+            Draft unboxed(Opcode::Unbox, site.origin());
+            unboxed.setOperand(0, numbers[entryParameter]);
+            unboxed.representation = Representation::Double;
+            if (Reference number = walker.build(WTF::move(unboxed)))
+                numbers[entryParameter] = number;
+            if (walker.isUnreachable() || walker.hasFailed())
+                return true;
+        }
+        return walker.walkInline(call, callee, numbers.span(), &site);
+    }
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(call.id()));
+    uint32_t begin = call.id().index() - block.firstValue().index();
+    if (walker.inputBlockBeingWalked() != block.id() || begin >= limitOfStretchOfNumbers(walker, block))
+        return false;
+    walker.count(StatisticID::ComparatorsInlinedForNumbers);
+    return walkStretchBehindTestsOfNumbers(walker, tests.span(), block.id(), begin, begin + 1, BlockFrequency::Normal, EndOfNumberArms::MayTakeBranch);
 }
 
 static bool copyLearnsOfThisAtInlining(Walker& walker, const BodyValue& call, FunctionID callee)
@@ -1501,19 +3110,26 @@ bool inlineCalleeOfItsOpcodes(Walker& walker, const BodyValue& call)
     if (!callee)
         return false;
 
+    if (copyKeyOfComparator(walker, call, callee))
+        return true;
     if (call.opcode() == Opcode::Call && walker.standsAtFrameOfRowOfShapeTests() && !copyLearnsOfThisAtInlining(walker, call, callee)
-        && !(walker.isInLoop() && isSmallLeaf(walker, callee, call.as<Opcode::Call>().argumentsOperands().size())))
+        && !(walker.isInLoop() && (isSmallLeaf(walker, callee, call.as<Opcode::Call>().argumentsOperands().size()) || loopRemovesResult(walker, call.id(), callee) || (walker.facts().linked().function(callee).mayCallBack && callsBackAtInlining(walker, call, callee)))))
         return false;
     Draft site = walker.draftOf(call);
     const BodyIndex& index = walker.currentBodyIndex();
     Vector<Reference, 8> passedOperands = collectPassedOperands(site, walker.program().at(callee));
     bool callsParameterOfCopy = call.opcode() == Opcode::Call && !walker.walksOwnBodyOfUnit() && index.block(entryBlock).indexOfParameter(index.stripCasts(call.as<Opcode::Call>().calleeOperand()));
     OperandsInSightAtInlining inSight { passedOperands.span(), callsParameterOfCopy, calleeStandsBehindBuiltin };
-    if (callAdmitsCopyAtInlining(walker, site, callee, { walker.currentFunction(), walker.isInLoop() || bodyOfUnitTakesCopyOfItselfAtInlining(walker, site, callee) || isLibraryFunctionInRecursion(walker, callee), &index, call.id() }, &inSight) && walker.walkInline(call, callee, passedOperands.span(), &site))
+    if (callAdmitsCopyAtInlining(walker, site, callee, { walker.currentFunction(), walker.isInLoop() || bodyOfUnitTakesCopyOfItselfAtInlining(walker, site, callee) || isLibraryFunctionInRecursion(walker, callee, passedOperands.span()), &index, call.id() }, &inSight) && walker.walkInline(call, callee, passedOperands.span(), &site))
         return true;
     if (calleeStandsBehindBuiltin || walker.hasFailed())
         return false;
-    return copyHeadThatReturnsAtOnceAtInlining(walker, call, site, callee, passedOperands.span()) || (!walker.hasFailed() && copyHeadThatAsksFieldsAtInlining(walker, call, site, callee, passedOperands.span()));
+    if (copyHeadThatReturnsAtOnceAtInlining(walker, call, site, callee, passedOperands.span()) || (!walker.hasFailed() && copyHeadThatAsksFieldsAtInlining(walker, call, site, callee, passedOperands.span())))
+        return true;
+    TypeID result = walker.facts().linked().function(callee).result;
+    if (walker.hasFailed() || !result || !walker.types().at(result).hasOnlyPrimitives(Primitive::Boolean | Primitive::Number))
+        return false;
+    return inlinePredicateByKinds(walker, call, site, callee, passedOperands.span()) || (!walker.hasFailed() && inlineComparatorForNumbers(walker, call, site, callee, passedOperands.span()));
 }
 
 struct ClosureMadeForCallAtInlining {
@@ -1560,6 +3176,59 @@ bool Walker::copyHandsBack(ValueID input)
     return frame.valueHandedBack && frame.valueHandedBack == body.stripCasts(input);
 }
 
+static bool onlyReckonsWithParameter(const BodyIndex& body, ValueID parameter)
+{
+    static constexpr OpcodeSet takesUndefinedAsNaN = numberProducingOperators | allRelations;
+    static constexpr OpcodeSet writtenNumbers { Opcode::Integer, Opcode::Double };
+    bool onlyReckons = true;
+    for (BodyValue operation : body.block(entryBlock).values()) {
+        bool takesParameter = false;
+        bool standsBesideNumbers = true;
+        operation.forEachOperand([&](ValueID operand, uint32_t) {
+            ValueID taken = operand ? body.stripCasts(operand) : ValueID();
+            if (taken == parameter)
+                takesParameter = true;
+            else
+                standsBesideNumbers &= taken && !body.isParameter(taken) && writtenNumbers.contains(body.opcodeOf(taken));
+        });
+        if (takesParameter && !opcodesThatStateTypes.contains(operation.opcode()))
+            onlyReckons &= takesUndefinedAsNaN.contains(operation.opcode()) || (operation.opcode() == Opcode::Add && standsBesideNumbers);
+    }
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        BodyTerminator end = body.terminator(BlockID(number));
+        end.forEachOperand([&](ValueID operand, uint32_t) {
+            onlyReckons &= !operand || body.stripCasts(operand) != parameter;
+        });
+        for (BodyTarget target : end.targets()) {
+            for (ValueID handedOn : target.arguments())
+                onlyReckons &= !handedOn || body.stripCasts(handedOn) != parameter;
+        }
+        onlyReckons &= !number || !body.block(BlockID(number)).numberOfValues();
+    }
+    return onlyReckons;
+}
+
+static bool guardsAskForUndefinedAlone(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
+{
+    TypeArena& types = walker.types();
+    const CallingConventions& conventions = walker.plan().conventions();
+    bool someGuardAsks = false;
+    for (uint32_t index = 0; index < entryArguments.size(); ++index) {
+        TypeID tested = conventions.typeBehindGuard(callee, index);
+        if (!tested || types.isSubset(walker.ownTypeOf(entryArguments[index]), tested))
+            continue;
+        Type arriving = types.at(walker.ownTypeOf(entryArguments[index]));
+        if (!types.at(tested).isNumber() || !entryArguments[index].isValue() || walker.representationOf(entryArguments[index]) != Representation::OptionalDouble
+            || !arriving.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) || !types.isSubset(types.intersectionOf(walker.ownTypeOf(entryArguments[index]), TypeTable::number), tested))
+            return false;
+        const BodyIndex& body = walker.facts().bodies().at(callee);
+        if (index >= body.block(entryBlock).numberOfParameters() || !onlyReckonsWithParameter(body, body.block(entryBlock).parameter(index)))
+            return false;
+        someGuardAsks = true;
+    }
+    return someGuardAsks;
+}
+
 bool Walker::walkInlineUnderHandlerMade(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft& writtenOut, BlockID handler)
 {
     SetForScope handlerMade(m_handlerMadeOverCopies, handler);
@@ -1567,10 +3236,250 @@ bool Walker::walkInlineUnderHandlerMade(const BodyValue& call, FunctionID callee
     return walkInline(call, callee, arguments, &writtenOut);
 }
 
+std::optional<ArrayStorage> predictStorageInRecursion(Walker&, const BodyValue& read, TypeID list);
+
+static bool readsParameterElements(Walker& walker, const BodyIndex& index)
+{
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        BlockID block(number);
+        if (!index.isReachable(block) || index.loopOf(block))
+            continue;
+        for (BodyValue operation : index.block(block).values()) {
+            if (operation.opcode() != Opcode::ElemGet)
+                continue;
+            ValueID list = index.stripCasts(operation.objectOperand());
+            while (!index.isParameter(list) && index.opcodeOf(list) == Opcode::CheckInitialized)
+                list = index.stripCasts(index.value(list).operand(0));
+            if (!index.isParameter(list) && index.opcodeOf(list) == Opcode::GetModuleVariable) {
+                TypeID held = walker.positions().variable(TypeLevel::Proven, index.value(list).variable());
+                if (held && predictStorageInRecursion(walker, operation, walker.types().withoutPrimitives(held, Primitive::Absent)))
+                    return true;
+                continue;
+            }
+            if (!index.isParameter(list) || index.blockOf(list) != entryBlock)
+                continue;
+            Reference arriving = walker.referenceBoundTo(list);
+            if (arriving && predictStorageInRecursion(walker, operation, walker.typeOf(arriving)))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool stepsParameterRoundCycle(Walker&);
+
+bool Walker::shouldSpecializeBody()
+{
+    static constexpr OpcodeSet unsupportedOpcodes { Opcode::CreateUnmappedArguments };
+    const Function& function = program().at(unit().function);
+    const BodyIndex& index = *m_frames[0].index;
+    if (unit().role != CodeRole::Body || !m_opensGuesses || !has(Mechanism::Guesses) || !has(Mechanism::Folding) || !has(Mechanism::Inlining) || function.isCoroutine() || program().admitsInspector)
+        return false;
+    if (function.kind != FunctionKind::Plain && function.kind != FunctionKind::Arrow && function.kind != FunctionKind::Method)
+        return false;
+    if (function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }) || m_restArrayAllocator || !m_storesOfCapturedValues.empty() || index.holdsAnyOf(unsupportedOpcodes) || index.hasLoops())
+        return false;
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        if (index.block(BlockID(number)).hasHandler())
+            return false;
+    }
+    return (index.opcodes().contains(Opcode::ElemGet) && callsItself(*this, index, unit().function) && readsParameterElements(*this, index)) || stepsParameterRoundCycle(*this);
+}
+
+void guardArraysAtEntry(Walker&);
+
+void Walker::walkSpecializedBody()
+{
+    const BodyIndex& index = *m_frames[0].index;
+    BodyBlock entry = index.block(entryBlock);
+    uint32_t inlineFrame = m_frames[0].inlineFrame;
+    BlockID fallback;
+    letGuessFailUnasked(fallback, m_origin);
+    Vector<Reference, 8> arriving;
+    for (uint32_t parameter = 0; parameter < entry.numberOfParameters(); ++parameter)
+        arriving.append(referenceBoundTo(entry.parameter(parameter)));
+
+    Frame& frame = m_frames.appendNew();
+    frame.function = unit().function;
+    frame.body = &index.body();
+    frame.index = &index;
+    frame.variablesStoredFirst = m_frames[0].variablesStoredFirst;
+    frame.references.lay(index.numberOfValues());
+    frame.inlineFrame = inlineFrame;
+    frame.isSpecializedBody = true;
+    frame.returnsInPlaceOfUnit = true;
+    frame.callsAreCountedByPlan = true;
+    frame.mayLeaveForCall = true;
+    frame.whereCopyLeavesForCall = fallback;
+    frame.inlineeRestartPoint = ++m_restartPointCount;
+    frame.numberOfValuesBuiltBefore = 0;
+    Vector<Frame::ReturnOfCopy, 2> returns;
+    frame.returnsOfCopy = &returns;
+    m_state.setInlineeRestartPoint(frame.inlineeRestartPoint);
+
+    for (uint32_t parameter = 0; parameter < entry.numberOfParameters(); ++parameter)
+        bind(entry.parameter(parameter), arriving[parameter]);
+    setCurrentInputBlock(entryBlock);
+    guardArraysAtEntry(*this);
+    for (uint32_t number = 0; number < index.numberOfBlocks() && !m_hasFailed && (number || !isUnreachable()); ++number)
+        walkBlock(BlockID(number));
+    m_block = { };
+    m_state.clear();
+    fallback = m_frames.last().whereCopyLeavesForCall;
+    endBlocksInFrontOfLoops(m_frames.size() - 1, { });
+    m_frames.removeLast();
+    if (m_hasFailed || !fallback)
+        return;
+    continueIn(fallback);
+    m_state.clearRestartMark();
+}
+
+bool Walker::canGuardRecursion()
+{
+    if (!isInRecursiveCopy() || m_frames.last().inlinedHeadBlocks || !mayLeaveCopyForCall())
+        return false;
+    const Frame& leaving = frameLeftForCall();
+    return leaving.isSpecializedBody || leaving.canCallInstead;
+}
+
+BlockID Walker::elementGuardFallback()
+{
+    Frame& frame = frameLeftForCall();
+    if (frame.isSpecializedBody)
+        return blockWhereCopyLeavesForCall();
+    if (!frame.whereHeadEnds)
+        frame.whereHeadEnds = addBlock(BlockFrequency::Rare);
+    return frame.whereHeadEnds;
+}
+
 bool Walker::mayLeaveCopyForCall() const
 {
     const Frame& frame = m_frames.last();
     return frame.mayLeaveForCall && !isUnreachable() && m_state.isInlineeEffectFree(frame.inlineeRestartPoint) && !isUnderHandlerOtherThanCleanups() && !hasStringsInBuilders() && !m_coldCopyDepth;
+}
+
+bool Walker::walkInlineFusedChain(const BodyValue& call, FunctionID text, std::span<const Reference> arguments, const Draft& site, BlockID& asWritten)
+{
+    m_armOfNextFusedChain = &asWritten;
+    bool isCopied = walkInline(call, text, arguments, &site);
+    m_armOfNextFusedChain = nullptr;
+    return isCopied;
+}
+
+bool Walker::walkInlineKey(const BodyValue& call, FunctionID comparator, std::span<const Reference> arguments, const Draft& site, ValueID key)
+{
+    m_keyOfNextCopy = key;
+    bool isCopied = walkInline(call, comparator, arguments, &site);
+    m_keyOfNextCopy = { };
+    return isCopied;
+}
+
+bool Walker::isElementReadByName(Reference argument, const BodyIndex& callback, uint32_t parameter) const
+{
+    if (!m_frameOfFusedChain || m_frames.size() != m_frameOfFusedChain || !mayLeaveFusedChainHere() || m_code.at(underlyingCellOf(m_code, argument.id())).opcode != Opcode::GetOwnContiguousIndex)
+        return false;
+    ValueID element(parameter);
+    std::optional<BodyUser> first = callback.firstUser(element);
+    while (first && first->kind == BodyUseKind::Operand && opcodesThatStateTypes.contains(callback.opcodeOf(first->value))) {
+        element = first->value;
+        first = callback.firstUser(element);
+    }
+    if (!first || first->kind != BodyUseKind::Operand || callback.blockOf(first->value) != entryBlock || callback.opcodeOf(first->value) != Opcode::PropGet)
+        return false;
+    BodyValue read = callback.value(first->value);
+    return !read.isFreeName() && read.objectOperand() == element;
+}
+
+bool Walker::fillsListOfFusedChain(const Draft& draft, const Effects& effects) const
+{
+    static constexpr OpcodeSet storesIntoNewList { Opcode::TryPutIndex, Opcode::TryPutByValDirect, Opcode::ElemDefine, Opcode::PutContiguousIndex, Opcode::PutOwnContiguousIndex, Opcode::AppendElement };
+    static constexpr OpcodeSet newLists { Opcode::NewArray, Opcode::NewArrayLike, Opcode::SortKeyArray };
+    static constexpr OpcodeSet allocationsOfArrayLength { Opcode::NewArrayLike, Opcode::SortKeyArray };
+    if (allocationsOfArrayLength.contains(draft.opcode) && m_frames.size() == m_frameOfFusedChain)
+        return true;
+    if (draft.opcode == Opcode::SortByKeys && m_frames.size() == m_frameOfFusedChain)
+        return true;
+    if (!storesIntoNewList.contains(draft.opcode) || effects.mayRunOtherCode())
+        return false;
+    Reference list = draft.operand(0);
+    ValueID made = list && list.isValue() ? underlyingCellOf(m_code, list.id()) : ValueID();
+    return made && newLists.contains(m_code.at(made).opcode) && made.index() >= m_frames[m_frameOfFusedChain - 1].numberOfValuesBuiltBefore;
+}
+
+BlockID Walker::blockWhereFusedChainIsLeft()
+{
+    Frame& frame = m_frames[m_frameOfFusedChain - 1];
+    if (!frame.whereCopyLeavesForCall) {
+        frame.whereCopyLeavesForCall = addBlock(BlockFrequency::Rare);
+        if (!frame.loopDepthAtCall)
+            m_code.setLoopMarks(frame.whereCopyLeavesForCall, false, false);
+    }
+    return frame.whereCopyLeavesForCall;
+}
+
+bool Walker::leaveFusedChain(const Draft& draft, const Effects& effects)
+{
+    return !fillsListOfFusedChain(draft, effects) && exitFusedChainUnlessHidden(effects);
+}
+
+bool Walker::exitFusedChainUnlessHidden(const Effects& effects)
+{
+    if (effects.mayBeRunAgainUnseen() && !effects.mayThrowByRule())
+        return false;
+    jumpTo(blockWhereFusedChainIsLeft());
+    leaveBlockPending();
+    return true;
+}
+
+Reference Walker::requireCoercibleInFusedChain(const Draft& draft)
+{
+    Reference value = draft.operand(0);
+    if (!m_types.overlap(typeOf(value), TypeTable::nullish))
+        return value;
+    Draft test(Opcode::TypeTest, draft.origin());
+    chooseConservativeFields(test);
+    test.setValueOperand(value);
+    test.setTestedType(TypeTable::nullish);
+    Reference isNullish = build(WTF::move(test));
+    if (!isNullish)
+        return { };
+    BlockID passed = addBlock();
+    branch(isNullish, blockWhereFusedChainIsLeft(), passed);
+    continueIn(passed);
+    if (isUnreachable())
+        return { };
+    Draft narrowed(Opcode::Narrowed, draft.origin());
+    chooseConservativeFields(narrowed);
+    narrowed.setValueOperand(value);
+    narrowed.setTestOperand(isNullish);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    return build(WTF::move(narrowed));
+}
+
+Reference Walker::narrowInFusedChain(Reference value, TypeID expected, Origin origin)
+{
+    TypeID tested = value && expected ? m_types.testablePartOf(m_types.withoutNullish(expected)) : TypeID();
+    if (!tested || isNeverType(tested) || m_types.isSubset(ownTypeOf(value), tested))
+        return value;
+    Draft test(Opcode::TypeTest, origin);
+    chooseConservativeFields(test);
+    test.setValueOperand(value);
+    test.setTestedType(tested);
+    Reference passes = build(WTF::move(test));
+    if (!passes)
+        return { };
+    BlockID passed = addBlock();
+    branch(passes, passed, blockWhereFusedChainIsLeft());
+    continueIn(passed);
+    if (isUnreachable())
+        return { };
+    Draft narrowed(Opcode::Narrowed, origin);
+    chooseConservativeFields(narrowed);
+    narrowed.setValueOperand(value);
+    narrowed.setTestOperand(passes);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setIsOnTakenEdge(true);
+    return build(WTF::move(narrowed));
 }
 
 bool Walker::tryLeaveInlinedHeadSlow()
@@ -1583,13 +3492,10 @@ bool Walker::tryLeaveInlinedHeadSlow()
     return true;
 }
 
-BlockID Walker::blockWhereCopyLeavesForCall()
+Walker::Frame& Walker::frameLeftForCall()
 {
-    if (Frame& frame = m_frames.last(); frame.inlinedHeadBlocks) {
-        if (!frame.whereHeadEnds)
-            frame.whereHeadEnds = addBlock();
-        return frame.whereHeadEnds;
-    }
+    if (m_frames.last().inlinedHeadBlocks)
+        return m_frames.last();
     size_t outermost = m_frames.size() - 1;
     size_t lowest = m_trialVisits.isEmpty() ? 0 : m_trialVisits.last().frameIndex;
     while (outermost > lowest + 1) {
@@ -1598,7 +3504,17 @@ BlockID Walker::blockWhereCopyLeavesForCall()
             break;
         --outermost;
     }
-    Frame& frame = m_frames[outermost];
+    return m_frames[outermost];
+}
+
+BlockID Walker::blockWhereCopyLeavesForCall()
+{
+    Frame& frame = frameLeftForCall();
+    if (frame.inlinedHeadBlocks) {
+        if (!frame.whereHeadEnds)
+            frame.whereHeadEnds = addBlock();
+        return frame.whereHeadEnds;
+    }
     if (!frame.whereCopyLeavesForCall)
         frame.whereCopyLeavesForCall = addBlock(BlockFrequency::Rare);
     return frame.whereCopyLeavesForCall;
@@ -1610,9 +3526,96 @@ bool Walker::walkInlineMethodThatProtocolCalls(const BodyValue& step, FunctionID
     return walkInline(step, callee, arguments);
 }
 
+static LayoutID singleLayoutAtInlining(const Walker& walker, TypeID type)
+{
+    Type objects = type ? walker.types().at(type) : Type();
+    return type && objects.isObject() && objects.hasOnlyLayouts() ? singleLayoutOf(walker.types(), objects) : LayoutID();
+}
+
+Reference Walker::receiverOf(const Frame& frame) const
+{
+    std::optional<unsigned> parameter = program().at(frame.function).thisParameterIndex();
+    if (!parameter || !frame.index || *parameter >= frame.index->block(entryBlock).numberOfParameters())
+        return { };
+    ValueID receiver = frame.index->block(entryBlock).parameter(*parameter);
+    return receiver.index() < frame.references.size() ? frame.references[receiver.index()] : Reference();
+}
+
+Reference Walker::findEnclosingReceiver(Reference receiver) const
+{
+    if (!isInLoop() || !isInCallbackCopy() || !receiver || !receiver.isValue())
+        return { };
+    auto layoutOf = [&](Reference value) {
+        return value && value.isValue() ? singleLayoutAtInlining(*this, typeOf(value)) : LayoutID();
+    };
+    LayoutID layout = layoutOf(receiver);
+    ValueID cell = underlyingCellOf(m_code, receiver.id());
+    if (!layout || m_code.isConstant(cell) || m_code.at(cell).opcode != Opcode::GetSlot || layoutOf(receiverOf(m_frames.last())) == layout)
+        return { };
+    for (size_t place = m_frames.size() - 1; place--;) {
+        Reference enclosing = receiverOf(m_frames[place]);
+        if (layoutOf(enclosing) == layout)
+            return underlyingCellOf(m_code, enclosing.id()) == cell ? Reference() : enclosing;
+    }
+    return { };
+}
+
+bool Walker::callsEnclosingReceiver(FunctionID callee, Reference receiver) const
+{
+    if (!isInLoop() || !facts().linked().function(callee).mayCallBack || !receiver || !receiver.isValue())
+        return false;
+    return callsEnclosingReceiver(callee, singleLayoutAtInlining(*this, typeOf(receiver)));
+}
+
+bool Walker::callsEnclosingReceiver(FunctionID callee, LayoutID layout) const
+{
+    const BodyIndex* body = isInLoop() && layout && facts().linked().function(callee).mayCallBack ? facts().bodies().find(callee) : nullptr;
+    std::optional<unsigned> thisParameter = body ? program().at(callee).thisParameterIndex() : std::nullopt;
+    if (!thisParameter)
+        return false;
+    Vector<LayoutID, 8> layoutsOfEnclosingReceivers;
+    for (const Frame& frame : m_frames) {
+        Reference enclosing = receiverOf(frame);
+        if (LayoutID enclosingLayout = enclosing && enclosing.isValue() ? singleLayoutAtInlining(*this, typeOf(enclosing)) : LayoutID())
+            layoutsOfEnclosingReceivers.append(enclosingLayout);
+    }
+    if (layoutsOfEnclosingReceivers.isEmpty())
+        return false;
+    ValueID own = body->block(entryBlock).parameter(*thisParameter);
+    auto isOwnReceiver = [&](ValueID value) {
+        value = body->stripCasts(value);
+        while (!body->isParameter(value) && body->opcodeOf(value) == Opcode::ToThis)
+            value = body->stripCasts(body->value(value).operand(0));
+        return value == own;
+    };
+    auto isOfEnclosingReceiver = [&](PropertyKeyID key) {
+        std::optional<FieldReference> field = findField(program(), layout, key);
+        LayoutID called = field ? singleLayoutAtInlining(*this, facts().linked().field(*field).proven) : LayoutID();
+        return called && layoutsOfEnclosingReceivers.contains(called);
+    };
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        for (BodyValue operation : body->block(BlockID(number)).values()) {
+            if (operation.opcode() != Opcode::Call)
+                continue;
+            ValueID called = operation.as<Opcode::Call>().thisValueOperand();
+            called = called ? body->stripCasts(called) : ValueID();
+            if (!called || body->isParameter(called) || body->opcodeOf(called) != Opcode::PropGet || body->value(called).isFreeName())
+                continue;
+            auto read = body->value(called).as<Opcode::PropGet>();
+            if (isOwnReceiver(read.objectOperand()) && isOfEnclosingReceiver(read.key()))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool directEntryTakesArguments(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
+
 bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft* writtenOut, const BitVector* inlinedHeadBlocks)
 {
     bool isCalledByProtocol = std::exchange(m_nextCopyIsOfMethodThatProtocolCalls, false);
+    BlockID* armOfFusedChain = std::exchange(m_armOfNextFusedChain, nullptr);
+    ValueID keyOfCopy = std::exchange(m_keyOfNextCopy, ValueID());
     if (!m_opensGuesses || m_frames.last().inlinedHeadBlocks || (inlinedHeadBlocks && (isUnderHandlerOtherThanCleanups() || hasStringsInBuilders())))
         return false;
 
@@ -1620,7 +3623,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     if (!writtenOut)
         drafted.emplace(draftOf(call));
     const Draft& site = writtenOut ? *writtenOut : *drafted;
-    if (isBeingWalked(callee) && !(inlinedHeadBlocks ? bodyOfUnitCallsItselfAtInlining(*this, site, callee) : bodyOfUnitTakesCopyOfItselfAtInlining(*this, site, callee)))
+    if (isBeingWalked(callee) && !(inlinedHeadBlocks ? bodyOfUnitCallsItselfAtInlining(*this, site, callee) : bodyOfUnitTakesCopyOfItselfAtInlining(*this, site, callee)) && !constructsItselfOnce(*this, site, callee))
         return false;
     Vector<ClosureMadeForCallAtInlining, 2> closuresMadeForCall;
     const Function& function = program().at(callee);
@@ -1644,6 +3647,17 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     if (isUnreachable())
         return true;
 
+    std::optional<unsigned> thisParameter = isInLoop() && mayBeCallback(*this, callee) ? function.thisParameterIndex() : std::nullopt;
+    bool callsBack = !inlinedHeadBlocks && thisParameter && *thisParameter < entryArguments.size() && callsEnclosingReceiver(callee, entryArguments[*thisParameter]);
+    if (callsBack)
+        m_state.forbidRestart();
+    callsBack |= isInCallbackCopy();
+
+    if (isInLoop() && !canRestartIteration() && !inlinedHeadBlocks && !site.isTailCall && !site.resultIsReturnedAtOnce && guardsAskForUndefinedAlone(*this, callee, entryArguments.span()))
+        m_walksCopyWhereItsGuardFailed = true;
+    auto endWalkWhereGuardFailed = makeScopeExit([&] {
+        m_walksCopyWhereItsGuardFailed = false;
+    });
     Vector<Reference, 8> argumentsAsTheyCame;
     BlockID whereGuardFails;
     bool failingSideIsWalkedInLine = false;
@@ -1681,6 +3695,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         });
     }
     Reference beginningInEffectsNet;
+    bool canCallInstead = copyMayLeaveForCall && !isConstructionOfCopy && !armOfFusedChain && !keyOfCopy && facts().bodies().at(callee).opcodes().contains(Opcode::ElemGet) && callsItself(*this, facts().bodies().at(callee), callee) && directEntryTakesArguments(*this, callee, entryArguments.span());
     if (copyMayLeaveForCall) {
         argumentsAsTheyCame = entryArguments;
         closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);
@@ -1722,7 +3737,10 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
                 }
                 return true;
             };
-            bool mayWalkFailingSideInLine = isInLoop() && !canRestartIteration() && !inlinedHeadBlocks && !site.isTailCall && !site.resultIsReturnedAtOnce && holdsEveryOperationInEntryBlock();
+            auto mayTakeFraction = [&] {
+                return m_types.at(tested).isInt32() && (m_types.at(typeOf(entryArguments[index])).primitives & Primitive::FractionalNumber) && onlyCalculatesInWindow(*this, callee, facts().bodies().at(callee));
+            };
+            bool mayWalkFailingSideInLine = !armOfFusedChain && !keyOfCopy && isInLoop() && !inlinedHeadBlocks && !site.isTailCall && !site.resultIsReturnedAtOnce && ((!canRestartIteration() && holdsEveryOperationInEntryBlock()) || mayTakeFraction());
             bool leavesCopyAround = !mayWalkFailingSideInLine && !whereGuardFails && mayLeaveCopyForCall();
             if (leavesCopyAround)
                 recordSpeculation();
@@ -1744,6 +3762,26 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         narrowed.setOperandIndex(OperandIndex::TypeTest::value);
         narrowed.setIsOnTakenEdge(true);
         entryArguments[index] = build(WTF::move(narrowed));
+    }
+    Reference enclosing = thisParameter && *thisParameter < entryArguments.size() && copyMayLeaveForCall && !inlinedHeadBlocks && !isUnreachable() && has(Mechanism::Guesses) ? findEnclosingReceiver(entryArguments[*thisParameter]) : Reference();
+    if (enclosing) {
+        Draft test(Opcode::StrictEq, originOfCall);
+        chooseConservativeFields(test);
+        test.setLeftOperand(entryArguments[*thisParameter]);
+        test.setRightOperand(enclosing);
+        Reference isEnclosing = build(WTF::move(test));
+        if (!isEnclosing)
+            return true;
+        if (!whereGuardFails) {
+            whereGuardFails = addBlock(BlockFrequency::Rare);
+            argumentsAsTheyCame = entryArguments;
+            closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);
+        }
+        recordSpeculation();
+        BlockID passed = addBlock();
+        branch(isEnclosing, passed, whereGuardFails);
+        continueIn(passed);
+        entryArguments[*thisParameter] = enclosing;
     }
     uint64_t readAfterWrites = canRestartIteration() && !inlinedHeadBlocks && !m_walksCopyWhereItsGuardFailed && has(Mechanism::Guesses) && has(Mechanism::TypedOperations) ? numbersReadAfterWrites(facts().bodies().at(callee)) : 0;
     for (uint32_t index = 0; index < entryArguments.size() && index < 64 && readAfterWrites >> index && !isUnreachable(); ++index) {
@@ -1789,7 +3827,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         entryArguments[index] = build(WTF::move(narrowed));
     }
     bool secondWalkIsRareAndKeepsSites = false;
-    if (!whereGuardFails && copyMayLeaveForCall && !m_walksCopyWhereItsGuardFailed && isInLoop() && !canRestartIteration() && !mayLeaveCopyForCall() && !inlinedHeadBlocks && !site.isTailCall && !site.resultIsReturnedAtOnce
+    if (!whereGuardFails && !keyOfCopy && copyMayLeaveForCall && !m_walksCopyWhereItsGuardFailed && isInLoop() && !canRestartIteration() && !mayLeaveCopyForCall() && !inlinedHeadBlocks && !site.isTailCall && !site.resultIsReturnedAtOnce
         && facts().bodies().at(callee).numberOfBlocks() == 1 && !isUnreachable()) {
         for (uint32_t index = 0; index < entryArguments.size() && index < function.numberOfEntryParameters() && !failingSideIsWalkedInLine; ++index) {
             const DeclaredType* declared = function.declaredEntryParameter(index);
@@ -1817,6 +3855,11 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         if (proven && !isOneLook)
             continue;
         TypeID tested = proven && entryArguments[index].isValue() ? m_types.testablePartOf(proven) : TypeID();
+        bool leavesChainAtNullish = tested && isElementReadByName(entryArguments[index], facts().bodies().at(callee), index);
+        if (TypeID present = leavesChainAtNullish ? m_types.withoutNullish(tested) : TypeID(); present && !isNeverType(present))
+            tested = present;
+        else
+            leavesChainAtNullish = false;
         TypeID arriving = tested ? ownTypeOf(entryArguments[index]) : TypeID();
         bool isRawNumberAmongFractions = arriving && m_types.at(arriving).isNumber() && representationOf(entryArguments[index]) == Representation::Double && (m_types.at(tested).primitives & Primitive::FractionalNumber);
         if (!arriving || isRawNumberAmongFractions || !m_types.at(arriving).isJavaScriptValue() || m_types.at(tested).isAnything() || m_types.isSubset(arriving, tested) || !m_types.overlap(arriving, tested))
@@ -1831,8 +3874,13 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         BlockID whereClaimFails = addBlock(BlockFrequency::Rare);
         branch(passes, whereClaimHolds, whereClaimFails);
         continueIn(whereClaimFails);
-        buildCheckOfProof(entryArguments[index], TypeTable::never, TypeTable::anything, ProofSource::EntryParameter, originOfCall);
-        endAsUnreachable(originOfCall);
+        if (leavesChainAtNullish) {
+            jumpTo(blockWhereFusedChainIsLeft());
+            leaveBlockPending();
+        } else {
+            buildCheckOfProof(entryArguments[index], TypeTable::never, TypeTable::anything, ProofSource::EntryParameter, originOfCall);
+            endAsUnreachable(originOfCall);
+        }
         continueIn(whereClaimHolds);
 
         Reference asItCame = entryArguments[index];
@@ -1874,10 +3922,11 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     frame.function = callee;
     frame.body = &body.body();
     frame.index = &body;
-    if (function.isModuleBody())
-        frame.variablesStoredFirst = facts().linked().variablesStoredFirstIn(callee);
+    if (function.isModuleBody() || function.syntax.contains(FunctionSyntax::IsWrappedModuleBody))
+        frame.variablesStoredFirst = firstStores().variablesStoredFirstIn(callee);
     frame.references.lay(body.numberOfValues());
     frame.loopDepthAtCall = loopDepthAtCall;
+    frame.isInCallbackCopy = callsBack;
     frame.returnsInPlaceOfUnit = returnsInPlaceOfUnit;
     frame.callsAreCountedByPlan = callsAreCountedByPlan;
     if (ofAnswer.type) {
@@ -1889,9 +3938,11 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     frame.numberOfValuesBuiltBefore = numberOfValuesBuiltBefore;
     frame.isCopiedByLinkOfChain = copyIsMadeByLinkOfChain;
     frame.inlineFrame = inlineFrame;
+    frame.keyOfComparator = keyOfCopy;
     frame.whereCopyLeavesForCall = whereGuardFails;
     frame.isWalkedWhereItsGuardFailed = std::exchange(m_walksCopyWhereItsGuardFailed, false);
     frame.mayLeaveForCall = copyMayLeaveForCall && copyIsReached && !guessesInCopyKeepTheirFailingWays;
+    frame.canCallInstead = canCallInstead;
     frame.inlinedHeadBlocks = inlinedHeadBlocks;
     frame.inlineeRestartPoint = ++m_restartPointCount;
     uint32_t inlineeRestartPoint = frame.inlineeRestartPoint;
@@ -1904,6 +3955,9 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     using ReturnOfCopy = Frame::ReturnOfCopy;
     Vector<ReturnOfCopy, 2> returns;
     m_frames.last().returnsOfCopy = &returns;
+    uint32_t frameOfFusedChainAround = m_frameOfFusedChain;
+    if (armOfFusedChain)
+        m_frameOfFusedChain = static_cast<uint32_t>(m_frames.size());
 
     BodyBlock entry = body.block(entryBlock);
     for (uint32_t index = 0; index < entryArguments.size() && copyIsReached; ++index)
@@ -1920,9 +3974,13 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     bool wasCopiedByLinkOfChain = m_frames.last().isCopiedByLinkOfChain;
     whereGuardFails = m_frames.last().whereCopyLeavesForCall;
     BlockID whereHeadEnds = m_frames.last().whereHeadEnds;
+    Reference generatorMadeAgain = m_frames.last().generatorMadeAgain;
 
     endBlocksInFrontOfLoops(m_frames.size() - 1, { });
     m_frames.removeLast();
+    m_frameOfFusedChain = frameOfFusedChainAround;
+    if (armOfFusedChain)
+        *armOfFusedChain = std::exchange(whereGuardFails, BlockID());
     for (ReturnOfCopy& returned : returns) {
         if (!returned.value)
             returned.value = constant(Draft(Opcode::Undefined, originOfCall));
@@ -1940,6 +3998,10 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
                 Draft again = draftOf(currentBodyIndex().value(closure.written));
                 chooseConservativeFields(again);
                 if (Reference madeHere = build(WTF::move(again)))
+                    argument = madeHere;
+            }
+            if (generatorMadeAgain && argument == generatorMadeAgain && !isUnreachable()) {
+                if (Reference madeHere = makeGeneratorAgain(argument))
                     argument = madeHere;
             }
         }
@@ -1980,6 +4042,17 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     }
     size_t numberOfReturnsOfCopy = returns.size();
 
+    if (keyOfCopy && whereGuardFails && !m_hasFailed) {
+        m_block = { };
+        m_state.clear();
+        continueIn(std::exchange(whereGuardFails, BlockID()));
+        if (!isUnreachable()) {
+            jumpTo(blockWhereFusedChainIsLeft());
+            leaveBlockPending();
+        }
+        m_block = { };
+        m_state.clear();
+    }
     if (whereGuardFails && !m_hasFailed) {
         m_block = { };
         m_state.clear();
@@ -2037,7 +4110,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         Vector<ReturnOfCopy, 2> returnsOfOneKind;
         for (ReturnOfCopy* returned : ways)
             returnsOfOneKind.append(WTF::move(*returned));
-        goOnBehindReturnsOfCopy(call, function, linked, originOfCall, returnsOfOneKind, numberOfValuesBuiltBefore);
+        goOnBehindReturnsOfCopy(call, function, linked, originOfCall, returnsOfOneKind, numberOfValuesBuiltBefore, !!keyOfCopy);
         walkEndOfBlockBehindReturnsOfCopy(call.id());
     };
     auto endWhereWaysWentApart = [&] {
@@ -2048,6 +4121,8 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         m_calleeAccountedFor = callee;
         return true;
     };
+    if (isConstructionOfCopy && function.takesThisFromConstruction())
+        return goOnBehindReturnsOfCopy(call, function, linked, originOfCall, returns, numberOfValuesBuiltBefore);
     if (std::optional<uint32_t> loopRestartPoint = returns.size() > 1 ? turnWhoseQuietWaysGoToHeadAround(m_frames.last().block) : std::nullopt) {
         Vector<ReturnOfCopy*, 4> quiet;
         Vector<ReturnOfCopy*, 4> others;
@@ -2080,6 +4155,21 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             return endWhereWaysWentApart();
         }
     }
+    if (returns.size() > 1 && closed.isEmpty() && isInLoop() && has(Mechanism::EscapeAnalysis)) {
+        bool hasMixedReturns = false;
+        Vector<Vector<ReturnOfCopy*, 2>, 4> shapes = groupReturnsByShape(returns, numberOfValuesBuiltBefore, hasMixedReturns);
+        if (shapes.size() > 1 && letShapesOfCopyWalkEndOfBlockApart(call.id(), shapes.size())) {
+            ++m_duplicatedJoinCount;
+            if (hasMixedReturns)
+                count(StatisticID::MixedReturnsWalkedApart);
+            noteWaysApart(numberOfValuesBuiltBefore);
+            for (const auto& ways : shapes) {
+                if (!m_hasFailed)
+                    walkEndOfBlockBehind(ways.span());
+            }
+            return endWhereWaysWentApart();
+        }
+    }
     if (wasCopiedByLinkOfChain && !passing.isEmpty() && !closed.isEmpty() && letReturnsOfCopyWalkEndOfBlockApart(call.id(), passing.span(), closed.span())) {
         {
             ClosedArm closedArm(*this);
@@ -2091,17 +4181,17 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             walkEndOfBlockBehind(passing.span());
         return endWhereWaysWentApart();
     }
-    return goOnBehindReturnsOfCopy(call, function, linked, originOfCall, returns, numberOfValuesBuiltBefore);
+    return goOnBehindReturnsOfCopy(call, function, linked, originOfCall, returns, numberOfValuesBuiltBefore, !!keyOfCopy);
 }
 
-bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& function, const LinkedFunction& linked, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns, uint32_t numberOfValuesBuiltBefore)
+bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& function, const LinkedFunction& linked, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns, uint32_t numberOfValuesBuiltBefore, bool returnsKey)
 {
     using ReturnOfCopy = Frame::ReturnOfCopy;
 
     if (returns.size() == 1 && !returns[0].isUnderHandlerOfCallee) {
         m_block = returns[0].block;
         m_state = WTF::move(returns[0].state);
-        if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine())
+        if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine() && !returnsKey)
             checkProofOfResultOfCopy(returns[0].value, linked.result, originOfCall, holdsNaNForUndefined(returns[0].value));
         bind(call.id(), guardNumericCallResult(*this, call, returns[0].value, originOfCall));
         return true;
@@ -2125,7 +4215,16 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
         objects = findObjectsThatMeetAsOne(*this, ways.span(), values.span(), numberOfValuesBuiltBefore);
     }
     BlockID continuationBlock = addBlock();
-    Reference result = addParameter(continuationBlock, type, formOfParameter(type, forms.span()));
+    auto isNullish = [&](const ReturnOfCopy& returned) {
+        return returned.value.isConstant() && m_types.at(ownTypeOf(returned.value)).isUndefinedOrNull();
+    };
+    auto isOptionalInteger = [&](const ReturnOfCopy& returned) {
+        return representationOf(returned.value) == Representation::OptionalInt64;
+    };
+    bool nullMeetsIntegers = has(Mechanism::UnboxedNumbers) && std::ranges::any_of(returns, isOptionalInteger) && std::ranges::all_of(returns, [&](const ReturnOfCopy& returned) {
+        return isOptionalInteger(returned) || isNullish(returned);
+    });
+    Reference result = addParameter(continuationBlock, type, nullMeetsIntegers && isLegalRepresentation(m_types.at(type), Representation::OptionalInt64) ? Representation::OptionalInt64 : formOfParameter(type, forms.span()));
     Vector<Reference, 8> parametersOfSlots;
     if (objects) {
         for (const ObjectsThatMeet::Slot& slot : objects->slots) {
@@ -2141,7 +4240,7 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
         }
     }
     Vector<FieldOfScope, 4> fieldsThatMeet;
-    if (unitHasMadeScopes() || !m_fieldsOfScopesOfHeads.isEmpty()) {
+    if (unitHasMadeScopes() || !m_fieldsOfScopesOfHeads.isEmpty() || !m_carriedResultRequests.isEmpty() || mayMeetUnmadeRecords(returns[0].state)) {
         Vector<const WalkState*, 4> states;
         for (const ReturnOfCopy& returned : returns)
             states.append(&returned.state);
@@ -2171,7 +4270,7 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
         noteObjectsThatHaveMetAsOne(*this, result, *objects, parametersOfSlots.span());
     if (!m_hasFailed)
         noteFieldsOfScopes(fieldsThatMeet.span());
-    if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine())
+    if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine() && !returnsKey)
         checkProofOfResultOfCopy(result, linked.result, originOfCall, std::ranges::any_of(returns, [&](const ReturnOfCopy& returned) { return holdsNaNForUndefined(returned.value); }));
     bind(call.id(), guardNumericCallResult(*this, call, result, originOfCall));
     return true;

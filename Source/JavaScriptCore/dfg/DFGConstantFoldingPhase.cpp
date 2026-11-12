@@ -663,6 +663,10 @@ private:
                 if (data.cases.size() != 1)
                     break;
                 
+                // A MultiGetByOffset with a double result exits if its value is not a number.
+                if (node->hasDoubleResult() && data.cases[0].method().kind() == GetByOffsetMethod::Constant && !data.cases[0].method().constant()->value().isNumber())
+                    break;
+
                 emitGetByOffset(indexInBlock, node, baseValue, data.cases[0], data.identifierNumber);
                 changed = true;
                 break;

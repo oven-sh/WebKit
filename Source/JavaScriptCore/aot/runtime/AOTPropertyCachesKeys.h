@@ -53,11 +53,14 @@ struct NamedAccess {
     std::optional<uint32_t> number;
 };
 
-JSValue getAndCache(const NamedAccess&, JSValue base, JSValue receiver);
+enum class StaticFieldIsRead : bool { AsProperty, InVariable };
+JSValue getAndCache(const NamedAccess&, JSValue base, JSValue receiver, StaticFieldIsRead = StaticFieldIsRead::AsProperty);
 inline JSValue getAndCache(const NamedAccess& access, JSValue base) { return getAndCache(access, base, base); }
 void fileReadWithoutCode(Instance*, JSObject* base, const Identifier&);
 JSValue getUnderKeyForReceiver(Instance*, JSObject* base, const Identifier&, JSValue receiver);
 void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);
+bool tryRepeatFieldExit(Instance*, JSValue base, uint32_t key, JSValue, PutMode);
+bool tryStoreBySlot(Instance&, JSObject* target, UniquedStringImpl*, JSValue);
 bool tryReplaceGlobalProperty(Instance*, VM&, JSValue base, UniquedStringImpl*, JSValue);
 bool hasPropertyAndCache(Instance*, JSObject*, const CachedName&);
 bool instanceOfAndCache(Instance*, JSValue, JSValue constructor);

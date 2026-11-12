@@ -64,6 +64,7 @@ int runCommandSubcommand(StringView command, std::span<const String> arguments);
 int runPrintSubcommand(std::span<const String> arguments);
 int runCompileSubcommand(std::span<const String> arguments);
 int runFuzzAllocationSubcommand(std::span<const String> arguments);
+int runFuzzExecutionSubcommand(std::span<const String> arguments);
 
 Vector<TypeID> typesNamedBy(const Program&, std::optional<FunctionID> functionOfTypesLine);
 

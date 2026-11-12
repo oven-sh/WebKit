@@ -136,6 +136,16 @@ struct MatchRecordRegisters {
 
 void recordMatch(StubAssembler&, const MatchRecordRegisters&);
 
+struct WideMatchRegisters {
+    GPRReg answer;
+    GPRReg string;
+    GPRReg impl;
+    GPRReg characters;
+    GPRReg length;
+};
+
+void rejectMatchInsidePair(StubAssembler&, const WideMatchRegisters&, Label isSearched, JumpList& slowCases);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

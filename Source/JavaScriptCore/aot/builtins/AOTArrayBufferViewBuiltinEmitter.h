@@ -18,10 +18,13 @@ public:
     void generateTypedArrayLength(const InlineCall&);
     void generateTypedArrayByteLength(const InlineCall&);
     void generateTypedArrayByteOffset(const InlineCall&);
+    void generateViewLength(const InlineCall&);
+    void generateViewIsOutOfBounds(const InlineCall&);
     void generateTypedArrayWithLength(const InlineCall&);
     void generateTypedArraySet(const InlineCall&);
     void generateByteLiteral(const InlineCall&);
 
+    Integer lengthOfViewInArgument(const InlineCall&);
     Condition hasFixedLength(CellPointer view);
     Integer lengthOf(CellPointer view);
     Integer byteOffsetOf(CellPointer view);

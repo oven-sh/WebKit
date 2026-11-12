@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTCellFormat.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
@@ -21,7 +22,6 @@
 #include <span>
 #include <tuple>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 
@@ -240,11 +240,11 @@ private:
     {
         for (; logSize; --logSize) {
             for (unsigned shift = 1; shift < 32; shift *= 2)
-                bits = (bits | bits >> shift) & masksOfEveryOtherRun[std::countr_zero(shift)];
+                bits = (bits | bits >> shift) & alternatingRunMasks[std::countr_zero(shift)];
         }
         return bits;
     }
-    static constexpr std::array<uint64_t, 5> masksOfEveryOtherRun { 0x3333333333333333, 0x0f0f0f0f0f0f0f0f, 0x00ff00ff00ff00ff, 0x0000ffff0000ffff, 0x00000000ffffffff };
+    static constexpr std::array<uint64_t, 5> alternatingRunMasks { 0x3333333333333333, 0x0f0f0f0f0f0f0f0f, 0x00ff00ff00ff00ff, 0x0000ffff0000ffff, 0x00000000ffffffff };
 
     void take(uint32_t offset, unsigned logSize)
     {

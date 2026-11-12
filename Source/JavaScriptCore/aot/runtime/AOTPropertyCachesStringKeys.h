@@ -173,12 +173,12 @@ public:
     static constexpr unsigned keyOfPairSetShift = 6;
     static_assert(waysOfKeysOfPairs * sizeof(KeyOfPair) == 1 << keyOfPairSetShift);
     static constexpr uint32_t keyOfPairMultiplier = 0x9e3779b1u;
-    static constexpr uint32_t keyOfPairMultiplierOfSecond = 0x213bca7fu;
+    static constexpr uint32_t secondKeyMultiplier = 0x213bca7fu;
     static constexpr unsigned keyOfPairHashShift = 13;
     static constexpr uint64_t keyOfPairMaskFor(size_t tableSize) { return (tableSize / waysOfKeysOfPairs - 1) << keyOfPairSetShift; }
     static constexpr uint32_t hashOfPair(EncodedJSValue first, EncodedJSValue second)
     {
-        uint32_t mixed = static_cast<uint32_t>(first) + static_cast<uint32_t>(second) * keyOfPairMultiplierOfSecond;
+        uint32_t mixed = static_cast<uint32_t>(first) + static_cast<uint32_t>(second) * secondKeyMultiplier;
         return mixed * keyOfPairMultiplier >> keyOfPairHashShift;
     }
     JS_EXPORT_PRIVATE static const KeyOfPair* noKeysOfPairs();
@@ -242,8 +242,8 @@ public:
 
         ALWAYS_INLINE bool tryAppendInteger(uint32_t integer)
         {
-            constexpr uint32_t limitOfTwoDigits = 100;
-            if (integer - limitOfTwoDigits >= limitOfIntegers - limitOfTwoDigits) {
+            constexpr uint32_t twoDigitLimit = 100;
+            if (integer - twoDigitLimit >= limitOfIntegers - twoDigitLimit) {
                 if (integer >= limitOfIntegers)
                     return false;
                 uint32_t tens = integer * 103 >> 10;
@@ -272,8 +272,8 @@ public:
         ALWAYS_INLINE uint64_t lastEightBytes() const
         {
             ASSERT(length >= bytesOfWord);
-            uint32_t bytesBehindFirst = length - bytesOfWord;
-            return bytesBehindFirst == bytesOfWord ? last : first >> (8 * bytesBehindFirst) | (last << 1) << (8 * (bytesOfWord - bytesBehindFirst) - 1);
+            uint32_t bytesAfterFirst = length - bytesOfWord;
+            return bytesAfterFirst == bytesOfWord ? last : first >> (8 * bytesAfterFirst) | (last << 1) << (8 * (bytesOfWord - bytesAfterFirst) - 1);
         }
 
         ALWAYS_INLINE unsigned hash() const

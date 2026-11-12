@@ -11,7 +11,7 @@
 # CHECK: field L6.0 "kind" proven=string writers-known filled
 # Nobody tells holders apart by `r`.
 # RUN(OTHER): link fields mechanisms=all
-# OTHER: field L0.1 "r" proven=i32 writers-known written-at-construction-alone filled
+# OTHER: field L0.1 "r" proven=2 writers-known written-at-construction-alone filled
 
 layout L0 name="Circle" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Square" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}]

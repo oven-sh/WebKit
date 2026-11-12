@@ -57,8 +57,18 @@ static SlotAssigner::Size sizeOfSpillPlace(const SpillFacts& facts)
 {
     if (facts.isPointerBesideNarrowReference)
         return SlotAssigner::Word;
-    RELEASE_ASSERT(facts.width == Width32 || facts.width == Width64);
-    return facts.width == Width32 ? SlotAssigner::Half : SlotAssigner::Word;
+    switch (facts.width) {
+    case Width32:
+        return SlotAssigner::Half;
+    case Width64:
+        return SlotAssigner::Word;
+    case Width128:
+        return SlotAssigner::Pair;
+    case Width8:
+    case Width16:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static SpillPlaceRange rangeOfSpillPlace(const Procedure& proc, const SpillFacts& facts)
@@ -144,9 +154,13 @@ static HalfWordsOfSpillPlace halfWordsOfSpillPlace(uint32_t distance, SlotAssign
     return { lastHalfWord / 64, uint64_t { 3 } << ((lastHalfWord - 1) % 64) };
 }
 
+static constexpr uint32_t neverReleasedPlace = std::numeric_limits<uint32_t>::max();
+
 static constexpr uint32_t makeHeldPlace(uint32_t distanceWithinPart, SlotAssigner::Part part, SlotAssigner::Size size)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(!(distanceWithinPart % bytesPerPlaceHalf));
+    if (size == SlotAssigner::Pair)
+        return neverReleasedPlace;
     return distanceWithinPart | static_cast<uint32_t>(part) << 1 | static_cast<uint32_t>(size);
 }
 
@@ -209,7 +223,7 @@ void SlotAssigner::run()
     joinParts();
     if (!m_allocation.suspensions().empty())
         findWordsDeadAcrossSuspensions();
-    if (isX86_64())
+    if (isX86_64() && !m_holdsPairs)
         bringBusyWordsNearEndsOfFrame();
 }
 
@@ -386,18 +400,22 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
         });
     }
 
+    if (m_allocation.suspensions().empty())
+        return;
     ArenaVector<uint32_t> wordsEncodedAsIndex;
-    for (const PatchOperation* patch : m_allocation.suspensions()) {
+    size_t suspensionCount = 0;
+    for (const Step& step : steps) {
+        if (step.kind != StepKind::Execute || step.operation->opcode() != Patch)
+            continue;
+        const PatchOperation* patch = static_cast<const PatchOperation*>(step.operation);
         if (!patch->operandEncodedAsFrameWordIndex())
             continue;
-        const Step* step = m_allocation.findExecuteOf(patch);
-        if (!step)
-            step = &m_allocation.step(m_allocation.stepsOf(patch->owner()).terminator);
-        RELEASE_ASSERT(step->kind == StepKind::Execute && step->operation == patch);
-        Location location = m_allocation.patchAssignment(step->patchAssignment).locations[m_proc.resultCount(patch->type()) + *patch->operandEncodedAsFrameWordIndex()];
+        ++suspensionCount;
+        Location location = m_allocation.patchAssignment(step.patchAssignment).locations[m_proc.resultCount(patch->type()) + *patch->operandEncodedAsFrameWordIndex()];
         if (location.isSpill())
             wordsEncodedAsIndex.append(m_arena, wordOf(location.spillIndex()));
     }
+    RELEASE_ASSERT(suspensionCount >= static_cast<size_t>(std::ranges::count_if(m_allocation.suspensions(), [](const PatchOperation* patch) { return !!patch->operandEncodedAsFrameWordIndex(); })));
 
     for (uint32_t word : wordsEncodedAsIndex)
         numberOfAccesses[word] = UINT32_MAX;
@@ -627,6 +645,8 @@ NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position positio
     const uint32_t* const placesOfSpills = m_placesOfSpills;
     const uint32_t numberOfSpills = m_numberOfSpills;
     auto release = [&](uint32_t place) {
+        if (place == neverReleasedPlace) [[unlikely]]
+            return;
         m_freePlaces[partOfHeldPlace(place)][sizeOfHeldPlace(place)].append(m_arena, distanceOfHeldPlace(place));
     };
 
@@ -677,6 +697,13 @@ ALWAYS_INLINE_INTO_OTHER_FILES uint32_t SlotAssigner::takePlace(Part part, Size 
         return distance;
     };
 
+    if (size == Pair) [[unlikely]] {
+        RELEASE_ASSERT(part == DeadAtSuspensions);
+        m_bytesOfPart[part] += 2 * bytesPerPlaceWord;
+        m_holdsPairs = true;
+        return take(m_bytesOfPart[part]);
+    }
+
     ArenaVector<uint32_t>& freePlaces = m_freePlaces[part][size];
     if (taken.isEmpty() && !freePlaces.isEmpty())
         return take(freePlaces.takeLast());
@@ -698,6 +725,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES uint32_t SlotAssigner::takePlace(Part part, Size 
         return take(distance - bytesPerPlaceHalf);
     case Word:
         return take(distance);
+    case Pair:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

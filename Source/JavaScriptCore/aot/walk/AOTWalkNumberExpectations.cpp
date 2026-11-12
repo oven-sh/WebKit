@@ -311,6 +311,329 @@ bool usesSpeakForInt32(Walker& walker, ValueID input)
     return speaksForInt32 && !speaksAgainstInt32;
 }
 
+static bool truncates(const BodyIndex& index, const BodyValue& operation, uint32_t operandIndex)
+{
+    if (operation.opcode() == Opcode::BitNot) {
+        ValueID user = index.onlyUsingValue(operation.id());
+        return user && !index.isParameter(user) && index.opcodeOf(user) == Opcode::BitNot;
+    }
+    return !operandIndex && operatorsWithZeroAsIdentityInNumberExpectations.contains(operation.opcode()) && isWrittenZeroInNumberExpectations(index, operation.operand(1));
+}
+
+bool isOnlyTruncated(Walker& walker, ValueID input)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    NamesInNumberExpectations names { index.stripCasts(input) };
+    bool isTruncatedAlone = !!names[0];
+    for (size_t place = 0; place < names.size() && isTruncatedAlone; ++place) {
+        bool sawEveryMention = visitMentionsForNumberExpectations(index, names[place], [&](const MentionInNumberExpectations& mention) {
+            BodyValue user = mention.user ? index.value(mention.user) : BodyValue();
+            if (mention.user && truncates(index, user, mention.operandIndex))
+                return;
+            bool isCast = mention.user && opcodesThatStateTypes.contains(user.opcode()) && !mention.operandIndex;
+            if (!isCast || names.size() == mostNamesFollowedInNumberExpectations) {
+                isTruncatedAlone = false;
+                return;
+            }
+            names.append(mention.user);
+        });
+        isTruncatedAlone &= sawEveryMention;
+    }
+    return isTruncatedAlone;
+}
+
+static constexpr OpcodeSet binarySumsInNumberExpectations { Opcode::Add, Opcode::Sub };
+
+static bool isSumWithBits(const BodyIndex& index, ValueID term, unsigned depth)
+{
+    static constexpr unsigned maxDepth = 6;
+    ValueID made = index.stripCasts(term);
+    if (!made || index.isParameter(made))
+        return false;
+    if (allBitwiseOperators.contains(index.opcodeOf(made)))
+        return true;
+    if (depth == maxDepth || !binarySumsInNumberExpectations.contains(index.opcodeOf(made)))
+        return false;
+    BodyValue sum = index.value(made);
+    return isSumWithBits(index, sum.operand(0), depth + 1) || isSumWithBits(index, sum.operand(1), depth + 1);
+}
+
+bool isTruncatedInLoop(const BodyIndex& index, ValueID read)
+{
+    LoopID loop = index.loopOf(index.blockOf(read));
+    if (!loop || index.isUnused(read))
+        return false;
+    BlockID head = index.loop(loop).head;
+    NamesInNumberExpectations names { read };
+    for (size_t known = 0; known != names.size();) {
+        known = names.size();
+        for (size_t place = 0; place < known; ++place) {
+            ValueID name = names[place];
+            uint32_t mentionsLeft = index.useCount(name);
+            bool isTruncated = mentionsLeft && mentionsLeft != BodyIndex::maxCountedUses;
+            auto follow = [&](ValueID next) {
+                if (next && names.contains(next))
+                    return;
+                isTruncated &= next && names.size() < mostNamesFollowedInNumberExpectations;
+                if (isTruncated)
+                    names.append(next);
+            };
+            auto visit = [&](const MentionInNumberExpectations& mention) {
+                --mentionsLeft;
+                if (!mention.user) {
+                    bool isCarried = !mention.handedOnAs || index.blockOf(mention.handedOnAs) == head || !index.isInLoop(index.blockOf(mention.handedOnAs), loop);
+                    follow(isCarried ? ValueID() : mention.handedOnAs);
+                    return;
+                }
+                BodyValue user = index.value(mention.user);
+                if (!allBitwiseOperators.contains(user.opcode()))
+                    follow(opcodesThatStateTypes.contains(user.opcode()) && !mention.operandIndex ? mention.user : ValueID());
+            };
+            if (std::optional<BodyUser> user = index.onlyUser(name)) {
+                BlockID member = user->kind == BodyUseKind::Operand ? index.blockOf(user->value) : user->block;
+                if (!index.isInLoop(member, loop))
+                    return false;
+                if (user->kind == BodyUseKind::Operand)
+                    visitMentionsInOperationForNumberExpectations(index.value(user->value), name, visit);
+                else
+                    visitMentionsAtEndOfBlockForNumberExpectations(index, member, name, visit);
+            }
+            std::span<const BlockID> members = index.membersOf(loop);
+            size_t home = isTruncated && mentionsLeft ? std::ranges::find(members, index.blockOf(name)) - members.begin() : 0;
+            for (size_t turn = 0; turn < members.size() && isTruncated && mentionsLeft; ++turn) {
+                BodyBlock block = index.block(members[(home + turn) % members.size()]);
+                uint32_t first = block.firstValue().index();
+                if (!turn)
+                    first = std::max(first, name.index() + 1);
+                for (uint32_t end = block.endOfValues().index(); first < end && isTruncated && mentionsLeft; ++first)
+                    visitMentionsInOperationForNumberExpectations(index.value(ValueID(first)), name, visit);
+                if (isTruncated && mentionsLeft)
+                    visitMentionsAtEndOfBlockForNumberExpectations(index, block.id(), name, visit);
+            }
+            if (!isTruncated || mentionsLeft)
+                return false;
+        }
+    }
+    return true;
+}
+
+TruncatedUse findTruncatedUse(Walker& walker, ValueID input)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    NamesInNumberExpectations names { input };
+    bool isTruncated = true;
+    bool meetsBits = false;
+    bool isTerm = false;
+    for (size_t place = 0; place < names.size() && isTruncated; ++place) {
+        ValueID name = names[place];
+        auto follow = [&](ValueID next) {
+            if (names.contains(next))
+                return;
+            isTruncated &= next && names.size() < mostNamesFollowedInNumberExpectations;
+            if (isTruncated)
+                names.append(next);
+        };
+        bool sawEveryMention = visitMentionsForNumberExpectations(index, name, [&](const MentionInNumberExpectations& mention) {
+            if (!mention.user) {
+                bool isCarried = !mention.handedOnAs || index.isLoopHead(index.blockOf(mention.handedOnAs));
+                follow(isCarried ? ValueID() : mention.handedOnAs);
+                return;
+            }
+            BodyValue user = index.value(mention.user);
+            if (allBitwiseOperators.contains(user.opcode()))
+                return;
+            bool isSum = binarySumsInNumberExpectations.contains(user.opcode());
+            if (isSum) {
+                isTerm = true;
+                meetsBits |= isSumWithBits(index, user.operand(1 - mention.operandIndex), 0);
+            }
+            follow(isSum || (opcodesThatStateTypes.contains(user.opcode()) && !mention.operandIndex) ? mention.user : ValueID());
+        });
+        isTruncated &= sawEveryMention;
+    }
+    if (!isTruncated || index.isUnused(input))
+        return TruncatedUse::None;
+    return !isTerm ? TruncatedUse::OperandOfBits : meetsBits ? TruncatedUse::TermOfSums : TruncatedUse::None;
+}
+
+bool isOnlyCalculatedWith(Walker& walker, ValueID input)
+{
+    static constexpr OpcodeSet calculations = allSums | allRelations | OpcodeSet { Opcode::Mul, Opcode::Div, Opcode::Mod };
+    const BodyIndex& index = walker.currentBodyIndex();
+    NamesInNumberExpectations names { input };
+    bool isCalculatedWith = false;
+    for (size_t place = 0; place < names.size(); ++place) {
+        bool isOtherwiseUsed = false;
+        bool sawEveryMention = visitMentionsForNumberExpectations(index, names[place], [&](const MentionInNumberExpectations& mention) {
+            BodyValue user = mention.user ? index.value(mention.user) : BodyValue();
+            if (mention.user && calculations.contains(user.opcode())) {
+                isCalculatedWith = true;
+                return;
+            }
+            bool isCast = mention.user && opcodesThatStateTypes.contains(user.opcode()) && !mention.operandIndex;
+            if (!isCast || names.size() == mostNamesFollowedInNumberExpectations) {
+                isOtherwiseUsed = true;
+                return;
+            }
+            names.append(mention.user);
+        });
+        if (!sawEveryMention || isOtherwiseUsed)
+            return false;
+    }
+    return isCalculatedWith;
+}
+
+static bool isNeverNegativeZero(Walker& walker, const BodyIndex& index, ValueID value, std::span<const ValueID> sums = { })
+{
+    static constexpr OpcodeSet neverNegativeZero = allBitwiseOperators | OpcodeSet { Opcode::Integer, Opcode::Increment, Opcode::Decrement };
+    static constexpr size_t mostTermsSearched = 8;
+    static constexpr size_t mostSumsFollowed = 3;
+    auto isParameterNeverNegativeZero = [&](ValueID parameter) {
+        if (std::ranges::contains(sums, parameter))
+            return true;
+        BlockID block = index.blockOf(parameter);
+        if (sums.size() == mostSumsFollowed || block == entryBlock || index.block(block).role() != BlockRole::Ordinary)
+            return false;
+        Vector<ValueID, mostSumsFollowed> followed(sums);
+        followed.append(parameter);
+        uint32_t place = parameter.index() - index.block(block).firstParameter().index();
+        auto edges = walker.incomingEdgesOf(index, block);
+        return !edges.empty() && std::ranges::all_of(edges, [&](const BodyIncomingEdge& edge) {
+            std::span<const ValueID> arguments = edge.target.arguments();
+            return place < arguments.size() && isNeverNegativeZero(walker, index, arguments[place], followed.span());
+        });
+    };
+    Vector<ValueID, mostTermsSearched> terms { index.stripCasts(value) };
+    for (size_t place = 0; place < terms.size(); ++place) {
+        ValueID term = terms[place];
+        if (term && index.isParameter(term) && isParameterNeverNegativeZero(term))
+            return true;
+        if (!term || index.isParameter(term))
+            continue;
+        if (neverNegativeZero.contains(index.opcodeOf(term)))
+            return true;
+        if (index.opcodeOf(term) != Opcode::Add || terms.size() + 2 > mostTermsSearched)
+            continue;
+        BodyValue sum = index.value(term);
+        terms.append(index.stripCasts(sum.operand(0)));
+        terms.append(index.stripCasts(sum.operand(1)));
+    }
+    return false;
+}
+
+bool isSignOfZeroIgnored(Walker& walker, ValueID input)
+{
+    static constexpr OpcodeSet operatorsIgnoringSignOfZero = allBitwiseOperators | allRelations | allEqualities | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::ToBoolean };
+    static constexpr OpcodeSet operatorsPassingSignOfZero { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Negate, Opcode::ToNumber, Opcode::ToNumeric };
+    const BodyIndex& index = walker.currentBodyIndex();
+    NamesInNumberExpectations names { input };
+    bool isIgnored = true;
+    for (size_t place = 0; place < names.size() && isIgnored; ++place) {
+        ValueID name = names[place];
+        bool sawEveryMention = visitMentionsForNumberExpectations(index, name, [&](const MentionInNumberExpectations& mention) {
+            BodyValue user = mention.user ? index.value(mention.user) : BodyValue();
+            if (mention.user && operatorsIgnoringSignOfZero.contains(user.opcode()))
+                return;
+            bool isPassedOn = mention.user && (operatorsPassingSignOfZero.contains(user.opcode()) || (opcodesThatStateTypes.contains(user.opcode()) && !mention.operandIndex));
+            bool isRightOfDifference = isPassedOn && user.opcode() == Opcode::Sub && mention.operandIndex;
+            if (isPassedOn && (user.opcode() == Opcode::Add || isRightOfDifference) && isNeverNegativeZero(walker, index, user.operand(1 - mention.operandIndex)))
+                return;
+            if (!isPassedOn || names.size() == mostNamesFollowedInNumberExpectations) {
+                isIgnored = false;
+                return;
+            }
+            if (!names.contains(mention.user))
+                names.append(mention.user);
+        });
+        isIgnored &= sawEveryMention;
+    }
+    return isIgnored;
+}
+
+bool isOnlyComparedWithIntegers(Walker& walker, ValueID input)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    bool isCompared = true;
+    bool sawEveryMention = visitMentionsForNumberExpectations(index, input, [&](const MentionInNumberExpectations& mention) {
+        if (!mention.user) {
+            isCompared &= mention.handedOnAs && index.isUnused(mention.handedOnAs);
+            return;
+        }
+        BodyValue user = index.value(mention.user);
+        if (user.opcode() == Opcode::ToBoolean)
+            return;
+        ValueID other = allEqualities.contains(user.opcode()) ? user.operand(1 - mention.operandIndex) : ValueID();
+        isCompared &= other && !index.isParameter(other) && index.opcodeOf(other) == Opcode::Integer;
+    });
+    return isCompared && sawEveryMention;
+}
+
+enum class ZeroSignUse : uint8_t { None, ReturnedAlone, Seen };
+
+static ZeroSignUse findZeroSignUse(Walker& walker, const BodyIndex& index, ValueID input)
+{
+    static constexpr OpcodeSet operatorsIgnoringSignOfZero = allBitwiseOperators | allRelations | allEqualities | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::ToBoolean };
+    static constexpr OpcodeSet operatorsPassingSignOfZero { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Mod, Opcode::Negate, Opcode::ToNumber, Opcode::ToNumeric };
+    return static_cast<ZeroSignUse>(walker.zeroSignUse(index, input, [&] {
+        bool isReturned = false;
+        NamesInNumberExpectations names { input };
+        for (size_t place = 0; place < names.size(); ++place) {
+            ValueID name = names[place];
+            uint32_t mentionsLeft = index.useCount(name);
+            bool isIgnored = mentionsLeft != BodyIndex::maxCountedUses;
+            BlockID visited;
+            auto follow = [&](ValueID next) {
+                if (next && names.contains(next))
+                    return;
+                isIgnored &= next && names.size() < mostNamesFollowedInNumberExpectations;
+                if (isIgnored)
+                    names.append(next);
+            };
+            auto visit = [&](const MentionInNumberExpectations& mention) {
+                --mentionsLeft;
+                if (!mention.user && !mention.handedOnAs && index.terminator(visited).kind() == TerminatorKind::Return) {
+                    isReturned = true;
+                    return;
+                }
+                if (!mention.user) {
+                    follow(mention.handedOnAs);
+                    return;
+                }
+                BodyValue user = index.value(mention.user);
+                if (operatorsIgnoringSignOfZero.contains(user.opcode()) || (user.opcode() == Opcode::Mod && mention.operandIndex))
+                    return;
+                bool isRightOfDifference = user.opcode() == Opcode::Sub && mention.operandIndex;
+                if ((user.opcode() == Opcode::Add || isRightOfDifference) && isNeverNegativeZero(walker, index, user.operand(1 - mention.operandIndex)))
+                    return;
+                bool isPassedOn = operatorsPassingSignOfZero.contains(user.opcode()) || (opcodesThatStateTypes.contains(user.opcode()) && !mention.operandIndex);
+                follow(isPassedOn ? mention.user : ValueID());
+            };
+            for (uint32_t number = 0; number < index.numberOfBlocks() && isIgnored && mentionsLeft; ++number) {
+                BlockID block(number);
+                if (!index.isReachable(block))
+                    continue;
+                visited = block;
+                for (BodyValue operation : index.block(block).values())
+                    visitMentionsInOperationForNumberExpectations(operation, name, visit);
+                visitMentionsAtEndOfBlockForNumberExpectations(index, block, name, visit);
+            }
+            if (!isIgnored || mentionsLeft)
+                return static_cast<uint8_t>(ZeroSignUse::Seen);
+        }
+        return static_cast<uint8_t>(isReturned ? ZeroSignUse::ReturnedAlone : ZeroSignUse::None);
+    }));
+}
+
+bool isZeroSignUnused(Walker& walker, ValueID input)
+{
+    ZeroSignUse use = findZeroSignUse(walker, walker.currentBodyIndex(), input);
+    if (use != ZeroSignUse::ReturnedAlone)
+        return use == ZeroSignUse::None;
+    auto [caller, call] = walker.callThatFrameAtWorkCopies();
+    const BodyIndex* index = caller && call ? walker.facts().bodies().find(caller) : nullptr;
+    return index && !index->isParameter(call) && index->opcodeOf(call) == Opcode::Call && findZeroSignUse(walker, *index, call) == ZeroSignUse::None;
+}
+
 static ValueID readOfEnvironmentFieldBehindNamesInNumberExpectations(const BodyIndex& index, ValueID value)
 {
     while (value && !index.isParameter(value)) {
@@ -480,7 +803,7 @@ ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker& walker, ValueID i
     return { cut, found.isDeclared, found.isHeld };
 }
 
-ExpectationOfNumber numberExpectedOfAddendOfPosition(Walker& walker, const BodyValue& operation, ValueID operand, ExpectationOfNumber found)
+ExpectationOfNumber expectedIndexAddend(Walker& walker, const BodyValue& operation, ValueID operand, ExpectationOfNumber found)
 {
     if (!found.type || !sumsFollowedInNumberExpectations.contains(operation.opcode()) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
         return found;
@@ -497,6 +820,68 @@ ExpectationOfNumber numberExpectedOfAddendOfPosition(Walker& walker, const BodyV
     TypeID proven = provenTypeInNumberExpectations(walker, operand);
     if (!cut || (proven && !types.overlap(proven, cut)) || !usesSpeakForInt32(walker, operation.id()))
         return found;
+    return { cut, found.isDeclared, found.isHeld };
+}
+
+bool readsFieldOfIntegers(Walker& walker, ValueID operand)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = readOfSlotBehindNamesInNumberExpectations(index, operand);
+    if (!read)
+        return false;
+    PropertyKeyID key = index.value(read).key();
+    const LinkTables& linked = walker.facts().linked();
+    if (!key || linked.keysStoredWhatIsNoInt32.get(key.index()))
+        return false;
+    TypeArena& types = walker.types();
+    ValueID object = index.value(read).objectOperand();
+    TypeID receiver = provenTypeInNumberExpectations(walker, object);
+    if (isUninformativeInNumberExpectations(types, receiver))
+        receiver = object && object < read ? findExpectation(walker, object).type : TypeID();
+    if (isUninformativeInNumberExpectations(types, receiver))
+        return false;
+    Type holder = types.at(types.withoutNullish(receiver));
+    if (!holder.layouts || !holder.hasOnlyLayouts())
+        return false;
+    const Program& program = walker.program();
+    return std::ranges::all_of(types.listOf(holder.layouts), [&](LayoutID member) {
+        bool isUsedAsInteger = linked.fieldsReadAsIntegers.names(program, member, key) || linked.fieldsStoredCounts.names(program, member, key);
+        return isUsedAsInteger && !linked.fieldsStoredWhatIsNoInt32.names(program, member, key);
+    });
+}
+
+bool readsSumOfWords(Walker& walker, ValueID operand)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = readOfSlotBehindNamesInNumberExpectations(index, operand);
+    LoopID loop = read ? index.loopOf(index.blockOf(read)) : LoopID();
+    return loop && index.value(read).key() && walker.storesSumOfWords(index, loop, index.value(read).key());
+}
+
+ExpectationOfNumber numbersExpectedOfWord(Walker& walker, ValueID operand, ExpectationOfNumber found)
+{
+    if (!found.type || found.isDeclared || found.isHeld || !walker.types().at(found.type).isInt32OrNullish() || !walker.has(Mechanism::UnboxedNumbers) || !readsSumOfWords(walker, operand))
+        return found;
+    return { TypeTable::number, false, false };
+}
+
+ExpectationOfNumber expectedIntegerField(Walker& walker, const BodyValue& operation, ValueID operand, ExpectationOfNumber found)
+{
+    static constexpr OpcodeSet operators = sumsFollowedInNumberExpectations | allRelations;
+    if (!found.type || !operators.contains(operation.opcode()) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
+        return found;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!index.loopOf(index.blockOf(operation.id())))
+        return found;
+    TypeArena& types = walker.types();
+    Type expected = types.at(found.type);
+    if (!holdsNumbersBesideNullishAlone(expected) || expected.isInt32OrNullish())
+        return found;
+    TypeID cut = withNumbersCutToInt32(types, expected);
+    TypeID proven = provenTypeInNumberExpectations(walker, operand);
+    if (!cut || (proven && !types.overlap(proven, cut)) || !readsFieldOfIntegers(walker, operand))
+        return found;
+    walker.count(StatisticID::IntegerFieldsSpeculated);
     return { cut, found.isDeclared, found.isHeld };
 }
 

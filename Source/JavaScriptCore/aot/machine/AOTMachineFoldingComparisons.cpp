@@ -264,10 +264,30 @@ static ComparisonFoldOrdering comparisonFoldOrderingOfNumbers(double left, doubl
     return ComparisonFoldOrdering::Unordered;
 }
 
+static Operation* comparisonFoldConvertedIntegers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
+{
+    constexpr double limit = 0x1p52;
+    bool isConstant = right->hasDouble() && std::trunc(right->asDouble()) == right->asDouble() && std::abs(right->asDouble()) <= limit;
+    if (!isConstant && (right->opcode() != IToD || (!isExactConvertedInteger(left) && !isExactConvertedInteger(right))))
+        return nullptr;
+    if (opcode == EqualOrUnordered)
+        opcode = Equal;
+    int64_t constant = isConstant ? static_cast<int64_t>(right->asDouble()) : 0;
+    if (left->child(0)->type() == Int32 && (isConstant ? constant == static_cast<int32_t>(constant) : right->child(0)->type() == Int32))
+        return builder.binary(opcode, left->child(0), isConstant ? builder.const32(static_cast<int32_t>(constant)) : right->child(0));
+    return builder.binary(opcode, wideConvertedInteger(builder, left), isConstant ? builder.const64(constant) : wideConvertedInteger(builder, right));
+}
+
 Operation* foldMachineComparisonOfNumbers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(!comparisonFoldIsUnsignedOrder(opcode));
-    if (comparisonFoldIsUnsignedOrder(opcode) || !right->isConstant())
+    if (comparisonFoldIsUnsignedOrder(opcode))
+        return nullptr;
+    if (left->opcode() == IToD) {
+        if (Operation* folded = comparisonFoldConvertedIntegers(builder, opcode, left, right))
+            return folded;
+    }
+    if (!right->isConstant())
         return nullptr;
 
     double rightNumber = comparisonFoldNumberOf(right);

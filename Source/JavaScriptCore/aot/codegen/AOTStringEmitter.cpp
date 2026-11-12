@@ -13,7 +13,9 @@
 #include "AOTElementAccessEmitter.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRepresentationRules.h"
+#include "AOTResolvedCallEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStringTable.h"
 #include "AOTStubsStrings.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeArena.h"
@@ -28,8 +30,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned widthOfFiber1Lower = JSRopeString::CompactFibers::widthOfFiber1LowerInLengthWord;
-static constexpr unsigned shiftOfFiber2 = JSRopeString::CompactFibers::shiftOfFiber2InUpperWord;
 
 void StringEmitter::continueIf(Condition condition, BlockEdge otherwise)
 {
@@ -53,6 +53,18 @@ String StringEmitter::textOf(StringID id) const
     if (!text.is8Bit() && text.containsOnlyLatin1())
         return String::make8Bit(text.span16());
     return text;
+}
+
+void StringEmitter::recordInlined(StringID id)
+{
+    if (m_records.inlinedStrings.areRecorded()) [[unlikely]]
+        m_records.inlinedStrings.append(types().bytesOf(id));
+}
+
+void StringEmitter::recordInlined(char16_t codeUnit)
+{
+    if (m_records.inlinedStrings.areRecorded()) [[unlikely]]
+        m_records.inlinedStrings.append(encodeProgramString(std::span<const char16_t>(singleElementSpan(codeUnit))).span());
 }
 
 Word32 StringEmitter::flagsInImpl(Pointer impl)
@@ -122,24 +134,11 @@ CharacterView StringEmitter::viewOfFlatString(CellPointer flat)
     return viewOfSource(sourceInImpl(loadField<Pointer>(flat, m_heaps.JSString_value)), flat);
 }
 
-CellPointer StringEmitter::substringBaseOf(CellPointer rope)
-{
-    static_assert(widthOfFiber1Lower == 32 && shiftOfFiber2 == 16, "load32 and load16 read the two parts of fiber 1");
-    LValue lower = m_out.load32(m_out.address(m_heaps.JSRopeString_fiber1, rope.value(), JSRopeString::offsetOfFiber1Lower()));
-    LValue upper = m_out.load16ZeroExt32(m_out.address(m_heaps.JSRopeString_fiber2, rope.value(), JSRopeString::offsetOfFiber2()));
-    LValue lowerBits = m_out.zeroExtPtr(lower);
-    return CellPointer(m_out.bitOr(lowerBits, m_out.shl(m_out.zeroExtPtr(upper), widthOfFiber1Lower)));
-}
-
-CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, CellPointer rope, Pointer fiber)
+CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, CellPointer rope)
 {
     Word32 length = loadField<Word32>(rope, m_heaps.JSRopeString_length);
-    Condition isNotSubstring = hasNoBits(fiber, JSRopeString::isSubstringInPointer);
-    CellPointer base = substringBaseOf(rope);
-    CellPointer flat = select(isNotSubstring, rope, base);
-    Pointer characters(callStub(context, ropeCharacters(), { rope.value() }).first);
-    Word32 flags = loadField<Word32>(loadField<Pointer>(flat, m_heaps.JSString_value), m_heaps.StringImpl_hashAndFlags);
-    return { characters, length, flags };
+    StubCallResult charactersAndImpl = callStub(context, ropeCharacters(), { rope.value() });
+    return { Pointer(charactersAndImpl.first), length, flagsInImpl(Pointer(charactersAndImpl.second)) };
 }
 
 CharacterView StringEmitter::viewOfString(const OperationContext& context, CellPointer string)
@@ -166,7 +165,7 @@ CharacterView StringEmitter::viewOfString(const OperationContext& context, CellP
     join(sourceInImpl(fiber));
 
     m_out.appendToArm(rope, fork);
-    join(sourceOfRope(context, string, fiber));
+    join(sourceOfRope(context, string));
 
     m_out.appendToJoin(continuation, fork);
     Pointer joinedCharacters(m_out.phi(machineTypeOf(Pointer::representation), characters));
@@ -179,7 +178,7 @@ CharacterView StringEmitter::viewWithoutResolving(const OperationContext& contex
 {
     Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
     Condition isFlat = hasNoBits(fiber, JSString::isRopeInPointer);
-    if (!context.block() || !generator().isInLoop(context.block())) {
+    if (!context.block() || !generator().usesLoopForms(context.block())) {
         continueIf(isFlat, otherwise);
         return viewOfSource(sourceInImpl(fiber), string);
     }
@@ -217,8 +216,95 @@ CharacterView StringEmitter::viewWithoutResolving(const OperationContext& contex
     return viewOfSource({ joinedCharacters, joinedLength, joinedFlags }, string);
 }
 
+CellPointer StringEmitter::makeSubstring(const OperationContext& context, const OwnedCharacters& characters)
+{
+    return substring(context, characters.owner, { characters.start, add(characters.start, characters.source.length) });
+}
+
+CellPointer StringEmitter::makeCarriedSubstring(const ValueContext& cut, const CodeGenerator::CarriedSubstring& carried)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    CellPointer whole = in<CellPointer>(carried.string);
+    Word32 start(carried.start);
+    Word32 length(carried.length);
+    LBasicBlock isPart = newBlock();
+    Join<CellPointer> join(m_out);
+    Condition isWhole = logicalAnd(isZero(start), equal(length, lengthOf(whole)));
+    LBasicBlock isAll = newBlock();
+    m_out.branch(isWhole.value(), normalEdge(isAll), normalEdge(isPart));
+    m_out.appendTo(isAll);
+    join.add(whole);
+    m_out.appendTo(isPart);
+    join.add(CellPointer(callStub(cut, AOT::substring(), { whole.value(), zeroExtended(start).value(), zeroExtended(add(start, length)).value() }).first));
+    return join.finish();
+}
+
+OwnedCharacters StringEmitter::loadCharacters(const OperationContext& context, CellPointer string, std::optional<SubstringBounds> bounds)
+{
+    LBasicBlock flat = newBlock();
+    LBasicBlock rope = newBlock();
+    LBasicBlock substring = newBlock();
+    LBasicBlock unresolved = newBlock();
+    LBasicBlock continuation = newBlock();
+    Vector<ValueFromBlock, 3> characters;
+    Vector<ValueFromBlock, 3> lengths;
+    Vector<ValueFromBlock, 3> implFlags;
+    Vector<ValueFromBlock, 3> owners;
+    Vector<ValueFromBlock, 3> starts;
+    auto join = [&](Pointer impl, CellPointer owner, std::optional<Integer> offset, Word32 lengthOfString) {
+        Word32 flags = flagsInImpl(impl);
+        Pointer firstOfOwner = loadField<Pointer>(impl, m_heaps.StringImpl_data);
+        if (bounds)
+            offset = offset ? Integer(m_out.add(offset->value(), zeroExtended(bounds->start).value())) : zeroExtended(bounds->start);
+        Condition is8Bit = hasBits(flags, StringImpl::flagIs8Bit());
+        characters.append(m_out.anchor(offset ? select(is8Bit, offsetBy(firstOfOwner, *offset, 0), offsetBy(firstOfOwner, *offset, 1)).value() : firstOfOwner.value()));
+        lengths.append(m_out.anchor(bounds ? bounds->length.value() : lengthOfString.value()));
+        implFlags.append(m_out.anchor(flags.value()));
+        owners.append(m_out.anchor(owner.value()));
+        starts.append(m_out.anchor(offset ? low32(*offset).value() : m_out.constInt32(0)));
+        m_out.jump(continuation);
+    };
+    auto lengthInImpl = [&](Pointer impl) {
+        return bounds ? bounds->length : loadField<Word32>(impl, m_heaps.StringImpl_length);
+    };
+    Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(flat), normalEdge(rope));
+
+    m_out.appendToArm(flat, fork);
+    join(fiber, string, std::nullopt, lengthInImpl(fiber));
+
+    m_out.appendToArm(rope, fork);
+    m_out.branch(m_out.testNonZeroPtr(fiber.value(), JSRopeString::isSubstringInPointer), normalEdge(substring), unlikelyEdge(unresolved));
+
+    m_out.appendToContinuation(substring);
+    using CompactFibers = JSRopeString::CompactFibers;
+    static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
+    const Machine::AbstractHeap& storage = m_heaps.entire(AbstractHeap::StringStorage);
+    LValue lower = m_out.zeroExtPtr(m_out.load32(m_out.address(storage, string.value(), JSRopeString::offsetOfFiber1Lower())));
+    LValue upper = m_out.zeroExtPtr(m_out.load16ZeroExt32(m_out.address(storage, string.value(), JSRopeString::offsetOfFiber2())));
+    LValue offset = m_out.lShr(m_out.load64(m_out.address(storage, string.value(), JSRopeString::offsetOfFiber2())), CompactFibers::shiftOfFiber2InUpperWord);
+    CellPointer base(m_out.bitOr(lower, m_out.shl(upper, CompactFibers::widthOfFiber1LowerInLengthWord)));
+    join(loadField<Pointer>(base, m_heaps.JSString_value), base, Integer(offset), bounds ? bounds->length : loadField<Word32>(string, m_heaps.JSRopeString_length));
+
+    m_out.appendTo(unresolved);
+    CellPointer resolved(callStub(context, flattenString(), { string.value() }).first);
+    Pointer implOfResolved = loadField<Pointer>(resolved, m_heaps.JSString_value);
+    join(implOfResolved, resolved, std::nullopt, lengthInImpl(implOfResolved));
+
+    m_out.appendToJoin(continuation, fork);
+    Pointer joinedCharacters(m_out.phi(machineTypeOf(Pointer::representation), characters));
+    Word32 joinedLength(m_out.phi(machineTypeOf(Word32::representation), lengths));
+    Word32 joinedFlags(m_out.phi(machineTypeOf(Word32::representation), implFlags));
+    CellPointer joinedOwner(m_out.phi(machineTypeOf(CellPointer::representation), owners));
+    Word32 joinedStart(m_out.phi(machineTypeOf(Word32::representation), starts));
+    return { { joinedCharacters, joinedLength, joinedFlags }, joinedOwner, joinedStart };
+}
+
 CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID string)
 {
+    if (const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(string)) [[unlikely]]
+        return viewOfCharacters(emitter<ResolvedCallEmitter>().loadCarriedSubstring(context, *carried, false));
     std::optional<FlatStringCell> flat = flatStringByType(string);
     if (!flat)
         return viewOfString(context, in<CellPointer>(string));
@@ -226,13 +312,27 @@ CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID str
     if (auto opened = m_openedStrings.find(cell.value()); opened != m_openedStrings.end()) {
         if (!opened->value.mayBeRope)
             return viewOfSource(opened->value.source, cell);
-        const OpenedRope& rope = openedRopeAt(string, context.block());
-        CharacterView view = viewOfSource({ rope.characters, Word32(), rope.implFlags }, cell);
-        view.possibleRope = string;
-        view.implFlags = rope.implFlags;
-        return view;
+        return viewOfPossibleRope(string, context.block(), cell);
     }
     return viewOfSource(sourceInImpl(implOfFlatString(*flat)), cell);
+}
+
+CharacterView StringEmitter::viewForReadOfCodeUnit(const OperationContext& context, ValueID string)
+{
+    if (opcodeOf(string) != Opcode::OpenString || !generator().mayStayRope(string))
+        return viewOf(context, string);
+    CharacterView view = viewOfPossibleRope(string, context.block(), in<CellPointer>(string));
+    view.resolvesAt = &context;
+    return view;
+}
+
+CharacterView StringEmitter::viewOfPossibleRope(ValueID string, BlockID block, CellPointer cell)
+{
+    const OpenedRope& rope = openedRopeAt(string, block);
+    CharacterView view = viewOfSource({ rope.characters, Word32(), rope.implFlags }, cell);
+    view.possibleRope = string;
+    view.implFlags = rope.implFlags;
+    return view;
 }
 
 Word32 StringEmitter::lengthOf(CellPointer string)
@@ -259,6 +359,8 @@ Word32 StringEmitter::lengthOf(CellPointer string)
 
 Word32 StringEmitter::lengthOf(ValueID string)
 {
+    if (const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(string)) [[unlikely]]
+        return Word32(carried->length);
     std::optional<FlatStringCell> flat = flatStringByType(string);
     if (!flat)
         return lengthOf(in<CellPointer>(string));
@@ -282,7 +384,10 @@ const StringEmitter::OpenedRope& StringEmitter::openedRopeAt(ValueID string, Blo
 {
     for (size_t index = m_openedRopes.size(); index--;) {
         const OpenedRope& opened = m_openedRopes[index];
-        if (opened.string == string && m_generator.blockDominates(opened.block, block))
+        if (opened.string != string || !m_generator.blockDominates(opened.block, block))
+            continue;
+        EdgeID handler = opened.isRead && opened.block != block ? m_code.handlerOf(opened.block) : EdgeID();
+        if (!handler || !m_generator.blockDominates(opened.block, m_code.at(handler).to))
             return opened;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -324,6 +429,8 @@ Word32 StringEmitter::codeUnitOfPossibleRope(const CharacterView& view, Word32 i
     join(loadCodeUnit(view.characters, index, false), view.characters, view.implFlags);
 
     m_out.appendTo(unresolved);
+    if (view.resolvesAt)
+        callStub(*view.resolvesAt, flattenString(), { view.owner.value() });
     LValue operands[] = { view.owner.value(), index.value() };
     Word32 unit = low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(stringCodeUnitAt(), operands).first));
     Pointer fiber = loadField<Pointer>(view.owner, m_heaps.JSString_value);
@@ -334,7 +441,7 @@ Word32 StringEmitter::codeUnitOfPossibleRope(const CharacterView& view, Word32 i
     join(unit, view.characters, view.implFlags);
 
     m_out.appendTo(continuation);
-    m_openedRopes.append({ view.possibleRope, generator().blockBeingGenerated(), Pointer(m_out.phi(machineTypeOf(Pointer::representation), characters)), Word32(m_out.phi(machineTypeOf(Word32::representation), implFlags)) });
+    m_openedRopes.append({ view.possibleRope, generator().blockBeingGenerated(), Pointer(m_out.phi(machineTypeOf(Pointer::representation), characters)), Word32(m_out.phi(machineTypeOf(Word32::representation), implFlags)), true });
     return Word32(m_out.phi(machineTypeOf(Word32::representation), units));
 }
 
@@ -413,6 +520,9 @@ CellPointer StringEmitter::stringFromCodeUnit(const OperationContext& context, W
 
 CellPointer StringEmitter::substring(const OperationContext& context, CellPointer string, CodeUnitRange range)
 {
+    LValue end = range.end.value();
+    if (end->opcode() == Machine::Add && end->child(0) == range.start.value() && end->child(1)->isInt32(1))
+        return CellPointer(callStub(context, characterAt(), { string.value(), zeroExtended(range.start).value() }).first);
     return CellPointer(callStub(context, AOT::substring(), { string.value(), zeroExtended(range.start).value(), zeroExtended(range.end).value() }).first);
 }
 
@@ -569,9 +679,16 @@ void StringEmitter::generateSubstring(const ValueContext& value)
     CellPointer string = in<CellPointer>(value->stringOperand());
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
+    const CodeGenerator::CarriedSubstring* carried = generator().findCarriedSubstring(value->stringOperand());
     if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.checksBounds()) {
         elements.stopUnlessInside(value, belowOrEqual(start, end));
-        elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(string)));
+        elements.stopUnlessInside(value, belowOrEqual(end, carried ? Word32(carried->length) : lengthOf(string)));
+    }
+    if (carried) [[unlikely]] {
+        OwnedCharacters characters = emitter<ResolvedCallEmitter>().loadCarriedSubstring(value, *carried);
+        Word32 startInOwner = add(characters.start, start);
+        define(value, generator().carrySubstring(value.id(), startInOwner.value(), sub(end, start).value()) ? characters.owner : substring(value, characters.owner, { startInOwner, add(characters.start, end) }));
+        return;
     }
     define(value, substring(value, string, { start, end }));
 }
@@ -602,6 +719,8 @@ void StringEmitter::generateBoundsOfStringSplit(const ValueContext& value)
     Word32 countAndWhetherAllAreCounted = word32(static_cast<int32_t>(count | (value->countsEveryPiece() ? 1u << 31 : 0)));
     String separator = textOf(value->literal());
     bool isOneCodeUnit = separator.length() == 1;
+    if (isOneCodeUnit)
+        recordInlined(value->literal());
     Word32 sought = isOneCodeUnit ? word32(separator[0]) : numberOf(m_mentions.add(NumberSpace::String, value->literal()));
     Word32 numberOfPieces = selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
         RuntimeOperation operation = isOneCodeUnit
@@ -622,9 +741,8 @@ void StringEmitter::generateNewStringSplitArray(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::StringSplitString, { in<CellPointer>(value->stringOperand()), in<CellPointer>(value->separatorOperand()), word32(-1) }));
 }
 
-void StringEmitter::generateFlattenString(const ValueContext& value)
+CellPointer StringEmitter::openPossibleRope(const ValueContext& value, CellPointer string)
 {
-    CellPointer string = in<CellPointer>(value->stringOperand());
     LBasicBlock isFlat = newBlock();
     LBasicBlock isRope = newBlock();
     LBasicBlock continuation = newBlock();
@@ -636,29 +754,53 @@ void StringEmitter::generateFlattenString(const ValueContext& value)
 
     m_out.appendToArm(isFlat, fork);
     ValueFromBlock cellWhenFlat = m_out.anchor(string.value());
+    ValueFromBlock charactersWhenFlat = m_out.anchor(loadField<Pointer>(fiber, m_heaps.StringImpl_data).value());
+    ValueFromBlock flagsWhenFlat = m_out.anchor(flagsInImpl(fiber).value());
+    m_out.jump(continuation);
+
+    m_out.appendToArm(isRope, fork);
+    ValueFromBlock cellWhenRope = m_out.anchor(string.value());
+    ValueFromBlock charactersWhenRope = m_out.anchor(m_out.constIntPtr(0));
+    ValueFromBlock flagsWhenRope = m_out.anchor(word32(0).value());
+    m_out.jump(continuation);
+
+    m_out.appendToJoin(continuation, fork);
+    CellPointer opened(m_out.phi(machineTypeOf(CellPointer::representation), cellWhenFlat, cellWhenRope));
+    Pointer characters(m_out.phi(machineTypeOf(Pointer::representation), charactersWhenFlat, charactersWhenRope));
+    Word32 flags(m_out.phi(machineTypeOf(Word32::representation), flagsWhenFlat, flagsWhenRope));
+    m_openedStrings.add(opened.value(), OpenedString { fiber, { characters, Word32(), flags }, true });
+    m_openedRopes.append({ value.id(), value.block(), characters, flags });
+    generator().forEachCarryingLoop(value.id(), [&](BlockID head, LValue carriedCharacters, LValue carriedFlags) {
+        m_openedRopes.append({ value.id(), head, Pointer(carriedCharacters), Word32(carriedFlags) });
+    });
+    return opened;
+}
+
+void StringEmitter::generateOpenString(const ValueContext& value)
+{
+    CellPointer string = in<CellPointer>(value->stringOperand());
+    define(value, generator().mayStayRope(value.id()) ? openPossibleRope(value, string) : string);
+}
+
+void StringEmitter::generateFlattenString(const ValueContext& value)
+{
+    CellPointer string = in<CellPointer>(value->stringOperand());
     if (generator().mayStayRope(value.id())) {
-        ValueFromBlock charactersWhenFlat = m_out.anchor(loadField<Pointer>(fiber, m_heaps.StringImpl_data).value());
-        ValueFromBlock flagsWhenFlat = m_out.anchor(flagsInImpl(fiber).value());
-        m_out.jump(continuation);
-
-        m_out.appendToArm(isRope, fork);
-        ValueFromBlock cellWhenRope = m_out.anchor(string.value());
-        ValueFromBlock charactersWhenRope = m_out.anchor(m_out.constIntPtr(0));
-        ValueFromBlock flagsWhenRope = m_out.anchor(word32(0).value());
-        m_out.jump(continuation);
-
-        m_out.appendToJoin(continuation, fork);
-        CellPointer opened(m_out.phi(machineTypeOf(CellPointer::representation), cellWhenFlat, cellWhenRope));
-        Pointer characters(m_out.phi(machineTypeOf(Pointer::representation), charactersWhenFlat, charactersWhenRope));
-        Word32 flags(m_out.phi(machineTypeOf(Word32::representation), flagsWhenFlat, flagsWhenRope));
-        m_openedStrings.add(opened.value(), OpenedString { fiber, { characters, Word32(), flags }, true });
-        m_openedRopes.append({ value.id(), value.block(), characters, flags });
-        generator().forEachLoopThatCarries(value.id(), [&](BlockID head, LValue carriedCharacters, LValue carriedFlags) {
-            m_openedRopes.append({ value.id(), head, Pointer(carriedCharacters), Word32(carriedFlags) });
-        });
-        define(value, opened);
+        define(value, openPossibleRope(value, string));
         return;
     }
+
+    LBasicBlock isFlat = newBlock();
+    LBasicBlock isRope = newBlock();
+    LBasicBlock continuation = newBlock();
+
+    Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
+    Condition isAlreadyFlat = hasNoBits(fiber, JSString::isRopeInPointer);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isAlreadyFlat.value(), normalEdge(isFlat), unlikelyEdge(isRope));
+
+    m_out.appendToArm(isFlat, fork);
+    ValueFromBlock cellWhenFlat = m_out.anchor(string.value());
     Vector<ValueFromBlock, 3> cells { cellWhenFlat };
     Vector<ValueFromBlock, 3> impls { m_out.anchor(fiber.value()) };
     m_out.jump(continuation);
@@ -688,6 +830,33 @@ void StringEmitter::generateFlattenString(const ValueContext& value)
     define(value, flat);
 }
 
+void StringEmitter::generateTryResolveRope(const ValueContext& value)
+{
+    CellPointer string = in<CellPointer>(value->stringOperand());
+    LBasicBlock isFlat = newBlock();
+    LBasicBlock isRope = newBlock();
+    LBasicBlock continuation = newBlock();
+    Vector<ValueFromBlock, 3> outcomes;
+    m_out.branch(isRopeString(string).value(), unlikelyEdge(isRope), normalEdge(isFlat));
+
+    m_out.appendTo(isRope);
+    for (ValueID isRead : value->isReadOperands()) {
+        LBasicBlock mayBeRead = newBlock();
+        m_out.branch(in<Condition>(isRead).value(), normalEdge(mayBeRead), normalEdge(isFlat));
+        m_out.appendTo(mayBeRead);
+    }
+    Condition isResolved = callWithoutSite<Condition>(RuntimeOperation::TryResolveRope, { string });
+    outcomes.append(m_out.anchor(isResolved.value()));
+    m_out.jump(continuation);
+
+    m_out.appendTo(isFlat);
+    outcomes.append(m_out.anchor(boolean(true).value()));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    defineTest(value, Condition(m_out.phi(Machine::Int32, outcomes)));
+}
+
 void StringEmitter::generateStringRange(const ValueContext& value)
 {
     StringRangeMethod method = value->method();
@@ -710,13 +879,15 @@ StringID StringEmitter::findNumberedStringConstant(const OperationContext& conte
 
 CellPointer StringEmitter::cellOf(const OperationContext& context, const StringPart& part)
 {
+    if (part.integer)
+        return integerToString(context, *part.integer);
     return part.cell ? *part.cell : emitter<ConstantEmitter>().stringConstant(context, part.constant);
 }
 
-static std::optional<ConstantsOfConcatenation> chooseConstantsOfConcatenation(std::span<const StringEmitter::StringPart> parts)
+std::optional<ConstantsOfConcatenation> StringEmitter::chooseConstants(std::span<const StringPart> parts)
 {
     auto isConstant = [&](size_t index) {
-        return !parts[index].cell;
+        return parts[index].isConstant();
     };
     if (parts.size() == 2) {
         if (isConstant(0))
@@ -730,15 +901,61 @@ static std::optional<ConstantsOfConcatenation> chooseConstantsOfConcatenation(st
     return isConstant(1) ? std::optional(ConstantsOfConcatenation::SecondOfThree) : std::nullopt;
 }
 
+std::optional<CellPointer> StringEmitter::tryConcatenateInteger(const OperationContext& context, std::span<const StringPart> parts)
+{
+    auto formOf = [&]() -> std::optional<ConcatenatedInteger> {
+        auto isString = [&](size_t index) {
+            return !parts[index].integer && !parts[index].unconverted;
+        };
+        if (parts.size() == 2) {
+            if (parts[0].integer && isString(1))
+                return parts[1].isConstant() ? ConcatenatedInteger::IntegerThenConstant : ConcatenatedInteger::IntegerThenString;
+            if (parts[1].integer && isString(0))
+                return parts[0].isConstant() ? ConcatenatedInteger::ConstantThenInteger : ConcatenatedInteger::StringThenInteger;
+            return std::nullopt;
+        }
+        if (parts[2].integer && isString(0) && isString(1)) {
+            if (parts[0].isConstant())
+                return ConcatenatedInteger::ConstantStringInteger;
+            return parts[1].isConstant() ? ConcatenatedInteger::StringConstantInteger : ConcatenatedInteger::StringsThenInteger;
+        }
+        if (!parts[1].integer || !isString(0) || !isString(2))
+            return std::nullopt;
+        if (parts[0].isConstant())
+            return parts[2].isConstant() ? ConcatenatedInteger::ConstantIntegerConstant : ConcatenatedInteger::ConstantIntegerString;
+        return parts[2].isConstant() ? ConcatenatedInteger::StringIntegerConstant : ConcatenatedInteger::StringIntegerString;
+    };
+    std::optional<ConcatenatedInteger> form = formOf();
+    if (!form)
+        return std::nullopt;
+    Vector<LValue, 3> operands;
+    for (const StringPart& part : parts)
+        operands.append(part.integer ? part.integer->value() : part.isConstant() && !(form == ConcatenatedInteger::ConstantStringInteger && &part == &parts[1]) ? m_out.wideNumber(m_mentions.add(NumberSpace::StringCell, part.constant)) : cellOf(context, part).value());
+    return CellPointer(callStub(context, concatenateInteger(*form), operands.span()).first);
+}
+
 CellPointer StringEmitter::concatenateTwoOrThree(const OperationContext& context, std::span<const StringPart> parts)
 {
-    std::optional<ConstantsOfConcatenation> constants = chooseConstantsOfConcatenation(parts);
+    if (std::optional<CellPointer> joined = tryConcatenateInteger(context, parts))
+        return *joined;
+    std::optional<ConstantsOfConcatenation> constants = chooseConstants(parts);
     Vector<LValue, 3> operands;
+    bool converts = false;
     for (unsigned index = 0; index < parts.size(); ++index) {
         if (constants && isConstantOperand(*constants, index))
-            operands.append(zeroExtended(numberOf(m_mentions.add(NumberSpace::StringCell, parts[index].constant))).value());
-        else
+            operands.append(m_out.wideNumber(m_mentions.add(NumberSpace::StringCell, parts[index].constant)));
+        else if (parts[index].unconverted) {
+            RELEASE_ASSERT(!converts && index == lastOperandThatIsNoConstant(constants, static_cast<unsigned>(parts.size())));
+            converts = true;
+            operands.append(parts[index].unconverted->value());
+        } else
             operands.append(cellOf(context, parts[index]).value());
+    }
+    if (converts) {
+        const StubKey stub = convertAndConcatenate(constants, static_cast<unsigned>(parts.size()));
+        return CellPointer(generator().withConversionLeftToConcatenation(context, [&](const OperationContext& conversion) {
+            return callStub(conversion, stub, operands.span()).first;
+        }));
     }
     StubKey stub = constants ? concatenateWithConstants(*constants) : AOT::concatenate(static_cast<unsigned>(parts.size()));
     return CellPointer(callStub(context, stub, operands.span()).first);
@@ -751,8 +968,8 @@ CellPointer StringEmitter::concatenate(const OperationContext& context, std::spa
     if (parts.size() == 1)
         return cellOf(context, parts[0]);
 
-    bool beginsWithStringTwice = parts[0].cell && parts[1].cell && parts[0].cell->value() == parts[1].cell->value();
-    size_t numberOfPartsJoined = std::min<size_t>(parts.size(), beginsWithStringTwice ? 2 : 3);
+    bool startsWithRepeatedString = parts[0].cell && parts[1].cell && parts[0].cell->value() == parts[1].cell->value();
+    size_t numberOfPartsJoined = std::min<size_t>(parts.size(), startsWithRepeatedString ? 2 : 3);
     CellPointer joined = concatenateTwoOrThree(context, parts.first(numberOfPartsJoined));
     while (numberOfPartsJoined < parts.size()) {
         Vector<StringPart, 3> next { joined, parts[numberOfPartsJoined++] };

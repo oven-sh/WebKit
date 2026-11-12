@@ -108,6 +108,7 @@ struct SharedRoutine {
         FindFirstOfClass,
         FindFirstOfTwoUnits,
         FindFirstPairOfUnits,
+        FindEitherPrefix,
         CanonicalEquivalence,
     };
 
@@ -164,13 +165,20 @@ struct SharedRoutine {
         friend bool operator==(const FindFirstPairOfUnits&, const FindFirstPairOfUnits&) = default;
     };
 
+    // 8-bit subjects only. The table maps the low half of a character to a bit set of its possible positions in the prefixes: one byte for the first prefix and, 16 bytes later, one for the second, or one byte for both if the prefixes have four characters.
+    struct FindEitherPrefix {
+        uint8_t prefixLength;
+
+        friend bool operator==(const FindEitherPrefix&, const FindEitherPrefix&) = default;
+    };
+
     struct CanonicalEquivalence {
         CanonicalMode mode;
 
         friend bool operator==(const CanonicalEquivalence&, const CanonicalEquivalence&) = default;
     };
 
-    using Payload = Variant<MatchSet, ReadCodePoint, SlowCodePointRead, MatchCodePointAgainstClassTable, ClearCaptures, FindFirstOfClass, FindFirstOfTwoUnits, FindFirstPairOfUnits, CanonicalEquivalence>;
+    using Payload = Variant<MatchSet, ReadCodePoint, SlowCodePointRead, MatchCodePointAgainstClassTable, ClearCaptures, FindFirstOfClass, FindFirstOfTwoUnits, FindFirstPairOfUnits, FindEitherPrefix, CanonicalEquivalence>;
 
     Kind kind() const;
 
@@ -183,6 +191,9 @@ void add(Hasher&, const SharedRoutine&);
 bool canGenerateSharedRoutine(const SharedRoutine&);
 void generateSharedRoutine(CCallHelpers&, const SharedRoutine&, CodeAddressing&);
 inline constexpr unsigned unitsInVectorOfTwoUnitsSearch = 16;
+inline constexpr unsigned prefixSearchVectorLength = 16;
+inline constexpr unsigned longPrefixLength = 8;
+inline constexpr unsigned shortPrefixLength = 4;
 MacroAssembler::Jump emitTestOfVectorForTwoUnits(CCallHelpers&, CharSize, bool unitsDiffer, int32_t unitsInFrontOfIndex);
 void emitAdvanceToUnitFoundInVector(CCallHelpers&);
 

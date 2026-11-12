@@ -64,12 +64,15 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject*, JSPropertyNameEnumerator*, JSVa
 void initializeIterationWords(Instance&);
 void appendElementsOfList(JSGlobalObject*, JSArray* target, JSArray* source);
 bool tryAppendCharacters(Instance&, JSArray* target, JSString*);
+void copyNumbersOfView(JSArrayBufferView*, EncodedJSValue* numbers, size_t length);
 JSString* stringOfCharacter(Instance&, char16_t);
 void appendMembersOfSet(JSGlobalObject*, JSArray* target, JSSet* source);
 bool tryAppendPairsOfMap(JSGlobalObject*, JSArray* target, JSMap* source);
 bool tryAppendPairsLeftIn(JSGlobalObject*, JSArray* target, JSMapIterator*);
 bool tryAppendMembersOfIteratorNobodyStepped(JSGlobalObject*, JSArray* target, JSMapIterator*);
 bool tryAppendMembersOfIteratorNobodyStepped(JSGlobalObject*, JSArray* target, JSSetIterator*);
+bool tryAppendKeysOfArray(VM&, JSArray* target, JSArray* source);
+bool tryAppendEntriesOfArray(JSGlobalObject*, JSArray* target, JSArray* source);
 JS_EXPORT_PRIVATE size_t numberOfElementsSpreadFrom(JSGlobalObject*, JSString*);
 
 } } // namespace JSC::AOT

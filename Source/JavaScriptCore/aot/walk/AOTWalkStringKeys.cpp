@@ -25,6 +25,30 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned mostValuesFollowedBehindTextInStringKeys = 4;
 
+static StringID textOfConstantField(const Walker& walker, const BodyValue& read)
+{
+    if (read.isFreeName())
+        return { };
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID holder = index.stripCasts(read.objectOperand());
+    if (holder && !index.isParameter(holder) && index.opcodeOf(holder) == Opcode::CheckInitialized)
+        holder = index.stripCasts(index.value(holder).operand(0));
+    if (!holder || index.isParameter(holder) || index.opcodeOf(holder) != Opcode::GetModuleVariable)
+        return { };
+    VariableID variable = index.value(holder).variable();
+    TypeID held = walker.program().at(variable).flags.contains(VariableFlags::IsImmutable) ? walker.positions().variable(TypeLevel::Proven, variable) : TypeID();
+    if (!held || holdsOnlyPrimitives(held))
+        return { };
+    TypeArena& types = walker.types();
+    LayoutID layout = singleLayoutOf(types, types.at(types.withOnlyObjects(held)));
+    std::optional<FieldReference> field = layout ? findField(walker.program(), layout, read.key()) : std::nullopt;
+    const LinkedCell* cell = field ? &walker.facts().linked().field(*field) : nullptr;
+    if (!cell || !cell->isFilledAtEveryRead || cell->isWrittenAfterConstruction || !cell->proven)
+        return { };
+    Type type = types.at(cell->proven);
+    return type.hasOnlyPrimitives(Primitive::LiteralString) ? singleStringLiteralOf(type) : StringID();
+}
+
 static PrimitiveKnownToFolding keyKnownWhereverAskedInStringKeys(const Walker& walker, ValueID written, ValueID access)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -40,16 +64,22 @@ static PrimitiveKnownToFolding keyKnownWhereverAskedInStringKeys(const Walker& w
             return PrimitiveKnownToFolding::undefined();
         case Opcode::Null:
             return PrimitiveKnownToFolding::null();
+        case Opcode::PropGet:
+            if (StringID text = textOfConstantField(walker, operation))
+                return PrimitiveKnownToFolding::text(text);
+            break;
         case Opcode::Boolean:
             return PrimitiveKnownToFolding::boolean(operation.as<Opcode::Boolean>().boolean());
         default:
             break;
         }
     }
-    bool wayHoldsKeyOfAccess = index.isParameter(definition) && index.blockOf(access) == index.blockOf(definition) && walker.isWalkingForThisWay(index.blockOf(definition));
-    LoopID loopOfKey = index.loopOf(index.blockOf(definition));
-    if (loopOfKey && !wayHoldsKeyOfAccess && !walker.armHoldsKeyOf(access) && !walker.turnWrittenOutHoldsKeyOf(access, loopOfKey))
-        return { };
+    if (BlockID blockOfKey = index.hasLoops() ? index.blockOf(definition) : BlockID()) {
+        bool wayHoldsKeyOfAccess = index.isParameter(definition) && index.isInBlock(access, blockOfKey) && walker.isWalkingForThisWay(blockOfKey);
+        LoopID loopOfKey = index.loopOf(blockOfKey);
+        if (loopOfKey && !wayHoldsKeyOfAccess && !walker.armHoldsKeyOf(access) && !walker.turnWrittenOutHoldsKeyOf(access, loopOfKey))
+            return { };
+    }
     Reference bound = walker.referenceBoundTo(definition);
     return bound && bound.isRecord() ? primitiveKnownForStrings(walker, bound) : PrimitiveKnownToFolding();
 }
@@ -310,6 +340,13 @@ static bool memberRunsNoCodeOfProgramInStringKeys(const BuiltinTable& table, Bui
             return false;
     }
     return hasRowOfCalls;
+}
+
+bool recordFindsNothingAbove(const Walker& walker, LayoutID layout, PropertyKeyID key)
+{
+    const Program& program = walker.program();
+    BuiltinID objectPrototype = lockedObjectPrototypeInStringKeys(program);
+    return isRecordBelowObjectPrototypeInStringKeys(program, layout) && objectPrototype && !findOwnMember(program, objectPrototype, key) && listsEveryMemberUnder(program, objectPrototype, key);
 }
 
 static bool nameIsFoundNowhereFromObjectsOfInStringKeys(const Walker& walker, LayoutID id, const LinkedLayout& known, PropertyKeyID key)

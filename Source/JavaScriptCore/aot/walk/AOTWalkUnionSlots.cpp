@@ -114,7 +114,7 @@ bool everyReceiverKeepsFieldInSlotThatIsNeverEmpty(const Walker& walker, std::sp
         if (!listed)
             return false;
         const PlacedSlot& slot = slots.slot(receiver, *listed);
-        return slot.hasStorage() && !slot.holdsAccessor && !canLeaveSlot(slot.representation);
+        return slot.hasStorage() && !slot.holdsAccessor && !mayBeCreatedByStore(slot.representation);
     });
 }
 

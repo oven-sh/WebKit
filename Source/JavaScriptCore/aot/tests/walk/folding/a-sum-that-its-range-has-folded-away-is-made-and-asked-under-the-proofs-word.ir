@@ -1,14 +1,15 @@
 # function over(x, y) { const sum = (x & 3) + (y & 3); return sum > 6; }
 # The range of the sum folds the comparison, and nothing else reads the sum. Under the proofs' word the sum is made all the same and asked for its range, from what its form says and not from the rule that gave the range.
-# The integer form of + tests nothing by itself: there the machine's answer is held against the sum of the same two as numbers.
+# The integer form of + tests nothing by itself: there the machine's answer is compared with the sum of the same two, which the conversions to numbers have folded into 64 bits.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f1:Body mechanisms=all
 # CHECK: [[sum]]: int[0, 6] @Int32 = Add {{*}}form=Integers
 # CHECK-NEXT: CheckProof [[sum]] checkedType=int[0, 6] typeWithoutProof=i32 source=OtherOperation
 # RUN(EMIT): emit f1:Body mechanisms=all
 # EMIT: Int32 @[[sum]] = Add(
-# EMIT: Double @[[made]] = IToD(@[[sum]],
-# EMIT-NEXT: Int32 @[[holds]] = Equal({{*}}, @[[made]],
+# EMIT: Int64 @[[exact]] = Add(
+# EMIT: Int64 @[[wide]] = SExt32(@[[sum]],
+# EMIT-NEXT: Int32 @[[holds]] = Equal(@[[exact]], @[[wide]],
 # EMIT-NEXT: = Branch(@[[holds]],
 # EMIT: effects = Terminal|ControlDependent
 

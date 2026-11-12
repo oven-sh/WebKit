@@ -1,0 +1,75 @@
+# declare function print(value: any): void;
+# declare const which: number;
+# function make(value: any): any { const o: any = { a: value }; Object.defineProperty(o, "hidden", { value: value, writable: true }); o.last = value; return o; }
+# const made = make(which);
+# print(made.hidden);
+# print(Object.keys(made).join());
+# print(JSON.stringify(Object.getOwnPropertyDescriptor(made, "hidden")));
+# A definition fills the empty slot of an object that nothing else has seen: the order of its keys is known behind it, and nothing is asked of the object in front of the next store.
+# RUN(DEFINED): walk f1 mechanisms=all-Inlining
+# DEFINED-LABEL: code f1:Body
+# DEFINED: = DefineOwnProperty {{*}} descriptorFlags=[HasValue, HasWritable, IsWritable] orderWordAfter=
+# DEFINED-NOT: HasLayoutPrototype
+# DEFINED-NOT: IsNotFrozen
+# DEFINED: PutSlotOrAdd {{*}} key="last" {{*}} orderWordAfter=
+# RUN(TEXT): run-in-shell mechanisms=-Inlining globalThis.which = 1;
+# TEXT: 1
+# TEXT: a,last
+# TEXT: {"value":1,"writable":true,"enumerable":false,"configurable":false}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L1 module=m0 position=119 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] place=119 ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @249
+    v3 = PropGet v2 key="which" [isFreeName] @249
+    v4 = Call v1, -, v3 calleeName="make" @244
+    v5 = Builtin builtin=GlobalThis @257
+    v6 = PropGet v5 key="print" [isFreeName] @257
+    v7 = PropGet v4 key="hidden" @263
+    v8 = Call v6, -, v7 calleeName="print" @257
+    v9 = Builtin builtin=GlobalThis @277
+    v10 = PropGet v9 key="print" [isFreeName] @277
+    v11 = Builtin builtin=Object @283
+    v12 = Builtin builtin=ObjectKeys @283
+    v13 = Call v12, v11, v4 calleeName="Object.keys" @290
+    v14 = Convert v13 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @283
+    v15 = PropGet v14 key="join" @299
+    v16 = Call v15, v14 calleeKey="join" calleeName="join" @301
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @283
+    v18 = Call v10, -, v17 calleeName="print" @277
+    v19 = Builtin builtin=GlobalThis @310
+    v20 = PropGet v19 key="print" [isFreeName] @310
+    v21 = Builtin builtin=JSON @316
+    v22 = PropGet v21 key="stringify" @316
+    v23 = Convert v22 declared={type=builtin(JSONStringify) flags=[IsExpected]} @316
+    v24 = Builtin builtin=Object @331
+    v25 = Builtin builtin=ObjectGetOwnPropertyDescriptor @331
+    v26 = String string="hidden" @369
+    v27 = Call v25, v24, v4, v26 calleeName="Object.getOwnPropertyDescriptor" @338
+    v28 = Convert v27 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]} @331
+    v29 = Call v23, v21, v28 calleeKey="stringify" calleeName="JSON.stringify" @321
+    v30 = Convert v29 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @316
+    v31 = Call v20, -, v30 calleeName="print" @310
+    v32 = Undefined @310
+    Return v32 @310
+}
+function f1 name="make" module=m0 position=71 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0] @119
+    v2 = FinishObject v1 @119
+    v3 = Builtin builtin=Object @133
+    v4 = Builtin builtin=ObjectDefineProperty @133
+    v5 = String string="hidden" @158
+    v6 = Boolean boolean=true @194
+    v7 = Convert v6 declared={type=undefined|boolean} @194
+    v8 = NewObject -, v0, v7 layout=L0 fields=[4, 5] @168
+    v9 = FinishObject v8 @168
+    v10 = Call v4, v3, v2, v5, v9 calleeName="Object.defineProperty" @140
+    PropSet v2, v0 key="last" @203
+    Return v2 @226
+}

@@ -138,6 +138,13 @@ public:
         return *m_value;
     }
 
+    T& makeFromZeros()
+    {
+        ASSERT(!m_value);
+        m_value = std::launder(reinterpret_cast<T*>(m_storage));
+        return *m_value;
+    }
+
 private:
     Storage* m_storage;
     T* m_value { nullptr };
@@ -182,7 +189,7 @@ enum class CountInEffectsNet : uint8_t;
 struct GrowingFlatText {
     JSString* buffer;
     const StringImpl* lastResolved;
-    uint32_t resolvesInTurn;
+    uint32_t consecutiveResolves;
 };
 
 struct WideCharacterStrings {
@@ -208,6 +215,7 @@ struct State {
     std::unique_ptr<CacheRegistry> caches;
     GrowingFlatText growingFlatText { };
     WideCharacterStrings wideCharacterStrings { };
+    std::array<JSString*, 64> textsOfFewStrings { };
     std::unique_ptr<ImmortalCells> immortalCells;
     JSObject* objectThatHoldsUndefined { nullptr };
     std::unique_ptr<ProgramStrings> strings;

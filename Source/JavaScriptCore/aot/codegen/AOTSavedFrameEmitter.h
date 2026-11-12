@@ -7,12 +7,17 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTOperationEmitter.h"
 #include "AOTStubsCoroutines.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct LeafStepOfGenerator;
+
 class SavedFrameEmitter final : public OperationEmitter {
+    friend class LeafStepPlanner;
+
 public:
     explicit SavedFrameEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
@@ -20,6 +25,9 @@ public:
     void generateNewGeneratorOfLibrary(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
     void generateTakeGeneratorPrototype(const ValueContext&);
+    void generateIsCallDelegated(const ValueContext&);
+    void generateGiveDelegatedResult(const ValueContext&);
+    void generateCallDelegate(const ValueContext&);
     void generateStepAsyncGenerator(const ValueContext&);
     void generateAwaitMayContinue(const ValueContext&);
     void generateAwaitBySavingFrame(const ValueContext&);
@@ -28,9 +36,12 @@ public:
     void generateAsyncGeneratorYield(const ValueContext&);
     void generateReturnAsyncResult(const ValueContext&);
     void generatePromiseAllOfElements(const ValueContext&);
+    void generateStartReactionChain(const ValueContext&);
 
     void generateStepGenerator(const ValueContext&);
     void generateIsUnmodifiedGenerator(const ValueContext&);
+    void branchUnlessGeneratorsPlain(CellPointer function, LBasicBlock otherwise);
+    void branchUnlessUnmodifiedAsyncGenerator(CellPointer generator, LBasicBlock otherwise);
 
     void generateNewHeapWords(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
@@ -57,6 +68,7 @@ public:
 
 private:
     CoroutineKind kindOfFunction() const;
+    Word32 loadGeneratorStructureID(CellPointer closure, LBasicBlock otherwise);
     CellPointer allocateGenerator(std::optional<CellPointer> closure, GeneratorFunctionOrigin, LBasicBlock slowPath);
     GeneratorFunctionOrigin originOfGeneratorFunction(FunctionID) const;
     LValue cellOrZero(ValueID driver);
@@ -64,6 +76,7 @@ private:
     TypedPointer stateOf(CellPointer generator);
     Pointer framePointerAtThisPoint();
     enum class RunsCodeOfAwaited : bool { InFrameOfFunction, BehindFunction };
+    bool awaitsOnlyResultOfCall(const ValueContext& await) const;
     StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver, RunsCodeOfAwaited = RunsCodeOfAwaited::InFrameOfFunction);
     void suspendGenerator(const ValueContext&, GeneratorSuspension);
     void defineValueAndWord(const ValueContext&, StubCallResult);
@@ -95,6 +108,10 @@ private:
     void storeIntoHeapFrame(LValue frame, ValueID kept);
     LValue readOutOfHeapFrame(LValue frame, ValueID kept);
     LValue addressOfEntrypoint(unsigned index);
+    LValue addressOfLeafStep(const LeafStepOfGenerator*);
+    void findLeafSteps();
+    const LeafStepOfGenerator* leafStepOf(ValueID yield) const;
+    void storeLeafStep(ValueID yield);
     void makeHeapFrame(const ValueContext& firstYield, CellPointer generator, LValue resumeAddress);
     void yieldOutOfHeapFrame(const ValueContext&);
     bool mayBeSetInHeapFrame(ValueID traced) const { return m_wordsThatMayBeSet.get(m_wordsOfKeptValues[traced.index()] - 1); }
@@ -155,6 +172,7 @@ private:
     Vector<BlockID, 64> m_blocksOfStretches;
     std::span<uint32_t> m_suspensionsInFrontOfPlaces;
     uint16_t m_numberOfEntrypoints { 1 };
+    Vector<std::pair<ValueID, const LeafStepOfGenerator*>, 1> m_leafSteps;
     bool m_hasPassedFirstYield { false };
     bool m_keepsWordsInMachineFrame { false };
     bool m_passesHandlerArguments { false };

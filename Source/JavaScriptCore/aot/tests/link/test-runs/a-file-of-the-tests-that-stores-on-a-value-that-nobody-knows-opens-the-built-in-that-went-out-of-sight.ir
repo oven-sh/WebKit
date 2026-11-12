@@ -7,6 +7,7 @@
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
 module m1 path="/support/patch.js" displayPath="support/patch.js" body=f3
 module m2 path="/src/main.js" displayPath="src/main.js" flags=[HasReadOnlyBuiltins] body=f4
+variable g0 name="kept0" module=m1 declared={type=anything} initialization=Undefined
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -19,7 +20,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 }
 function f1 name="same" module=m1 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    Return v0
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    Return v2
 }
 function f2 name="patched" module=m1 thisType={type=anything} results=[{type=anything}] {
   b0():

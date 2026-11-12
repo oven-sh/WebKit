@@ -105,7 +105,7 @@ static std::optional<T> numberFoldExactReciprocalOf(T divisor)
     return reciprocal;
 }
 
-static bool numberFoldIsExactInteger(const Operation* number)
+bool isExactConvertedInteger(const Operation* number)
 {
     if (number->opcode() != IToD)
         return false;
@@ -114,7 +114,7 @@ static bool numberFoldIsExactInteger(const Operation* number)
     return integer->type() == Int32 || IntegerRange { -limit, limit }.contains(rangeOf(integer));
 }
 
-static Operation* numberFoldIntegerBehind(Builder& builder, Operation* number)
+Operation* wideConvertedInteger(Builder& builder, Operation* number)
 {
     Operation* integer = number->child(0);
     return integer->type() == Int32 ? builder.unary(SExt32, integer) : integer;
@@ -123,10 +123,10 @@ static Operation* numberFoldIntegerBehind(Builder& builder, Operation* number)
 static Operation* numberFoldSumOfExactIntegers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(opcode == Add || opcode == Sub);
-    if (!numberFoldIsExactInteger(left) || !numberFoldIsExactInteger(right))
+    if (!isExactConvertedInteger(left) || !isExactConvertedInteger(right))
         return nullptr;
-    Operation* wideLeft = numberFoldIntegerBehind(builder, left);
-    Operation* wideRight = numberFoldIntegerBehind(builder, right);
+    Operation* wideLeft = wideConvertedInteger(builder, left);
+    Operation* wideRight = wideConvertedInteger(builder, right);
     return builder.unary(IToD, builder.binary(opcode, wideLeft, wideRight));
 }
 
@@ -242,6 +242,7 @@ Operation* foldFloatingPoint(Builder& builder, Opcode opcode, Type type, Operati
         return foldMachineNumber<float>(builder, opcode, left, rightOrNull);
     case Double:
         return foldMachineNumber<double>(builder, opcode, left, rightOrNull);
+    case Vector128:
     case Void:
     case Int32:
     case Int64:

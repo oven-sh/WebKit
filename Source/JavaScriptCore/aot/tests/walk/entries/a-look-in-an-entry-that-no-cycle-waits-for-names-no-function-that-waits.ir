@@ -4,7 +4,7 @@
 # RUN: walk f4:GenericCallEntry mechanisms=all
 # CHECK-LABEL: code f4:GenericCallEntry
 # The entry asks in every build, and the failing side stops by name.
-# CHECK: TypeTest v2 testedType=int|whole
+# CHECK: TypeTest v2 testedType=int[0, {{*}}]
 # CHECK: TypeTest v3 testedType=function
 # CHECK: CheckProof v2 checkedType=never
 # CHECK: CheckProof v3 checkedType=never

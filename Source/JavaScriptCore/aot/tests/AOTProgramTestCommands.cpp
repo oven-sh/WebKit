@@ -356,7 +356,7 @@ static void printImageStringWord(PrintStream& out, const ImageStringWord& word)
 
 static void printImageIdentifierByte(PrintStream& out, uint8_t byte)
 {
-    ImageIdentifierWord word = ImageIdentifierWord::ofByteInImage(byte);
+    ImageIdentifierWord word = ImageIdentifierWord::fromByte(byte);
     out.print(nameOf(word.kind()));
     if (word.kind() == PropertyKeyKind::WellKnownSymbol)
         out.print(" symbol=", nameOf(word.wellKnownSymbol()));
@@ -386,6 +386,9 @@ static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& t
             case Operation::CallStart:
                 out.print(" start ", step.operand());
                 break;
+            case Operation::CallStartUnlessStopped:
+                out.print(" return-if-loading-stops-behind m", steps[place - 1].operand(), ", start ", step.operand());
+                break;
             case Operation::CallBody:
                 out.print(" body ", step.operand());
                 break;
@@ -397,6 +400,10 @@ static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& t
                 break;
             case Operation::Finish:
                 out.print(" finish m", step.operand(), step.hasFlag() ? " unless in a record"_s : ""_s);
+                break;
+            case Operation::FinishAndReturn:
+                out.print(" finish m", step.operand(), step.hasFlag() ? " unless in a record"_s : ""_s, ", return");
+                hasEnded = true;
                 break;
             case Operation::ReturnIfLoadingStops:
                 out.print(" return-if-loading-stops-behind m", step.operand());

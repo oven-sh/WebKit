@@ -41,7 +41,82 @@ void ArrayStorageBuiltinEmitter::generateArrayPush(const InlineCall& call)
         finishInlineCall(call, emitter<ConstantEmitter>().zeroOf(resultRepresentationOf(call)));
         return;
     }
+    if (call.numberOfArguments()) {
+        pushSeveral(call, in<CellPointer>(call.receiver()));
+        return;
+    }
     m_out.jump(missBlockOf(call));
+}
+
+void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer array)
+{
+    LBasicBlock miss = missBlockOf(call);
+    auto values = call.arguments();
+    ArrayStorage expected = elements().expectedFormOf(call.receiver()).kind;
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(call.receiver())).predicted();
+    ArrayStorageFormList forms = elements().candidateFormsFor(values.front(), expected);
+    for (ValueID value : values.subspan(1)) {
+        ArrayStorageFormList formsOfValue = elements().candidateFormsFor(value, expected);
+        forms.removeAllMatching([&](const ArrayStorageForm* form) {
+            return !formsOfValue.contains(form);
+        });
+    }
+    if (forms.isEmpty()) {
+        m_out.jump(miss);
+        return;
+    }
+    if (hasArrayStorageForm(declared) && forms.first()->kind == declared)
+        forms.shrink(1);
+
+    build().statistics().count(StatisticID::ArrayPushesInlined);
+    Representation representation = resultIsRead(call) ? resultRepresentationOf(call) : Representation::Void;
+    std::optional<CodeGenerator::PushesInLoop> loop = generator().findPushesInLoop(call.context().block(), call.receiver());
+    LBasicBlock isStored = newBlock();
+    LBasicBlock hasOtherKind = newBlock();
+    LBasicBlock oneByOne = newBlock();
+    LBasicBlock isFull = loop ? newBlock() : oneByOne;
+    OperandJoin join(m_out, representation);
+    bool mayPushCell = std::ranges::any_of(values, [&](ValueID value) {
+        return typeOf(value).hasCells();
+    });
+    ArrayElements storage = elements().elementsOf(array);
+    Word32 length = elements().publicLengthAsWord(storage);
+    Word32 newLength = add(length, word32(static_cast<int32_t>(values.size())));
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, hasOtherKind, [&](const ArrayStorageForm& form) {
+        branchUnless(belowOrEqual(newLength, elements().vectorLengthAsWord(storage)), isFull);
+        Vector<Operand, maxInlinePushedValues> rawElements;
+        for (ValueID value : values)
+            rawElements.append(*elements().rawElementToStore(form, value, oneByOne));
+        if (form.holdsCells && mayPushCell)
+            branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), oneByOne);
+        Integer start = zeroExtended(length);
+        for (size_t i = 0; i < rawElements.size(); ++i) {
+            elements().stopWhereHoleWouldBeStored(call.context(), form, rawElements[i]);
+            elements().storeRawElement(form, storage, i ? add(start, integer(i)) : start, rawElements[i]);
+        }
+        m_out.jump(isStored);
+    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
+
+    m_out.appendTo(isStored);
+    elements().setPublicLength(storage, newLength);
+    join.add(representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength)));
+
+    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape && CopyOnWrite > ContiguousShape);
+    m_out.appendTo(hasOtherKind);
+    branchUnless(belowOrEqual(mode, word32(ContiguousShape)), miss);
+    m_out.jump(oneByOne);
+
+    if (loop) {
+        m_out.appendTo(isFull);
+        reserveForRemainingIterations(call, *loop, array, length, oneByOne);
+    }
+
+    m_out.appendTo(oneByOne);
+    for (ValueID value : values.first(values.size() - 1))
+        elements().appendOutOfLine(call.context(), array, value);
+    join.add(pushOutOfLine(call, array, values.back(), representation));
+    finishInlineCall(call, join.finish());
 }
 
 void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer array)
@@ -57,7 +132,8 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     ArrayStorage expected = elements().expectedFormOf(call.receiver()).kind;
     ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
-    if (!hasArrayStorageForm(declared) && representationOf(pushed) == Representation::Int32) {
+    bool isInt32OrNothing = typeOf(pushed).isInt32OrNullish() && typeOf(pushed).primitives & Primitive::Integer;
+    if (!hasArrayStorageForm(declared) && (representationOf(pushed) == Representation::Int32 || isInt32OrNothing)) {
         ValueID birth = call.receiver();
         while (valuePreservingOpcodes.contains(opcodeOf(birth)))
             birth = operationAt(birth).operand(0);
@@ -76,16 +152,18 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
         forms.shrink(1);
     bool goesByKindOfNumbers = !hasArrayStorageForm(declared) && elements().goesByKindOfListOfNumbers(call.receiver(), pushed);
     if (goesByKindOfNumbers)
-        forms = elements().formsOfListOfNumbersFor(pushed, false);
+        forms = elements().formsOfListOfNumbersFor(pushed, generator().usesLoopForms(block));
     bool mayPushCell = typeOf(pushed).hasCells();
+    std::optional<CodeGenerator::PushesInLoop> loop = generator().findPushesInLoop(block, call.receiver());
     LBasicBlock isStored = newBlock();
     LBasicBlock slowPath = newBlock();
+    LBasicBlock isFull = loop ? newBlock() : slowPath;
     OperandJoin join(m_out, representation);
 
     build().statistics().count(StatisticID::ArrayPushesInlined);
     ArrayElements storage = elements().elementsOf(array);
     Word32 length = elements().publicLengthAsWord(storage);
-    branchUnless(below(length, elements().vectorLengthAsWord(storage)), slowPath);
+    branchUnless(below(length, elements().vectorLengthAsWord(storage)), isFull);
     auto store = [&](const ArrayStorageForm& form) {
         Operand rawElement = *elements().rawElementToStore(form, pushed, slowPath);
         if (form.holdsCells && mayPushCell)
@@ -109,9 +187,60 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     elements().setPublicLength(storage, newLength);
     join.add(representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength)));
 
+    if (loop) {
+        m_out.appendTo(isFull);
+        reserveForRemainingIterations(call, *loop, array, length, slowPath);
+    }
+
     m_out.appendTo(slowPath);
     join.add(pushOutOfLine(call, array, pushed, representation));
     finishInlineCall(call, join.finish());
+}
+
+void ArrayStorageBuiltinEmitter::reserveForRemainingIterations(const InlineCall& call, const CodeGenerator::PushesInLoop& loop, CellPointer array, Word32 length, LBasicBlock done)
+{
+    static constexpr int64_t growthFactor = 16;
+    static constexpr int64_t smallestGrowth = 64;
+    auto numberOf = [&](ValueID id) -> std::optional<Number> {
+        Operand operand = get(id);
+        switch (operand.representation) {
+        case Representation::Int32:
+            return toNumber(operand.as<Word32>());
+        case Representation::Int64:
+            return toNumber(operand.as<Integer>());
+        case Representation::Double:
+            return operand.as<Number>();
+        case Representation::JSValue:
+            branchUnless(isInt32(operand.as<Boxed>()), done);
+            return toNumber(unboxInt32(operand.as<Boxed>()));
+        default:
+            return std::nullopt;
+        }
+    };
+    std::optional<Number> bound = numberOf(loop.bound);
+    std::optional<Number> counter = bound ? numberOf(loop.counter) : std::nullopt;
+    if (!counter) {
+        m_out.jump(done);
+        return;
+    }
+    build().statistics().count(StatisticID::PushesReservingForLoops);
+    Number remaining = sub(*bound, *counter);
+    if (loop.includesBound)
+        remaining = add(remaining, number(1));
+    if (loop.valuesPerIteration > 1)
+        remaining = mul(remaining, number(loop.valuesPerIteration));
+    Number held = toNumber(zeroExtended(length));
+    if (loop.startOfCounter) {
+        std::optional<Number> start = numberOf(loop.startOfCounter);
+        if (!start) {
+            m_out.jump(done);
+            return;
+        }
+        branchUnless(greaterThanOrEqual(held, mul(sub(*counter, *start), number(loop.valuesPerIteration))), done);
+    }
+    Number mostCapacity = add(mul(held, number(growthFactor)), number(smallestGrowth));
+    callStub(call.context(), reserveArrayCapacity(), { array.value(), min(add(held, remaining), mostCapacity).value() });
+    m_out.jump(done);
 }
 
 Operand ArrayStorageBuiltinEmitter::pushOutOfLine(const InlineCall& call, CellPointer array, ValueID pushed, Representation representation)

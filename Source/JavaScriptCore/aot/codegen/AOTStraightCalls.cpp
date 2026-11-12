@@ -131,7 +131,7 @@ static void generateConstructWithList(StraightEmitter& emitter, const BodyValue&
 {
     ValueID callee = value.calleeOperand();
     ValueID newTarget = value.newTargetOperand();
-    emitter.callOperation(value, RuntimeOperation::ConstructWithArray, { callee, newTarget ? newTarget : callee, value.listOperand() }, { .constructs = true });
+    emitter.callStub(value, constructWithArray(ConstructSyntax::NewExpression), { callee, newTarget ? newTarget : callee, value.listOperand() }, { .constructs = true });
     emitter.define(value);
 }
 
@@ -153,6 +153,7 @@ static bool crossesStraightCall(const ArgumentLocation& location)
     case Representation::JSValue:
     case Representation::Cell:
     case Representation::Int32:
+    case Representation::Int64:
     case Representation::Boolean:
     case Representation::Double:
         return true;

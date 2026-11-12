@@ -31,7 +31,7 @@ struct ArrayAllocationProfile {
     static constexpr uint32_t countMask = 0xffffu << allocationCountShift;
     static constexpr uint32_t shortestInterval = 64;
     static constexpr uint8_t maxIntervalDoublings = 4;
-    static constexpr uint8_t reviewsInWindow = 10;
+    static constexpr uint8_t reviewsInWindow = 6;
     static constexpr unsigned lengthsKept = 3;
     static constexpr unsigned sizeOfLastArrayWord = 8;
 
@@ -63,7 +63,8 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile&, JSArray* lastArrayOrN
 inline constexpr unsigned propertyRoomOfArray = 4 * sizeof(uint64_t);
 constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom = 0) { return (3 + capacity) * sizeof(uint64_t) + propertyRoom; }
 
-JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
+enum class NewElements : bool { AreHoles, WrittenByCaller };
+JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0, NewElements = NewElements::AreHoles);
 inline constexpr uint32_t maxValuesInArrayLiteral = (1u << 25) - 1;
 
 inline constexpr unsigned holeArrayCapacityShift = 8;

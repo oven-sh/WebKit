@@ -463,12 +463,8 @@ BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* 
         if (original == structure)
             found = builtinClass;
     });
-    const ClassInfo* info = structure->classInfoForCells();
-    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* original) {
-        if (original == structure && (!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)))
-            found = binding.builtinClass;
-    });
-    return found;
+    BuiltinClassID hostClass = BuiltinBindings::findHostClass(realm, structure);
+    return hostClass ? hostClass : found;
 }
 
 static JSObject* findExistingHiddenPrototype(JSGlobalObject* realm, BuiltinClassID builtinClass)

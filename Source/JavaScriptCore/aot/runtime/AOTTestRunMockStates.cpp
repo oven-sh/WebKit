@@ -106,7 +106,8 @@ void Modules::countMockStates(ASCIILiteral door, const String& before, ModuleID 
 }
 
 MockDoor::MockDoor(Modules* modules, ModuleID module, ASCIILiteral door)
-    : m_modules(Options::aotCountsPath() ? modules : nullptr)
+    : m_modulesOfMock(modules)
+    , m_modules(Options::aotCountsPath() ? modules : nullptr)
     , m_module(module)
     , m_door(door)
 {
@@ -118,6 +119,8 @@ MockDoor::MockDoor(Modules* modules, ModuleID module, ASCIILiteral door)
 
 MockDoor::~MockDoor()
 {
+    if (m_modulesOfMock)
+        m_modulesOfMock->didChangeLinkState();
     if (m_modules) [[unlikely]]
         m_modules->countMockStates(m_door, m_before, m_module);
 }

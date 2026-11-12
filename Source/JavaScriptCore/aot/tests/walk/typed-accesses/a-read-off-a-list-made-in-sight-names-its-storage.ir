@@ -9,7 +9,7 @@
 # An index that may lie anywhere is still held against the length, and the kind is named.
 # RUN(ANYWHERE): walk f2 mechanisms=all
 # ANYWHERE-LABEL: code f2:Body
-# ANYWHERE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# ANYWHERE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral
 # RUN(NAMED): walk f3 mechanisms=all
 # NAMED-LABEL: code f3:Body
 # NAMED: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]

@@ -77,6 +77,8 @@ void initializeStubWords(Instance& instance)
 {
     instance.stubs.closureEntrypoint = closureEntrypoint().taggedPtr();
     instance.stubs.slimClosureEntrypoint = slimClosureEntrypoint().taggedPtr();
+    if (std::optional<BuiltinNativeFunction> push = BuiltinBindings::nativeFunctionOf(Builtins::ArrayPrototypePush); push && push->function)
+        instance.stubs.arrayPush = TaggedNativeFunction(push->function).taggedPtr();
 
     constexpr unsigned numberOfCounts = BoxedCallEntry::maxArgumentCount - BoxedCallEntry::minArgumentCount + 1;
     const Image& image = *Image::current();
@@ -95,7 +97,7 @@ void initializeStubWords(Instance& instance)
         bool isFree = !entry.nativeFunction;
         if (isFree) {
             ++numberOfUsedEntries;
-            RELEASE_ASSERT(numberOfUsedEntries * 3 <= StubWords::numberOfBoxedCallEntries * 2);
+            RELEASE_ASSERT(numberOfUsedEntries * 4 <= StubWords::numberOfBoxedCallEntries * 3);
             entry.nativeFunction = nativeFunction;
         }
 

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBody.h"
 #include "AOTEffects.h"
 #include "AOTFamilies.h"
@@ -54,9 +55,14 @@ public:
     static constexpr SlotOfContents underAnyName() { return behindEnumerators(UnderAnyName); }
     static constexpr SlotOfContents returnedAlone() { return behindEnumerators(ReturnedAlone); }
     static constexpr SlotOfContents noLongerAsMade() { return behindEnumerators(NoLongerAsMade); }
+    static constexpr SlotOfContents mayHaveNumberNames() { return behindEnumerators(MayHaveNumberNames); }
     static constexpr SlotOfContents mayBeOfClassBelow() { return behindEnumerators(MayBeOfClassBelow); }
     static constexpr SlotOfContents mayBeShorter() { return behindEnumerators(MayBeShorter); }
     static constexpr SlotOfContents isChanged() { return behindEnumerators(IsChanged); }
+    static constexpr SlotOfContents mayHaveHoles() { return behindEnumerators(MayHaveHoles); }
+    static constexpr SlotOfContents mayLoseElements() { return behindEnumerators(MayLoseElements); }
+    static constexpr SlotOfContents mayHaveNamesOfEngine() { return behindEnumerators(MayHaveNamesOfEngine); }
+    static constexpr SlotOfContents hasSeveralRecordLayouts() { return behindEnumerators(HasSeveralRecordLayouts); }
     static constexpr bool hasSlotAt(uint32_t place) { return place < nameBit - firstWrittenPlace; }
     static constexpr SlotOfContents at(uint32_t place) { return fromNumber(firstWrittenPlace + place); }
     static constexpr SlotOfContents internalField(uint32_t index) { return fromNumber(firstInternalField + index); }
@@ -83,7 +89,7 @@ public:
 
 private:
     // The slots that no enumerator of ContentsSlot names are numbered behind the enumerators, in this order. Whoever adds one adds it here, so the count below knows of it.
-    enum SlotBehindEnumerators : uint32_t { UnderUnknownNames, UnderAnyName, ReturnedAlone, NoLongerAsMade, MayBeOfClassBelow, MayBeShorter, IsChanged, numberOfSlotsBehindEnumerators };
+    enum SlotBehindEnumerators : uint32_t { UnderUnknownNames, UnderAnyName, ReturnedAlone, NoLongerAsMade, MayBeOfClassBelow, MayBeShorter, IsChanged, MayHaveHoles, MayLoseElements, MayHaveNamesOfEngine, HasSeveralRecordLayouts, MayHaveNumberNames, numberOfSlotsBehindEnumerators };
     static constexpr SlotOfContents behindEnumerators(SlotBehindEnumerators slot) { return fromNumber(numberOfEnumerators<ContentsSlot> + slot); }
     static constexpr uint32_t firstInternalField = 16;
     static_assert(numberOfEnumerators<ContentsSlot> + numberOfSlotsBehindEnumerators <= firstInternalField);
@@ -138,9 +144,11 @@ public:
     static constexpr WrittenUnit fromBits(uint32_t bits)
     {
         WrittenUnit unit;
-        unit.m_bits = bits;
+        if (bits >> payloadBits)
+            unit.m_bits = bits;
         return unit;
     }
+    static constexpr uint32_t literalString = 1;
 
     constexpr uint32_t bits() const { return m_bits; }
     constexpr explicit operator bool() const { return !!m_bits; }
@@ -152,7 +160,8 @@ public:
     friend constexpr bool operator==(WrittenUnit, WrittenUnit) = default;
 
 private:
-    static constexpr uint32_t payloadLimit = 1u << 30;
+    static constexpr unsigned payloadBits = 30;
+    static constexpr uint32_t payloadLimit = 1u << payloadBits;
 
     constexpr WrittenUnit(Kind kind, uint32_t payload)
         : m_bits(static_cast<uint32_t>(kind) << 30 | payload)
@@ -164,17 +173,19 @@ private:
 
 struct SummaryEdge {
     SummaryEdge() = default;
-    SummaryEdge(uint32_t from, uint32_t to, TypeID passes, bool runsCodeOfValue)
+    SummaryEdge(uint32_t from, uint32_t to, TypeID passes, bool runsCodeOfValue, bool isConversionByEquality)
         : from(from)
         , runsCodeOfValue(runsCodeOfValue)
+        , isConversionByEquality(isConversionByEquality)
         , to(to)
         , passes(passes)
     {
         RELEASE_ASSERT(this->from == from);
     }
 
-    uint32_t from : 31 { 0 };
+    uint32_t from : 30 { 0 };
     uint32_t runsCodeOfValue : 1 { false };
+    uint32_t isConversionByEquality : 1 { false };
     uint32_t to { 0 };
     TypeID passes;
 };
@@ -198,9 +209,14 @@ struct SummaryCall {
     bool resultIsReadAsKey : 1 { false };
     bool liesOnNoWayToReturn : 1 { false };
     bool passesOnGatheredArguments : 1 { false };
+    bool appliesGatheredArguments : 1 { false };
+    bool sharesArgumentsObject : 1 { false };
     bool expectsCalleeItself : 1 { false };
     bool isMadeByHost : 1 { false };
     bool passesLiteral : 1 { false };
+    bool continuesConstruction : 1 { false };
+    bool describesPrototypeInSight : 1 { false };
+    bool passesWrittenParts : 1 { false };
     uint16_t lengthOfWrittenList : 13 { 0 };
     FunctionID function;
     BuiltinID builtin;
@@ -228,10 +244,12 @@ struct SummaryAccess {
     bool isPartOfConstruction : 1 { false };
     bool subjectIsAnsweredBySuperCall : 1 { false };
     bool storesObjectMadeForIt : 1 { false };
+    bool storesConstructedObject : 1 { false };
     bool standsForObjectMadeAtSite : 1 { false };
     bool liesOnNoWayToReturn : 1 { false };
     bool keyIsSurelyIndex : 1 { false };
     bool storesSurelyIndex : 1 { false };
+    bool storesZero : 1 { false };
     bool standsRightBehindCall : 1 { false };
     bool answerIsOnlyCalled : 1 { false };
     bool laysAccessorAsWritten : 1 { false };
@@ -240,9 +258,11 @@ struct SummaryAccess {
     bool laysTextNumberOrBooleanThatIsWritten : 1 { false };
     bool subjectIsMadeInBody : 1 { false };
     bool isSpelledByCopy : 1 { false };
+    bool storesExport : 1 { false };
     bool keyIsNameThatLoopOverSubjectGave : 1 { false };
     bool isCopySpelledByLoop : 1 { false };
     bool readsPrototypeOfHeritage : 1 { false };
+    bool isByMethodDecorator : 1 { false };
     std::optional<OptionSet<FieldForm>> formCreated;
     uint32_t subject { 0 };
     uint32_t receiver { noSummaryNode };
@@ -251,7 +271,7 @@ struct SummaryAccess {
 
     uint32_t value { noSummaryNode };
     SlotOfContents slot;
-    uint32_t whatHoldsNothingOrBeginningOfKey { noSummaryNode };
+    uint32_t emptyHolderOrKeyPrefix { noSummaryNode };
     uint32_t thrownTo { noSummaryNode };
     union {
         uint32_t descriptorFromElsewhere { noSummaryNode };
@@ -260,8 +280,8 @@ struct SummaryAccess {
 
 
     bool isToContents() const { return !!slot; }
-    uint32_t whatHoldsNothing() const { return isToContents() ? whatHoldsNothingOrBeginningOfKey : noSummaryNode; }
-    StringID beginningOfKey() const { return isToContents() ? StringID() : StringID::fromBits(whatHoldsNothingOrBeginningOfKey); }
+    uint32_t whatHoldsNothing() const { return isToContents() ? emptyHolderOrKeyPrefix : noSummaryNode; }
+    StringID beginningOfKey() const { return isToContents() ? StringID() : StringID::fromBits(emptyHolderOrKeyPrefix); }
     bool laysValueInSightUnderName() const { return !isToContents() && (kind == Kind::Store || (kind == Kind::Define && value && value != noSummaryNode)); }
 };
 
@@ -284,16 +304,36 @@ struct SummaryOperator {
     uint32_t converted[mostOperands] { noSummaryNode, noSummaryNode };
     enum class WrittenDivisor : uint8_t { None, FromOneBelowTwoTo31, FromTwoTo31ToTwoTo32 };
     WrittenDivisor writtenDivisor { WrittenDivisor::None };
+    bool shiftsRightByConstant { false };
+    int8_t step { 0 };
+    uint8_t steppedOperand { 0 };
+
+    bool isConversionByEquality() const { return opcode == Opcode::Eq; }
+};
+
+struct SummaryParameterTest {
+    uint32_t parameter { 0 };
+    TypeID tested;
+    bool holds { false };
+};
+
+struct SummaryReturn {
+    uint32_t node { 0 };
+    uint32_t firstTest { 0 };
+    uint32_t numberOfTests { 0 };
 };
 
 struct SummaryMember {
     LayoutID classLayout;
     ClassSide side { ClassSide::Prototype };
     MethodKind kind { MethodKind::Method };
+    bool isRedefined { false };
     uint32_t index { 0 };
     PropertyKeyID key;
     uint32_t value { 0 };
 };
+
+bool canHoldAccessors(const Program&, LayoutID);
 
 struct SummaryChange {
     enum class Kind : uint8_t {
@@ -326,6 +366,10 @@ struct SummaryChange {
     bool laysAccessorAsWritten { false };
     bool laysNewValueOfNativeCode { false };
     bool laysTextNumberOrBooleanThatIsWritten { false };
+    bool definesValueWithAttributes { false };
+    bool getterEscapesOnlyThroughLink { false };
+    bool accessorEscapesOnlyThroughLink { false };
+    bool fillsObjectBeingMade { false };
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };
     bool laysValueInSight { false };
@@ -387,7 +431,8 @@ enum class SummaryTrait : uint16_t {
     StoresUnderComputedKey = 1 << 7,
     OnlyPassesOnGatheredArguments = 1 << 8,
     HoldsInt32Promise = 1 << 9,
-    ReturnsUInt32 = 1 << 10,
+    NeverReturns = 1 << 10,
+    SuspendsAfterStart = 1 << 11,
 };
 
 struct OtherNameOfObjectBeingMade {
@@ -400,6 +445,42 @@ struct SummaryPlaceInBody {
     uint32_t position { 0 };
 
     friend constexpr auto operator<=>(const SummaryPlaceInBody&, const SummaryPlaceInBody&) = default;
+};
+
+struct SummaryMethodOfClass {
+    FunctionID constructor;
+    FunctionID method;
+
+    friend constexpr auto operator<=>(const SummaryMethodOfClass&, const SummaryMethodOfClass&) = default;
+};
+
+struct SummaryStoreOnPrototype {
+    ValueID site;
+    uint32_t position { 0 };
+    VariableID variable;
+    FunctionID function;
+    FunctionID method;
+    PropertyKeyID key;
+    bool isOnEveryPath { false };
+
+    friend constexpr auto operator<=>(const SummaryStoreOnPrototype&, const SummaryStoreOnPrototype&) = default;
+};
+
+struct SummaryUnitInVariable {
+    VariableID variable;
+    uint32_t unit { 0 };
+
+    friend constexpr auto operator<=>(const SummaryUnitInVariable&, const SummaryUnitInVariable&) = default;
+};
+
+bool isBodyOfWrappedModule(const Program&, FunctionID);
+bool isModuleOfBundle(const Program&, ModuleID);
+
+struct SummaryClassInVariable {
+    VariableID variable;
+    FunctionID constructor;
+
+    friend constexpr auto operator<=>(const SummaryClassInVariable&, const SummaryClassInVariable&) = default;
 };
 
 struct SummaryDefinition {
@@ -438,8 +519,19 @@ struct SummaryKeyAtSite {
     PropertyKeyID key;
 };
 
+struct LiteralArrayLocation {
+    static constexpr uint32_t isVariable = UINT32_MAX;
+
+    static LiteralArrayLocation of(VariableID variable) { return { isVariable, variable.index() }; }
+    static LiteralArrayLocation of(FieldReference field) { return { field.layout.index(), field.field }; }
+    friend constexpr auto operator<=>(const LiteralArrayLocation&, const LiteralArrayLocation&) = default;
+
+    uint32_t layout;
+    uint32_t number;
+};
+
 struct SummaryWrittenListOfVariable {
-    VariableID variable;
+    LiteralArrayLocation place;
     DataID data;
     ValueID made;
     uint32_t length;
@@ -462,6 +554,7 @@ struct SummaryWithoutLists {
     bool someResultIsReadAsKey { false };
     bool mayReadPathOfAnyModule { true };
     bool makesObjects { false };
+    bool hasClosures { false };
 
     bool has(SummaryTrait trait) const { return traits.contains(trait); }
 };
@@ -547,6 +640,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 private:
     friend struct ThinSummary;
+    friend class FactMisstater;
 
     std::span<T> mutableSpan() LIFETIME_BOUND { return m_storage.list<T, number>(); }
 
@@ -689,7 +783,17 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<uint32_t, 57> definitionsByDescriptorInOrderOfSites;
         SummaryList<uint32_t, 58> callsAtSitesOfCopiesThatSpellStores;
         SummaryList<SummaryWrittenAccessor, 59> writtenAccessors;
+        SummaryList<SummaryMethodOfClass, 60> methodsOfClasses;
+        SummaryList<SummaryClassInVariable, 61> classesInVariables;
+        SummaryList<SummaryUnitInVariable, 62> unitsInVariables;
+        SummaryList<SummaryStoreOnPrototype, 63> storesOnPrototypes;
+        SummaryList<SummaryPlaceInBody, 64> firstUsesOfVariables;
+        SummaryList<uint32_t, 65> nodesHandedToEvals;
+        SummaryList<SummaryReturn, 66> returnStatements;
+        SummaryList<SummaryParameterTest, 67> parameterTests;
     };
+
+    std::span<const SummaryParameterTest> testsOf(const SummaryReturn& statement) const LIFETIME_BOUND { return parameterTests.span().subspan(statement.firstTest, statement.numberOfTests); }
 
     const SummaryWrittenAccessor& writtenAccessorOf(uint32_t access) const LIFETIME_BOUND
     {
@@ -707,10 +811,10 @@ struct ThinSummary : SummaryWithoutLists {
     {
         return std::ranges::any_of(writtenListsOfVariables, [&](const SummaryWrittenListOfVariable& written) { return written.data == data; });
     }
-    const SummaryWrittenListOfVariable* findWrittenListOf(VariableID variable) const LIFETIME_BOUND
+    const SummaryWrittenListOfVariable* findLiteralArray(LiteralArrayLocation place) const LIFETIME_BOUND
     {
-        auto found = std::ranges::lower_bound(writtenListsOfVariables, variable.index(), { }, [](const SummaryWrittenListOfVariable& each) { return each.variable.index(); });
-        return found != writtenListsOfVariables.end() && found->variable == variable ? &*found : nullptr;
+        auto found = std::ranges::lower_bound(writtenListsOfVariables, place, { }, &SummaryWrittenListOfVariable::place);
+        return found != writtenListsOfVariables.end() && found->place == place ? &*found : nullptr;
     }
     bool constantListIsStoredIntoInLoop(ValueID list) const { return std::ranges::binary_search(constantListsStoredIntoInLoops, list.index(), { }, &ValueID::index); }
     bool makerEndsWhereItLeaves(ValueID allocation) const { return std::ranges::binary_search(allocationsOfMakersThatEndWhereTheyLeave, allocation.index(), { }, &ValueID::index); }
@@ -726,7 +830,7 @@ struct ThinSummary : SummaryWithoutLists {
 
     static constexpr uint32_t isFilledByCopy = 1u << 31;
     static constexpr uint32_t noCopy = UINT32_MAX;
-    void forEachLayoutLeftEmptyAndCopy(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld, uint32_t copy)> auto& functor) const
+    void forEachUnfilledLayout(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld, uint32_t copy)> auto& functor) const
     {
         std::span<const uint32_t> rest = fieldsHeldOfLayoutsLeftEmpty.span();
         while (!rest.empty()) {
@@ -739,7 +843,7 @@ struct ThinSummary : SummaryWithoutLists {
     }
     void forEachLayoutLeftEmpty(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld)> auto& functor) const
     {
-        forEachLayoutLeftEmptyAndCopy([&](LayoutID layout, std::span<const uint32_t> fieldsHeld, uint32_t) {
+        forEachUnfilledLayout([&](LayoutID layout, std::span<const uint32_t> fieldsHeld, uint32_t) {
             functor(layout, fieldsHeld);
         });
     }
@@ -817,6 +921,14 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<uint32_t> definitionsByDescriptorInOrderOfSites;
     Vector<uint32_t> callsAtSitesOfCopiesThatSpellStores;
     Vector<SummaryWrittenAccessor> writtenAccessors;
+    Vector<SummaryMethodOfClass> methodsOfClasses;
+    Vector<SummaryClassInVariable> classesInVariables;
+    Vector<SummaryUnitInVariable> unitsInVariables;
+    Vector<SummaryStoreOnPrototype> storesOnPrototypes;
+    Vector<SummaryPlaceInBody> firstUsesOfVariables;
+    Vector<uint32_t> nodesHandedToEvals;
+    Vector<SummaryReturn> returnStatements;
+    Vector<SummaryParameterTest> parameterTests;
     uint64_t layoutsOfOwnWrites { 0 };
     Effects ownEffects;
     std::optional<Effects> ownEffectsOfOperators;
@@ -850,8 +962,8 @@ public:
     void setNumberOfValuesScanned(uint64_t number) { m_numberOfValuesScanned = number; }
     std::span<const FunctionID> functionsThatCopyMembers() const LIFETIME_BOUND { return m_functionsThatCopyMembers.span(); }
     void setFunctionsThatCopyMembers(Vector<FunctionID>&& functions) { m_functionsThatCopyMembers = WTF::move(functions); }
-    std::span<const FunctionID> functionsThatMakeCopies() const LIFETIME_BOUND { return m_functionsThatMakeCopies.span(); }
-    void setFunctionsThatMakeCopies(Vector<FunctionID>&& functions) { m_functionsThatMakeCopies = WTF::move(functions); }
+    std::span<const FunctionID> copyingFunctions() const LIFETIME_BOUND { return m_copyingFunctions.span(); }
+    void setCopyingFunctions(Vector<FunctionID>&& functions) { m_copyingFunctions = WTF::move(functions); }
     struct MakerOfClosures {
         FunctionID closure;
         FunctionID maker;
@@ -864,6 +976,36 @@ public:
     void setMakersAboveCopiesOfMembers(Vector<MakerOfClosures>&& makers) { m_makersAboveCopiesOfMembers = WTF::move(makers); }
     PropertyKeyID symbolHeldBy(VariableID variable) const { return variable.index() < m_symbolsOfVariables.size() ? m_symbolsOfVariables[variable.index()] : PropertyKeyID(); }
     void setSymbolsOfVariables(Vector<PropertyKeyID>&& symbols) { m_symbolsOfVariables = WTF::move(symbols); }
+    struct ElementStores {
+        struct LiteralArgument {
+            FunctionID caller;
+            ValueID site;
+            uint32_t argument { 0 };
+            DataID literal;
+        };
+        void merge(const ElementStores& other)
+        {
+            literalArguments.appendVector(other.literalArguments);
+            literalResults.appendVector(other.literalResults);
+            parameters.appendVector(other.parameters);
+            results.appendVector(other.results);
+        }
+
+        Vector<LiteralArgument> literalArguments;
+        Vector<std::pair<FunctionID, DataID>> literalResults;
+        Vector<std::pair<FunctionID, uint32_t>> parameters;
+        Vector<std::pair<FunctionID, ValueID>> results;
+    };
+    void setElementStores(ElementStores&& stores) { m_elementStores = WTF::move(stores); }
+    ElementStores takeElementStores() { return WTF::move(m_elementStores); }
+    void noteStoredByElement(DataID literal) { m_literalsStoredByElement.set(literal.index()); }
+    bool storesElementInto(VariableID variable) const { return m_variablesStoredByElement.get(variable.index()); }
+    bool storesElementInto(DataID literal) const { return m_literalsStoredByElement.get(literal.index()); }
+    void setStoresByElement(BitVector&& variables, BitVector&& literals)
+    {
+        m_variablesStoredByElement = WTF::move(variables);
+        m_literalsStoredByElement = WTF::move(literals);
+    }
 
 private:
     LargeList<ThinSummary> m_summaries;
@@ -872,9 +1014,12 @@ private:
     SetsOfLayoutsWritten m_setsOfLayoutsWrittenInBodies;
     uint64_t m_numberOfValuesScanned { 0 };
     Vector<FunctionID> m_functionsThatCopyMembers;
-    Vector<FunctionID> m_functionsThatMakeCopies;
+    Vector<FunctionID> m_copyingFunctions;
     Vector<MakerOfClosures> m_makersAboveCopiesOfMembers;
     Vector<PropertyKeyID> m_symbolsOfVariables;
+    BitVector m_variablesStoredByElement;
+    BitVector m_literalsStoredByElement;
+    ElementStores m_elementStores;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

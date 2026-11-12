@@ -337,6 +337,8 @@ bool isEncodableArithmeticConstant(int64_t constant)
 
 bool isEncodableIndexedAddress(Width accessWidth, unsigned shift, IndexExtension, int32_t offset)
 {
+    if (accessWidth == Width128)
+        return !offset && !shift;
     return !offset && (!shift || shift == static_cast<unsigned>(std::countr_zero(bytesForWidth(accessWidth))));
 }
 
@@ -354,7 +356,7 @@ unsigned numberOfScratchGPRsOf(const ProcedureTraits&, const Operation& operatio
 {
     if (operation.opcode() != Switch)
         return 0;
-    return operation.switchData().caseValues.size() >= minCasesForJumpTable ? 1 : 0;
+    return operation.switchData().caseValues.size() >= minCasesForSwitchWindow ? 1 : 0;
 }
 
 uint32_t trapReach()

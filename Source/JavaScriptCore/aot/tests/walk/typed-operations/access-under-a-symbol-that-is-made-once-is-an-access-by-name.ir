@@ -3,10 +3,10 @@
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: ElemGet
-# CHECK: GetSlotOrUndefined {{*}} key=symbol("depth")@m0:0 receivers=[L0] level=Proven
+# CHECK: = GetSlot {{*}} key=symbol("depth")@m0:0 receivers=[L0] level=Proven
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: ElemSet
-# CHECK: PutSlotOrAdd {{*}} key=symbol("depth")@m0:0 receivers=[L0] level=Proven
+# CHECK: = PutSlot {{*}} key=symbol("depth")@m0:0 receivers=[L0] level=Proven
 # Where typed operations are withheld Link's key at the access is still asked, and the variable bears it out: it holds the one symbol for good, which is a constant of the program and no memory. The access is the closed form by name.
 # RUN(WITHHELD): walk f1 mechanisms=all-TypedOperations
 # WITHHELD-NOT: ElemGet

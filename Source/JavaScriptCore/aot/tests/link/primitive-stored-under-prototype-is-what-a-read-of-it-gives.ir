@@ -17,7 +17,7 @@
 # RUN(KEPT): link functions fields layouts mechanisms=all
 # KEPT: function f8
 # KEPT-NEXT: parameter 0 {{*}}proven=object
-# KEPT: field L2.0 "w" proven=i32 writers-known
+# KEPT: field L2.0 "w" proven=int[0, 2147483647] writers-known
 # KEPT: layout L2 changes=[]
 
 layout L0 kind=Instance name="Q" module=m0 constructor=f1 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]

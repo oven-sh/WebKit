@@ -99,6 +99,7 @@ private:
 static_assert(sizeof(MemoryLocation) == 12);
 
 uint64_t maskOf(const Program&, const MemoryLocation&);
+uint64_t maskOfRead(const Program&, const MemoryLocation&);
 
 struct MemoryLocationDump {
     const Program& program;
@@ -170,6 +171,11 @@ public:
     ALWAYS_INLINE void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
 
     void add(const MemoryLocation&);
+    ALWAYS_INLINE void addRead(const Program& program, const MemoryLocation& location)
+    {
+        if (uint64_t mask = location.isEntireHeap() ? entireHeap : maskOfRead(program, location))
+            add(location.heap(), mask);
+    }
 
     constexpr bool merge(const LocationMasks& other)
     {
@@ -313,7 +319,7 @@ constexpr uint64_t locationMaskOfBit(std::optional<uint8_t> bit, uint32_t offset
     return uint64_t { 1 } << ((*bit + offset) & 63);
 }
 
-constexpr uint64_t markOfElementsThatMayHoldCells = uint64_t { 1 } << 63;
+constexpr uint64_t cellHoldingElementsMask = uint64_t { 1 } << 63;
 
 constexpr uint64_t locationMaskOfElementBase(ElementBase base)
 {
@@ -321,7 +327,7 @@ constexpr uint64_t locationMaskOfElementBase(ElementBase base)
     case ElementBase::Unknown:
         return LocationMasks::entireHeap;
     case ElementBase::Array:
-        return (uint64_t { 1 } << static_cast<unsigned>(base)) | markOfElementsThatMayHoldCells;
+        return (uint64_t { 1 } << static_cast<unsigned>(base)) | cellHoldingElementsMask;
     case ElementBase::Arguments:
     case ElementBase::Object:
         return uint64_t { 1 } << static_cast<unsigned>(base);
@@ -330,6 +336,7 @@ constexpr uint64_t locationMaskOfElementBase(ElementBase base)
 }
 
 inline constexpr LocationMasks placesUnderLengthsOfLists { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths } };
+inline constexpr LocationMasks slotsUnderInBoundsIndices { AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::LoweredArrayLengths } };
 
 template<typename ProgramWithLocationBits>
 ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, const MemoryLocation& location)
@@ -369,6 +376,9 @@ ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, co
     case AbstractHeap::RuntimeState:
     case AbstractHeap::CalleesInFrames:
     case AbstractHeap::ArrayLengths:
+    case AbstractHeap::ArrayCapacity:
+    case AbstractHeap::LoweredArrayLengths:
+    case AbstractHeap::ClassObjects:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

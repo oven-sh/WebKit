@@ -81,6 +81,8 @@ ALWAYS_INLINE bool isLegalRepresentation(const Type& type, Representation repres
     if (type.opaque || type.environment) [[unlikely]]
         return isLegalRepresentationOfInternalValue(type, representation);
     uint16_t primitives = static_cast<uint16_t>(type.primitives & ~Primitive::Unspecified);
+    if (representation == Representation::JSValue)
+        return !(primitives & ~representableSetOf(Representation::JSValue).primitives);
     bool hasObjects = type.hasObjects();
     if (!primitives && !hasObjects)
         return true;
@@ -100,6 +102,8 @@ ALWAYS_INLINE bool isLegalRepresentation(TypeReader types, TypeID id, Representa
     if (representation == Representation::Unchosen)
         return false;
     uint16_t primitives = static_cast<uint16_t>(primitivesInID(id) & ~Primitive::Unspecified);
+    if (representation == Representation::JSValue)
+        return !(primitives & ~representableSetOf(Representation::JSValue).primitives);
     if (!primitives)
         return true;
     if (representation == Representation::Void)

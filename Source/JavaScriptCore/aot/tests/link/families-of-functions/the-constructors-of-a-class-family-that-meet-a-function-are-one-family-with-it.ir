@@ -1,6 +1,6 @@
 # Jar, Tin and Pot have a supertype in common and no constructor in common: none calls another. Jar and Tin meet at a parameter of their own: "the constructors of the family", a type that does not say who came. That value comes, by a longer way, to a parameter that holds a plain function already, and is constructed there with a text.
 # All constructors of the class family are one family of functions with `plain`. If they were lost one by one and not united, the text would come to Jar alone, whose name the lost value bears, and not to Tin. Pot came nowhere, and is handed the text all the same: nothing may hang on who came first.
-# function either(a) { return a; }  function make(held, x) { return new held(x); }  make(plain, "text");  make(pass(pass(either(Jar))), "text");  either(Tin);
+# let kept; function either(a) { kept = a; return kept; }  function make(held, x) { return new held(x); }  make(plain, "text");  make(pass(pass(either(Jar))), "text");  either(Tin);
 # RUN(HELD): link held functions mechanisms=all
 # HELD: function f2 
 # HELD: parameter 1 expected=undefined|string proven=undefined|string
@@ -15,6 +15,8 @@ layout L1 kind=Instance name="Jar" module=m0 constructor=f2 fields=[] supertypes
 layout L2 kind=Instance name="Tin" module=m0 constructor=f3 fields=[] supertypes=[L0]
 layout L3 kind=Instance name="Pot" module=m0 constructor=f4 fields=[] supertypes=[L0]
 module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="kept0" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="kept1" module=m0 declared={type=anything} initialization=Undefined
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -66,7 +68,9 @@ function f4 name="Pot" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasEx
 }
 function f5 name="either" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    Return v0
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    Return v2
 }
 function f6 name="make" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -80,5 +84,7 @@ function f7 name="plain" module=m0 length=1 thisType={type=anything} parameters=
 }
 function f8 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    Return v0
+    PutModuleVariable v0 variable=g1
+    v2 = GetModuleVariable variable=g1
+    Return v2
 }

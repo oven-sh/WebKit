@@ -7,7 +7,8 @@
 # undefined is there at once, and the text comes through two calls and two reads. While two tellings of a change were compared by "some primitive, null or not" alone, the second was taken for the first:
 # the layout stayed without a change, and the run stopped: "AddProperty of an object of layout L0: the compiler has proven that it never happens".
 # RUN: link layouts mechanisms=all
-# CHECK: layout L0 changes=[GainsProperty]
+# The characters are followed as stores under numbers. Link tells the layout of such stores as of stores under any name, of which __proto__ is one.
+# CHECK: layout L0 changes=[GainsProperty, ChangesPrototype]
 
 module m0 path="late.js" displayPath="late.js" body=f0
 entry module=m0

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSScope.h"
 
+#include "AOTEnvironment.h"
 #include "AOTModuleRecord.h"
 #include "AbstractModuleRecord.h"
 #include "DeferTermination.h"
@@ -106,7 +107,7 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
                 AbstractModuleRecord* importedRecord = resolution.moduleRecord;
 #if USE(BUN_JSC_ADDITIONS)
-                if (resolution.isLiveExport(vm)) [[unlikely]] {
+                if (resolution.isLiveExport(vm) || resolution.isNamespaceOfCompiledOriginal(vm)) [[unlikely]] {
                     op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
                     return true;
                 }
@@ -185,7 +186,7 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
 
 #if USE(BUN_JSC_ADDITIONS)
                 if (requiresPutOfSubclass(globalObject, getOrPut)) {
-                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
+                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, reinterpret_cast<uintptr_t>(globalObject->variableAt(entry.scopeOffset()).slot()));
                     return true;
                 }
 #endif
@@ -351,6 +352,21 @@ ResolveOp JSScope::abstractResolve(JSGlobalObject* globalObject, size_t depthOff
     bool needsVarInjectionChecks = JSC::needsVarInjectionChecks(unlinkedType);
     size_t depth = depthOffset;
     for (; scope; scope = scope->next()) {
+#if ENABLE(AOT)
+        if (globalObject->aotInstance()) [[unlikely]] {
+            switch (AOT::findNameInEvalScope(globalObject, scope, ident)) {
+            case AOT::NameInEvalScope::NotEvalScope:
+                break;
+            case AOT::NameInEvalScope::Present:
+                return ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
+            case AOT::NameInEvalScope::Absent:
+                if (SymbolTable* symbolTable = scope->symbolTable())
+                    needsVarInjectionChecks |= symbolTable->usesSloppyEval();
+                ++depth;
+                continue;
+            }
+        }
+#endif
         bool success = abstractAccess(globalObject, scope, ident, getOrPut, depth, needsVarInjectionChecks, op, initializationMode);
         if (success)
             break;

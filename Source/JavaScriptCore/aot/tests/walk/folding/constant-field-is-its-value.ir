@@ -1,0 +1,48 @@
+# const Limits = { MAX: 1000, MIN: 0 };  function over(x) { return (x | 0) > Limits.MAX; }  function under(x) { return (x | 0) < Limits.MIN; }  Limits.MIN = over(5) ? 1 : 2;
+# A field that one written value alone fills is that value. A field that is stored into again is read.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: GetSlot
+# CHECK: Integer integer=1000
+# CHECK-NOT: GetSlot
+# CHECK: Greater
+# RUN(STORED): walk f2:Body mechanisms=all
+# STORED: GetSlot {{*}}key="MIN"
+# STORED: Less
+
+layout L0 module=m0 fields=[{key="MAX" declared={type=anything} flags=[IsRequired]}, {key="MIN" declared={type=anything} flags=[IsRequired]}] declaredOrder=[0, 1] ownFieldCount=2
+variable g0 name="Limits" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+data d0 root=Object{layout=L0 members=[{key="MAX" value=Number{value=1000}}, {key="MIN" value=Number{value=0}}]} module=m0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = Call v3, -, v4
+    v6 = NewClosure function=f2
+    v7 = Call v3, -, v6
+    v8 = Integer integer=2
+    PropSet v0, v8 key="MIN"
+    Return v7
+}
+function f1 name="over" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="MAX"
+    v5 = Greater v2, v4
+    Return v5
+}
+function f2 name="under" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="MIN"
+    v5 = Less v2, v4
+    Return v5
+}

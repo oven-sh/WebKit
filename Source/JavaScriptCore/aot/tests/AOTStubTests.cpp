@@ -766,13 +766,16 @@ static void testAlignmentOfStubsIsPadding()
     StubCatalog catalog(StubOptions { });
     StubAssembler jit(catalog.options(), catalog);
     jit.ret();
+    const size_t sizeOfReturn = jit.m_assembler.codeSize();
     jit.align();
+    AOT_TEST_CHECK(isX86_64() ? jit.m_assembler.codeSize() == sizeOfReturn : !(jit.m_assembler.codeSize() % 16));
+    emitPadding(jit);
     jit.ret();
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
     AOT_TEST_CHECK(!buffer.didFailToAllocate());
     buffer.finalize(false, "stub with an aligned part"_s);
     std::span<uint8_t> bytes = buffer.bytes();
-    AOT_TEST_CHECK(bytes.size() > 16);
+    AOT_TEST_CHECK(bytes.size() > 2 * sizeOfReturn);
     for (size_t offset = 0; offset < bytes.size(); offset += codeOffsetUnit)
         AOT_TEST_CHECK(!MacroAssembler::isBreakpoint(bytes.subspan(offset).data()));
 }

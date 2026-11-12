@@ -7,12 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTID.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -93,6 +93,7 @@ struct ModuleEvaluationParts {
 
 class ModuleEvaluationPlan {
     WTF_MAKE_NONCOPYABLE(ModuleEvaluationPlan);
+    friend class FactMisstater;
 public:
     ModuleEvaluationPlan() = default;
     explicit ModuleEvaluationPlan(ModuleEvaluationParts&& parts)

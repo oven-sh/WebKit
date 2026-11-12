@@ -194,8 +194,29 @@ struct KeyOrderRegisters {
 
 struct FieldOfLayout {
     GPRReg layout;
-    GPRReg fieldIndex;
+    GPRReg offsetOfRecord;
 };
+
+inline void loadOffsetOfFieldRecord(StubAssembler& jit, GPRReg index, GPRReg result)
+{
+    static_assert(sizeof(FieldData) == 3 * sizeof(uint32_t) && !(sizeof(LayoutData) % sizeof(uint32_t)));
+    jit.getEffectiveAddress(BaseIndex(index, index, CCallHelpers::TimesTwo, sizeof(LayoutData) / sizeof(uint32_t)), result);
+    jit.lshift32(TrustedImm32(2), result);
+}
+
+inline void loadTypeOfFieldRecord(StubAssembler& jit, GPRReg record, int32_t offset, GPRReg result)
+{
+    jit.load16(Address(record, offset + OBJECT_OFFSETOF(FieldData, typeNumber)), result);
+    jit.lshift32(TrustedImm32(ProgramTables::shiftOfNearTypeNumbers), result);
+}
+
+inline void addOffsetOfField(StubAssembler& jit, GPRReg layout, GPRReg index, GPRReg result, int32_t offset = 0)
+{
+    static_assert(sizeof(FieldData) == 3 * sizeof(uint32_t));
+    RELEASE_ASSERT(noOverlap(layout, index));
+    jit.getEffectiveAddress(BaseIndex(index, index, CCallHelpers::TimesTwo), index);
+    jit.getEffectiveAddress(BaseIndex(layout, index, CCallHelpers::TimesFour, offset), result);
+}
 
 void loadExtensionWordOffset(StubAssembler&, GPRReg object, GPRReg result);
 struct WaysToFieldInExtension {
@@ -205,13 +226,15 @@ struct WaysToFieldInExtension {
 void computeFieldAddress(StubAssembler&, const FieldAddressRegisters&, bool isOutOfLine, JumpList& hasNoStorage, WaysToFieldInExtension* = nullptr, std::optional<SlotRepresentation> known = std::nullopt);
 void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&, std::optional<SlotRepresentation> known = std::nullopt);
 void loadGetterSetterInField(StubAssembler&, GPRReg address, GPRReg representation, GPRReg result, JumpList& isAbsent);
-void branchOnFieldPresence(StubAssembler&, const FieldAddressRegisters&, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent);
+void branchOnFieldPresence(StubAssembler&, const FieldAddressRegisters&, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent, JumpList& keyOrderDecides);
 void returnFieldPresence(StubAssembler&, const CachedSlot&, const FieldAddressRegisters&, JumpList& isUnknown, JumpList* keyOrderSays = nullptr);
 void branchUnlessTypeAccepts(StubAssembler&, const TypeTestRegisters&, JumpList& isRejected, JumpList& cannot);
 void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&, const ScopedLambda<void(GPRReg classOfSlot)>* rememberStore = nullptr);
 void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
 void listCreatedField(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
-void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt);
+enum class CreationChecksChain : bool { No, Yes };
+void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt, CreationChecksChain = CreationChecksChain::No);
+void loadOrderAfterRememberedCreation(StubAssembler&, const KeyOrderRegisters&, JumpList& isNotRemembered);
 enum class FirstExtension : bool { IsLeftToStub, IsAllocatedInLine };
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const WaysToFieldInExtension&, FirstExtension = FirstExtension::IsLeftToStub);
 void allocateFirstExtensionWithOneGranule(StubAssembler&, GPRReg object, GPRReg granuleBit, GPRReg extensionAndGranule, GPRReg scratch, GPRReg secondScratch, Label hasGranule, JumpList& isLeftToStub);

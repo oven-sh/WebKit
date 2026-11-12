@@ -7,9 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTLayout.h"
 #include "AOTTypeArena.h"
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 

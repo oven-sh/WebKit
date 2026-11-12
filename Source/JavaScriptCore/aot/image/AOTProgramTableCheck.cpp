@@ -274,7 +274,11 @@ static void checkNamesOfModule(const JoinedTables& check, std::span<const Entry>
     const IdentifierNumbering& identifiers = check.numbers.identifiers();
     StringID previous;
     for (const Entry& entry : list.subspan(first, end - first)) {
-        StringID name = entry.name < identifiers.count() ? identifiers.at(entry.name).text : StringID();
+        StringID name;
+        if (entry.name < identifiers.count())
+            name = identifiers.at(entry.name).text;
+        else if (std::is_same_v<Entry, ModuleExportData> && entry.name < check.stringsByNumber.size())
+            name = check.stringsByNumber[entry.name];
         if (!check.expect(!!name, "NameWithoutIdentifier"_s))
             return;
         Vector<char16_t> previousBuffer;
@@ -296,7 +300,7 @@ static void checkModuleTables(const JoinedTables& check)
     std::span<const ModuleExportData> exports = tables.moduleExports();
     for (size_t index = 0; index < numberOfModules; ++index) {
         uint32_t endOfExports = modules[index + 1].firstExport;
-        if (endOfExports > modules[index].firstExport && endOfExports <= exports.size() && exports[endOfExports - 1].kindBits == ModuleExportData::kindBitsOfWordOfMock)
+        while (endOfExports > modules[index].firstExport && endOfExports <= exports.size() && exports[endOfExports - 1].isHidden())
             --endOfExports;
         checkNamesOfModule(check, exports, modules[index].firstExport, endOfExports);
         checkNamesOfModule(check, tables.syntheticExports(), modules[index].firstSyntheticExport, modules[index + 1].firstSyntheticExport);
@@ -349,21 +353,20 @@ static void checkModuleTables(const JoinedTables& check)
 
     std::span<const uint32_t> starts = tables.moduleStarts();
     std::span<const ModuleStartStepData> steps = tables.moduleStartSteps();
-    auto endsRow = [](ModuleStartStepData step) {
-        return step.operation() == ModuleStartStepData::Operation::Trap || step.operation() == ModuleStartStepData::Operation::Return;
-    };
     auto namesWhatExists = [&](ModuleStartStepData step) {
         switch (step.operation()) {
         case ModuleStartStepData::Operation::Trap:
         case ModuleStartStepData::Operation::Return:
             return !step.operand() && !step.hasFlag();
         case ModuleStartStepData::Operation::CallStart:
+        case ModuleStartStepData::Operation::CallStartUnlessStopped:
             return step.operand() < starts.size() && starts[step.operand()] && !step.hasFlag();
         case ModuleStartStepData::Operation::CallBody:
             return step.operand() < check.encoder.inputs.functions.size() && !step.hasFlag();
         case ModuleStartStepData::Operation::Begin:
         case ModuleStartStepData::Operation::BeginOrReturn:
         case ModuleStartStepData::Operation::Finish:
+        case ModuleStartStepData::Operation::FinishAndReturn:
             return step.operand() < numberOfModules;
         case ModuleStartStepData::Operation::ReturnIfLoadingStops:
         case ModuleStartStepData::Operation::AbandonOnThrow:
@@ -372,9 +375,9 @@ static void checkModuleTables(const JoinedTables& check)
         return false;
     };
     bool everyRowBeginsBehindAnEnd = std::ranges::all_of(starts, [&](uint32_t firstStep) {
-        return firstStep < steps.size() && (!firstStep || endsRow(steps[firstStep - 1]));
+        return firstStep < steps.size() && (!firstStep || steps[firstStep - 1].endsRow());
     });
-    bool hasRowsOfPlan = starts.empty() ? steps.empty() : starts.size() == numberOfModules && !steps.empty() && !steps.front().bits && endsRow(steps.back());
+    bool hasRowsOfPlan = starts.empty() ? steps.empty() : starts.size() == numberOfModules && !steps.empty() && !steps.front().bits && steps.back().endsRow();
     check.expect(hasRowsOfPlan && everyRowBeginsBehindAnEnd && std::ranges::all_of(steps, namesWhatExists), "TableOutOfBounds"_s, { }, "moduleStartSteps"_s);
 
     std::span<const UncompiledModuleData> uncompiledModules = tables.modulesOfUncompiledCode();
@@ -453,6 +456,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkAscending(tables.functionsWithLargeCounts(), [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; }, "functionsWithLargeCounts"_s);
     checkAscending(tables.unsharedFunctionRecords(), &UnsharedFunctionRecordData::function, "unsharedFunctionRecords"_s);
     checkAscending(tables.closurePropertyNames(), std::identity { }, "closurePropertyNames"_s);
+    checkAscending(tables.fieldGetters(), &FieldGetterData::function, "fieldGetters"_s);
     auto checkSorted = [&](auto entries, const auto& keyOf, ASCIILiteral table) {
         check.expect(std::ranges::is_sorted(entries, { }, keyOf), "TableNotSorted"_s, { }, table);
     };
@@ -483,6 +487,11 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkAscending(tables.eagerBuiltinCells(), std::identity { }, "eagerBuiltinCells"_s);
     checkAscending(tables.classGuardCounts(), std::identity { }, "classGuardCounts"_s);
     checkAscending(tables.classesBelowWithGuardsOfNames(), std::identity { }, "classesBelowWithGuardsOfNames"_s);
+    checkAscending(tables.assignedMembers(), &AssignedMemberData::place, "assignedMembers"_s);
+    check.expect(std::ranges::all_of(tables.assignedMembers(), [&](const AssignedMemberData& member) {
+        uint32_t offset = byteOffsetOfClassGuardBit(member.guardBit);
+        return !(offset % sizeof(EncodedJSValue)) && offset + sizeof(EncodedJSValue) <= sizeOfStatics && tables.someClassGuardNames(member.name);
+    }), "TableOutOfBounds"_s);
 
     auto liesInStatics = [&](const StaticsRange& range) {
         return static_cast<uint64_t>(range.offset) + range.size <= sizeOfStatics;
@@ -490,7 +499,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     check.expect(std::ranges::all_of(tables.classGuardCounts(), [&](const ClassGuardCountData& count) {
         return byteOffsetOfClassGuardBit(count.guardBit) < sizeOfStatics && !(count.offsetOfCount % sizeof(uint32_t)) && liesInStatics({ count.offsetOfCount, sizeof(uint32_t) });
     }), "TableOutOfBounds"_s, { }, "classGuardCounts"_s);
-    check.expect(std::ranges::all_of(tables.staticsRoots(), liesInStatics) && std::ranges::all_of(tables.staticsNarrowRoots(), liesInStatics) && std::ranges::all_of(tables.staticsClearedEachCollection(), liesInStatics), "TableOutOfBounds"_s, { }, "staticsRoots"_s);
+    check.expect(std::ranges::all_of(tables.staticsRoots(), liesInStatics) && std::ranges::all_of(tables.staticsNarrowRoots(), liesInStatics) && std::ranges::all_of(tables.staticsClearedEachCollection(), liesInStatics) && std::ranges::all_of(tables.variablesWithViewMirror(), liesInStatics), "TableOutOfBounds"_s, { }, "staticsRoots"_s);
     check.expect(std::ranges::all_of(tables.stateOfLibraryModules(), [&](const StateOfLibraryModuleData& state) {
         uint64_t end = static_cast<uint64_t>(state.first) + state.count;
         switch (state.kind()) {
@@ -545,16 +554,20 @@ static void checkRowsNamedByNumber(const JoinedTables& check)
     bool namesEveryGlobalBinding = std::ranges::equal(tables.globalBindings(), numbers.globalBindings(), { }, [](uint32_t word) { return word & GlobalBindings::identifierMask; }, [&](const PlacedGlobalBinding& binding) { return numberOfKey(binding.key); });
     expectRows(namesEveryGlobalBinding && tables.globalBindings().size() == tables.instanceSizes.numberOfGlobalBindings, "globalBindings"_s);
 
-    std::span<const AllocationData> allocations = tables.allocations();
+    const AllocationTable allocations = tables.allocations();
+    std::span<const AllocationRow> allocationRows = tables.allocationRows();
     std::span<const uint32_t> layouts = tables.layouts();
     expectRows(allocations.size() == numbers.allocations().size(), "allocations"_s);
-    check.expect(std::ranges::all_of(allocations, [&](const AllocationData& allocation) {
-        return allocation.shape < layouts.size() && layouts[allocation.shape];
+    bool everyAllocationHasForm = std::ranges::all_of(allocationRows, [&](const AllocationRow& row) { return row.form < tables.allocationForms().size(); });
+    if (!check.expect(everyAllocationHasForm, "TableOutOfBounds"_s, { }, "allocationForms"_s))
+        return;
+    check.expect(std::ranges::all_of(allocationRows, [&](const AllocationRow& row) {
+        return row.shape < layouts.size() && layouts[row.shape];
     }), "ShapeWithoutLayout"_s, { }, "allocations"_s);
     std::span<const ConstructedAllocationData> constructedAllocations = tables.constructedAllocations();
     bool listsConstructedAllocations = ascendsStrictlyInTable(constructedAllocations, [](const ConstructedAllocationData& entry) -> uint32_t { return entry.allocation; })
         && std::ranges::all_of(constructedAllocations, [&](const ConstructedAllocationData& entry) { return entry.allocation < allocations.size() && allocations[entry.allocation].isConstructed; })
-        && static_cast<size_t>(std::ranges::count_if(allocations, [](const AllocationData& allocation) { return !!allocation.isConstructed; })) == constructedAllocations.size();
+        && static_cast<size_t>(std::ranges::count_if(allocationRows, [&](const AllocationRow& row) { return !!tables.allocationForms()[row.form].isConstructed; })) == constructedAllocations.size();
     check.expect(listsConstructedAllocations, "TableNotSorted"_s, { }, "constructedAllocations"_s);
 
     std::span<const uint32_t> runs = tables.propertyRuns();
@@ -570,8 +583,8 @@ static void checkFunctionTables(const JoinedTables& check)
     const FunctionNumbers& functions = check.numbers.functions();
     size_t numberOfClosureFunctions = tables.closureFunctions.end - tables.closureFunctions.first;
     SparseNumberTable cells(tables.closureCells());
-    bool hasRowForEachFunction = tables.numberOfFunctions() == functions.numberOfFunctions() && tables.closureFunctionKinds().size() == numberOfClosureFunctions && tables.functionLengths().size() == numberOfClosureFunctions
-        && tables.closureCaptureCounts().size() == numberOfClosureFunctions && tables.closureCells().size() >= NumberGroup::numberOfGroupWords(numberOfClosureFunctions);
+    bool hasRowForEachFunction = tables.numberOfFunctions() == functions.numberOfFunctions() && tables.closureFactNumbers().size() == numberOfClosureFunctions
+        && std::ranges::all_of(tables.closureFactNumbers(), [&](uint16_t number) { return number < tables.closureFacts().size(); }) && tables.closureCells().size() >= NumberGroup::numberOfGroupWords(numberOfClosureFunctions);
     if (!check.expect(hasRowForEachFunction, "TableOutOfBounds"_s, { }, "functionRecordNumbers"_s))
         return;
     for (uint32_t number = 0; number < numberOfClosureFunctions; ++number) {
@@ -667,7 +680,7 @@ static void checkListedFunctions(const JoinedTables& check)
         std::optional<FunctionID> entry = check.encoder.findEntrypoint(constructor);
         check.expect(!entry || std::ranges::binary_search(tables.constructors(), entry->index(), { }, &ConstructorData::function), "FunctionNotListed"_s, LayoutID(index), "constructors"_s);
     }
-    BitVector isCalledByHost = Typed::functionsCalledByHost(check.program);
+    Typed::BitVector isCalledByHost = Typed::functionsCalledByHost(check.program);
     for (const Typed::RuntimeFunctionEntry& listed : check.program.runtimeFunctions) {
         if (!listed.function || !isCalledByHost.get(listed.function.index()) || !functionInImage(conventions.closureEntryOf(listed.function)))
             continue;
@@ -721,11 +734,11 @@ static void checkRecordAgainstPlan(const JoinedTables& check, const LayoutData& 
         const FieldData& field = fields[*slot.indexInLayoutRecord];
         if (!check.expect(field.slot == slot.data() && field.isOutOfLine() == slot.isOutOfLine(), "RecordDiffersFromPlan"_s, id))
             return;
-        if (!check.expect(!slot.typeInLayoutRecord() || field.type == check.offsetOfType(slot.typeInLayoutRecord()), "FieldTypeDiffersFromPlan"_s, id))
+        if (!check.expect(!slot.typeInLayoutRecord() || check.tables.offsetOfTypeOf(field) == check.offsetOfType(slot.typeInLayoutRecord()), "FieldTypeDiffersFromPlan"_s, id))
             return;
         if (!field.holdsRawValueFromBirth)
             continue;
-        const RuntimeType* type = check.tryGetRecord<RuntimeType>(TablePartID::Types, field.type);
+        const RuntimeType* type = check.tryGetRecord<RuntimeType>(TablePartID::Types, check.tables.offsetOfTypeOf(field));
         if (!check.expect(type && !type->primitiveSet().containsAny({ PrimitiveSet::Undefined, PrimitiveSet::Null }), "TypeOfRawFieldTakesMarker"_s, id))
             return;
     }
@@ -763,9 +776,9 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
         const PropertiesOfHeirsData* properties = check.tryGetRecord<PropertiesOfHeirsData>(TablePartID::Layouts, classData.propertiesOfHeirsOffset);
         bool isInPart = properties && check.tryGetRecord<PropertiesOfHeirsData>(TablePartID::Layouts, classData.propertiesOfHeirsOffset, static_cast<uint64_t>(properties->numberOfNames) * sizeof(uint32_t));
         if (check.expect(isInPart, "OffsetOutsideItsPart"_s, id)) {
-            bool namesFieldsInOrder = properties->builtinClass == written.writtenBuiltinBase.index() && properties->numberOfNames == written.fields.size();
+            bool namesFieldsInOrder = properties->builtinClass() == Typed::builtinClassOfInstances(written).index() && properties->isBelowMixin() == !!written.mixedBuiltinBase && properties->numberOfNames == written.fields.size();
             for (size_t field = 0; namesFieldsInOrder && field < written.fields.size(); ++field)
-                namesFieldsInOrder = check.numbers.identifiers().numberOf(written.fields[field].key) == std::optional<uint32_t>(properties->names()[field] & ~PropertiesOfHeirsData::mayBeStoredLate) && written.fields[field].flags.contains(Typed::FieldFlags::IsRequired) == !(properties->names()[field] & PropertiesOfHeirsData::mayBeStoredLate);
+                namesFieldsInOrder = check.numbers.identifiers().numberOf(written.fields[field].key) == std::optional<uint32_t>(properties->names()[field] & ~PropertiesOfHeirsData::mayBeStoredLate) && Typed::isDecidedByClassStructure(written.fields[field]) == !(properties->names()[field] & PropertiesOfHeirsData::mayBeStoredLate);
             check.expect(namesFieldsInOrder, "PropertiesOfHeirsDifferFromProgram"_s, id);
         }
     }
@@ -815,12 +828,13 @@ static void checkObjectRecord(const JoinedTables& check, uint32_t offset, Layout
     if (!check.expect(isInPart, "OffsetOutsideItsPart"_s, id))
         return;
     check.expect(layout->shape == shape && layout->index == id.index(), "ShapeWithoutLayout"_s, id);
-    auto hasUnknownFlag = [](const FieldData& field) {
-        return !!(field.flags & ~allFieldFlags);
+    const uint16_t knownFlags = check.tables.shiftOfTypeNumbers == ProgramTables::shiftOfNearTypeNumbers ? allFieldFlags : allFieldFlags | fieldTypeIsLeftToRunTime;
+    auto hasUnknownFlag = [&](const FieldData& field) {
+        return !!(field.flags & ~knownFlags);
     };
     check.expect(std::ranges::none_of(layout->fields(), hasUnknownFlag) && std::ranges::none_of(layout->staticFields(), hasUnknownFlag), "UnknownFieldFlag"_s, id);
     check.expect(std::ranges::all_of(layout->fields(), [&](const FieldData& field) {
-        return !field.type || check.tryGetRecord<RuntimeType>(TablePartID::Types, field.type);
+        return !field.typeNumber || check.tryGetRecord<RuntimeType>(TablePartID::Types, check.tables.offsetOfTypeOf(field));
     }), "OffsetOutsideItsPart"_s, id);
     checkRecordAgainstPlan(check, *layout, id);
     if (layout->isClass())
@@ -871,22 +885,26 @@ static void checkLayoutRecords(const JoinedTables& check)
             checkObjectRecord(check, offset, id, generalShape);
     }
 
-    uint64_t sizeOfStructuresOfHeirs = 0;
-    for (LayoutID heir : check.numbers.heirsLookedAt()) {
-        if (!check.expect(heir.index() < numberOfLayouts && tables.offsetOfClass(heir.index()) && Typed::isKnownByStructureOfClass(check.program.at(heir)), "HeirLookedAtWithoutRecord"_s, heir))
+    uint64_t subclassStructuresEnd = 0;
+    const Vector<uint32_t>& subclassStructuresOffsets = check.numbers.statics().subclassStructuresOffsets;
+    for (uint32_t index = 0; index < subclassStructuresOffsets.size(); ++index) {
+        uint32_t offset = subclassStructuresOffsets[index];
+        if (offset == PlacedStatics::noOffset)
             continue;
-        uint32_t key = heir.index();
-        check.expect(check.numbers.numberOf(NumberSpace::HeirLookedAt, singleElementSpan(key)) == std::optional<uint32_t>(static_cast<uint32_t>(sizeOfStructuresOfHeirs)), "StructuresOfHeirsOverlap"_s, heir);
-        sizeOfStructuresOfHeirs += StructuresOfHeir::sizeWithDisplacementsOfFields(check.program.at(heir).fields.size());
+        LayoutID heir(index);
+        if (!check.expect(index < numberOfLayouts && tables.offsetOfClass(index) && Typed::isKnownByStructureOfClass(check.program.at(heir)), "HeirLookedAtWithoutRecord"_s, heir))
+            continue;
+        check.expect(offset >= subclassStructuresEnd && !(offset % alignof(StructuresOfHeir)), "StructuresOfHeirsOverlap"_s, heir);
+        subclassStructuresEnd = offset + StructuresOfHeir::sizeWithDisplacementsOfFields(check.program.at(heir).fields.size());
     }
-    check.expect(tables.sizeOfStructuresOfHeirs == sizeOfStructuresOfHeirs && tables.sizeOfStructuresOfHeirs == check.numbers.sizeOfStructuresOfHeirs(), "SizeOfStructuresOfHeirsDiffersFromNumbers"_s);
+    check.expect(subclassStructuresEnd <= tables.instanceSizes.sizeOfStatics, "SubclassStructuresBeyondStatics"_s);
 }
 
 static void checkFieldTable(const JoinedTables& check)
 {
     const ProgramTables& tables = check.tables;
     const uint32_t highestObjectShape = tables.firstEnvironmentShape - 1;
-    const uint32_t typeOfAnyValue = check.offsetOfType(Typed::TypeTable::anything);
+    const uint16_t numberOfAnyType = static_cast<uint16_t>(check.offsetOfType(Typed::TypeTable::anything) >> tables.shiftOfTypeNumbers);
     const uint32_t numberOfColumns = check.numbers.identifiers().countWithFieldTableColumn();
     bool hasRowsAndColumns = tables.firstEnvironmentShape && tables.numberOfFieldTableColumns == numberOfColumns && numberOfColumns <= FieldTableEntry::maxName + 1 && tables.numberOfFieldTableRows == highestObjectShape
         && highestObjectShape <= tables.fieldTable().size() && tables.fieldRecordIndices().size() == tables.fieldTable().size() - highestObjectShape;
@@ -922,7 +940,7 @@ static void checkFieldTable(const JoinedTables& check)
                 ++numberOfFieldsFound;
                 uint32_t index = row + field.name;
                 bool isInTable = findFieldInTable(tables, shape, field.name) == layout.indexOf(field) && FieldTableEntry { entries[index] } == FieldTableEntry::forField(layout, field)
-                    && tables.fieldRecordIndices()[index] == FieldRecordIndex::create(field, layout.indexOf(field), tables.typeAt(field.type), typeOfAnyValue).bits;
+                    && tables.fieldRecordIndices()[index] == FieldRecordIndex::create(field, layout.indexOf(field), tables.typeAt(tables.offsetOfTypeOf(field)), numberOfAnyType).bits;
                 check.expect(isInTable, "FieldMissingFromFieldTable"_s, id);
                 if (tables.fieldRecordIndices()[index] & FieldRecordIndex::isStoredWithoutTypeTest)
                     continue;

@@ -88,7 +88,8 @@ constexpr Representation elementRepresentationOf(ArrayStorage kind)
 inline constexpr IndexingType arrayStorageTestMask = IndexingShapeMask;
 
 inline constexpr size_t maxInlineConcatOperands = 3;
-inline constexpr size_t maxInlineSpliceInsertions = 2;
+inline constexpr size_t maxInlineSpliceInsertions = 3;
+inline constexpr size_t maxInlinePushedValues = 16;
 inline constexpr int64_t maxRemovedByInlineSplice = 2;
 
 ArrayStorage arrayStorageHolding(const TypeArena&, TypeID elements);
@@ -97,12 +98,14 @@ Expected<ArrayStorage> arrayStorageDeclaredBy(const Program&, TypeReader, TypeID
 bool isDeclaredToHoldNumbersAlone(const Program&, TypeReader, TypeID array);
 bool isProvenToBeList(TypeReader, TypeID array);
 bool readTakesIndexOfProvenList(TypeReader, TypeID array, TypeID position);
-bool numberOfProvenListIsReadUnboxed(TypeReader, TypeID array, TypeID position, Representation formOfPosition, bool testsForItself);
+bool numberOfProvenListIsReadUnboxed(TypeReader, TypeID array, TypeID position, Representation formOfPosition);
 bool keyOfProvenListMayBeAskedForInt32(TypeReader, TypeID array, TypeID position);
 inline bool storeTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position) { return readTakesIndexOfProvenList(types, array, position); }
 
 JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode::Array&);
 JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
+JS_EXPORT_PRIVATE bool isShortStringList(const DataNode::Array&);
+inline constexpr uint32_t mostElementsComparedInLoop = 8;
 inline constexpr uint32_t maxNodesOfExpandedData = 16;
 bool canStoreWithoutConversion(const TypeArena&, ArrayStorage, TypeID stored);
 bool canStoreWithoutConversion(ArrayStorage, double stored);

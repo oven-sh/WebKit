@@ -53,7 +53,6 @@ struct ChainWalk {
     bool dependsOnChain() const { return !changeableObjects.isEmpty(); }
 
     ChainWalkResult result { ChainWalkResult::Unknown };
-    bool didFlatten { false };
     bool passedSlotFilledWithoutReport { false };
     bool passedEmptySlot { false };
     JSObject* firstObjectWithEmptySlot { nullptr };
@@ -65,6 +64,7 @@ struct ChainWalk {
 };
 
 ChainWalk walkChain(const ChainWalkStart&, UniquedStringImpl*);
+bool isArrayPrototypeWithWritableLength(const JSGlobalObject*, const JSObject*);
 
 ALWAYS_INLINE JSValue valueAtOffset(const JSObject* holder, PropertyOffset offset)
 {
@@ -88,6 +88,7 @@ public:
     virtual void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) = 0;
     virtual bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const = 0;
     virtual bool keepChainDependent(VM&, uint32_t, UniquedStringImpl*, const CreatedMembers&) { return false; }
+    virtual bool readsValuesInPlace() const { return false; }
 };
 
 enum class ChainDependentOwnerID : uint8_t { NoOwner = UINT8_MAX };
@@ -163,6 +164,7 @@ private:
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
 void didReplaceValueOnChainObject(VM&, JSObject* changed, UniquedStringImpl*);
+void startReportingReplacements(VM&, JSObject*);
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, ChainDependents& ofOwner, const ChainDependent&);

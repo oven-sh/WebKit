@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTFacts.h"
 #include "AOTFieldTable.h"
@@ -18,7 +19,6 @@
 #include <array>
 #include <atomic>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -113,6 +113,12 @@ static void findModulesThatWriteFieldsForNamePlan(const Program& program, const 
                 if (std::exchange(modulesSeenUpTo[key.index()], module + 1) != module + 1)
                     written.append(static_cast<uint64_t>(key.index()) << 32 | module);
             });
+        }
+    }
+    for (const Layout& layout : program.layouts) {
+        for (const Field& field : layout.fields) {
+            if (field.key && field.form.contains(FieldForm::IsAccessor))
+                parts.keysOfAccessors.set(field.key.index());
         }
     }
     Vector<uint32_t>& first = parts.firstModuleThatWritesFieldUnder;

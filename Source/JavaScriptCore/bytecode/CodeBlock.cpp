@@ -487,10 +487,15 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         }
     }
 
+#if ENABLE(AOT)
+    const bool runsCompiledImage = Options::runsCompiledImage();
+    Vector<const JSInstruction*, 32> variableResolutions;
+#endif
+
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
 #if ENABLE(AOT)
-        if (Options::runsCompiledImage())
+        if (runsCompiledImage)
             AOT::Interpreter::didLinkNewObject(metadata.m_objectAllocationProfile);
 #endif
     };
@@ -654,6 +659,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 metadata.m_resolveType = ClosureVar;
                 metadata.m_localScopeDepth = bytecode.m_localScopeDepth + outerHops;
                 metadata.m_symbolTable.set(vm, this, symbolTableObject->symbolTable());
+#if ENABLE(AOT)
+                if (runsCompiledImage)
+                    variableResolutions.append(instruction.ptr());
+#endif
                 if (Options::validateBytecodeOptimizerStaticScopes()) [[unlikely]] {
                     ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, GlobalProperty, InitializationMode::NotInitialization);
                     RELEASE_ASSERT(op.type == ClosureVar, op.type, outerHops);
@@ -667,6 +676,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
+#if ENABLE(AOT)
+            if (runsCompiledImage && (op.type == ClosureVar || op.type == GlobalVar || op.type == GlobalLexicalVar))
+                variableResolutions.append(instruction.ptr());
+#endif
             if (op.type == ModuleVar)
                 metadata.m_moduleImportSlot = op.moduleImportSlot;
             else if (op.lexicalEnvironment)
@@ -876,8 +889,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK
 
 #if ENABLE(AOT)
-    if (Options::runsCompiledImage())
-        AOT::Interpreter::fuseReadsOfClosureVariables(*this);
+    if (!variableResolutions.isEmpty())
+        AOT::Interpreter::fuseVariableReads(*this, variableResolutions.span());
 #endif
 
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())

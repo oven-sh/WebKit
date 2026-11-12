@@ -2,16 +2,15 @@
 # function OfProgram() { this.own = 1; }
 # function lay() { const a = new OfLibrary(); a.laid = 2; const b = new OfProgram(); b.laid = 2; return [a, b]; }
 # No layout lists `laid`: Link appends it to both. The library makes its objects one for a request or a connection and hands them over, and a framework that lays a name on one lays it on each: there the slot lies in the cell.
-# On an object of the program's own class a name that no constructor stores lies out of line, as ever: forty makers' names would lie in every object.
+# On an object of the program's own class the names that no constructor stores lie in the cell where all of them fit within one size class more: forty makers' names would lie in every object.
 # RUN: link fields mechanisms=all
 # CHECK: field L0.1 "laid" appended
 # CHECK: field L1.1 "laid" appended
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: layout L0 CompiledObject
 # PLAN: slot {{*}}"laid" {{*}}Inline
-# PLAN: layout L1 CompiledObject
-# PLAN-NOT: "laid" {{*}}Inline
-# PLAN: layout
+# PLAN: layout L1 CompiledObject size=48
+# PLAN: slot {{*}}"laid" {{*}}Inline
 
 layout L0 kind=Instance name="OfLibrary" module=m0 constructor=f1 fields=[{key="own" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="OfProgram" module=m0 constructor=f2 fields=[{key="own" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]

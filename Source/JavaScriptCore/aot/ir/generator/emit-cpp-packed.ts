@@ -248,7 +248,7 @@ function structLines(record: PackedRecord): string[] {
       "}",
     ],
     [
-      `static ${name} read(auto& cursor)`,
+      `ALWAYS_INLINE static ${name} read(auto& cursor)`,
       "{",
       ...indent([`${name} result;`, ...guardedLines(words, "result.", readLinesOf), "return result;"]),
       "}",

@@ -45,6 +45,13 @@ static ValueID recordBehindNamesAndFormsInQuotients(const Code& code, ValueID re
     return record;
 }
 
+static bool isSameValueInQuotients(const Code& code, ValueID first, ValueID second)
+{
+    first = recordBehindNamesAndFormsInQuotients(code, first);
+    second = recordBehindNamesAndFormsInQuotients(code, second);
+    return first == second || (code.at(first).opcode == Opcode::Integer && code.at(second).opcode == Opcode::Integer && code.at(first).integer() == code.at(second).integer());
+}
+
 static bool operandsAreInSightInQuotients(Walker& walker, const BodyValue& operation)
 {
     const Code& code = walker.code();
@@ -56,7 +63,7 @@ static bool operandsAreInSightInQuotients(Walker& walker, const BodyValue& opera
         return false;
     for (uint32_t operandIndex : { 0u, 1u }) {
         Reference bound = walker.referenceBoundTo(operation.operand(operandIndex));
-        if (!bound || !bound.isRecord() || recordBehindNamesAndFormsInQuotients(code, bound.id()) != recordBehindNamesAndFormsInQuotients(code, record.operand(operandIndex)))
+        if (!bound || !bound.isRecord() || !isSameValueInQuotients(code, bound.id(), record.operand(operandIndex)))
             return false;
     }
     return true;
@@ -78,10 +85,29 @@ static ALWAYS_INLINE std::optional<BodyValue> findOperatorOnExactIntegersInQuoti
 
 std::optional<DivisionAsWritten> findQuotientOfIntegers(Walker& walker, ValueID number, const InputsOfTypedOperation& inputs)
 {
-    std::optional<BodyValue> quotient = findOperatorOnExactIntegersInQuotients(walker, Opcode::Div, number, inputs);
-    if (!quotient)
+    RELEASE_ASSERT(!inputs.areOnlyTypes());
+    if (std::optional<BodyValue> quotient = findOperatorOnExactIntegersInQuotients(walker, Opcode::Div, number, inputs))
+        return DivisionAsWritten { walker.referenceOf(quotient->operand(0)), walker.referenceOf(quotient->operand(1)) };
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = number ? index.stripCasts(number) : ValueID();
+    if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::Div)
         return std::nullopt;
-    return DivisionAsWritten { quotient->operand(0), quotient->operand(1) };
+    const Code& code = walker.code();
+    Reference built = walker.referenceBoundTo(written);
+    if (!built || !built.isValue())
+        return std::nullopt;
+    const Operation& record = code.at(recordBehindNamesAndFormsInQuotients(code, built.id()));
+    if (record.opcode != Opcode::Div)
+        return std::nullopt;
+    auto operandOf = [&](uint32_t operandIndex) {
+        ValueID operand = record.operand(operandIndex);
+        return code.isConstant(operand) ? Reference::constant(operand) : Reference::value(operand);
+    };
+    DivisionAsWritten division { operandOf(OperandIndex::Div::left), operandOf(OperandIndex::Div::right) };
+    if (!isExactIntegerInQuotients(walker, walker.typeOf(division.dividend)) || !isExactIntegerInQuotients(walker, walker.typeOf(division.divisor)))
+        return std::nullopt;
+    return division;
 }
 
 std::optional<WholeRemainder> findWholeRemainder(Walker& walker, ValueID number, const InputsOfTypedOperation& inputs)
@@ -366,6 +392,8 @@ bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
     Reference dividend = walker.referenceOf(writtenDividend);
     Reference divisor = walker.referenceOf(writtenDivisor);
     if (!dividend.isValue())
+        return false;
+    if (walker.isInLoop() && walker.code().at(walker.currentBlock()).frequency != BlockFrequency::Rare && walker.representationOf(dividend) != Representation::JSValue)
         return false;
     Type typeOfDividend = typeOfBuiltInQuotients(walker, dividend);
     if (!typeOfDividend.isNumber() || typeOfDividend.isInteger() || !(typeOfDividend.primitives & Primitive::Integer))

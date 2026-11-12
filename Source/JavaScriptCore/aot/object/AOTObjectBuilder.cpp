@@ -91,6 +91,13 @@ void ObjectBuilderPlan::createFastPath()
         m_fastFields.append({ static_cast<uint16_t>(field.slot.offset), field.slot.representation(), accepted });
         namedFields.set(m_layout.indexOf(field));
     }
+    m_acceptedByConsecutiveWords = AcceptsInt32 | AcceptsDouble | AcceptsString | AcceptsObject | AcceptsBoolean;
+    for (size_t index = 0; index < m_fastFields.size(); ++index) {
+        const FastField& field = m_fastFields[index];
+        if (field.representation != SlotRepresentation::JSValue || field.offset != m_fastFields[0].offset + index * sizeof(EncodedJSValue))
+            m_acceptedByConsecutiveWords = 0;
+        m_acceptedByConsecutiveWords &= field.acceptedValues;
+    }
     m_acceptedStructureIDs.fill(0, m_fastFields.size());
     m_namesEveryFieldOfBirth = true;
     for (const FieldData& field : m_layout.fields()) {

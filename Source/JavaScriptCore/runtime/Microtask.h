@@ -45,6 +45,7 @@ using MicrotaskIdentifier = ObjectIdentifier<MicrotaskIdentifierType>;
 #if ENABLE(AOT)
 #define JSC_FOR_EACH_COMPILED_ASYNC_FUNCTION_INTERNAL_MICROTASK(macro) \
     macro(CompiledAsyncFunctionResume) \
+    macro(CompiledReactionChainStep) \
 
 #define JSC_FOR_EACH_COMPILED_MODULE_INTERNAL_MICROTASK(macro) \
     macro(CompiledModuleBodyResume) \

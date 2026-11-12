@@ -24,7 +24,7 @@
 # SIMPLE-NOT: = TypeTest
 # RUN(OTHER): walk f3:GenericCallEntry mechanisms=all
 # OTHER: = TypeTest {{*}}testedType=L0
-# OTHER: = TypeTest {{*}}testedType=int|whole
+# OTHER: = TypeTest {{*}}testedType=int[0, 9007199254740992]
 # RUN(ANSWER): run-in-shell mechanisms=all
 # ANSWER: 43
 # ANSWER-NEXT: exited with 0

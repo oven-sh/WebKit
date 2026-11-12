@@ -249,7 +249,7 @@ static void appendFunctionWithSwitch(StringBuilder& text, unsigned function)
         text.append("case b"_s, i + 1, "(), "_s);
     text.append("otherwise b"_s, numberOfCases + 1, "()\n"_s);
     for (unsigned i = 0; i < numberOfCases; ++i)
-        text.append("  b"_s, i + 1, "():\n    v"_s, i + 1, " = Integer integer="_s, 11 * i + 10, "\n    Return v"_s, i + 1, '\n');
+        text.append("  b"_s, i + 1, "():\n    v"_s, i + 1, " = PropGet v0 key=\"k"_s, i, "\"\n    Return v"_s, i + 1, '\n');
     text.append("  b"_s, numberOfCases + 1, "():\n    Return v0\n}\n"_s);
 }
 

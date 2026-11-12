@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTCellFormat.h"
 #include "AOTClassToken.h"
 #include "AOTCompiledStructure.h"
@@ -335,26 +336,27 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     jit.returnToCaller();
 }
 
-void branchOnFieldPresence(StubAssembler& jit, const FieldAddressRegisters& r, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent)
+void branchOnFieldPresence(StubAssembler& jit, const FieldAddressRegisters& r, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent, JumpList& keyOrderDecides)
 {
     RELEASE_ASSERT(noOverlap(r.address, r.representation, scratch));
 
     struct AbsenceTest {
         uint8_t width;
         uint64_t absentBits;
+        bool keyOrderDecides;
         JumpList representations;
     };
     Vector<AbsenceTest, 8> tests;
     for (SlotRepresentation representation : representationsInTestOrder) {
-        const SlotTraits traits = traitsOf(representation);
-        if (!traits.hasAbsent)
+        if (!mayBeCreatedByStore(representation))
             continue;
+        const AbsenceTest wanted { static_cast<uint8_t>(widthOf(representation)), bitsBeforeCreation(representation), isListedOnlyByKeyOrder(representation), { } };
         size_t index = tests.findIf([&](const AbsenceTest& test) {
-            return test.width == traits.width && test.absentBits == traits.absentBits;
+            return test.width == wanted.width && test.absentBits == wanted.absentBits && test.keyOrderDecides == wanted.keyOrderDecides;
         });
         if (index == notFound) {
             index = tests.size();
-            tests.append(AbsenceTest { traits.width, traits.absentBits, { } });
+            tests.append(wanted);
         }
         tests[index].representations.append(jit.branch32(CCallHelpers::Equal, r.representation, TrustedImm32(static_cast<int32_t>(representation))));
     }
@@ -363,7 +365,7 @@ void branchOnFieldPresence(StubAssembler& jit, const FieldAddressRegisters& r, G
     for (const AbsenceTest& test : tests) {
         test.representations.link(&jit);
         loadSlotBits(jit, test.width, Address(r.address), scratch);
-        isAbsent.append(branchIfBitsEqual(jit, test.width, scratch, test.absentBits));
+        (test.keyOrderDecides ? keyOrderDecides : isAbsent).append(branchIfBitsEqual(jit, test.width, scratch, test.absentBits));
         isPresent.append(jit.jump());
     }
 }
@@ -378,7 +380,7 @@ void returnFieldPresence(StubAssembler& jit, const CachedSlot& slot, const Field
     Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
     computeFieldAddress(jit, field, false, isAbsent);
     Label hasAddress = jit.label();
-    branchOnFieldPresence(jit, field, field.slotData, isPresent, isAbsent);
+    branchOnFieldPresence(jit, field, field.slotData, isPresent, isAbsent, isUnknown);
 
     isOutOfLine.link(&jit);
     if (slot.kind() == Slot::Kind::FieldOrInherited)
@@ -395,7 +397,9 @@ void returnFieldPresence(StubAssembler& jit, const CachedSlot& slot, const Field
     isAbsent.link(&jit);
     switch (slot.kind()) {
     case Slot::Kind::Field:
-        if (keyOrderSays && slot.form() == SlotForm::Slot)
+        if (slot.form() == SlotForm::PackedSlot)
+            (keyOrderSays ? *keyOrderSays : isUnknown).append(slot.branchUnlessFlag(jit, Slot::isOwn));
+        else if (keyOrderSays)
             keyOrderSays->append(slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined));
         isUnknown.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
         break;
@@ -438,8 +442,6 @@ static_assert(ClassToken::slotsPerField * sizeof(EncodedJSValue) == 1u << shiftO
 
 void generatePrivateGet(StubAssembler& jit)
 {
-    constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
-    static_assert(sizeof(FieldData) == 1u << fieldSizeShift);
     using WordsOfLayout = std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>;
     LayoutData withEveryEvaluationBit { };
     withEveryEvaluationBit.evaluationBits = 3;
@@ -514,9 +516,7 @@ void generatePrivateGet(StubAssembler& jit)
             jit.and32(TrustedImm32(static_cast<int32_t>(evaluationMask)), T10);
             goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, T10, TrustedImm32(static_cast<int32_t>(provenOnce))));
             jit.zeroExtend32ToWord(field, record);
-            jit.lshift64(TrustedImm32(fieldSizeShift), record);
-            jit.addPtr(layout, record);
-            jit.addPtr(TrustedImm32(sizeof(LayoutData)), record);
+            addOffsetOfField(jit, layout, record, record, sizeof(LayoutData));
         }
 
         FieldReadExits exits;
@@ -573,10 +573,7 @@ void generatePrivateGet(StubAssembler& jit)
         const FPRReg instance = number;
         goesToRunTime.append(jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
         loadStructure(jit, object, T12);
-        jit.load32(Address(T12, CompiledStructure::offsetOfExtraPropertiesSlot()), hiddenWordOffset);
-        goesToRunTime.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
-        jit.and32(TrustedImm32(SlotData::maxOffset), hiddenWordOffset);
-        loadExtraProperties(jit, object, hiddenWordOffset, extraProperties, goesToRunTime);
+        loadExtraPropertiesByStructure(jit, object, T12, hiddenWordOffset, extraProperties, goesToRunTime);
         jit.move64ToDouble(object, instance);
         jit.move(extraProperties, object);
         JumpList isNotKnown;
@@ -653,10 +650,7 @@ static void loadHolderOfNamesWithoutField(StubAssembler& jit, GPRReg object, GPR
     Jump isNotCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
     hasNone.append(jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     loadStructure(jit, object, structure);
-    jit.load32(Address(structure, CompiledStructure::offsetOfExtraPropertiesSlot()), hiddenWordOffset);
-    hasNone.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
-    jit.and32(TrustedImm32(SlotData::maxOffset), hiddenWordOffset);
-    loadExtraProperties(jit, object, hiddenWordOffset, holder, hasNone);
+    loadExtraPropertiesByStructure(jit, object, structure, hiddenWordOffset, holder, hasNone);
     isNotCompiledObject.link(&jit);
 }
 
@@ -714,6 +708,21 @@ PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
     });
 }
 
+struct EvaluationBitsOfLayout {
+    uint32_t mask { 0 };
+    uint32_t provenOnce { 0 };
+};
+
+static EvaluationBitsOfLayout evaluationBitsOfLayout()
+{
+    using WordsOfLayout = std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>;
+    LayoutData withEveryEvaluationBit { };
+    withEveryEvaluationBit.evaluationBits = 3;
+    LayoutData evaluatedOnce { };
+    evaluatedOnce.evaluationBits = static_cast<uint32_t>(EvaluationState::ProvenOnce);
+    return { std::bit_cast<WordsOfLayout>(withEveryEvaluationBit)[0], std::bit_cast<WordsOfLayout>(evaluatedOnce)[0] };
+}
+
 PreludeExit emitPrivateHasPrelude(StubAssembler& jit)
 {
     if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
@@ -728,7 +737,7 @@ PreludeExit emitPrivateHasPrelude(StubAssembler& jit)
 
     JumpList callsOperation;
     callsOperation.append(jit.branchIfNotCell(object));
-    callsOperation.append(branchIfNotCompiledObject(jit, object));
+    JumpList isNotCompiledObject = branchIfNotCompiledObject(jit, object);
     callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     loadStructure(jit, object, layouts);
     if (!jit.options().hasOneInstance) {
@@ -736,8 +745,18 @@ PreludeExit emitPrivateHasPrelude(StubAssembler& jit)
         callsOperation.append(branchIfNotOfThisRealm(jit, place));
     }
     jit.loadPtr(Address(layouts, CompiledStructure::offsetOfLayout()), layouts);
-    jit.load32(Address(layouts, OBJECT_OFFSETOF(LayoutData, index)), layouts);
     jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), place);
+    Jump isOfOtherClass = jit.branch32(CCallHelpers::NotEqual, place, Address(layouts, OBJECT_OFFSETOF(LayoutData, index)));
+    const EvaluationBitsOfLayout evaluation = evaluationBitsOfLayout();
+    jit.load32(Address(layouts), row);
+    jit.and32(TrustedImm32(static_cast<int32_t>(evaluation.mask)), row);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, row, TrustedImm32(static_cast<int32_t>(evaluation.provenOnce))));
+    jit.zeroExtend32ToWord(field, row);
+    addOffsetOfField(jit, layouts, row, row, sizeof(LayoutData));
+    Jump hasRecord = jit.jump();
+
+    isOfOtherClass.link(&jit);
+    jit.load32(Address(layouts, OBJECT_OFFSETOF(LayoutData, index)), layouts);
     jit.getEffectiveAddress(BaseIndex(place, place, CCallHelpers::TimesTwo), row);
     jit.add32(layouts, row);
     jit.lshift64(TrustedImm32(32), layouts);
@@ -749,10 +768,40 @@ PreludeExit emitPrivateHasPrelude(StubAssembler& jit)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.privateFieldPlaces)), place);
     jit.addPtr(row, place);
     callsOperation.append(jit.branch64(CCallHelpers::NotEqual, layouts, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, layouts))));
+    Jump hasPlace = jit.branch32(CCallHelpers::Equal, field, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, declaredField)));
     jit.or32(TrustedImm32(static_cast<int32_t>(layoutHasNoPlaceForPrivateField)), field, row);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, row, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, declaredField))));
+    Label answersNo = jit.label();
     jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsBoolean(false))), jit.result());
     jit.returnToCaller();
+
+    hasPlace.link(&jit);
+    jit.loadPtr(Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, field)), row);
+    hasRecord.link(&jit);
+    JumpList isPresent;
+    const FieldAddressRegisters registers { .object = object, .slotData = layouts, .extensionWordOffset = place, .address = place, .representation = row };
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(row, OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(fieldMayExistWithoutStorage | fieldIsAccessor | fieldIsOutOfLine)));
+    jit.load32(Address(row, OBJECT_OFFSETOF(FieldData, slot)), layouts);
+    computeFieldAddress(jit, registers, false, callsOperation);
+    branchOnFieldPresence(jit, registers, layouts, isPresent, callsOperation, callsOperation);
+    isPresent.link(&jit);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsBoolean(true))), jit.result());
+    jit.returnToCaller();
+
+    isNotCompiledObject.link(&jit);
+    callsOperation.append(jit.branch8(CCallHelpers::Below, Address(object, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
+    jit.load64(slotOfButterfly(token, ClassToken::structuresWithoutNamesSlot), place);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, place));
+    jit.load32(Address(object, JSCell::structureIDOffset()), row);
+    jit.urshift32(TrustedImm32(ClassToken::shiftOfStructureWithoutName), row);
+    jit.add32(field, row);
+    jit.and32(TrustedImm32(ClassToken::numberOfStructuresWithoutNames - 1), row);
+    static_assert(2 * sizeof(EncodedJSValue) == 1 << 4);
+    jit.lshift32(TrustedImm32(4), row);
+    jit.addPtr(row, place);
+    loadStructure(jit, object, layouts);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, layouts, slotOfButterfly(place, 0)));
+    jit.branch32(CCallHelpers::Equal, field, slotOfButterfly(place, 1)).linkTo(answersNo, &jit);
 
     callsOperation.link(&jit);
     return PreludeExit::CallsOperation;
@@ -816,6 +865,7 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         growsStorage.link(&jit);
         const GPRReg newCapacity = place;
         jit.urshift32(TrustedImm32(1), newCapacity);
+        Jump isStoredWithElements = jit.branchTest32(CCallHelpers::Zero, newCapacity);
         jit.move(TrustedImm32(0), oldCapacity);
         Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
         jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
@@ -829,6 +879,18 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
             .scratch = definition,
             .addedValue = value,
         }, cannot);
+        Jump isGrown = jit.jump();
+
+        isStoredWithElements.link(&jit);
+        static_assert(propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
+        cannot.append(jit.branchTest8(CCallHelpers::NonZero, Address(owner, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine)));
+        jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);
+        jit.move(storage, place);
+        jit.subPtr(owner, place);
+        cannot.append(jit.branch64(CCallHelpers::NotEqual, place, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
+        jit.store64(value, Address(storage, offsetInButterfly(firstOutOfLineOffset) * static_cast<int32_t>(sizeof(EncodedJSValue))));
+        jit.store32(structureAfter, Address(owner, JSCell::structureIDOffset()));
+        isGrown.link(&jit);
         isDefined.link(&jit);
     };
     auto withTokenAndField = [&](JumpList& callsOperation, const ScopedLambda<void(JumpList& cannot)>& emit) {

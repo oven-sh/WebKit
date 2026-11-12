@@ -25,6 +25,7 @@
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTWalk.h"
+#include "AOTWalkNumberGuesses.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/BitVector.h>
@@ -122,7 +123,9 @@ private:
     bool isWhereWalkBegan(BlockID block) const { return m_code.at(block).isEntry; }
     bool isDefinedBefore(ValueID definition, BlockID, uint32_t place) const;
     bool isDefinedWhereBlockMayThrow(ValueID definition, BlockID) const;
+    EdgeID findAnswerEdge(ValueID test, bool testResult, BlockID from) const;
     bool isAnsweredAt(ValueID test, bool testResult, BlockID, uint32_t place);
+    bool everyPathPassesOneOf(std::span<const ValueID> tests, std::span<const ValueID> cells, BlockID) const;
     bool areSameCells(ValueID, ValueID) const;
     bool mustAlias(ValueID, ValueID) const;
     ValueID findArrayWriteBetween(ValueID ground, ValueID access) const;
@@ -147,10 +150,12 @@ private:
     void verifyRecords();
     void verifyNarrowedValues();
     void verifyUsersOfHolesReadAsNaN();
+    void verifyUsersOfReadNumbers();
     bool treatsUndefinedAsNaN(ValueID, const Operation& user, uint32_t operandIndex) const;
     bool isOperatorSpecializationCheck(ValueID test) const;
     void verifyTestsPassed();
     void verifyLengthsHeldAgainst();
+    void verifyDataViewAccesses();
     void verifyKindsOfStorageNamed();
     void verifyFrameCells();
     void verifyWordsInPlaceOfCaptures();
@@ -164,6 +169,10 @@ private:
     void verifyNarrowed(BlockID, ValueID, const Operation&);
     void verifyPlainFieldWrites(BlockID, ValueID, const Operation&);
     void verifyPointerIntoStorage(BlockID, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner);
+    void verifySharedObjects(BlockID, ValueID, const Operation&);
+    void verifyStorageOfObject(BlockID, ValueID access, const Operation&);
+    ValueID mirroredLengthOf(ValueID access) const;
+    bool isMirroredBySameBufferView(const Operation& read, ValueID view) const;
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
     void verifyMakerOfClosure(BlockID, ValueID, const Operation&);
@@ -262,8 +271,10 @@ String CodeVerifier::run()
         &CodeVerifier::verifyRecords,
         &CodeVerifier::verifyNarrowedValues,
         &CodeVerifier::verifyUsersOfHolesReadAsNaN,
+        &CodeVerifier::verifyUsersOfReadNumbers,
         &CodeVerifier::verifyTestsPassed,
         &CodeVerifier::verifyLengthsHeldAgainst,
+        &CodeVerifier::verifyDataViewAccesses,
         &CodeVerifier::verifyKindsOfStorageNamed,
         &CodeVerifier::verifyFrameCells,
         &CodeVerifier::verifyWordsInPlaceOfCaptures,
@@ -286,8 +297,10 @@ String CodeVerifier::runOnSweptCode()
         &CodeVerifier::verifyRecords,
         &CodeVerifier::verifyNarrowedValues,
         &CodeVerifier::verifyUsersOfHolesReadAsNaN,
+        &CodeVerifier::verifyUsersOfReadNumbers,
         &CodeVerifier::verifyTestsPassed,
         &CodeVerifier::verifyLengthsHeldAgainst,
+        &CodeVerifier::verifyDataViewAccesses,
         &CodeVerifier::verifyKindsOfStorageNamed,
         &CodeVerifier::verifyFrameCells,
         &CodeVerifier::verifyWordsInPlaceOfCaptures,
@@ -838,6 +851,24 @@ EffectTraits CodeVerifier::boundOnTraitsOf(const Operation& operation)
     return bound;
 }
 
+void CodeVerifier::verifySharedObjects(BlockID block, ValueID id, const Operation& operation)
+{
+    static constexpr OpcodeSet lookups { Opcode::ElemGet, Opcode::ElemHas, Opcode::GetKeyedPropertyAddress };
+    static constexpr OptionSet<OperandUse> leakingUses { OperandUse::Retains, OperandUse::Returns, OperandUse::WritesContents };
+    Opcode opcode = operation.opcode;
+    for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands(); ++operandIndex) {
+        ValueID operand = operation.operand(operandIndex);
+        if (!operand || m_code.isConstant(operand))
+            continue;
+        ValueID cell = underlyingCell(operand);
+        if (!cell || m_code.isConstant(cell) || m_code.at(cell).opcode != Opcode::Data || m_code.at(cell).encoding() != DataEncoding::SharedObject)
+            continue;
+        bool isNamed = operandIndex < numberOfNamedOperandsOf(opcode);
+        if (!isNamed || (!lookups.contains(opcode) && !cellPreservingOpcodes.contains(opcode) && operandInfoOf(opcode, operandIndex).uses.containsAny(leakingUses)))
+            return fail(block, id, "an operation stores into a literal that is made once, or hands it on"_s, operand);
+    }
+}
+
 void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, const Operation& operation)
 {
     Opcode opcode = operation.opcode;
@@ -847,6 +878,8 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
         return fail(block, id, "the operation has no emitter"_s);
 
     collectOperands(block, place, id, operation, opcode == Opcode::Narrowed ? operation.testOperand() : ValueID());
+    if (m_code.opcodesOfValues().contains(Opcode::Data))
+        verifySharedObjects(block, id, operation);
     if (hasFailed())
         return;
     if (opcode == Opcode::ResultAt) {
@@ -909,6 +942,25 @@ void CodeVerifier::verifyOperation(BlockID block, uint32_t place, ValueID id, co
         verifyPointerIntoStorage(block, id, operation.storageOperand(), Opcode::GetArrayStorage, operation.arrayOperand());
     else if (OperandPosition::vector(opcode))
         verifyPointerIntoStorage(block, id, operation.vectorOperand(), Opcode::GetTypedArrayVector, operation.viewOperand());
+    else if (opcode == Opcode::GetElementInStorageOrAbsent && operation.elementsOperand())
+        verifyStorageOfObject(block, id, operation);
+}
+
+void CodeVerifier::verifyStorageOfObject(BlockID block, ValueID id, const Operation& operation)
+{
+    verifyPointerIntoStorage(block, id, operation.elementsOperand(), Opcode::GetObjectStorage, operation.objectOperand());
+    std::array<std::pair<ValueID, bool>, 2> lengths { { { operation.numberOfValuesOperand(), false }, { operation.numberOfDoublesOperand(), true } } };
+    for (auto [length, countsDoubles] : lengths) {
+        if (hasFailed())
+            return;
+        if (!length || m_code.isConstant(length) || m_code.at(length).opcode != Opcode::GetObjectStorageLength)
+            return fail(block, id, "a read takes for the length of its object's storage what no read of such a length gives"_s, length);
+        const Operation& read = m_code.at(length);
+        if (read.countsDoubles() != countsDoubles || !areSameCells(read.objectOperand(), operation.objectOperand()))
+            return fail(block, id, "a read takes the length of another object's storage, or of another kind"_s, length);
+        if (ValueID writer = findArrayWriteBetween(length, id))
+            return fail(block, id, "the storage of an object is written between the read of its length and a read under that length"_s, writer);
+    }
 }
 
 void CodeVerifier::verifyPlainFieldWrites(BlockID block, ValueID id, const Operation& operation)
@@ -1003,19 +1055,50 @@ void CodeVerifier::collectUnderlyingCells(ValueID name, Vector<ValueID, 4>& cell
     std::ranges::sort(cells, { }, &ValueID::index);
 }
 
+ValueID CodeVerifier::mirroredLengthOf(ValueID access) const
+{
+    const Operation& operation = m_code.at(access);
+    ValueID length;
+    if (operation.opcode == Opcode::GetTypedArrayElement || operation.opcode == Opcode::PutTypedArrayElement) {
+        const PassedTest* passed = operation.isInsideView() ? m_code.testsPassedFor(access) : nullptr;
+        if (passed && passed->groundsOfPosition())
+            length = passed->groundsOfPosition()->length;
+        else if (!operation.isInsideView() && !operation.lengthOperands().empty())
+            length = operation.lengthOperands()[0];
+    }
+    return length && m_code.at(length).opcode == Opcode::GetMirroredLength ? length : ValueID();
+}
+
 void CodeVerifier::verifyPointerIntoStorage(BlockID block, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner)
 {
     if (!pointer)
         return;
     const Operation& read = m_code.at(pointer);
+    if (readOfPointer == Opcode::GetTypedArrayVector && read.opcode == Opcode::GetMirroredVector) {
+        if (!mirroredLengthOf(access))
+            return fail(block, access, "an access through a mirrored vector does not rest on the mirrored length"_s, pointer);
+        readOfPointer = Opcode::GetMirroredVector;
+    }
     if (read.opcode != readOfPointer)
         return fail(block, access, "an access takes for a pointer into storage what no read of such a pointer gives"_s, pointer);
-    if (!areSameCells(read.operand(*baseOf(readOfPointer)), owner))
+    bool isOfBuffer = readOfPointer == Opcode::GetMirroredVector && m_code.at(mirroredLengthOf(access)).isOfBuffer() && isMirroredBySameBufferView(read, owner);
+    if (!isOfBuffer && !areSameCells(read.operand(*baseOf(readOfPointer)), owner))
         return fail(block, access, "an access takes a pointer into the storage of another object"_s, pointer);
-    if (readOfPointer != Opcode::GetArrayStorage)
+    if (readOfPointer != Opcode::GetArrayStorage && readOfPointer != Opcode::GetObjectStorage)
         return;
     if (ValueID writer = findArrayWriteBetween(pointer, access))
         fail(block, access, "the storage of an array is written between the read of a pointer into it and an access through that pointer"_s, writer);
+}
+
+bool CodeVerifier::isMirroredBySameBufferView(const Operation& read, ValueID view) const
+{
+    const Operation& held = m_code.at(underlyingCell(view));
+    if (!m_plan || held.opcode != Opcode::GetModuleVariable)
+        return false;
+    const PlannedVariable& planned = m_plan->variable(held.variable());
+    if (read.opcode == Opcode::GetMirroredVector)
+        return planned.firstViewOfBuffer && read.variable() == planned.firstViewOfBuffer;
+    return read.opcode == Opcode::GetMirroredLength && read.isOfBuffer() && planned.firstViewOfElementSize && read.variable() == planned.firstViewOfElementSize;
 }
 
 bool CodeVerifier::areSameCells(ValueID one, ValueID other) const
@@ -1042,7 +1125,14 @@ bool CodeVerifier::mustAlias(ValueID one, ValueID other) const
 
 ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) const
 {
-    static constexpr AbstractHeapSet heapsOfLists { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths };
+    static constexpr AbstractHeapSet heapsOfLengths { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths };
+    const bool isPointer = m_code.at(ground).opcode == Opcode::GetArrayStorage;
+    static_assert(!declaredBoundOf(Opcode::ConvertToDoubleStorage).writes.contains(AbstractHeap::ArrayLengths));
+    const bool isLength = m_code.at(ground).opcode == Opcode::GetArrayLength;
+    static constexpr OpcodeSet readsOfObjects { Opcode::GetObjectStorage, Opcode::GetObjectStorageLength };
+    AbstractHeapSet heapsOfLists = isPointer ? heapsOfLengths | AbstractHeapSet { AbstractHeap::ArrayCapacity } : heapsOfLengths;
+    if (readsOfObjects.contains(m_code.at(ground).opcode))
+        heapsOfLists = heapsOfLists | AbstractHeapSet { AbstractHeap::ArrayCapacity, AbstractHeap::ShapeWords };
     BlockID home = m_code.blockOf(ground);
     BlockID block = m_code.blockOf(access);
     ValueID list = m_code.at(access).operand(0);
@@ -1057,7 +1147,7 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
         for (ValueID each : operationsOf(in)) {
             uint32_t place = m_places[each.index()];
             const Operation& operation = m_code.at(each);
-            if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
+            if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || (isPointer && operation.opcode == Opcode::ShortenArray) || (isLength && operation.opcode == Opcode::ConvertToDoubleStorage) || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
                 continue;
             if (writesLists(operation) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
                 return each;
@@ -1070,12 +1160,17 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
         return found;
     BitVector seen(m_code.numberOfBlocks());
     Vector<BlockID, 16> waiting;
+    bool searchedBehindAccess = false;
     seen.set(block.index());
     waiting.append(block);
     while (!waiting.isEmpty()) {
         BlockID to = waiting.takeLast();
         for (EdgeID edge = m_code.at(to).firstEdgeIn(); edge; edge = m_code.at(edge).nextInto()) {
             BlockID from = m_code.at(edge).from;
+            if (from == block && from != home && !std::exchange(searchedBehindAccess, true)) {
+                if (ValueID found = findIn(block, m_places[access.index()], UINT32_MAX))
+                    return found;
+            }
             if (seen.set(from.index()))
                 continue;
             if (ValueID found = findIn(from, from == home ? m_places[ground.index()] : 0, UINT32_MAX))
@@ -1328,6 +1423,12 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
             return fail(block, id, "the value of a Narrowed is no other result of the operation that its test reads a result of"_s, test);
         return;
     }
+    if (narrowed.narrowsWithCounter()) {
+        ValueID counter = m_code.at(test).numberOfOperands() == 2 ? valueBeforeConversions(m_code.at(test).operand(narrowed.operandIndex() & 1)) : ValueID();
+        if (!counter || m_code.at(counter).opcode != Opcode::Parameter || m_code.at(value).opcode != Opcode::Parameter || m_code.blockOf(counter) != m_code.blockOf(value))
+            return fail(block, id, "a Narrowed is bounded beside what is no counter of its head"_s, test);
+        return;
+    }
     ValueID tested = valueThatTestSpeaksOf(m_code, test, narrowed.operandIndex());
     if (tested)
         tested = valueBeforeConversions(tested);
@@ -1335,7 +1436,10 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
         tested = holderOfSlotRead(tested);
     if (tested && narrowed.narrowsTermOfOperand()) {
         const Operation& sum = m_code.at(tested);
-        bool isTerm = sum.opcode == Opcode::Add && !narrowed.narrowsHolderOfOperand() && (valueBeforeConversions(sum.operand(0)) == value) != (valueBeforeConversions(sum.operand(1)) == value);
+        auto isOperand = [&](uint32_t place) {
+            return valueBeforeConversions(sum.operand(place)) == value;
+        };
+        bool isTerm = !narrowed.narrowsHolderOfOperand() && ((sum.opcode == Opcode::Add && isOperand(0) != isOperand(1)) || (sum.opcode == Opcode::Mul && isOperand(0) && isOperand(1)));
         if (!isTerm)
             return fail(block, id, "the value of a Narrowed is no term of the sum that its test has looked at"_s, test);
         return;
@@ -1434,6 +1538,101 @@ bool CodeVerifier::treatsUndefinedAsNaN(ValueID id, const Operation& user, uint3
     return user.opcode == Opcode::PutTypedArrayElement && user.valueOperand() == user.operand(operandIndex) && user.viewOperand() != user.operand(operandIndex) && user.positionOperand() != user.operand(operandIndex) && !isBigInt(user.typedArrayType());
 }
 
+void CodeVerifier::verifyUsersOfReadNumbers()
+{
+    Vector<ValueID, 8> numbers;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& read = m_code.at(id);
+            if (read.opcode == Opcode::NumberOrNaN && !m_types.at(m_code.at(read.valueOperand()).type).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent))
+                numbers.append(id);
+        }
+    }
+    if (numbers.isEmpty())
+        return;
+    Vector<ValueID, 8> tests;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& test = m_code.at(id);
+            if (test.opcode == Opcode::StrictEq && test.leftOperand() == test.rightOperand() && numbers.contains(test.leftOperand()))
+                tests.append(id);
+        }
+    }
+    Vector<std::pair<ValueID, ValueID>, 8> computed;
+    auto numberBehind = [&](ValueID value) -> ValueID {
+        bool isNumberByType = false;
+        for (; valuePreservingOpcodes.contains(m_code.at(value).opcode); value = m_code.at(value).operand(0))
+            isNumberByType |= m_code.at(value).opcode == Opcode::Narrowed && !m_types.at(m_code.at(value).type).mayBeNaN();
+        if (numbers.contains(value))
+            return isNumberByType ? ValueID() : value;
+        size_t place = computed.findIf([&](const auto& entry) { return entry.first == value; });
+        return place == notFound ? ValueID() : computed[place].second;
+    };
+    auto isTakenUntested = [&](ValueID operand, BlockID block, uint32_t place, EdgeID edge) -> bool {
+        ValueID number = operand ? numberBehind(operand) : ValueID();
+        if (!number)
+            return false;
+        Vector<ValueID, 2> testsOfNumber;
+        for (ValueID test : tests) {
+            if (m_code.at(test).leftOperand() != number)
+                continue;
+            if ((edge && findAnswerEdge(test, true, block) == edge) || isAnsweredAt(test, true, block, place))
+                return false;
+            testsOfNumber.append(test);
+        }
+        ValueID tested[] { number };
+        return !everyPathPassesOneOf(testsOfNumber.span(), tested, block);
+    };
+    auto isExempt = [&](const Operation& user) {
+        bool isTestWithoutNaN = user.opcode == Opcode::TypeTest && !m_types.at(user.testedType()).mayBeNaN();
+        return valuePreservingOpcodes.contains(user.opcode) || user.opcode == Opcode::StrictEq || user.opcode == Opcode::CheckProof || isTestWithoutNaN;
+    };
+    for (bool hasChanged = true; hasChanged;) {
+        hasChanged = false;
+        for (BlockID block : m_reachedBlocks) {
+            for (ValueID id : operationsOf(block)) {
+                const Operation& user = m_code.at(id);
+                if (!user.traits().isPure() || isExempt(user) || computed.containsIf([&](const auto& entry) { return entry.first == id; }))
+                    continue;
+                for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                    if (!isTakenUntested(user.operand(operandIndex), block, m_places[id.index()], { }))
+                        continue;
+                    computed.append({ id, numberBehind(user.operand(operandIndex)) });
+                    hasChanged = true;
+                    break;
+                }
+            }
+        }
+    }
+    constexpr ASCIILiteral rule = "a number is read out of a value and taken where it may be NaN for what is no number"_s;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& user = m_code.at(id);
+            if (user.traits().isPure() || isExempt(user))
+                continue;
+            for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                if (isTakenUntested(user.operand(operandIndex), block, m_places[id.index()], { }))
+                    return fail(block, id, rule, user.operand(operandIndex));
+            }
+        }
+        uint32_t placeOfEnd = operationsOf(block).size() + 1;
+        const Terminator& end = m_code.at(block).terminator;
+        for (uint32_t operandIndex = 0; operandIndex < end.numberOfOperands(); ++operandIndex) {
+            if (isTakenUntested(end.operand(operandIndex), block, placeOfEnd, { }))
+                return fail(block, end.operand(operandIndex), rule);
+        }
+        ValueID passedOn;
+        m_code.forEachEdgeOf(block, [&](EdgeID id, const Edge& edge) {
+            for (ValueID argument : edge.arguments()) {
+                if (isTakenUntested(argument, block, placeOfEnd, id))
+                    passedOn = argument;
+            }
+        });
+        if (passedOn)
+            return fail(block, passedOn, rule);
+    }
+}
+
 void CodeVerifier::verifyUsersOfHolesReadAsNaN()
 {
     bool someHoleIsReadAsNaN = false;
@@ -1454,7 +1653,7 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
         if (user)
             return reckons(user);
         uint32_t usesLeft = index.useCount(name);
-        if (usesLeft < 2 || usesLeft >= BodyIndex::maxCountedUses)
+        if (usesLeft == 1 || usesLeft >= BodyIndex::maxCountedUses)
             return false;
         for (BodyValue operation : index.block(index.blockOf(name)).values()) {
             uint32_t usesHere = 0;
@@ -1469,6 +1668,74 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
         }
         return !usesLeft;
     };
+    auto programOnlyTakesBits = [](const BodyIndex& index, ValueID written) {
+        static constexpr size_t maxNames = 16;
+        Vector<ValueID, maxNames> names { written };
+        bool onlyTakesBits = true;
+        for (size_t place = 0; place < names.size() && onlyTakesBits; ++place) {
+            ValueID name = names[place];
+            uint32_t usesLeft = index.useCount(name);
+            auto follow = [&](ValueID next) {
+                if (next && names.contains(next))
+                    return;
+                onlyTakesBits &= next && names.size() < maxNames;
+                if (onlyTakesBits)
+                    names.append(next);
+            };
+            auto visitOperation = [&](const BodyValue& user) {
+                user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                    if (operand != name)
+                        return;
+                    --usesLeft;
+                    if (!allBitwiseOperators.contains(user.opcode()))
+                        follow(opcodesThatStateTypes.contains(user.opcode()) && !operandIndex ? user.id() : ValueID());
+                });
+            };
+            auto visitEnd = [&](BlockID from) {
+                BodyBlock block = index.block(from);
+                block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
+                    onlyTakesBits &= operand != name;
+                });
+                block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+                    BodyBlock join = index.block(target.block());
+                    for (uint32_t position = 0; position < target.arguments().size(); ++position) {
+                        if (target.arguments()[position] != name)
+                            continue;
+                        --usesLeft;
+                        follow(position < join.numberOfParameters() && !index.isLoopHead(join.id()) ? join.parameter(position) : ValueID());
+                    }
+                });
+                index.forEachEdgeResult(from, [&](const BodyEdgeResult& result) {
+                    onlyTakesBits &= result.subject != name;
+                });
+                onlyTakesBits &= block.subject() != name;
+            };
+            if (std::optional<BodyUser> user = index.onlyUser(name)) {
+                if (user->kind == BodyUseKind::Operand)
+                    visitOperation(index.value(user->value));
+                else
+                    visitEnd(user->block);
+            } else if (usesLeft && usesLeft < BodyIndex::maxCountedUses) {
+                BodyBlock block = index.block(index.blockOf(name));
+                for (BodyValue user : block.values())
+                    visitOperation(user);
+                visitEnd(block.id());
+            }
+            onlyTakesBits &= !usesLeft;
+        }
+        return onlyTakesBits;
+    };
+    auto callerComputesWith = [&](const BodyIndex& index, ValueID written, ValueID read) {
+        for (ValueID user = index.onlyUsingValue(written); user && opcodesThatStateTypes.contains(index.opcodeOf(user)); user = index.onlyUsingValue(written))
+            written = user;
+        BodyTerminator end = index.block(index.blockOf(written)).terminator();
+        if (!index.hasOneUse(written) || end.kind() != TerminatorKind::Return || end.operand(0) != written)
+            return false;
+        return std::ranges::any_of(m_code.readsAnsweredByHolesReadAsNaN(), [&](const Code::InputOfHoleReadAsNaN& taken) {
+            const BodyIndex* caller = taken.read == read ? m_facts->bodies().find(taken.function) : nullptr;
+            return caller && !caller->isParameter(taken.written) && caller->opcodeOf(taken.written) == Opcode::Call && programOnlyReckonsWith(*caller, taken.written);
+        });
+    };
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             if (m_code.at(id).opcode != Opcode::GetArrayElement || !m_code.at(id).readsHoleAsNaN() || !m_facts)
@@ -1478,11 +1745,11 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
             const BodyIndex* index = found != noted.end() && found->read == id && found->written ? m_facts->bodies().find(found->function) : nullptr;
             if (!index)
                 return fail(block, id, "a hole is read as NaN and the read names no value of the program"_s);
-            if (!programOnlyReckonsWith(*index, found->written))
+            if (!programOnlyReckonsWith(*index, found->written) && !programOnlyTakesBits(*index, found->written) && !isTruncatedInLoop(*index, found->written) && !callerComputesWith(*index, found->written, id))
                 return fail(block, id, "a hole is read as NaN and the program does more with the value than arithmetic"_s);
             for (const Code::InputOfHoleReadAsNaN& answered : m_code.readsAnsweredByHolesReadAsNaN()) {
                 const BodyIndex* indexOfAnswered = answered.read == id ? m_facts->bodies().find(answered.function) : nullptr;
-                if (answered.read == id && (!indexOfAnswered || !programOnlyReckonsWith(*indexOfAnswered, answered.written)))
+                if (answered.read == id && (!indexOfAnswered || (!programOnlyReckonsWith(*indexOfAnswered, answered.written) && !programOnlyTakesBits(*indexOfAnswered, answered.written) && !callerComputesWith(*indexOfAnswered, answered.written, id))))
                     return fail(block, id, "a hole is read as NaN and the program does more with the value than arithmetic"_s);
             }
         }
@@ -1701,7 +1968,8 @@ auto CodeVerifier::listsMadeUnder(ValueID name, BlockID block) -> std::optional<
 bool CodeVerifier::isLengthOfView(ValueID length, ValueID view, BlockID block)
 {
     length = underlyingCell(length);
-    if (m_code.at(length).opcode == Opcode::GetTypedArrayLength && areSameCells(m_code.at(length).viewOperand(), view))
+    bool isReadOffView = m_code.at(length).opcode == Opcode::GetTypedArrayLength || m_code.at(length).opcode == Opcode::GetMirroredLength;
+    if (isReadOffView && (areSameCells(m_code.at(length).viewOperand(), view) || isMirroredBySameBufferView(m_code.at(length), view)))
         return true;
     if (m_code.at(length).opcode == Opcode::GetArrayLength && areSameCells(m_code.at(length).arrayOperand(), view))
         return true;
@@ -1716,19 +1984,43 @@ bool CodeVerifier::isLengthOfView(ValueID length, ValueID view, BlockID block)
     return given == counted || (m_code.at(given).opcode == Opcode::Integer && m_code.at(counted).opcode == Opcode::Integer && m_code.at(given).integer() == m_code.at(counted).integer());
 }
 
+EdgeID CodeVerifier::findAnswerEdge(ValueID test, bool testResult, BlockID from) const
+{
+    const Terminator& end = m_code.at(from).terminator;
+    ValueID condition = end.isConditionalBranch() ? end.conditionOperand() : ValueID();
+    bool saysYes = testResult;
+    for (; condition && condition != test && (m_code.at(condition).opcode == Opcode::LogicalNot || m_code.at(condition).opcode == Opcode::ToBoolean || conversionsOfForm.contains(m_code.at(condition).opcode)); condition = m_code.at(condition).operand(0))
+        saysYes ^= m_code.at(condition).opcode == Opcode::LogicalNot;
+    return condition == test ? (saysYes ? end.taken() : end.notTaken()) : EdgeID();
+}
+
+bool CodeVerifier::everyPathPassesOneOf(std::span<const ValueID> tests, std::span<const ValueID> cells, BlockID block) const
+{
+    if (tests.size() < 2 || std::ranges::any_of(cells, [&](ValueID cell) { return m_code.isConstant(cell); }))
+        return false;
+    BitVector reached(m_code.numberOfBlocks());
+    Vector<BlockID, 16> waiting;
+    auto reach = [&](BlockID to) {
+        if (!reached.set(to.index()))
+            waiting.append(to);
+    };
+    for (ValueID cell : cells)
+        reach(m_code.blockOf(cell));
+    while (!waiting.isEmpty()) {
+        BlockID from = waiting.takeLast();
+        m_code.forEachEdgeOf(from, [&](EdgeID id, const Edge& edge) {
+            if (std::ranges::none_of(tests, [&](ValueID test) { return findAnswerEdge(test, true, from) == id; }))
+                reach(edge.to);
+        });
+    }
+    return !reached.get(block.index());
+}
+
 bool CodeVerifier::isAnsweredAt(ValueID test, bool testResult, BlockID block, uint32_t place)
 {
     if (m_code.isConstant(test) || m_code.blockOf(test) == block || !isDefinedBefore(test, block, place))
         return false;
-    auto edgeThatPasses = [&](BlockID from) -> EdgeID {
-        const Terminator& end = m_code.at(from).terminator;
-        ValueID condition = end.isConditionalBranch() ? end.conditionOperand() : ValueID();
-        bool saysYes = testResult;
-        for (; condition && condition != test && (m_code.at(condition).opcode == Opcode::LogicalNot || m_code.at(condition).opcode == Opcode::ToBoolean || conversionsOfForm.contains(m_code.at(condition).opcode)); condition = m_code.at(condition).operand(0))
-            saysYes ^= m_code.at(condition).opcode == Opcode::LogicalNot;
-        return condition == test ? (saysYes ? end.taken() : end.notTaken()) : EdgeID();
-    };
-    if (EdgeID passes = edgeThatPasses(m_code.blockOf(test))) {
+    if (EdgeID passes = findAnswerEdge(test, testResult, m_code.blockOf(test))) {
         BlockID behind = m_code.at(passes).to;
         if (m_code.at(behind).firstEdgeIn() == passes && !m_code.at(passes).nextInto() && isReached(behind) && dominates(headOf(behind), headOf(block)))
             return true;
@@ -1741,7 +2033,7 @@ bool CodeVerifier::isAnsweredAt(ValueID test, bool testResult, BlockID block, ui
     waiting.append(m_code.blockOf(test));
     while (!waiting.isEmpty()) {
         BlockID from = waiting.takeLast();
-        EdgeID passes = edgeThatPasses(from);
+        EdgeID passes = findAnswerEdge(test, testResult, from);
         m_code.forEachEdgeOf(from, [&](EdgeID id, const Edge& edge) {
             if (id != passes && !reached.set(edge.to.index()))
                 waiting.append(edge.to);
@@ -1764,7 +2056,7 @@ void CodeVerifier::verifyTestsPassed()
             if (isRawStore && !access.isInBounds() && m_program.at(FunctionID(m_code.inlineFrames()[access.inlineFrame].callee)).role != FunctionRole::Library)
                 return fail(block, id, "a raw store into a list that the library has not written names no ground"_s);
             bool isBoundedByCapacity = access.opcode == Opcode::ExtendArrayLength;
-            bool isMarkedInBounds = isBoundedByCapacity || (isOfView ? access.isInsideView() : arrayAccessOpcodes.contains(access.opcode) && access.isInBounds());
+            bool isMarkedInBounds = isBoundedByCapacity || access.opcode == Opcode::ShortenArray || (isOfView ? access.isInsideView() : arrayAccessOpcodes.contains(access.opcode) && access.isInBounds());
             bool isPresent = access.opcode == Opcode::GetArrayElement && access.isPresent();
             if (!isMarkedInBounds && !isPresent)
                 continue;
@@ -1786,11 +2078,17 @@ void CodeVerifier::verifyTestsPassed()
                     return ValueID();
                 return findArrayWriteBetween(named, id);
             };
+            bool someGroundIsSwept = false;
+            for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.stepNonNegativeCheck, grounds.limitWithinLengthCheck, grounds.loweredCounter, grounds.loweredFrom, grounds.steppedBeside.stepped, grounds.steppedBeside.counter, grounds.steppedBeside.steppedStart, grounds.steppedBeside.counterStart })
+                someGroundIsSwept |= named && m_code.isSwept() && !m_code.isConstant(named) && !m_code.isNeeded(named);
+            static constexpr OpcodeSet presenceTests { Opcode::IsElementPresent, Opcode::HasContiguousIndex };
             ValueID writtenBy = findArrayWriteAfter(grounds.length);
             for (const PassedTest::Side& side : passed->sides()) {
                 const Operation& test = m_code.at(side.test);
                 if (!writtenBy)
                     writtenBy = findArrayWriteAfter(side.test);
+                if (!presenceTests.contains(test.opcode) && !someGroundIsSwept)
+                    continue;
                 ValueID position = valueBeforeConversions(underlyingCell(access.operand(1)));
                 for (uint32_t operand = 0; !writtenBy && operand < test.numberOfOperands(); ++operand) {
                     if (test.operand(operand) && valueBeforeConversions(underlyingCell(test.operand(operand))) != position)
@@ -1814,7 +2112,8 @@ void CodeVerifier::verifyTestsPassed()
             std::optional<ListsMade> made = isPresent && !wasFoundPresent && !isBoundedByLiteral ? listsMadeUnder(access.operand(0), block) : std::nullopt;
             if (isPresent && !wasFoundPresent && !isBoundedByLiteral && (!made || !made->areWhole))
                 return fail(block, id, "an element is taken to be present and no test of its presence has passed"_s);
-            if (!isMarkedInBounds || wasFoundPresent)
+            bool wasFoundAtOrAfter = !isOfView && !isBoundedByCapacity && testsProveElementAtOrAfter(m_code, m_types, access.operand(0), access.operand(1), passed->sides());
+            if (!isMarkedInBounds || wasFoundPresent || wasFoundAtOrAfter)
                 continue;
             if (!grounds.length)
                 return fail(block, id, "an access is taken to lie inside its view and names no length"_s);
@@ -1830,12 +2129,9 @@ void CodeVerifier::verifyTestsPassed()
                     return fail(block, id, "a store is taken to lie below a length that no raise in front of it has made"_s, grounds.length);
                 continue;
             }
-            bool someGroundIsSwept = false;
-            for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.stepNonNegativeCheck, grounds.limitWithinLengthCheck })
-                someGroundIsSwept |= named && m_code.isSwept() && !m_code.isConstant(named) && !m_code.isNeeded(named);
             if (someGroundIsSwept)
                 continue;
-            for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.limitWithinLengthCheck }) {
+            for (ValueID named : { grounds.length, grounds.isBelow, grounds.isFromZeroUp, grounds.counter, grounds.start, grounds.limitWithinLengthCheck, grounds.loweredCounter, grounds.loweredFrom, grounds.steppedBeside.stepped, grounds.steppedBeside.counter, grounds.steppedBeside.steppedStart, grounds.steppedBeside.counterStart }) {
                 if (named && !isDefinedBefore(named, block, place))
                     return fail(block, id, "a ground of an access inside its view is not made in front of it on every path"_s, named);
             }
@@ -1843,6 +2139,20 @@ void CodeVerifier::verifyTestsPassed()
             bool isRoomOfList = isBoundedByCapacity && counted.opcode == Opcode::GetArrayCapacity && mustAlias(counted.arrayOperand(), access.operand(0));
             if (!isRoomOfList && !isLengthOfView(grounds.length, access.operand(0), block))
                 return fail(block, id, "the length that an access counts on is not that of its view"_s, grounds.length);
+            if (grounds.counterTest) {
+                BlockID header = m_code.blockOf(underlyingCell(grounds.counter));
+                for (ValueID named : { grounds.start, grounds.loweredFrom }) {
+                    if (!named || !isDefinedBefore(named, header, 0))
+                        return fail(block, id, "a limit of a second counter is not computed before its loop"_s, named);
+                }
+                if (!isAnsweredAt(grounds.counterTest, grounds.counterTestResult, block, place) || !secondCounterStaysWithin(m_code, m_types, grounds))
+                    return fail(block, id, "the second counter that an access counts on may lie outside its limits"_s, grounds.counter);
+                if (!groundsShowPositionInside(m_code, m_types, access.operand(1), grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
+                    return isAnsweredAt(relation, testResult, block, place);
+                })))
+                    return fail(block, id, "the grounds of an access do not show that it lies inside its view"_s, grounds.isBelow);
+                continue;
+            }
             bool stepHolds = !grounds.counter || !grounds.stepNonNegativeCheck || isAnsweredAt(grounds.stepNonNegativeCheck, true, m_code.blockOf(grounds.counter), 0);
             if (grounds.counter && !(stepHolds && everyWayStepsUpFrom(m_code, m_types, grounds.counter, grounds.start, grounds.stepNonNegativeCheck, scopedLambda<bool(ValueID)>([&](ValueID each) {
                 return isDefinedBefore(grounds.start, m_code.blockOf(each), m_places[each.index()]);
@@ -1850,6 +2160,14 @@ void CodeVerifier::verifyTestsPassed()
                 return isReached(each);
             }))))
                 return fail(block, id, "the counter that an access counts on may lie below its start"_s, grounds.counter);
+            if (grounds.loweredCounter && !everyWayStepsDownFrom(m_code, m_types, grounds.loweredCounter, grounds.loweredFrom, scopedLambda<bool(ValueID)>([&](ValueID each) {
+                return isDefinedBefore(grounds.loweredFrom, m_code.blockOf(each), m_places[each.index()]);
+            }), scopedLambda<bool(BlockID)>([&](BlockID each) {
+                return isReached(each);
+            })))
+                return fail(block, id, "the counter that an access counts on may lie above its start"_s, grounds.loweredCounter);
+            if (grounds.steppedBeside.stepped && !isSteppedWithCounter(m_code, m_types, grounds.steppedBeside))
+                return fail(block, id, "the key that an access counts on is not stepped beside its counter"_s, grounds.steppedBeside.stepped);
             if (!groundsShowPositionInside(m_code, m_types, access.operand(1), grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
                 return isAnsweredAt(relation, testResult, block, place);
             })))
@@ -1870,6 +2188,49 @@ void CodeVerifier::verifyLengthsHeldAgainst()
                 if (!isLengthOfView(length, access.operand(0), block))
                     return fail(block, id, "the length that an access is held against is not that of its holder"_s, length);
             }
+        }
+    }
+}
+
+void CodeVerifier::verifyDataViewAccesses()
+{
+    static constexpr OpcodeSet accesses { Opcode::GetDataViewElement, Opcode::PutDataViewElement };
+    if (!m_code.opcodesOfValues().intersects(accesses))
+        return;
+    Vector<ValueID, 8> tests;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            if (m_code.at(id).opcode == Opcode::IsBelowLength)
+                tests.append(id);
+        }
+    }
+    auto rootOf = [&](ValueID number) -> const Operation& {
+        for (;;) {
+            ValueID behind = valueBeforeConversions(underlyingCell(number));
+            if (behind == number)
+                return m_code.at(number);
+            number = behind;
+        }
+    };
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            const Operation& access = m_code.at(id);
+            if (!accesses.contains(access.opcode))
+                continue;
+            uint32_t place = m_places[id.index()];
+            const Operation& position = rootOf(access.positionOperand());
+            bool isInside = std::ranges::any_of(tests, [&](ValueID testID) {
+                const Operation& test = m_code.at(testID);
+                const Operation& limit = m_code.at(valueBeforeConversions(test.lengthOperand()));
+                if (limit.opcode != Opcode::GetDataViewLimit || !areSameCells(limit.viewOperand(), access.viewOperand()) || !isAnsweredAt(testID, true, block, place))
+                    return false;
+                const Operation& tested = rootOf(test.positionOperand());
+                if (position.opcode == Opcode::Integer)
+                    return tested.opcode == Opcode::Integer && position.integer() >= 0 && tested.integer() + elementSize(limit.typedArrayType()) >= position.integer() + elementSize(access.typedArrayType());
+                return &tested == &position && elementSize(limit.typedArrayType()) >= elementSize(access.typedArrayType());
+            });
+            if (!isInside)
+                return fail(block, id, "an access is taken to lie inside its view and no test of its offset has passed"_s);
         }
     }
 }
@@ -1921,10 +2282,20 @@ void CodeVerifier::verifyKindsOfStorageNamed()
             auto showsKind = [&](const Operation& test) {
                 return isNumericStore ? test.isWritable() && isNumericStorage(test.arrayStorage()) : test.arrayStorage() == named;
             };
-            bool hasPassedTest = std::ranges::any_of(*tests, [&](ValueID test) {
-                return showsKind(m_code.at(test)) && areSameCells(m_code.at(test).arrayOperand(), access.operand(0)) && isAnsweredAt(test, true, block, m_places[id.index()]);
+            Vector<ValueID, 8> testsOfList;
+            for (ValueID test : *tests) {
+                if (showsKind(m_code.at(test)) && areSameCells(m_code.at(test).arrayOperand(), access.operand(0)))
+                    testsOfList.append(test);
+            }
+            bool hasPassedTest = std::ranges::any_of(testsOfList, [&](ValueID test) {
+                return isAnsweredAt(test, true, block, m_places[id.index()]);
             });
-            if (!hasPassedTest)
+            bool everyCellHasPassed = !hasPassedTest && cells.size() > 1 && std::ranges::all_of(cells, [&](ValueID cell) {
+                return std::ranges::any_of(*tests, [&](ValueID test) {
+                    return showsKind(m_code.at(test)) && areSameCells(m_code.at(test).arrayOperand(), cell) && isAnsweredAt(test, true, block, m_places[id.index()]);
+                });
+            });
+            if (!hasPassedTest && !everyCellHasPassed && !everyPathPassesOneOf(testsOfList, cells, block))
                 return fail(block, id, isNumericStore ? "a store names a numeric kind of storage that no passed test of its array shows"_s : "an access names a kind of storage that a maker of its list is not surely born with, and no test of that kind has passed"_s, isNumericStore ? access.arrayOperand() : bornOtherwise, InternalErrorKind::InvalidGuard);
         }
     }

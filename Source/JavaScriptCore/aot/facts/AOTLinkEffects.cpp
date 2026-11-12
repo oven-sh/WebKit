@@ -191,6 +191,7 @@ private:
 
     bool isSummarized(uint32_t function) const { return m_isSummarized.get(function); }
     bool isAnyCodeByItsOwnText(FunctionID, const ThinSummary&) const;
+    bool isEnteredByNobody(FunctionID) const;
     bool keepsDefaults(FunctionID, const ThinSummary&, OptionSet<SummaryTrait>) const;
     uint32_t nodeOfLostFunctions() const { return m_numberOfFunctions; }
     uint32_t nodeOfSharedCall(uint32_t shared) const { return m_numberOfFunctions + 1 + shared; }
@@ -221,6 +222,7 @@ private:
     void lookInLayout(LayoutID, bool hasOwnFields, PropertyKeyID, MethodKind wanted, bool callsWhatIsFound, CodeFound&) const;
     void findCodeBehindLookup(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, bool callsWhatIsFound, CodeFound&);
     Effects effectsOfLookupItself(SummaryAccess::Kind, PropertyKeyID) const;
+    bool thenLookupCannotThrow(const LinkType& subject, PropertyKeyID) const;
 
     std::span<const BuiltinID> builtinsEnteredBy(FunctionID, const ThinSummary& summary LIFETIME_BOUND, uint32_t call) const LIFETIME_BOUND;
     template<typename Functor> bool forEachRowOf(BuiltinID, const SummaryCall&, const Functor&) const;
@@ -251,7 +253,7 @@ private:
     struct GivenArgumentsInKnownEffects {
         uint32_t parametersTakenAsExpected { 0 };
         uint32_t parametersCalled { 0 };
-        Vector<uint32_t> parametersThatBringObjectsAlone;
+        Vector<uint32_t> soleObjectParameters;
     };
 
     static EffectsOfComponentInKnownEffects knownEffectsOfUnknownCode() { return { Effects::unknownCode(), LocationMasks::top(), objectsOfAnyLayout }; }
@@ -272,8 +274,8 @@ private:
     void takeKnownEffectsOfFunction(FunctionID callee, WayInKnownEffects, EffectsOfComponentInKnownEffects& into) const;
     bool mergeKnownEffectsOfCodeOutside(const CodeEntered&, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&) const;
     void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&, GivenArgumentsInKnownEffects&) const;
-    std::optional<uint16_t> primitivesExpectedOfParameter(FunctionID, uint32_t entryParameter) const;
-    uint32_t parametersExpectedPrimitiveThatBringObjectsAlone(FunctionID, const ThinSummary&, uint32_t node, GivenArgumentsInKnownEffects&) const;
+    std::optional<uint16_t> expectedParameterPrimitives(FunctionID, uint32_t entryParameter) const;
+    uint32_t findSoleObjectParameters(FunctionID, const ThinSummary&, uint32_t node, GivenArgumentsInKnownEffects&) const;
     bool readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID) const;
     void addEffectsOfAccessItself(FunctionID, const ThinSummary&, const SummaryAccess&, const LinkType& subject, PropertyKeyID, WayInKnownEffects, EffectsOfComponentInKnownEffects&);
     static std::optional<uint32_t> entryParameterAt(const ThinSummary&, uint32_t node);
@@ -399,7 +401,9 @@ CalleeSummarizerForLinkEffects::CalleeSummarizerForLinkEffects(const LinkFlow& f
 
 bool CalleeSummarizerForLinkEffects::keepsDefaults(FunctionID id, const ThinSummary& summary, OptionSet<SummaryTrait> traits) const
 {
-    return m_program.at(id).isCoroutine() || summary.traits.containsAny(traits);
+    const Function& function = m_program.at(id);
+    bool isAsyncFunction = function.has(FunctionFlags::IsAsync) && !function.has(FunctionFlags::IsGenerator) && !function.isModuleBody();
+    return (function.isCoroutine() && !isAsyncFunction) || summary.traits.containsAny(traits);
 }
 
 bool CalleeSummarizerForLinkEffects::isAnyCodeByItsOwnText(FunctionID id, const ThinSummary& summary) const
@@ -843,6 +847,23 @@ void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subjec
         found.mayBeUnseen = true;
 }
 
+bool CalleeSummarizerForLinkEffects::thenLookupCannotThrow(const LinkType& subject, PropertyKeyID key) const
+{
+    bool asksForThen = key && std::ranges::any_of(m_program.builtins().keysReadBy(Protocol::Thenable), [&](BuiltinName name) { return m_program.keyOf(name) == key; });
+    if (!asksForThen || subject.primitives || subject.hasUnknownObjects || subject.holdsLostBuiltins || subject.builtin || subject.classes != LinkType::Classes::None || subject.functions != LinkType::Functions::None)
+        return false;
+    auto holdsPlainObjects = [&](LayoutID layout) {
+        LayoutKind kind = m_program.at(layout).kind;
+        bool isPlain = kind == LayoutKind::Instance || kind == LayoutKind::Record;
+        for (LayoutID current = layout; current && isPlain; current = m_program.at(current).base)
+            isPlain = !builtinClassOfInstances(m_program.at(current));
+        return isPlain;
+    };
+    if (subject.objects == LinkType::Objects::Layout)
+        return holdsPlainObjects(subject.layout);
+    return subject.objects == LinkType::Objects::Set && std::ranges::all_of(m_flow.layoutsOfSet(subject), holdsPlainObjects);
+}
+
 Effects CalleeSummarizerForLinkEffects::effectsOfLookupItself(SummaryAccess::Kind kind, PropertyKeyID key) const
 {
     constexpr Effects ofDefinition = declaredBoundOf(NamedEffectSet::DefinesProperty);
@@ -1153,6 +1174,8 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
     case SummaryCall::Callee::Name:
         if (!typeAt(id, call.receiver).isNever()) {
             effects = effectsOfLookupItself(SummaryAccess::Kind::Read, call.key);
+            if (call.isMadeByProtocol && thenLookupCannotThrow(typeAt(id, call.receiver), call.key))
+                effects.mayThrow = ThrowEffect(false);
             if (call.key && readMayMakeClosureOfField(typeAt(id, call.receiver), call.key))
                 effects.writes.add(m_program, MemoryLocation::objectField(call.key));
         }
@@ -1304,6 +1327,34 @@ void CalleeSummarizerForLinkEffects::prefetchSummaryOfMemberBehindInRanks(size_t
     prefetchSummariesBehind(m_membersInRanks.span(), position);
 }
 
+static bool removeOptionalReferrersInCycles(LinkTables& tables, const ComponentsOfLinkEffects& cycles)
+{
+    Vector<uint64_t> removed = std::exchange(tables.optionalReferrers, { });
+    removed.removeAllMatching([&](uint64_t row) {
+        return cycles.componentOfFunction[LinkTables::functionOfRow(row).index()] != cycles.componentOfFunction[LinkTables::referrerOfRow(row).index()];
+    });
+    if (removed.isEmpty())
+        return false;
+    size_t next = 0;
+    uint32_t numberKept = 0;
+    uint32_t place = 0;
+    for (uint32_t node = 0; node + 1 < tables.firstReferrer.size(); ++node) {
+        uint32_t end = tables.firstReferrer[node + 1];
+        tables.firstReferrer[node] = numberKept;
+        for (; place < end; ++place) {
+            FunctionID referrer = tables.referrers[place];
+            if (next < removed.size() && removed[next] == LinkTables::rowOfReferrer(FunctionID(node), referrer))
+                ++next;
+            else
+                tables.referrers[numberKept++] = referrer;
+        }
+    }
+    tables.firstReferrer.last() = numberKept;
+    tables.referrers.shrink(numberKept);
+    RELEASE_ASSERT(next == removed.size());
+    return true;
+}
+
 void rankReferrersFirst(LinkTables& tables)
 {
     uint32_t numberOfFunctions = static_cast<uint32_t>(tables.functions.size());
@@ -1311,9 +1362,14 @@ void rankReferrersFirst(LinkTables& tables)
     if (tables.referrers.isEmpty() || tables.firstReferrer.size() != numberOfNodes + 1)
         return;
 
-    ComponentsOfLinkEffects cycles = findComponentsForLinkEffects(numberOfNodes, [&](uint32_t node) {
-        return tables.referrersOf(FunctionID(node));
-    });
+    auto findCycles = [&] {
+        return findComponentsForLinkEffects(numberOfNodes, [&](uint32_t node) {
+            return tables.referrersOf(FunctionID(node));
+        });
+    };
+    ComponentsOfLinkEffects cycles = findCycles();
+    if (removeOptionalReferrersInCycles(tables, cycles))
+        cycles = findCycles();
 
     constexpr uint32_t none = UINT32_MAX;
     Vector<uint32_t>& rankOfCycle = tables.rankOfCycle;

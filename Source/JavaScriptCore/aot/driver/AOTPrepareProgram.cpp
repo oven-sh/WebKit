@@ -12,6 +12,7 @@
 #include "AOTBodyVerifier.h"
 #include "AOTBuildContext.h"
 #include "AOTCurrentWork.h"
+#include "AOTFactFaults.h"
 #include "AOTFacts.h"
 #include "AOTHeaps.h"
 #include "AOTIRProgram.h"
@@ -20,6 +21,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramVerifier.h"
+#include "AOTRegExpSummary.h"
 #include "AOTStackTestPlan.h"
 #include "AOTStubCatalog.h"
 #include "AOTTailCallPlan.h"
@@ -67,10 +69,10 @@ static bool computeFactsOfPreparedProgram(PreparedProgram& prepared, BuildContex
     return !build.diagnostics().hasErrors();
 }
 
-static BitVector findDictionariesOfPreparedProgram(const Typed::Program& program, const Typed::Facts& facts)
+static Typed::BitVector findDictionariesOfPreparedProgram(const Typed::Program& program, const Typed::Facts& facts)
 {
     unsigned numberOfLayouts = program.layouts.size();
-    BitVector layoutsOfDictionaries(numberOfLayouts);
+    Typed::BitVector layoutsOfDictionaries(numberOfLayouts);
     for (unsigned index = 0; index < numberOfLayouts; ++index)
         layoutsOfDictionaries.quickSet(index, facts.has(Typed::LayoutID(index), Typed::LayoutFact::ObjectsAreDictionaries));
     return layoutsOfDictionaries;
@@ -88,6 +90,7 @@ static void leaveOutCallsOfBuiltinsThatProgramCannotHold(StubOptions& options, c
         return held.get(builtins.canonicalID(builtin).index());
     };
     options.callsNumberOrStringByValue = isHeld(Builtins::Number) || isHeld(Builtins::String);
+    options.callsArrayByValue = isHeld(Builtins::Array);
     options.boxedCallsOutOfReach.setAll();
     for (const auto& call : builtins.boxedCalls()) {
         if (isHeld(call.builtin))
@@ -103,11 +106,13 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     Typed::Program& program = *prepared.program;
     const Typed::Facts& facts = *prepared.facts;
 
-    BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
+    Typed::BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
     Typed::noteLayoutsOfDictionaries(program, layoutsOfDictionaries);
 
     program.types.keepAddressesOfTypes();
     prepared.plan = Typed::planProgram(program, facts, build);
+    if (prepared.plan && build.options().misstatedFact) [[unlikely]]
+        Typed::misstatePlan(program, facts, *prepared.plan, build);
     program.types.freeze();
     times.didFinish("plan"_s);
     if (!prepared.plan || build.diagnostics().hasErrors())
@@ -132,6 +137,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     if (build.diagnostics().hasErrors())
         return false;
 
+    build.regExpSummaries().setRecordsMatches(facts.mayReadLegacyRegExpStatics());
     runLanes(build.parallelLoops(), {
         [&] {
             StubOptions options = StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckWalkAtRunTime));

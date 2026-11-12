@@ -376,6 +376,12 @@ export const resultFieldHoldingOnlyWhatIsStored = (field: string | number): Plac
   field,
   holdsOnlyWhatIsStored: true,
 });
+export const resultElementField = (field: string | number): PlaceSpec => ({
+  place: "ResultField",
+  field,
+  holdsOnlyWhatIsStored: true,
+  isOfElements: true,
+});
 export const ownValues = (name: OperandName): PlaceSpec => ({ place: "OwnValues", operand: name });
 export const nativeCell = (cell: string): PlaceSpec => ({ place: "NativeCell", cell });
 export const everyOwnValue = null;

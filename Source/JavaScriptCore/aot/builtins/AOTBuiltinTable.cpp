@@ -17,6 +17,7 @@
 #include "IdentifierInlines.h"
 #include "VM.h"
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <utility>
 #include <wtf/ASCIICType.h>
@@ -423,7 +424,8 @@ bool BuiltinTable::ignoresArgument(BuiltinID builtin, unsigned argument) const
         return !row.isUndeclared() && !parameterFor(row, BuiltinOperand::argument(argument));
     });
     return noRowSpeaksOfIt && std::ranges::all_of(overloadSummariesOf(canonical), [](const BuiltinOverloadSummary& overload) {
-        return overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
+        bool isCodeInLineAlone = overload.kind == BuiltinImplementationKind::Inline && !overload.hasOtherwise;
+        return isCodeInLineAlone || overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
     });
 }
 
@@ -1152,6 +1154,36 @@ static ID findToken(BuiltinTexts tokens, StringView token)
     return { };
 }
 
+static bool mayEndWithNameOfBuiltin(StringView token, std::span<const char> name)
+{
+    unsigned end = token.length();
+    while (end && token[end - 1] == '_')
+        --end;
+    for (size_t place = name.size(); place--;) {
+        if (!isASCIIAlphanumeric(name[place]))
+            return true;
+        if (!end || toASCIILower(token[end - 1]) != toASCIILower(static_cast<char16_t>(name[place])))
+            return false;
+        --end;
+    }
+    return true;
+}
+
+BuiltinID BuiltinTable::makerOfFilledArrays() const
+{
+    static constexpr auto token = "CompilerHelpersFilledArray"_s;
+    if (this != &singleton()) {
+        BuiltinID found = singleton().makerOfFilledArrays();
+        return contains(found) && token == tokenOf(found) ? found : builtinFromToken(token);
+    }
+    static BuiltinID maker;
+    static std::once_flag once;
+    std::call_once(once, [&] {
+        maker = builtinFromToken(token);
+    });
+    return maker;
+}
+
 BuiltinID BuiltinTable::builtinFromToken(StringView token) const
 {
     if (token.isEmpty())
@@ -1163,6 +1195,16 @@ BuiltinID BuiltinTable::builtinFromToken(StringView token) const
         for (unsigned i = 0; i < m_data.builtins.size(); ++i) {
             if (token == tokenOf(BuiltinID(i)))
                 return BuiltinID(i);
+        }
+        return { };
+    }
+    static constexpr unsigned fewestLookupsWithMap = 16;
+    static std::atomic<unsigned> numberOfLookups;
+    if (numberOfLookups.fetch_add(1, std::memory_order_relaxed) < fewestLookupsWithMap) {
+        for (unsigned i = 0; i < m_data.builtins.size(); ++i) {
+            BuiltinID id(i);
+            if (mayEndWithNameOfBuiltin(token, charactersOf(m_data.names, at(id).name)) && token == tokenOf(id))
+                return id;
         }
         return { };
     }

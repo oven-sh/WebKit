@@ -67,6 +67,7 @@ bool nameCastInFrontOfAwaitTakenInCopy(Walker&, const BodyValue& cast);
 
 bool buildStepWrittenByHand(Walker&, const BodyValue& call);
 bool buildAwaitedStepWrittenByHand(Walker&, const BodyValue& call);
+Reference buildAwaitOfResolution(Walker&, Reference resolution, std::span<const Reference> held, Origin);
 bool buildPromiseAllOfElements(Walker&, const BodyValue& call);
 
 } } } // namespace JSC::AOT::Typed

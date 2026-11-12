@@ -12,6 +12,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
+#include "AOTLimits.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentation.h"
 #include "AOTTypeArena.h"
@@ -23,8 +24,6 @@
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static constexpr int64_t maxLengthOfStringMadeFlat = 1024;
 
 std::optional<Condition> StringBuiltinEmitter::isUndefinedArgument(const InlineCall& call, unsigned index)
 {
@@ -90,8 +89,10 @@ void StringBuiltinEmitter::generateIndexedRead(const InlineCall& call, IndexedRe
     Representation representation = resultRepresentationOf(call);
 
     CharacterView view = strings().viewOfString(context, stringOperand(call.receiver()));
-    Number position = numberArgument(call, 0).value_or(number(0));
-    Integer index = strings().indexInString(position, view.length, read == IndexedRead::At);
+    ValueID positionOperand = call.argumentOrNull(0);
+    Type positionType = positionOperand ? typeOf(positionOperand) : undefinedType;
+    bool readsFirst = positionType.hasOnlyPrimitives(Primitive::Undefined) || (positionType.isInteger() && positionType.integers.isSubsetOf({ 0, 0 }));
+    Integer index = readsFirst ? integer(0) : strings().indexInString(numberArgument(call, 0).value_or(number(0)), view.length, read == IndexedRead::At);
 
     auto integerTypeUpTo = [&](int64_t maximum) {
         return types().at(types().integer({ 0, maximum }));
@@ -108,7 +109,7 @@ void StringBuiltinEmitter::generateIndexedRead(const InlineCall& call, IndexedRe
         LBasicBlock inside = newBlock();
         LBasicBlock outside = newBlock();
         OperandJoin join(m_out, representation);
-        Condition isInside = greaterThanOrEqual(index, integer(0));
+        Condition isInside = readsFirst ? isNotZero(view.length) : greaterThanOrEqual(index, integer(0));
         ScopeFork fork = m_out.forkScope();
         m_out.branch(isInside.value(), normalEdge(inside), unlikelyEdge(outside));
         m_out.appendToArm(inside, fork);
@@ -161,8 +162,19 @@ void StringBuiltinEmitter::generateRange(const InlineCall& call, StringRangeMeth
 
 void StringBuiltinEmitter::generateStringFromCharCode(const InlineCall& call)
 {
-    Word32 word = emitter<ConversionEmitter>().toInt32(*numberArgument(call, 0));
-    finish(call, strings().stringFromCodeUnit(call.context(), bitAnd(word, word32(UINT16_MAX))));
+    auto codeUnitOf = [&](unsigned index) -> Word32 {
+        Word32 word = emitter<ConversionEmitter>().toInt32(*numberArgument(call, index));
+        return bitAnd(word, word32(UINT16_MAX));
+    };
+    unsigned count = call.numberOfArguments();
+    if (count == 1) {
+        finish(call, strings().stringFromCodeUnit(call.context(), codeUnitOf(0)));
+        return;
+    }
+    Integer codeUnits = zeroExtended(codeUnitOf(0));
+    for (unsigned index = 1; index < count; ++index)
+        codeUnits = bitOr(codeUnits, Integer(m_out.shl(zeroExtended(codeUnitOf(index)).value(), static_cast<int32_t>(index * Limits::bitsOfCodeUnit))));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringOfCodeUnits, { codeUnits, word32(static_cast<int32_t>(count)) }));
 }
 
 void StringBuiltinEmitter::generateStringFromCodePoint(const InlineCall& call)
@@ -225,7 +237,7 @@ void StringBuiltinEmitter::generateStringRepeat(const InlineCall& call)
     CellPointer string = stringOperand(call.receiver());
     Integer count = countArgument(call, 0);
     Integer length = zeroExtended(strings().lengthOf(string));
-    Integer limit = integer(maxLengthOfStringMadeFlat);
+    Integer limit = integer(Limits::maxLengthOfStringMadeFlat);
     branchUnless(belowOrEqual(count, limit), miss);
     branchUnless(belowOrEqual(mul(count, length), limit), miss);
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringRepeat, { string, low32(count) }));
@@ -233,11 +245,11 @@ void StringBuiltinEmitter::generateStringRepeat(const InlineCall& call)
 
 void StringBuiltinEmitter::generatePad(const InlineCall& call, bool isAtStart)
 {
-    LBasicBlock miss = missBlockOf(call);
     CellPointer string = stringOperand(call.receiver());
     Integer length = countArgument(call, 0);
     Integer stringLength = zeroExtended(strings().lengthOf(string));
-    branchUnless(belowOrEqual(length, integer(maxLengthOfStringMadeFlat)), miss);
+    if (call.canMiss())
+        branchUnless(belowOrEqual(length, integer(Limits::maxLengthOfStringMadeFlat)), missBlockOf(call));
     finish(call, selectByBranch<CellPointer>(lessThanOrEqual(length, stringLength), [&] {
         return string;
     }, [&] {

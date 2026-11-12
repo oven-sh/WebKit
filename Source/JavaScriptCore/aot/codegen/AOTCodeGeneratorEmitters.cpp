@@ -93,8 +93,10 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
     , m_checksEffects(AOT::hasFlag(inputs.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
     , m_understatedEffects(inputs.build.options().understatedEffects)
 {
+    if (FunctionID id = code().function())
+        m_isTrapOfProxy = facts().linked().function(id).isTrapOfProxy;
     if (proc.traits().notesRangesOfOrigins) {
-        records.formsSaid.beginNoting();
+        records.formsSaid.beginNoting(m_isTrapOfProxy);
         m_out.noteFormsIn(records.formsSaid);
     }
     m_notesForms = records.formsSaid.areNoted();

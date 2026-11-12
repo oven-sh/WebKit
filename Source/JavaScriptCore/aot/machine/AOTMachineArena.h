@@ -37,7 +37,7 @@ public:
 
     static constexpr size_t bytesTakenBy(size_t bytes) { return (bytes + alignmentOfCursor - 1) & ~(alignmentOfCursor - 1); }
 
-    void* allocate(size_t bytes, size_t alignment = alignof(std::max_align_t))
+    ALWAYS_INLINE void* allocate(size_t bytes, size_t alignment = alignof(std::max_align_t))
     {
         ASSERT(hasOneBitSet(alignment));
         uintptr_t start = alignment <= alignmentOfCursor ? m_cursor : (m_cursor + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
@@ -241,7 +241,7 @@ public:
     std::span<T> span() { return { m_data, m_size }; }
     std::span<const T> span() const { return { m_data, m_size }; }
 
-    void append(Arena& arena, const T& value)
+    ALWAYS_INLINE void append(Arena& arena, const T& value)
     {
         if (m_size == m_capacity) [[unlikely]]
             reserve(arena, m_capacity ? m_capacity * 2 : smallestCapacity);
@@ -254,7 +254,7 @@ public:
         new (NotNull, m_data + m_size++) T(value);
     }
 
-    T* appendUninitialized(Arena& arena)
+    ALWAYS_INLINE T* appendUninitialized(Arena& arena)
     {
         if (m_size == m_capacity) [[unlikely]]
             reserve(arena, m_capacity ? m_capacity * 2 : smallestCapacity);

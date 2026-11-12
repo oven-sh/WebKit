@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
+#include "AOTCallEmitter.h"
 #include "AOTClosureWord.h"
 #include "AOTCodeRecords.h"
 #include "AOTConvention.h"
@@ -70,7 +71,7 @@ void countEntryIntoCode(Machine::PatchOperation* count)
 
 void EntryEmitter::generateEntries()
 {
-    generateEntry(0, conventions().locationsOf(m_program, m_unit));
+    generateEntry(0, emitter<CallEmitter>().ownLocations());
 }
 
 void EntryEmitter::generateEntry(uint16_t entry, const ArgumentLocations& locations)
@@ -192,8 +193,10 @@ static bool passesStackWordsInTailCall(const CodeGenerationInputs& inputs, const
         return false;
     for (uint32_t index = 0; index < code.numberOfBlocks(); ++index) {
         BlockID block(index);
+        if (!code.isReached(block))
+            continue;
         const Terminator& terminator = code.at(block).terminator;
-        if (terminator.kind == TerminatorKind::ReturnCall && code.isReached(block) && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
+        if (terminator.kind == TerminatorKind::ReturnCall && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
             return true;
     }
     return false;

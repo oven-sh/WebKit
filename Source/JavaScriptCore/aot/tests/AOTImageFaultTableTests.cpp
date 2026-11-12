@@ -53,9 +53,7 @@ static void appendFault(CodeSketch& sketch, Vector<ExpectedFault>& faults, uint3
         return;
     }
     uint32_t offset = sketch.pinned(word);
-    FaultingAccess access { offset, { }, { } };
-    access.throwSite.appendVector(words);
-    sites.faultingAccesses.append(WTF::move(access));
+    sites.faultingAccesses.append(FaultingAccess { offset, { }, ThrowSiteWords(words.span()) });
     faults.append(ExpectedFault { offset, FaultSiteKind::NullCheck, hasFrame, WTF::move(words) });
 }
 

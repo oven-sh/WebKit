@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -18,6 +20,8 @@ enum class IterationHelper : uint8_t {
     StepIterator,
     WayToStepIterator,
     StepIteratorInWay,
+    WayToStepMatches,
+    StepMatchesInWay,
     CloseIterator,
     CloseIteratorAfterThrow,
     AppendGenerator,
@@ -39,6 +43,10 @@ inline BuiltinID builtinOfIterationHelper(IterationHelper helper)
         return Builtins::CompilerHelpersWayToStepIterator;
     case IterationHelper::StepIteratorInWay:
         return Builtins::CompilerHelpersStepIteratorInWay;
+    case IterationHelper::WayToStepMatches:
+        return Builtins::CompilerHelpersWayToStepMatches;
+    case IterationHelper::StepMatchesInWay:
+        return Builtins::CompilerHelpersStepMatchesInWay;
     case IterationHelper::CloseIterator:
         return Builtins::CompilerHelpersCloseIterator;
     case IterationHelper::CloseIteratorAfterThrow:
@@ -53,6 +61,12 @@ inline BuiltinID builtinOfIterationHelper(IterationHelper helper)
         return Builtins::CompilerHelpersNextOfStepsOverText;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline bool isWrittenMatchAll(const Program& program, const BodyValue& written)
+{
+    BuiltinName matchAll = written && written.opcode() == Opcode::Call ? program.builtins().nameOf(byteCast<uint8_t>(("matchAll"_s).span())) : BuiltinName();
+    return matchAll && written.calleeKey() == program.keyOf(matchAll);
 }
 
 inline FunctionID functionOfIterationHelper(const Program& program, IterationHelper helper)

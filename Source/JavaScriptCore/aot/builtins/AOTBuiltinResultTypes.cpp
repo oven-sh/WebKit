@@ -66,6 +66,8 @@ Range computeResultRange(BuiltinRangeRule rule, std::span<const Range> operandRa
         return first;
     case BuiltinRangeRule::Sign:
         return { signOfRangeBound(first.minimum), signOfRangeBound(first.maximum) };
+    case BuiltinRangeRule::CodeUnitOrNaN:
+        return { 0, UINT16_MAX };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -74,6 +76,7 @@ static TypeID typeOfRuledResultOfFractions(TypeArena& types, const BuiltinOverlo
 {
     switch (overload.result.rangeRule) {
     case BuiltinRangeRule::None:
+    case BuiltinRangeRule::CodeUnitOrNaN:
         break;
     case BuiltinRangeRule::MinimumOfArguments:
     case BuiltinRangeRule::MaximumOfArguments:
@@ -95,6 +98,8 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
     const BuiltinResult& result = overload.result;
     if (result.rangeRule == BuiltinRangeRule::None || !result.rangeOperand)
         return declared;
+    if (result.rangeRule == BuiltinRangeRule::CodeUnitOrNaN)
+        return context.types.intersectionOf(context.types.withPrimitives(context.types.integer({ 0, UINT16_MAX }), Primitive::WholeNumber), declared);
     if (result.rangeRule == BuiltinRangeRule::IntegerPart)
         declared = context.types.intersectionOf(TypeArena::fromPrimitives(Primitive::NumberWithoutFraction), declared);
 
@@ -116,6 +121,10 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
         return TypeTable::never;
 
     TypeArena& types = context.types;
+    static constexpr uint16_t convertsToNumberWithoutFraction = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::NumberWithoutFraction;
+    bool returnsOperand = result.rangeRule == BuiltinRangeRule::MinimumOfArguments || result.rangeRule == BuiltinRangeRule::MaximumOfArguments || result.rangeRule == BuiltinRangeRule::AbsoluteValue;
+    if (returnsOperand && std::ranges::all_of(rangeOperands, [&](TypeID operand) { return operand && types.at(operand).hasOnlyPrimitives(convertsToNumberWithoutFraction); }))
+        declared = types.intersectionOf(TypeArena::fromPrimitives(Primitive::NumberWithoutFraction), declared);
     Vector<Range, 8> ranges;
     bool takesOnlyIntegers = true;
     for (TypeID operand : rangeOperands) {
@@ -252,11 +261,49 @@ Vector<BuiltinOverloadID, 4> overloadsReachedBy(const BuiltinTypeContext& contex
     return reached;
 }
 
+static TypeID computeResultOfReachableOverloads(const BuiltinTypeContext&, BuiltinID, BuiltinCallMode, const BuiltinOperandTypes&);
+
 TypeID resultTypeOfReachableOverloads(const BuiltinTypeContext& context, BuiltinID builtin, BuiltinCallMode mode, const BuiltinOperandTypes& passed)
 {
     if (hasNeverAmongBuiltinOperands(passed))
         return TypeTable::never;
 
+    static constexpr uint8_t question = static_cast<uint8_t>(AnswerKeptInArena::ResultOfBuiltinCall);
+    static constexpr uint32_t mostOperandsOfKey = 15;
+    static constexpr uint32_t bitOfReceiver = 1u << 24;
+    static constexpr uint32_t bitOfKey = 1u << 29;
+    TypeArena& types = context.types;
+    size_t numberOfArguments = passed.arguments.size();
+    if (types.keeps() != ArenaKeeps::UntilReset || !types.table().isFrozen() || !passed.aspectsOfReceiver.isEmpty() || !passed.aspectsOfArguments.isEmpty() || numberOfArguments > mostOperandsOfKey || passed.arguments.contains(TypeID()))
+        return computeResultOfReachableOverloads(context, builtin, mode, passed);
+
+    static_assert(sizeof(builtin) == 2);
+    uint32_t list = bitOfKey | static_cast<uint32_t>(builtin.index()) | static_cast<uint32_t>(mode) << 16 | static_cast<uint32_t>(context.level) << 18 | static_cast<uint32_t>(numberOfArguments) << 20;
+    TypeID last;
+    if (passed.receiver) {
+        list |= bitOfReceiver;
+        last = passed.receiver;
+    }
+    for (TypeID argument : passed.arguments) {
+        if (last)
+            list = types.numberOfOperandList(list, last);
+        last = argument;
+    }
+    uint32_t lastWord = last ? last.bits() : 0;
+    if (std::optional<uint32_t> known = types.rememberedAnswer(question, list, lastWord))
+        return TypeID::fromBits(*known);
+    bool asksPositions = false;
+    BuiltinTypeContext noting { context.program, types, context.positions, context.level, &asksPositions };
+    TypeID result = computeResultOfReachableOverloads(noting, builtin, mode, passed);
+    if (!asksPositions)
+        types.rememberAnswer(question, list, lastWord, result.bits());
+    else if (context.asksPositions)
+        *context.asksPositions = true;
+    return result;
+}
+
+static TypeID computeResultOfReachableOverloads(const BuiltinTypeContext& context, BuiltinID builtin, BuiltinCallMode mode, const BuiltinOperandTypes& passed)
+{
     TypeArena& types = context.types;
     const BuiltinTable& table = context.program.builtins();
     std::optional<BuiltinDispatchTarget> root = table.dispatchOf(table.canonicalID(builtin), mode);

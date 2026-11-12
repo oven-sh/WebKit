@@ -1,6 +1,6 @@
 # namespace N { export function f() { return 1 } export const late = 2 }  function replace() { (N as any).f = g }  function use() { return N.f() }
 # The name `f` is bound to the function for good. The property of the object is not: what it holds is what the stores bring. And the object is in the variable before its block has stored anything:
-# the scan follows the allocation as it follows a record's, so neither field counts as filled by the construction.
+# nobody sees it there until other code may run, so what is stored right behind it counts as filled, and what is stored behind a call does not.
 # RUN: link fields layouts variables mechanisms=all
 # CHECK: field L0.0 "f"
 # CHECK-NOT: proven=f1
@@ -8,9 +8,9 @@
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: variable g0 proven=undefined|L0
 # RUN(FILLED): link fields mechanisms=all
-# FILLED-NOT: field L0.{{*}} filled
+# FILLED: field L0.0 "f" {{*}} filled
+# FILLED-NOT: field L0.1 "late" {{*}} filled
 # RUN(SCAN): summary f0
-# SCAN: leaves-empty L0.0 "f"
 # SCAN: leaves-empty L0.1 "late"
 
 layout L0 kind=Container name="N" module=m0 fields=[{key="f" declared={type=f1 flags=[IsFromCompiler, IsExpected]}}, {key="late" declared={type=2}}] ownFieldCount=2
@@ -24,10 +24,10 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     PutModuleVariable v1 variable=g0
     v3 = NewClosure function=f1
     PropSet v1, v3 key="f"
-    v5 = Integer integer=2
-    PropSet v1, v5 key="late"
-    v7 = NewClosure function=f3
-    v8 = Call v7, - calleeName="replace"
+    v5 = NewClosure function=f3
+    v6 = Call v5, - calleeName="replace"
+    v7 = Integer integer=2
+    PropSet v1, v7 key="late"
     v9 = NewClosure function=f4
     v10 = Call v9, - calleeName="use"
     Return v10

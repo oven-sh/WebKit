@@ -40,7 +40,7 @@ public:
     bool multiline() const { return m_multiline; }
 
     void setInput(JSGlobalObject*, JSString*);
-    JSString* input() LIFETIME_BOUND { return m_cachedResult.input(); }
+    inline JSString* input(JSGlobalObject* owner) LIFETIME_BOUND;
     // Stops a program whose compiled code leaves no record of a match because nothing was found to read one.
     static void willReadLegacyStatics(VM&);
 

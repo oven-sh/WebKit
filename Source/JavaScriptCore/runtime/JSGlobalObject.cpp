@@ -4169,7 +4169,7 @@ FFI::FFIContext& JSGlobalObject::ffiContext()
 {
     if (!m_ffiContext) [[unlikely]] {
         ASSERT(!isCompilationThread());
-        auto context = makeUnique<FFI::FFIContext>(vm());
+        auto context = makeUnique<FFI::FFIContext>(vm(), *this);
         WTF::storeStoreFence();
         m_ffiContext = WTF::move(context);
     }

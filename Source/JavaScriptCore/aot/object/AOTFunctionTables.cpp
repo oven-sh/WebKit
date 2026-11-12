@@ -479,18 +479,23 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     RETURN_IF_EXCEPTION(scope, { });
     if (text)
         return text;
-    if (isProgramFunction && callableKind == CallableKind::Arrow)
-        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
+    JSValue made;
     bool isWrittenWithoutName = callableKind == CallableKind::Arrow || (!isProgramFunction && kindData.hasInferredName);
-    String name = isWrittenWithoutName ? emptyString() : initialNameProperty(function);
-    if (kindData.isConstructor)
-        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s));
-    if (isProgramFunction && callableKind == CallableKind::Method)
-        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "*"_s : ""_s, name, "() { [native code] }"_s));
-    RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
+    if (isProgramFunction && callableKind == CallableKind::Arrow)
+        made = jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s);
+    else if (String name = isWrittenWithoutName ? emptyString() : initialNameProperty(function); kindData.isConstructor)
+        made = jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s);
+    else if (isProgramFunction && callableKind == CallableKind::Method)
+        made = jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "*"_s : ""_s, name, "() { [native code] }"_s);
+    else
+        made = jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isProgramFunction)
+        FunctionTables::of(globalObject->vm()).sourceTexts.set(function, Weak<JSString>(asString(made)));
+    return made;
 }
 
-JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
+JSString* functionStringIfCreated(VM& vm, JSObject* callee)
 {
     FunctionID function = checkedFunctionOf(callee);
     if (functionKindData(function).isInRuntimeModule)
@@ -498,6 +503,14 @@ JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
     const FunctionTables::SourceTextMap& answered = FunctionTables::of(vm).sourceTexts;
     auto found = answered.find(function);
     return found == answered.end() ? nullptr : found->value.get();
+}
+
+JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
+{
+    const ProgramTables& tables = Image::current()->programTables();
+    uint32_t function = checkedFunctionOf(callee).index();
+    bool holdsSource = std::ranges::contains(findFunctionSourceEntries(tables, tables.sourceFunctionOf(function)), function, [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; });
+    return holdsSource ? functionStringIfCreated(vm, callee) : nullptr;
 }
 
 FunctionKind kind(JSObject* callee)

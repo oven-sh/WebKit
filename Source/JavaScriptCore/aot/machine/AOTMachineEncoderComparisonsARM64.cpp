@@ -335,7 +335,8 @@ static Test testOfUnfusedComparison(const Encoder& encoder, const Step& step)
     const Operation* comparison = step.operation;
     const Operation* left = comparison->child(0);
     const Operation* right = comparison->child(1);
-    RELEASE_ASSERT(!encoder.m_liveness.isFused(left) && !encoder.m_liveness.isFused(right));
+    for (const Operation* operand : { left, right })
+        RELEASE_ASSERT(!encoder.m_liveness.isFused(operand) || operand->opcode() == Trunc || namesWord(operand));
 
     LeafCursor leaves(step);
     Location leftLocation = leaves.take();
@@ -410,7 +411,8 @@ void Encoder::encodeSelect(const Step& step)
     ASSERT(step.kind == StepKind::Execute);
     const Operation* select = step.operation;
     ASSERT(select->opcode() == Select);
-    RELEASE_ASSERT(!m_liveness.isFused(select->child(1)) && !m_liveness.isFused(select->child(2)));
+    for (unsigned index : { 1u, 2u })
+        RELEASE_ASSERT(!m_liveness.isFused(select->child(index)) || select->child(index)->opcode() == Trunc || namesWord(select->child(index)));
 
     LeafCursor leaves(step);
     Test test = resolveTest(select, leaves);
@@ -419,14 +421,32 @@ void Encoder::encodeSelect(const Step& step)
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     switch (select->type().kind()) {
+    case Int64: {
+        bool holdsRarely = isEndOfExactIntegers(select->child(1));
+        GPRReg destination = gprOfComparisonOperand(step.destination);
+        GPRReg rare = gprOfComparisonOperand(holdsRarely ? whenNotZero : whenZero);
+        if (test.kind != Test::CompareNumbers && holdsRarely != isEndOfExactIntegers(select->child(2)) && rare != destination && placeOf(m_block).loop != noLoop) {
+            MacroAssembler::RelationalCondition condition = setFlagsForTestOfIntegers(m_jit, test);
+            MacroAssembler::Jump isRare = m_jit.branchOnFlags(holdsRarely ? condition : MacroAssembler::invert(condition));
+            m_jit.move(gprOfComparisonOperand(holdsRarely ? whenZero : whenNotZero), destination);
+            auto moveRareArm = [rare, destination, isRare, done = m_jit.label()](CCallHelpers& jit) {
+                isRare.link(&jit);
+                jit.move(rare, destination);
+                jit.jump().linkTo(done, &jit);
+            };
+            addLatePath(m_arena.create<LatePathOf<decltype(moveRareArm)>>(moveRareArm));
+            return;
+        }
+        [[fallthrough]];
+    }
     case Int32:
-    case Int64:
         selectIntegerOnTest(m_jit, test, gprOfComparisonOperand(whenNotZero), gprOfComparisonOperand(whenZero), gprOfComparisonOperand(step.destination));
         return;
     case Float:
     case Double:
         selectNumberOnTest(m_jit, test, fprOfComparisonOperand(whenNotZero), fprOfComparisonOperand(whenZero), fprOfComparisonOperand(step.destination));
         return;
+    case Vector128:
     case Void:
     case Tuple:
         break;

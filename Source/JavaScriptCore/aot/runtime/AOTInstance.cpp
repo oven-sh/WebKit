@@ -67,6 +67,7 @@
 #include "AddressSpaceBudget.h"
 #include "BooleanConstructor.h"
 #include "DeferGC.h"
+#include "ArrayConstructor.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
 #include "GlobalObjectMethodTable.h"
@@ -78,6 +79,7 @@
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSCustomGetterFunction.h"
+#include "JSArrayBufferView.h"
 #include "JSFunction.h"
 #include "JSModuleLoader.h"
 #include "JSPromise.h"
@@ -87,9 +89,11 @@
 #include "MarkedBlockCage.h"
 #include "NativeExecutable.h"
 #include "NumberConstructor.h"
+#include "ObjectConstructor.h"
 #include "ObjectPrototype.h"
 #include "Opcode.h"
 #include "Options.h"
+#include "ParserArena.h"
 #include "ReservedRangeHeap.h"
 #include "SlotVisitorInlines.h"
 #include "StringConstructor.h"
@@ -113,6 +117,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFConfig.h>
@@ -193,6 +198,9 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     instance.numberTag = JSValue::NumberTag;
     instance.notCellMask = JSValue::NotCellMask;
     instance.singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
+    static_assert(static_cast<unsigned>(TypeofType::Function) + 1 == InstanceHeader::numberOfTypeStrings);
+    for (unsigned type = 0; type < InstanceHeader::numberOfTypeStrings; ++type)
+        instance.typeStrings[type] = vm.smallStrings.typeString(static_cast<TypeofType>(type));
     instance.collation.ducetLevel1Weights = ducetLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
@@ -238,7 +246,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.fieldRecordIndices = image.programTables().fieldRecordIndices().data();
     words.classAccessors = image.programTables().classAccessors().data();
     words.data = image.programTables().data().data();
-    words.closureFunctionKinds = image.programTables().closureFunctionKinds().data();
+    words.closureFactNumbers = image.programTables().closureFactNumbers().data();
+    words.closureFacts = image.programTables().closureFacts().data();
     words.regExps = image.section<ImageRegExp>(ImageSection::RegExps).data();
     words.regExpCode = image.regExpCode().data();
     words.functionSteps = image.functionStarts().steps();
@@ -255,6 +264,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.endOfIdentifiers = image.header().numbers.endOfIdentifiers;
     words.stringWords = std::bit_cast<const uint32_t*>(std::bit_cast<uintptr_t>(image.section<uint32_t>(ImageSection::Strings).data()) - words.endOfIdentifiers * sizeof(uint32_t));
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
+    words.hashesOfPlacedConstants = image.text().hashesOfPlacedConstants().data();
+    words.numberOfPlacedConstants = image.text().hashesOfPlacedConstants().size();
     static_assert(!(InstanceLayout::largestPageSize % InstanceLayout::sizeOfIndexOfSiteAnswers) && !(InstanceLayout::distanceToPageEdge % InstanceLayout::sizeOfIndexOfSiteAnswers));
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
     RELEASE_ASSERT(InstanceLayout::offsetOfIndexOfSiteAnswers(image.programTables().instanceSizes, image.programTables().instanceSizes.numberOfSiteCaches) <= INT32_MAX);
@@ -290,6 +301,7 @@ static void fillNumberWords(Instance& instance)
     static_assert(std::size(WTF::intHashSecrets) == std::extent_v<decltype(NumberWords::hashSecrets)>);
     for (size_t i = 0; i < std::size(WTF::intHashSecrets); ++i)
         words.hashSecrets[i] = WTF::intHashSecrets[i];
+    words.keyMultiplierOfTables = CompactTable::keyMultiplier;
 }
 
 static void fillAllocationSpaces(Instance& instance, VM& vm)
@@ -329,6 +341,7 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = realm->boundFunctionStructure()->id().bits();
     words.hostFunctionStructureID = realm->hostFunctionStructure()->id().bits();
+    words.atomListStructureID = realm->vm().cellButterflyOnlyAtomStringsStructure->id().bits();
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
@@ -341,6 +354,10 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     words.intStrings = vm.numericStrings.intCache();
     words.keysOfPairs = StringKeyCache::noKeysOfPairs();
     words.keyOfPairMask = 0;
+    words.stringsOfImmediates[JSValue::ValueNull] = vm.smallStrings.nullString();
+    words.stringsOfImmediates[JSValue::ValueUndefined] = vm.smallStrings.undefinedString();
+    words.stringsOfImmediates[JSValue::ValueTrue] = vm.smallStrings.trueString();
+    words.stringsOfImmediates[JSValue::ValueFalse] = vm.smallStrings.falseString();
 }
 
 static void fillInstanceClassInfos(Instance& instance)
@@ -517,15 +534,23 @@ Instance* Instance::create(JSGlobalObject* realm)
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("growing flat text"_s, asMutableByteSpan(instance->state->growingFlatText));
     instance->state->caches->addClearedEachCollection("wide character strings"_s, asMutableByteSpan(instance->state->wideCharacterStrings));
+    instance->state->caches->addClearedEachCollection("texts of few strings"_s, asMutableByteSpan(instance->state->textsOfFewStrings));
+    instance->state->caches->addClearedEachCollection("released heap frames"_s, asMutableByteSpan(instance->coroutines.releasedHeapFrames));
+    instance->state->caches->addClearedEachCollection("released array"_s, asMutableByteSpan(instance->arrays.releasedArray));
+    instance->state->caches->addClearedEachCollection("released copy"_s, asMutableByteSpan(instance->arrays.releasedCopy));
+    instance->state->caches->addClearedEachCollection("sort keys"_s, asMutableByteSpan(instance->arrays.sortKeys));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
+    instance->state->caches->addClearedEachCollection("structures around the first shift"_s, asMutableByteSpan(instance->arrays.structuresAroundFirstShift));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     const uint8_t* hasRunSinceClear = &instance->propertyCaches.hasRunSinceClear;
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.hasCachedSlotValues), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("forwarding handlers of proxies"_s, asMutableByteSpan(instance->propertyCaches.forwardingProxyHandlers), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("replaced members"_s, asMutableByteSpan(instance->propertyCaches.replacedMembers));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance);
 
@@ -535,6 +560,9 @@ Instance* Instance::create(JSGlobalObject* realm)
         Locker locker { vmState.instancesLock };
         vmState.instances.append(instance);
         vmState.didChangeInstances();
+        vmState.lendTablesOfLivingInstances();
+        for (Instance* each : vmState.instances)
+            each->propertyCaches.forgetReplacedMembers();
     }
     vmState.propertyCaches->didCreateInstance(*instance);
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
@@ -553,6 +581,23 @@ void VMState::didChangeInstances()
     if (onlyInstance)
         onlyInstance->propertyCaches.hasRunSinceClear = true;
     instanceOfRecentRun = { };
+}
+
+Instance* VMState::findInstanceThatLendsTables() const
+{
+    for (Instance* instance : instances) {
+        if (instance->state)
+            return instance;
+    }
+    return nullptr;
+}
+
+void VMState::lendTablesOfLivingInstances()
+{
+    for (JSGlobalObject* realm : realmsWithBorrowedTables) {
+        if (!realm->aotInstance() && !instances.contains(realm->aotTableInstance()))
+            realm->setAOTTableInstance(findInstanceThatLendsTables());
+    }
 }
 
 void Instance::destroy(Instance* instance)
@@ -652,7 +697,6 @@ static size_t arenaCapacity(const ProgramTables& tables)
         + sizeOfZeroedTable(tables.firstEnvironmentShape, sizeof(uint32_t))
         + sizeOfZeroedTable(tables.allocations().size() + 1, sizeof(AllocationSiteRecord) + sizeof(int32_t))
         + sizeOfZeroedTable(tables.numberOfClasses(), sizeof(JSCell*))
-        + sizeOfZeroedTable(tables.sizeOfStructuresOfHeirs, sizeof(uint8_t))
         + sizeOfZeroedTable(tables.numberOfClosureCells, sizeOfCellReference)
         + sizeOfZeroedTable(tables.keyCellIdentifiers().size(), sizeOfCellReference)
         + sizeOfZeroedTable(tables.bigIntConstants().size(), sizeof(JSCell*))
@@ -854,6 +898,8 @@ static void fillThunkAndPointers(void** entries, const Image& image)
     set(Entry::VirtualCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_virtual_call_trampoline).taggedPtr());
     set(Entry::NonConstructorHostFunction, std::bit_cast<void*>(&callHostFunctionAsConstructor));
     set(Entry::ErrorConstructorClassInfo, const_cast<ClassInfo*>(ErrorConstructor::info()));
+    set(Entry::ArrayConstructorClassInfo, const_cast<ClassInfo*>(ArrayConstructor::info()));
+    set(Entry::ObjectConstructorClassInfo, const_cast<ClassInfo*>(ObjectConstructor::info()));
     set(Entry::BooleanConstructorClassInfo, const_cast<ClassInfo*>(BooleanConstructor::info()));
     set(Entry::CustomGetterClassInfo, const_cast<ClassInfo*>(JSCustomGetterFunction::info()));
     set(Entry::NumberConstructorClassInfo, const_cast<ClassInfo*>(NumberConstructor::info()));
@@ -998,6 +1044,19 @@ VMState::~VMState()
     RELEASE_ASSERT(!hasCompiledCode);
 }
 
+void VMState::didParseSource(VM& vm, size_t length, std::unique_ptr<IdentifierArena>&& identifiers)
+{
+    constexpr size_t lengthBetweenPrunes = 1 * MB;
+    lengthOfSourcesSincePrune += length;
+    if (lengthOfSourcesSincePrune >= lengthBetweenPrunes) {
+        lengthOfSourcesSincePrune = 0;
+        vm.pruneUnusedSourceProviderCaches();
+    }
+    constexpr size_t mostTimesAsLarge = 8;
+    if (identifiers && (!identifiersOfLastSource || identifiersOfLastSource->size() <= mostTimesAsLarge * identifiers->size()))
+        identifiersOfLastSource = WTF::move(identifiers);
+}
+
 #if OS(LINUX) && ENABLE(AOT_GUARDED_PAGES)
 static void didMapPropertyCachesOfThread();
 #endif
@@ -1075,6 +1134,7 @@ void VMState::releaseImage(VM& vm)
     functionTables = nullptr;
     cyclesOfImports = nullptr;
     importersOfModules = nullptr;
+    modulesWithQuery = std::nullopt;
     reexportedNames = nullptr;
     callSiteCache = nullptr;
     runtimeTable = nullptr;
@@ -1490,6 +1550,9 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
         at<Slot>(offset) = static_cast<Slot>(initialWordAt(offset / sizeof(uint64_t)) >> (offset % sizeof(uint64_t) * 8));
         offset += sizeof(Slot);
     };
+    auto refreshMirrors = makeScopeExit([&] {
+        refreshViewMirrors();
+    });
     for (uint32_t end = offset + size; offset < end;) {
         uint32_t left = end - offset;
         if (!(offset % sizeof(uint64_t)) && left >= sizeof(uint64_t))
@@ -1500,6 +1563,82 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
             putBackSlot(uint16_t());
         else
             putBackSlot(uint8_t());
+    }
+}
+
+std::span<ProgramStatics::VariableWithViewMirror> ProgramStatics::viewMirrorVariables(const StaticsRange& range)
+{
+    return { reinterpret_cast<VariableWithViewMirror*>(m_instance.statics() + range.offset), range.size / sizeof(VariableWithViewMirror) };
+}
+
+void ProgramStatics::refreshViewMirrors()
+{
+    bool mirrorAlone = true;
+    for (const StaticsRange& range : m_tables.variablesWithViewMirror()) {
+        std::span<VariableWithViewMirror> views = viewMirrorVariables(range);
+        if (!std::exchange(mirrorAlone, false)) {
+            VariableWithViewMirror::refreshViewsOfOneBuffer(views);
+            continue;
+        }
+        for (VariableWithViewMirror& mirrored : views)
+            mirrored.refresh();
+    }
+}
+
+void ProgramStatics::VariableWithViewMirror::refresh()
+{
+    JSValue held = JSValue::decode(variable);
+    auto* view = held && held.isCell() ? dynamicDowncast<JSArrayBufferView>(held.asCell()) : nullptr;
+    bool hasFixedLength = view && isTypedView(typedArrayType(view->type())) && !isResizableOrGrowableShared(view->mode());
+    vector = hasFixedLength ? view->vector() : nullptr;
+    length = hasFixedLength ? std::min<uint64_t>(view->lengthRaw(), (1ull << 31) >> logElementSize(typedArrayType(view->type()))) : 0;
+}
+
+void ProgramStatics::VariableWithViewMirror::refreshViewsOfOneBuffer(std::span<VariableWithViewMirror> views)
+{
+    auto logElementSizeOf = [](const VariableWithViewMirror& mirrored) {
+        return logElementSize(typedArrayType(JSValue::decode(mirrored.variable).asCell()->type()));
+    };
+    uint64_t size = UINT64_MAX;
+    bool haveOneVector = true;
+    for (VariableWithViewMirror& mirrored : views) {
+        mirrored.refresh();
+        haveOneVector &= mirrored.length && mirrored.vector == views.front().vector;
+        if (haveOneVector)
+            size = std::min(size, mirrored.length << logElementSizeOf(mirrored));
+    }
+    for (VariableWithViewMirror& mirrored : views)
+        mirrored.lengthOfBuffer = haveOneVector ? size >> logElementSizeOf(mirrored) : 0;
+}
+
+void ProgramStatics::didWriteVariable(uint32_t offset)
+{
+    std::span<const StaticsRange> ranges = m_tables.variablesWithViewMirror();
+    auto range = std::ranges::find_if(ranges, [&](const StaticsRange& range) {
+        return range.contains(offset);
+    });
+    if (range == ranges.begin() && range != ranges.end())
+        at<VariableWithViewMirror>(offset).refresh();
+    else if (range != ranges.end())
+        VariableWithViewMirror::refreshViewsOfOneBuffer(viewMirrorVariables(*range));
+}
+
+void ProgramStatics::didMoveStorageOf(JSCell* view)
+{
+    bool mirrorAlone = true;
+    for (const StaticsRange& range : m_tables.variablesWithViewMirror()) {
+        std::span<VariableWithViewMirror> views = viewMirrorVariables(range);
+        bool areOfOneBuffer = !std::exchange(mirrorAlone, false);
+        bool holdsView = false;
+        for (VariableWithViewMirror& mirrored : views) {
+            if (mirrored.variable != JSValue::encode(view))
+                continue;
+            holdsView = true;
+            if (!areOfOneBuffer)
+                mirrored.refresh();
+        }
+        if (areOfOneBuffer && holdsView)
+            VariableWithViewMirror::refreshViewsOfOneBuffer(views);
     }
 }
 
@@ -1570,10 +1709,12 @@ void ProgramStatics::write(Instance& instance, SlotData slot, JSValue value)
     if (!value) {
         RELEASE_ASSERT(traitsOf(representation).hasAbsent);
         clearSlot(representation, address);
+        statics.didWriteVariable(slot.offset);
         return;
     }
     bool didWrite = tryWriteSlot(instance, representation, address, value);
     RELEASE_ASSERT(didWrite);
+    statics.didWriteVariable(slot.offset);
     if (traitsOf(representation).holdsCell)
         statics.didStoreRootInStatics(slot.offset);
 }

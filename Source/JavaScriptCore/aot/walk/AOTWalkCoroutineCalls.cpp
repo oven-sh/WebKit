@@ -44,7 +44,7 @@ std::optional<AwaitingBodyOfCoroutine> findAwaitingBodyOfCoroutine(Walker& walke
 
 Draft draftOfCoroutineCalls(Walker& walker, Opcode opcode, Origin origin)
 {
-    origin.isTailCall = false;
+    origin.isTailCall &= origin.inlineFrame && opcode == Opcode::AwaitCallBySavingFrame;
     Draft draft(opcode, origin);
     walker.chooseConservativeFields(draft);
     return draft;
@@ -291,7 +291,7 @@ bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return true;
     bool walksOwnBody = walker.walksOwnBodyOfUnit();
     return (walker.currentBodyIndex().opcodes().contains(Opcode::NewArray) && buildPromiseAllOfElements(walker, value))
-        || buildStepWrittenByHand(walker, value)
+        || ((written.calleeKey() == walker.program().keyOf(BuiltinNames::next) || walker.armHoldsKeyOf(written.calleeOperand())) && buildStepWrittenByHand(walker, value))
         || (walksOwnBody && walker.unit().role == CodeRole::CoroutineBody && buildAwaitedStepWrittenByHand(walker, value))
         || ((walksOwnBody ? walker.unit().role == CodeRole::CoroutineBody : !!walker.coroutineState().keptByCalls) && buildAwaitedCall(walker, value))
         || (walksOwnBody && walker.isInLoop() && buildRampAtCall(walker, value));

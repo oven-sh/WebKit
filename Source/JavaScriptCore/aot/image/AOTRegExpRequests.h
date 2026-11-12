@@ -43,6 +43,7 @@ struct RegExpRequest {
     StringID pattern;
     OptionSet<Yarr::Flags> flags;
     RegExpRequestOrigin origin { RegExpRequestOrigin::Literal };
+    bool needsMatcher { false };
     StringID atom { };
     Vector<StringID> captureGroupNames { };
     Vector<RegExpNamedGroupStrings> namedGroups { };

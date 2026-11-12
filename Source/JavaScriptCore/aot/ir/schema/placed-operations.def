@@ -1,5 +1,5 @@
 family Representation Placed..Placed
-operation Box (value: Convertible/returns) -> natural(same(value)) ; none ; passThrough = Form ; closedIn = UnlikelyBlock, RareBlock ; form = Open
+operation Box (value: Convertible/returns) -> natural(same(value)) ; none ; passThrough = Form ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = Number ; openIn = Loop ; closedIn = UnlikelyBlock, RareBlock
 operation Unbox (value: Convertible/returns) -> natural(same(value)) ; none ; passThrough = Form ; form = Open
 operation IntegerToNumber (value: Integer/returns) -> natural(same(value)) ; none ; passThrough = Form ; form = Open
 operation NumberToInteger (value: Number/returns) -> natural(same(value)) ; none ; passThrough = Form ; form = Open

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
+#include "AOTBitVector.h"
 #include "AOTCodeRole.h"
 #include "AOTID.h"
 #include "AOTOpcode.h"
@@ -20,7 +21,6 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
@@ -42,6 +42,7 @@ struct FunctionConvention {
     bool takesArgumentsInBuffer : 1 { false };
     bool callEntryTakesNewTarget : 1 { false };
     bool coroutineNeverSuspends : 1 { false };
+    bool generatorNeverYields : 1 { false };
     bool callEntryWalksBody : 1 { false };
     uint8_t borrowedArguments : 2 { 0 };
     uint16_t numberOfEntryParameters { 0 };
@@ -118,6 +119,7 @@ struct CallingConventionParts {
 static constexpr unsigned maxArgumentsOfTableCall = 4;
 
 class CallingConventions {
+    friend class FactMisstater;
 public:
     CallingConventions() = default;
     JS_EXPORT_PRIVATE explicit CallingConventions(CallingConventionParts&&);
@@ -247,7 +249,11 @@ private:
     {
         RELEASE_ASSERT(parameterIndex < convention.numberOfEntryParameters);
         Representation form = m_parts.formsOfEntryParameters[convention.firstEntryParameter + parameterIndex];
-        if (form != Representation::JSValue || role != CodeRole::Body || !convention.has(CodeRole::ParameterGuard))
+        if (role != CodeRole::Body || !convention.has(CodeRole::ParameterGuard))
+            return form;
+        if (form != Representation::JSValue && form != Representation::Double && form != Representation::Int64 && form != Representation::OptionalDouble)
+            return form;
+        if (form != Representation::JSValue && !m_parts.typesBehindGuards[convention.firstTypeBehindGuard + parameterIndex])
             return form;
         return formBehindGuard(program, convention, parameterIndex);
     }

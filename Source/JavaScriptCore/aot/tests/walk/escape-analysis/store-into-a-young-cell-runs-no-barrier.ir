@@ -1,11 +1,11 @@
 # the cell was made behind the last safepoint and nothing else names it, so the collector cannot have marked it: the store runs no barrier. The second store lays what lies there already, and goes
-# function make(v) { const o = { x: v }; o.y = v; o.x = v; return o; }
+# function make(v) { const o = { x: v }; o.y = v; o.x = v; kept = o; }
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject
 # CHECK: = PutSlotOrAdd {{*}}key="y"{{*}}OwnerIsYoung
 # a call stands between the making and the store. The object is still fresh, so the store is typed, and the collector may have marked the cell
-# function called(v, f) { const o = { x: v }; f(); o.y = v; return o; }
+# function called(v, f) { const o = { x: v }; f(); o.y = v; kept = o; }
 # RUN(CALL): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # CALL-LABEL: code f2:Body
 # CALL: = PutSlotOrAdd {{*}}key="y"
@@ -20,14 +20,14 @@
 # RUN(SEENNOT): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # SEENNOT-NOT: OwnerIsYoung
 # the second allocation may collect: the first cell is old, the second is young
-# function two(v) { const o = { x: v }; const p = { x: v }; o.y = v; p.y = v; return [o, p]; }
+# function two(v) { const o = { x: v }; const p = { x: v }; o.y = v; p.y = v; kept = o; kept = p; }
 # RUN(TWO): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # TWO-LABEL: code f4:Body
 # TWO: = PutSlotOrAdd {{*}}key="y"
 # TWO-NOT: OwnerIsYoung
 # TWO: = PutSlotOrAdd {{*}}key="y"{{*}}OwnerIsYoung
 # an old object holds the young one: the barrier of that store has the old one looked at again, and the marker goes on from there
-# function held(v) { const p = { x: v }; const o = { x: v }; p.y = o; o.y = v; return p; }
+# function held(v) { const p = { x: v }; const o = { x: v }; p.y = o; o.y = v; kept = p; }
 # RUN(HELD): walk f5 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # HELD-LABEL: code f5:Body
 # HELD: = PutSlotOrAdd
@@ -61,7 +61,8 @@ function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[
     v2 = FinishObject v1
     PropSet v2, v0 key="y" mode=Strict
     PropSet v2, v0 key="x" mode=Strict
-    Return v2
+    PutModuleVariable v2 variable=g0
+    Return v0
 }
 function f2 name="called" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -69,7 +70,8 @@ function f2 name="called" module=m0 length=2 thisType={type=anything} parameters
     v3 = FinishObject v2
     v4 = Call v1, -
     PropSet v3, v0 key="y" mode=Strict
-    Return v3
+    PutModuleVariable v3 variable=g0
+    Return v0
 }
 function f3 name="published" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -88,7 +90,8 @@ function f4 name="two" module=m0 length=1 thisType={type=anything} parameters=[{
     PropSet v2, v0 key="y" mode=Strict
     PropSet v4, v0 key="y" mode=Strict
     PutModuleVariable v2 variable=g0
-    Return v4
+    PutModuleVariable v4 variable=g0
+    Return v0
 }
 function f5 name="held" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -98,5 +101,6 @@ function f5 name="held" module=m0 length=1 thisType={type=anything} parameters=[
     v4 = FinishObject v3
     PropSet v2, v4 key="y" mode=Strict
     PropSet v4, v0 key="y" mode=Strict
-    Return v2
+    PutModuleVariable v2 variable=g0
+    Return v0
 }

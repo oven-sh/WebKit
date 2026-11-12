@@ -122,6 +122,20 @@ static JSArray* bearArrayWithHoles(JSGlobalObject* globalObject, VM& vm, Scope& 
     return constructEmptyArray(globalObject, nullptr, static_cast<uint32_t>(length));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTSortKeyArray, JSCell*, (Instance* instance, uint64_t length))
+{
+    static constexpr uint64_t maxLengthOfKeptArray = 32;
+    auto* kept = static_cast<JSArray*>(instance->arrays.sortKeys);
+    if (kept && length <= maxLengthOfKeptArray && kept->indexingMode() == ArrayWithContiguous) [[likely]]
+        return { kept, nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSortKeyArray);
+    JSArray* made = bearArrayWithHoles(globalObject, vm, scope, nullptr, std::max(length, maxLengthOfKeptArray), ArrayWithContiguous, NewArrayWithHolesFlag::mustHaveIndexingType);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (length <= maxLengthOfKeptArray)
+        instance->arrays.sortKeys = made;
+    OPERATION_RETURN(scope, made);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance* instance, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayWithHoles);
@@ -154,6 +168,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHolesAtSite, JSCell*, (Instance
     if (isReviewed && array)
         lastArray = array;
     OPERATION_RETURN(scope, array);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReviewArraySite, void, (Instance* instance, void* profileAddress, JSCell* array))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTReviewArraySite);
+    uint8_t* statics = instance->statics();
+    uint8_t* address = static_cast<uint8_t*>(profileAddress);
+    uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;
+    RELEASE_ASSERT(address >= statics && distanceToLastArray >= sizeof(ArrayAllocationProfile));
+    RELEASE_ASSERT(address + distanceToLastArray + ArrayAllocationProfile::sizeOfLastArrayWord <= statics + instance->tables().instanceSizes.sizeOfStatics);
+    auto& profile = *reinterpret_cast<ArrayAllocationProfile*>(address);
+    auto& lastArray = *reinterpret_cast<JSArray**>(address + distanceToLastArray);
+    ASSERT(profile.isDueForReview());
+    reviewArrayAllocationProfile(profile, lastArray);
+    profile.startInterval();
+    lastArray = cellArgument<JSArray>(array, Entry::operationAOTReviewArraySite);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfGiven, JSCell*, (Instance* instance, EncodedJSValue encodedGiven))

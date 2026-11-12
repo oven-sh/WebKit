@@ -193,7 +193,13 @@ static BuiltinID outermostHolderWithFeatureInProgramFacts(const BuiltinTable& bu
 
 static bool isCharacterOfWordInProgramFacts(uint8_t character)
 {
-    return isASCIIAlphanumeric(character) || character == '_' || character == '$';
+    static constexpr std::array<bool, 256> answers = [] consteval {
+        std::array<bool, 256> table { };
+        for (unsigned each = 0; each < table.size(); ++each)
+            table[each] = isASCIIAlphanumeric(static_cast<uint8_t>(each)) || each == '_' || each == '$';
+        return table;
+    }();
+    return answers[character];
 }
 
 static void forEachWordInProgramFacts(std::span<const uint8_t> text, NOESCAPE const Invocable<void(std::span<const uint8_t>)> auto& functor)
@@ -427,64 +433,69 @@ struct VariableStoredInFieldInProgramFacts {
     FieldReference ofEnvironment;
 };
 
+struct FieldUsedOutsideLoopsInProgramFacts {
+    FunctionID function;
+    LayoutID declarer;
+    PropertyKeyID key;
+};
+
 class NamesOfNumbersInProgramFacts {
     WTF_MAKE_NONCOPYABLE(NamesOfNumbersInProgramFacts);
 public:
     explicit NamesOfNumbersInProgramFacts(size_t numberOfKeys)
-        : m_numberOfKeys(numberOfKeys)
-        , m_storedWhatIsNoInt32(std::make_unique<std::atomic<uint32_t>[]>(numberOfKeys / 32 + 1))
+        : m_storedWhatIsNoInt32(numberOfKeys)
     {
     }
 
-    void noteReadAsInteger(LayoutID declarer, PropertyKeyID key) { add(m_fieldsReadAsIntegers, declarer, key); }
-    void noteReadForArithmetic(LayoutID declarer, PropertyKeyID key) { add(m_fieldsReadForArithmetic, declarer, key); }
-    void noteStoredWhatIsNoInt32(LayoutID declarer, PropertyKeyID key) { add(m_fieldsStoredWhatIsNoInt32, declarer, key); }
-    void noteStoredWhatIsNoInt32(PropertyKeyID key) { set(m_storedWhatIsNoInt32, key); }
-    void noteStoredVariable(VariableStoredInFieldInProgramFacts store)
+    void merge(NamesOfNumbersInProgramFacts& other)
     {
-        Locker locker { m_lock };
-        m_variablesStoredInFields.append(store);
+        m_storedWhatIsNoInt32.merge(other.m_storedWhatIsNoInt32);
+        m_fieldsReadAsIntegers.merge(other.m_fieldsReadAsIntegers);
+        m_namesReadAsIntegers.merge(other.m_namesReadAsIntegers);
+        m_fieldsReadForArithmetic.merge(other.m_fieldsReadForArithmetic);
+        m_fieldsStoredWhatIsNoInt32.merge(other.m_fieldsStoredWhatIsNoInt32);
+        m_fieldsUsedInProducts.merge(other.m_fieldsUsedInProducts);
+        m_fieldsFilledByInitializers.merge(other.m_fieldsFilledByInitializers);
+        m_initializerMethods.appendVector(other.m_initializerMethods);
+        m_fieldsUsedOutsideLoops.appendVector(other.m_fieldsUsedOutsideLoops);
+        m_iterationCallbacks.appendVector(other.m_iterationCallbacks);
+        m_variablesStoredInFields.appendVector(other.m_variablesStoredInFields);
     }
+
+    void noteReadAsInteger(LayoutID declarer, PropertyKeyID key) { m_fieldsReadAsIntegers.add(declarer, key); }
+    void noteNameReadAsInteger(ModuleID module, PropertyKeyID key) { m_namesReadAsIntegers.add(module, key); }
+    void noteReadForArithmetic(LayoutID declarer, PropertyKeyID key) { m_fieldsReadForArithmetic.add(declarer, key); }
+    void noteStoredWhatIsNoInt32(LayoutID declarer, PropertyKeyID key) { m_fieldsStoredWhatIsNoInt32.add(declarer, key); }
+    void noteUsedInProduct(LayoutID declarer, PropertyKeyID key) { m_fieldsUsedInProducts.add(declarer, key); }
+    void noteFilledByInitializer(LayoutID declarer, PropertyKeyID key) { m_fieldsFilledByInitializers.add(declarer, key); }
+    void noteInitializerMethod(FunctionID method) { m_initializerMethods.append(method); }
+    void noteUsedInProductOutsideLoops(FieldUsedOutsideLoopsInProgramFacts use) { m_fieldsUsedOutsideLoops.append(use); }
+    void noteIterationCallback(FunctionID callback) { m_iterationCallbacks.append(callback); }
+    void noteStoredWhatIsNoInt32(PropertyKeyID key) { m_storedWhatIsNoInt32.set(key.index()); }
+    void noteStoredVariable(VariableStoredInFieldInProgramFacts store) { m_variablesStoredInFields.append(store); }
     Vector<VariableStoredInFieldInProgramFacts> takeVariablesStoredInFields() { return WTF::move(m_variablesStoredInFields); }
     FieldsOfNumbers takeFieldsReadAsIntegers() { return WTF::move(m_fieldsReadAsIntegers); }
+    NamesOfModules takeNamesReadAsIntegers() { return WTF::move(m_namesReadAsIntegers); }
     FieldsOfNumbers takeFieldsReadForArithmetic() { return WTF::move(m_fieldsReadForArithmetic); }
     FieldsOfNumbers takeFieldsStoredWhatIsNoInt32() { return WTF::move(m_fieldsStoredWhatIsNoInt32); }
-    BitVector keysStoredWhatIsNoInt32() const { return listed(m_storedWhatIsNoInt32); }
+    FieldsOfNumbers takeFieldsUsedInProducts() { return WTF::move(m_fieldsUsedInProducts); }
+    Vector<FieldUsedOutsideLoopsInProgramFacts> takeFieldsUsedOutsideLoops() { return WTF::move(m_fieldsUsedOutsideLoops); }
+    Vector<FunctionID> takeIterationCallbacks() { return WTF::move(m_iterationCallbacks); }
+    FieldsOfNumbers takeFieldsFilledByInitializers() { return WTF::move(m_fieldsFilledByInitializers); }
+    Vector<FunctionID> takeInitializerMethods() { return WTF::move(m_initializerMethods); }
+    BitVector takeKeysStoredWhatIsNoInt32() { return WTF::move(m_storedWhatIsNoInt32); }
 
 private:
-    using Words = std::unique_ptr<std::atomic<uint32_t>[]>;
-
-    void add(FieldsOfNumbers& fields, LayoutID declarer, PropertyKeyID key)
-    {
-        Locker locker { m_lock };
-        fields.add(declarer, key);
-    }
-
-    static void set(Words& words, PropertyKeyID key)
-    {
-        std::atomic<uint32_t>& word = words[key.index() / 32];
-        uint32_t bit = 1u << (key.index() % 32);
-        if (!(word.load(std::memory_order_relaxed) & bit))
-            word.fetch_or(bit, std::memory_order_relaxed);
-    }
-
-    BitVector listed(const Words& words) const
-    {
-        BitVector result;
-        result.ensureSize(m_numberOfKeys);
-        for (size_t first = 0; first < m_numberOfKeys; first += 32) {
-            for (uint32_t bits = words[first / 32].load(std::memory_order_relaxed); bits; bits &= bits - 1)
-                result.quickSet(first + std::countr_zero(bits));
-        }
-        return result;
-    }
-
-    size_t m_numberOfKeys;
-    Words m_storedWhatIsNoInt32;
-    Lock m_lock;
+    BitVector m_storedWhatIsNoInt32;
     FieldsOfNumbers m_fieldsReadAsIntegers;
+    NamesOfModules m_namesReadAsIntegers;
     FieldsOfNumbers m_fieldsReadForArithmetic;
     FieldsOfNumbers m_fieldsStoredWhatIsNoInt32;
+    FieldsOfNumbers m_fieldsUsedInProducts;
+    FieldsOfNumbers m_fieldsFilledByInitializers;
+    Vector<FunctionID> m_initializerMethods;
+    Vector<FieldUsedOutsideLoopsInProgramFacts> m_fieldsUsedOutsideLoops;
+    Vector<FunctionID> m_iterationCallbacks;
     Vector<VariableStoredInFieldInProgramFacts> m_variablesStoredInFields;
 };
 
@@ -571,7 +582,7 @@ private:
     BuiltinID builtinSurelyAt(ValueID value) const { return value && !m_mayBeSomethingElse.get(value.index()) ? m_builtinOfValue[value.index()] : BuiltinID(); }
     BuiltinID builtinHeldBy(VariableID variable) const { return variable.index() < m_builtinsHeldByVariables.size() ? m_builtinsHeldByVariables[variable.index()] : BuiltinID(); }
     ValueID originOfURL(ValueID value) const { return value && !m_originOfURLOfValue.isEmpty() ? m_originOfURLOfValue[value.index()] : ValueID(); }
-    bool isURLOrItsText(ValueID) const;
+    bool isURLOrURLString(ValueID) const;
     BuiltinID holderOfMethodServed(ValueID) const;
     BuiltinID classOfPartAt(ValueID value) const { return value && !m_classOfPartOfValue.isEmpty() ? m_classOfPartOfValue[value.index()] : BuiltinID(); }
     BuiltinID builtinThatLinkLedToAt(ValueID value) const { return value && !m_builtinThatLinkLedToOfValue.isEmpty() ? m_builtinThatLinkLedToOfValue[value.index()] : BuiltinID(); }
@@ -598,12 +609,21 @@ private:
     void noteBuiltinsSpelledIn(const DataNode&, const BodyValue&);
     void noteModuleSpelledBy(PropertyKeyID, const BodyValue&);
     TypeID writtenTypeOf(ValueID) const;
+    PropertyKeyID keyOfRead(ValueID) const;
+    bool computesFraction(const BodyValue&) const;
+    void noteUsedInProduct(const BodyValue& operation, LayoutID declarer, PropertyKeyID);
+    void noteReadsInProduct(const BodyValue&);
+    TypeID declaredTypeOf(ValueID) const;
+    TypeID declaredTypeOfField(TypeID receiver, PropertyKeyID) const;
+    TypeID declaredTypeOfElement(TypeID list) const;
     void forEachDeclarerOfFieldOf(ValueID receiver, PropertyKeyID, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
-    void noteReadUsedAsInteger(ValueID);
+    bool isTruncation(const BodyValue&) const;
+    void noteReadUsedAsInteger(ValueID, bool isTruncatedAlone = false);
     void noteReadUsedForArithmetic(ValueID);
     void noteWhatIsStoredUnder(ValueID receiver, LayoutID allocated, PropertyKeyID, ValueID stored);
     TypeID writtenTypeWhereValueIsHandedOn(ValueID) const;
     void noteVariableStoredUnder(ValueID receiver, LayoutID allocated, PropertyKeyID, ValueID stored);
+    void noteFieldsFilledByInitializer();
     void noteWhatIsToldOfNumbers(const BodyValue&);
     void nameBuiltin(const BodyValue&, BuiltinID);
     void lookAtLoad(const BodyValue&);
@@ -636,6 +656,7 @@ private:
     bool rowsOnlyBindAsReceiver(BuiltinID callee, BuiltinOperand) const;
     bool linkFollowsWritesOn(ValueID written, ValueID site) const;
     bool linkHoldsAsTheObject(ValueID) const;
+    bool storesGlobalObjectOnItself(const BodyValue&) const;
     bool rowsOnlyConstructReceiver(BuiltinID callee, BuiltinID receiver) const;
     bool rowsOnlyCallReceiver(BuiltinID callee, BuiltinID receiver) const;
     Fate fateOf(const BodyValue& user, uint32_t operandIndex) const;
@@ -663,6 +684,7 @@ private:
     static constexpr uint32_t mostQuestionsAnsweredByGoingThroughCalls = 8;
     Vector<BuiltinID> m_builtinOfValue;
     BitVector m_mayBeSomethingElse;
+    BitVector m_parametersNotHeldByLink;
     Vector<PropertyKeyID, 8> m_namesReadOffUnknownValues;
     Vector<BuiltinID, 4> m_builtinsSpelledInTexts;
     Vector<ValueID> m_originOfURLOfValue;
@@ -817,6 +839,8 @@ bool BodyLookOfProgramFacts::passOn(ValueID argument, ValueID parameter, const B
         return false;
     m_builtinOfValue[parameter.index()] = builtin;
     m_mayBeSomethingElse.set(parameter.index());
+    if (!linkHoldsAsTheObject(argument))
+        m_parametersNotHeldByLink.set(parameter.index());
     return true;
 }
 
@@ -1099,6 +1123,18 @@ bool BodyLookOfProgramFacts::linkFollowsWritesOn(ValueID written, ValueID site) 
     return linkHoldsAsTheObject(written) && (std::ranges::contains(m_summary.calls, site, &SummaryCall::site) || std::ranges::contains(m_summary.accesses, site, &SummaryAccess::site) || std::ranges::contains(m_summary.changes, site, &SummaryChange::site));
 }
 
+bool BodyLookOfProgramFacts::storesGlobalObjectOnItself(const BodyValue& store) const
+{
+    if (store.opcode() != Opcode::PropSet)
+        return false;
+    auto operation = store.as<Opcode::PropSet>();
+    BuiltinID globalObject = m_builtins.canonicalID(Builtins::GlobalThis);
+    auto isGlobalObject = [&](BuiltinID builtin) {
+        return builtin && m_builtins.canonicalID(builtin) == globalObject;
+    };
+    return operation.key() && isGlobalObject(builtinSurelyAt(operation.objectOperand())) && isGlobalObject(builtinSurelyAt(operation.valueOperand())) && isGlobalObject(findOwnMember(m_program, globalObject, operation.key()));
+}
+
 bool BodyLookOfProgramFacts::linkHoldsAsTheObject(ValueID written) const
 {
     if (!builtinAt(written))
@@ -1113,8 +1149,10 @@ bool BodyLookOfProgramFacts::linkHoldsAsTheObject(ValueID written) const
     ValueID read = written;
     while (true) {
         read = m_index.stripCasts(read);
-        if (!read || m_index.isParameter(read))
+        if (!read)
             return false;
+        if (m_index.isParameter(read))
+            return builtinAt(read) && !m_parametersNotHeldByLink.get(read.index());
         BodyValue definition = m_index.value(read);
         if (definition.opcode() == Opcode::Builtin) {
             auto named = definition.as<Opcode::Builtin>();
@@ -1282,6 +1320,10 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
             return Fate::IsInspected;
         if (accessClassOf(opcode) == AccessClass::ByName && receiverOf(opcode) == operandIndex && !isOnlyInspected)
             return (user.operandUses(operandIndex) - usesThatOnlyWriteOnOperandInProgramFacts).isEmpty() && linkFollowsWritesOn(user.operand(operandIndex), user.id()) ? Fate::IsWrittenOn : Fate::IsLetGo;
+        if (operandIndex == OperandIndex::PropSet::value && storesGlobalObjectOnItself(user))
+            return Fate::IsInspected;
+        if (opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::value && linkFollowsWritesOn(user.operand(operandIndex), user.id()))
+            return Fate::IsFollowedByLink;
         if (accessClassOf(opcode) == AccessClass::ByName)
             return isOnlyInspected && receiverOf(opcode) == operandIndex ? Fate::IsAskedForAnyMember : Fate::IsLetGo;
         if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
@@ -1329,7 +1371,7 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
     return fateAt(BuiltinOperand::argument(argument));
 }
 
-bool BodyLookOfProgramFacts::isURLOrItsText(ValueID value) const
+bool BodyLookOfProgramFacts::isURLOrURLString(ValueID value) const
 {
     if (originOfURL(value))
         return true;
@@ -1375,7 +1417,7 @@ void BodyLookOfProgramFacts::noteStartOfWorker(const BodyValue& call, bool spell
         }
         if (opcode == Opcode::String)
             paths.append(passed.as<Opcode::String>().string());
-        else if (isURLOrItsText(arguments[argument]))
+        else if (isURLOrURLString(arguments[argument]))
             isFromURL = true;
         else
             mayGetUnknownFile |= !isNullish;
@@ -1660,18 +1702,105 @@ TypeID BodyLookOfProgramFacts::writtenTypeOf(ValueID value) const
     return { };
 }
 
+TypeID BodyLookOfProgramFacts::declaredTypeOfField(TypeID receiver, PropertyKeyID key) const
+{
+    if (!receiver || !key)
+        return { };
+    TypeID found;
+    for (LayoutID layout : membersOf(TypeReader(m_program), m_program.types.at(receiver))) {
+        std::optional<FieldReference> field = findField(m_program, layout, key);
+        TypeID declared = field ? fieldAt(m_program, declarationOf(m_program, *field)).declared.written() : TypeID();
+        if (!declared || (found && found != declared))
+            return { };
+        found = declared;
+    }
+    return found;
+}
+
+TypeID BodyLookOfProgramFacts::declaredTypeOfElement(TypeID list) const
+{
+    if (!list)
+        return { };
+    TypeID found;
+    for (const ClassPart& part : classPartsOf(TypeReader(m_program), m_program.types.at(list))) {
+        TypeID contents = part.writtenContentsAt(m_program.builtins(), ContentsSlot::Element);
+        if (!contents || (found && found != contents))
+            return { };
+        found = contents;
+    }
+    return found;
+}
+
+TypeID BodyLookOfProgramFacts::declaredTypeOf(ValueID value) const
+{
+    Vector<PropertyKeyID, 4> reads;
+    auto typeOfReads = [&](TypeID type) {
+        while (!reads.isEmpty()) {
+            PropertyKeyID key = reads.takeLast();
+            type = key ? declaredTypeOfField(type, key) : declaredTypeOfElement(type);
+        }
+        return type;
+    };
+    while (value) {
+        if (m_index.isParameter(value)) {
+            if (m_index.blockOf(value).index() || value.index() >= m_function.numberOfEntryParameters())
+                return { };
+            const DeclaredType* declared = m_function.declaredEntryParameter(value.index());
+            return declared ? typeOfReads(declared->written()) : TypeID();
+        }
+        BodyValue definition = m_index.value(value);
+        switch (definition.opcode()) {
+        case Opcode::Convert:
+            if (TypeID declared = definition.as<Opcode::Convert>().declared().written(); declared && declared != TypeTable::anything)
+                return typeOfReads(declared);
+            break;
+        case Opcode::GetModuleVariable:
+            return typeOfReads(m_program.at(definition.as<Opcode::GetModuleVariable>().variable()).declared.written());
+        case Opcode::GetEnvironmentField:
+            return typeOfReads(m_program.at(definition.as<Opcode::GetEnvironmentField>().layout()).fields[definition.as<Opcode::GetEnvironmentField>().field()].declared.written());
+        case Opcode::PropGet:
+            if (definition.isFreeName())
+                return { };
+            reads.append(definition.as<Opcode::PropGet>().key());
+            break;
+        case Opcode::ElemGet:
+            reads.append(PropertyKeyID());
+            break;
+        default:
+            if (definition.opcode() != Opcode::CheckInitialized && !opcodesThatStateTypes.contains(definition.opcode()))
+                return { };
+            break;
+        }
+        value = definition.operand(0);
+    }
+    return { };
+}
+
 void BodyLookOfProgramFacts::forEachDeclarerOfFieldOf(ValueID receiver, PropertyKeyID key, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
 {
-    TypeID written = writtenTypeOf(receiver);
-    if (!written)
+    TypeID declared = declaredTypeOf(receiver);
+    if (!declared)
         return;
-    for (LayoutID layout : membersOf(TypeReader(m_program), m_program.types.at(written))) {
+    for (LayoutID layout : membersOf(TypeReader(m_program), m_program.types.at(declared))) {
         if (std::optional<FieldReference> field = findField(m_program, layout, key))
             functor(declarationOf(m_program, *field).layout);
     }
 }
 
-void BodyLookOfProgramFacts::noteReadUsedAsInteger(ValueID used)
+bool BodyLookOfProgramFacts::isTruncation(const BodyValue& operation) const
+{
+    static constexpr OpcodeSet operatorsWithZeroAsIdentity { Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
+    if (operation.opcode() == Opcode::BitNot) {
+        ValueID user = m_index.onlyUsingValue(operation.id());
+        return user && !m_index.isParameter(user) && m_index.opcodeOf(user) == Opcode::BitNot;
+    }
+    if (!operatorsWithZeroAsIdentity.contains(operation.opcode()))
+        return false;
+    ValueID right = operation.operand(1);
+    return right && !m_index.isParameter(right) && m_index.opcodeOf(right) == Opcode::Integer && !m_index.value(right).as<Opcode::Integer>().integer();
+}
+
+void BodyLookOfProgramFacts::noteReadUsedAsInteger(ValueID used, bool isTruncatedAlone)
 {
     if (!used)
         return;
@@ -1679,9 +1808,13 @@ void BodyLookOfProgramFacts::noteReadUsedAsInteger(ValueID used)
         if (definition.opcode() != Opcode::PropGet)
             return false;
         if (PropertyKeyID key = definition.as<Opcode::PropGet>().key()) {
+            bool isOfKnownLayout = false;
             forEachDeclarerOfFieldOf(definition.as<Opcode::PropGet>().objectOperand(), key, [&](LayoutID declarer) {
                 m_namesOfNumbers.noteReadAsInteger(declarer, key);
+                isOfKnownLayout = true;
             });
+            if (!isOfKnownLayout && m_function.module && !definition.isFreeName())
+                m_namesOfNumbers.noteNameReadAsInteger(m_function.module, key);
         }
         return true;
     };
@@ -1689,7 +1822,7 @@ void BodyLookOfProgramFacts::noteReadUsedAsInteger(ValueID used)
     if (!behindCasts || m_index.isParameter(behindCasts))
         return;
     BodyValue definition = m_index.value(behindCasts);
-    if (noteRead(definition) || !allSums.contains(definition.opcode()))
+    if ((!isTruncatedAlone && noteRead(definition)) || !allSums.contains(definition.opcode()))
         return;
     definition.forEachOperand([&](ValueID operand, uint32_t) {
         ValueID part = operand ? m_index.stripCasts(operand) : ValueID();
@@ -1765,6 +1898,60 @@ void BodyLookOfProgramFacts::noteReadUsedForArithmetic(ValueID used)
     }
 }
 
+static constexpr OpcodeSet productsInProgramFacts { Opcode::Mul, Opcode::Div, Opcode::Pow };
+static constexpr OpcodeSet otherTermsInProgramFacts = productsInProgramFacts | OpcodeSet { Opcode::Double };
+
+PropertyKeyID BodyLookOfProgramFacts::keyOfRead(ValueID value) const
+{
+    ValueID behindCasts = value ? m_index.stripCasts(value) : ValueID();
+    bool isRead = behindCasts && !m_index.isParameter(behindCasts) && m_index.opcodeOf(behindCasts) == Opcode::PropGet;
+    return isRead ? m_index.value(behindCasts).as<Opcode::PropGet>().key() : PropertyKeyID();
+}
+
+bool BodyLookOfProgramFacts::computesFraction(const BodyValue& operation) const
+{
+    if (productsInProgramFacts.contains(operation.opcode()))
+        return true;
+    if (operation.opcode() != Opcode::Add && operation.opcode() != Opcode::Sub)
+        return false;
+    for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
+        ValueID operand = m_index.stripCasts(operation.operand(operandIndex));
+        if (operand && !m_index.isParameter(operand) && otherTermsInProgramFacts.contains(m_index.opcodeOf(operand)))
+            return true;
+    }
+    return false;
+}
+
+void BodyLookOfProgramFacts::noteUsedInProduct(const BodyValue& operation, LayoutID declarer, PropertyKeyID key)
+{
+    if (m_index.loopOf(m_index.blockOf(operation.id())))
+        m_namesOfNumbers.noteUsedInProduct(declarer, key);
+    else
+        m_namesOfNumbers.noteUsedInProductOutsideLoops({ m_id, declarer, key });
+}
+
+void BodyLookOfProgramFacts::noteReadsInProduct(const BodyValue& operation)
+{
+    auto noteRead = [&](ValueID operand) {
+        PropertyKeyID key = keyOfRead(operand);
+        if (!key)
+            return;
+        noteReadUsedForArithmetic(operand);
+        forEachDeclarerOfFieldOf(m_index.value(m_index.stripCasts(operand)).as<Opcode::PropGet>().objectOperand(), key, [&](LayoutID declarer) {
+            noteUsedInProduct(operation, declarer, key);
+        });
+    };
+    operation.forEachOperand([&](ValueID operand, uint32_t) {
+        noteRead(operand);
+        ValueID term = m_index.stripCasts(operand);
+        if (!term || m_index.isParameter(term) || (m_index.opcodeOf(term) != Opcode::Add && m_index.opcodeOf(term) != Opcode::Sub))
+            return;
+        m_index.value(term).forEachOperand([&](ValueID part, uint32_t) {
+            noteRead(part);
+        });
+    });
+}
+
 void BodyLookOfProgramFacts::noteWhatIsStoredUnder(ValueID receiver, LayoutID allocated, PropertyKeyID key, ValueID stored)
 {
     ValueID behindCasts = key && stored ? m_index.stripCasts(stored) : ValueID();
@@ -1775,6 +1962,23 @@ void BodyLookOfProgramFacts::noteWhatIsStoredUnder(ValueID receiver, LayoutID al
     if (readsOfVariablesInProgramFacts.contains(opcode)) {
         noteVariableStoredUnder(receiver, allocated, key, behindCasts);
         return;
+    }
+    auto receiverOfRead = [&](ValueID read) {
+        return m_index.stripCasts(m_index.value(m_index.stripCasts(read)).as<Opcode::PropGet>().objectOperand());
+    };
+    bool isSumOrDifference = opcode == Opcode::Add || opcode == Opcode::Sub;
+    bool accumulatesField = isSumOrDifference && keyOfRead(definition.operand(0)) == key && keyOfRead(definition.operand(1)) && keyOfRead(definition.operand(1)) != key
+        && receiverOfRead(definition.operand(0)) == receiverOfRead(definition.operand(1));
+    if (accumulatesField)
+        noteReadsInProduct(definition);
+    if (accumulatesField || computesFraction(definition)) {
+        auto noteStored = [&](LayoutID declarer) {
+            noteUsedInProduct(definition, declarer, key);
+        };
+        if (!allocated)
+            forEachDeclarerOfFieldOf(receiver, key, noteStored);
+        else if (std::optional<FieldReference> field = findField(m_program, allocated, key))
+            noteStored(declarationOf(m_program, *field).layout);
     }
     bool isNoInt32 = opcode == Opcode::Double || opcode == Opcode::Div || opcode == Opcode::Pow;
     if (opcode == Opcode::Integer) {
@@ -1801,12 +2005,16 @@ void BodyLookOfProgramFacts::noteWhatIsToldOfNumbers(const BodyValue& value)
 {
     Opcode opcode = value.opcode();
     if (allBitwiseOperators.contains(opcode)) {
+        bool truncates = isTruncation(value);
         value.forEachOperand([&](ValueID operand, uint32_t) {
-            noteReadUsedAsInteger(operand);
+            noteReadUsedAsInteger(operand, truncates);
         });
         return;
     }
-    if (operatorsOnNumbersAloneInProgramFacts.contains(opcode)) {
+    bool isFraction = computesFraction(value);
+    if (isFraction)
+        noteReadsInProduct(value);
+    if (isFraction || operatorsOnNumbersAloneInProgramFacts.contains(opcode)) {
         value.forEachOperand([&](ValueID operand, uint32_t) {
             noteReadUsedForArithmetic(operand);
         });
@@ -1852,6 +2060,8 @@ void BodyLookOfProgramFacts::noteWhatIsToldOfNumbers(const BodyValue& value)
     std::span<const ValueID> arguments = value.variadicOperands();
     if (!calleeKey || arguments.empty() || !m_program.builtinNameOf(calleeKey))
         return;
+    if (ValueID callback = m_index.stripCasts(arguments[0]); callback && !m_index.isParameter(callback) && m_index.opcodeOf(callback) == Opcode::NewClosure && findOwnMember(m_program, m_builtins.canonicalID(Builtins::ArrayPrototype), calleeKey))
+        m_namesOfNumbers.noteIterationCallback(m_index.value(callback).function());
     bool passesRead = std::ranges::any_of(arguments, [&](ValueID argument) {
         ValueID behindCasts = argument ? m_index.stripCasts(argument) : ValueID();
         return behindCasts && !m_index.isParameter(behindCasts) && (m_index.opcodeOf(behindCasts) == Opcode::PropGet || allSums.contains(m_index.opcodeOf(behindCasts)));
@@ -2069,6 +2279,47 @@ ALWAYS_INLINE void BodyLookOfProgramFacts::lookAtEnd(const BodyBlock& block)
     });
 }
 
+void BodyLookOfProgramFacts::noteFieldsFilledByInitializer()
+{
+    static constexpr size_t fewestFieldsOfInitializer = 4;
+    std::optional<unsigned> thisParameter = m_function.thisParameterIndex();
+    if (!thisParameter || m_function.kind != FunctionKind::Method)
+        return;
+    size_t stores = 0;
+    for (const SummaryAccess& access : m_summary.accesses)
+        stores += access.kind == SummaryAccess::Kind::Store && access.key;
+    if (stores < fewestFieldsOfInitializer)
+        return;
+    BlockID last;
+    for (uint32_t number = 0; number < m_index.numberOfBlocks(); ++number) {
+        BlockID block(number);
+        if (m_index.terminator(block).kind() != TerminatorKind::Return || (block != entryBlock && !m_index.immediateDominator(block)))
+            continue;
+        if (!last)
+            last = block;
+        while (!m_index.dominates(last, block))
+            last = m_index.immediateDominator(last);
+    }
+    ValueID receiver = m_index.block(entryBlock).parameter(*thisParameter);
+    Vector<PropertyKeyID, 16> keys;
+    for (BlockID block = last; block; block = block == entryBlock ? BlockID() : m_index.immediateDominator(block)) {
+        for (BodyValue operation : m_index.block(block).values()) {
+            if (operation.opcode() != Opcode::PropSet || m_index.stripCasts(operation.as<Opcode::PropSet>().objectOperand()) != receiver)
+                continue;
+            if (PropertyKeyID key = operation.as<Opcode::PropSet>().key())
+                keys.appendIfNotContains(key);
+        }
+    }
+    if (keys.size() < fewestFieldsOfInitializer)
+        return;
+    m_namesOfNumbers.noteInitializerMethod(m_id);
+    for (PropertyKeyID key : keys) {
+        forEachDeclarerOfFieldOf(receiver, key, [&](LayoutID declarer) {
+            m_namesOfNumbers.noteFilledByInitializer(declarer, key);
+        });
+    }
+}
+
 void BodyLookOfProgramFacts::run()
 {
     bool namesBuiltins = m_index.holdsAnyOf(giversOfBuiltinsInProgramFacts);
@@ -2092,6 +2343,8 @@ void BodyLookOfProgramFacts::run()
         if (!m_builtinOfValue.isEmpty())
             lookAtEnd(block);
     }
+    if (m_isOfProgram && m_index.holdsAnyOf(OpcodeSet { Opcode::PropSet }))
+        noteFieldsFilledByInitializer();
 }
 
 class LooksAtBodies {
@@ -2125,8 +2378,14 @@ public:
     Vector<uint32_t> firstFindingOfFunction;
     LargeList<FindingOfProgramFacts> findings;
     FieldsOfNumbers fieldsReadAsIntegers;
+    NamesOfModules namesReadAsIntegers;
     FieldsOfNumbers fieldsReadForArithmetic;
     FieldsOfNumbers fieldsStoredWhatIsNoInt32;
+    FieldsOfNumbers fieldsUsedInProducts;
+    FieldsOfNumbers fieldsFilledByInitializers;
+    Vector<FunctionID> initializerMethods;
+    Vector<FieldUsedOutsideLoopsInProgramFacts> fieldsUsedOutsideLoops;
+    Vector<FunctionID> iterationCallbacks;
     Vector<VariableStoredInFieldInProgramFacts> variablesStoredInFields;
     BitVector keysStoredWhatIsNoInt32;
     bool isFilled { false };
@@ -2136,6 +2395,12 @@ const FieldsOfNumbers& fieldsReadAsIntegersIn(const LooksAtBodies& looks)
 {
     RELEASE_ASSERT(looks.isFilled);
     return looks.fieldsReadAsIntegers;
+}
+
+const NamesOfModules& namesReadAsIntegersIn(const LooksAtBodies& looks)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    return looks.namesReadAsIntegers;
 }
 
 const FieldsOfNumbers& fieldsReadForArithmeticIn(const LooksAtBodies& looks)
@@ -2148,6 +2413,379 @@ const FieldsOfNumbers& fieldsStoredWhatIsNoInt32In(const LooksAtBodies& looks)
 {
     RELEASE_ASSERT(looks.isFilled);
     return looks.fieldsStoredWhatIsNoInt32;
+}
+
+const FieldsOfNumbers& initializerFields(const LooksAtBodies& looks)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    return looks.fieldsFilledByInitializers;
+}
+
+BitVector initializerMethodsIn(const LooksAtBodies& looks, const Program& program)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    BitVector methods(program.functions.size());
+    for (FunctionID method : looks.initializerMethods)
+        methods.quickSet(method.index());
+    return methods;
+}
+
+BitVector functionsCalledInLoopsIn(const LooksAtBodies& looks, const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held, BitVector& keysCalledInLoops, bool& elementsAreCalledInLoops)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    BitVector functions(program.functions.size());
+    BitVector& methodsCalled = keysCalledInLoops;
+    for (FunctionID callback : looks.iterationCallbacks)
+        functions.quickSet(callback.index());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID caller(index);
+        const auto& summary = summaries.at(caller);
+        if (!linked.function(caller).isReached)
+            continue;
+        bool callsItself = std::ranges::any_of(summary.calls, [&](const SummaryCall& call) {
+            return call.callee == SummaryCall::Callee::Binding && call.function == caller;
+        });
+        if (!callsItself && !summary.has(SummaryTrait::HasLoops))
+            continue;
+        for (const SummaryCall& call : summary.calls) {
+            if (!callsItself && !call.isInLoop)
+                continue;
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(caller, call.site);
+            if (!callee)
+                callee = held.calleeAt(caller, call.site);
+            if (callee)
+                functions.quickSet(callee.index());
+            else if (call.callee == SummaryCall::Callee::Name && call.key)
+                methodsCalled.set(call.key.index());
+            else if (call.callee == SummaryCall::Callee::Value && call.subject != noSummaryNode && summary.nodes[call.subject].kind == SummaryNode::Kind::ResultOfAccess)
+                elementsAreCalledInLoops |= !summary.accesses[summary.nodes[call.subject].first].key;
+        }
+    }
+    for (const LinkedMember& member : linked.members) {
+        if (!member.key || !methodsCalled.get(member.key.index()))
+            continue;
+        for (FunctionID method : { member.function, member.written, member.replacement }) {
+            if (method)
+                functions.quickSet(method.index());
+        }
+    }
+    return functions;
+}
+
+BitVector functionsCalledInLoopsOfOwnFileIn(const LooksAtBodies& looks, const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    BitVector functions(program.functions.size());
+    for (FunctionID callback : looks.iterationCallbacks)
+        functions.quickSet(callback.index());
+    const BitVector iterationCallbacks = functions;
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsCalled;
+    BitVector keysCalled;
+    auto methodOfFile = [](ModuleID file, PropertyKeyID key) {
+        return static_cast<uint64_t>(file.index()) << 32 | key.bits();
+    };
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID caller(index);
+        const ThinSummary& summary = summaries.at(caller);
+        ModuleID file = program.at(caller).module;
+        bool isIterationCallback = iterationCallbacks.get(index) || linked.function(caller).isIterationCallback;
+        if (!file || !linked.function(caller).isReached || (!isIterationCallback && !summary.has(SummaryTrait::HasLoops)))
+            continue;
+        for (const SummaryCall& call : summary.calls) {
+            if (!isIterationCallback && !call.isInLoop)
+                continue;
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(caller, call.site);
+            if (!callee)
+                callee = held.calleeAt(caller, call.site);
+            if (callee && program.at(callee).module == file)
+                functions.quickSet(callee.index());
+            else if (!callee && call.callee == SummaryCall::Callee::Name && call.key) {
+                methodsCalled.add(methodOfFile(file, call.key));
+                keysCalled.set(call.key.index());
+            }
+        }
+    }
+    for (const LinkedMember& member : linked.members) {
+        if (!member.key || !keysCalled.get(member.key.index()))
+            continue;
+        for (FunctionID method : { member.function, member.written, member.replacement }) {
+            ModuleID file = method ? program.at(method).module : ModuleID();
+            if (file && methodsCalled.contains(methodOfFile(file, member.key)))
+                functions.quickSet(method.index());
+        }
+    }
+    return functions;
+}
+
+BitVector constructorsCalledInLoopsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    BitVector constructors(program.functions.size());
+    Vector<FunctionID> waiting;
+    for (size_t function : linked.functionsCalledInLoops)
+        waiting.append(FunctionID(static_cast<uint32_t>(function)));
+    for (size_t function : linked.functionsDoneInIterations) {
+        if (!linked.functionsCalledInLoops.quickGet(function))
+            waiting.append(FunctionID(static_cast<uint32_t>(function)));
+    }
+    while (!waiting.isEmpty()) {
+        FunctionID caller = waiting.takeLast();
+        if (program.at(caller).kind == FunctionKind::BaseConstructor)
+            constructors.quickSet(caller.index());
+        for (const SummaryCall& call : summaries.at(caller).calls) {
+            if (!call.isConstruction)
+                continue;
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(caller, call.site);
+            if (!callee)
+                callee = held.calleeAt(caller, call.site);
+            if (callee && program.at(callee).kind == FunctionKind::BaseConstructor && !constructors.quickSet(callee.index()))
+                waiting.append(callee);
+        }
+    }
+    return constructors;
+}
+
+BitVector mixedClassesConstructedIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    UncheckedKeyHashMap<uint32_t, Vector<FunctionID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> methodsByKey;
+    BitVector isReached(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index)
+        isReached.quickSet(index, linked.function(FunctionID(index)).isReached);
+    for (const LinkedMember& member : held.members) {
+        if (!member.function || !member.key || member.kind != MethodKind::Method)
+            continue;
+        methodsByKey.add(member.key.bits(), Vector<FunctionID, 2>()).iterator->value.append(member.function);
+        isReached.quickClear(member.function.index());
+    }
+    Vector<FunctionID> waiting;
+    for (size_t function : isReached)
+        waiting.append(FunctionID(static_cast<uint32_t>(function)));
+    auto reach = [&](FunctionID function) {
+        if (!isReached.quickSet(function.index()))
+            waiting.append(function);
+    };
+    BitVector constructed(program.layouts.size());
+    while (!waiting.isEmpty()) {
+        FunctionID caller = waiting.takeLast();
+        for (const SummaryCall& call : summaries.at(caller).calls) {
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(caller, call.site);
+            if (!callee)
+                callee = held.calleeAt(caller, call.site);
+            if (callee) {
+                reach(callee);
+                if (LayoutID made = call.isConstruction ? program.at(callee).constructedClass : LayoutID()) {
+                    LayoutID topmost = made;
+                    while (LayoutID above = program.at(topmost).base)
+                        topmost = above;
+                    if (program.at(topmost).mixedSubclass)
+                        constructed.quickSet(made.index());
+                }
+            } else if (call.callee == SummaryCall::Callee::Name && call.key) {
+                auto methods = methodsByKey.find(call.key.bits());
+                for (FunctionID method : methods == methodsByKey.end() ? std::span<const FunctionID>() : methods->value.span())
+                    reach(method);
+            }
+        }
+    }
+    BitVector extended(program.layouts.size());
+    for (size_t made : constructed) {
+        if (LayoutID above = program.at(LayoutID(static_cast<uint32_t>(made))).base)
+            extended.quickSet(above.index());
+    }
+    constructed.exclude(extended);
+    return constructed;
+}
+
+BitVector functionsCalledByValueInLoopsIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, BitVector& functionsInElements)
+{
+    BitVector functions(program.functions.size());
+    functionsInElements = BitVector(program.functions.size());
+    auto isCalledUnder = [&](PropertyKeyID key) {
+        return key ? linked.keysCalledInLoops.get(key.index()) : linked.elementsAreCalledInLoops;
+    };
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID holder(index);
+        const ThinSummary& summary = summaries.at(holder);
+        if (!summary.hasClosures || !linked.function(holder).isReached)
+            continue;
+        auto isClosure = [&](uint32_t node) {
+            return node != noSummaryNode && summary.nodes[node].kind == SummaryNode::Kind::Closure;
+        };
+        for (const SummaryAccess& access : summary.accesses) {
+            if (access.laysValueInSightUnderName() && isClosure(access.value) && isCalledUnder(access.key))
+                functions.quickSet(summary.nodes[access.value].first);
+        }
+        for (const SummaryEdge& edge : summary.edges) {
+            if (!isClosure(edge.from))
+                continue;
+            const SummaryNode& to = summary.nodes[edge.to];
+            bool isInArray = to.kind == SummaryNode::Kind::Contents && linked.elementsAreCalledInLoops;
+            bool isInField = to.kind == SummaryNode::Kind::Field && to.first < program.layouts.size() && to.second < program.layouts[to.first].fields.size() && isCalledUnder(program.layouts[to.first].fields[to.second].key);
+            if (isInArray || isInField)
+                functions.quickSet(summary.nodes[edge.from].first);
+            if (isInArray && !isLibraryCode(program, program.at(holder)))
+                functionsInElements.quickSet(summary.nodes[edge.from].first);
+        }
+    }
+    return functions;
+}
+
+BitVector comparatorCallees(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    BitVector functions(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID comparator(index);
+        if (!linked.function(comparator).isRepeatedCallback || !linked.function(comparator).isReached)
+            continue;
+        for (const SummaryCall& call : summaries.at(comparator).calls) {
+            FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : linked.calleeAt(comparator, call.site);
+            if (!callee)
+                callee = held.calleeAt(comparator, call.site);
+            if (callee)
+                functions.quickSet(callee.index());
+        }
+    }
+    return functions;
+}
+
+FunctionsDoneInIterations findFunctionsFinishedInIterations(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    struct MethodsUnderName {
+        Vector<FunctionID, 1> methods;
+        bool areAdded { false };
+    };
+    HashMap<uint64_t, MethodsUnderName, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsOfFiles;
+    auto methodOfFile = [](ModuleID file, PropertyKeyID key) {
+        return static_cast<uint64_t>(file.index()) << 32 | key.bits();
+    };
+    auto noteMethod = [&](PropertyKeyID key, FunctionID method) {
+        ModuleID file = key && method ? program.at(method).module : ModuleID();
+        if (!file)
+            return;
+        Vector<FunctionID, 1>& methods = methodsOfFiles.add(methodOfFile(file, key), MethodsUnderName()).iterator->value.methods;
+        if (methods.isEmpty() || methods.last() != method)
+            methods.append(method);
+    };
+    for (const LinkedMember& member : linked.members) {
+        noteMethod(member.key, member.function);
+        if (member.written != member.function)
+            noteMethod(member.key, member.written);
+        noteMethod(member.key, member.replacement);
+    }
+    for (const LinkedAssignment& assignment : held.lastAssignments)
+        noteMethod(assignment.key, assignment.method);
+    FunctionsDoneInIterations found;
+    BitVector functions = linked.functionsCalledInLoopsOfOwnFile;
+    Vector<FunctionID> waiting;
+    auto add = [&](FunctionID function) {
+        if (!functions.quickSet(function.index()))
+            waiting.append(function);
+    };
+    auto addCallees = [&](FunctionID caller, bool isDoneInIterations) {
+        ModuleID file = program.at(caller).module;
+        if (!file)
+            return;
+        for (const SummaryCall& call : summaries.at(caller).calls) {
+            if (!isDoneInIterations && !call.isInLoop)
+                continue;
+            if (call.callee == SummaryCall::Callee::Binding) {
+                if (call.function && program.at(call.function).module == file)
+                    add(call.function);
+                continue;
+            }
+            if (call.callee != SummaryCall::Callee::Name || !call.key)
+                continue;
+            auto named = methodsOfFiles.find(methodOfFile(file, call.key));
+            if (named == methodsOfFiles.end() || std::exchange(named->value.areAdded, true))
+                continue;
+            for (FunctionID method : named->value.methods)
+                add(method);
+        }
+    };
+    for (size_t function : linked.functionsCalledInLoopsOfOwnFile)
+        waiting.append(FunctionID(static_cast<uint32_t>(function)));
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (linked.function(FunctionID(index)).isReached && summaries.at(FunctionID(index)).has(SummaryTrait::HasLoops))
+            addCallees(FunctionID(index), false);
+    }
+    while (!waiting.isEmpty())
+        addCallees(waiting.takeLast(), true);
+    found.functions = functions;
+    functions.clearAll();
+    for (MethodsUnderName& named : methodsOfFiles.values())
+        named.areAdded = false;
+    for (size_t index : found.functions) {
+        FunctionID caller(static_cast<uint32_t>(index));
+        if (linked.function(caller).isReached && summaries.at(caller).has(SummaryTrait::HasLoops))
+            addCallees(caller, false);
+    }
+    while (!waiting.isEmpty())
+        addCallees(waiting.takeLast(), true);
+    found.inNestedIterations = WTF::move(functions);
+    return found;
+}
+
+void markLiteralsStoredByCallees(ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
+{
+    ThinSummaries::ElementStores stores = summaries.takeElementStores();
+    auto calleeAt = [&](FunctionID caller, ValueID site) {
+        FunctionID callee = linked.calleeAt(caller, site);
+        return callee ? callee : held.calleeAt(caller, site);
+    };
+    auto order = [](std::pair<FunctionID, uint32_t> parameter) {
+        return std::pair { parameter.first.index(), parameter.second };
+    };
+    std::ranges::sort(stores.parameters, { }, order);
+    for (const auto& passed : stores.literalArguments) {
+        FunctionID callee = calleeAt(passed.caller, passed.site);
+        if (callee && std::ranges::binary_search(stores.parameters, order({ callee, passed.argument }), { }, order))
+            summaries.noteStoredByElement(passed.literal);
+    }
+    if (stores.literalResults.isEmpty())
+        return;
+    BitVector functions;
+    for (auto [caller, site] : stores.results) {
+        if (FunctionID callee = calleeAt(caller, site))
+            functions.set(callee.index());
+    }
+    for (auto [function, literal] : stores.literalResults) {
+        if (functions.get(function.index()))
+            summaries.noteStoredByElement(literal);
+    }
+}
+
+FieldsOfNumbers fieldsUsedInProductsIn(const LooksAtBodies& looks, const BitVector& functionsCalledInLoops)
+{
+    RELEASE_ASSERT(looks.isFilled);
+    FieldsOfNumbers all = looks.fieldsUsedInProducts;
+    Vector<std::tuple<uint32_t, uint32_t, uint32_t>> uses;
+    for (const FieldUsedOutsideLoopsInProgramFacts& use : looks.fieldsUsedOutsideLoops) {
+        if (functionsCalledInLoops.quickGet(use.function.index())) {
+            all.add(use.declarer, use.key);
+            uses.append({ use.function.index(), use.declarer.index(), use.key.index() });
+        }
+    }
+    std::ranges::sort(uses);
+    uses.shrink(std::ranges::unique(uses).begin() - uses.begin());
+    UncheckedKeyHashMap<uint32_t, unsigned, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fieldsOfDeclarers;
+    all.forEachDeclarer([&](LayoutID declarer) {
+        ++fieldsOfDeclarers.add(declarer.index(), 0).iterator->value;
+    });
+    FieldsOfNumbers fields = looks.fieldsUsedInProducts;
+    for (size_t begin = 0; begin < uses.size();) {
+        size_t end = begin + 1;
+        while (end < uses.size() && std::get<0>(uses[end]) == std::get<0>(uses[begin]))
+            ++end;
+        auto usesOfFunction = uses.span().subspan(begin, end - begin);
+        bool namesSeveralFieldsOfRecord = std::ranges::any_of(usesOfFunction, [&](const auto& use) {
+            return fieldsOfDeclarers.get(std::get<1>(use)) > 1;
+        });
+        if (namesSeveralFieldsOfRecord) {
+            for (auto [function, declarer, key] : usesOfFunction)
+                fields.add(LayoutID(declarer), PropertyKeyID(key));
+        }
+        begin = end;
+    }
+    return fields;
 }
 
 FieldsOfNumbers fieldsStoredCountsIn(const LooksAtBodies& looks, const Program& program, const LinkTables& linked)
@@ -2291,14 +2929,21 @@ void lookAtBodies(LooksAtBodies& looks, const Program& program, const ThinSummar
     Vector<uint32_t>& firstFindingOfFunction = looks.firstFindingOfFunction;
     firstFindingOfFunction.grow(numberOfFunctions + 1);
     firstFindingOfFunction[0] = 0;
-    NamesOfNumbersInProgramFacts namesOfNumbers(program.types.numberOfPropertyKeys());
+    Vector<std::unique_ptr<NamesOfNumbersInProgramFacts>> namesOfWorkers(loops.width());
     BuiltinsHeldByVariablesInProgramFacts builtinsHeldByVariables = builtinsHeldByVariablesStoredOnceInProgramFacts(program, rows, bodies);
-    Vector<Vector<FindingOfProgramFacts>> chunks = collectChunksInParallel<FindingOfProgramFacts>(loops, numberOfFunctions, [&](unsigned number, Vector<FindingOfProgramFacts>& found) {
-        size_t numberFoundInFront = found.size();
-        FunctionID id(number);
-        if (const BodyIndex* index = bodies.find(id))
-            BodyLookOfProgramFacts(program, rows, refused, id, *index, summaries, found, namesOfNumbers, builtinsHeldByVariables).run();
-        firstFindingOfFunction[number + 1] = static_cast<uint32_t>(found.size() - numberFoundInFront);
+    ChunksOfIndices division = divideIntoChunks(numberOfFunctions);
+    Vector<Vector<FindingOfProgramFacts>> chunks(division.size());
+    forEachIndexInParallel(loops, division.size(), [&](unsigned chunk, unsigned worker) {
+        if (!namesOfWorkers[worker])
+            namesOfWorkers[worker] = makeUniqueWithoutFastMallocCheck<NamesOfNumbersInProgramFacts>(program.types.numberOfPropertyKeys());
+        Vector<FindingOfProgramFacts>& found = chunks[chunk];
+        for (unsigned number = division.firstIndexOf[chunk]; number < division.firstIndexOf[chunk + 1]; ++number) {
+            size_t numberFoundInFront = found.size();
+            FunctionID id(number);
+            if (const BodyIndex* index = bodies.find(id))
+                BodyLookOfProgramFacts(program, rows, refused, id, *index, summaries, found, *namesOfWorkers[worker], builtinsHeldByVariables).run();
+            firstFindingOfFunction[number + 1] = static_cast<uint32_t>(found.size() - numberFoundInFront);
+        }
     });
     for (unsigned index = 0; index < numberOfFunctions; ++index)
         firstFindingOfFunction[index + 1] += firstFindingOfFunction[index];
@@ -2317,10 +2962,21 @@ void lookAtBodies(LooksAtBodies& looks, const Program& program, const ThinSummar
         chunks[chunk] = { };
     });
 
+    NamesOfNumbersInProgramFacts namesOfNumbers(program.types.numberOfPropertyKeys());
+    for (const auto& namesOfWorker : namesOfWorkers) {
+        if (namesOfWorker)
+            namesOfNumbers.merge(*namesOfWorker);
+    }
     looks.fieldsReadAsIntegers = namesOfNumbers.takeFieldsReadAsIntegers();
+    looks.namesReadAsIntegers = namesOfNumbers.takeNamesReadAsIntegers();
     looks.fieldsReadForArithmetic = namesOfNumbers.takeFieldsReadForArithmetic();
     looks.fieldsStoredWhatIsNoInt32 = namesOfNumbers.takeFieldsStoredWhatIsNoInt32();
-    looks.keysStoredWhatIsNoInt32 = namesOfNumbers.keysStoredWhatIsNoInt32();
+    looks.fieldsUsedInProducts = namesOfNumbers.takeFieldsUsedInProducts();
+    looks.fieldsFilledByInitializers = namesOfNumbers.takeFieldsFilledByInitializers();
+    looks.initializerMethods = namesOfNumbers.takeInitializerMethods();
+    looks.fieldsUsedOutsideLoops = namesOfNumbers.takeFieldsUsedOutsideLoops();
+    looks.iterationCallbacks = namesOfNumbers.takeIterationCallbacks();
+    looks.keysStoredWhatIsNoInt32 = namesOfNumbers.takeKeysStoredWhatIsNoInt32();
     looks.variablesStoredInFields = namesOfNumbers.takeVariablesStoredInFields();
     looks.isFilled = true;
 }
@@ -2863,9 +3519,18 @@ public:
     void settle();
 
     bool canLockAtStartUp(BuiltinID member) const;
+    bool programReadsPrototypes() const { return m_programReadsPrototypes; }
+    bool isLost(BuiltinID canonical) const { return m_isLost.quickGet(canonical.index()); }
+    bool isStoredUnderThroughUnseen(PropertyKeyID) const;
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLostOutOfPlaceThatHolds); }
     bool isWrittenAsFarAsLinkGoes(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLost) != ReasonBuiltinStaysOpen::None; }
-    bool mayHaveNameLaidAsFarAsLinkGoes(BuiltinID canonicalHolder, PropertyKeyID key) const { return reasonNoLockHolds() != ReasonBuiltinStaysOpen::None || isReachedThroughUnseen(canonicalHolder) || reasonToLeaveOpenUnder(canonicalHolder, key, false, m_isLost) != ReasonBuiltinStaysOpen::None; }
+    bool mayHaveNameLaidAsFarAsLinkGoes(BuiltinID canonicalHolder, PropertyKeyID key) const
+    {
+        bool isReached = m_builtins.at(canonicalHolder).flags.contains(BuiltinFlag::IsGlobalObject)
+            ? m_lookups.builtinsAtUnseen.get(canonicalHolder.index()) || m_lookups.lostBuiltins.get(canonicalHolder.index())
+            : isReachedThroughUnseen(canonicalHolder) && (!isPrototypeOfPrimitives(m_builtins, canonicalHolder) || isStoredUnderThroughUnseen(key));
+        return isReached || reasonNoLockHolds() != ReasonBuiltinStaysOpen::None || reasonToLeaveOpenUnder(canonicalHolder, key, false, m_isLost) != ReasonBuiltinStaysOpen::None;
+    }
 
 private:
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const;
@@ -2891,6 +3556,7 @@ private:
     BitVector m_isLost;
     BitVector m_isLostOutOfPlaceThatHolds;
     BitVector m_isWithinReachOfUnseen;
+    bool m_programReadsPrototypes { false };
     bool m_locksAreLaid { true };
 };
 
@@ -3029,6 +3695,15 @@ bool WritesOnBuiltinsInProgramFacts::runsCodeThatNoLockIsLaidBeside(BuiltinID ca
     return !runsOnlyText && !m_builtins.has(BuiltinMark::EvaluatesTextInGlobalScope, canonical);
 }
 
+static bool exposesPrototypesInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+{
+    for (BuiltinID handsOut : { Builtins::ObjectGetPrototypeOf, Builtins::ReflectGetPrototypeOf, Builtins::ReflectGet, Builtins::ObjectGetOwnPropertyDescriptor, Builtins::ReflectGetOwnPropertyDescriptor, Builtins::ObjectGetOwnPropertyDescriptors, Builtins::ObjectValues, Builtins::ObjectEntries, Builtins::ObjectPrototype__lookupGetter__ }) {
+        if (canonical == builtins.canonicalID(handsOut))
+            return true;
+    }
+    return false;
+}
+
 void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
 {
     using Kind = FindingOfProgramFacts::Kind;
@@ -3050,6 +3725,8 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
             noteWritten(BuiltinID(finding.subject));
         if (isOfProgram && uses.containsAny(usesOfObjectItselfInProgramFacts))
             m_locksAreLaid &= !runsCodeThatNoLockIsLaidBeside(canonical, uses.contains(BuiltinUse::Escaped));
+        if (isOfProgram && !(uses - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
+            m_programReadsPrototypes |= exposesPrototypesInProgramFacts(m_builtins, canonical);
         if (isOfProgram && uses.contains(BuiltinUse::Escaped))
             carryOut(canonical, finding.kind == Kind::ReadOfAnyMember, isFileOfProductInTestRun(m_source, FunctionID(finding.witness.function)));
         break;
@@ -3116,6 +3793,13 @@ bool WritesOnBuiltinsInProgramFacts::isReadOffUnseen(BuiltinName name) const
 {
     PropertyKeyID key = m_source.keyOf(name);
     return m_lookups.readsUnderKeysNobodyKnows || !m_lookups.holdersReadUnderKeysNobodyKnows.isEmpty() || m_lookups.readsUnderNamesThatLoopsGave || (key && m_lookups.namesRead.get(key.index()));
+}
+
+bool WritesOnBuiltinsInProgramFacts::isStoredUnderThroughUnseen(PropertyKeyID key) const
+{
+    if (!key || m_lookups.writesUnderAnyNameThroughUnseenByProgram || m_lookups.writesUnderAnyNameThroughLostBuiltins)
+        return true;
+    return m_lookups.namesWrittenThroughUnseenByProgram.get(key.index()) || m_lookups.namesWrittenThroughUnseenByLibrary.get(key.index()) || m_lookups.namesWrittenThroughLostBuiltins.get(key.index());
 }
 
 bool WritesOnBuiltinsInProgramFacts::isReachedThroughUnseen(BuiltinID canonicalHolder) const
@@ -3209,6 +3893,7 @@ public:
     void run();
 
     void noteReached(FunctionID);
+    void leaveOutDirectEvals() { m_leavesOutDirectEvals = true; }
     void noteFindingsIn(FunctionID id) { take(m_inputs.looks.of(id)); }
     void noteFindingsIn(std::span<const FunctionID>);
     void noteObjectsThatBodyMakes(FunctionID id) { noteWhatBodyMakes(id); }
@@ -3288,7 +3973,10 @@ public:
     void takeBuiltinsThatCameOutOfSight(Vector<BuiltinID>&);
     bool objectsMayHaveMethodCalledWithStartupLoads() const { return m_objectsMayHaveMethodCalledWithStartupLoads; }
     bool climberMayBeHandedWhatNobodyKnows() const { return m_climberMayBeHandedWhatNobodyKnows; }
+    bool programMayReachPrototypes() const;
+    bool writersMayRunUnseen() const;
     bool isOutOfSight(BuiltinID canonical) const { return m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
+    bool isInReach(BuiltinID canonical) const { return !(m_uses[canonical.index()] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty(); }
     bool machineCodeMayBeLoaded() const;
     bool isAskedForOtherNames(BuiltinID canonical) const { return m_lightFormsAskedForMore.get(canonical.index()) || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const { return m_source.testsReplaceBuiltins() ? nullptr : m_rows.lightFormOf(m_builtins, canonical); }
@@ -3303,6 +3991,7 @@ public:
     }
     bool hostIsAskedForValueOfModule() const { return m_hostIsAskedForValueOfModule; }
     bool unseenCodeCanRun() const { return hasRecordThat(admitsUnknownJavaScriptInProgramFacts); }
+    BuiltinID globalObject() const { return m_globalObject; }
     bool loaderOfMachineCodeIsInUse() const
     {
         auto isInUse = [&](BuiltinID builtin) {
@@ -3312,6 +4001,7 @@ public:
             return isInUse(loader.callee) || isInUse(loader.named);
         });
     }
+    bool m_leavesOutDirectEvals { false };
     void deferRuntimeNames() { m_defersRuntimeNames = true; }
     bool defersRuntimeNames() const { return m_defersRuntimeNames; }
     bool defersMembersOf(BuiltinID canonicalHolder) const { return m_defersRuntimeNames && (canonicalHolder == m_globalObject); }
@@ -3448,6 +4138,7 @@ private:
     void noteStartWithoutName(const Witness&);
     void listWorkers();
     bool mayReadRecordOfLastMatch() const;
+    bool mayRecompileRegExps() const;
 
     const InputsOfProgramFacts& m_inputs;
     const Program& m_source;
@@ -3513,6 +4204,7 @@ private:
     BitVector m_isFoundByWhatCodeWrote;
     BitVector m_isCalledByCodeInSight;
     BitVector m_isSpelledInTexts;
+    BitVector m_modulesImportedByProgram;
     bool m_eventsAreWithheld { true };
     bool m_defersRuntimeNames { false };
     bool m_hasDeferredMembers { false };
@@ -3612,6 +4304,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_isFoundByWhatCodeWrote(m_builtins.builtinCount())
     , m_isCalledByCodeInSight(m_builtins.builtinCount())
     , m_isSpelledInTexts(m_builtins.builtinCount())
+    , m_modulesImportedByProgram(m_builtins.builtinCount())
     , m_writes(inputs.program, m_refused, inputs.linked.lookups)
     , m_namesOfProtocols(m_builtins.nameCount())
     , m_keysReadOnlyByRowsThatNameThem(m_builtins.nameCount())
@@ -3763,6 +4456,24 @@ void BuilderOfProgramFacts::noteStandsAboveClass(BuiltinID builtin, FunctionID c
     take(findings.span());
 }
 
+bool BuilderOfProgramFacts::programMayReachPrototypes() const
+{
+    auto spells = [&](BuiltinName name) {
+        PropertyKeyID key = m_source.keyOf(name);
+        return key && m_namesSpelledByProgram.get(key.index());
+    };
+    return m_writes.programReadsPrototypes() || spells(BuiltinNames::__proto__) || (spells(BuiltinNames::constructor) && spells(BuiltinNames::prototype)) || !m_inputs.linked.lookups.readsOfProgramUnderKeysNobodyKnows.isEmpty();
+}
+
+bool BuilderOfProgramFacts::writersMayRunUnseen() const
+{
+    for (size_t index : m_rows.writeUnderKeysOfCalls) {
+        if (anyRowMayApply(BuiltinID(static_cast<uint32_t>(index))))
+            return true;
+    }
+    return false;
+}
+
 void BuilderOfProgramFacts::noteLetGoByLink(BuiltinID builtin)
 {
     BuiltinID canonical = m_builtins.canonicalID(builtin);
@@ -3872,6 +4583,8 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
                 m_functionsThatAnswerEveryNameOnInstances.append(FunctionID(finding.key));
             break;
         case Finding::Kind::UnseenCode:
+            if (m_leavesOutDirectEvals && static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::EvaluatesText)
+                break;
             add(m_program.unseenCode, static_cast<UnseenCodeCause>(finding.detail), { }, finding.witness);
             if (static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::LoadsModuleByName)
                 m_loadsOfProgramByName.append(finding.witness);
@@ -4401,11 +5114,14 @@ void BuilderOfProgramFacts::evaluate(ModuleID id, const Witness& witness)
         return !!entry.variable;
     });
     if (object && fillsVariables) {
+        if (standsInTextOfProgram(witness))
+            m_modulesImportedByProgram.quickSet(m_builtins.canonicalID(object).index());
         auto memberUnder = [&](const SyntheticExport& entry) {
             std::optional<PropertyKeyID> key = m_source.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = entry.name });
             return key ? findOwnMember(m_source, m_builtins.canonicalID(object), *key) : BuiltinID();
         };
-        bool everyNameIsMember = loaderFillsVariablesOffValueOf(module) && std::ranges::all_of(module.syntheticExports, [&](const SyntheticExport& entry) {
+        bool onlyFillsVariables = module.kind == ModuleKind::Runtime || loaderFillsVariablesOffValueOf(module);
+        bool everyNameIsMember = onlyFillsVariables && std::ranges::all_of(module.syntheticExports, [&](const SyntheticExport& entry) {
             return !entry.variable || memberUnder(entry);
         });
         if (everyNameIsMember) {
@@ -4861,7 +5577,7 @@ Vector<BuiltinUseRecord> BuilderOfProgramFacts::usesWithWhatNobodyNamesAsEscaped
             record.uses = BuiltinUse::Tested;
             continue;
         }
-        if (m_isSpelledInTexts.quickGet(canonical))
+        if (m_isSpelledInTexts.quickGet(canonical) || m_modulesImportedByProgram.quickGet(canonical))
             uses.add(BuiltinUse::Read);
         else if (!isNamed.quickGet(canonical)) {
             uses = (uses & usesThatNameNothing) | OptionSet<BuiltinUse> { BuiltinUse::Escaped };
@@ -5961,13 +6677,25 @@ bool BuilderOfProgramFacts::mayReadRecordOfLastMatch() const
     BuiltinID constructor = m_builtins.at(BuiltinClasses::RegExp).constructor;
     if (!constructor || m_program.unseenCodeCanRun)
         return true;
-    return std::ranges::any_of(m_builtins.membersOf(m_builtins.canonicalID(constructor)), [&](BuiltinID member) {
+    BuiltinID canonical = m_builtins.canonicalID(constructor);
+    bool unknownValuesMayBeIt = m_hasDeferredMembers || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isLookedThrough.quickGet(canonical.index());
+    return std::ranges::any_of(m_builtins.membersOf(canonical), [&](BuiltinID member) {
         const Builtin& entry = m_builtins.at(member);
         if (entry.mutability != BuiltinMutability::ChangesOnItsOwn)
             return false;
         PropertyKeyID key = entry.name ? m_source.keyOf(entry.name) : PropertyKeyID();
-        return !m_uses[member.index()].isEmpty() || !m_uses[m_builtins.canonicalID(member).index()].isEmpty() || (key && m_namesRead.get(key.index()));
+        return !m_uses[member.index()].isEmpty() || !m_uses[m_builtins.canonicalID(member).index()].isEmpty() || (unknownValuesMayBeIt && key && m_namesRead.get(key.index()));
     });
+}
+
+bool BuilderOfProgramFacts::mayRecompileRegExps() const
+{
+    BuiltinID compile = m_builtins.canonicalID(BuiltinID(Builtins::RegExpPrototypeCompile));
+    if (m_program.unseenCodeCanRun || m_hasDeferredMembers || !m_uses[compile.index()].isEmpty() || isOutOfSight(compile))
+        return true;
+    const Builtin& entry = m_builtins.at(compile);
+    PropertyKeyID key = entry.name ? m_source.keyOf(entry.name) : PropertyKeyID();
+    return key && (m_namesRead.get(key.index()) || m_namesCalled.get(key.index()));
 }
 
 void BuilderOfProgramFacts::listWorkers()
@@ -6253,6 +6981,7 @@ void BuilderOfProgramFacts::run()
     m_tables.featureUses = FeaturesOfProgramFacts(m_inputs, m_refused, builtinsWhoseOperandsNobodyKnows, foundByNameAlone, handedOnByCodeInSight, unseenCodeMayRun).run(usesWithWhatNobodyNamesAsEscaped().span());
     layPlacesWhereProgramReadsNames();
     m_program.mayReadLegacyRegExpStatics = mayReadRecordOfLastMatch();
+    m_program.mayRecompileRegExps = mayRecompileRegExps();
     m_program.matchesRegExps = m_program.unseenCodeCanRun || std::ranges::contains(m_tables.featureUses, static_cast<uint32_t>(RemovableFeature::RegExp), &FeatureUseRecord::feature);
     listLibraryCodeLacked();
     listLocaleUses();
@@ -6294,6 +7023,11 @@ BuiltinsInReach::BuiltinsInReach(const Program& program, const LooksAtBodies& lo
 }
 
 BuiltinsInReach::~BuiltinsInReach() = default;
+
+void BuiltinsInReach::leaveOutDirectEvals()
+{
+    m_builder->leaveOutDirectEvals();
+}
 
 bool BuiltinsInReach::hasNoFindingsIn(FunctionID id) const
 {
@@ -6634,7 +7368,8 @@ void BuiltinsInReach::noteWriteThroughLostBuiltins(PropertyKeyID key, bool isByF
 
 void BuiltinsInReach::noteNameWrittenThroughUnseenByLibrary(PropertyKeyID key)
 {
-    m_wasToldSomethingNew |= !m_linked->lookups.namesWrittenThroughUnseenByLibrary.set(key.index());
+    LookupsPastProgramObjects& lookups = m_linked->lookups;
+    m_wasToldSomethingNew |= key ? !lookups.namesWrittenThroughUnseenByLibrary.set(key.index()) : !std::exchange(lookups.writesAnyNameThroughUnseenByLibrary, true);
 }
 
 void BuiltinsInReach::noteWriteThroughUnseenByProgram(PropertyKeyID key, bool isByFileOfProduct)
@@ -6746,6 +7481,7 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     m_builder->takeBuiltinsThatCameOutOfSight(cameOutOfSight);
 
     m_builder->writes().settle();
+    m_writersMayRunUnseen = m_writersMayRunUnseen || m_builder->writersMayRunUnseen();
     BitVector& taken = m_linked->lookups.membersTakenForConstants;
     for (size_t index : taken) {
         BuiltinID member(static_cast<uint32_t>(index));
@@ -6764,15 +7500,20 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
 
 bool BuiltinsInReach::mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID key) const
 {
-    return m_builder->machineCodeMayBeLoaded() || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key);
+    bool evaluatesTextOnGlobalObject = m_builder->unseenCodeCanRun() && canonicalHolder == m_builder->globalObject();
+    auto isStoredUnderAnyName = [&] {
+        bool someWriterMayRun = m_linked->lookups.writesAnyNameThroughUnseenByLibrary || m_writersMayRunUnseen;
+        return m_builder->unseenCodeCanRun() || (someWriterMayRun && (m_builder->programMayReachPrototypes() || m_builder->writes().isLost(canonicalHolder)));
+    };
+    bool isDefinedUnseen = isPrototypeOfPrimitives(m_inputs->program.builtins(), canonicalHolder) && (isStoredUnderAnyName() || (m_builder->isOutOfSight(canonicalHolder) && m_builder->writes().isStoredUnderThroughUnseen(key)));
+    return m_builder->machineCodeMayBeLoaded() || evaluatesTextOnGlobalObject || isDefinedUnseen || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key);
 }
 
 void BuiltinsInReach::takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID key)
 {
-    NameOnHolder taken { canonicalHolder, key };
-    if (m_namesTakenForUnlaid.contains(taken))
+    if (!m_namesEverTakenForUnlaid.add(static_cast<uint64_t>(canonicalHolder.index()) << 32 | key.bits()).isNewEntry)
         return;
-    m_namesTakenForUnlaid.append(taken);
+    m_namesTakenForUnlaid.append(NameOnHolder { canonicalHolder, key });
     m_wasToldSomethingNew = true;
 }
 
@@ -6821,6 +7562,11 @@ bool BuiltinsInReach::objectsMayHaveMethodCalledWithStartupLoads() const
 bool BuiltinsInReach::isOutOfSight(BuiltinID canonical) const
 {
     return m_builder->isOutOfSight(canonical);
+}
+
+bool BuiltinsInReach::isInReach(BuiltinID canonical) const
+{
+    return m_builder->isInReach(canonical);
 }
 
 bool BuiltinsInReach::isAskedForOtherNames(BuiltinID canonical) const

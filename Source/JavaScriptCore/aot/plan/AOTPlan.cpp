@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
@@ -28,6 +29,7 @@
 #include "AOTThinSummary.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTTypedArrayKinds.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
 #include <array>
@@ -35,7 +37,6 @@
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 
@@ -252,7 +253,7 @@ static BitVector variablesDescribedToRunTimeByPlan(const Program& program)
             add(binding.variable);
     }
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
-        if (program.variables[index].flags.contains(VariableFlags::HoldsMock) || program.variables[index].owner)
+        if (program.variables[index].flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::HoldsInstance, VariableFlags::GuardsInstance, VariableFlags::AllocatesInstance, VariableFlags::HasSeveralInstances }) || program.variables[index].owner)
             described.quickSet(index);
     }
     return described;
@@ -305,7 +306,7 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
                 continue;
             const LinkedCell& cell = linked.variable(definition.variable);
             if (!cell.everyWriterIsKnown || cell.isWrittenAfterConstruction || !cell.proven || variable.owner || variable.initialization == VariableInitialization::Function
-                || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }))
+                || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable, VariableFlags::HoldsInstance }))
                 continue;
             if (!index)
                 index = facts.bodies().find(body);
@@ -358,6 +359,135 @@ static SlotRepresentation formOfNumbersProvenOfVariableInPlan(const Program& pro
     return proven.primitives & Primitive::Double ? SlotRepresentation::OptionalDouble : SlotRepresentation::OptionalInt64;
 }
 
+template<typename Functor>
+static auto findInClassOfVariable(const Program& program, const Facts& facts, VariableID id, const Functor& functor) -> decltype(functor(std::declval<const ClassPart&>()))
+{
+    auto findIn = [&](TypeID held) -> decltype(functor(std::declval<const ClassPart&>())) {
+        if (!held || isNeverType(held))
+            return { };
+        Type type = program.at(held);
+        type.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
+        const ClassPart* onlyClass = singleBuiltinClassOf(TypeReader(program), type);
+        return onlyClass ? functor(*onlyClass) : decltype(functor(*onlyClass)) { };
+    };
+    if (auto found = findIn(facts.beforeEvaluation().typeOf(id)))
+        return found;
+    return id.index() < facts.linked().variables.size() ? findIn(facts.linked().variable(id).proven) : decltype(functor(std::declval<const ClassPart&>())) { };
+}
+
+static std::optional<TypedArrayType> findViewTypeOfVariable(const Program& program, const Facts& facts, VariableID id)
+{
+    return findInClassOfVariable(program, facts, id, [&](const ClassPart& held) -> std::optional<TypedArrayType> {
+        TypedArrayType kind = program.builtins().typedArrayTypeOf(held.builtinClass);
+        return isTypedView(kind) && hasInlineElementAccess(kind) ? std::optional(kind) : std::nullopt;
+    });
+}
+
+static bool isViewVariable(const Program& program, const Facts& facts, VariableID id)
+{
+    return findViewTypeOfVariable(program, facts, id).has_value();
+}
+
+static bool isBufferVariable(const Program& program, const Facts& facts, VariableID id)
+{
+    return findInClassOfVariable(program, facts, id, [](const ClassPart& held) {
+        return held.builtinClass == BuiltinClasses::ArrayBuffer;
+    });
+}
+
+static void findViewsOfOneBuffer(const Program& program, const Facts& facts, Vector<PlannedVariable>& variables)
+{
+    BitVector modulesWithViews(program.modules.size());
+    BitVector modulesAsked(program.modules.size());
+    Vector<uint32_t> views;
+    for (uint32_t index = 0; index < variables.size(); ++index) {
+        ModuleID module = program.variables[index].module;
+        if (!variables[index].hasViewMirror || !module)
+            continue;
+        views.append(index);
+        if (modulesWithViews.quickSet(module.index()))
+            modulesAsked.quickSet(module.index());
+    }
+    if (modulesAsked.isEmpty())
+        return;
+
+    struct BufferOfVariable {
+        VariableID variable;
+        uint32_t buffer;
+    };
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> buffersOfViews;
+    BitVector givenOtherwise(variables.size());
+    uint32_t numberOfBuffers = 0;
+    for (uint32_t number = 0; number < program.functions.size(); ++number) {
+        ModuleID module = program.functions[number].module;
+        const BodyIndex* index = module && modulesAsked.quickGet(module.index()) ? facts.bodies().find(FunctionID(number)) : nullptr;
+        if (!index || !index->opcodes().contains(Opcode::PutModuleVariable))
+            continue;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            Vector<BufferOfVariable, 2> buffers;
+            auto bufferOfView = [&](ValueID stored) -> std::optional<uint32_t> {
+                if (index->isParameter(stored) || index->opcodeOf(stored) != Opcode::Construct)
+                    return std::nullopt;
+                std::span<const ValueID> arguments = index->value(stored).argumentsOperands();
+                ValueID given = arguments.size() == 1 ? index->stripCasts(arguments[0]) : ValueID();
+                if (!given || index->isParameter(given) || index->opcodeOf(given) != Opcode::GetModuleVariable || index->blockOf(given) != BlockID(block))
+                    return std::nullopt;
+                VariableID variable = index->value(given).variable();
+                if (!isBufferVariable(program, facts, variable))
+                    return std::nullopt;
+                auto found = std::ranges::find(buffers, variable, &BufferOfVariable::variable);
+                if (found == buffers.end()) {
+                    buffers.append({ variable, numberOfBuffers++ });
+                    return buffers.last().buffer;
+                }
+                return found->buffer;
+            };
+            for (BodyValue store : index->block(BlockID(block)).values()) {
+                if (store.opcode() != Opcode::PutModuleVariable)
+                    continue;
+                VariableID variable = store.variable();
+                buffers.removeAllMatching([&](const BufferOfVariable& held) {
+                    return held.variable == variable;
+                });
+                if (!variables[variable.index()].hasViewMirror)
+                    continue;
+                ValueID stored = index->stripCasts(store.valueOperand());
+                if (!index->isParameter(stored) && (index->opcodeOf(stored) == Opcode::Undefined || index->opcodeOf(stored) == Opcode::Null))
+                    continue;
+                if (std::optional<uint32_t> buffer = bufferOfView(stored))
+                    buffersOfViews.add(variable.index(), Vector<uint32_t, 2>()).iterator->value.append(*buffer);
+                else
+                    givenOtherwise.quickSet(variable.index());
+            }
+        }
+    }
+
+    for (uint32_t place = 0; place < views.size(); ++place) {
+        auto buffers = buffersOfViews.find(views[place]);
+        if (buffers == buffersOfViews.end() || givenOtherwise.quickGet(views[place]) || variables[views[place]].firstViewOfBuffer)
+            continue;
+        Vector<uint32_t, 8> together;
+        for (uint32_t other : views.span().subspan(place)) {
+            auto buffersOfOther = buffersOfViews.find(other);
+            if (buffersOfOther != buffersOfViews.end() && buffersOfOther->value == buffers->value && !givenOtherwise.quickGet(other))
+                together.append(other);
+        }
+        if (together.size() < 2)
+            continue;
+        uint64_t locations = 0;
+        for (uint32_t view : together)
+            locations |= Typed::maskOf(program, MemoryLocation::moduleVariable(VariableID(view)));
+        for (uint32_t view : together) {
+            unsigned size = logElementSize(*findViewTypeOfVariable(program, facts, VariableID(view)));
+            variables[view].firstViewOfBuffer = VariableID(together[0]);
+            variables[view].firstViewOfElementSize = VariableID(*std::ranges::find_if(together, [&](uint32_t other) {
+                return logElementSize(*findViewTypeOfVariable(program, facts, VariableID(other))) == size;
+            }));
+            variables[view].locationsOfViewsOfBuffer = locations;
+        }
+    }
+}
+
 static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Facts& facts, const BitVector& described)
 {
     bool leavesOutWordsNeverStored = facts.mechanisms().contains(Mechanism::TypedSlots);
@@ -371,8 +501,11 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
         planned.isDescribedToRunTime = described.quickGet(index);
         if (declaration.owner)
             continue;
+        planned.hasViewMirror = holdsNumbersRaw && declaration.initialization != VariableInitialization::Function
+            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance })
+            && isViewVariable(program, facts, VariableID(index));
         if (holdsNumbersRaw && !planned.isDescribedToRunTime && declaration.initialization != VariableInitialization::Function && !filledByRunTime.get(index)
-            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
+            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance }))
             planned.representation = formOfNumbersProvenOfVariableInPlan(program, facts.linked(), VariableID(index));
         SlotTraits traits = traitsOf(planned.representation);
         switch (declaration.initialization) {
@@ -391,6 +524,8 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
             break;
         }
     }
+    if (holdsNumbersRaw)
+        findViewsOfOneBuffer(program, facts, variables);
     return variables;
 }
 
@@ -534,7 +669,7 @@ static BitVector layoutsWithClassRecordInPlan(const Program& program, const Fact
     return layouts;
 }
 
-static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program, const Facts& facts)
+static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program, const Facts& facts, const BitVector& functionsThatEndTheirTailCalls)
 {
     const LinkTables& linked = facts.linked();
     BitVector found(program.functions.size());
@@ -553,8 +688,9 @@ static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program,
             return linked.leadsTo(CodeUnit { function, CodeRole::Body }, named);
         }));
         const BodyIndex* index = facts.bodies().find(function);
+        bool endsItsTailCalls = functionsThatEndTheirTailCalls.get(number);
         for (const SummaryCall& call : facts.summaries().at(function).calls) {
-            if (passesNoReturn)
+            if (passesNoReturn || endsItsTailCalls)
                 break;
             if (!call.isInTailPosition)
                 continue;
@@ -595,6 +731,16 @@ static BitVector functionsWithClosureCellInPlan(const Program& program, const Ca
             functions.quickSet(index);
     }
     return functions;
+}
+
+static void addClosureCellsOfFunctionsWithoutCapturesLeft(const Program& program, PlanParts& parts)
+{
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID id(index);
+        uint32_t numberRemoved = parts.promotedEnvironments.numberOfRemovedCapturesOf(id);
+        if (numberRemoved && numberRemoved == program.functions[index].captures.size() && parts.conventions.of(id).has(CodeRole::GenericCallEntry))
+            parts.functionsWithClosureCell.quickSet(index);
+    }
 }
 
 ParentInClassRecord parentNamedByClassRecord(const Program& program, const Facts& facts, LayoutID id)
@@ -731,7 +877,97 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
     return plans;
 }
 
-static BitVector globalNamesNeverStoredInPlan(const Program& program, const Facts& facts)
+static StoredGlobalValue storedValueOfNode(const Program& program, const LinkTables& link, FunctionID function, const ThinSummary& summary, const SummaryNode& value)
+{
+    StoredGlobalValue stored;
+    auto takeType = [&](TypeID type) {
+        if (!type || holdsOnlyPrimitives(type) || !program.at(type).hasObjects() || program.at(type).hasUnboundedUnknown())
+            return;
+        if (FunctionID only = singleFunctionOf(TypeReader(program), program.at(type)))
+            stored.function = only;
+        else if (LayoutID only = singleLayoutOf(TypeReader(program), program.at(type)))
+            stored.layout = only;
+        else
+            stored.type = type;
+    };
+    switch (value.kind) {
+    case SummaryNode::Kind::Allocation:
+        stored.layout = LayoutID(value.first);
+        break;
+    case SummaryNode::Kind::ClassInstance:
+        stored.builtinClass = BuiltinClassID(value.first);
+        break;
+    case SummaryNode::Kind::Closure:
+        stored.function = FunctionID(value.first);
+        break;
+    case SummaryNode::Kind::Constant:
+        takeType(TypeID::fromBits(value.first));
+        break;
+    case SummaryNode::Kind::Variable:
+        takeType(link.variable(VariableID(value.first)).proven);
+        break;
+    case SummaryNode::Kind::ResultOfCall: {
+        const SummaryCall& call = summary.calls[value.first];
+        FunctionID callee = call.callee == SummaryCall::Callee::Binding ? call.function : link.calleeAt(function, call.site);
+        if (callee && call.isConstruction)
+            stored.layout = program.at(callee).constructedClass;
+        break;
+    }
+    default:
+        break;
+    }
+    return stored;
+}
+
+static std::optional<StoredGlobalValue> findStoredValue(const Program& program, const LinkTables& link, FunctionID function, const ThinSummary& summary, const SummaryAccess& store, uint32_t globalObject)
+{
+    static constexpr unsigned mostArrivals = 4;
+    std::optional<StoredGlobalValue> found;
+    bool isUnknown = false;
+    unsigned numberOfArrivals = 0;
+    auto take = [&](uint32_t node) {
+        const SummaryNode& value = summary.nodes[node];
+        if (value.kind == SummaryNode::Kind::Constant && holdsOnlyPrimitives(TypeID::fromBits(value.first)))
+            return;
+        if (value.kind == SummaryNode::Kind::ResultOfAccess && summary.accesses[value.first].key == store.key && isGlobalObject(program, link, summary, summary.accesses[value.first].subject, globalObject))
+            return;
+        StoredGlobalValue stored = storedValueOfNode(program, link, function, summary, value);
+        isUnknown |= stored.isUnknown() || (found && !found->isSameAs(stored));
+        found = stored;
+    };
+    if (summary.nodes[store.value].kind != SummaryNode::Kind::Join)
+        take(store.value);
+    else {
+        for (const SummaryEdge& edge : summary.edges) {
+            if (edge.to != store.value)
+                continue;
+            if (++numberOfArrivals > mostArrivals || summary.nodes[edge.from].kind == SummaryNode::Kind::Join)
+                return StoredGlobalValue { };
+            take(edge.from);
+        }
+    }
+    if (isUnknown)
+        return StoredGlobalValue { };
+    return found;
+}
+
+static Vector<StoredGlobalValue> agreedGlobalValues(Vector<StoredGlobalValue>&& stored)
+{
+    std::ranges::stable_sort(stored, { }, [](const StoredGlobalValue& value) { return value.key.index(); });
+    Vector<StoredGlobalValue> only;
+    for (size_t place = 0; place < stored.size();) {
+        size_t end = place + 1;
+        bool agrees = !stored[place].isUnknown();
+        for (; end < stored.size() && stored[end].key == stored[place].key; ++end)
+            agrees &= stored[end].isSameAs(stored[place]);
+        if (agrees)
+            only.append(stored[place]);
+        place = end;
+    }
+    return only;
+}
+
+static BitVector globalNamesNeverStoredInPlan(const Program& program, const Facts& facts, Vector<StoredGlobalValue>& stored)
 {
     unsigned numberOfKeys = program.types.numberOfPropertyKeys();
     BitVector neverStored(numberOfKeys);
@@ -741,14 +977,32 @@ static BitVector globalNamesNeverStoredInPlan(const Program& program, const Fact
     }
     uint32_t globalObject = program.builtins().canonicalID(Builtins::GlobalThis).index();
     const ThinSummaries& summaries = facts.summaries();
+    const LinkTables& link = facts.linked();
+    auto readStore = [&](FunctionID function, const ThinSummary& summary, const SummaryAccess& store) {
+        if (store.key.index() >= numberOfKeys)
+            return;
+        const SummaryNode& subject = summary.nodes[store.subject];
+        if (subject.kind == SummaryNode::Kind::Builtin)
+            neverStored.quickClear(store.key.index());
+        if (store.isToContents() || store.value == noSummaryNode || !program.types.hasStableNumber(store.key))
+            return;
+        if (std::optional<StoredGlobalValue> value = findStoredValue(program, link, function, summary, store, globalObject)) {
+            value->key = store.key;
+            stored.append(*value);
+        }
+    };
+    if (link.listsGlobalStores) {
+        for (const LinkedGlobalStore& store : link.globalStores) {
+            const ThinSummary& summary = summaries.at(store.function);
+            readStore(store.function, summary, summary.accesses[store.access]);
+        }
+        return neverStored;
+    }
     for (uint32_t function = 0; function < summaries.size(); ++function) {
         const ThinSummary& summary = summaries.at(FunctionID(function));
         for (const SummaryAccess& access : summary.accesses) {
-            if (access.kind != SummaryAccess::Kind::Store || !access.key || access.key.index() >= numberOfKeys)
-                continue;
-            const SummaryNode& subject = summary.nodes[access.subject];
-            if (subject.kind == SummaryNode::Kind::Builtin && subject.first == globalObject)
-                neverStored.quickClear(access.key.index());
+            if (access.kind == SummaryAccess::Kind::Store && access.key && isGlobalObject(program, link, summary, access.subject, globalObject))
+                readStore(FunctionID(function), summary, access);
         }
     }
     return neverStored;
@@ -766,13 +1020,15 @@ static BitVector namesOfFieldsWrittenAsOneFunctionInPlan(const Program& program)
     return names;
 }
 
-static void planWordsOfModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
+static void planWordsOfModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts, const BitVector& functionsThatEndTheirTailCalls)
 {
     chooseModuleWordsOfPlan(program, parts);
     parts.namesOfFieldsWrittenAsOneFunction = namesOfFieldsWrittenAsOneFunctionInPlan(program);
-    parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts);
+    Vector<StoredGlobalValue> storedGlobalValues;
+    parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts, storedGlobalValues);
+    parts.storedGlobalValues = agreedGlobalValues(WTF::move(storedGlobalValues));
     parts.globalNamesNeverStoredThroughBinding = parts.globalNamesNeverStoredByName;
-    parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
+    parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts, functionsThatEndTheirTailCalls);
     parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFill(program);
 }
 
@@ -950,6 +1206,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
             [&] { runLane("plan: lane of variables, class creation"_s, [&] {
                 const BitVector variablesDescribedToRunTime = variablesDescribedToRunTimeByPlan(program);
                 parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
+                parts.heldRegExps = HeldRegExps(program, facts);
                 variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
                 classCreation = classCreationOfPlan(program, facts);
             }); },
@@ -1005,13 +1262,14 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         [&] { runLane("plan: lane of tail calls that end, words of modules, names"_s, [&] {
             if (facts.mechanisms().contains(Mechanism::DirectCalls))
                 functionsThatEndTheirTailCalls = findFunctionsThatEndTheirTailCalls(program, facts);
-            planWordsOfModulesAndGlobalNames(program, facts, build, parts);
+            planWordsOfModulesAndGlobalNames(program, facts, build, parts, functionsThatEndTheirTailCalls.whateverArrives);
         }); },
     });
     if (!finish("plan: slots, key orders beside conventions, stack tests, shapes"_s))
         return nullptr;
 
     parts.conventions.setRemovedCaptures(program, parts.promotedEnvironments);
+    addClosureCellsOfFunctionsWithoutCapturesLeft(program, parts);
     std::unique_ptr<Plan> plan = makeUnique<Plan>(WTF::move(parts));
     plan->setParameterGuards(planParameterGuards(program, facts, *plan, build).span());
     plan->setFunctionsThatEndTheirTailCalls(WTF::move(functionsThatEndTheirTailCalls));

@@ -261,6 +261,44 @@ static void testWholePagesOfSpanAreGivenBackAndWhatLiesBesideItStays()
     OSAllocator::decommitAndRelease(pages.data(), size);
 }
 
+static void testIdleSpanPagesAreReleasedAtNextCollection()
+{
+    TestVM test;
+    CacheRegistry registry;
+    constexpr size_t sizeOfBorder = 8;
+    size_t size = 4 * pageSize();
+    std::span<uint8_t> pages { static_cast<uint8_t*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages)), size };
+    std::span<uint8_t> cleared = pages.subspan(sizeOfBorder, size - 2 * sizeOfBorder);
+    registry.addClearedEachCollection("pages"_s, cleared);
+#if OS(LINUX)
+    auto isAway = [&](size_t page) {
+        std::array<unsigned char, 4> isThere { };
+        return !mincore(pages.data(), size, isThere.data()) && !(isThere[page] & 1);
+    };
+    constexpr bool idlePagesAreReleased = true;
+#else
+    auto isAway = [](size_t) {
+        return false;
+    };
+    constexpr bool idlePagesAreReleased = false;
+#endif
+
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        memsetSpan(pages, 1);
+        registry.finalize(test.vm(), scope);
+        AOT_TEST_CHECK(!isAway(0) && !isAway(1) && !isAway(2) && !isAway(3));
+
+        pages[2 * pageSize() + sizeOfBorder] = 1;
+        registry.finalize(test.vm(), scope);
+        AOT_TEST_CHECK(isAway(1) == idlePagesAreReleased && !isAway(0) && !isAway(2) && !isAway(3));
+
+        registry.finalize(test.vm(), scope);
+        AOT_TEST_CHECK(isAway(2) == idlePagesAreReleased && !isAway(0) && !isAway(3));
+        AOT_TEST_CHECK(holdsOnlyZeros(cleared) && pages.front() == 1 && pages.back() == 1);
+    }
+    OSAllocator::decommitAndRelease(pages.data(), size);
+}
+
 static void testWeakOwnerIsAskedAtEveryCollection()
 {
     TestVM test;
@@ -523,6 +561,7 @@ std::span<const NativeTest> cacheRegistryTests()
         { "callsInRegistrationOrder"_s, testCallsInRegistrationOrder },
         { "spanIsClearedEveryTime"_s, testSpanIsClearedEveryTime },
         { "wholePagesOfSpanAreGivenBackAndWhatLiesBesideItStays"_s, testWholePagesOfSpanAreGivenBackAndWhatLiesBesideItStays },
+        { "idleSpanPagesAreReleasedAtNextCollection"_s, testIdleSpanPagesAreReleasedAtNextCollection },
         { "weakOwnerIsAskedAtEveryCollection"_s, testWeakOwnerIsAskedAtEveryCollection },
         { "weakOwnerSweepsNoRegionInEdenUntilRecordAll"_s, testWeakOwnerSweepsNoRegionInEdenUntilRecordAll },
         { "weakOwnerSweepsScannedRegionsInFull"_s, testWeakOwnerSweepsScannedRegionsInFull },

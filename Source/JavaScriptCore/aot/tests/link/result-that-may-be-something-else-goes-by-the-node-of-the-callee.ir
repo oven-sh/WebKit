@@ -1,8 +1,10 @@
-# orZero() may also return a constant of its own, so its result is no parameter: every call gets what the node of the result holds, which is what all callers pass and the constant
+# orZero() may also return a constant of its own, so its result is no parameter. The node of its result holds what all callers pass and the constant; each call gets its own operand and the constant
 # function orZero(x) { return x ? x : 0; }   function text() { return orZero("a"); }   function flag() { return orZero(true); }   text(); flag();
 # f1 = orZero, f2 = text, f3 = flag
 # RUN: link functions mechanisms=all
-# CHECK: function f3 {{*}}result={{*}}string
+# CHECK: function f1 {{*}}result=true|int[0, 2147483647]|string
+# CHECK: function f2 {{*}}result=int[0, 2147483647]|string returns
+# CHECK: function f3 {{*}}result=true|int[0, 2147483647] returns
 # RUN(NEVER): summary f1
 # NEVER-NOT: result 0 is
 

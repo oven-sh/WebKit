@@ -72,6 +72,11 @@ JSValue pointerToJSValue(JSGlobalObject* globalObject, uint64_t address)
     return JSBigInt::createFrom(globalObject, address);
 }
 
+String stringFromCString(const char* string)
+{
+    return String::fromUTF8WithLatin1Fallback(std::span<const char>(string, strlen(string)));
+}
+
 static constexpr int64_t maxInt52 = 9007199254740991;
 
 int64_t doubleToInt64(double value)
@@ -478,8 +483,7 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         const char* string = reinterpret_cast<const char*>(static_cast<uintptr_t>(slot));
         if (!string)
             return jsNull();
-        String decoded = String::fromUTF8WithLatin1Fallback(std::span<const char>(string, strlen(string)));
-        return jsString(getVM(globalObject), decoded);
+        return jsString(getVM(globalObject), stringFromCString(string));
     }
     case Type::Pointer:
     case Type::Function:

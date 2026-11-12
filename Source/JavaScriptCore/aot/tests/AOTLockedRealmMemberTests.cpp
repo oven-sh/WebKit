@@ -827,6 +827,32 @@ void checkWriteIsToldOfOnceForEachMember(Realms& realms)
     AOT_TEST_CHECK(numberOf(inTestRun, Builtins::DateParse) == 1 && numberOf(inTestRun, Builtins::DateUTC) == 3);
 }
 
+void checkStoreThroughPrototypeDoesNotWrite(Realms& realms)
+{
+    class Listener final : public WritesToBuiltinMembers {
+    public:
+        void willWrite(BuiltinID, UniquedStringImpl*) final { ++numberOfWriteNotifications; }
+        void willAddNameTo(BuiltinID) final { ++numberOfWriteNotifications; }
+
+        unsigned numberOfWriteNotifications { 0 };
+    };
+    VM& vm = realms.vm();
+    JSGlobalObject* realm = realms.plain();
+    Identifier name = Identifier::fromString(vm, "nameNobodyHas"_s);
+    for (auto [prototypeSource, receiverSource] : { std::pair { "globalThis.arrayPrototype = [];"_s, "Object.setPrototypeOf([], globalThis.arrayPrototype)"_s }, std::pair { "globalThis.functionPrototype = function () { };"_s, "Object.setPrototypeOf(function () { }, globalThis.functionPrototype)"_s } }) {
+        Listener listener;
+        JSObject* prototype = realms.object(realm, prototypeSource);
+        JSObject* receiver = realms.object(realm, receiverSource);
+        AOT_TEST_CHECK(prototype->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, { }, &listener).get()));
+        PutPropertySlot toReceiver(receiver, true);
+        AOT_TEST_CHECK(receiver->methodTable()->put(receiver, realm, name, jsNumber(1), toReceiver) && receiver->getDirect(vm, name) == jsNumber(1));
+        AOT_TEST_CHECK(!listener.numberOfWriteNotifications && !prototype->getDirect(vm, name));
+        PutPropertySlot toPrototype(prototype, true);
+        AOT_TEST_CHECK(prototype->methodTable()->put(prototype, realm, name, jsNumber(2), toPrototype) && prototype->getDirect(vm, name) == jsNumber(2));
+        AOT_TEST_CHECK(listener.numberOfWriteNotifications);
+    }
+}
+
 void checkLockLeavesObjectsWithSameStructure(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -1023,6 +1049,7 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/prototypes-of-function-kinds"_s, withoutImage<checkPrototypesOfFunctionKinds> },
         { "locked-realm-members/names-given-twice"_s, withoutImage<checkNamesGivenTwice> },
         { "locked-realm-members/a-write-is-told-of-once-for-each-member"_s, withoutImage<checkWriteIsToldOfOnceForEachMember> },
+        { "locked-realm-members/a-store-through-a-prototype-is-no-write"_s, withoutImage<checkStoreThroughPrototypeDoesNotWrite> },
         { "locked-realm-members/lock-leaves-objects-with-same-structure"_s, withoutImage<checkLockLeavesObjectsWithSameStructure> },
         { "locked-realm-members/fixed-names-keep-their-offsets-when-the-holder-is-flattened"_s, withoutImage<checkFixedNamesKeepOffsetsWhenFlattened> },
         { "locked-realm-members/pristine-instances"_s, withoutImage<checkPristineInstances> },

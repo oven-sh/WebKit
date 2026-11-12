@@ -105,10 +105,21 @@ bool effectsOfDirectCallHangOnArguments(Walker& walker, FunctionID callee)
     return given && (given->parametersTakenAsExpected || given->parametersCalled);
 }
 
+bool callOnlyMakesGenerator(Walker& walker, FunctionID callee)
+{
+    const Function& function = walker.program().at(callee);
+    return function.has(FunctionFlags::IsGenerator) && !function.has(FunctionFlags::IsAsync) && !unitDoesMoreThanBodyForKnownEffects(walker.plan(), callee) && walker.isQuietBeforeInitialYield(callee);
+}
+
 Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
 {
     if (unitDoesMoreThanBodyForKnownEffects(walker.plan(), callee))
         return Effects::unknownCode();
+    if (callOnlyMakesGenerator(walker, callee)) {
+        Effects effects = Effects::ofReadByNameThatRunsNoCode();
+        effects.writes.add(AbstractHeapSet { AbstractHeap::ShapeWords, AbstractHeap::PrototypeLinks, AbstractHeap::NamedProperties, AbstractHeap::ArrayStorage });
+        return effects;
+    }
     const LinkTables& linked = walker.facts().linked();
     const LinkedFunction& entered = linked.function(callee);
     Effects onReturn = entered.effectsOnReturn();

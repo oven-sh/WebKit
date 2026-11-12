@@ -1,0 +1,67 @@
+# var first, second; function evaluate(text) { return eval(text); } first = function (n) { return n > 0 ? second(n - 1) : 0; }; second = function (n) { return first(n); }; first(3);
+# The function that holds the body of a wrapped CommonJS file stores the variables in front of the functions that read them, as the body of a module does. So until a direct eval was handed a text they hold their functions.
+# LIBRARY: own
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: GetModuleVariable variable=g3
+
+layout L0 module=m0
+module m0 path="main.js" displayPath="main.js" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="evaluate" module=m0 declared={type=anything} initialization=Function function=f2
+variable g2 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="second" module=m0 declared={type=anything} initialization=Undefined
+variable g4 module=m0 declared={type=anything} initialization=Undefined flags=[MarksEvaluation]
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="evaluate" depth=1 variable=g1}, {name="first" depth=1 variable=g2}, {name="second" depth=1 variable=g3}]
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy, IsHiddenInStackTraces] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    v4 = CallDirect v1, v1, v3, v3, v3, v3 function=f1
+    Return v3
+}
+function f1 module=m0 flags=[IsSloppy, HasThis] length=5 syntax=[IsWrappedModuleBody] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f3
+    PutModuleVariable v6 variable=g2
+    v8 = NewClosure function=f4
+    PutModuleVariable v8 variable=g3
+    v10 = GetModuleVariable variable=g2
+    v11 = Integer integer=3
+    v12 = Call v10, -, v11
+    v13 = Undefined
+    Return v13
+}
+function f2 name="evaluate" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    PutModuleVariable v3 variable=g4
+    v5 = DirectEval v2, v0, v1 evalScope=e0
+    Return v5
+}
+function f3 name="first" module=m0 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Greater v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g3
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = Call v3, -, v5
+    Jump -> next b3(v6)
+  b2():
+    v7 = Integer
+    Jump -> next b3(v7)
+  b3(v8):
+    Return v8
+}
+function f4 name="second" module=m0 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0
+    Return v2
+}

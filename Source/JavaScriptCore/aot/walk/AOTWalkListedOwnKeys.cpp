@@ -107,7 +107,7 @@ static Reference buildListOfOrderInListedOwnKeys(Walker& walker, const CallOfOwn
     Vector<Reference, 16> elements;
     for (FieldIndex field : order.fields) {
         Reference name = asked.list == OwnKeyList::Values ? Reference() : nameOfOwnKeyInListedOwnKeys(walker, order.layout, field, asked.origin);
-        Reference value = asked.list == OwnKeyList::Keys ? Reference() : valueOfOwnKey(walker, object, order.layout, field, asked.origin);
+        Reference value = asked.list == OwnKeyList::Keys ? Reference() : valueOfCopiedKey(walker, asked.call, object, order.layout, field, asked.origin);
         if ((asked.list != OwnKeyList::Values && !name) || (asked.list != OwnKeyList::Keys && !value))
             return { };
         Reference element = name ? name : value;
@@ -129,7 +129,7 @@ static Reference buildListOfOrderInListedOwnKeys(Walker& walker, const CallOfOwn
 
 static bool buildListOfObjectInSightInListedOwnKeys(Walker& walker, const CallOfOwnKeyList& asked, Reference source)
 {
-    std::optional<OwnKeyOrder> order = ownKeysInSight(walker, source);
+    std::optional<OwnKeyOrder> order = ownKeysInSight(walker, source, AccessorsAmongOwnKeys::AreCalled);
     if (!order || !canWriteOutInListedOwnKeys(order->fields.size()))
         return false;
     if (Reference list = buildListOfOrderInListedOwnKeys(walker, asked, source, *order))
@@ -164,7 +164,7 @@ static ValueID findReadOfLengthThatAloneReadsListInListedOwnKeys(Walker& walker,
 
 static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnKeyList& asked, ValueID written, Reference source)
 {
-    OwnKeyPlan plan = planOwnKeyWalk(walker, written, source);
+    OwnKeyPlan plan = planOwnKeyWalk(walker, written, source, mostFieldsOfOwnKeyWalk, mostArmsOfOwnKeyWalk, AccessorsAmongOwnKeys::AreCalled);
     if (!plan)
         return false;
     ValueID readOfLength = findReadOfLengthThatAloneReadsListInListedOwnKeys(walker, asked.call.id());
@@ -238,8 +238,8 @@ void noteListedOwnKeys(Walker& walker, ValueID id)
     Reference object = walker.referenceOf(call.argumentsOperands()[0]);
     if (!list || !list.isValue() || !object || !object.isValue())
         return;
-    static constexpr AbstractHeapSet heapsThatTellOwnKeys { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
-    noteKnown(walker, KnownNote::ListedOwnKeys, object, list, 0, LocationMasks(heapsThatTellOwnKeys), 1, true);
+    static constexpr AbstractHeapSet ownKeysHeaps { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    noteKnown(walker, KnownNote::ListedOwnKeys, object, list, 0, LocationMasks(ownKeysHeaps), 1, true);
 }
 
 bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)

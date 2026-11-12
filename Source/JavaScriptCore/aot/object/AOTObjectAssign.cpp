@@ -397,8 +397,11 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
             RELEASE_ASSERT(didStore);
         }
         uint16_t index = layout.indexOf(*fields[i]);
-        if (!isListed.set(index))
-            keys.append(index);
+        if (isListed.set(index))
+            continue;
+        keys.append(index);
+        if (acceptedValues[i] && layout.isClass())
+            state.objects->classes.didShadowMember(layout, *fields[i]);
     }
     if (keys.size() == numberOfKeysBefore)
         return true;
@@ -1328,6 +1331,7 @@ static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const Assig
 {
     if (plan.orderWordBeforeRun != unorderedOrderWord || !plan.extraPropertyStores.isEmpty() || plan.orderWordAfterRun & ~orderAndCountMask || isOrderStoredOutOfLine(plan.orderWordAfterRun))
         return false;
+    copy.moves.reserveInitialCapacity(plan.fieldStores.size());
     for (const AssignmentPlan::FieldStore& store : plan.fieldStores) {
         std::optional<MappedCopy::MoveKind> kind = moveKindOutOfOrdinaryObject(state.objects->layouts, store);
         if (!kind || !isInlineOffset(store.sourceOffset))
@@ -1403,6 +1407,8 @@ static bool tryDescribeCopyFollowingPlan(VM& vm, State& state, const AssignmentP
         move.placeInTarget = placeOf(store.offset);
         copy.moves.append(move);
     }
+    copy.moves.shrinkToFit();
+    followed.wordMoves.shrinkToFit();
     if (source.compiledObject && source.propertyStorage) {
         std::optional<SlotData> word = source.compiledObject->compiledStructure().extraPropertiesSlot();
         if (!word)
@@ -1877,15 +1883,14 @@ JSFinalObject* tryCopyTwoObjects(VM& vm, State& state, JSGlobalObject* realm, JS
 {
     if (compiledObjectOrNull(first))
         return nullptr;
-    std::array<std::optional<AssignmentSource>, 2> sources;
     std::array<JSValue, 2> values { first, second };
+    auto sourceOf = [](JSValue value) {
+        return value.isObject() ? assignmentSourceFor(asObject(value), { }, true) : std::nullopt;
+    };
+    std::array<std::optional<AssignmentSource>, 2> sources { sourceOf(first), sourceOf(second) };
     for (size_t index = 0; index < values.size(); ++index) {
-        JSValue value = values[index];
-        if (!value.isCell())
+        if (!values[index].isCell())
             continue;
-        if (!value.isObject())
-            return nullptr;
-        sources[index] = assignmentSourceFor(asObject(value), { }, true);
         if (!sources[index] || (sources[index]->compiledObject && &sources[index]->compiledObject->state() != &state))
             return nullptr;
     }

@@ -31,7 +31,11 @@ public:
     static AtomString atomOf(const Image& image, StringID string) { return AtomString(image.text().createAtom(string)); }
     static String text(const ProgramTables&, StringID string) { return text(*Image::current(), string); }
     static StringView viewInImage(const ProgramTables&, StringID string) { return Image::current()->text().view(string); }
-    static StringID identifierString(const ProgramTables&, uint32_t identifier) { return Image::current()->text().identifier(identifier).text(); }
+    static StringID identifierString(const ProgramTables&, uint32_t identifierOrString)
+    {
+        const ImageText& text = Image::current()->text();
+        return identifierOrString < text.numberOfIdentifiers() ? text.identifier(identifierOrString).text() : StringID(identifierOrString);
+    }
 
     enum class Made : bool { AnyNumberOfTimes, Once };
     JSString* string(VM& vm, StringID string, Made made = Made::AnyNumberOfTimes) const { return this->string(vm, m_image.text().wordOf(string), made); }

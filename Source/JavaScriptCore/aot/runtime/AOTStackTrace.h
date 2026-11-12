@@ -105,7 +105,7 @@ struct RunListing {
 };
 JS_EXPORT_PRIVATE IterationStatus appendShownFramesOfRun(VM&, CompiledFrameIterator&, ShownFrameFilter&, WTF::Vector<StackFrame>& results, RunListing&);
 enum class HiddenFrameOnTop : bool { IsLeftOut, IsShown };
-void forEachShownFrameOfRunAtTop(VM&, HiddenFrameOnTop, const ScopedLambda<IterationStatus(const TraceFrame&)>&);
+std::optional<TraceFrame> findShownFrameOnTop(VM&, HiddenFrameOnTop);
 JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, WTF::Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, const ScopedLambda<bool(const StackFrame&)>* wanted = nullptr);
 JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetClassCallWithoutNewFrame(VM&, CallFrame*);
 std::optional<TraceFrame> makeElidedConstructorFrame(const Image&, FunctionID constructed);
@@ -114,6 +114,8 @@ JS_EXPORT_PRIVATE std::optional<SourcePosition> definitionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);
 JS_EXPORT_PRIVATE String displayPathOf(ModuleID);
+JS_EXPORT_PRIVATE String sourceURLOf(const SourcePosition&);
+JS_EXPORT_PRIVATE String displayPathOf(const SourcePosition&);
 String sourceProviderURLOf(ModuleID);
 String sourceProviderURLOf(const TraceFrame&, const std::optional<SourcePosition>&);
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);

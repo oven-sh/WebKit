@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTOpcodeSets.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -127,7 +128,7 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
     build(WTF::move(poll));
 }
 
-void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& preview)
+void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
 {
     m_pollInFrontOfLoopBeingEntered = { };
     if (!has(Mechanism::Handlers) || preview.effects.maySuspend || m_coldCopyDepth || isUnreachable() || !isUnderHandler())
@@ -141,6 +142,9 @@ void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& previe
 
     if (head.hasHandler())
         noteStateAtHeadForHandler();
+    flattenStringsReadByLoop(*this, inputHead, entering, m_origin);
+    if (m_hasFailed || isUnreachable())
+        return;
     Draft poll(Opcode::LoopHint, m_origin);
     poll.setThrowsOwedError(true);
     Reference built = build(WTF::move(poll));
@@ -189,7 +193,8 @@ void Walker::settleFateOfPoll(const OpenLoop& loop)
     if (around)
         around->likelyTurnMayCollect |= loop.likelyTurnMayCollect;
 
-    if (!loop.numberOfEdgesThatCameRound && has(Mechanism::Folding)) {
+    bool isEnteredAgain = m_loopsWithSideExits.contains(std::pair { loop.frame, m_frames[loop.frame].index->loop(loop.loop).head });
+    if (!loop.numberOfEdgesThatCameRound && !isEnteredAgain && has(Mechanism::Folding)) {
         drop(loop.poll);
         drop(loop.pollInFront);
         if (around)

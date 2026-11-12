@@ -20,7 +20,7 @@ OpcodeSet StraightEmitter::opcodesOfModules()
 {
     return {
         Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::RecordRequire,
-        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
+        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::InstanceNamespace, Opcode::InstanceImportMeta, Opcode::OriginalArgument, Opcode::LinkedMock, Opcode::KeepsOriginalNames, Opcode::HasNameInMock, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
         Opcode::ResolveModule, Opcode::ThrowModuleFailure, Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic
     };
 }
@@ -214,7 +214,7 @@ void StraightEmitter::generateModule(const BodyValue& value)
         defineBoolean(value);
         return;
     case Opcode::SeesMockOf:
-        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()), StraightArgument::word(value.thatKeepsNamesOfOriginal()) });
+        callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()), StraightArgument::word(value.keepingOriginalNames()) });
         defineBoolean(value);
         return;
     case Opcode::IsLinkedBelow:
@@ -228,6 +228,30 @@ void StraightEmitter::generateModule(const BodyValue& value)
     case Opcode::NamespaceSeenBy:
         callOperation(value, RuntimeOperation::NamespaceSeenBy, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()) });
         define(value);
+        return;
+    case Opcode::InstanceNamespace:
+        callOperation(value, RuntimeOperation::InstanceNamespace, { value.instanceOperand(), moduleIndexArgument(value.module()), StraightArgument::word(static_cast<uint32_t>(value.phase())) });
+        define(value);
+        return;
+    case Opcode::InstanceImportMeta:
+        callOperation(value, RuntimeOperation::InstanceImportMeta, { value.instanceOperand(), moduleIndexArgument(value.module()) });
+        define(value);
+        return;
+    case Opcode::OriginalArgument:
+        callOperation(value, RuntimeOperation::OriginalArgument, { moduleIndexArgument(value.module()), StraightArgument::word(value.index()) });
+        define(value);
+        return;
+    case Opcode::LinkedMock:
+        callOperation(value, RuntimeOperation::LinkedMock, { value.wordOperand() });
+        define(value);
+        return;
+    case Opcode::KeepsOriginalNames:
+        callOperation(value, RuntimeOperation::KeepsOriginalNames, { value.wordOperand() });
+        defineBoolean(value);
+        return;
+    case Opcode::HasNameInMock:
+        callOperation(value, RuntimeOperation::HasNameInMock, { value.wordOperand(), StraightArgument::number(mentionOfName(value.key())), StraightArgument::word(value.outsideCycles()) });
+        defineBoolean(value);
         return;
     case Opcode::AreLoaderFunctionsStored:
         callOperation(value, RuntimeOperation::AreLoaderFunctionsStored, { });

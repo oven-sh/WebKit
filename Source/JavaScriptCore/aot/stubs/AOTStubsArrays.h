@@ -24,10 +24,10 @@ static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::s
 static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeof(IndexingHeader)) && Butterfly::offsetOfVectorLength() == Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
 
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
-enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3 };
+enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3, ContiguousCapacity5, ContiguousCapacity7, ContiguousCapacity9, ContiguousCapacity13, ContiguousCapacity17 };
 enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles };
 enum class ArrayStoredValue : uint8_t { Value, Number, ValueInSloppyCode };
-enum class ArrayRead : uint8_t { OfListAsMade, OfAnyList };
+enum class ArrayRead : uint8_t { OfListAsMade, OfAnyList, OfPlainList };
 enum class SharedElements : uint8_t { InImage, InStorageOfSite };
 enum class SearchedElements : uint8_t { Values, ValuesFromStart };
 
@@ -71,9 +71,12 @@ inline constexpr int64_t arraySliceToEnd = 1ll << 32;
 
 constexpr StubKey arrayLiteral(unsigned count) { return StubKey(StubFamily::ArrayLiteral).withCount(count); }
 constexpr StubKey arrayLiteralWithInt32(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithInt32).withCount(count); }
+constexpr StubKey arrayLiteralOfNumbers(unsigned count) { return StubKey(StubFamily::ArrayLiteralOfNumbers).withCount(count); }
+constexpr StubKey arrayLiteralWithRoom(unsigned count, bool holdsInt32) { return StubKey(StubFamily::ArrayLiteralWithRoom).withForm(holdsInt32).withCount(count); }
 constexpr StubKey arrayLiteralWithDouble(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithDouble).withCount(count); }
 constexpr StubKey arrayLiteralWithDoubleSlow() { return StubKey(StubFamily::ArrayLiteralWithDoubleSlow); }
 constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elements) { return StubKey(StubFamily::NewCopyOnWriteArray).withForm(static_cast<uint8_t>(kind) + 3 * static_cast<uint8_t>(elements)); }
+constexpr StubKey listOwnKeys() { return StubKey(StubFamily::ListOwnKeys); }
 constexpr StubKey newEmptyArray(EmptyArray array) { return StubKey(StubFamily::NewEmptyArray).withForm(static_cast<uint8_t>(array)); }
 constexpr StubKey newEmptyArrayWithCapacity() { return StubKey(StubFamily::NewEmptyArrayWithCapacity); }
 constexpr StubKey newArrayFromBuffer() { return StubKey(StubFamily::NewArrayFromBuffer); }
@@ -98,16 +101,18 @@ constexpr StubKey appendValuesOfMap() { return StubKey(StubFamily::AppendValuesO
 constexpr StubKey appendIterable() { return StubKey(StubFamily::AppendIterable); }
 constexpr StubKey destructureIterable() { return StubKey(StubFamily::DestructureIterable); }
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
+constexpr StubKey storeWideningIntegers() { return StubKey(StubFamily::StoreWideningIntegers); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey reserveArrayCapacity() { return StubKey(StubFamily::ReserveArrayCapacity); }
 struct ListWhoseLengthIsStoredWithoutRunTime {
     static constexpr IndexingType firstKind = ArrayWithUndecided;
     static constexpr IndexingType lastKind = ArrayWithContiguous;
     static constexpr uint32_t bitsThatItsStructureMayNotHave = Structure::s_anyImmutablePropertiesBits;
+    static constexpr uint32_t mostElementsOfVector = (MarkedSpace::largeCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue);
 };
 constexpr StubKey setArrayLength(bool isInSloppyCode) { return StubKey(StubFamily::SetArrayLength).withForm(isInSloppyCode); }
 constexpr StubKey arrayGetAtIndex(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtIndex).withForm(static_cast<uint8_t>(read)); }
-constexpr StubKey arrayGetAtNumber() { return StubKey(StubFamily::ArrayGetAtNumber); }
+constexpr StubKey arrayGetAtNumber(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtNumber).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey arrayIndexOfString(SearchedElements elements) { return StubKey(StubFamily::ArrayIndexOfString).withForm(static_cast<uint8_t>(elements)); }
 
 Jump branchIfHavingABadTime(StubAssembler&);
@@ -125,9 +130,10 @@ struct SparseElementSearch {
 void emitFindSparseElement(StubAssembler&, const SparseElementSearch&, JumpList& isAbsent);
 
 static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInRegisters)) && !exists(arrayLiteral(maxArrayElementsInRegisters).withCount(maxArrayElementsInRegisters + 1)));
+static_assert(exists(arrayLiteralWithRoom(1, true)) && exists(arrayLiteralWithRoom(maxArrayElementsInRegisters, false)) && !exists(arrayLiteralWithRoom(1, false).withCount(0)));
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
 static_assert(exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite)) && !exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite).withForm(6)));
-static_assert(exists(newEmptyArray(EmptyArray::Int32Capacity3)) && !exists(newEmptyArray(EmptyArray::Int32Capacity3).withForm(8)));
+static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity17)) && !exists(newEmptyArray(EmptyArray::ContiguousCapacity17).withForm(13)));
 static_assert(exists(newArrayWithLengthAtSite(ArrayElementKind::Double)) && !exists(newArrayWithLengthAtSite(ArrayElementKind::Contiguous)));
 static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous)) && exists(newArrayOfGiven()));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
@@ -137,7 +143,7 @@ static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(createArgume
 static_assert(exists(appendMembers()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());
 static_assert(exists(arrayPutAtIndex(ArrayStoredValue::ValueInSloppyCode)) && !exists(arrayPutAtNumber(ArrayStoredValue::ValueInSloppyCode)));
-static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtIndex(ArrayRead::OfAnyList)) && !exists(arrayGetAtIndex().withForm(2)) && exists(arrayGetAtNumber()));
+static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtIndex(ArrayRead::OfPlainList)) && !exists(arrayGetAtIndex().withForm(3)) && exists(arrayGetAtNumber(ArrayRead::OfPlainList)));
 
 } } // namespace JSC::AOT
 

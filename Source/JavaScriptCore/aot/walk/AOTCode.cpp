@@ -50,7 +50,11 @@ constinit const OpcodeSet opcodesWithoutEmitterInCode = opcodesWithoutEmitterByL
 
 bool readsNumberOutOfBytes(const Operation& operation)
 {
-    if (operation.opcode != Opcode::GetTypedArrayElement || !operation.isInsideView() || operation.representation != Representation::Double)
+    if (operation.representation != Representation::Double)
+        return false;
+    if (operation.opcode == Opcode::GetDataViewElement)
+        return isFloat(operation.typedArrayType());
+    if (operation.opcode != Opcode::GetTypedArrayElement || !operation.isInsideView())
         return false;
     return operation.typedArrayType() == NotTypedArray || (isFloat(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType()));
 }
@@ -76,6 +80,8 @@ bool takesAnyNaN(const Operation& user, uint32_t operandIndex)
         return user.form() == OperatorForm::Numbers;
     if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32)
         return true;
+    if (user.opcode == Opcode::PutDataViewElement)
+        return operandIndex == OperandIndex::PutDataViewElement::value;
     if (user.opcode == Opcode::PutTypedArrayElement)
         return operandIndex == OperandIndex::PutTypedArrayElement::value && hasInlineElementAccess(user.typedArrayType()) && !isClamped(user.typedArrayType());
     return handsOnBitsOfNaN(user);
@@ -136,7 +142,7 @@ static ALWAYS_INLINE bool allocatesInFrameOfUnit(const Draft& draft)
     return shapesOfOperationsInCode[static_cast<unsigned>(draft.opcode)].hasWordOfStorage && draft.storage() != AllocationStorage::Heap;
 }
 
-static ALWAYS_INLINE ValueID appendRecordToCode(StableArray<Operation, 14>& operations, const Operation& operation)
+static ALWAYS_INLINE ValueID appendRecordToCode(auto& operations, const Operation& operation)
 {
     RELEASE_ASSERT(operations.size() < Reference::indexMask);
     return ValueID(operations.append(operation));
@@ -241,6 +247,12 @@ void Code::noteEffectsBelieved(ValueID id, const Effects& effects)
     m_effectsBelieved.append({ id, effects });
 }
 
+void Code::noteSteppedWithCounter(const SteppedWithCounter& beside)
+{
+    if (!m_steppedWithCounters.contains(beside))
+        m_steppedWithCounters.append(beside);
+}
+
 void Code::noteTestsPassedFor(ValueID id, const PassedTest& passed)
 {
     while (!m_testsPassed.isEmpty() && m_testsPassed.last().first.index() >= id.index())
@@ -292,23 +304,28 @@ void Code::reset(CodeUnit unit)
     m_effectsBelieved.shrink(0);
     m_operationsThatWriteWhatTurnHasMade.shrink(0);
     m_testsPassed.shrink(0);
+    m_steppedWithCounters.shrink(0);
     m_keepsTestsPassed = false;
+    m_marksLoops = m_unit.role != CodeRole::SlowBody;
     m_testsOfGuardsInFrontOfCopies.shrink(0);
     m_inputsOfHolesReadAsNaN.shrink(0);
     m_readsAnsweredByHolesReadAsNaN.shrink(0);
     m_cellsMadeForOneOperation.shrink(0);
     m_syntheticVariableReads.shrink(0);
+    m_mergedObjects = BitVector();
     m_valuesThatFoldedArithmeticGives.shrink(0);
     m_pollsWithFates.shrink(0);
     m_opcodesOfValues = { };
     m_numberOfFrameWords = 0;
     m_hasHandlers = false;
+    m_hasBoxesForHandlers = false;
     m_hasSuspensions = false;
     m_hasLoops = false;
     m_holdsFrameCells = false;
     m_holdsCallThatPlanHasNotCounted = false;
     m_callsOfFunctionNeverCollect = false;
     m_readsNumbersOutOfBytes = false;
+    m_callsItself = false;
     m_isEntryThatWalksBody = false;
     m_mayHoldReturnedCalls = false;
     m_mechanismsWithheld = { };
@@ -415,7 +432,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES BlockID Code::addBlockBehindEdge(EdgeID edgeID, B
     Block block;
     block.frequency = frequencyTakenFor(m_blocks.size(), frequency);
     if (isInLoop) {
-        block.isInLoop = m_unit.role != CodeRole::SlowBody && !loopMarkIsDrawnAway(m_blocks.size());
+        block.isInLoop = m_marksLoops && !loopMarkIsDrawnAway(m_blocks.size());
         m_hasLoops = true;
     }
     block.m_firstEdgeIn = edgeID;
@@ -455,11 +472,18 @@ void Code::makeBlockRare(BlockID block)
     m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = frequencyTakenFor(block.index(), BlockFrequency::Rare);
 }
 
+void Code::makeBlockNormal(BlockID block)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    keepMarksOfOlderBlock(checkedIndexInCode(block, m_blocks.size()));
+    m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = frequencyTakenFor(block.index(), BlockFrequency::Normal);
+}
+
 void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
 {
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
-    block.isInLoop = isInLoop && m_unit.role != CodeRole::SlowBody && !loopMarkIsDrawnAway(blockID.index());
+    block.isInLoop = isInLoop && m_marksLoops && !loopMarkIsDrawnAway(blockID.index());
     block.isLoopHead = isLoopHead;
     if (isInLoop || isLoopHead)
         m_hasLoops = true;
@@ -575,6 +599,20 @@ void Code::letJoinFailWhereItsReaderFails(ValueID join)
     if (m_keepsChangesToOlderParts)
         m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, join, record });
     record.traitBits = record.traits().withoutThrowByRule().bits();
+}
+
+void Code::turnFinishIntoUnusedString(ValueID finish)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(finish, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::StackStringBuilderFinish || record.opcode == Opcode::StringBuilderFinish);
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, finish, record });
+    record.opcode = record.opcode == Opcode::StackStringBuilderFinish ? Opcode::StackStringBuilderToString : Opcode::StringBuilderToString;
+    Effects ofContents = Effects::none();
+    ofContents.writes = LocationMasks(AbstractHeapSet { AbstractHeap::StringBuilderContents });
+    record.traitBits = record.traits().withoutThrowByRule().bits() & ~EffectTraits(ofContents).bits();
+    m_opcodesOfValues.add(record.opcode);
 }
 
 void Code::turnBranchIntoJump(BlockID block, EdgeID lastOnWay)
@@ -715,6 +753,8 @@ ValueID Code::append(BlockID blockID, const Draft& draft, TypeID proven, EffectT
         m_hasSuspensions = true;
     if (draft.opcode == Opcode::GetTypedArrayElement && (readsNumberOutOfBytes(operation) || readsNumberOrNothingOutOfBytes(operation)))
         m_readsNumbersOutOfBytes = true;
+    if (draft.opcode == Opcode::CallDirect && operation.function() == m_unit.function)
+        m_callsItself = true;
     return id;
 }
 
@@ -986,6 +1026,7 @@ Code::Mark Code::mark() const
     mark.numberOfEffectsBelieved = static_cast<uint32_t>(m_effectsBelieved.size());
     mark.numberOfOperationsThatWriteWhatTurnHasMade = static_cast<uint32_t>(m_operationsThatWriteWhatTurnHasMade.size());
     mark.numberOfTestsPassed = static_cast<uint32_t>(m_testsPassed.size());
+    mark.numberOfSteppedCounters = static_cast<uint32_t>(m_steppedWithCounters.size());
     mark.numberOfTestsOfGuardsInFrontOfCopies = static_cast<uint32_t>(m_testsOfGuardsInFrontOfCopies.size());
     mark.numberOfInputsOfHolesReadAsNaN = static_cast<uint32_t>(m_inputsOfHolesReadAsNaN.size());
     mark.numberOfReadsAnsweredByHolesReadAsNaN = static_cast<uint32_t>(m_readsAnsweredByHolesReadAsNaN.size());
@@ -1002,6 +1043,7 @@ Code::Mark Code::mark() const
     mark.holdsCallThatPlanHasNotCounted = m_holdsCallThatPlanHasNotCounted;
     mark.callsOfFunctionNeverCollect = m_callsOfFunctionNeverCollect;
     mark.readsNumbersOutOfBytes = m_readsNumbersOutOfBytes;
+    mark.callsItself = m_callsItself;
     return mark;
 }
 
@@ -1142,6 +1184,7 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     m_effectsBelieved.shrink(mark.numberOfEffectsBelieved);
     m_operationsThatWriteWhatTurnHasMade.shrink(mark.numberOfOperationsThatWriteWhatTurnHasMade);
     m_testsPassed.shrink(mark.numberOfTestsPassed);
+    m_steppedWithCounters.shrink(mark.numberOfSteppedCounters);
     m_testsOfGuardsInFrontOfCopies.shrink(mark.numberOfTestsOfGuardsInFrontOfCopies);
     m_inputsOfHolesReadAsNaN.shrink(mark.numberOfInputsOfHolesReadAsNaN);
     m_readsAnsweredByHolesReadAsNaN.shrink(std::min<size_t>(m_readsAnsweredByHolesReadAsNaN.size(), mark.numberOfReadsAnsweredByHolesReadAsNaN));
@@ -1155,6 +1198,27 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     m_holdsCallThatPlanHasNotCounted = mark.holdsCallThatPlanHasNotCounted;
     m_callsOfFunctionNeverCollect = mark.callsOfFunctionNeverCollect;
     m_readsNumbersOutOfBytes = mark.readsNumbersOutOfBytes;
+    m_callsItself = mark.callsItself;
+}
+
+void Code::releaseAbandonedBlocks()
+{
+    RELEASE_ASSERT(m_isSwept);
+    uint32_t numberOfBlocks = 0;
+    for (const PartsAbandoned& parts : m_partsAbandoned)
+        numberOfBlocks += parts.blocks.second - parts.blocks.first;
+    static constexpr uint32_t mostBlocksKept = ASSERT_ENABLED ? 0 : 1 << 13;
+    if (numberOfBlocks <= mostBlocksKept)
+        return;
+    for (const PartsAbandoned& parts : m_partsAbandoned) {
+        uint32_t first = parts.blocks.first;
+        if (m_graveyard && first <= m_graveyard.index() && m_graveyard.index() < parts.blocks.second) {
+            m_blocks.releasePages(first, m_graveyard.index());
+            first = m_graveyard.index() + 1;
+        }
+        m_blocks.releasePages(first, parts.blocks.second);
+        m_edges.releasePages(parts.edges.first, parts.edges.second);
+    }
 }
 
 uint32_t Code::addInlineFrame(const InlineFrame& frame)

@@ -145,6 +145,7 @@ const justifiedDifferences: ReadonlyMap<string, string> = new Map([
   ["SetArrayLength names an index of Elements", "as AppendHole"],
   ["TruncateNewArray names an index of Elements", "as AppendHole"],
   ["SortNumbers names an index of Elements", "as AppendHole"],
+  ["SortByKeys names an index of Elements", "as AppendHole"],
   ["SetMappedArgument names an index of Elements", "a row of the run time has no index; the receiver is an arguments object"],
   ["NewArray leaves out throws", "for want of memory alone: the cell is null and the next use faults"],
   ["CreateRest leaves out throws", "as NewArray"],
@@ -169,7 +170,9 @@ function checkFunctionCoversOperation(entry: Entry, applied: Set<string>, errors
   if (entry.effects.isUnknownCode) differences.push("calls unknownCode");
   if (!byFunction.writesAllHeaps) {
     if (entry.effects.writesAllHeaps) differences.push("writes all");
-    for (const heap of heapsLeftOut(entry.effects.writes, byFunction.writes)) differences.push(`writes ${heap}`);
+    for (const heap of heapsLeftOut(entry.effects.writes, byFunction.writes)) {
+      if (!heapsWithoutLoads.has(heap)) differences.push(`writes ${heap}`);
+    }
   }
   if (!byFunction.readsAllHeaps) {
     if (entry.effects.readsAllHeaps) differences.push("reads all");
@@ -183,6 +186,7 @@ function checkFunctionCoversOperation(entry: Entry, applied: Set<string>, errors
 }
 
 const bookkeepingHeaps: ReadonlySet<string> = new Set(["AllocatorState", "RuntimeState"]);
+const heapsWithoutLoads: ReadonlySet<string> = new Set(["ClassObjects"]);
 
 function heapsNamedByIndexAlone(declared: readonly HeapReference[], byFunction: readonly HeapReference[]): string[] {
   const isWhole = (references: readonly HeapReference[], heap: HeapReference["heap"]) =>

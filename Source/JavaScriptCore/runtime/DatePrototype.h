@@ -54,4 +54,9 @@ private:
     void finishCreation(VM&, JSGlobalObject*);
 };
 
+#if ENABLE(AOT)
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetTime);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToPrimitiveSymbol);
+#endif
+
 } // namespace JSC

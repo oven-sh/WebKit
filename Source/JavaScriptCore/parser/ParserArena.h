@@ -47,6 +47,8 @@ namespace JSC {
             clear();
         }
 
+        size_t size() const { return m_identifiers.size(); }
+
         template <typename T>
         ALWAYS_INLINE const Identifier& makeIdentifier(VM&, std::span<const T> characters);
         ALWAYS_INLINE const Identifier& makeEmptyIdentifier(VM&);
@@ -189,6 +191,8 @@ namespace JSC {
             m_deletableObjects.append(deletable);
             return instance;
         }
+
+        std::unique_ptr<IdentifierArena> takeIdentifierArena() { return WTF::move(m_identifierArena); }
 
         IdentifierArena& identifierArena()
         {

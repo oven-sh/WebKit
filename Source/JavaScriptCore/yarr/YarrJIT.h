@@ -478,6 +478,8 @@ struct CodeGenerationRequest {
     YarrCodeBlock* codeBlock;
     const CodeGenerationPolicy& policy;
     Function<std::unique_ptr<CodeAddressing>(CCallHelpers&)> createCodeAddressing;
+    // Whether the pattern's flat programs remember failed searches. Requests for one pattern share it.
+    std::optional<bool>* remembersFailedSearches { nullptr };
 };
 
 struct CodeGenerationAttempt;

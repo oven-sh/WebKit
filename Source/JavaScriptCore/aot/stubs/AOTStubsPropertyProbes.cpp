@@ -12,6 +12,7 @@
 #include "AOTFieldTable.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
+#include "AOTModuleNamespace.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCachesFront.h"
@@ -252,8 +253,7 @@ static void branchUnlessNameIsAbsent(StubAssembler& jit, const FieldTableProbe& 
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfObjectPrototypes)), names);
     jit.urshift32(probe.name, TrustedImm32(6), structure);
     jit.load64(BaseIndex(names, structure, CCallHelpers::TimesEight), names);
-    jit.urshift64(probe.name, names);
-    mayBePresent.append(jit.branchTest64(CCallHelpers::NonZero, names, TrustedImm32(1)));
+    mayBePresent.append(branchTestBitAt(jit, CCallHelpers::NonZero, names, probe.name));
 }
 
 void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish, const ScopedLambda<void()>* finishWhereAbsent)
@@ -409,9 +409,8 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
 
 void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg object, GPRReg name, GPRReg T10, GPRReg T11, GPRReg T12, GPRReg T13, JumpList& otherwise)
 {
-    constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
     constexpr uint32_t flagsLeftToCaches = fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsAccessor | fieldIsPrivate | fieldIsBrand;
-    static_assert(sizeof(FieldData) == 1u << fieldSizeShift && sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
+    static_assert(sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
     RELEASE_ASSERT(noOverlap(object, name, T10, T11, T12, T13));
     const FieldTableProbe probe { object, name, T10, T11, true, true };
     JumpList isAbsent;
@@ -459,18 +458,17 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), probe.table);
     jit.load16(BaseIndex(probe.table, probe.index, CCallHelpers::TimesTwo), probe.index);
     jit.and32(TrustedImm32(FieldRecordIndex::indexMask), probe.index);
-    jit.lshift32(TrustedImm32(fieldSizeShift), probe.index);
     const GPRReg record = T12;
     loadStructure(jit, object, record);
     jit.loadPtr(Address(record, CompiledStructure::offsetOfLayout()), record);
-    jit.addPtr(probe.index, record);
+    addOffsetOfField(jit, record, probe.index, record);
     otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags))), TrustedImm32(flagsLeftToCaches)));
     const FieldAddressRegisters field { object, T10, T11, T11, T12 };
     jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), field.slotData);
     computeFieldAddress(jit, field, false, otherwise);
     JumpList isPresent;
     JumpList isAbsentInObjectWithEveryFieldInItsSlot;
-    branchOnFieldPresence(jit, field, T10, isPresent, isAbsentInObjectWithEveryFieldInItsSlot);
+    branchOnFieldPresence(jit, field, T10, isPresent, isAbsentInObjectWithEveryFieldInItsSlot, otherwise);
 
     static_assert(!uncreatedDeferredClosure);
     isPresent.link(&jit);
@@ -986,8 +984,7 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), scratch);
         jit.load16(BaseIndex(scratch, probe.index, CCallHelpers::TimesTwo), scratch);
         jit.and32(TrustedImm32(FieldRecordIndex::indexMask), scratch);
-        jit.lshift32(TrustedImm32(4), scratch);
-        jit.add32(TrustedImm32(sizeof(LayoutData)), scratch, offsetOfRecord);
+        loadOffsetOfFieldRecord(jit, scratch, offsetOfRecord);
         jit.jumpToStub(putKnownFieldThatTakesAnyValue(putModeOf(operation)));
     }
     isEmptySlot.link(&jit);
@@ -1030,10 +1027,9 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
             JumpList differs;
             loadStructure(jit, probe.receiver, record);
             jit.loadPtr(Address(record, CompiledStructure::offsetOfLayout()), record);
-            jit.lshift32(TrustedImm32(4), scratch);
-            jit.addPtr(scratch, record);
-            differs.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(flagsOfFieldsStoredOtherwise)));
-            jit.load32(Address(record, sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, type)), type);
+            addOffsetOfField(jit, record, scratch, record);
+            differs.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(flagsOfFieldsStoredOtherwise | fieldTypeIsLeftToRunTime)));
+            loadTypeOfFieldRecord(jit, record, sizeof(LayoutData), type);
             branchUnlessTypeAccepts(jit, { value, type, kind, probe.table, scratch, probe.receiver }, differs, differs);
             Jump agrees = jit.jump();
             differs.link(&jit);
@@ -1063,9 +1059,7 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         goesByItsRecord.link(&jit);
     }
     hasIndex.link(&jit);
-    static_assert(sizeof(FieldData) == 1 << 4);
-    jit.lshift32(TrustedImm32(4), scratch);
-    jit.add32(TrustedImm32(sizeof(LayoutData)), scratch, offsetOfRecord);
+    loadOffsetOfFieldRecord(jit, scratch, offsetOfRecord);
     jit.jumpToStub(putKnownField(putModeOf(operation)));
 }
 
@@ -1143,8 +1137,7 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesChangedOnChains)), scratch);
         jit.urshift32(name, TrustedImm32(6), extra);
         jit.load64(BaseIndex(scratch, extra, CCallHelpers::TimesEight), scratch);
-        jit.urshift64(name, scratch);
-        cannot.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
+        cannot.append(branchTestBitAt(jit, CCallHelpers::NonZero, scratch, name));
     }
     Jump isCreated = jit.jump();
     isInSlot.link(&jit);
@@ -1276,7 +1269,7 @@ void generatePutBooleanOrDoubleField(StubAssembler& jit)
     static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1) && JSValue::ValueTrue <= UINT8_MAX);
     static_assert(traitsOf(SlotRepresentation::OptionalBoolean).width == 1 && !traitsOf(SlotRepresentation::OptionalBoolean).absentBits);
     static_assert(traitsOf(SlotRepresentation::OptionalDouble).absentBits == absentDouble && !traitsOf(SlotRepresentation::Double).hasAbsent);
-    static_assert(sizeof(FieldData) == 1 << 4 && sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
+    static_assert(sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
     const PutMode mode = static_cast<PutMode>(jit.key().form());
     const GPRReg object = jit.operand(0);
     const GPRReg value = jit.operand(1);
@@ -1298,8 +1291,7 @@ void generatePutBooleanOrDoubleField(StubAssembler& jit)
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), scratch);
         jit.load16(BaseIndex(scratch, operand, CCallHelpers::TimesTwo), scratch);
         jit.and32(TrustedImm32(FieldRecordIndex::indexMask), scratch);
-        jit.lshift32(TrustedImm32(4), scratch);
-        jit.add32(TrustedImm32(sizeof(LayoutData)), scratch, name);
+        loadOffsetOfFieldRecord(jit, scratch, name);
         jit.jumpToStub(stub);
         isNotCompiledObject.link(&jit);
         jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
@@ -1441,7 +1433,7 @@ void CachedSlot::loadOwnWordIndex(StubAssembler& jit, GPRReg result) const
         jit.signExtend32ToPtr(m_payload, result);
         return;
     }
-    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition || payload == SlotPayload::Removal);
+    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition || payload == SlotPayload::Removal || (payload == SlotPayload::Key && m_form == SlotForm::Slot));
     if (payload == SlotPayload::Holder && m_form == SlotForm::PackedSlot)
         jit.signExtend32ToPtr(m_header, result);
     else
@@ -1529,6 +1521,41 @@ void CachedSlot::loadSecondPayloadWord(StubAssembler& jit, GPRReg result) const
     }
 }
 
+void CachedSlot::loadVariableBase(StubAssembler& jit, GPRReg receiver, GPRReg result, GPRReg scratch) const
+{
+    RELEASE_ASSERT(m_kind == Slot::Kind::Variable && noOverlap(receiver, result, scratch));
+    RELEASE_ASSERT(m_form == SlotForm::PackedSlot || noOverlap(m_payload, receiver, result, scratch));
+    if (!jit.options().hasModuleInstances) {
+        loadStaticsBase(jit, result, scratch);
+        return;
+    }
+    Jump isInModuleInstance = branchIfFlag(jit, Slot::isInModuleInstance);
+    loadStaticsBase(jit, result, scratch);
+    JumpList hasBase;
+    hasBase.append(jit.jump());
+
+    isInModuleInstance.link(&jit);
+    if (m_form == SlotForm::Slot) {
+        loadSecondPayloadWord(jit, result);
+        Jump belongsToReceiver = jit.branchTest32(CCallHelpers::Zero, result);
+        decodeCell32(jit, result, result);
+        hasBase.append(jit.jump());
+        belongsToReceiver.link(&jit);
+    }
+    jit.loadPtr(Address(receiver, ModuleNamespace::offsetOfModuleInstance()), result);
+    hasBase.link(&jit);
+}
+
+void loadProxySlotKey(StubAssembler& jit, SlotForm form, GPRReg header, GPRReg key, JumpList& isForNoProxies)
+{
+    RELEASE_ASSERT(noOverlap(header, key));
+    if (form == SlotForm::PackedSlot)
+        jit.zeroExtend32ToWord(header, key);
+    isForNoProxies.append(jit.branchTest64(CCallHelpers::Zero, key));
+    if (form == SlotForm::PackedSlot)
+        decodeCell32(jit, key, key);
+}
+
 void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
 {
     if (m_form == SlotForm::Slot) {
@@ -1537,8 +1564,13 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     }
     RELEASE_ASSERT(result != m_header);
     switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::Key: {
+        JumpList hasNoKey;
+        loadProxySlotKey(jit, m_form, m_header, result, hasNoKey);
+        hasNoKey.link(&jit);
+        return;
+    }
     case SlotPayload::None:
-    case SlotPayload::Key:
         jit.move(TrustedImm32(0), result);
         return;
     case SlotPayload::Holder: {

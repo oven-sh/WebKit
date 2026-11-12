@@ -315,9 +315,12 @@ private:
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
+#if USE(BUN_JSC_ADDITIONS)
+    UniquedStringImpl* m_rootBeingReloaded { nullptr };
+    unsigned m_modulesBeingMade { 0 };
+#endif
 #if ENABLE(AOT)
     bool m_hasAliasedLoadedModules { false };
-    UniquedStringImpl* m_rootBeingReloaded { nullptr };
     UniquedStringImpl* m_moduleBeingMadeInline { nullptr };
 #endif
 
@@ -327,7 +330,12 @@ private:
 #endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
-    ResolutionMap<WriteBarrier<Unknown>> m_resolutionFailures;
+    struct ResolutionFailure {
+        WriteBarrier<Unknown> error;
+        RefPtr<UniquedStringImpl> referrer;
+        RefPtr<UniquedStringImpl> specifier;
+    };
+    ResolutionMap<ResolutionFailure> m_resolutionFailures;
 };
 
 // Validates the host-defined payload threaded through HostLoadImportedModule / FinishLoadingImportedModule.

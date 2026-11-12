@@ -32,6 +32,7 @@
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
+#include "IteratorOperations.h"
 #include "JSObjectInlines.h"
 #include "LLIntEntrypoint.h"
 #include "ProxyObject.h"
@@ -40,7 +41,7 @@
 
 namespace JSC {
 
-inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCell* owner, JSValue callee, [[maybe_unused]] JSValue receiver, CallLinkInfo* callLinkInfo)
+inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCell* owner, JSValue callee, JSValue receiver, CallLinkInfo* callLinkInfo)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -55,8 +56,13 @@ inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCe
     // But we would like to have error information for them from the thrown frame.
     // This frame information can be reconstructed easily since we have CodeOrigin and owner CodeBlock for CallLinkInfo.
     auto [codeBlock, bytecodeIndex] = callLinkInfo->retrieveCaller(owner);
-    if (codeBlock)
-        errorMessage = appendSourceToErrorMessage(codeBlock, bytecodeIndex, errorMessage, runtimeTypeForValue(callee), notAFunctionSourceAppender);
+    if (codeBlock) {
+        // LLInt and Baseline validate the iterable before this call. DFG and FTL do not.
+        if (bytecodeIndex.checkpoint() == OpIteratorOpen::symbolCall && codeBlock->instructionAt(bytecodeIndex)->is<OpIteratorOpen>())
+            errorMessage = getIteratorErrorMessage(validateIterable(vm, receiver, callee), receiver);
+        else
+            errorMessage = appendSourceToErrorMessage(codeBlock, bytecodeIndex, errorMessage, runtimeTypeForValue(callee), notAFunctionSourceAppender);
+    }
     auto* error = ErrorInstance::create(vm, globalObject->errorStructure(ErrorType::TypeError), errorMessage, JSValue(), ErrorType::TypeError, owner, callLinkInfo);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) [[unlikely]]

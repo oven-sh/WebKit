@@ -141,6 +141,10 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
         return false;
     case ModuleExportKind::Indirect:
         return mocks.isAnyModuleMocked;
+    case ModuleExportKind::Field:
+        if (!entry.layout || entry.layout.index() >= program.layouts.size())
+            return true;
+        return program.at(entry.layout).module != exporter && mocks.modulesReachingMocks.get(exporter.index());
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -288,7 +292,14 @@ void finishFactsOfTestRun(const Program& program, BuildContext& build, FactTable
     if (!program.admitsReplacedBuiltins)
         return;
 
+    auto noteOpenMember = [&](BuiltinID member) {
+        const BuiltinTable& builtins = program.builtins();
+        if (BuiltinID holder = builtins.at(member).holder)
+            tables.builtinHoldersWithOpenMembers.set(builtins.canonicalID(holder).index());
+    };
+    std::ranges::for_each(program.unlockedBuiltins(), noteOpenMember);
     for (const BuiltinLeftOpen& open : tables.builtinMembersLeftOpen) {
+        noteOpenMember(open.member);
         if (open.reason != ReasonBuiltinStaysOpen::IsOpenToDebugger && !program.builtins().has(BuiltinMark::MayBeAbsent, open.member))
             tables.builtinMembersBehindWatch.set(open.member.index());
         if (!program.isLockLeftToProgram(open.member))

@@ -443,7 +443,7 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
 
 bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (!isThisValueAltered(slot, asObject(cell)) && cell->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
         return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

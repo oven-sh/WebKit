@@ -249,6 +249,18 @@ static bool isEmptyTextInStringFolds(Walker& walker, Reference part)
     return text && !walker.types().numberOfBytesOf(text);
 }
 
+bool mayMergeKnownParts(Walker& walker, std::span<const Reference> parts)
+{
+    bool isLastKnown = false;
+    for (Reference part : parts) {
+        bool isKnown = part && !!primitiveKnownForStrings(walker, part);
+        if (isKnown && (isLastKnown || isEmptyTextInStringFolds(walker, part)))
+            return true;
+        isLastKnown = isKnown;
+    }
+    return false;
+}
+
 void mergeKnownPartsOfJoinedText(Walker& walker, Vector<Reference, 8>& parts)
 {
     if (!walker.has(Mechanism::Folding) || parts.isEmpty())

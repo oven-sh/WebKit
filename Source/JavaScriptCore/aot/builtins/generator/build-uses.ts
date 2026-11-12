@@ -22,6 +22,7 @@ import type {
   ModelType,
   ModelTypePart,
 } from "./model.ts";
+import { resultFieldLayouts } from "./model.ts";
 import {
   operandRoles,
   operandUses,
@@ -161,7 +162,7 @@ function isSamePlace(left: ModelPlace, right: ModelPlace): boolean {
       return right.place === "ResultSlot" && left.slot === right.slot;
     case "ResultField":
       if (right.place !== "ResultField" || left.holdsOnlyWhatIsStored !== right.holdsOnlyWhatIsStored) return false;
-      return left.index === right.index;
+      return left.index === right.index && left.isOfElements === right.isOfElements;
     case "NewValue":
       return right.place === "NewValue" && left.type === right.type && left.holdsWhatIsThrown === right.holdsWhatIsThrown;
     case "Member":
@@ -412,8 +413,8 @@ function findLayoutField(layout: ModelLayout, field: string | number): number | 
   return index < 0 ? null : index;
 }
 
-function resolveResultField(context: OverloadContext, field: string | number): number | null {
-  const layouts = context.resultType.parts.flatMap(part => (part.part === "Layout" ? [part.layout] : []));
+function resolveResultField(context: OverloadContext, field: string | number, isOfElements: boolean): number | null {
+  const layouts = resultFieldLayouts(context.resultType, isOfElements);
   if (layouts.length === 0) {
     context.report(`the result has no layout, so it has no field ${field}`);
     return null;
@@ -460,9 +461,10 @@ function resolvePlace(context: OverloadContext, spec: PlaceSpec): ModelPlace | n
       return slot === null ? null : { place: "ResultSlot", slot };
     }
     case "ResultField": {
-      const index = resolveResultField(context, spec.field);
+      const isOfElements = spec.isOfElements ?? false;
+      const index = resolveResultField(context, spec.field, isOfElements);
       if (index === null) return null;
-      return { place: "ResultField", index, holdsOnlyWhatIsStored: spec.holdsOnlyWhatIsStored ?? false };
+      return { place: "ResultField", index, holdsOnlyWhatIsStored: spec.holdsOnlyWhatIsStored ?? false, isOfElements };
     }
     case "NewValue":
       return {

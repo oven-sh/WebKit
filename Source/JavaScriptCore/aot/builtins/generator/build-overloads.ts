@@ -337,6 +337,7 @@ function resolveRangeOperand(context: OverloadContext): ModelOperand | null {
     case "AbsoluteValue":
     case "IntegerPart":
     case "Sign":
+    case "CodeUnitOrNaN":
       if (range.operand === undefined) context.report(`the range rule ${range.rule} needs the operand it applies to`);
       return written;
   }

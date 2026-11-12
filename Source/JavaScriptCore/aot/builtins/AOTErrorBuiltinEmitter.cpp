@@ -27,6 +27,27 @@ void ErrorBuiltinEmitter::generateNewError(const InlineCall& call)
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewError, { word32(static_cast<int32_t>(kind)), message, options }, { .capturesStackTrace = true }));
 }
 
+void ErrorBuiltinEmitter::generateErrorIsError(const InlineCall& call)
+{
+    ValueID argument = call.argumentOrNull(0);
+    if (!argument || !typeOf(argument).hasObjects()) {
+        finishInlineCall(call, boolean(false));
+        return;
+    }
+    LBasicBlock isCellCase = newBlock();
+    LBasicBlock isNotCell = newBlock();
+    Join<Condition> join(m_out);
+    Boxed value = in<Boxed>(argument);
+    branch(isCell(value), { normalEdge(isCellCase), normalEdge(isNotCell) });
+
+    m_out.appendTo(isCellCase);
+    join.add(hasCellType(unboxCell(value), ErrorInstanceType));
+
+    m_out.appendTo(isNotCell);
+    join.add(boolean(false));
+    finishInlineCall(call, join.finish());
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

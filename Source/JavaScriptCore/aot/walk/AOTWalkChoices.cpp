@@ -341,7 +341,7 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
     Vector<PropertyKeyID, 16> keysDefinedBehind;
     for (size_t index = numberListed; index < fields.size(); ++index) {
         PropertyKeyID key = keyDefinedBehindAllocationInChoices(walker, { layout, fields[index] });
-        if (!key || (hasSlots && !canLeaveSlot(plan.slot(layout, fields[index]).representation))) {
+        if (!key || (hasSlots && !mayBeCreatedByStore(plan.slot(layout, fields[index]).representation))) {
             walker.fail("a field that only an allocation can create stands behind what the allocation can list"_s);
             return false;
         }
@@ -644,9 +644,69 @@ static void becomeObjectOfDataInChoices(Walker& walker, Draft& draft, const Data
 static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
 {
     bool isEmpty = !list.numberOfVariadicOperands() && list.holes().empty();
-    bool kindIsWritten = list.contents() && !walker.types().at(list.contents()).isAnything() && arrayStorageHolding(walker.types(), list.contents()) == ArrayStorage::Contiguous;
-    if (isEmpty && !kindIsWritten && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.program().at(walker.unit().function).isModuleBody()))
+    if (isEmpty && walker.appendsDoublesInFusedChain() && walker.has(Mechanism::TypedOperations) && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other) {
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
+        list.setArrayStorage(ArrayStorage::Double);
+        return;
+    }
+    bool kindIsWritten = list.contents() && !walker.types().at(list.contents()).isAnything() && arrayStorageHolding(walker.types(), list.contents()) == ArrayStorage::Contiguous;
+    if (isEmpty && (!kindIsWritten || walker.isInLoop()) && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.program().at(walker.unit().function).isModuleBody()))
+        list.setLiteralStorage(ArrayLiteralStorage::Profiled);
+}
+
+static bool elementsMayBeInt32(const Walker& walker, const Draft& list)
+{
+    return list.numberOfVariadicOperands() <= maxArrayLengthInStubKey && std::ranges::all_of(list.variadicOperands(), [&](Reference element) {
+        TypeID type = walker.typeOf(element);
+        return type && !isNeverType(type) && (walker.types().at(type).primitives & Primitive::Integer);
+    });
+}
+
+TypeID Walker::literalElementTypeInLoops(ValueID literal)
+{
+    const BodyIndex& index = currentBodyIndex();
+    const Vector<std::pair<ValueID, TypeID>>& literals = m_literalElementTypes.ensure(&index, [&] {
+        Vector<std::pair<ValueID, TypeID>> found;
+        if (!index.numberOfLoops() || !index.holdsAnyOf(OpcodeSet { Opcode::NewArray }) || !index.holdsAnyOf(OpcodeSet { Opcode::ElemGet }))
+            return found;
+        auto literalUnder = [&](ValueID holder) {
+            ValueID root = index.stripCasts(holder);
+            return root && !index.isParameter(root) && index.opcodeOf(root) == Opcode::NewArray ? root : ValueID();
+        };
+        auto forEachReachableOperation = [&](Opcode opcode, bool inLoops, NOESCAPE const Invocable<void(const BodyValue&, ValueID)> auto& visit) {
+            for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+                if (!index.isReachable(BlockID(number)) || (inLoops && !index.loopOf(BlockID(number))))
+                    continue;
+                for (BodyValue operation : index.block(BlockID(number)).values()) {
+                    if (ValueID root = operation.opcode() == opcode ? literalUnder(operation.objectOperand()) : ValueID())
+                        visit(operation, root);
+                }
+            }
+        };
+        forEachReachableOperation(Opcode::ElemGet, true, [&](const BodyValue& read, ValueID root) {
+            found.append({ root, facts().linked().resultOfReadByKey(currentFunction(), read.id()) });
+        });
+        auto isNoNumber = [&](TypeID type) {
+            return !type || !(m_types.at(type).primitives & Primitive::Number) || !m_types.at(type).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent);
+        };
+        Vector<ValueID, 4> storedInto;
+        if (std::ranges::any_of(found, isNoNumber, &std::pair<ValueID, TypeID>::second)) {
+            forEachReachableOperation(Opcode::ElemSet, false, [&](const BodyValue& store, ValueID root) {
+                ValueID stored = index.stripCasts(store.valueOperand());
+                bool isMoved = stored && !index.isParameter(stored) && (index.opcodeOf(stored) == Opcode::Integer || (index.opcodeOf(stored) == Opcode::ElemGet && literalUnder(index.value(stored).objectOperand()) == root));
+                if (!isMoved)
+                    storedInto.append(root);
+            });
+        }
+        for (auto& [read, type] : found) {
+            if (!storedInto.contains(read) && isNoNumber(type))
+                type = m_types.withPrimitives(TypeTable::int32, Primitive::Undefined);
+        }
+        std::ranges::stable_sort(found, { }, &std::pair<ValueID, TypeID>::first);
+        return found;
+    }).iterator->value;
+    auto place = std::ranges::lower_bound(literals, literal, { }, &std::pair<ValueID, TypeID>::first);
+    return place != literals.end() && place->first == literal ? place->second : TypeID();
 }
 
 static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
@@ -671,23 +731,36 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
     }
     bool numbersAreWritten = holdsNumbersAsWritten && walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked);
     bool isOnlyHandedOn = list.inputValueGiven && walker.currentBodyIndex().hasOneUse(list.inputValueGiven);
-    if (!numbersAreWritten && !isOnlyHandedOn)
+    static constexpr OpcodeSet calls { Opcode::Call, Opcode::Construct };
+    bool isMadeByCall = list.inputValueGiven && !walker.currentBodyIndex().isParameter(list.inputValueGiven) && calls.contains(walker.currentBodyIndex().opcodeOf(list.inputValueGiven));
+    TypeID readInLoops = !numbersAreWritten && !isOnlyHandedOn && list.inputValueGiven ? walker.literalElementTypeInLoops(list.inputValueGiven) : TypeID();
+    bool holdsNumbersInLoops = readInLoops && (walker.types().at(readInLoops).primitives & Primitive::Number) && walker.types().at(readInLoops).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined | Primitive::Absent);
+    holdsNumbersInLoops |= !numbersAreWritten && !isOnlyHandedOn && list.inputValueGiven && walker.loopsPushNumbersOnto(list.inputValueGiven);
+    if (!numbersAreWritten && !isOnlyHandedOn && !holdsNumbersInLoops && !isMadeByCall)
         return;
     bool areInt32 = true;
     bool mayHaveFraction = false;
     for (Reference element : list.variadicOperands()) {
         TypeID proven = walker.typeOf(element);
-        if (!proven || !walker.types().at(proven).isNumber())
+        if (!proven || !walker.types().at(proven).isNumber()) {
+            if (numbersAreWritten && elementsMayBeInt32(walker, list))
+                list.setLiteralStorage(ArrayLiteralStorage::ByElements);
             return;
+        }
         areInt32 &= walker.types().at(proven).isInt32();
         mayHaveFraction |= !!(walker.types().at(proven).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
     }
-    if (!areInt32 && !numbersAreWritten && !mayHaveFraction)
+    if (!areInt32 && !numbersAreWritten && !mayHaveFraction) {
+        if (elementsMayBeInt32(walker, list))
+            list.setLiteralStorage(ArrayLiteralStorage::ByElements);
         return;
+    }
     if (!areInt32)
         list.setArrayStorage(ArrayStorage::Double);
-    else if (isOnlyHandedOn)
+    else if (isOnlyHandedOn || holdsNumbersInLoops || isMadeByCall)
         list.setArrayStorage(ArrayStorage::Int32);
+    if (holdsNumbersInLoops)
+        walker.count(StatisticID::ArrayLiteralsAllocatedForLoops);
 }
 
 static unsigned widthOfStorageInChoices(ArrayStorage storage)
@@ -866,7 +939,7 @@ static bool holdsNothingYetInChoices(const DataNode& element)
     return element.is<DataNode::Undefined>() || element.is<DataNode::Null>();
 }
 
-static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array& array)
+static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array& array, DataID data)
 {
     if (std::ranges::all_of(array.elements, holdsNothingYetInChoices))
         return false;
@@ -874,11 +947,11 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
         return true;
     FunctionID function = walker.currentFunction();
     if (walker.program().at(function).isModuleBody() && !walker.isInLoop())
-        return false;
+        return isShortStringList(array) && walker.facts().summaries().at(function).holdsWrittenList(data);
     return std::ranges::all_of(array.elements, canLieInSharedStorageInChoices);
 }
 
-static bool isBornToBeFilledInChoices(const DataNode::Array& array)
+static bool isZeroFilledArray(const DataNode::Array& array)
 {
     return array.elements.size() > 1 && std::ranges::all_of(array.elements, [](const DataNode& element) {
         const auto* number = element.tryAs<DataNode::Number>();
@@ -894,6 +967,25 @@ static bool variableHoldsListInChoices(Walker& walker, DataID data)
     return function.isModuleBody() || (body && walker.facts().summaries().at(body).holdsWrittenList(data));
 }
 
+static bool isLookupOnlyInChoices(Walker& walker, const Draft& data)
+{
+    const auto* object = walker.program().at(data.data()).root.tryAs<DataNode::Object>();
+    if (!object || !data.inputValueGiven || (walker.program().at(walker.currentFunction()).isModuleBody() && !walker.isInLoop()))
+        return false;
+    if (std::ranges::any_of(object->members, [](const DataMember& member) { return isAggregateOfDataInChoices(member.value); }))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID literal = data.inputValueGiven;
+    if (index.isParameter(literal) || index.opcodeOf(literal) != Opcode::Data)
+        return false;
+    ValueID user = index.onlyUsingValue(literal);
+    static constexpr OpcodeSet lookups { Opcode::ElemGet, Opcode::ElemHas };
+    if (!user || index.isParameter(user) || !lookups.contains(index.opcodeOf(user)))
+        return false;
+    BodyValue lookup = index.value(user);
+    return lookup.objectOperand() == literal && lookup.propertyOperand() != literal;
+}
+
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
     RootOfConstant whereRootEnds = walker.constantEndsWhereItLeaves(data.inputValueGiven, data.data()) ? RootOfConstant::EndsWhereItLeaves : RootOfConstant::IsAsked;
@@ -903,18 +995,29 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     }
     SetForScope makingObjectsOfConstant = walker.makingObjectsOfConstant();
     const DataNode& root = walker.program().at(data.data()).root;
-    if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array)) {
-        if (array->elements.size() <= maxNodesOfExpandedData && isBornToBeFilledInChoices(*array) && !variableHoldsListInChoices(walker, data.data())) {
+    if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array, data.data())) {
+        if (array->elements.size() <= maxNodesOfExpandedData && isZeroFilledArray(*array) && !variableHoldsListInChoices(walker, data.data())) {
             becomeNodeOfDataInChoices(walker, data, root);
             return;
         }
-        bool isStoredIntoInLoop = data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
-        data.setEncoding(isStoredIntoInLoop ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
+        bool isStoredInto = ((data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven)) || walker.facts().summaries().storesElementInto(data.data())) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
+        if (isStoredInto)
+            walker.count(StatisticID::ArrayLiteralsWithOwnStorage);
+        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations()) {
+            becomeNodeOfDataInChoices(walker, data, root);
+            return;
+        }
+        data.setEncoding(isStoredInto ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
         return;
     }
     data.setEncoding(DataEncoding::ReadOnlyTree);
     if (isAggregateOfDataInChoices(root)) {
         Walker::SurveyOfConstant survey = surveyDataInChoices(walker, data.data());
+        if (survey.tableOfImageHoldsIt && isLookupOnlyInChoices(walker, data)) {
+            data.setEncoding(DataEncoding::SharedObject);
+            walker.count(StatisticID::LiteralsSharedByLookups);
+            return;
+        }
         if (survey.tableOfImageHoldsIt && !(survey.allocationsAloneMakeIt && survey.numberOfNodes <= maxNodesOfExpandedData))
             return;
     }

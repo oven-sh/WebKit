@@ -236,6 +236,9 @@ private:
     VM* const m_vm;
 #if ENABLE(AOT)
     AOT::Instance* m_aotInstance { nullptr };
+    AOT::Instance* m_aotTableInstance { nullptr };
+    // The object that node:vm contextified. The class of node:vm's global objects visits it.
+    JSObject* m_contextifiedObject { nullptr };
     JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
 #endif
     Debugger* m_debugger { nullptr };
@@ -1171,7 +1174,16 @@ public:
     // Compiled code runs some jobs without queueing them: true if the queue would run one right away.
     bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask && m_microtaskRunnability == QueuedTaskResult::Executed; }
     AOT::Instance* aotInstance() const { return m_aotInstance; }
-    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    void setAOTInstance(AOT::Instance* instance)
+    {
+        m_aotInstance = instance;
+        m_aotTableInstance = instance;
+    }
+    // The instance whose tables the interpreter reads. The VM owns the tables, so a realm without its own instance has another realm's.
+    AOT::Instance* aotTableInstance() const { return m_aotTableInstance; }
+    void setAOTTableInstance(AOT::Instance* instance) { m_aotTableInstance = instance; }
+    JSObject* contextifiedObject() const { return m_contextifiedObject; }
+    void setContextifiedObject(JSObject* object) { m_contextifiedObject = object; }
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
 #endif
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }

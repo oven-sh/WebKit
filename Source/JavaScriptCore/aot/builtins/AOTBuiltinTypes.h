@@ -25,6 +25,7 @@ struct BuiltinTypeContext {
     TypeArena& types;
     const PositionTypes* positions { nullptr };
     TypeLevel level { TypeLevel::Proven };
+    bool* asksPositions { nullptr };
 };
 
 struct BuiltinOperandTypes {

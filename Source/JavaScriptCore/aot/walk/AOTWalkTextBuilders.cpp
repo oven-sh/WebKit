@@ -13,7 +13,9 @@
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
+#include <limits>
 #include <functional>
 #include <optional>
 #include <span>
@@ -198,8 +200,89 @@ static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const Body
     }
 }
 
+static constexpr size_t maxEnteringParts = 16;
+
+static Vector<Reference, 8> collectEnteringParts(const Walker& walker, Reference enters)
+{
+    const Code& code = walker.code();
+    Vector<Reference, 8> parts { enters };
+    for (size_t place = 0; place < parts.size();) {
+        ValueID root = parts[place].isValue() ? underlyingCellOf(code, parts[place].id()) : ValueID();
+        if (!root || code.isConstant(root) || !operationsThatJoinTexts.contains(code.at(root).opcode)) {
+            ++place;
+            continue;
+        }
+        const Operation& join = code.at(root);
+        auto hasOwnText = [&](ValueID part) {
+            TypeID type = part ? walker.typeOf(code.isConstant(part) ? Reference::constant(part) : Reference::value(part)) : TypeID();
+            return type && !isNeverType(type) && hasTextByItself(walker.types().at(type));
+        };
+        bool isConcatenation = std::ranges::all_of(join.operands(), hasOwnText) && std::ranges::any_of(join.operands(), [&](ValueID part) {
+            return walker.types().at(walker.typeOf(code.isConstant(part) ? Reference::constant(part) : Reference::value(part))).isAnyString();
+        });
+        if (!isConcatenation || (join.opcode == Opcode::Strcat && join.isLikelyKey()) || parts.size() + join.numberOfOperands() > maxEnteringParts) {
+            ++place;
+            continue;
+        }
+        parts.removeAt(place);
+        size_t end = place;
+        for (ValueID part : join.operands())
+            parts.insert(end++, code.isConstant(part) ? Reference::constant(part) : Reference::value(part));
+    }
+    return parts;
+}
+
+static bool isJoinFailureMovable(const Walker& walker, ValueID join)
+{
+    static constexpr unsigned maxBlocks = 4;
+    const Code& code = walker.code();
+    BlockID block = walker.currentBlock();
+    for (unsigned blocks = 0; blocks < maxBlocks; ++blocks) {
+        for (ValueID id = code.lastOperationOf(block); id; id = code.at(id).previous) {
+            if (id == join)
+                return true;
+            if (!code.at(id).traits().isRemovableWhenUnused())
+                return false;
+        }
+        BlockID before;
+        unsigned numberOfEdges = 0;
+        code.forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+            before = edge.from;
+            ++numberOfEdges;
+        });
+        if (numberOfEdges != 1 || code.at(before).terminator.kind != TerminatorKind::Jump)
+            return false;
+        block = before;
+    }
+    return false;
+}
+
+static ValueID findEnteringJoin(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t parameterIndex, Reference enters)
+{
+    ValueID written;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+        if (index.isInLoop(edge.from, index.loopOf(inputHead)))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        if (written || parameterIndex >= arguments.size() || !arguments[parameterIndex])
+            return { };
+        written = arguments[parameterIndex];
+    }
+    while (written && !index.isParameter(written) && index.hasOneUse(written) && opcodesThatStateTypes.contains(index.opcodeOf(written)))
+        written = index.value(written).operand(0);
+    if (!written || index.isParameter(written) || !index.hasOneUse(written) || !operationsThatJoinTexts.contains(index.opcodeOf(written)))
+        return { };
+    const Code& code = walker.code();
+    ValueID root = underlyingCellOf(code, enters.id());
+    if (code.isConstant(root) || !operationsThatJoinTexts.contains(code.at(root).opcode) || !code.at(root).traits().withoutThrowByRule().isRemovableWhenUnused())
+        return { };
+    return isJoinFailureMovable(walker, root) ? root : ValueID();
+}
+
 static StringInBuilder* beginTextInTextBuilders(Walker& walker, const BodyIndex& index, BlockID inputHead, std::optional<WaysOutOfLoopInTextBuilders>& waysOut, GrowingText&& web, Reference enters, Origin origin)
 {
+    Vector<Reference, 8> enteringParts = collectEnteringParts(walker, enters);
+    ValueID enteringJoin = enteringParts.size() > 1 ? findEnteringJoin(walker, index, inputHead, web.parameterIndex, enters) : ValueID();
     StringInBuilder text;
     text.web = WTF::move(web);
     text.frameIndex = static_cast<uint32_t>(walker.topFrameIndex());
@@ -225,9 +308,11 @@ static StringInBuilder* beginTextInTextBuilders(Walker& walker, const BodyIndex&
     begun.beganEmpty = textOfKnownPartOfStringBuilder(walker, enters) == walker.program().strings.emptyString();
     begun.beganAsText = walker.types().at(walker.typeOf(enters)).isAnyString();
     if (!begun.beganEmpty) {
-        appendPartsToStringBuilder(walker, begun, begun.builder, singleElementSpan(enters), origin);
+        appendPartsToStringBuilder(walker, begun, begun.builder, enteringParts.span(), origin);
         if (walker.isUnreachable())
             return nullptr;
+        if (enteringJoin && !walker.hasFailed())
+            walker.code().letJoinFailWhereItsReaderFails(enteringJoin);
     }
     bindNamesReadBehindLoopAnewInTextBuilders(walker, index, waysOut, begun.web);
     return &begun;
@@ -391,6 +476,104 @@ bool terminatorUsesStringInBuilder(Walker& walker, const BodyTerminator& termina
     return takesText;
 }
 
+bool Walker::branchOnSwitchedStringLength(const BodyTerminator& terminator)
+{
+    auto overStrings = terminator.as<TerminatorKind::SwitchString>();
+    ValueID subject = overStrings.subjectOperand();
+    Reference name = nameLastBoundTo(subject);
+    if (!isStringInBuilder(*this, name) || isUnreachable())
+        return false;
+    StringInBuilder* text = findTextOfOperandInTextBuilders(*this, subject, name);
+    if (!text || (text->stringOfState && text->blockOfState == currentBlock()))
+        return false;
+    Vector<StringID, 16> cases;
+    for (StringID written : overStrings.strings())
+        cases.append(written);
+    if (cases.isEmpty())
+        return false;
+
+    unsigned shortest = std::numeric_limits<unsigned>::max();
+    unsigned longest = 0;
+    for (StringID written : cases) {
+        unsigned length = lengthOfTextForStrings(*this, written);
+        shortest = std::min(shortest, length);
+        longest = std::max(longest, length);
+    }
+    Origin origin = m_origin;
+    origin.isTailCall = false;
+    Reference length = lengthOfStringInBuilder(*this, *text, name, origin);
+    if (!length)
+        return true;
+    count(StatisticID::BuilderSwitchLengthChecks);
+    BlockID otherwise = addBlock();
+    auto leaveIf = [&](Reference isOutside) {
+        if (!isOutside)
+            return;
+        BlockID inside = addBlock();
+        branch(isOutside, otherwise, inside);
+        continueIn(inside);
+    };
+    if (shortest)
+        leaveIf(buildIntegerOperator(*this, Opcode::Less, length, integerForStrings(*this, shortest), origin));
+    if (!isUnreachable())
+        leaveIf(buildIntegerOperator(*this, Opcode::Less, integerForStrings(*this, longest), length, origin));
+    Vector<BlockID, 16> matches;
+    for (size_t place = 0; place < cases.size(); ++place)
+        matches.append(addBlock());
+    static constexpr size_t mostCasesCompared = 24;
+    bool comparesInPlace = cases.size() <= mostCasesCompared && std::ranges::all_of(cases, [&](StringID written) { return canCompareBuilderWithLiteral(*this, *text, written); });
+    if (Reference isOnStack = comparesInPlace && !isUnreachable() ? buildBuilderIsOnStack(*this, name, origin) : Reference()) {
+        BlockID onStack = addBlock();
+        BlockID elsewhere = addBlock(BlockFrequency::Unlikely);
+        branch(isOnStack, onStack, elsewhere);
+        continueIn(onStack);
+        Vector<int64_t, 16> lengths;
+        Vector<BlockID, 16> casesOfLength;
+        for (StringID written : cases) {
+            int64_t caseLength = lengthOfTextForStrings(*this, written);
+            if (lengths.contains(caseLength))
+                continue;
+            lengths.append(caseLength);
+            casesOfLength.append(addBlock());
+        }
+        switchOn(length, lengths.span(), casesOfLength.span(), otherwise);
+        for (size_t group = 0; group < lengths.size(); ++group) {
+            continueIn(casesOfLength[group]);
+            for (size_t place = 0; place < cases.size() && !isUnreachable(); ++place) {
+                if (static_cast<int64_t>(lengthOfTextForStrings(*this, cases[place])) != lengths[group])
+                    continue;
+                Reference isEqual = buildBuilderEqualsLiteral(*this, name, cases[place], origin);
+                if (!isEqual)
+                    break;
+                BlockID next = addBlock();
+                branch(isEqual, matches[place], next);
+                continueIn(next);
+            }
+            if (!isUnreachable())
+                jumpTo(otherwise);
+        }
+        continueIn(elsewhere);
+        text->stringOfState = { };
+    }
+    if (Reference string = isUnreachable() ? Reference() : materializeStringInBuilder(*this, *text, name, origin)) {
+        TerminatorDraft compare(TerminatorKind::SwitchString, origin);
+        compare.setSubjectOperand(string);
+        compare.setStrings(cases.span());
+        endWithSwitchOverOwnBlocks(compare, matches.span(), otherwise);
+    }
+    for (size_t place = 0; place < matches.size() && !m_hasFailed; ++place) {
+        continueIn(matches[place]);
+        EdgeToTargetOfBody match { terminator.block(), static_cast<uint32_t>(place) };
+        endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, origin), singleElementSpan(match));
+    }
+    if (m_hasFailed)
+        return true;
+    continueIn(otherwise);
+    EdgeToTargetOfBody noMatch { terminator.block(), static_cast<uint32_t>(cases.size()) };
+    endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, origin), singleElementSpan(noMatch));
+    return true;
+}
+
 MaterializedStringsScope::MaterializedStringsScope(Walker& walker, const BodyTerminator& terminator)
     : m_walker(walker)
 {
@@ -456,6 +639,8 @@ Reference materializeStringInBuilder(Walker& walker, StringInBuilder& text, Refe
     return text.stringOfState;
 }
 
+static Reference finishInTextBuilders(Walker&, StringInBuilder&, Reference name, Origin);
+
 static void appendPartsBehindFrontInTextBuilders(Walker& walker, StringInBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
 {
     if (text.web.standsUnderHandlers)
@@ -504,6 +689,105 @@ bool tryAppendJoinToStringInBuilder(Walker& walker, const BodyValue& join, Vecto
     appendPartsBehindFrontInTextBuilders(walker, *grown, name, parts.span(), origin);
     if (!walker.isUnreachable())
         walker.bind(join.id(), name);
+    return true;
+}
+
+static ValueID findFinishBeforeJoin(const Walker& walker, Reference string)
+{
+    static constexpr unsigned maxBlocks = 4;
+    static constexpr OpcodeSet finishes { Opcode::StackStringBuilderFinish, Opcode::StringBuilderFinish };
+    const Code& code = walker.code();
+    ValueID finish = string.isValue() ? underlyingCellOf(code, string.id()) : ValueID();
+    if (!finish || code.isConstant(finish) || !finishes.contains(code.at(finish).opcode))
+        return { };
+    BlockID block = walker.currentBlock();
+    for (unsigned blocks = 0; blocks < maxBlocks; ++blocks) {
+        for (ValueID id = code.lastOperationOf(block); id; id = code.at(id).previous) {
+            if (id == finish)
+                return finish;
+            const Operation& record = code.at(id);
+            bool readsString = std::ranges::any_of(record.operands(), [&](ValueID operand) {
+                return operand && !code.isConstant(operand) && underlyingCellOf(code, operand) == finish;
+            });
+            if (OperandPosition::builder(record.opcode) || record.traits().maySuspend() || (readsString && !cellPreservingOpcodes.contains(record.opcode)))
+                return { };
+        }
+        BlockID before;
+        unsigned numberOfEdges = 0;
+        bool passesString = false;
+        code.forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+            before = edge.from;
+            ++numberOfEdges;
+            passesString |= std::ranges::any_of(edge.arguments(), [&](ValueID argument) {
+                return argument && !code.isConstant(argument) && underlyingCellOf(code, argument) == finish;
+            });
+        });
+        if (numberOfEdges != 1 || passesString || code.at(before).terminator.kind != TerminatorKind::Jump)
+            return { };
+        block = before;
+    }
+    return { };
+}
+
+static bool isFinalStringDead(Walker& walker, const BodyValue& firstJoin, const BodyValue& lastJoin, ValueID finish)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Code& code = walker.code();
+    auto namesString = [&](ValueID value) {
+        Reference bound = value ? walker.nameLastBoundTo(value) : Reference();
+        return bound && bound.isValue() && underlyingCellOf(code, bound.id()) == finish;
+    };
+    BodyBlock block = index.block(index.blockOf(firstJoin.id()));
+    if (block.hasHandler() || index.blockOf(lastJoin.id()) != block.id() || walker.standsUnderHandler())
+        return false;
+    bool isRead = false;
+    for (uint32_t id = firstJoin.id().index() + 1; id < block.endOfValues().index(); ++id) {
+        index.value(ValueID(id)).forEachOperand([&](ValueID operand, uint32_t) {
+            isRead |= namesString(operand);
+        });
+    }
+    BodyTerminator terminator = block.terminator();
+    terminator.forEachOperand([&](ValueID operand, uint32_t) {
+        isRead |= namesString(operand);
+    });
+    BodyLiveness liveness;
+    liveness.compute(index);
+    for (BodyTarget target : terminator.targets()) {
+        for (ValueID argument : target.arguments())
+            isRead |= namesString(argument);
+        isRead |= !target.proofs().empty();
+        liveness.forEachLiveAtHead(target.block(), [&](ValueID value) {
+            isRead |= namesString(value);
+        });
+    }
+    return !isRead;
+}
+
+bool tryAppendJoinToFinishedString(Walker& walker, const BodyValue& firstJoin, const BodyValue& lastJoin, std::span<const Reference> parts)
+{
+    if (parts.size() < 2 || !canKeepStringsInBuilders(walker) || walker.isUnreachable())
+        return false;
+    ValueID finish = findFinishBeforeJoin(walker, parts[0]);
+    if (!finish || !isFinalStringDead(walker, firstJoin, lastJoin, finish))
+        return false;
+    for (Reference part : parts.subspan(1)) {
+        TypeID type = part ? walker.typeOf(part) : TypeID();
+        if (!type || isStringInBuilder(walker, part) || !hasTextByItself(walker.types().at(type)) || (part.isValue() && underlyingCellOf(walker.code(), part.id()) == finish))
+            return false;
+    }
+
+    Origin origin = walker.originOf(lastJoin);
+    origin.isTailCall = false;
+    StringInBuilder text;
+    text.frameIndex = static_cast<uint32_t>(walker.topFrameIndex());
+    text.builder = Reference::value(walker.code().at(finish).builderOperand());
+    text.liesInFrame = walker.code().at(finish).opcode == Opcode::StackStringBuilderFinish;
+    walker.code().turnFinishIntoUnusedString(finish);
+    appendPartsToStringBuilder(walker, text, text.builder, parts.subspan(1), origin);
+    if (walker.isUnreachable() || walker.hasFailed())
+        return true;
+    if (Reference joined = finishInTextBuilders(walker, text, text.builder, origin))
+        walker.bind(lastJoin.id(), joined);
     return true;
 }
 

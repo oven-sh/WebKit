@@ -106,6 +106,8 @@ private:
     uint32_t m_count { 0 };
 };
 
+inline bool CompiledStructure::hasSpareWord() const { return m_extraPropertiesSlot.offset && !m_layout->hasExtraPropertiesSlot; }
+
 class Object final : public JSObject {
 public:
     using Base = JSObject;
@@ -117,7 +119,7 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> ALWAYS_INLINE static void visitFields(Object*, Visitor&);
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(Object*, const CompiledStructure&, Visitor&);
     static size_t estimatedSize(JSCell*, VM&);
     static void analyzeHeap(JSCell*, HeapAnalyzer&);
 
@@ -208,6 +210,7 @@ public:
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
     void setIntegrity(JSGlobalObject*, Integrity);
+    bool tryFreezeFields(VM&);
     bool testIntegrity(VM&, Integrity) const;
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
@@ -253,6 +256,7 @@ public:
     static JSObject* createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
     bool tryCreateExtraPropertiesOfNewObject(VM&, std::span<const ExtraProperty> inOrder);
     void didChangeExtraProperties(VM&);
+    bool tryNameHeldStructure(VM&);
     void ensureStructureForExtraProperties(VM&);
     static bool ensureStructureForExtraPropertiesIfNeeded(VM&, JSCell*);
     enum class ExtraPropertyStore : uint8_t { NotHandled, Replaced, Added };
@@ -326,7 +330,10 @@ public:
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
     JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
+    JSCellButterfly* enumerableKeys(VM&) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);
+    static JSPropertyNameEnumerator* enumeratorOfFinalObject(JSGlobalObject*, JSObject*);
+    static bool areEnumeratedNamesFixed(JSGlobalObject*, JSObject*, const JSPropertyNameEnumerator*);
     bool keysDependOnlyOnStructureAndOrderWord() const;
 
     static bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*);
@@ -424,7 +431,9 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
     case SlotRepresentation::JSValue:
         return functor(JSValue::decode(at<EncodedJSValue>(field.slot.offset)));
     case SlotRepresentation::Int32:
-        return functor(at<int32_t>(field.slot.offset));
+        if (int32_t word = at<int32_t>(field.slot.offset); word != absentInt32) [[likely]]
+            return functor(word);
+        return functor(read(field));
     case SlotRepresentation::Double:
         return functor(at<double>(field.slot.offset));
     case SlotRepresentation::Uint8:
@@ -493,10 +502,12 @@ void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)
 }
 
 template<typename Visitor>
-ALWAYS_INLINE void Object::visitFields(Object* object, Visitor& visitor)
+ALWAYS_INLINE void Object::visitFields(Object* object, const CompiledStructure& structure, Visitor& visitor)
 {
-    const LayoutData& layout = object->layout();
+    const LayoutData& layout = structure.layout();
     visitReferences(object, layout, layout.hasExtension(), visitor);
+    if (object->hasExtraProperties() && structure.hasSpareWord()) [[unlikely]]
+        visitReferenceAt(object, *structure.extraPropertiesSlot(), visitor);
 }
 
 } } // namespace JSC::AOT

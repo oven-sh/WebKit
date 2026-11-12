@@ -70,6 +70,7 @@ private:
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
     ElementAccessEmitter::FirstForm firstCandidateFormOf(const InlineCall&);
     void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    void forEachReadForm(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
 
     void removeElementAtEnd(const InlineCall&, bool removesFirst);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
@@ -95,14 +96,20 @@ private:
     void replaceElements(const InlineCall&, const InlineSplice&, const ArrayStorageForm&, std::span<const Operand> inserted);
     CellPointer copyRemovedElements(const InlineCall&, const InlineSplice&, const ArrayStorageForm&);
     Boxed spliceByOperation(const InlineCall&, LBasicBlock otherwise, const CallOptions&);
+    Word32 int32OrElse(ValueID, LBasicBlock otherwise);
+    void spliceDiscardingByOperation(const InlineCall&, LBasicBlock otherwise, const CallOptions&);
 
     Integer indexOfNumber(const InlineCall&, CellPointer array);
+    Integer indexOfInt32(const InlineCall&, CellPointer array);
+    Integer indexOfOptionalInt32(const InlineCall&, CellPointer array);
+    Integer indexOfBoxedInt32(const InlineCall&, CellPointer array, Boxed searched, std::optional<Integer> first);
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
     Integer indexOfString(const InlineCall&, CellPointer array, CellPointer searched);
     bool handlesSearch(const InlineCall&);
     Integer indexOfSearched(const InlineCall&, HoleIs);
-    void scanShortVector(const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, Join<Integer>& found);
+    std::optional<Integer> firstIndexOfSearch(const InlineCall&);
+    void scanShortVector(const InlineCall&, const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, std::optional<Integer> first, Join<Integer>& found);
 };
 
 static_assert(sizeof(ArrayBuiltinEmitter) == sizeof(OperationEmitter));

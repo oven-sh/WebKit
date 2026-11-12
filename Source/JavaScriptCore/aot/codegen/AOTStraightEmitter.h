@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyIndex.h"
 #include "AOTCodeGenerator.h"
 #include "AOTCodeRecords.h"
@@ -108,6 +109,11 @@ public:
     CodeRecords& records() { return m_records; }
     MentionList& mentions() { return m_records.mentions; }
     RelocationRecorder& relocations() { return m_records.relocations; }
+    void recordInlined(std::span<const uint8_t> programString)
+    {
+        if (m_records.inlinedStrings.areRecorded()) [[unlikely]]
+            m_records.inlinedStrings.append(programString);
+    }
     BodyBlock currentBlock() const { return m_block; }
     bool isNeverEntered(BlockID block) const { return !m_blocksNeverEntered.empty() && std::ranges::binary_search(m_blocksNeverEntered, block); }
 
@@ -198,6 +204,7 @@ public:
     void storeSlot(GPRReg cell, const PlacedSlot&, GPRReg boxed);
     void loadVariable(VariableID, GPRReg boxedResult);
     void storeVariable(VariableID, GPRReg boxed);
+    void storeVariable(VariableID, ValueID);
     void barrierAfterStore(GPRReg owner);
 
     COLD NEVER_INLINE void fail(Opcode);
@@ -289,16 +296,10 @@ private:
         VariableID variable;
         ModuleFailureID failure;
     };
-    struct ListOfImportChecks {
-        uint16_t entry;
-        Vector<ImportCheck, 8> checks;
-    };
     static constexpr uint32_t fewestImportChecksInList = 2;
-    static constexpr uint16_t firstEntryOfListOfImportChecks = 0xf000;
     std::optional<ImportCheck> importCheckIn(BodyBlock) const;
     Vector<ImportCheck, 8> importChecksFrom(BodyBlock) const;
-    void generateImportChecks(BodyBlock first, Vector<ImportCheck, 8>&& checks);
-    void writeListsOfImportChecks();
+    void generateImportChecks(BodyBlock first, std::span<const ImportCheck>);
     void generateOperation(const BodyValue&);
     bool leavesDefinitionToFirstRead(const BodyValue&);
     void generateTerminator(BodyBlock, const BodyTerminator&);
@@ -350,7 +351,6 @@ private:
     Vector<CCallHelpers::Label, 32> m_labels;
     Vector<JumpToBlock, 32> m_jumps;
     Vector<LandingPad, 4> m_landingPads;
-    Vector<ListOfImportChecks, 1> m_listsOfImportChecks;
     uint32_t m_landingPadOfBlockPlusOne { 0 };
     ValueID m_valueInRegister;
     ValueID m_valueTakenOutOfRegister;

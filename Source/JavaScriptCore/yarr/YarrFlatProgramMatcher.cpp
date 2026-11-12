@@ -182,7 +182,8 @@ struct StartSearch {
     const unsigned startOffset;
     StartCandidates candidates { };
     RequiredTextPlaces requiredTextPlaces { };
-    bool usesRequiredTexts { true };
+    // Skips positions that the required strings or the preceding unit rule out. The tables are always checked.
+    bool skipsStarts { true };
 };
 
 template<typename CharType> static unsigned findStartBehindFailedRun(const FlatProgram&, const CharType* input, unsigned length, unsigned from, unsigned next, StartSearch&);
@@ -478,6 +479,29 @@ static NEVER_INLINE unsigned findStartBehindFailedRun(const FlatProgram& program
 }
 
 template<typename CharType> static unsigned findStartOfMatch(const FlatProgram&, const CharType* input, unsigned length, unsigned from, StartSearch&);
+template<typename CharType> static unsigned findStartWithTables(const FlatProgram&, const CharType* input, unsigned length, unsigned from, StartSearch&);
+
+// See FlatProgram::precedingUnits.
+template<typename CharType>
+static NEVER_INLINE unsigned findStartAfterUnit(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
+{
+    const auto& preceding = *program.precedingUnits;
+    for (; from <= length; ++from) {
+        if (program.startScan != FlatStartScan::PrecedingUnitOnly)
+            from = findStartWithTables(program, input, length, from, search);
+        if (from > length || !search.skipsStarts)
+            return from;
+        if (!from) {
+            if (preceding.mayBeAbsent)
+                return from;
+            continue;
+        }
+        unsigned unit = input[from - 1];
+        if (sizeof(CharType) > 1 && unit > 0xff ? preceding.mayBeWide : preceding.latin1[unit >> 6] >> (unit & 63) & 1)
+            return from;
+    }
+    return from;
+}
 
 // See FlatProgram::startPair.
 template<typename CharType>
@@ -513,7 +537,7 @@ static NEVER_INLINE unsigned findStartByPair(const FlatProgram& program, const C
             return static_cast<unsigned>(cursor - units);
         ++cursor;
     }
-    return findStartOfMatch(program, input, length, static_cast<unsigned>(cursor - units), search);
+    return findStartWithTables(program, input, length, static_cast<unsigned>(cursor - units), search);
 }
 
 // See FlatProgram::asksRequiredTextsLate.
@@ -525,22 +549,21 @@ static NEVER_INLINE unsigned findStartBehindLateSearchForTexts(const FlatProgram
     unsigned next = nextStartWithRequiredTexts(program.requiredTexts, std::span { input, length }, from, search.requiredTextPlaces);
     if (next >= length)
         return next;
-    return findStartOfMatch(program, input, length, from, search);
+    return findStartWithTables(program, input, length, from, search);
 }
 
-// The first place from `from` on where a match can begin. Past the end: none. Out of line so that its loops do not take registers from Machine::run().
 template<typename CharType>
-static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
+static ALWAYS_INLINE unsigned findStartWithTablesInline(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
 {
     constexpr unsigned enough = FlatProgram::unitsWalkedBeforeTextsAreAsked;
     auto isTimeToAskTexts = [&] ALWAYS_INLINE_LAMBDA {
-        return !search.requiredTextPlaces[0] && from - search.startOffset >= enough && from <= length && length - from >= enough && search.usesRequiredTexts;
+        return !search.requiredTextPlaces[0] && from - search.startOffset >= enough && from <= length && length - from >= enough && search.skipsStarts;
     };
     if (program.requiredTexts.isEmpty() || (program.asksRequiredTextsLate && !isTimeToAskTexts()))
         return findStartByTables<CharType, SkipsStarts::BehindFailedRun>(program, input, length, from, search);
     if (program.asksRequiredTextsLate)
         return findStartBehindLateSearchForTexts(program, input, length, from, search);
-    if (!search.usesRequiredTexts) [[unlikely]]
+    if (!search.skipsStarts) [[unlikely]]
         return program.startScan == FlatStartScan::RequiredTextsAlone ? from : findStartByTables<CharType, SkipsStarts::No>(program, input, length, from, search);
     for (;;) {
         if (!search.requiredTextPlaces[0] || !canBeginByKnownPlaces(program.requiredTexts, length, from, search.requiredTextPlaces))
@@ -552,6 +575,21 @@ static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const 
             return next;
         from = next;
     }
+}
+
+template<typename CharType>
+static NEVER_INLINE unsigned findStartWithTables(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
+{
+    return findStartWithTablesInline(program, input, length, from, search);
+}
+
+// The first position at or after `from` where a match can begin, or one past the end. Out of line so that its loops do not take registers from Machine::run().
+template<typename CharType>
+static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
+{
+    if (program.precedingUnits) [[unlikely]]
+        return findStartAfterUnit(program, input, length, from, search);
+    return findStartWithTablesInline(program, input, length, from, search);
 }
 
 // failedOp: the last op that failed. Whatever the attempt wrote and did not undo, it wrote on its path to that op.
@@ -2547,16 +2585,16 @@ static NEVER_INLINE JSRegExpResult runFullMachine(const FlatProgram& program, co
 }
 
 template<typename CharType, bool isFull = false>
-static NEVER_INLINE JSRegExpResult matchForgetting(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output, unsigned steps, bool usesRequiredTexts = true)
+static NEVER_INLINE JSRegExpResult matchForgetting(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output, unsigned steps, bool skipsStarts = true)
 {
-    Enclosure<CharType> enclosure { { start, { }, { }, usesRequiredTexts }, length, steps };
+    Enclosure<CharType> enclosure { { start, { }, { }, skipsStarts }, length, steps };
     JSRegExpResult result;
     if constexpr (isFull)
         result = runFullMachine(program, input, enclosure, output, nullptr, nullptr);
     else
         result = enclosure.resultUnlessGivenUp(program, Machine<CharType, false>(program, std::span { input, length }, start, output, enclosure).run());
-    // The JIT makes an attempt at every place, and can run out of turns at one that the texts rule out. Giving up answers as no match does, so only a match behind such a place is searched for again.
-    if (result == JSRegExpResult::Match && output[0] != start && usesRequiredTexts && program.jitCountsTurns && !program.requiredTexts.isEmpty()) [[unlikely]]
+    // The JIT makes an attempt at every position, and can run out of iterations at one that the required strings or the preceding unit rule out. Giving up has the same result as no match, so the search is repeated only for a match after such a position.
+    if (result == JSRegExpResult::Match && output[0] != start && skipsStarts && program.jitCountsTurns && (!program.requiredTexts.isEmpty() || program.precedingUnits)) [[unlikely]]
         return matchForgetting<CharType, isFull>(program, input, length, start, output, steps, false);
     return result;
 }

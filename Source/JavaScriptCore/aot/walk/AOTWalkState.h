@@ -187,9 +187,10 @@ enum class CellFact : uint16_t {
     NoExtraProperties = 1 << 6,
     BearsNoMark = 1 << 7,
     EnumeratorIsCurrent = 1 << 8,
+    IsExtensible = 1 << 9,
 };
-inline constexpr uint32_t numberOfCellFacts = 9;
-static_assert(static_cast<uint32_t>(CellFact::EnumeratorIsCurrent) == 1u << (numberOfCellFacts - 1));
+inline constexpr uint32_t numberOfCellFacts = 10;
+static_assert(static_cast<uint32_t>(CellFact::IsExtensible) == 1u << (numberOfCellFacts - 1));
 
 OptionSet<CellFact> cellFactsInvalidatedBy(const LocationMasks& writes);
 
@@ -295,6 +296,9 @@ public:
     }
     bool isFresh(Reference object) const { return mayHold(Kinds::freshObjects) && m_held->mayHaveRecordOf(object) && m_held->holderIsFresh(object); }
     bool holdsFreshObjects() const { return mayHold(Kinds::freshObjects) && m_held->m_numberOfFreshHolders; }
+    bool mayHoldFreshObjectsFrom(uint32_t firstRecord) const { return holdsFreshObjects() && m_held->m_endOfFreshObjects > firstRecord; }
+    void noteStoreIntoUnmadeRecord(uint32_t number) { heldToWrite().m_newestStoreIntoUnmadeRecord = number; }
+    uint32_t newestStoreIntoUnmadeRecord() const { return m_held ? m_held->m_newestStoreIntoUnmadeRecord : 0; }
     void forEachFreshObject(NOESCAPE const Invocable<void(Reference)> auto& functor) const
     {
         if (!holdsFreshObjects())
@@ -370,6 +374,20 @@ public:
         m_answers.forEachHolderOfAnswerAboutFreshHolderLackingIn(arriving.m_answers, [&](Reference holder) {
             functor(holder, std::nullopt, holder);
         });
+    }
+    void forEachValueHeldByAnotherSince(ValueID oldest, NOESCAPE const Invocable<void(Reference)> auto& functor) const
+    {
+        if (!m_held)
+            return;
+        for (uint32_t position = 0; position < m_held->m_places.size();) {
+            if (!(position % Held::placesOfNewestValue) && m_held->holdsOnlyValuesBefore(oldest, position / Held::placesOfNewestValue)) {
+                position += Held::placesOfNewestValue;
+                continue;
+            }
+            const Place& place = m_held->m_places[position++];
+            if (place.value && place.value != m_held->m_holders[place.holder].object)
+                functor(place.value);
+        }
     }
     void forEachValueHeldByAnother(NOESCAPE const Invocable<void(Reference)> auto& functor) const
     {
@@ -493,7 +511,7 @@ public:
     }
     void noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
     {
-        bool isNoted = orderWord ? orderWordOf(object) == orderWord && cellFacts(object).containsAll({ CellFact::NotFrozen, CellFact::NoFieldOutsideSlot }) : !cellFacts(object).contains(CellFact::OrderWordIsKnown);
+        bool isNoted = orderWord ? orderWordOf(object) == orderWord && cellFacts(object).containsAll({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot }) : !cellFacts(object).contains(CellFact::OrderWordIsKnown);
         if (!isNoted) {
             heldToWrite().noteOrderWord(object, orderWord);
             m_marks.kinds |= Kinds::cellFacts;
@@ -501,9 +519,10 @@ public:
     }
     std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::cellFacts) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
 
-    enum class AskerOfGuardOfReads : uint8_t { EveryRead, ReadBehindLookAtObject };
-    static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side, AskerOfGuardOfReads asker = AskerOfGuardOfReads::EveryRead) { return classLayout.index() << 2 | static_cast<uint32_t>(asker) << 1 | static_cast<uint32_t>(side); }
-    static LayoutID classOfGuardedSide(uint32_t number) { return LayoutID(number >> 2); }
+    enum class AskerOfGuardOfReads : uint8_t { EveryRead, ReadBehindLookAtObject, AssignedMember, PrototypeLink };
+    static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side, AskerOfGuardOfReads asker = AskerOfGuardOfReads::EveryRead) { return classLayout.index() << 3 | static_cast<uint32_t>(asker) << 1 | static_cast<uint32_t>(side); }
+    static LayoutID classOfGuardedSide(uint32_t number) { return LayoutID(number >> 3); }
+    static AskerOfGuardOfReads askerOfGuardedSide(uint32_t number) { return static_cast<AskerOfGuardOfReads>(number >> 1 & 3); }
     void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
     {
         if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()), test)) {
@@ -521,6 +540,9 @@ public:
     }
     bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, ClassSide side = ClassSide::Prototype) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()); }
     bool memberAboveIsUnchanged(LayoutID classLayout, PropertyKeyID key) const { return guardOfReadsHolds(classLayout, key) || !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype, AskerOfGuardOfReads::ReadBehindLookAtObject), key.bits()); }
+    Reference assignedMemberTest(LayoutID classLayout, PropertyKeyID key) const { return valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype, AskerOfGuardOfReads::AssignedMember), key.bits()); }
+    bool isMemberAssigned(LayoutID classLayout, PropertyKeyID key) const { return !!assignedMemberTest(classLayout, key); }
+    bool isPrototypeLinkUnchanged(LayoutID classLayout, ClassSide side) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side, AskerOfGuardOfReads::PrototypeLink), PropertyKeyID().bits()); }
     bool mayHoldGuards() const { return mayHoldPlaceOf(Reference()) && m_held->mayHoldGuards(); }
     bool someGuardHoldsOf(LayoutID classLayout) const { return mayHoldPlaceOf(Reference()) && m_held->someGuardHoldsOf(classLayout); }
     void noteThatGuardsHaveBegun(LayoutID classLayout)
@@ -627,7 +649,13 @@ public:
     void setRestartPoint(uint32_t restartPoint) { m_marks.restartMark = restartPoint; }
     void clearRestartMark() { m_marks.restartMark = 0; }
     uint32_t restartMark() const { return m_marks.restartMark; }
+    void forbidRestart()
+    {
+        if (m_marks.restartMark)
+            m_marks.restartMark = restartPointOf(m_marks.restartMark) | irreversibleWritesBit;
+    }
     void setRestartMarkForTesting(uint32_t mark) { m_marks.restartMark = mark; }
+    void restoreRestartMark(uint32_t mark) { m_marks.restartMark = mark; }
     bool isInlineeEffectFree(uint32_t inlineeRestartPoint) const { return m_marks.restartMark && m_marks.restartMark <= inlineeRestartPoint; }
     void setInlineeRestartPoint(uint32_t inlineeRestartPoint)
     {
@@ -641,7 +669,8 @@ public:
     }
     void updateRestartMark(const Effects& effects)
     {
-        if (m_marks.restartMark && !effects.mayBeRunAgainUnseen())
+        constexpr AbstractHeapSet heapsWrittenUnseen = unobservableWriteHeaps | AbstractHeapSet { AbstractHeap::ArrayCapacity };
+        if (m_marks.restartMark && (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsWrittenUnseen)))
             m_marks.restartMark = effects.mayRunOtherCode() ? 0 : restartPointOf(m_marks.restartMark) | irreversibleWritesBit;
     }
 
@@ -664,7 +693,11 @@ public:
         const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone;
         const ScopedLambda<ClassOfHolder(Reference holder)>& classOf;
     };
-    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone = nullptr, const WriterOfOneObject* = nullptr);
+    struct FreshCellWriter {
+        std::span<const Reference> cells;
+        const ScopedLambda<Reference(Reference holder)>& rootOf;
+    };
+    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone = nullptr, const WriterOfOneObject* = nullptr, const FreshCellWriter* = nullptr);
     void invalidateHeap()
     {
         clearRestartMark();
@@ -804,7 +837,8 @@ public:
 
 private:
     struct Held {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Held);
+        static void* operator new(size_t) { return ThreadBlockCache<Held, KindOfBlocks::HeldByWalkState>::allocate(); }
+        static void operator delete(void* held) { ThreadBlockCache<Held, KindOfBlocks::HeldByWalkState>::free(held); }
 
         Held() = default;
         Held(const Held&);
@@ -838,7 +872,7 @@ private:
         void noteElementsLieOutsideViews(Reference object);
         void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone);
         void meetWith(const Held&, RecordsLastMet*);
-        void endWhatIsWritten(const ProgramOfState&, const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject*);
+        void endWhatIsWritten(const ProgramOfState&, const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject*, const FreshCellWriter*);
 
         bool mayHaveRecordOf(Reference object) const { return m_filterOfHolders & bitInFilterOfHolders(object); }
         TypeID shapeOfHolderOf(Reference) const;
@@ -894,6 +928,7 @@ private:
             const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>* mayEndGuard { nullptr };
             VariableID variableWrittenAlone;
             const WriterOfOneObject* writerOfOneObject { nullptr };
+            const FreshCellWriter* freshCellWriter { nullptr };
             const ProgramOfState* program { nullptr };
             const MemoryLocation* writtenAlone { nullptr };
         };
@@ -946,6 +981,15 @@ private:
         void dropEndedRecords();
 
         using Table = SharedArray<uint32_t, 0, 8>;
+        static constexpr uint32_t placesOfNewestValue = 64;
+        static constexpr uint32_t placesWithoutNewestValues = 256;
+        void noteNewestValue(uint32_t position, Reference value)
+        {
+            if (m_places.size() > placesWithoutNewestValues) [[unlikely]]
+                noteNewestValueSlowCase(position, value);
+        }
+        void noteNewestValueSlowCase(uint32_t position, Reference value);
+        bool holdsOnlyValuesBefore(ValueID oldest, uint32_t group) const { return group < m_newestValues.size() && m_newestValues[group] < oldest.index(); }
         static uint32_t findInTable(const Table&, unsigned hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isSought);
         static void addToTable(Table&, unsigned hash, uint32_t position);
 
@@ -964,6 +1008,7 @@ private:
         uint32_t m_numberOfShapes { 0 };
         uint32_t m_numberOfFactHolders { 0 };
         uint32_t m_numberOfFreshHolders { 0 };
+        uint32_t m_endOfFreshObjects { 0 };
         uint32_t m_numberOfShapesReachedByEffects { 0 };
         uint32_t m_reachedFactHolderCount { 0 };
         uint32_t m_numberOfPlacesReachedByEffects { 0 };
@@ -981,6 +1026,8 @@ private:
         SharedArray<uint32_t, holdersFoundWithoutTable> m_holdersReachedByEffects;
         SharedArray<Holder, holdersFoundWithoutTable> m_holders;
         SharedArray<Place, placesThatLieInHeld> m_places;
+        Table m_newestValues;
+        uint32_t m_newestStoreIntoUnmadeRecord { 0 };
     };
 
     static void release(Held* held)
@@ -1071,6 +1118,7 @@ private:
 };
 
 bool leavesDeadZoneForGood(const Program&, VariableID);
+bool leavesDeadZoneForGood(const Program&, FieldReference);
 
 } } } // namespace JSC::AOT::Typed
 

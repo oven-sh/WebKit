@@ -183,6 +183,7 @@ LValue operationTestValueOfBits(Output& out, LValue bits, Type type)
         return out.bitCast(out.castToInt32(bits), Float);
     case Double:
         return out.bitCast(bits, Double);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -201,6 +202,7 @@ LValue operationTestConstant(Output& out, uint64_t bits, Type type)
         return out.constFloat(operationTestValueOf<float>(bits));
     case Double:
         return out.constDouble(operationTestValueOf<double>(bits));
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -219,6 +221,7 @@ LValue operationTestBitsOfValue(Output& out, LValue value)
         return out.zeroExtPtr(out.bitCast(value, Int32));
     case Double:
         return out.bitCast(value, Int64);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -886,7 +889,7 @@ void checkComparisonsWithConstantsOf()
     }
 }
 
-static void testMachineOperationsThatCompareWithConstants()
+static void testConstantComparisonOperations()
 {
     checkComparisonsWithConstantsOf<int32_t>();
     checkComparisonsWithConstantsOf<int64_t>();
@@ -1160,8 +1163,8 @@ static void testMachineOperationsThatSwitch()
     static constexpr int64_t halfFilled[] = { 0, 2, 4, 6, 8, 10, 12 };
     static constexpr int64_t lessThanHalfFilled[] = { 0, 3, 6, 9, 12, 15, 18, 21 };
     static constexpr int64_t sparse[] = { -1000000, -5, 0, 7, 1000, 65536, 0x7fffffff };
-    static constexpr int64_t asFarApartAsTableTakes[] = { 0, 31, 47, 63, 79, 95, 111 };
-    static constexpr int64_t fartherApartThanTableTakes[] = { 0, 32, 64, 96, 128, 160, 192 };
+    static constexpr int64_t asFarApartAsTableTakes[] = { 0, 7, 11, 15, 19, 23, 27 };
+    static constexpr int64_t fartherApartThanTableTakes[] = { 0, 8, 16, 24, 32, 40, 48 };
     static constexpr int64_t kindsOfNodes[] = { 174, 175, 176, 177, 178, 179, 180, 181, 182, 185, 186, 195, 201, 219, 220, 242, 249, 250, 251, 263, 266, 268, 270, 300, 308, 318, 324, 339, 341, 347 };
     static constexpr int64_t shortRunsAmongOthers[] = { -70000, 10, 13, 40, 41, 8232, 8233, 8234, 8290, 1 << 20 };
     static constexpr int64_t runsAmongOthers[] = { -100, 0, 1, 2, 3, 4, 5, 6, 7, 500, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 100000 };
@@ -1947,6 +1950,37 @@ static void testMachineOperationsThatKeepRestOfDestination()
     AOT_TEST_CHECK(!zeroed(Shape::OperandDies, true));
 }
 
+static void testFloatConversionsInLoops()
+{
+    if (!isX86_64())
+        return;
+    TestProcedure test;
+    Output& out = test.out();
+    LBasicBlock head = out.newBlock();
+    LBasicBlock done = out.newBlock();
+    LValue end = test.argumentGPR(1);
+    ValueFromBlock firstPlace = out.anchor(test.argumentGPR(0));
+    ValueFromBlock firstSum = out.anchor(out.constDouble(0));
+    out.jump(head);
+
+    out.appendTo(head);
+    LValue place = out.phi(Int64, firstPlace);
+    LValue sum = out.phi(Double, firstSum);
+    LValue number = out.floatToDouble(out.loadFloat(out.address(test.heaps().argumentBuffer, place, 0)));
+    LValue nextSum = out.doubleAdd(sum, out.doubleMul(number, number));
+    LValue nextPlace = out.add(place, out.constInt64(sizeof(float)));
+    out.addIncomingToPhi(place, out.anchor(nextPlace));
+    out.addIncomingToPhi(sum, out.anchor(nextSum));
+    out.branch(out.below(nextPlace, end), normalEdge(head), normalEdge(done));
+
+    out.appendTo(done);
+    out.ret(nextSum);
+    compileOrFail(test);
+    std::array<float, 4> numbers { 1.5f, -2, 0.25f, 4 };
+    AOT_TEST_CHECK(test.call<double>(numbers.data(), numbers.data() + numbers.size()) == 22.3125);
+    AOT_TEST_CHECK(operationTestNumberOfRegistersZeroed(test) >= 2);
+}
+
 static std::span<const NativeTest> listOfMachineOperationTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1958,8 +1992,9 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/numbers/arithmetic"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfNumberArithmetic> },
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
+        { "machine/operations/numbers/floats-widened-in-loops"_s, runOperationTestWhereCodeRuns<testFloatConversionsInLoops> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
-        { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatCompareWithConstants> },
+        { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testConstantComparisonOperations> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },
         { "machine/operations/comparisons/bit-tests"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatTestBits> },
         { "machine/operations/switch"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatSwitch> },

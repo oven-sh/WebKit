@@ -454,6 +454,10 @@ static TypeID narrowByIntegerBound(TypeArena& types, Opcode comparison, bool sou
         other = types.withoutPrimitives(other, Primitive::Undefined);
         if (TypeID defined = types.withoutPrimitives(source, Primitive::Undefined); types.at(defined).isInteger())
             source = defined;
+    } else if (types.at(source).primitives & Primitive::Undefined) {
+        TypeID defined = types.withoutPrimitives(source, Primitive::Undefined);
+        TypeID narrowed = types.at(defined).isInteger() ? narrowByIntegerBound(types, comparison, sourceIsLeft, defined, other, side) : defined;
+        return narrowed == defined ? source : types.unionOf(narrowed, TypeTable::undefined);
     }
     Type sourceType = types.at(source);
     Type otherType = types.at(other);

@@ -179,6 +179,8 @@ ASCIILiteral MachinePrinter::nameOf(TypeKind kind)
         return "Float"_s;
     case Double:
         return "Double"_s;
+    case Vector128:
+        return "Vector128"_s;
     case Tuple:
         return "Tuple"_s;
     }

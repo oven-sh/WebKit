@@ -153,6 +153,20 @@ static void testProfileGrowsWithTheThirdLongerArray()
     AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && hasWindow(profile, 1, BASE_CONTIGUOUS_VECTOR_LEN_MAX, 0, 0));
 }
 
+static void testProfileIgnoresLongMinority()
+{
+    Realms realms;
+    ArrayAllocationProfile fewLong { };
+    for (unsigned count = 0; count < 10 * window; ++count)
+        review(realms, fewLong, ArrayWithContiguous, count % 3 ? 3 : 20);
+    AOT_TEST_CHECK(fewLong.capacity() <= defaultCapacity);
+
+    ArrayAllocationProfile manyLong { };
+    for (unsigned count = 0; count < 10 * window; ++count)
+        review(realms, manyLong, ArrayWithContiguous, count % 3 ? 20 : 3);
+    AOT_TEST_CHECK(manyLong.capacity() == 21);
+}
+
 static void testProfileReviewInterval()
 {
     ArrayAllocationProfile profile { };
@@ -198,7 +212,8 @@ static void testProfileLearnsNothingFromListsThatAreStillEmpty()
     ArrayAllocationProfile someShort { };
     review(realms, someShort, ArrayWithContiguous, 2);
     review(realms, someShort, ArrayWithContiguous, 0, window - 1);
-    AOT_TEST_CHECK(someShort.capacity() == 3 && hasNewWindow(someShort));
+    static_assert(defaultCapacity == 3);
+    AOT_TEST_CHECK(!someShort.capacity() && hasNewWindow(someShort));
 
     ArrayAllocationProfile allShort { };
     review(realms, allShort, ArrayWithContiguous, 1, window);
@@ -211,33 +226,33 @@ static void testProfileReviewIntervalGrowsWhileNothingChanges()
     constexpr uint32_t shortest = ArrayAllocationProfile::shortestInterval;
     constexpr uint32_t longest = shortest << ArrayAllocationProfile::maxIntervalDoublings;
     ArrayAllocationProfile profile { };
-    review(realms, profile, ArrayWithDouble, 3, window);
-    AOT_TEST_CHECK(profile.capacity() == 3 && profile.interval() == shortest);
+    review(realms, profile, ArrayWithDouble, 1, window);
+    AOT_TEST_CHECK(profile.capacity() == 1 && profile.interval() == shortest);
     for (uint32_t expected = 2 * shortest; expected <= longest; expected *= 2) {
-        review(realms, profile, ArrayWithDouble, 3, window - 1);
+        review(realms, profile, ArrayWithDouble, 1, window - 1);
         AOT_TEST_CHECK(profile.interval() == expected / 2);
-        review(realms, profile, ArrayWithDouble, 3);
+        review(realms, profile, ArrayWithDouble, 1);
         AOT_TEST_CHECK(profile.interval() == expected && hasNewWindow(profile));
     }
-    review(realms, profile, ArrayWithDouble, 3, 2 * window);
-    AOT_TEST_CHECK(profile.interval() == longest && profile.capacity() == 3);
+    review(realms, profile, ArrayWithDouble, 1, 2 * window);
+    AOT_TEST_CHECK(profile.interval() == longest && profile.capacity() == 1);
 
     for (uint32_t expected = longest / 2; expected >= shortest; expected /= 2) {
         reviewArrayAllocationProfile(profile, nullptr);
-        AOT_TEST_CHECK(profile.interval() == expected && profile.capacity() == 3);
+        AOT_TEST_CHECK(profile.interval() == expected && profile.capacity() == 1);
     }
     reviewArrayAllocationProfile(profile, nullptr);
     AOT_TEST_CHECK(profile.interval() == shortest);
-    review(realms, profile, ArrayWithDouble, 3, ArrayAllocationProfile::maxIntervalDoublings * window);
+    review(realms, profile, ArrayWithDouble, 1, ArrayAllocationProfile::maxIntervalDoublings * window);
     AOT_TEST_CHECK(profile.interval() == longest);
 
-    review(realms, profile, ArrayWithDouble, 4);
-    AOT_TEST_CHECK(profile.interval() == shortest && profile.capacity() == 3);
-    review(realms, profile, ArrayWithDouble, 3, 2 * window);
+    review(realms, profile, ArrayWithDouble, 2);
+    AOT_TEST_CHECK(profile.interval() == shortest && profile.capacity() == 1);
+    review(realms, profile, ArrayWithDouble, 1, 2 * window);
     AOT_TEST_CHECK(profile.interval() > shortest);
-    review(realms, profile, ArrayWithContiguous, 3);
+    review(realms, profile, ArrayWithContiguous, 1);
     AOT_TEST_CHECK(profile.interval() == shortest && profile.shape() == ContiguousShape);
-    review(realms, profile, ArrayWithContiguous, 3, 2 * window);
+    review(realms, profile, ArrayWithContiguous, 1, 2 * window);
     AOT_TEST_CHECK(profile.interval() > shortest);
     review(realms, profile, ArrayWithContiguous, 1, 2 * window);
     AOT_TEST_CHECK(profile.capacity() == 1);
@@ -287,6 +302,7 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/table"_s, testFormsTable },
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
+        { "arrays/profile/ignores-long-minority"_s, testProfileIgnoresLongMinority },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },
         { "arrays/profile/samples-walk-through-the-residues-of-the-interval"_s, testProfileSamplesWalkThroughTheResiduesOfTheInterval },
         { "arrays/profile/learns-nothing-from-lists-that-are-still-empty"_s, testProfileLearnsNothingFromListsThatAreStillEmpty },

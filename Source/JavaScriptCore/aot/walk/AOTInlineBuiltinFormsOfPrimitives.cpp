@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTLimits.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "YarrFlags.h"
@@ -239,7 +240,7 @@ InlineForm PrimitiveFormChooser::stringForm() const
     case InlineBuiltin::StringLastIndexOf:
         return wholeIf(searchesStringForString());
     case InlineBuiltin::StringFromCharCode:
-        return wholeIf(numberOfArguments() == 1 && isNumber(argument(0)));
+        return wholeIf(numberOfArguments() && numberOfArguments() <= Limits::maxPackedCodeUnits && hasOnlyNumberArguments());
     case InlineBuiltin::CallStringConstructor:
         return wholeIf(numberOfArguments() == 1 && convertsAsConcatenationDoes(argument(0)));
     case InlineBuiltin::StringToLowerCase:
@@ -260,7 +261,11 @@ InlineForm PrimitiveFormChooser::stringForm() const
         return twoWayIf(isString(receiver()) && isNumber(argument(0)));
     case InlineBuiltin::StringPadStart:
     case InlineBuiltin::StringPadEnd:
-        return twoWayIf(isString(receiver()) && isNumber(argument(0)) && (numberOfArguments() < 2 || isString(argument(1))));
+        if (!isString(receiver()) || !isNumber(argument(0)) || (numberOfArguments() >= 2 && !isString(argument(1))))
+            return InlineForm::Call;
+        if (Type length = m_types.at(argument(0)); length.isInteger() && length.integers.isSubsetOf({ 0, Limits::maxLengthOfStringMadeFlat }))
+            return InlineForm::Whole;
+        return twoWayIf(true);
     case InlineBuiltin::StringIsWellFormed:
     case InlineBuiltin::StringToWellFormed:
         return twoWayIf(isString(receiver()));

@@ -141,6 +141,7 @@ JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Struc
     }
     JSFFICallback* callback = new (NotNull, allocateCell<JSFFICallback>(vm)) JSFFICallback(vm, structure, WTF::move(signature));
     callback->m_threadsafe = threadsafe;
+    callback->m_hasCStringArguments = threadsafe && std::ranges::find(callback->signature().arguments(), FFI::Type::CString) != callback->signature().arguments().end();
     callback->m_embedderContext = embedderContext;
     callback->m_poolEntry = poolEntry;
     if (poolEntry)

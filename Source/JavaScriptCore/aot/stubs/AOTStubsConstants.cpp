@@ -209,6 +209,7 @@ static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResu
     const GPRReg cell = gprOf(newCellRegister);
     const GPRReg allocator = gprOf(allocatorRegister);
     const GPRReg allocationScratch = gprOf(allocationScratchRegister);
+    constexpr unsigned bitOfFlag = JSCell::typeInfoFlagsOffset() * 8 + getLSBSet(ConstantCellWords::flagOfStringConstant);
     RELEASE_ASSERT(noOverlap(headerAndResult, scratch, number, cell, allocator, allocationScratch, instanceGPR, cellCageBaseGPR));
 
     jit.preserving({ cell, allocator, allocationScratch }, [&] {
@@ -224,11 +225,15 @@ static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResu
         if (atomness == AtomnessOfHeader::IsSaidByWordInScratch) {
             constexpr unsigned shiftOfIdentifierFlagToCellBit = (JSCell::typeInfoFlagsOffset() * 8 + getLSBSet(static_cast<unsigned>(TypeInfoPerCellBit))) - getLSBSet(ImageString::hasIdentifierNumberFlag);
             static_assert(hasOneBitSet(ImageString::hasIdentifierNumberFlag));
+            static_assert(shiftOfIdentifierFlagToCellBit <= bitOfFlag);
             jit.and32(TrustedImm32(ImageString::hasIdentifierNumberFlag), allocationScratch);
+            jit.or32(TrustedImm32(1 << (bitOfFlag - shiftOfIdentifierFlagToCellBit)), allocationScratch);
             jit.lshift64(TrustedImm32(shiftOfIdentifierFlagToCellBit), allocationScratch);
         } else {
             jit.load32(Address(header, StringImpl::flagsOffset()), allocationScratch);
+            static_assert(shiftOfAtomFlagToCellBit <= bitOfFlag);
             jit.and32(TrustedImm32(StringImpl::flagIsAtom()), allocationScratch);
+            jit.or32(TrustedImm32(1 << (bitOfFlag - shiftOfAtomFlagToCellBit)), allocationScratch);
             jit.lshift64(TrustedImm32(shiftOfAtomFlagToCellBit), allocationScratch);
         }
         jit.or64(allocationScratch, scratch);
@@ -260,6 +265,7 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
     const GPRReg allocationScratch = gprOf(allocationScratchRegister);
     static_assert(sizeof(ImageStringHeader) == 24 && ImageString::hashMask * sizeof(ImageStringHeader) <= INT32_MAX);
 
+    Jump isPlaced = jit.branch64(CCallHelpers::Above, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.numberOfPlacedConstants)), number);
     cannot.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult, TrustedImm32(ImageString::hasTextFlag)));
     jit.move(wordAndResult, scratch);
     jit.and32(TrustedImm32(ImageString::isAtomFlag | ImageString::hasIdentifierNumberFlag), scratch);
@@ -292,16 +298,29 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
         createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [](JumpList&) { }, AtomnessOfHeader::IsSaidByWordInScratch);
     }
 
+    const GPRReg characters = scratch;
+    const GPRReg newHeader = cell;
+    const GPRReg hashAndFlags = allocator;
+    const GPRReg length = allocationScratch;
+    constexpr unsigned flagsOf16BitText = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringNormal);
+    static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringNormal) == (flagsOf16BitText | StringImpl::flagIs8Bit()));
+    static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, characters) == sizeof(uint64_t));
+    static_assert(OBJECT_OFFSETOF(ImageStringHeader, unused) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
+    auto createHeader = [&](JumpList& cannotAllocate) {
+        const GPRReg next = wordAndResult;
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.nextStringHeader)), newHeader);
+        jit.addPtr(TrustedImm32(sizeof(ImageStringHeader)), newHeader, next);
+        cannotAllocate.append(jit.branchPtr(CCallHelpers::Above, next, Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.endOfStringHeaders))));
+        jit.storePtr(next, Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.nextStringHeader)));
+        jit.lshift64(TrustedImm32(32), length);
+        jit.or64(TrustedImm32(StringImpl::refCountOfStaticString()), length);
+        jit.storePair64(length, characters, newHeader, TrustedImm32(0));
+        jit.store64(hashAndFlags, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags)));
+        jit.move(newHeader, header);
+    };
+
     hasNoHeader.link(&jit);
     createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [&](JumpList& cannotAllocate) {
-        const GPRReg characters = scratch;
-        const GPRReg newHeader = cell;
-        const GPRReg hashAndFlags = allocator;
-        const GPRReg length = allocationScratch;
-        constexpr unsigned flagsOf16BitText = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringNormal);
-        static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringNormal) == (flagsOf16BitText | StringImpl::flagIs8Bit()));
-        static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, characters) == sizeof(uint64_t));
-        static_assert(OBJECT_OFFSETOF(ImageStringHeader, unused) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
         cannotAllocate.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult, TrustedImm32(ImageString::hasListedHashFlag)));
         jit.move(wordAndResult, characters);
         jit.and32(TrustedImm32(ImageString::hashMask), characters);
@@ -319,16 +338,21 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
         Jump is16Bit = jit.branchTest32(CCallHelpers::NonZero, wordAndResult, TrustedImm32(ImageString::is16BitFlag));
         jit.or32(TrustedImm32(StringImpl::flagIs8Bit()), hashAndFlags);
         is16Bit.link(&jit);
-        const GPRReg next = wordAndResult;
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.nextStringHeader)), newHeader);
-        jit.addPtr(TrustedImm32(sizeof(ImageStringHeader)), newHeader, next);
-        cannotAllocate.append(jit.branchPtr(CCallHelpers::Above, next, Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.endOfStringHeaders))));
-        jit.storePtr(next, Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.nextStringHeader)));
-        jit.lshift64(TrustedImm32(32), length);
-        jit.or64(TrustedImm32(StringImpl::refCountOfStaticString()), length);
-        jit.storePair64(length, characters, newHeader, TrustedImm32(0));
-        jit.store64(hashAndFlags, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags)));
-        jit.move(newHeader, header);
+        createHeader(cannotAllocate);
+    });
+
+    isPlaced.link(&jit);
+    createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [&](JumpList& cannotAllocate) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.hashesOfPlacedConstants)), hashAndFlags);
+        jit.load32(BaseIndex(hashAndFlags, number, CCallHelpers::TimesFour), hashAndFlags);
+        jit.lshift32(TrustedImm32(StringImpl::s_flagCount), hashAndFlags);
+        jit.or32(TrustedImm32(flagsOf16BitText | StringImpl::flagIs8Bit()), hashAndFlags);
+        jit.move(wordAndResult, characters);
+        jit.move(wordAndResult, length);
+        jit.and32(TrustedImm32(ImagePlacedString::lengthMask), length);
+        jit.urshift32(TrustedImm32(ImagePlacedString::lengthBits), characters);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.text)), characters);
+        createHeader(cannotAllocate);
     });
 }
 
@@ -431,7 +455,50 @@ static void returnConstantInRegisterOfKey(StubAssembler& jit, CreatedConstant co
     jit.returnToCaller();
 }
 
+StubSignature signatureOfStoreStringConstant(StubKey key)
+{
+    const GPRReg object = key.operandRegister().value_or(gprOf(firstStubOperandRegister));
+    const GPRReg number = gprOf(isARM64() ? stubImmediateRegister : StubRegister::T12);
+    StubSignature signature = StubSignature::withoutResult({ object });
+    signature.immediate = number != object ? number : gprOf(StubRegister::T10);
+    return signature;
+}
+
+void generateStoreStringConstant(StubAssembler& jit)
+{
+    const GPRReg object = jit.operand(0);
+    const GPRReg number = jit.immediate();
+    const Address word(object, static_cast<int32_t>(jit.key().count() * sizeof(uint64_t)));
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg cell = ownedScratch;
+    Jump isNotCreated;
+
+    if (jit.options().useWideReferences) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.wideStringCells)), cell);
+        jit.load64(BaseIndex(cell, number, CCallHelpers::TimesEight), cell);
+        isNotCreated = jit.branchTest64(CCallHelpers::Zero, cell);
+    } else {
+        jit.load32(BaseIndex(instanceGPR, number, CCallHelpers::TimesFour, InstanceLayout::offsetOfStringCells), cell);
+        isNotCreated = jit.branchTest32(CCallHelpers::Zero, cell);
+        decodeCell32(jit, cell, cell);
+    }
+    jit.store64(cell, word);
+    jit.returnToCaller();
+
+    isNotCreated.link(&jit);
+    callMakerOfConstantAndReturn(jit, createConstant(CreatedConstant::String), number, [&](GPRReg numberOfMaker) {
+        jit.move(number, numberOfMaker);
+    });
+    jit.store64(number, word);
+    jit.returnToCaller();
+}
+
 void loadStringConstantsAndJump(StubAssembler& jit, std::span<const GPRReg> numbers, StubKey target)
+{
+    loadStringConstantsAndContinue(jit, numbers, scopedLambda<void()>([&] { jit.jumpToStub(target); }));
+}
+
+void loadStringConstantsAndContinue(StubAssembler& jit, std::span<const GPRReg> numbers, const ScopedLambda<void()>& body)
 {
     struct LateConstant {
         Jump isNotCreated;
@@ -439,11 +506,11 @@ void loadStringConstantsAndJump(StubAssembler& jit, std::span<const GPRReg> numb
         Label isLoaded;
     };
 
-    const OwnedScratchRegister ownedScratch(jit);
-    const GPRReg word = ownedScratch;
     const bool isNarrow = !jit.options().useWideReferences;
     Vector<LateConstant, 2> lateConstants;
     for (GPRReg number : numbers) {
+        const OwnedScratchRegister ownedScratch(jit);
+        const GPRReg word = ownedScratch;
         RELEASE_ASSERT(noOverlap(number, word, instanceGPR, cellCageBaseGPR));
         Jump isNotCreated;
         if (isNarrow) {
@@ -458,7 +525,7 @@ void loadStringConstantsAndJump(StubAssembler& jit, std::span<const GPRReg> numb
         }
         lateConstants.append({ isNotCreated, number, jit.label() });
     }
-    jit.jumpToStub(target);
+    body();
 
     for (const LateConstant& late : lateConstants) {
         late.isNotCreated.link(&jit);

@@ -153,7 +153,12 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
     case "ResultSlot":
       return { place: "ResultSlot", slot: slotTokenOf(place.slot) };
     case "ResultField":
-      return { place: "ResultField", index: place.index, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
+      return {
+        place: "ResultField",
+        index: place.index,
+        holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored,
+        isOfElements: place.isOfElements,
+      };
     case "NewValue":
       return { place: "NewValue", type: dumpType(place.type), holdsWhatIsThrown: place.holdsWhatIsThrown };
     case "Member":

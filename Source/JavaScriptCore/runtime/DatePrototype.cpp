@@ -50,7 +50,9 @@ static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMilliSeconds);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMinutes);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMonth);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetSeconds);
+#if !ENABLE(AOT)
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetTime);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetTimezoneOffset);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetUTCDate);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetUTCDay);
@@ -78,7 +80,9 @@ static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncSetUTCMonth);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncSetUTCSeconds);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncSetYear);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToDateString);
+#if !ENABLE(AOT)
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToPrimitiveSymbol);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToTimeString);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToUTCString);

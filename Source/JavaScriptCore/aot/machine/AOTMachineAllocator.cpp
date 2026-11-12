@@ -175,7 +175,7 @@ static ALWAYS_INLINE void listLeavesAmongChildrenOfAllocatedOperation(const Live
             continue;
         }
         if (selectAbove) [[unlikely]] {
-            if (Operation* arm = armOfSelectThatExtends(selectAbove, child))
+            if (Operation* arm = armOfSelectThatExtends(selectAbove, operation, child))
                 child = arm;
         }
         leaves.append(operation, index, child);
@@ -397,6 +397,12 @@ void Allocator::letGoOfWorkingLists()
         m_arena.letGoOfArray(reads.data(), reads.size());
     m_listsOfReads.letGo(m_arena);
     m_numbersOfListsOfReads.letGo(m_arena);
+    for (std::span<const uint32_t> reads : m_listsOutsideRareRegions) {
+        if (!reads.empty())
+            m_arena.letGoOfArray(reads.data(), reads.size());
+    }
+    m_listsOutsideRareRegions.letGo(m_arena);
+    m_numbersOfListsOutsideRareRegions.letGo(m_arena);
     m_firstReadsFromHeads.letGo(m_arena);
     m_firstReadsNotKnownOutOfReach.letGo(m_arena);
     m_allocation.m_laterUsesScanned = m_laterUsesScanned;
@@ -901,7 +907,7 @@ static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& all
             allocator.noteFrameUse();
             if ((allocator.m_valueFacts[leaf->index()].lastUse <= allocator.m_position || !allocator.hasFreeRegister(bank, candidates)) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
                 return allocator.memoryLocationOf(leaf);
-        } else if (comparesConstantInMemory(*user, childIndex, *leaf) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
+        } else if (readsConstantInMemory(*user, childIndex, *leaf) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
             return Location::immediate();
         reg = allocator.bringIntoRegister(leaf, candidates, hintIfAmong(allocator.hintOf(leaf), candidates));
         if (!reg) {
@@ -939,6 +945,9 @@ static NEVER_INLINE Location placeAllocatedLeafWithoutPosition(Allocator& alloca
                     if (!pinned.offset) {
                         if (opcodeOfLeaf == Const64)
                             return Location::reg(pinned.reg);
+                    } else if (Reg reg = allocator.anyRegisterOf(leaf, allocator.m_file.allocatableIn(bankOf(leaf->type())))) {
+                        taken.locked |= maskOf(reg);
+                        return Location::reg(reg);
                     } else {
                         int32_t offset = *pinned.offset;
                         if (takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
@@ -1100,7 +1109,7 @@ static NEVER_INLINE void placeLeavesBelowOperationFusedIntoAllocatedOperation(Al
             continue;
         }
         if (selectAbove) [[unlikely]] {
-            if (Operation* arm = armOfSelectThatExtends(selectAbove, child))
+            if (Operation* arm = armOfSelectThatExtends(selectAbove, fused, child))
                 child = arm;
         }
         placeNextLeafOfAllocatedOperation(allocator, fused, index, child, targetAloneSaysWhatStandsInInstruction, placed);
@@ -1171,6 +1180,11 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
     return true;
 }
 
+static ALWAYS_INLINE bool isReadFromWordRegister(const Operation* fused)
+{
+    return fused->opcode() == ZExt32 || fused->opcode() == Trunc;
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
 {
     const Type type = operation->type();
@@ -1207,7 +1221,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
         bool canCoalesceFirstChild = false;
         if (firstSourceIsRegister && !(fusedChildren & 1)) {
             overwritesFirstChild = (traits & AllocatedOpcodeOverwritesFirstChild) && !(fusedChildren && addsScaledIndex(m_liveness, operation));
-            maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && !(fusedChildren & 2) && secondSource.isRegister();
+            maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && (!(fusedChildren & 2) || isReadFromWordRegister(inlineChildrenOfAllocatedOperation(operation)[1])) && secondSource.isRegister();
             canCoalesceFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeWhenCoalesced(m_liveness, operation);
             if (overwritesFirstChild || canCoalesceFirstChild) {
                 Operation* first = m_valueIn[firstSource.reg().index()];
@@ -1266,7 +1280,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
 
     if (overwritesFirstChild) {
         const Opcode opcode = operation->opcode();
-        bool hasThreeAddressForm = type.isInt() && ((opcode == Add && (maySwapChildren || secondSource.isImmediate())) || (opcode == Mul && secondSource.isImmediate()));
+        bool hasThreeAddressForm = type.isInt() && ((opcode == Add && maySwapChildren) || (secondSource.isImmediate() && hasThreeAddressFormWithConstant(*operation)));
         if (!hasThreeAddressForm && destination != firstSource && !(maySwapChildren && destination == secondSource)) {
             Step& move = appendStep(StepKind::Move, inlineChildrenOfAllocatedOperation(operation)[0]);
             move.destination = destination;
@@ -1611,7 +1625,7 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
         }
 
         bool hasThreeAddressForm = usesOverflowFlag || (operation->type().isInt()
-            && ((opcode == Add && (maySwapChildren || sources[1].isImmediate())) || (opcode == Mul && sources[1].isImmediate())));
+            && ((opcode == Add && maySwapChildren) || (sources[1].isImmediate() && hasThreeAddressFormWithConstant(*operation))));
         if (overwritesFirstChild && !hasThreeAddressForm && destination != sources[0] && !(maySwapChildren && destination == sources[1])) {
             Step& move = appendStep(StepKind::Move, operation->child(0));
             move.destination = destination;

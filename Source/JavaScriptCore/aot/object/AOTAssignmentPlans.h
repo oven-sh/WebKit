@@ -92,9 +92,12 @@ struct AssignmentPlan {
         const FieldData* to { nullptr };
         PropertyOffset sourceOffset { invalidOffset };
         StructureID lastAcceptedStructure { };
-        OptionSet<ValueKind> acceptedKinds;
         int32_t leastInt32 { 0 };
         int32_t greatestInt32 { -1 };
+        int32_t bytesInSource { 0 };
+        enum class MovesFrom : uint8_t { Nowhere, Cell, InlineProperties, OutsideProperties };
+        MovesFrom movesFrom { MovesFrom::Nowhere };
+        OptionSet<ValueKind> acceptedKinds;
         bool writesInt32AsItIs { false };
         bool sourceAlwaysFits { false };
         bool sourceFitsUnlessUndefinedOrNull { false };
@@ -106,21 +109,18 @@ struct AssignmentPlan {
         bool leavesUndefinedAndNullToOtherWay { false };
         uint8_t width { 0 };
         uint64_t absentBits { 0 };
-        enum class MovesFrom : uint8_t { Nowhere, Cell, InlineProperties, OutsideProperties };
-        MovesFrom movesFrom { MovesFrom::Nowhere };
-        int32_t bytesInSource { 0 };
         MappedCopy::Move move { };
     };
 
     struct ExtraPropertyStore {
         int32_t bytesInSource { 0 };
         int32_t bytesInTarget { 0 };
-        bool isOutsideInSource { false };
-        bool isOutsideInTarget { false };
         const FieldData* from { nullptr };
         PropertyOffset sourceOffset { invalidOffset };
         PropertyOffset offset { invalidOffset };
         UniquedStringImpl* name { nullptr };
+        bool isOutsideInSource { false };
+        bool isOutsideInTarget { false };
         bool addsName { false };
     };
     static constexpr uint16_t isExtraPropertyStore = 1 << 15;

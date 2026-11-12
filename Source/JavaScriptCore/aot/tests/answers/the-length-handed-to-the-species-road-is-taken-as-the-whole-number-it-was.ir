@@ -1,10 +1,12 @@
 # var length = $toLength(array.length); return $newArrayWithSpecies(length, array, length, undefined);
 # The operand is a number by its kind, so the whole number is turned into a double in front of the operation. The emitter turned it back, asked whether that had lost anything, and boxed it for the run time, all in front of the allocation in line.
-# It takes the whole number that stands behind the double, and boxes where the run time is asked: two conversions are left in the body, the operand's own and the one of the box on the rare side.
+# It takes the whole number that stands behind the double, and boxes by the stub where the run time is asked: one conversion is left in the body, the operand's own.
 # RUN: emit f1 mechanisms=all
 # CHECK: = IToD(
-# CHECK: = IToD(
 # CHECK-NOT: = IToD(
+# RUN(BOX): bytes f1:Body mechanisms=all
+# BOX: BoxNumber.Integer
+# BOX-NOT: BoxNumber
 # RUN(ANSWER): run-in-shell mechanisms=all globalThis.after = () => { class Shelf extends Array {} const shelf = new Shelf(); shelf.push(1, 2); const of = n => { const list = []; for (let i = 0; i < n; i++) list.push(i); return list; }; for (const list of [[], [1, 2, 3], of(127), of(128), new Array(200000), shelf, { length: 3 }, { length: -1 }, { length: 2.5 }]) { const result = made.call(list); print(result.length, result.constructor.name, 0 in result); } try { made.call({ length: 4294967296 }); } catch (error) { print(error.constructor.name); } };
 # ANSWER: 0 Array false
 # ANSWER-NEXT: 3 Array false

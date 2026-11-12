@@ -84,6 +84,7 @@ struct LinkedRangeOfRareCode {
     uint32_t end;
 };
 void describeRareCode(const Procedure&, const LinkBuffer&, Vector<LinkedRangeOfRareCode>&);
+uint64_t describePlacesInLine(const Procedure&, const LinkBuffer&, uint64_t placesOfPrimaryEntry);
 
 } } } // namespace JSC::AOT::Machine
 

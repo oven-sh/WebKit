@@ -64,10 +64,6 @@ constexpr uint8_t catchModule[] = {
     0x0a, 0x14, 0x02, 0x04, 0x00, 0x08, 0x00, 0x0b, 0x0d, 0x00, 0x06, 0x7f, 0x10, 0x00, 0x41, 0x01, 0x07, 0x00, 0x41, 0x02, 0x0b, 0x0b,
 };
 
-// Two functions, a table with the first one in it, and no memory. The second function calls through the table with six arguments:
-// (type (func (param i32 i32 i32 i32 i32 i32) (result i32))) (type (func (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
-// (table (export "table") 1 funcref) (elem (i32.const 0) 0) (func (export "callee") (type 0) local.get 0)
-// (func (export "indirect") (type 1) local.get 0 ... local.get 5 local.get 6 call_indirect (type 0))
 constexpr uint8_t indirectCallModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x16, 0x02, 0x60, 0x06, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x07, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
@@ -254,8 +250,6 @@ static void testEveryFunctionHasCode()
 
 static void testIndirectCallWithSixArgumentsHasCode()
 {
-    // On x86-64 every register is taken where that call is made: six arguments, the code pointer, the boxed callee, the callee instance
-    // and the function's record. A scratch register more stops the compiler.
     Wasm::ModuleForImage module = compileModuleWithCode(indirectCallModule);
     AOT_TEST_CHECK(module.functions[trapping].size() == 2);
     checkFunctionsLieInCode(module, module.functions[trapping]);

@@ -10,7 +10,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
+#include "AOTRegExpBitParallel.h"
 #include "AOTRegExpFlags.h"
+#include "AOTRegExpMatcher.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "YarrJIT.h"
@@ -115,8 +117,20 @@ MacroAssembler::Jump ImageCodeAddressing::branchTestLatin1Table(MacroAssembler::
         if (table.data[index])
             members.set(index);
     }
+    return branchTestLatin1Set(condition, character, members);
+}
+
+MacroAssembler::Jump ImageCodeAddressing::branchTestLatin1Set(MacroAssembler::ResultCondition condition, GPRReg character, const WTF::BitSet<256>& members)
+{
     uint8_t bit = Latin1BitPlane::preferredBit(members);
     return branchTestTableByte(condition, character, Latin1BitPlane { members, bit }, reachOfRegExpTables, bit);
+}
+
+uint8_t ImageCodeAddressing::moveAddressOfLatin1Set(const WTF::BitSet<256>& members, GPRReg dest)
+{
+    uint8_t bit = Latin1BitPlane::preferredBit(members);
+    moveAddressOfSymbol(Latin1BitPlane { members, bit }, dest, reachOfRegExpTables);
+    return 1 << bit;
 }
 
 void ImageCodeAddressing::canonicalizeLatin1(GPRReg character)
@@ -320,11 +334,12 @@ static bool needsProcessAddress(Yarr::JITFailureReason reason)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& inputs, const Yarr::YarrPattern& pattern, Yarr::CharSize charSize, Yarr::CodeSizePolicy sizePolicy, PCRelativeReach reachWithinBody)
+static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& inputs, const Yarr::YarrPattern& pattern, Yarr::CharSize charSize, Yarr::CodeSizePolicy sizePolicy, PCRelativeReach reachWithinBody, std::optional<bool>& remembersFailedSearches)
 {
     Yarr::YarrCodeBlock codeBlock(nullptr);
     Yarr::CodeGenerationPolicy policy;
     policy.sizePolicy = sizePolicy;
+    std::unique_ptr<const BitParallelRegExp> bitParallel = charSize == Yarr::CharSize::Char16 ? planBitParallelRegExp(pattern) : nullptr;
     Yarr::CodeGenerationRequest request {
         .pattern = pattern,
         .patternString = inputs.pattern,
@@ -334,8 +349,12 @@ static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& 
         .codeBlock = &codeBlock,
         .policy = policy,
         .createCodeAddressing = [&](CCallHelpers& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
-            return makeUnique<ImageCodeAddressing>(jit, reachWithinBody, inputs.assemblerPolicy, inputs.context);
+            auto addressing = makeUnique<ImageCodeAddressing>(jit, reachWithinBody, inputs.assemblerPolicy, inputs.context);
+            if (bitParallel)
+                emitBitParallelRegExp(jit, *addressing, *bitParallel);
+            return addressing;
         },
+        .remembersFailedSearches = &remembersFailedSearches,
     };
 
     auto generated = Yarr::generateCode(request);
@@ -345,6 +364,7 @@ static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& 
     RegExpCodeOrFailureReason code = static_cast<ImageCodeAddressing&>(generated->addressing()).takeCode();
     if (code) {
         (*code)->hasElidedFrame = generated->hasElidedFrame();
+        (*code)->isBitParallel = !!bitParallel;
         (*code)->handsLongSearchesOver = generated->handsLongSearchesOver();
         (*code)->analysisLimitHits = pattern.m_firstFollowSets.limitHits() + generated->classTableLimitHits();
     }
@@ -369,12 +389,13 @@ NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
     RELEASE_ASSERT(!yarrPattern.m_firstFollowSets.didExhaustStack());
 
     CompiledRegExp result { .form = RegExpRecordForm::Code };
+    std::optional<bool> remembersFailedSearches;
     for (auto charSize : { Yarr::CharSize::Char8, Yarr::CharSize::Char16 }) {
         if (charSize == Yarr::CharSize::Char16 && inputs.codeFor16BitSubjects == RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject && summary.matchesOnlyWhole8BitSubjects)
             break;
-        RegExpCodeOrFailureReason code = generateRegExpCode(inputs, yarrPattern, charSize, Yarr::CodeSizePolicy::Compact, PCRelativeReach::Near);
+        RegExpCodeOrFailureReason code = generateRegExpCode(inputs, yarrPattern, charSize, Yarr::CodeSizePolicy::Compact, PCRelativeReach::Near, remembersFailedSearches);
         if (!code && code.error() == Yarr::JITFailureReason::OutOfPCRelativeReach)
-            code = generateRegExpCode(inputs, yarrPattern, charSize, Yarr::CodeSizePolicy::MostCompact, PCRelativeReach::Far);
+            code = generateRegExpCode(inputs, yarrPattern, charSize, Yarr::CodeSizePolicy::MostCompact, PCRelativeReach::Far, remembersFailedSearches);
         if (!code) {
             RELEASE_ASSERT(code.error() != Yarr::JITFailureReason::ParenthesisNestedTooDeep);
             if (inputs.context && needsProcessAddress(code.error()))
@@ -412,7 +433,7 @@ static void applyRegExpSectionSizeLimit(CompiledRegExps& compiled, BuildContext&
     for (CompiledRegExp& result : compiled.results) {
         uint64_t size = result.codeSize();
         if (totalSize + size > maxCodeSize)
-            result = { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::SectionFull };
+            result = { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::SectionFull, .matcher = WTF::move(result.matcher) };
         else
             totalSize += size;
     }
@@ -433,6 +454,8 @@ static void countRegExpResult(Statistics& statistics, const CompiledRegExp& resu
     switch (result.form) {
     case RegExpRecordForm::Code:
         statistics.count(StatisticID::RegExpsCompiled);
+        if (result.code[1] && result.code[1]->isBitParallel)
+            statistics.count(StatisticID::BitParallelRegExpsCompiled);
         return;
     case RegExpRecordForm::NoCode:
     case RegExpRecordForm::NoMetadata:
@@ -458,6 +481,10 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         auto compile = [&] {
             const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
             compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject });
+            if (!request.needsMatcher)
+                return;
+            if (const RegExpCode* matcher = summaries.matcherOf(request.pattern, request.flags, pattern, context))
+                compiled.results[index].matcher = createRegExpMatcher(*matcher, index);
         };
         if (hasStackForRegExpCompiler())
             compile();

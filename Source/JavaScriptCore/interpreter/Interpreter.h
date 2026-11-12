@@ -211,6 +211,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JS_EXPORT_PRIVATE void appendStackTrace(JSCell* owner, Vector<StackFrame>& results, const StackTraceStart&, size_t maxStackSize);
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize);
         bool isExceptionCaughtByUserCatchClause();
+        bool isCaughtByInterpretedTopFrame();
 
     private:
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);

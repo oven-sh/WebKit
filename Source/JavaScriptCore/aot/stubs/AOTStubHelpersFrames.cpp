@@ -139,7 +139,33 @@ void callNativeFunction(StubAssembler& jit, CodeSpecializationKind, Address func
     jit.call(function, HostFunctionPtrTag);
 }
 
-void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind, GPRReg scratch, Address realm, Address function)
+static void branchUnlessResultIs(StubAssembler& jit, HostResult expected, GPRReg result, GPRReg scratch, JumpList& isOther)
+{
+    if (expected == HostResult::Boolean) {
+        isOther.append(jit.branchIfNotBoolean(result, scratch));
+        return;
+    }
+    isOther.append(jit.branchIfNotCell(result));
+    switch (expected) {
+    case HostResult::Boolean:
+        RELEASE_ASSERT_NOT_REACHED();
+    case HostResult::String:
+        isOther.append(jit.branchIfNotString(result));
+        return;
+    case HostResult::Symbol:
+        isOther.append(jit.branchIfNotSymbol(result));
+        return;
+    case HostResult::Object:
+        isOther.append(jit.branchIfNotObject(result));
+        return;
+    case HostResult::Array:
+        isOther.append(jit.branchIfNotType(result, ArrayType));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind, GPRReg scratch, Address realm, Address function, std::optional<HostResult> expected)
 {
     const GPRReg realmArgument = jit.reuseScratch(StubRegister::A0);
     const GPRReg callFrameArgument = jit.reuseScratch(StubRegister::A1);
@@ -153,6 +179,9 @@ void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind
     callNativeFunction(jit, kind, function, scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset()));
+    JumpList isOther;
+    if (expected)
+        branchUnlessResultIs(jit, *expected, GPRInfo::returnValueGPR, scratch, isOther);
     jit.emitFunctionEpilogue();
     jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
@@ -160,6 +189,19 @@ void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind
     exception.link(&jit);
     jit.emitFunctionEpilogue();
     jit.jumpToExceptionHandler();
+
+    if (!expected)
+        return;
+    isOther.link(&jit);
+    const GPRReg calledFunction = jit.reuseScratch(StubRegister::A2);
+    const GPRReg kinds = jit.reuseScratch(StubRegister::A3);
+    RELEASE_ASSERT(calledFunction == operationArgumentGPR(2) && kinds == operationArgumentGPR(3) && noOverlap(calledFunction, kinds, GPRInfo::returnValueGPR));
+    jit.load64(hostCallFrameSlot(CallFrameSlot::callee), calledFunction);
+    jit.move(TrustedImm32(static_cast<int32_t>(kindsOfHostResult(*expected))), kinds);
+    jit.move(GPRInfo::returnValueGPR, callFrameArgument);
+    jit.move(instanceGPR, realmArgument);
+    jit.callOperation(Entry::operationAOTStopAtHostResult, jit.reuseScratch(StubRegister::Operation));
+    jit.breakpoint();
 }
 
 } } // namespace JSC::AOT

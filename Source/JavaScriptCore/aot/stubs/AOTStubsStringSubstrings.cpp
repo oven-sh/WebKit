@@ -20,6 +20,7 @@
 namespace JSC { namespace AOT {
 
 static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
+static constexpr int32_t emptyPairBits = static_cast<int32_t>(0xff80ff80);
 static_assert(JSRopeString::offsetOfFiber0() == sizeof(EncodedJSValue) && JSRopeString::offsetOfLength() == 2 * sizeof(EncodedJSValue));
 static_assert(maxSingleCharacterString == 0xff);
 
@@ -69,7 +70,7 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
         part.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(makesRope, &part);
         part.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
         part.load32(BaseIndex(characters, start, CCallHelpers::TimesTwo), codeUnit);
-        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(static_cast<int32_t>(0xff80ff80))).linkTo(makesRope, &part);
+        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(emptyPairBits)).linkTo(makesRope, &part);
         part.preserving(savedAroundLeaf.span(), [&] {
             part.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
             part.move(codeUnit, leafFunctionGPR);
@@ -98,6 +99,31 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
         part.jump().linkTo(isMade, &part);
     });
     return refill;
+}
+
+StubSignature signatureOfCharacterAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+
+void generateCharacterAt(StubAssembler& jit)
+{
+    const GPRReg string = jit.operand(0);
+    const GPRReg position = jit.operand(1);
+    const GPRReg codeUnit = jit.result();
+    const GPRReg characters = jit.allocateScratch(StubRegister::T9);
+    const GPRReg end = jit.reuseScratch(StubRegister::A3);
+
+    JumpList isOther;
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+    isOther.append(jit.branchIfRopeStringImpl(characters));
+    isOther.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+    jit.load8(BaseIndex(characters, position, CCallHelpers::TimesOne), codeUnit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(singleCharacterStrings)), characters);
+    jit.loadPtr(BaseIndex(characters, codeUnit, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    isOther.link(&jit);
+    jit.add64(TrustedImm32(1), position, end);
+    jit.jumpToStub(substring().withCallerFrame(jit.key().callerFrame()));
 }
 
 StubSignature signatureOfSubstring(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
@@ -136,18 +162,8 @@ void generateSubstring(StubAssembler& jit)
     jit.load32(Address(fiber, StringImpl::flagsOffset()), flags);
     jit.move(string, base);
     jit.move(from, start);
-    Jump isReady = jit.jump();
 
-    isRope.link(&jit);
-    isWhole.append(jit.branch32(CCallHelpers::Equal, span, Address(string, JSRopeString::offsetOfLength())));
-    Jump isAtMostTwoOfRope = jit.branch64(CCallHelpers::LessThanOrEqual, span, TrustedImm32(2));
-    Label isLongPartOfRope = jit.label();
-    fails.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    jit.move(fiber, flags);
-    loadSubstringBaseAndOffset(jit, string, base, start);
-    jit.add64(from, start);
-
-    isReady.link(&jit);
+    Label isReady = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(ropeStringAllocator)), allocator);
     fails.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, result, allocator, scratch, fails);
@@ -163,15 +179,33 @@ void generateSubstring(StubAssembler& jit)
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
+    isRope.link(&jit);
+    isWhole.append(jit.branch32(CCallHelpers::Equal, span, Address(string, JSRopeString::offsetOfLength())));
+    Jump isAtMostTwoOfRope = jit.branch64(CCallHelpers::LessThanOrEqual, span, TrustedImm32(2));
+    Label isLongPartOfRope = jit.label();
+    fails.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    jit.move(fiber, flags);
+    loadSubstringBaseAndOffset(jit, string, base, start);
+    jit.add64(from, start);
+    jit.jump().linkTo(isReady, &jit);
+
     isWhole.link(&jit);
     returnResult(jit, string);
 
     isAtMostTwoOfRope.link(&jit);
     Jump isNotTwoOfRope = jit.branch64(CCallHelpers::NotEqual, span, TrustedImm32(2));
     jit.branchTestPtr(CCallHelpers::NonZero, fiber, TrustedImm32(JSRopeString::is8BitInPointer)).linkTo(isLongPartOfRope, &jit);
+    fails.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    jit.move(fiber, flags);
+    loadSubstringBaseAndOffset(jit, string, base, start);
+    jit.add64(from, start);
+    jit.loadPtr(Address(base, JSString::offsetOfValue()), fiber);
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    jit.load32(BaseIndex(fiber, start, CCallHelpers::TimesTwo), span);
+    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isReady, &jit);
     fails.append(jit.jump());
     isNotTwoOfRope.link(&jit);
-    Jump isOneOfRope = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
+    Jump isSingleRopeCharacter = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
     Label isEmpty = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), result);
     jit.returnToCaller();
@@ -180,10 +214,13 @@ void generateSubstring(StubAssembler& jit)
     Jump isOne = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
     jit.branch64(CCallHelpers::LessThan, span, TrustedImm32(1)).linkTo(isEmpty, &jit);
     jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(isLong, &jit);
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), base);
+    jit.load32(BaseIndex(base, from, CCallHelpers::TimesTwo), span);
+    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isLong, &jit);
     fails.append(jit.jump());
 
-    isOneOfRope.link(&jit);
-    Jump isOneOfSubstring = jit.branchTestPtr(CCallHelpers::NonZero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
+    isSingleRopeCharacter.link(&jit);
+    Jump isSingleSubstringCharacter = jit.branchTestPtr(CCallHelpers::NonZero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
     jit.move(from, start);
     jit.and64(TrustedImm32(static_cast<int32_t>(JSRopeString::stringMask)), fiber);
     jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
@@ -197,7 +234,7 @@ void generateSubstring(StubAssembler& jit)
     Jump isInSecondFiber = jit.branch32(CCallHelpers::Below, start, Address(fiber, StringImpl::lengthMemoryOffset()));
     fails.append(jit.jump());
 
-    isOneOfSubstring.link(&jit);
+    isSingleSubstringCharacter.link(&jit);
     loadSubstringBaseAndOffset(jit, string, base, start);
     jit.add64(from, start);
     jit.loadPtr(Address(base, JSString::offsetOfValue()), fiber);

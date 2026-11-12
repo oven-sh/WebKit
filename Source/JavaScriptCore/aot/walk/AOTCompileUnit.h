@@ -197,28 +197,90 @@ struct FunctionsNamedByFieldsOfOperation {
     Vector<FunctionID, 4>& functions;
 };
 
+inline ValueID valueBehindCasts(const BodyIndex& index, ValueID value)
+{
+    while (value && !index.isParameter(value) && inputPassThroughOpcodes.contains(index.value(value).opcode()))
+        value = index.value(value).operand(0);
+    return value;
+}
+
+inline FunctionID functionMadeThroughCasts(const BodyIndex& index, ValueID made)
+{
+    made = valueBehindCasts(index, made);
+    return made && !index.isParameter(made) && index.value(made).opcode() == Opcode::NewClosure ? index.value(made).as<Opcode::NewClosure>().function() : FunctionID();
+}
+
+inline FunctionID classConstructorThroughCasts(const BodyIndex& index, ValueID made)
+{
+    made = valueBehindCasts(index, made);
+    return made && !index.isParameter(made) && index.value(made).opcode() == Opcode::NewClass ? functionMadeThroughCasts(index, index.value(made).operand(0)) : FunctionID();
+}
+
+inline VariableID variableReadThroughCasts(const BodyIndex& index, ValueID made)
+{
+    made = valueBehindCasts(index, made);
+    return made && !index.isParameter(made) && index.value(made).opcode() == Opcode::GetModuleVariable ? index.value(made).variable() : VariableID();
+}
+
+inline ValueID prototypeReadFunctionThroughCasts(const Program& program, ModuleID module, const BodyIndex& index, ValueID made)
+{
+    made = valueBehindCasts(index, made);
+    if (!made || index.isParameter(made) || index.value(made).opcode() != Opcode::PropGet || index.value(made).as<Opcode::PropGet>().key() != program.keyOf(BuiltinNames::prototype))
+        return { };
+    ValueID function = index.value(made).as<Opcode::PropGet>().objectOperand();
+    if (functionMadeThroughCasts(index, function))
+        return function;
+    VariableID variable = variableReadThroughCasts(index, function);
+    return variable && program.at(variable).module == module && program.at(variable).flags.contains(VariableFlags::IsImmutable) ? function : ValueID();
+}
+
 template<typename OperationOrTerminator>
-void listFunctionsUsedBy(const Program& program, const BodyIndex& index, const OperationOrTerminator& user, bool namesFunctionsInFields, bool usesOperands, VariableID variableRead, Vector<FunctionID, 4>& functions)
+void listFunctionsUsedBy(const Program& program, const LinkedFirstStores& tables, FunctionID body, const BodyIndex& index, const OperationOrTerminator& user, bool namesFunctionsInFields, uint32_t firstOperandUsed, Vector<FunctionID, 4>& functions)
 {
     functions.shrink(0);
     if (namesFunctionsInFields)
         user.forEachReference(FunctionsNamedByFieldsOfOperation { program, functions });
-    if (variableRead && program.at(variableRead).function)
-        functions.append(program.at(variableRead).function);
-    if (!usesOperands)
-        return;
-    user.forEachOperand([&](ValueID made, uint32_t) {
-        while (made && !index.isParameter(made) && inputPassThroughOpcodes.contains(index.value(made).opcode()))
-            made = index.value(made).operand(0);
-        if (made && !index.isParameter(made) && index.value(made).opcode() == Opcode::NewClosure)
-            functions.append(index.value(made).template as<Opcode::NewClosure>().function());
+    user.forEachOperand([&](ValueID made, uint32_t place) {
+        if (place < firstOperandUsed)
+            return;
+        if (ValueID owner = prototypeReadFunctionThroughCasts(program, program.at(body).module, index, made))
+            made = owner;
+        FunctionID function = functionMadeThroughCasts(index, made);
+        if (!function)
+            function = classConstructorThroughCasts(index, made);
+        if (function)
+            functions.append(function);
+        VariableID variable = variableReadThroughCasts(index, made);
+        if (!variable)
+            return;
+        if (program.at(variable).function)
+            functions.append(program.at(variable).function);
+        for (const SummaryClassInVariable& held : std::ranges::equal_range(tables.classesInVariables, variable, { }, &SummaryClassInVariable::variable))
+            functions.append(held.constructor);
     });
 }
 
-inline void listFunctionsUsedByOperation(const Program& program, const BodyIndex& index, const BodyValue& value, Vector<FunctionID, 4>& functions)
+inline void listFunctionsUsedByOperation(const Program& program, const LinkedFirstStores& tables, FunctionID body, const BodyIndex& index, const BodyValue& value, Vector<FunctionID, 4>& functions)
 {
     Opcode opcode = value.opcode();
-    listFunctionsUsedBy(program, index, value, opcode != Opcode::NewClosure, !inputPassThroughOpcodes.contains(opcode), opcode == Opcode::GetModuleVariable ? value.variable() : VariableID(), functions);
+    uint32_t firstOperandUsed = 0;
+    if (inputPassThroughOpcodes.contains(opcode))
+        firstOperandUsed = UINT32_MAX;
+    else if (opcode == Opcode::NewClass)
+        firstOperandUsed = 1;
+    else if (opcode == Opcode::DefineMethod && classConstructorThroughCasts(index, value.operand(0)) && functionMadeThroughCasts(index, value.operand(1)))
+        firstOperandUsed = 2;
+    else if (opcode == Opcode::PutModuleVariable) {
+        FunctionID held = functionMadeThroughCasts(index, value.operand(0));
+        if (!held)
+            held = classConstructorThroughCasts(index, value.operand(0));
+        if (held && std::ranges::binary_search(tables.classesInVariables, SummaryClassInVariable { value.variable(), held }))
+            firstOperandUsed = 1;
+    } else if (opcode == Opcode::PropGet && prototypeReadFunctionThroughCasts(program, program.at(body).module, index, value.id()))
+        firstOperandUsed = UINT32_MAX;
+    else if (opcode == Opcode::PropSet && std::ranges::binary_search(tables.methodsOnPrototypes, LinkedMethodOnPrototype { body, value.id() }))
+        firstOperandUsed = UINT32_MAX;
+    listFunctionsUsedBy(program, tables, body, index, value, opcode != Opcode::NewClosure, firstOperandUsed, functions);
 }
 
 struct CompileInputs {
@@ -226,7 +288,7 @@ struct CompileInputs {
     CodeGenerationInputs generation;
 };
 
-WalkNotes notesOfSweptCode(TypeReader, const Code&, bool notesResolvedOperations);
+WalkNotes notesOfSweptCode(TypeReader, const Code&, bool notesResolvedOperations, bool explainsOperations);
 
 class CompileWorker {
     WTF_MAKE_NONCOPYABLE(CompileWorker);
@@ -272,7 +334,7 @@ private:
     WalkInputs m_walkInputs;
     std::unique_ptr<KeptBetweenUnits> m_keptBetweenUnits;
     WalkerInRoom m_walker;
-    RoomsOfSweep m_roomsOfSweep;
+    std::unique_ptr<RoomsOfSweep> m_roomsOfSweep { makeUniqueWithoutFastMallocCheck<RoomsOfSweep>() };
     CodeGenerationTotals m_totals;
     Vector<WalkNotes> m_notes;
     Vector<FunctionID, 8> m_functionsThatUnitMayEnterByValue;

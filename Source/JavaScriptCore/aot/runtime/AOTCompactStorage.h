@@ -15,6 +15,7 @@ namespace JSC {
 class JSCell;
 class JSGlobalObject;
 class JSObject;
+class JSSet;
 class VM;
 
 namespace AOT::CompactStorage {
@@ -42,6 +43,14 @@ JS_EXPORT_PRIVATE void setIterationEntry(JSCell* storage, uint32_t entry);
 JS_EXPORT_PRIVATE uint32_t iterationEntry(JSCell* storage);
 JS_EXPORT_PRIVATE JSValue keyAt(JSCell* storage, uint32_t entry);
 JS_EXPORT_PRIVATE JSValue valueAt(JSCell* storage, uint32_t entry);
+
+JS_EXPORT_PRIVATE bool canCompareKeys(JSSet*, JSSet* other);
+JS_EXPORT_PRIVATE bool isSubset(JSSet*, JSSet* other);
+JS_EXPORT_PRIVATE bool isDisjoint(JSSet*, JSSet* other);
+JS_EXPORT_PRIVATE JSSet* createIntersection(JSGlobalObject*, JSSet*, JSSet* other);
+JS_EXPORT_PRIVATE JSSet* createDifference(JSGlobalObject*, JSSet*, JSSet* other);
+JS_EXPORT_PRIVATE JSSet* createUnion(JSGlobalObject*, JSSet*, JSSet* other);
+JS_EXPORT_PRIVATE JSSet* createSymmetricDifference(JSGlobalObject*, JSSet*, JSSet* other);
 
 } // namespace AOT::CompactStorage
 } // namespace JSC

@@ -4,7 +4,7 @@
 # RUN: summary f0
 # CHECK: change {{*}}DefinesByDescriptor {{*}}"shown"
 # RUN(LINK): link fields members layouts mechanisms=all
-# LINK: field L0.0 "x" proven=i32 writers-known
+# LINK: field L0.0 "x" proven=int[0, 2147483647] writers-known
 # LINK: field L1.0 "x"
 # LINK-NOT: proven=
 # LINK: field L2.0 "get"

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCallEmitter.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCompileUnit.h"
 #include "AOTEffectsNet.h"
@@ -914,7 +915,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RELEASE_ASSERT(!branchesOnFlags || resultKind == StubResult::Flags);
 
     std::optional<Effects> effectsOfCalleeSayingLess;
-    if (m_options.understatedEffects) [[unlikely]] {
+    if (generator().watchesCalls()) [[unlikely]]
+        generator().zeroCountsAtCall(*request.effectsOfCallee);
+    if (generator().watchesCalls() && m_options.understatedEffects) [[unlikely]] {
         effectsOfCalleeSayingLess = *request.effectsOfCallee;
         UnderstatedEffects row = UnderstatedEffects::decode(m_options.understatedEffects);
         if (request.entry)
@@ -989,9 +992,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Machine::PatchOperation* patchpoint = m_out.patchpoint(type);
     patchpoint->effects.terminal = !returns;
-    patchpoint->setNeedsFrameRecord(shape->needsFrameRecord);
-    patchpoint->setFindsOperandsInFrameWithoutRecord(true);
-    patchpoint->setRunsWithoutFrame(!hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
+    patchpoint->describeNewCall(shape->needsFrameRecord, !hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
     RELEASE_ASSERT(!patchpoint->runsWithoutFrame() || !calleeMayCollect);
 
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
@@ -1049,7 +1050,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     const ThrowSite* throwSite = options.throwSite ? m_proc.arena().create<ThrowSite>(*options.throwSite) : nullptr;
     const OperationCall* preservingCall = request.preservingCall ? m_proc.arena().create<OperationCall>(*request.preservingCall) : nullptr;
-    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides });
+    patchpoint->makeGenerator<CallGenerator>(&m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides);
     if (mayBeShared)
         m_out.recordPurePatch(patchpoint);
 
@@ -1083,6 +1084,8 @@ void RuntimeCallEmitter::beginWatchOfOperation(const ValueContext& context, Watc
         unsigned builtin = BuiltinTable::singleton().at(operation.overload()).builtin.index();
         if (builtin < numberOfRowsInEffectsNet - firstBuiltinRowInEffectsNet)
             calleeRow = firstBuiltinRowInEffectsNet + builtin;
+        if (operation.opcode == Opcode::CallBuiltin)
+            emitter<BuiltinCallEmitter>().createStaticCallee(context);
     }
     EntersCompiledCode entersCompiledCode = effectRuleOf(operation.opcode) == EffectRule::Call || operation.opcode == Opcode::CallTable ? EntersCompiledCode::Yes : EntersCompiledCode::No;
     uint8_t exemptCounts = operation.opcode == Opcode::GetConstructPrototype ? 1u << static_cast<unsigned>(CountInEffectsNet::MemberGuardsArmedOrBegun) : 0;
@@ -1154,6 +1157,8 @@ static bool someStoreIntoFieldWasCounted(const Code& code, const Operation& undo
 {
     ValueID cell = underlyingCellOf(code, undoStore.operand(0));
     for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+        if (!code.isReached(BlockID(block)))
+            continue;
         for (ValueID each : code.valuesOf(BlockID(block))) {
             const Operation& store = code.at(each);
             if ((store.opcode != Opcode::PutSlot && store.opcode != Opcode::PutSlotOrAdd) || (store.opcode == Opcode::PutSlot && store.undoesIterationStore()) || store.key() != undoStore.key())
@@ -1169,22 +1174,26 @@ RuntimeCallEmitter::DeedsInFrontOfQuietCall RuntimeCallEmitter::countDeedOf(cons
 {
     static constexpr OpcodeSet endsOfWatches { Opcode::CheckIterationRestart, Opcode::CheckInlineeFallback, Opcode::CheckReloadBypass };
     EffectTraits traits = context->traits();
+    bool entersOwnBody = context.opcode() == Opcode::CallDirect && m_code.unit().role != CodeRole::Body && context->function() == m_code.unit().function;
+    if (entersOwnBody)
+        return { };
     ptrdiff_t all = AOT_INSTANCE_OFFSET(effectsNet.operationsThatDidSomething);
     ptrdiff_t loud = AOT_INSTANCE_OFFSET(effectsNet.operationsThatRanOtherCode);
-    if (!traits.mayWriteObservableState() && !traits.mayRunOtherCode()) {
+    bool onlyMakesGenerator = context.opcode() == Opcode::CallDirect && context->isRemovableWhenUnused();
+    if (onlyMakesGenerator || (!traits.mayWriteObservableState() && !traits.mayRunOtherCode())) {
         if (effectRuleOf(context.opcode()) != EffectRule::Call && context.opcode() != Opcode::CallTable)
             return { };
         return { readWordForEffectsNet(all, std::nullopt, nullptr), readWordForEffectsNet(loud, std::nullopt, nullptr) };
     }
     bool undoesFieldStore = context.opcode() == Opcode::PutSlot && context->undoesIterationStore();
-    if (undoesFieldStore ? !someStoreIntoFieldWasCounted(m_code, m_code.at(context.id())) : endsOfWatches.contains(context.opcode()) || m_code.writesWhatTurnHasMade(context.id()) || fillsCellBornAboveInItsBlock(m_code, context.id()))
+    if (undoesFieldStore ? !someStoreIntoFieldWasCounted(m_code, m_code.at(context.id())) : endsOfWatches.contains(context.opcode()) || context.opcode() == Opcode::ReserveArrayCapacity || m_code.writesWhatTurnHasMade(context.id()) || fillsCellBornAboveInItsBlock(m_code, context.id()))
         return { };
     Machine::PatchOperation* count = m_out.patchpoint(Machine::Void);
     count->effects = Machine::Effects::none();
     count->effects.writesLocalState = true;
     count->setRunsWithoutFrame(true);
     count->clobber(RegisterSet::macroClobberedGPRs());
-    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex || context.opcode() == Opcode::PutPropertyOfHeir) && context->undoesIterationStore() ? -1 : 1;
+    int32_t step = (context.opcode() == Opcode::PutSlot || context.opcode() == Opcode::PutOwnDoubleIndex || context.opcode() == Opcode::PutOwnInt32Index || context.opcode() == Opcode::RestoreArrayStore || context.opcode() == Opcode::RestoreElementWord || context.opcode() == Opcode::PutPropertyOfHeir || context.opcode() == Opcode::PutGlobalBinding || context.opcode() == Opcode::PutKeyedProperty) && context->undoesIterationStore() ? -1 : 1;
     count->setGenerator([all, loud, step, runsOtherCode = traits.mayRunOtherCode()](CCallHelpers& jit, const Machine::PatchParameters&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.add64(CCallHelpers::TrustedImm32(step), CCallHelpers::Address(instanceGPR, all));
@@ -1192,6 +1201,21 @@ RuntimeCallEmitter::DeedsInFrontOfQuietCall RuntimeCallEmitter::countDeedOf(cons
             jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(instanceGPR, loud));
     });
     return { };
+}
+
+void RuntimeCallEmitter::takeBackCountOfExtension()
+{
+    if (!AOT::hasFlag(m_options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
+        return;
+    Machine::PatchOperation* count = m_out.patchpoint(Machine::Void);
+    count->effects = Machine::Effects::none();
+    count->effects.writesLocalState = true;
+    count->setRunsWithoutFrame(true);
+    count->clobber(RegisterSet::macroClobberedGPRs());
+    count->setGenerator([all = AOT_INSTANCE_OFFSET(effectsNet.operationsThatDidSomething)](CCallHelpers& jit, const Machine::PatchParameters&) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.add64(CCallHelpers::TrustedImm32(-1), CCallHelpers::Address(instanceGPR, all));
+    });
 }
 
 void RuntimeCallEmitter::putBackDeedsBehindQuietCall(DeedsInFrontOfQuietCall inFront)
@@ -1205,6 +1229,45 @@ void RuntimeCallEmitter::putBackDeedsBehindQuietCall(DeedsInFrontOfQuietCall inF
     store->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
         jit.store64(params[0].gpr(), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.operationsThatDidSomething)));
         jit.store64(params[1].gpr(), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.operationsThatRanOtherCode)));
+    });
+}
+
+static constexpr int64_t noDeedsSaved = -1;
+
+void RuntimeCallEmitter::saveDeedsForHandler(DeedsInFrontOfQuietCall inFront)
+{
+    if (functionSuspends())
+        return;
+    if (!m_deedsForHandler)
+        m_deedsForHandler = m_proc.addStackSlot(2 * sizeof(uint64_t));
+    LValue slot = m_out.slotBase(m_deedsForHandler);
+    m_out.store64(inFront.all ? inFront.all : m_out.constInt64(noDeedsSaved), m_out.address(m_heaps.frameSlots, slot));
+    if (inFront.loud)
+        m_out.store64(inFront.loud, m_out.address(m_heaps.frameSlots, slot, sizeof(uint64_t)));
+}
+
+void RuntimeCallEmitter::restoreDeedsInHandler()
+{
+    if (functionSuspends())
+        return;
+    if (!m_deedsForHandler)
+        m_deedsForHandler = m_proc.addStackSlot(2 * sizeof(uint64_t));
+    LValue slot = m_out.slotBase(m_deedsForHandler);
+    LValue all = m_out.load64(m_out.address(m_heaps.frameSlots, slot));
+    LValue loud = m_out.load64(m_out.address(m_heaps.frameSlots, slot, sizeof(uint64_t)));
+    Machine::PatchOperation* store = m_out.patchpoint(Machine::Void);
+    store->append(all, Machine::ValueRep::SomeRegister);
+    store->append(loud, Machine::ValueRep::SomeRegister);
+    store->effects = Machine::Effects::none();
+    store->effects.writesLocalState = true;
+    store->setRunsWithoutFrame(true);
+    store->clobber(RegisterSet::macroClobberedGPRs());
+    store->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        CCallHelpers::Jump isNotSaved = jit.branch64(CCallHelpers::Equal, params[0].gpr(), CCallHelpers::TrustedImm32(noDeedsSaved));
+        jit.store64(params[0].gpr(), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.operationsThatDidSomething)));
+        jit.store64(params[1].gpr(), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.operationsThatRanOtherCode)));
+        isNotSaved.link(&jit);
     });
 }
 
@@ -1383,7 +1446,7 @@ void RuntimeCallEmitter::keepWordsOfVariablesThatUnitStores(WatchOfEffects& watc
             if (operation.opcode != Opcode::PutModuleVariable || !operation.block())
                 continue;
             PlannedVariable planned = m_plan.variable(operation.variable());
-            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && !m_variablesThatUnitStores->contains(operation.variable()))
+            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && !m_plan.deferredDefinitions().findDeferred(operation.variable()) && !m_variablesThatUnitStores->contains(operation.variable()))
                 m_variablesThatUnitStores->append(operation.variable());
         }
     }
@@ -1586,6 +1649,8 @@ Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const Operatio
             computedEffects->mayThrow = false;
     }
 
+    if (generator().watchesCalls()) [[unlikely]]
+        generator().zeroCountsAtCall(request.effects);
     Machine::PatchOperation* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
@@ -1653,7 +1718,8 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     Origin origin = options.origin.value_or(context.origin());
     const Operation* operation = context.valueID() ? static_cast<const Operation*>(&context.instruction()) : nullptr;
     BuiltinID calledBuiltin = options.calledBuiltin;
-    if (!calledBuiltin && operation && Operation::opcodesWithCalledBuiltin.contains(operation->opcode))
+    bool isStepOfLoop = operation && operation->opcode == Opcode::StepAsyncGenerator && operation->goesByDriverOperand();
+    if (!calledBuiltin && operation && !isStepOfLoop && Operation::opcodesWithCalledBuiltin.contains(operation->opcode))
         calledBuiltin = operation->calledBuiltin();
     if (BuiltinID builtinOfFrame = origin.inlineFrame ? m_code.inlineFrames()[origin.inlineFrame].calledBuiltin : BuiltinID()) {
         const InlineFrame& frame = m_code.inlineFrames()[origin.inlineFrame];

@@ -116,14 +116,14 @@ struct CollectedSite {
 enum SiteByte : unsigned { StepStart, StepContinuation, NumberStart, NumberContinuation, LaterWordsCode, ShortWordLow, ShortWordHigh, LaterWordsVarint, NumberOfSiteBytes };
 using FaultSiteCodes = PrefixCodes<NumberOfSiteBytes>;
 
-class LaterWordsOfBlock {
+class SubsequentBlockWords {
 public:
     static constexpr size_t maxSize = 1 + 2 * sizeOfVarint(UINT32_MAX);
 
     static constexpr bool isShort(uint8_t code) { return code >= firstShort; }
-    static constexpr unsigned numberOfVarints(uint8_t code) { return code == codeOfTwoWords ? 2 : code == codeOfWide; }
+    static constexpr unsigned numberOfVarints(uint8_t code) { return code == twoWordCode ? 2 : code == codeOfWide; }
 
-    explicit LaterWordsOfBlock(uint32_t defaultWord)
+    explicit SubsequentBlockWords(uint32_t defaultWord)
         : m_defaultWord(defaultWord)
     {
     }
@@ -132,7 +132,7 @@ public:
     {
         uint32_t word = words[0];
         if (words.size() > 1) {
-            symbols.append(LaterWordsCode, codeOfTwoWords);
+            symbols.append(LaterWordsCode, twoWordCode);
             symbols.appendVarint(LaterWordsVarint, LaterWordsVarint, word);
             symbols.appendVarint(LaterWordsVarint, LaterWordsVarint, words[1]);
             return;
@@ -163,7 +163,7 @@ public:
         uint8_t code = *cursor++;
         if (code == codeOfDefault)
             return { m_defaultWord, 0 };
-        if (code == codeOfTwoWords) {
+        if (code == twoWordCode) {
             uint32_t first = static_cast<uint32_t>(readVarint(cursor));
             return { first, static_cast<uint32_t>(readVarint(cursor)) };
         }
@@ -184,7 +184,7 @@ private:
     static constexpr uint8_t codeOfDefault = 0;
     static constexpr uint8_t firstRepeated = 1;
     static constexpr uint8_t codeOfWide = 62;
-    static constexpr uint8_t codeOfTwoWords = 63;
+    static constexpr uint8_t twoWordCode = 63;
     static constexpr uint8_t firstShort = 64;
     static constexpr uint32_t endOfShortWords = (256u - firstShort) << 16;
 
@@ -253,7 +253,7 @@ uint32_t findMostFrequentWord(const ParallelLoops& loops, Vector<uint32_t>&& wor
     return mostFrequentWord;
 }
 
-constexpr size_t maxSizeOfSite = FaultStep::maxSize + sizeOfVarint(uint64_t(UINT32_MAX) << 1) + LaterWordsOfBlock::maxSize;
+constexpr size_t maxSizeOfSite = FaultStep::maxSize + sizeOfVarint(uint64_t(UINT32_MAX) << 1) + SubsequentBlockWords::maxSize;
 
 struct StepSymbols {
     friend void appendVarint(StepSymbols& step, uint64_t value) { step.symbols.appendVarint(StepStart, StepContinuation, value); }
@@ -277,12 +277,12 @@ void readSiteBytes(const NextByte& nextByte)
     if (!hasLaterWords)
         return;
     uint8_t code = nextByte(LaterWordsCode);
-    if (LaterWordsOfBlock::isShort(code)) {
+    if (SubsequentBlockWords::isShort(code)) {
         nextByte(ShortWordLow);
         nextByte(ShortWordHigh);
         return;
     }
-    for (unsigned left = LaterWordsOfBlock::numberOfVarints(code); left; --left) {
+    for (unsigned left = SubsequentBlockWords::numberOfVarints(code); left; --left) {
         do {
             byte = nextByte(LaterWordsVarint);
         } while (byte & 0x80);
@@ -320,22 +320,22 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     }
     removeRepeatedElements(firstWords);
 
-    Vector<uint32_t> usesOfFirstWord(FillWith { }, firstWords.size(), 0u);
-    size_t indexOfFirstWord = 0;
+    Vector<uint32_t> firstWordUses(FillWith { }, firstWords.size(), 0u);
+    size_t firstWordIndex = 0;
     for (uint32_t word : everyFirstWord) {
-        while (firstWords[indexOfFirstWord] < word)
-            ++indexOfFirstWord;
-        ++usesOfFirstWord[indexOfFirstWord];
+        while (firstWords[firstWordIndex] < word)
+            ++firstWordIndex;
+        ++firstWordUses[firstWordIndex];
     }
     Vector<uint32_t> mostUsedFirst(firstWords.size());
     for (size_t index = 0; index < firstWords.size(); ++index)
         mostUsedFirst[index] = static_cast<uint32_t>(index);
     AOT::sort(mostUsedFirst, [&](uint32_t a, uint32_t b) {
-        return usesOfFirstWord[a] != usesOfFirstWord[b] ? usesOfFirstWord[a] > usesOfFirstWord[b] : a < b;
+        return firstWordUses[a] != firstWordUses[b] ? firstWordUses[a] > firstWordUses[b] : a < b;
     });
-    Vector<uint32_t> numberOfFirstWord(firstWords.size());
+    Vector<uint32_t> firstWordNumber(firstWords.size());
     for (size_t number = 0; number < mostUsedFirst.size(); ++number)
-        numberOfFirstWord[mostUsedFirst[number]] = static_cast<uint32_t>(number);
+        firstWordNumber[mostUsedFirst[number]] = static_cast<uint32_t>(number);
 
     uint32_t defaultSecondWord = findMostFrequentWord(loops, collectInParallel<uint32_t>(loops, sites.size(), [&](unsigned site, Vector<uint32_t>& words) {
         if (sites[site].numberOfWords > 1)
@@ -351,7 +351,7 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
         PrefixSymbol* firstSymbol = symbolsOfBlocks[block].mutableSpan().data();
         PrefixSymbolWriter symbols(firstSymbol);
         StepSymbols stepSymbols { symbols };
-        LaterWordsOfBlock laterWords(defaultSecondWord);
+        SubsequentBlockWords laterWords(defaultSecondWord);
         for (const CollectedSite& site : sitesOf(block)) {
             RELEASE_ASSERT(site.offset > previousOffset);
             site.stepFrom(previousOffset).append(stepSymbols);
@@ -360,7 +360,7 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
                 continue;
             size_t index = std::ranges::lower_bound(firstWords, site.words[0]) - firstWords.begin();
             bool hasLaterWords = site.numberOfWords > 1;
-            symbols.appendVarint(NumberStart, NumberContinuation, static_cast<uint64_t>(numberOfFirstWord[index]) << 1 | hasLaterWords);
+            symbols.appendVarint(NumberStart, NumberContinuation, static_cast<uint64_t>(firstWordNumber[index]) << 1 | hasLaterWords);
             if (hasLaterWords)
                 laterWords.append(symbols, std::span<const uint32_t>(site.words).subspan(1, site.numberOfWords - 1));
         }
@@ -427,7 +427,7 @@ struct FaultTableView {
     {
     }
 
-    std::array<uint32_t, FaultSite::maxThrowSiteWords> readThrowSite(const uint8_t*& cursor, LaterWordsOfBlock& laterWords) const
+    std::array<uint32_t, FaultSite::maxThrowSiteWords> readThrowSite(const uint8_t*& cursor, SubsequentBlockWords& laterWords) const
     {
         uint64_t number = readVarint(cursor);
         std::array<uint32_t, 2> later { header.defaultSecondWord, 0 };
@@ -513,7 +513,7 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
     PrefixCodeReader reader(table.steps.data() + checkpoint->stepsPosition, table.steps.data() + table.steps.size());
     std::array<uint8_t, maxSizeOfSite> siteBytes;
     uint64_t currentOffset = checkpoint->previousSiteOffset;
-    LaterWordsOfBlock laterWords(table.header.defaultSecondWord);
+    SubsequentBlockWords laterWords(table.header.defaultSecondWord);
     for (uint32_t i = 0; i < numberOfSteps; ++i) {
         size_t size = 0;
         readSiteBytes([&](unsigned code) {

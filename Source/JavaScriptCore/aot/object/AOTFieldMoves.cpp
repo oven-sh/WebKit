@@ -87,7 +87,7 @@ bool acceptsEveryValue(const RuntimeType& type)
 
 static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
 {
-    if (from.type == to.type)
+    if (from.typeNumber == to.typeNumber)
         return true;
     const RuntimeType& fromType = layouts.typeOf(from);
     const RuntimeType& toType = layouts.typeOf(to);
@@ -272,7 +272,7 @@ const FieldMovePlan& FieldMovePlanCache::add(FieldMovePlanKey&& key, std::unique
 {
     ASSERT(plan);
     if (!m_sets)
-        m_sets.make();
+        m_sets.makeFromZeros();
     m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
