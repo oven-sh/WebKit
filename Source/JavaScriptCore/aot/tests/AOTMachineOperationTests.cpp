@@ -183,6 +183,7 @@ LValue operationTestValueOfBits(Output& out, LValue bits, Type type)
         return out.bitCast(out.castToInt32(bits), Float);
     case Double:
         return out.bitCast(bits, Double);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -201,6 +202,7 @@ LValue operationTestConstant(Output& out, uint64_t bits, Type type)
         return out.constFloat(operationTestValueOf<float>(bits));
     case Double:
         return out.constDouble(operationTestValueOf<double>(bits));
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -219,6 +221,7 @@ LValue operationTestBitsOfValue(Output& out, LValue value)
         return out.zeroExtPtr(out.bitCast(value, Int32));
     case Double:
         return out.bitCast(value, Int64);
+    case Vector128:
     case Void:
     case Tuple:
         break;

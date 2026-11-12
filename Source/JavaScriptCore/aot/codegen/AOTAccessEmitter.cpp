@@ -1796,8 +1796,12 @@ bool AccessEmitter::storeLastIndexInLine(const ValueContext& value, Boxed object
     };
     LValue regExpObject = unboxCell(object).value();
     if (!isRegExp) {
-        if (!receiver.isObject())
-            continueIf(isCell(object));
+        if (!receiver.isObject()) {
+            Condition isPresentCell = isCell(object);
+            if (receiver.primitives & Primitive::Absent)
+                isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
+            continueIf(isPresentCell);
+        }
         continueIf(equal(loadStructureID(unboxCell(object)), loadFilledOnce32(Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
     }
     LValue regExpAndFlags = m_out.load64(m_out.address(state, regExpObject, RegExpObject::offsetOfRegExpAndFlags()));

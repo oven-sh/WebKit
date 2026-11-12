@@ -296,7 +296,8 @@ void BitParallelEmitter::emitStartsOfMatches(JumpList& matches, JumpList& fails)
     Jump isOutside = loadCodePoint();
     if (m_plan.length > 1)
         m_jit.lshift64(TrustedImm32(m_plan.numberOfAlternatives), stateGPR);
-    m_jit.or64(TrustedImm32((1 << m_plan.numberOfAlternatives) - 1), stateGPR);
+    static_assert(maxAlternatives < 32);
+    m_jit.or64(TrustedImm32(static_cast<int32_t>((1u << m_plan.numberOfAlternatives) - 1)), stateGPR);
     enterStates();
     matches.append(branchIfAccepts());
     m_jit.branch32(MacroAssembler::LessThanOrEqual, indexGPR, lastStartGPR).linkTo(next, &m_jit);

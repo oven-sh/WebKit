@@ -168,6 +168,7 @@ public:
             return single(static_cast<float>(value));
         case Double:
             return number(static_cast<double>(value));
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -283,6 +284,7 @@ private:
             return floatOperand;
         case Double:
             return doubleOperand;
+        case Vector128:
         case Void:
         case Tuple:
             break;
@@ -333,6 +335,7 @@ private:
             return foldingTestBitsOf(static_cast<double>(m_test.call<float>(first, second)));
         case Double:
             return foldingTestBitsOf(m_test.call<double>(first, second));
+        case Vector128:
         case Void:
         case Tuple:
             break;

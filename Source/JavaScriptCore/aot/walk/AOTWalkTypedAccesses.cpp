@@ -3527,7 +3527,7 @@ bool isNameOutsideFields(Walker& walker, TypeID typeOfObjects, PropertyKeyID key
     const LinkTables& link = linkTablesForTypedAccesses(walker);
     size_t numberOfLayouts = program.layouts.size();
     return std::ranges::all_of(membersOf(walker.types(), type.layouts), [&](LayoutID member) {
-        if (findField(program, member, key) || std::ranges::contains(link.appendedKeysOf(member), key) || !possibleChangesForbid(possibleChangesForTypedAccess(link, member), TypedAccess::FindsNoProperty))
+        if (builtinClassOfInstances(program.at(member)) || findField(program, member, key) || std::ranges::contains(link.appendedKeysOf(member), key) || !possibleChangesForbid(possibleChangesForTypedAccess(link, member), TypedAccess::FindsNoProperty))
             return false;
         size_t stepsLeft = numberOfLayouts;
         for (LayoutID current = declaredLayoutOf(program, member); current && stepsLeft--; current = program.at(current).base) {

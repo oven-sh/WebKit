@@ -1137,6 +1137,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTShiftArrayStart, void, (Instance* instance,
         }
         OPERATION_RETURN(scope);
     }
+    if (array->fastShift(vm)) [[likely]]
+        OPERATION_RETURN(scope);
     Butterfly& butterfly = *array->butterfly();
     unsigned last = butterfly.publicLength() - 1;
     if (hasDouble(array->indexingType())) {
