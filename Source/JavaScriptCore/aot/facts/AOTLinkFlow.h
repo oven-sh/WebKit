@@ -960,6 +960,7 @@ public:
     void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records, size_t numberOfNames);
     template<typename Functor> void forEachAppendedField(LayoutID layout, const Functor& functor) const
     {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
         for (uint32_t place = m_newestAppendedFieldOfLayout[layout.index()]; place != UINT32_MAX;) {
             AppendedField appended = m_appendedFields[place];
             place = appended.next;

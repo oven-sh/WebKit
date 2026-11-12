@@ -4328,15 +4328,13 @@ static bool passCodeUnitToStringFromCharCode(Walker& walker, const BodyValue& va
     }, codeUnit);
     if (!isBuilt || !codeUnit[0] || walker.isUnreachable() || walker.hasFailed())
         return true;
-    Reference boundBefore = walker.nameLastBoundTo(argument);
-    walker.bind(argument, codeUnit[0]);
+    Walker::StandIn codeUnitInPlaceOfArgument(walker, argument, codeUnit[0]);
     CallInWalkBuiltins call(walker, value);
     if (call.plan()) {
         walker.count(StatisticID::CodeUnitsPassedToStringFromCharCode);
         call.build();
     } else
         walker.fail("String.fromCharCode() of a code unit goes by no row"_s);
-    walker.bind(argument, boundBefore);
     return true;
 }
 
